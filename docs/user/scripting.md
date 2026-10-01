@@ -60,7 +60,21 @@ paneflow search backend "test result" --max 5
 
 `status` and `read --json` include `output_generation`, a monotonic
 counter that advances when pane output changes. Agents can use it to
-avoid guessing whether a pane has gone quiet.
+avoid guessing whether a pane has gone quiet. When Paneflow cannot read
+the counter, the field is absent rather than zero.
+
+`status --json` describes the agent instance running now:
+
+| Field | Meaning |
+|---|---|
+| `hooked` | `true` only when the last lifecycle hook came from the current launch of the agent and its runtime reports through hooks Paneflow installs (Claude Code, Codex). A hook left by a previous launch never counts. |
+| `state` | The reduced state the sidebar shows: `thinking`, `waiting_for_input`, `finished`, `errored`, or `idle`. It is absent when no state projection exists for the pane, never `unknown`. |
+| `state_seq` | A per-session counter that increases on every reduced-state transition. Compare two reads to tell a new turn from an unchanged one. |
+| `attention_reason` | Present when the pane asks for attention because the agent rang the terminal bell (`bell`). |
+
+Without a window, the CLI asks the host for `hooked` and
+`output_generation` and the per-home worker for `state` and
+`state_seq`.
 
 For push instead of polling, use `watch`:
 

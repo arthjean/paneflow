@@ -38,6 +38,10 @@ struct MockHost {
 
 impl MockHost {
     fn start() -> Self {
+        Self::replying(json!({"accepted": true}))
+    }
+
+    fn replying(reply: Value) -> Self {
         let (endpoint, keepalive) = unique_ipc_path();
         let name = endpoint
             .as_path()
@@ -58,7 +62,7 @@ impl MockHost {
             let event = read_json_line(&mut reader);
             assert_eq!(event["method"], "agent.event");
             event_tx.send(event.clone()).expect("send event");
-            write_result(&mut writer, &event, json!({"accepted": true}));
+            write_result(&mut writer, &event, reply);
         });
         Self {
             endpoint,
@@ -155,10 +159,12 @@ fn run_reporter(
         .arg(event)
         .env_clear()
         .envs(non_paneflow_environment())
-        .env("PANEFLOW_AI_TOOL", hook_env.tool)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
+    if !hook_env.tool.is_empty() {
+        command.env("PANEFLOW_AI_TOOL", hook_env.tool);
+    }
     if let Some(endpoint) = hook_env.endpoint {
         command.env("PANEFLOW_HOST_ENDPOINT", endpoint);
     }
@@ -267,6 +273,92 @@ fn hand_typed_claude_events_use_the_host_protocol() {
             "event={event}"
         );
     }
+}
+
+#[test]
+fn a_hook_that_names_no_tool_reaches_the_host_unattributed() {
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "UserPromptSubmit",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: None,
+            tool: "",
+            generation: Some(3),
+            hook_log: None,
+        },
+        json!({"session_id": "provider-session"})
+            .to_string()
+            .as_bytes(),
+    );
+    assert!(status.success());
+    let frame = host.event();
+    assert!(
+        frame["params"].get("tool").is_none(),
+        "the reporter never guesses Claude: {frame}"
+    );
+    assert_eq!(frame["params"]["kind"], "ai.prompt_submit");
+}
+
+#[test]
+fn a_host_drop_of_an_unattributed_hook_is_logged_with_its_reason() {
+    let reason = "the event names no tool and the pane runs no recognized agent runtime";
+    let host = MockHost::replying(json!({"accepted": false, "reason": reason}));
+    let directory = tempfile::TempDir::new().expect("temp directory");
+    let log = directory.path().join("hook.log");
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "Stop",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: None,
+            tool: "",
+            generation: Some(3),
+            hook_log: Some(&log),
+        },
+        json!({"session_id": "provider-session"})
+            .to_string()
+            .as_bytes(),
+    );
+    assert!(status.success());
+    assert!(host.event()["params"].get("tool").is_none());
+    let logged = std::fs::read_to_string(&log).expect("hook log");
+    assert!(logged.contains(reason), "{logged}");
+    assert!(!logged.to_ascii_lowercase().contains("claude"), "{logged}");
+}
+
+#[test]
+fn a_stop_failure_forwards_the_provider_error() {
+    let host = MockHost::start();
+    let (status, _, _) = run_reporter(
+        Path::new(HOOK_BIN),
+        "StopFailure",
+        &HookEnv {
+            endpoint: Some(&host.endpoint),
+            session: Some(SESSION_ID),
+            session_dir: None,
+            tool: "claude",
+            generation: Some(3),
+            hook_log: None,
+        },
+        json!({
+            "hook_event_name": "StopFailure",
+            "error": "rate_limit",
+            "error_details": "429 Too Many Requests",
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    assert!(status.success());
+    let frame = host.event();
+    assert_eq!(frame["params"]["hook_payload"]["error"], "rate_limit");
+    assert_eq!(
+        frame["params"]["hook_payload"]["hook_event_name"],
+        "StopFailure"
+    );
 }
 
 #[test]

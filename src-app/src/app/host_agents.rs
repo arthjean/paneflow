@@ -65,6 +65,8 @@ pub(crate) struct HostAgentRow {
     pub(crate) activity_source: ActivitySource,
     pub(crate) restart_recommended: bool,
     pub(crate) unread: bool,
+    pub(crate) state_seq: u64,
+    pub(crate) attention_reason: Option<String>,
 }
 
 #[derive(Default)]
@@ -181,6 +183,14 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
         restart_recommended: entry.get("restart_recommended").is_some_and(|value| {
             value.get("token").and_then(Value::as_str) == Some(paneflow_serve::RESTART_RECOMMENDED)
         }),
+        state_seq: entry
+            .get("state_seq")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        attention_reason: entry
+            .get("attention_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         unread: entry
             .get("unread")
             .and_then(Value::as_bool)
@@ -252,6 +262,8 @@ fn projected_session(
     session.message = row.message.clone();
     session.last_result = row.last_result.clone();
     session.last_event_at_ms = row.last_event_at_ms;
+    session.state_seq = row.state_seq;
+    session.attention_reason = row.attention_reason.clone();
     session.surface_id = Some(surface_id);
     session.waiting_since =
         (state == AgentState::WaitingForInput).then(|| waiting_since_instant(row.waiting_since_ms));
@@ -784,6 +796,58 @@ mod tests {
 
         assert!(row_from_snapshot(&json!({"live": true})).is_none());
         assert!(row_from_snapshot(&json!({"session": "not-a-uuid"})).is_none());
+    }
+
+    #[test]
+    fn a_bell_from_an_agent_without_hooks_reaches_the_attention_queue_as_waiting_for_input() {
+        let home = tempfile::tempdir().expect("home");
+        let session = SessionId::new();
+        let mut worker = paneflow_serve::state::WorkerState::new(home.path());
+        let row = |bell_at_ms: Option<u64>| {
+            let mut row = json!({
+                "session": session.to_string(),
+                "generation": 1,
+                "generation_started_at_ms": 1_000,
+                "live": true,
+                "lifecycle": paneflow_host::manifest::SessionLifecycle::Running,
+                "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
+                "host_build_id": "test-build",
+                "observed_runtime": paneflow_host::runtime_observer::RuntimeObservation {
+                    id: "com.sourcegraph.amp".to_string(),
+                    pid: 40,
+                    pid_started_at: Some(7),
+                    process_group: 40,
+                    process_name: "amp".to_string(),
+                    argv: None,
+                },
+            });
+            if let Some(bell_at_ms) = bell_at_ms {
+                row["bell_at_ms"] = json!(bell_at_ms);
+            }
+            row
+        };
+        worker.apply_core_snapshot(&[row(None)]);
+        let rang_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_millis() as u64;
+        let projection = worker
+            .apply_core_snapshot(&[row(Some(rang_at))])
+            .into_iter()
+            .next()
+            .expect("the bell is announced");
+        assert_eq!(projection.session["attention_reason"], "bell");
+        let host_row = row_from_snapshot(&projection.session).expect("row");
+        let session = projected_session(&host_row, 9, None).expect("agent session");
+        assert_eq!(session.state, AgentState::WaitingForInput);
+        assert_eq!(
+            session.tool,
+            TerminalAgent::from_binary("amp").expect("amp")
+        );
+        assert_eq!(session.source, AgentStateSource::Terminal);
+        assert_eq!(session.attention_reason.as_deref(), Some("bell"));
+        assert!(session.state_seq > 0);
+        assert!(session.waiting_since.is_some());
     }
 
     #[test]

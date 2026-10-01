@@ -115,7 +115,9 @@ flag `--raw` passes `fenced: false`.
 | `pid` | Agent process id, when known |
 | `tool` | Agent family such as `claude`, `codex`, `opencode`, or `gemini` |
 | `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
-| `hooked` | Whether lifecycle hook events are attached |
+| `hooked` | Whether the current launch reports through lifecycle hooks Paneflow installs; a hook from a previous launch never counts |
+| `state_seq` | Per-session counter that increases on every state transition, on `status` |
+| `attention_reason` | `bell` when the agent asked for attention with the terminal bell |
 | `reason` | Detection reason, including `no_hook` |
 | `surface_id` | Pane id |
 | `surface_name` | Pane name |
@@ -125,7 +127,7 @@ flag `--raw` passes `fenced: false`.
 | `last_result` | Last turn summary, when available |
 | `waiting_ms` | Time spent waiting for input |
 | `idle_ms` | Time since observed activity |
-| `output_generation` | Pane output counter, on `status` |
+| `output_generation` | Pane output counter, on `status`; absent when unknown |
 
 An empty fleet is `{"agents":[]}` with exit code `0`. A pane with no
 tracked agent returns idle state, not an error.

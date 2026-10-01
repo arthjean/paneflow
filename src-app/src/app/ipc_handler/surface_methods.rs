@@ -606,12 +606,17 @@ fn surface_status_value(
     session: Option<&AgentSession>,
     output_generation: u64,
     now: std::time::Instant,
+    projected_state_seq: Option<u64>,
 ) -> serde_json::Value {
     match session {
         Some(s) => serde_json::json!({
             "surface_id": sid,
             "state": s.state.wire_str(),
-            "hooked": true,
+            "state_seq": s.state_seq,
+            "attention_reason": s.attention_reason,
+            "hooked": s.source == crate::ai_types::AgentStateSource::Hook
+                && s.tool.runtime().lifecycle.authority
+                    == paneflow_agent_config::RuntimeLifecycleAuthority::Complete,
             "tool": s.tool.binary(),
             "active_tool_name": s.active_tool_name,
             "message": s.message,
@@ -622,12 +627,18 @@ fn surface_status_value(
             "idle_ms": now.saturating_duration_since(s.last_activity).as_millis() as u64,
             "output_generation": output_generation,
         }),
-        None => serde_json::json!({
-            "surface_id": sid,
-            "state": "idle",
-            "hooked": false,
-            "output_generation": output_generation,
-        }),
+        None => {
+            let mut value = serde_json::json!({
+                "surface_id": sid,
+                "hooked": false,
+                "output_generation": output_generation,
+            });
+            if let Some(state_seq) = projected_state_seq {
+                value["state"] = serde_json::json!("idle");
+                value["state_seq"] = serde_json::json!(state_seq);
+            }
+            value
+        }
     }
 }
 
@@ -946,12 +957,21 @@ impl PaneFlowApp {
                 };
                 let sid = terminal.entity_id().as_u64();
                 let output_generation = terminal.read(cx).terminal.output_generation;
+                let projected_state_seq = self
+                    .host_agent_row(&terminal.read(cx).terminal.session_id)
+                    .map(|row| row.state_seq);
                 let session = self
                     .workspaces
                     .iter()
                     .flat_map(|ws| ws.agent_sessions.values())
                     .find(|s| s.surface_id == Some(sid));
-                surface_status_value(sid, session, output_generation, std::time::Instant::now())
+                surface_status_value(
+                    sid,
+                    session,
+                    output_generation,
+                    std::time::Instant::now(),
+                    projected_state_seq,
+                )
             }
             "surface.rename" => {
                 if let Err(error) = opt_str(params, "new_name") {
@@ -1602,13 +1622,13 @@ mod tests {
         use crate::agent_launcher::TerminalAgent;
         use crate::ai_types::{AgentSession, AgentState};
         let mut s = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Finished);
-        let v = super::surface_status_value(7, Some(&s), 1, std::time::Instant::now());
+        let v = super::surface_status_value(7, Some(&s), 1, std::time::Instant::now(), None);
         assert!(
             v["last_result"].is_null(),
             "absent resolves to null, not missing"
         );
         s.last_result = Some("compiled clean".into());
-        let v = super::surface_status_value(7, Some(&s), 1, std::time::Instant::now());
+        let v = super::surface_status_value(7, Some(&s), 1, std::time::Instant::now(), None);
         assert_eq!(v["last_result"], "compiled clean");
     }
 
@@ -1740,12 +1760,22 @@ mod tests {
 
     #[test]
     fn surface_status_value_idle_when_no_session() {
-        let v = surface_status_value(7, None, 99, std::time::Instant::now());
+        let v = surface_status_value(7, None, 99, std::time::Instant::now(), Some(4));
         assert_eq!(v["surface_id"], 7);
         assert_eq!(v["state"], "idle");
+        assert_eq!(v["state_seq"], 4);
         assert_eq!(v["output_generation"], 99);
         assert!(v.get("tool").is_none());
         assert_eq!(v["hooked"], false);
+    }
+
+    #[test]
+    fn surface_status_value_names_no_state_without_a_worker_projection() {
+        let v = surface_status_value(7, None, 99, std::time::Instant::now(), None);
+        assert!(v.get("state").is_none(), "{v}");
+        assert!(v.get("state_seq").is_none(), "{v}");
+        assert_eq!(v["hooked"], false);
+        assert_eq!(v["output_generation"], 99);
     }
 
     #[test]
@@ -1753,11 +1783,31 @@ mod tests {
         use crate::agent_launcher::TerminalAgent;
         use crate::ai_types::{AgentSession, AgentState};
         let s = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
-        let v = surface_status_value(7, Some(&s), 12, std::time::Instant::now());
+        let v = surface_status_value(7, Some(&s), 12, std::time::Instant::now(), None);
         assert_eq!(v["state"], "thinking");
         assert_eq!(v["tool"], "codex");
         assert_eq!(v["output_generation"], 12);
         assert_eq!(v["hooked"], true);
+        assert_eq!(v["state_seq"], 0);
+    }
+
+    #[test]
+    fn surface_status_value_is_hooked_only_for_a_hook_owned_complete_runtime() {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{AgentSession, AgentState, AgentStateSource};
+        let mut screen = AgentSession::new(TerminalAgent::Gemini, AgentState::WaitingForInput);
+        screen.source = AgentStateSource::Terminal;
+        screen.state_seq = 5;
+        let v = surface_status_value(7, Some(&screen), 3, std::time::Instant::now(), None);
+        assert_eq!(v["hooked"], false);
+        assert_eq!(v["state_seq"], 5);
+        let mut pi = AgentSession::new(TerminalAgent::Pi, AgentState::Thinking);
+        pi.source = AgentStateSource::Hook;
+        let v = surface_status_value(7, Some(&pi), 3, std::time::Instant::now(), None);
+        assert_eq!(
+            v["hooked"], false,
+            "a partial hook stream is not authoritative"
+        );
     }
 
     #[gpui::test]

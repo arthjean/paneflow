@@ -32,6 +32,9 @@ pub struct AgentEvent {
     pub payload: Value,
 }
 
+pub const UNIDENTIFIED_TOOL: &str =
+    "the event names no tool and the pane runs no recognized agent runtime";
+
 pub fn clamp_text(raw: &str) -> String {
     let mut text = String::with_capacity(raw.len().min(MAX_AGENT_TEXT_BYTES));
     for character in raw.chars().filter(|character| *character != '\0') {
@@ -163,6 +166,10 @@ pub struct AgentSnapshotEntry {
     pub last_hook: Option<HookRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_changed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bell_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_started_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

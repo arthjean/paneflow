@@ -351,6 +351,8 @@ mod tests {
             activity_source: crate::app::host_agents::ActivitySource::Hooks,
             restart_recommended: false,
             unread: false,
+            state_seq: 0,
+            attention_reason: None,
         }
     }
 

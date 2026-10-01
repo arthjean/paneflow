@@ -16,6 +16,7 @@ mod surface_read;
 mod up_cmd;
 mod wait_cmd;
 mod watch_cmd;
+mod worker_state;
 mod workspace_spec;
 
 pub const EXIT_OK: i32 = 0;
@@ -559,7 +560,9 @@ impl IpcTransport for CliTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         match self {
             Self::Controller(client) => client.call(method, params),
-            Self::Host(transport) => transport.call(method, params),
+            Self::Host(transport) => transport
+                .call(method, params)
+                .map(|result| worker_state::with_worker_state(method, result)),
         }
     }
 }

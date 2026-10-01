@@ -125,9 +125,11 @@ fn read_runtime_generation_from(raw: Option<&str>) -> Option<u64> {
 fn detect_tool_from(
     raw: Option<&str>,
     payload: &Value,
-) -> Result<AiToolName, paneflow_ipc_client::ai_hook::InvalidToolName> {
+) -> Result<Option<AiToolName>, paneflow_ipc_client::ai_hook::InvalidToolName> {
     if let Some(raw) = raw {
-        return catalog_tool_name(raw).map_or_else(|| AiToolName::parse(raw), AiToolName::parse);
+        return catalog_tool_name(raw)
+            .map_or_else(|| AiToolName::parse(raw), AiToolName::parse)
+            .map(Some);
     }
     for key in [
         "runtime",
@@ -139,11 +141,11 @@ fn detect_tool_from(
     ] {
         if let Some(candidate) = payload.get(key).and_then(Value::as_str) {
             if let Some(tool) = catalog_tool_name(candidate) {
-                return AiToolName::parse(tool);
+                return AiToolName::parse(tool).map(Some);
             }
         }
     }
-    Ok(AiToolName::legacy_default())
+    Ok(None)
 }
 
 fn catalog_tool_name(candidate: &str) -> Option<&'static str> {
@@ -300,16 +302,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_tool_uses_the_legacy_default_but_malformed_tool_is_rejected() {
+    fn a_missing_tool_is_left_to_the_pane_runtime_and_a_malformed_tool_is_rejected() {
         assert_eq!(
-            detect_tool_from(None, &serde_json::json!({}))
-                .expect("legacy default")
-                .as_str(),
-            "claude"
+            detect_tool_from(None, &serde_json::json!({})).expect("no tool"),
+            None,
+            "an unidentified hook is never attributed to Claude"
         );
         assert_eq!(
             detect_tool_from(Some("cursor-agent"), &serde_json::json!({}))
                 .expect("valid tool")
+                .expect("named tool")
                 .as_str(),
             "cursor-agent"
         );
@@ -320,6 +322,7 @@ mod tests {
                 &serde_json::json!({"runtime": "C:\\node_modules\\@openai\\codex\\bin\\codex.js"}),
             )
             .expect("payload runtime")
+            .expect("named tool")
             .as_str(),
             "codex"
         );

@@ -2124,3 +2124,40 @@ fn a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs() 
     assert!(current.is_some());
     host.stop(&session, None).unwrap();
 }
+
+#[test]
+fn a_hook_without_a_tool_takes_the_runtime_the_pane_runs() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("pane-runtime-tool")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let untooled = json!({
+        "session": session,
+        "runtime_generation": 1,
+        "kind": "ai.stop",
+        "hook_payload": {"hook_event_name": "Stop"},
+    });
+    assert_eq!(
+        host.attribute_agent_tool(&untooled),
+        Err(crate::agent::UNIDENTIFIED_TOOL)
+    );
+    {
+        let sessions = host.lock_sessions();
+        let mut manifest = sessions[&session].manifest.lock().unwrap();
+        manifest.runtime = Some(HostedSessionRuntime {
+            current_observation: Some(crate::runtime_observer::RuntimeObservation {
+                id: "com.openai.codex".to_string(),
+                pid: 77,
+                pid_started_at: Some(5),
+                process_group: 77,
+                process_name: "codex".to_string(),
+                argv: None,
+            }),
+            launch_binding: None,
+        });
+    }
+    let attributed = host.attribute_agent_tool(&untooled).unwrap();
+    assert_eq!(attributed["tool"], "codex");
+    let named = json!({"session": session, "tool": "claude", "kind": "ai.stop"});
+    assert_eq!(host.attribute_agent_tool(&named).unwrap()["tool"], "claude");
+    host.stop(&session, None).unwrap();
+}

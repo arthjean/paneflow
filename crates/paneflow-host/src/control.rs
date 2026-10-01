@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use paneflow_config::schema::{SessionId, WorkspaceId};
+use paneflow_agent_config::runtime_catalog::{RuntimeLifecycleAuthority, runtime_for_tool};
+use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_ipc_client::scrollback::{
     fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback, search_text,
     truncate_ipc_text, wrap_untrusted,
@@ -147,27 +148,69 @@ fn surface_value(alias: u64, summary: &SessionSummary) -> Value {
     })
 }
 
-fn agent_status_value(alias: u64, last_hook: Option<&HookRecord>, now_ms: u64) -> Value {
-    match last_hook {
-        Some(hook) => json!({
-            "surface_id": alias,
-            "state": "unknown",
-            "hooked": true,
-            "tool": hook.tool,
-            "hook_event_name": hook.hook_event_name,
-            "active_tool_name": hook.tool_name,
-            "runtime_generation": hook.runtime_generation,
-            "idle_ms": now_ms.saturating_sub(hook.received_at_ms),
-            "output_generation": 0,
-            "reduced_by": Value::Null,
-        }),
-        None => json!({
-            "surface_id": alias,
-            "state": "idle",
-            "hooked": false,
-            "output_generation": 0,
-            "reduced_by": Value::Null,
-        }),
+fn current_hook(
+    generation: SessionGeneration,
+    last_hook: Option<&HookRecord>,
+) -> Option<&HookRecord> {
+    last_hook.filter(|hook| hook.runtime_generation == generation)
+}
+
+fn hook_is_authoritative(hook: &HookRecord) -> bool {
+    runtime_for_tool(&hook.tool)
+        .is_some_and(|runtime| runtime.lifecycle.authority == RuntimeLifecycleAuthority::Complete)
+}
+
+fn agent_hook_fields(
+    generation: SessionGeneration,
+    last_hook: Option<&HookRecord>,
+    now_ms: u64,
+) -> serde_json::Map<String, Value> {
+    let hook = current_hook(generation, last_hook);
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        "hooked".to_string(),
+        Value::Bool(hook.is_some_and(hook_is_authoritative)),
+    );
+    if let Some(hook) = hook {
+        fields.insert("tool".to_string(), json!(hook.tool));
+        fields.insert("pid".to_string(), json!(hook.pid));
+        fields.insert("hook_event_name".to_string(), json!(hook.hook_event_name));
+        fields.insert("active_tool_name".to_string(), json!(hook.tool_name));
+        fields.insert(
+            "runtime_generation".to_string(),
+            json!(hook.runtime_generation),
+        );
+        fields.insert(
+            "idle_ms".to_string(),
+            json!(now_ms.saturating_sub(hook.received_at_ms)),
+        );
+    }
+    fields
+}
+
+fn agent_status_value(
+    alias: u64,
+    session: &SessionId,
+    generation: SessionGeneration,
+    last_hook: Option<&HookRecord>,
+    output_generation: Option<u64>,
+    now_ms: u64,
+) -> Value {
+    let mut value = agent_hook_fields(generation, last_hook, now_ms);
+    value.insert("surface_id".to_string(), json!(alias));
+    value.insert("session".to_string(), json!(session));
+    value.insert("generation".to_string(), json!(generation));
+    if let Some(output_generation) = output_generation {
+        value.insert("output_generation".to_string(), json!(output_generation));
+    }
+    Value::Object(value)
+}
+
+fn output_generation(host: &SessionHost, session: &SessionId) -> Option<u64> {
+    match host.output_stream(session, None) {
+        Ok(Ok(stream)) => Some(stream.end_offset()),
+        Ok(Err(ended)) => Some(ended.end_offset),
+        Err(_) => None,
     }
 }
 
@@ -408,7 +451,10 @@ fn answer(
             let alias = aliases.alias_of(&session).unwrap_or(0);
             Ok(agent_status_value(
                 alias,
+                &session,
+                summary.manifest.generation,
                 summary.manifest.last_hook.as_ref(),
+                output_generation(host, &session),
                 now_ms,
             ))
         }
@@ -420,23 +466,21 @@ fn answer(
                 .iter()
                 .enumerate()
                 .filter_map(|(index, summary)| {
-                    let hook = summary.manifest.last_hook.as_ref()?;
-                    Some(json!({
-                        "pid": hook.pid,
-                        "tool": hook.tool,
-                        "state": "unknown",
-                        "hooked": true,
-                        "reason": Value::Null,
-                        "surface_id": index as u64 + 1,
-                        "surface_name": surface_name(summary),
-                        "session": summary.manifest.session,
-                        "workspace": summary.manifest.workspace,
-                        "hook_event_name": hook.hook_event_name,
-                        "active_tool_name": hook.tool_name,
-                        "runtime_generation": hook.runtime_generation,
-                        "idle_ms": now_ms.saturating_sub(hook.received_at_ms),
-                        "reduced_by": Value::Null,
-                    }))
+                    current_hook(
+                        summary.manifest.generation,
+                        summary.manifest.last_hook.as_ref(),
+                    )?;
+                    let mut agent = agent_hook_fields(
+                        summary.manifest.generation,
+                        summary.manifest.last_hook.as_ref(),
+                        now_ms,
+                    );
+                    agent.insert("surface_id".to_string(), json!(index as u64 + 1));
+                    agent.insert("surface_name".to_string(), json!(surface_name(summary)));
+                    agent.insert("session".to_string(), json!(summary.manifest.session));
+                    agent.insert("generation".to_string(), json!(summary.manifest.generation));
+                    agent.insert("workspace".to_string(), json!(summary.manifest.workspace));
+                    Some(Value::Object(agent))
                 })
                 .collect();
             Ok(json!({"agents": agents}))
@@ -625,34 +669,91 @@ mod tests {
         assert!(CONTROL_METHODS.contains(&"surface.send_text"));
     }
 
-    #[test]
-    fn the_status_row_reports_the_raw_hook_and_never_a_reduced_state() {
-        let hook = HookRecord {
+    fn status_hook(tool: &str, generation: SessionGeneration) -> HookRecord {
+        HookRecord {
             event: None,
             activity_event: None,
             hook_event_name: "UserPromptSubmit".to_string(),
-            tool: "claude".to_string(),
+            tool: tool.to_string(),
             tool_name: None,
             pid: Some(42),
-            runtime_generation: SessionGeneration::FIRST,
+            runtime_generation: generation,
             provider_session_id: None,
             transcript_path: None,
             emitted_at_ms: Some(900),
             received_at_ms: 1_000,
-        };
-        let value = agent_status_value(3, Some(&hook), 5_000);
-        assert_eq!(
-            value["state"], "unknown",
+        }
+    }
+
+    #[test]
+    fn the_status_row_reports_the_raw_hook_and_never_names_a_state() {
+        let session = SessionId::new();
+        let hook = status_hook("claude", SessionGeneration::FIRST);
+        let value = agent_status_value(
+            3,
+            &session,
+            SessionGeneration::FIRST,
+            Some(&hook),
+            Some(812),
+            5_000,
+        );
+        assert!(
+            value.get("state").is_none(),
             "the core never reduces; only a worker names a state"
         );
         assert_eq!(value["hooked"], true);
         assert_eq!(value["hook_event_name"], "UserPromptSubmit");
         assert_eq!(value["idle_ms"], 4_000);
-        assert!(value["reduced_by"].is_null());
+        assert_eq!(value["output_generation"], 812);
+        assert_eq!(value["session"], json!(session));
 
-        let idle = agent_status_value(3, None, 5_000);
-        assert_eq!(idle["state"], "idle");
-        assert_eq!(idle["hooked"], false);
+        let bare = agent_status_value(3, &session, SessionGeneration::FIRST, None, None, 5_000);
+        assert_eq!(bare["hooked"], false);
+        assert!(bare.get("state").is_none());
+        assert!(
+            bare.get("output_generation").is_none(),
+            "an unknown counter is absent, never a constant"
+        );
+        assert!(!value.to_string().contains("unknown"));
+        assert!(!bare.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn a_relaunched_agent_is_not_hooked_by_the_previous_generation() {
+        let session = SessionId::new();
+        let previous = status_hook("claude", SessionGeneration::FIRST);
+        let relaunched = agent_status_value(
+            3,
+            &session,
+            SessionGeneration::FIRST.next(),
+            Some(&previous),
+            Some(10),
+            5_000,
+        );
+        assert_eq!(relaunched["hooked"], false);
+        assert!(relaunched.get("hook_event_name").is_none());
+    }
+
+    #[test]
+    fn only_a_runtime_with_complete_authority_is_hooked() {
+        let session = SessionId::new();
+        for (tool, hooked) in [
+            ("claude", true),
+            ("codex", true),
+            ("pi", false),
+            ("gemini", false),
+        ] {
+            let hook = status_hook(tool, SessionGeneration::FIRST);
+            let value = agent_status_value(
+                1,
+                &session,
+                SessionGeneration::FIRST,
+                Some(&hook),
+                None,
+                5_000,
+            );
+            assert_eq!(value["hooked"], hooked, "{tool}");
+        }
     }
 
     #[test]

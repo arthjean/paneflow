@@ -770,42 +770,55 @@ impl SessionHost {
     }
 
     pub fn agent_snapshot(&self) -> Vec<AgentSnapshotEntry> {
-        let output_changes: BTreeMap<SessionId, u64> = {
+        let terminal_signals: BTreeMap<SessionId, [Option<u64>; 3]> = {
             let sessions = self.lock_sessions();
             sessions
                 .iter()
                 .filter_map(|(session, record)| {
-                    record.runtime.as_deref().and_then(|runtime| {
-                        runtime
-                            .output_changed_at_ms()
-                            .map(|changed_at| (session.clone(), changed_at))
+                    record.runtime.as_deref().map(|runtime| {
+                        (
+                            session.clone(),
+                            [
+                                runtime.output_changed_at_ms(),
+                                runtime.bell_at_ms(),
+                                runtime.input_at_ms(),
+                            ],
+                        )
                     })
                 })
                 .collect()
         };
         self.list(None)
             .into_iter()
-            .map(|summary| AgentSnapshotEntry {
-                output_changed_at_ms: output_changes.get(&summary.manifest.session).copied(),
-                session: summary.manifest.session,
-                generation: summary.manifest.generation,
-                launch_shell: summary.manifest.launch.shell.clone(),
-                lifecycle: summary.manifest.lifecycle,
-                process: summary.manifest.process,
-                workspace: summary.manifest.workspace,
-                title: summary.manifest.title,
-                cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
-                last_hook: summary.manifest.last_hook,
-                generation_started_at_ms: summary.manifest.generation_started_at_ms,
-                screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
-                screen_activity: summary.manifest.screen_activity,
-                menu_prompt_active: summary.manifest.menu_prompt_active,
-                observed_runtime: summary
-                    .manifest
-                    .runtime
-                    .and_then(|runtime| runtime.current_observation),
-                host_protocol_version: summary.manifest.host_protocol_version,
-                host_build_id: summary.manifest.host_build_id,
+            .map(|summary| {
+                let [output_changed_at_ms, bell_at_ms, input_at_ms] = terminal_signals
+                    .get(&summary.manifest.session)
+                    .copied()
+                    .unwrap_or_default();
+                AgentSnapshotEntry {
+                    output_changed_at_ms,
+                    bell_at_ms,
+                    input_at_ms,
+                    session: summary.manifest.session,
+                    generation: summary.manifest.generation,
+                    launch_shell: summary.manifest.launch.shell.clone(),
+                    lifecycle: summary.manifest.lifecycle,
+                    process: summary.manifest.process,
+                    workspace: summary.manifest.workspace,
+                    title: summary.manifest.title,
+                    cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
+                    last_hook: summary.manifest.last_hook,
+                    generation_started_at_ms: summary.manifest.generation_started_at_ms,
+                    screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
+                    screen_activity: summary.manifest.screen_activity,
+                    menu_prompt_active: summary.manifest.menu_prompt_active,
+                    observed_runtime: summary
+                        .manifest
+                        .runtime
+                        .and_then(|runtime| runtime.current_observation),
+                    host_protocol_version: summary.manifest.host_protocol_version,
+                    host_build_id: summary.manifest.host_build_id,
+                }
             })
             .collect()
     }
@@ -826,6 +839,52 @@ impl SessionHost {
             self.helper_dir.as_deref(),
             user,
         )
+    }
+
+    pub fn attribute_agent_tool(&self, params: &Value) -> Result<Value, &'static str> {
+        let unnamed = params.get("tool").is_none()
+            && params
+                .get("hook_payload")
+                .and_then(|payload| payload.get("tool"))
+                .is_none();
+        let session = params
+            .get("session")
+            .and_then(Value::as_str)
+            .and_then(|raw| SessionId::parse(raw).ok());
+        let (true, Some(session)) = (unnamed, session) else {
+            return Ok(params.clone());
+        };
+        let Some(tool) = self.pane_runtime_tool(&session) else {
+            log::warn!(
+                "paneflow-host: agent event dropped for session {session}: {}",
+                crate::agent::UNIDENTIFIED_TOOL
+            );
+            return Err(crate::agent::UNIDENTIFIED_TOOL);
+        };
+        let mut attributed = params.clone();
+        if let Some(object) = attributed.as_object_mut() {
+            object.insert("tool".to_string(), Value::String(tool.to_string()));
+        }
+        Ok(attributed)
+    }
+
+    fn pane_runtime_tool(&self, session: &SessionId) -> Option<&'static str> {
+        let manifest = Arc::clone(&self.lock_sessions().get(session)?.manifest);
+        let guard = manifest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let runtime = guard.runtime.as_ref()?;
+        runtime
+            .current_observation
+            .as_ref()
+            .and_then(crate::runtime_observer::RuntimeObservation::runtime)
+            .or_else(|| {
+                runtime
+                    .launch_binding
+                    .as_deref()
+                    .and_then(paneflow_agent_config::runtime_by_id)
+            })
+            .and_then(|runtime| runtime.detection.command_aliases.first().copied())
     }
 
     pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<Value, HostError> {

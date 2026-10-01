@@ -11,7 +11,6 @@ pub const METHOD_STOP: &str = "ai.stop";
 pub const METHOD_TOOL_USE: &str = "ai.tool_use";
 pub const METHOD_EXIT: &str = "ai.exit";
 
-pub const DEFAULT_TOOL: &str = "claude";
 pub const EVENT_REORDER_TOLERANCE_MS: u64 = 5_000;
 pub const MAX_TOOL_NAME_BYTES: usize = 64;
 pub const MAX_SESSION_PID: u32 = i32::MAX as u32;
@@ -86,10 +85,6 @@ impl AiToolName {
         Ok(Self(raw.to_owned()))
     }
 
-    pub fn legacy_default() -> Self {
-        Self(DEFAULT_TOOL.to_owned())
-    }
-
     pub fn from_wire_params(params: &Value) -> Result<Self, InvalidToolName> {
         let payload = params.get("hook_payload");
         let raw = if let Some(value) = params.get("tool") {
@@ -97,7 +92,7 @@ impl AiToolName {
         } else if let Some(value) = payload.and_then(|value| value.get("tool")) {
             value.as_str().ok_or(InvalidToolName)?
         } else {
-            DEFAULT_TOOL
+            return Err(InvalidToolName);
         };
         Self::parse(raw)
     }
@@ -220,7 +215,7 @@ impl LifecycleEventSource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AiHookParams {
-    pub tool: AiToolName,
+    pub tool: Option<AiToolName>,
     pub pid: Option<SessionPid>,
     pub tool_name: Option<String>,
     pub exit_code: Option<i32>,
@@ -231,7 +226,7 @@ pub struct AiHookParams {
 }
 
 impl AiHookParams {
-    pub fn new(tool: AiToolName, hook_payload: Value) -> Self {
+    pub fn new(tool: Option<AiToolName>, hook_payload: Value) -> Self {
         Self {
             tool,
             pid: None,
@@ -263,10 +258,9 @@ impl AiHookFrame {
             "kind".into(),
             Value::String(self.method.as_str().to_owned()),
         );
-        value.insert(
-            "tool".into(),
-            Value::String(self.params.tool.as_str().to_owned()),
-        );
+        if let Some(tool) = &self.params.tool {
+            value.insert("tool".into(), Value::String(tool.as_str().to_owned()));
+        }
         if let Some(pid) = self.params.pid {
             value.insert("pid".into(), Value::from(pid.get()));
         }
@@ -317,18 +311,16 @@ mod tests {
         assert!(AiToolName::parse(&"x".repeat(MAX_TOOL_NAME_BYTES + 1)).is_err());
         assert!(AiToolName::from_wire_params(&json!({"tool": 42})).is_err());
         assert!(AiToolName::from_wire_params(&json!({"hook_payload": {"tool": false}})).is_err());
-        assert_eq!(
-            AiToolName::from_wire_params(&json!({}))
-                .expect("legacy default")
-                .as_str(),
-            DEFAULT_TOOL
+        assert!(
+            AiToolName::from_wire_params(&json!({})).is_err(),
+            "a frame that names no tool is never attributed to a default agent"
         );
     }
 
     #[test]
     fn a_host_event_addresses_the_durable_session_not_a_surface() {
         let mut params = AiHookParams::new(
-            AiToolName::parse("claude").expect("valid test tool"),
+            Some(AiToolName::parse("claude").expect("valid test tool")),
             json!({"summary": "done"}),
         );
         params.pid = SessionPid::new(42);

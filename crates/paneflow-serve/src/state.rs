@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use paneflow_agent_config::runtime_catalog::{Runtime, RuntimeLifecycleSource};
+use paneflow_agent_config::runtime_catalog::{
+    Runtime, RuntimeLifecycleAuthority, RuntimeLifecycleSource,
+};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
 use paneflow_host::manifest::{SessionLifecycle, SessionManifest};
@@ -115,9 +117,18 @@ pub struct SessionEntry {
     pub screen_activity: Option<String>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
+    pub bell_at_ms: Option<u64>,
+    pub input_at_ms: Option<u64>,
+    bell_seen_at_ms: u64,
+    bell_attention_since: Option<u64>,
+    bell_notice_pending: bool,
+    pub state_seq: u64,
     pub unread: bool,
     pub updated_at_ms: u64,
 }
+
+pub const ATTENTION_REASON_BELL: &str = "bell";
+const BELL_OUTPUT_GRACE_MS: u64 = 1_000;
 
 impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
@@ -151,6 +162,12 @@ impl SessionEntry {
             observed_runtime: manifest
                 .runtime
                 .and_then(|runtime| runtime.current_observation),
+            bell_at_ms: None,
+            input_at_ms: None,
+            bell_seen_at_ms: 0,
+            bell_attention_since: None,
+            bell_notice_pending: false,
+            state_seq: 0,
             unread: false,
             updated_at_ms: manifest.updated_at_ms,
         };
@@ -184,6 +201,44 @@ impl SessionEntry {
             return true;
         }
         false
+    }
+
+    fn foreground_runtime(&self) -> Option<&'static Runtime> {
+        self.observed_runtime
+            .as_ref()
+            .and_then(RuntimeObservation::runtime)
+    }
+
+    fn observe_bell(&mut self) -> bool {
+        let rang_at = self.bell_at_ms.unwrap_or_default();
+        let fresh_bell = rang_at > self.bell_seen_at_ms;
+        self.bell_seen_at_ms = self.bell_seen_at_ms.max(rang_at);
+        let runtime = self
+            .foreground_runtime()
+            .filter(|runtime| runtime.lifecycle.authority != RuntimeLifecycleAuthority::Complete)
+            .filter(|_| self.lifecycle.is_running());
+        let Some(runtime) = runtime else {
+            self.bell_attention_since = None;
+            return false;
+        };
+        if fresh_bell && self.bell_attention_since.is_none() {
+            self.bell_attention_since = Some(rang_at);
+            self.bell_notice_pending = true;
+        }
+        let Some(since) = self.bell_attention_since else {
+            return false;
+        };
+        let typed = self.input_at_ms.is_some_and(|typed_at| typed_at > since);
+        let printed = runtime.lifecycle.attention_clears_on_output
+            && self
+                .output_changed_at_ms
+                .is_some_and(|printed_at| printed_at > since + BELL_OUTPUT_GRACE_MS);
+        if typed || printed {
+            self.bell_attention_since = None;
+            self.bell_notice_pending = false;
+            return false;
+        }
+        true
     }
 
     pub fn refresh_health(&mut self) {
@@ -242,11 +297,14 @@ impl SessionEntry {
             "live": self.live(),
             "health": self.health.wire_str(),
             "status": self.status(),
+            "state_seq": self.state_seq,
             "activity": self.activity,
             "activity_source": self.activity_source.wire_str(),
             "outcome": self.outcome,
             "runtime_id": self.runtime().map(|runtime| runtime.id),
             "menu_prompt_active": self.menu_prompt_active,
+            "attention_reason": (self.status == Status::Attention && self.bell_attention_since.is_some())
+                .then_some(ATTENTION_REASON_BELL),
             "unread": self.unread,
             "core_protocol": self.core_protocol,
             "core_build_id": self.core_build_id,
@@ -548,7 +606,10 @@ impl WorkerState {
         let notification_type = frame["hook_payload"]["notification_type"]
             .as_str()
             .map(str::to_owned);
-        let failure_reason = frame["hook_payload"]["reason"].as_str().map(str::to_owned);
+        let failure_reason = frame["hook_payload"]["error"]
+            .as_str()
+            .or_else(|| frame["hook_payload"]["reason"].as_str())
+            .map(failure_reason_text);
         let background_tasks_pending = payload_has_background_tasks(&frame["hook_payload"]);
         let raw_name = if event.is_interrupt() {
             crate::hook_state::EVENT_STOP_CANCELLED.to_string()
@@ -717,6 +778,16 @@ impl WorkerState {
         {
             status = Status::Attention;
         }
+        let bell_attention = self
+            .sessions
+            .get_mut(session)
+            .is_some_and(SessionEntry::observe_bell);
+        if bell_attention && matches!(status, Status::Busy | Status::Idle) {
+            status = Status::Attention;
+            if source == ActivitySource::None {
+                source = ActivitySource::Screen;
+            }
+        }
         if !running && status == Status::Busy {
             status = Status::Idle;
         }
@@ -736,7 +807,14 @@ impl WorkerState {
         } else {
             status
         };
-        let notice = self.engine.take_notice(session);
+        let bell_notice = self
+            .sessions
+            .get_mut(session)
+            .is_some_and(|entry| std::mem::take(&mut entry.bell_notice_pending));
+        let notice = self
+            .engine
+            .take_notice(session)
+            .or(bell_notice.then_some(Notice::NeedsInput));
         let outcome = self.engine.outcome(session);
         let generation = self.sessions.get(session)?.generation;
         let outcome_changed = self
@@ -764,6 +842,9 @@ impl WorkerState {
                 .activity
                 .as_ref()
                 .is_none_or(|summary| summary.state == state.wire_str());
+        if entry.status != status {
+            entry.state_seq += 1;
+        }
         entry.status = status;
         entry.activity_source = source;
         entry.outcome = wire_outcome;
@@ -835,6 +916,16 @@ fn source_wire(source: ActivitySource) -> &'static str {
     }
 }
 
+const MAX_FAILURE_REASON_BYTES: usize = 128;
+
+fn failure_reason_text(raw: &str) -> String {
+    let mut end = raw.len().min(MAX_FAILURE_REASON_BYTES);
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    raw[..end].to_string()
+}
+
 fn command_is_hook_capable(command: &str) -> bool {
     let alias = Path::new(command)
         .file_stem()
@@ -878,6 +969,16 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
     let declared = raw["last_hook"]["tool"]
         .as_str()
         .map(|tool| AgentSummary::declared(tool, now_ms()));
+    let bell_at_ms = raw["bell_at_ms"].as_u64();
+    let held_bell = held
+        .as_ref()
+        .filter(|entry| entry.generation == generation)
+        .map(|entry| (entry.bell_seen_at_ms, entry.bell_attention_since));
+    let (bell_seen_at_ms, bell_attention_since) = match (&held, held_bell) {
+        (_, Some(held_bell)) => held_bell,
+        (Some(_), None) => (0, None),
+        (None, None) => (bell_at_ms.unwrap_or_default(), None),
+    };
     SessionEntry {
         hook_revision: held
             .as_ref()
@@ -936,6 +1037,12 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
                 held.as_ref()
                     .and_then(|entry| entry.observed_runtime.clone())
             }),
+        bell_at_ms,
+        input_at_ms: raw["input_at_ms"].as_u64(),
+        bell_seen_at_ms,
+        bell_attention_since,
+        bell_notice_pending: false,
+        state_seq: held.as_ref().map_or(0, |entry| entry.state_seq),
         unread: same_generation
             .then(|| held.as_ref().map(|entry| entry.unread))
             .flatten()
@@ -1338,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_failure_settles_without_a_notification_and_records_its_reason() {
+    fn a_stop_failure_asks_for_attention_naming_the_error_cut_to_128_bytes() {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
         let mut state = running_state(home.path(), &session);
@@ -1349,17 +1456,46 @@ mod tests {
             json!({}),
         ));
 
+        let error = format!("rate_limit{}", "é".repeat(100));
         let failed = state
             .apply_core_event(&frame(
                 &session,
                 "ai.stop",
                 "StopFailure",
-                json!({"reason": "matcher"}),
+                json!({"error": error, "last_assistant_message": "API Error: Rate limit reached"}),
             ))
             .expect("the failure projects");
-        assert_eq!(failed.session["status"], "idle");
-        assert_eq!(failed.session["outcome"], "failed:matcher");
-        assert!(failed.notification.is_none());
+        assert_eq!(failed.session["status"], "attention");
+        assert_eq!(failed.session["activity"]["state"], "waiting_for_input");
+        let outcome = failed.session["outcome"].as_str().unwrap();
+        let reason = outcome.strip_prefix("failed:").unwrap();
+        assert!(reason.starts_with("rate_limit"), "{outcome}");
+        assert!(reason.len() <= 128, "{} bytes", reason.len());
+        assert_eq!(
+            failed.notification.map(|notification| notification.kind),
+            Some(KIND_NEEDS_INPUT)
+        );
+    }
+
+    #[test]
+    fn a_codex_interrupt_still_settles_the_turn_to_idle() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        let mut interrupted = frame(&session, "ai.stop", "Interrupt", json!({}));
+        interrupted["event_source"] = json!("interrupt");
+        let settled = state
+            .apply_core_event(&interrupted)
+            .expect("the interrupt projects");
+        assert_eq!(settled.session["status"], "idle");
+        assert_eq!(settled.session["outcome"], "cancelled");
+        assert!(settled.notification.is_none());
     }
 
     #[test]
@@ -1818,6 +1954,31 @@ mod tests {
         assert_eq!(
             state.get(&session).unwrap().activity_source,
             ActivitySource::None
+        );
+    }
+
+    #[test]
+    fn a_prompt_submitted_before_the_first_runtime_observation_keeps_its_turn() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.sweep(SystemTime::now(), &|_| Some(false));
+        let mut submitted = frame(&session, "ai.prompt_submit", "UserPromptSubmit", json!({}));
+        submitted["runtime_generation"] = json!(SessionGeneration::FIRST);
+        state.apply_core_event(&submitted);
+        assert_eq!(state.get(&session).unwrap().status(), "busy");
+
+        state.sessions.get_mut(&session).unwrap().observed_runtime =
+            Some(observation("com.anthropic.claude-code", 10, 5));
+        state.sweep(SystemTime::now(), &|_| Some(false));
+        assert_eq!(
+            state.get(&session).unwrap().status(),
+            "busy",
+            "the first identity the snapshot reports is the agent that submitted the prompt"
+        );
+        assert_eq!(
+            state.get(&session).unwrap().activity_source,
+            ActivitySource::Hooks
         );
     }
 
@@ -2368,5 +2529,214 @@ mod tests {
             "a new agent reusing the PID is its own session, never the old one resumed"
         );
         assert_eq!(first_entry.outcome.as_deref(), Some("completed"));
+    }
+
+    fn bell_row(session: &SessionId, runtime_id: Option<&str>, bell_at_ms: u64) -> Value {
+        let mut row = core_row(session);
+        row["bell_at_ms"] = json!(bell_at_ms);
+        if let Some(runtime_id) = runtime_id {
+            row["observed_runtime"] = serde_json::to_value(observation(runtime_id, 40, 7)).unwrap();
+        }
+        row
+    }
+
+    fn bell_state(home: &Path, session: &SessionId, runtime_id: Option<&str>) -> WorkerState {
+        let mut state = running_state(home, session);
+        state.apply_core_snapshot(&[bell_row(session, runtime_id, 0)]);
+        state
+    }
+
+    #[test]
+    fn a_bell_from_an_agent_without_hooks_lands_in_the_attention_queue_with_its_reason() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+        assert!(state.get(&session).unwrap().activity.is_none());
+
+        let rang_at = now_ms();
+        let projections =
+            state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), rang_at)]);
+        let projection = projections
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the bell is announced");
+        assert_eq!(projection.session["status"], "attention");
+        assert_eq!(
+            projection.session["attention_reason"],
+            ATTENTION_REASON_BELL
+        );
+        assert_eq!(projection.session["activity"]["state"], "waiting_for_input");
+        assert_eq!(projection.session["activity"]["tool"], "amp");
+        assert_eq!(
+            projection
+                .notification
+                .as_ref()
+                .map(|notification| notification.kind),
+            Some(KIND_NEEDS_INPUT),
+            "a bell notifies exactly like a hook that asks for input"
+        );
+    }
+
+    #[test]
+    fn a_bell_flood_raises_one_attention_and_never_reports_the_pane_finished() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
+        let first = now_ms();
+        let mut notifications = Vec::new();
+        let mut statuses = BTreeSet::new();
+        for offset in 0..1_000 {
+            for projection in state.apply_core_snapshot(&[bell_row(
+                &session,
+                Some("com.sourcegraph.amp"),
+                first + offset,
+            )]) {
+                statuses.insert(projection.session["status"].as_str().unwrap().to_string());
+                notifications.extend(
+                    projection
+                        .notification
+                        .map(|notification| notification.kind),
+                );
+            }
+        }
+        assert_eq!(notifications, [KIND_NEEDS_INPUT]);
+        assert!(!notifications.contains(&KIND_FINISHED));
+        assert_eq!(statuses, BTreeSet::from(["attention".to_string()]));
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+    }
+
+    #[test]
+    fn a_bell_never_moves_an_agent_whose_hooks_are_complete() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, Some("com.anthropic.claude-code"));
+        let projections = state.apply_core_snapshot(&[bell_row(
+            &session,
+            Some("com.anthropic.claude-code"),
+            now_ms(),
+        )]);
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none())
+        );
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "idle");
+        assert!(entry.to_value()["attention_reason"].is_null());
+    }
+
+    #[test]
+    fn a_bell_in_a_shell_without_an_agent_creates_no_agent_row() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, None);
+        let projections = state.apply_core_snapshot(&[bell_row(&session, None, now_ms())]);
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none())
+        );
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "idle");
+        assert!(entry.activity.is_none(), "no agent row for a plain shell");
+    }
+
+    #[test]
+    fn bell_attention_clears_on_the_next_keystroke() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
+        let rang_at = now_ms();
+        state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), rang_at)]);
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+
+        let mut typed = bell_row(&session, Some("com.sourcegraph.amp"), rang_at);
+        typed["input_at_ms"] = json!(rang_at + 1);
+        state.apply_core_snapshot(&[typed]);
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "idle");
+        assert!(entry.to_value()["attention_reason"].is_null());
+        assert!(
+            entry.activity.is_none(),
+            "the bell row leaves with the attention"
+        );
+    }
+
+    #[test]
+    fn bell_attention_clears_on_later_output_only_where_the_runtime_allows_it() {
+        for (runtime_id, clears) in [("com.sourcegraph.amp", true), ("ai.x.grok-cli", false)] {
+            let home = tempfile::tempdir().unwrap();
+            let session = SessionId::new();
+            let mut state = bell_state(home.path(), &session, Some(runtime_id));
+            let rang_at = now_ms();
+            state.apply_core_snapshot(&[bell_row(&session, Some(runtime_id), rang_at)]);
+            assert_eq!(
+                state.get(&session).unwrap().status(),
+                "attention",
+                "{runtime_id}"
+            );
+
+            let mut echoed = bell_row(&session, Some(runtime_id), rang_at);
+            echoed["output_changed_at_ms"] = json!(rang_at + 20);
+            state.apply_core_snapshot(&[echoed]);
+            assert_eq!(
+                state.get(&session).unwrap().status(),
+                "attention",
+                "{runtime_id}: output drawn with the bell is not an answer"
+            );
+
+            let mut printed = bell_row(&session, Some(runtime_id), rang_at);
+            printed["output_changed_at_ms"] = json!(rang_at + BELL_OUTPUT_GRACE_MS + 1);
+            state.apply_core_snapshot(&[printed]);
+            let expected = if clears { "idle" } else { "attention" };
+            assert_eq!(
+                state.get(&session).unwrap().status(),
+                expected,
+                "{runtime_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bell_rung_before_the_worker_started_is_not_replayed() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        write_manifest(home.path(), &manifest(session.clone(), None)).unwrap();
+        let mut state = WorkerState::new(home.path());
+        let projections =
+            state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), now_ms())]);
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none())
+        );
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+    }
+
+    #[test]
+    fn state_seq_counts_each_reduced_state_transition_and_nothing_else() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        let start = state.get(&session).unwrap().state_seq;
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        assert_eq!(state.get(&session).unwrap().state_seq, start + 1);
+        state.sweep(SystemTime::now(), &|_| Some(false));
+        assert_eq!(
+            state.get(&session).unwrap().state_seq,
+            start + 1,
+            "a sweep that keeps the state is not a transition"
+        );
+        let mut stopped = frame(&session, "ai.stop", "Stop", json!({}));
+        stopped["emitted_at_ms"] = json!(now_ms() + 1);
+        let projection = state.apply_core_event(&stopped).expect("the stop projects");
+        assert_eq!(projection.session["state_seq"], start + 2);
+        assert_eq!(projection.session["status"], "idle");
     }
 }

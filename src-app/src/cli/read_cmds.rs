@@ -129,7 +129,7 @@ pub fn status(client: &impl IpcTransport, target: &str, json_out: bool) -> Resul
         let state = result
             .get("state")
             .and_then(Value::as_str)
-            .unwrap_or("unknown");
+            .unwrap_or("no state");
         match result.get("tool").and_then(Value::as_str) {
             Some(tool) => println!("{state} ({tool})"),
             None => println!("{state}"),

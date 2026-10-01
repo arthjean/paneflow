@@ -329,16 +329,20 @@ impl ActivityEngine {
                 entry.state = Some(HookState::Busy);
                 entry.deadline_at = Some(now + HOOK_IDLE_TIMEOUT);
             }
-            EVENT_STOP | EVENT_STOP_FAILURE => {
-                entry.completed = canonical == EVENT_STOP;
+            EVENT_STOP => {
+                entry.completed = true;
                 entry.background_tasks_pending = false;
                 entry.state = Some(HookState::Idle);
                 entry.deadline_at = None;
-                entry.outcome = Some(if canonical == EVENT_STOP {
-                    Outcome::Completed
-                } else {
-                    Outcome::Failed(input.failure_reason.map(str::to_owned))
-                });
+                entry.outcome = Some(Outcome::Completed);
+            }
+            EVENT_STOP_FAILURE => {
+                entry.completed = false;
+                entry.background_tasks_pending = false;
+                entry.state = Some(HookState::Attention);
+                entry.deadline_at = None;
+                entry.last_signal = None;
+                entry.outcome = Some(Outcome::Failed(input.failure_reason.map(str::to_owned)));
             }
             EVENT_STOP_CANCELLED => {
                 entry.native_cancelled = true;
@@ -499,16 +503,24 @@ impl ActivityEngine {
 
     pub fn observe_foreground_runtime(&mut self, session: &SessionId, observed: Option<&str>) {
         let entry = self.entries.entry(session.clone()).or_default();
-        let changed_to_new_agent = entry.foreground_identity_recorded
-            && observed.is_some()
-            && entry.foreground_identity.as_deref() != observed;
+        let Some(observed) = observed else {
+            entry.foreground_identity_recorded = true;
+            return;
+        };
+        let changed_to_new_agent = match entry.foreground_identity.as_deref() {
+            Some(previous) => previous != observed,
+            None => {
+                entry.foreground_identity_recorded
+                    && entry.last_hook_generation != Some(entry.runtime_launch_generation)
+            }
+        };
         if changed_to_new_agent {
             let generation = entry.runtime_launch_generation;
             let session_dir = entry.session_dir.take();
             *entry = Entry::fresh_for(generation);
             entry.session_dir = session_dir;
         }
-        entry.foreground_identity = observed.map(str::to_owned);
+        entry.foreground_identity = Some(observed.to_owned());
         entry.foreground_identity_recorded = true;
     }
 
@@ -553,8 +565,9 @@ impl ActivityEngine {
         if entry.cancelled_at.is_some() || entry.native_cancelled {
             return;
         }
+        let failed_turn = matches!(entry.outcome, Some(Outcome::Failed(_)));
         match entry.state {
-            Some(HookState::Attention) if allow_attention_clear && grew => {
+            Some(HookState::Attention) if allow_attention_clear && grew && !failed_turn => {
                 entry.state = Some(HookState::Busy);
                 entry.deadline_at = Some(now + HOOK_IDLE_TIMEOUT);
             }
@@ -828,21 +841,36 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_failure_settles_without_completion_and_never_notifies() {
+    fn a_stop_failure_asks_for_attention_with_its_reason_until_the_next_turn() {
         let session = SessionId::new();
         let mut engine = engine_with_turn(&session);
         let mut failure = opened("StopFailure");
-        failure.failure_reason = Some("matcher");
+        failure.failure_reason = Some("rate_limit");
         assert!(engine.apply_hook_event(&session, failure, at(2_000)));
-        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Idle));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Attention)
+        );
         assert!(!engine.is_completed(&session));
         assert_eq!(
             engine
                 .outcome(&session)
                 .map(|outcome| outcome.wire_string()),
-            Some("failed:matcher".to_string())
+            Some("failed:rate_limit".to_string())
         );
-        assert_eq!(engine.take_notice(&session), None);
+        assert_eq!(engine.take_notice(&session), Some(Notice::NeedsInput));
+
+        engine.note_output_and_sweep(&session, 1, true, at(2_100));
+        engine.note_output_and_sweep(&session, 2, true, at(2_200));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Attention),
+            "the error text the agent prints never turns a failed turn back into work"
+        );
+
+        assert!(engine.apply_hook_event(&session, opened("UserPromptSubmit"), at(3_000)));
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Busy));
+        assert_eq!(engine.outcome(&session), None);
     }
 
     #[test]
@@ -1086,6 +1114,71 @@ mod tests {
         assert_eq!(engine.hook_owned_state(&session), None);
         assert!(!engine.is_latched(&session));
         assert_eq!(engine.runtime_launch_generation(&session), Some(1));
+    }
+
+    fn tagged(raw_name: &str, generation: u64) -> HookEventInput<'_> {
+        HookEventInput {
+            raw_name,
+            event_generation: Some(generation),
+            current_generation: generation,
+            ..HookEventInput::default()
+        }
+    }
+
+    #[test]
+    fn a_first_identity_after_none_keeps_a_turn_of_the_current_launch() {
+        let session = SessionId::new();
+        let mut engine = ActivityEngine::new();
+        engine.observe_runtime_launch(&session, 1, None);
+        engine.observe_foreground_runtime(&session, None);
+        assert!(engine.apply_hook_event(&session, tagged("UserPromptSubmit", 1), at(1_000)));
+        engine.observe_foreground_runtime(&session, Some("com.anthropic.claude-code:10:5"));
+        assert_eq!(engine.hook_owned_state(&session), Some(HookState::Busy));
+        assert!(engine.is_latched(&session));
+    }
+
+    #[test]
+    fn a_first_identity_after_none_drops_a_turn_no_hook_of_this_launch_confirmed() {
+        let session = SessionId::new();
+        let mut engine = ActivityEngine::new();
+        engine.observe_runtime_launch(&session, 1, None);
+        engine.observe_foreground_runtime(&session, None);
+        assert!(engine.apply_hook_event(&session, opened("UserPromptSubmit"), at(1_000)));
+        engine.observe_foreground_runtime(&session, Some("com.anthropic.claude-code:10:5"));
+        assert!(!engine.is_latched(&session));
+    }
+
+    #[test]
+    fn one_agent_replacing_another_always_resets_the_latch() {
+        let session = SessionId::new();
+        let mut engine = ActivityEngine::new();
+        engine.observe_runtime_launch(&session, 1, None);
+        engine.observe_foreground_runtime(&session, Some("com.anthropic.claude-code:10:5"));
+        assert!(engine.apply_hook_event(&session, tagged("UserPromptSubmit", 1), at(1_000)));
+        engine.observe_foreground_runtime(&session, Some("com.openai.codex:11:6"));
+        assert!(!engine.is_latched(&session));
+        assert_eq!(engine.hook_owned_state(&session), None);
+    }
+
+    #[test]
+    fn codex_starting_after_claude_left_inherits_nothing_from_claude() {
+        let session = SessionId::new();
+        let mut engine = ActivityEngine::new();
+        engine.observe_runtime_launch(&session, 1, None);
+        engine.observe_foreground_runtime(&session, Some("com.anthropic.claude-code:10:5"));
+        let mut asked = tagged("PermissionRequest", 1);
+        asked.tool_name = Some("Bash");
+        assert!(engine.apply_hook_event(&session, asked, at(1_000)));
+        assert_eq!(
+            engine.hook_owned_state(&session),
+            Some(HookState::Attention)
+        );
+        engine.observe_foreground_runtime(&session, None);
+        engine.observe_foreground_runtime(&session, Some("com.openai.codex:11:6"));
+        assert!(!engine.is_latched(&session));
+        assert_eq!(engine.hook_owned_state(&session), None);
+        assert_eq!(engine.outcome(&session), None);
+        assert_eq!(engine.take_notice(&session), None);
     }
 
     #[test]

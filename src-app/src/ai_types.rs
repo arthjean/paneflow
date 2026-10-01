@@ -16,6 +16,8 @@ pub struct AgentSession {
     pub proc_start: Option<u64>,
     pub last_result: Option<String>,
     pub last_event_at_ms: Option<u64>,
+    pub state_seq: u64,
+    pub attention_reason: Option<String>,
     pub pending_tab_title: Option<String>,
     pub auto_naming: crate::auto_naming::SessionNaming,
 }
@@ -55,6 +57,8 @@ impl AgentSession {
             proc_start: None,
             last_result: None,
             last_event_at_ms: None,
+            state_seq: 0,
+            attention_reason: None,
             pending_tab_title: None,
             auto_naming: crate::auto_naming::SessionNaming::default(),
         }

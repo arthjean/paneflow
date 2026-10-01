@@ -91,7 +91,7 @@ pub(crate) enum InputSource {
 }
 
 pub(crate) struct FrameContext {
-    pub(crate) tool: AiToolName,
+    pub(crate) tool: Option<AiToolName>,
     pub(crate) pid: Option<SessionPid>,
     pub(crate) event_source: Option<LifecycleEventSource>,
     pub(crate) runtime_generation: Option<u64>,
@@ -280,6 +280,7 @@ fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
             copy_string_field(payload, &mut compact, "last_result", MAX_HOOK_TEXT_BYTES);
             copy_string_field(payload, &mut compact, "transcript_path", 2048);
             copy_string_field(payload, &mut compact, "reason", 128);
+            copy_string_field(payload, &mut compact, "error", 128);
             copy_background_task_count(payload, &mut compact);
         }
         HookEvent::Exit => {
@@ -355,7 +356,7 @@ mod tests {
 
     fn test_context() -> FrameContext {
         FrameContext {
-            tool: AiToolName::parse("claude").expect("valid test tool"),
+            tool: Some(AiToolName::parse("claude").expect("valid test tool")),
             pid: None,
             event_source: None,
             runtime_generation: Some(3),

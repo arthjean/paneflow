@@ -483,12 +483,15 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 }
             }
             METHOD_AGENT_EVENT => {
-                let ingested = AgentEvent::from_params(&params)
-                    .map_err(DispatchError::Params)
-                    .and_then(|mut event| {
-                        event.received_at_ms = Some(now_ms());
-                        host.ingest_agent_event(&event).map_err(DispatchError::Host)
-                    });
+                let ingested = match host.attribute_agent_tool(&params) {
+                    Err(reason) => Ok(json!({"accepted": false, "reason": reason})),
+                    Ok(params) => AgentEvent::from_params(&params)
+                        .map_err(DispatchError::Params)
+                        .and_then(|mut event| {
+                            event.received_at_ms = Some(now_ms());
+                            host.ingest_agent_event(&event).map_err(DispatchError::Host)
+                        }),
+                };
                 let envelope = match ingested {
                     Ok(ack) => result_envelope(&id, ack),
                     Err(error) => error_to_envelope(&id, error),
@@ -1331,6 +1334,108 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(error.code(), Some(crate::protocol::ERR_SESSION_NOT_FOUND));
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_hook_without_a_tool_in_a_pane_without_an_agent_runtime_is_dropped_not_given_to_claude() {
+        let (_home, host, server) = start();
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let mut client =
+            HostClient::connect(server.endpoint(), &ClientHello::control("untooled-hook")).unwrap();
+        let reply = client
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": session,
+                    "runtime_generation": 1,
+                    "kind": "ai.prompt_submit",
+                    "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+                }),
+            )
+            .unwrap();
+        assert_eq!(reply["accepted"], false);
+        assert_eq!(reply["reason"], crate::agent::UNIDENTIFIED_TOOL);
+        let manifest = host.inspect(&session).unwrap().manifest;
+        assert!(
+            manifest.last_hook.is_none(),
+            "no agent row exists for a hook nobody can attribute"
+        );
+        assert_eq!(manifest.hook_revision, 0);
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn the_host_status_names_the_live_hook_and_the_real_output_counter() {
+        let (_home, host, server) = start();
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let mut client =
+            HostClient::connect(server.endpoint(), &ClientHello::control("status-truth")).unwrap();
+        let ack = client
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": session,
+                    "runtime_generation": 1,
+                    "kind": "ai.prompt_submit",
+                    "tool": "claude",
+                    "hook_payload": {"hook_event_name": "UserPromptSubmit"},
+                }),
+            )
+            .unwrap();
+        assert_eq!(ack["accepted"], true);
+        let status = client
+            .call("surface.status", json!({"session": session}))
+            .unwrap();
+        assert_eq!(status["hooked"], true);
+        assert!(status.get("state").is_none(), "{status}");
+        assert!(!status.to_string().contains("unknown"), "{status}");
+        let first = status["output_generation"]
+            .as_u64()
+            .expect("a real counter");
+
+        host.input(
+            &session,
+            None,
+            b"echo PANEFLOW_STATUS_\"\"COUNTER\r\n".to_vec(),
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut later = first;
+        while later == first && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            later = client
+                .call("surface.status", json!({"session": session}))
+                .unwrap()["output_generation"]
+                .as_u64()
+                .expect("a real counter");
+        }
+        assert!(
+            later > first,
+            "the counter follows the output: {first} then {later}"
+        );
+
+        host.stop(&session, None).unwrap();
+        host.restart(&session, None).unwrap();
+        let relaunched = client
+            .call("surface.status", json!({"session": session}))
+            .unwrap();
+        assert_eq!(
+            relaunched["hooked"], false,
+            "a hook of the previous generation never speaks for the relaunched agent"
+        );
+        let fleet = client.call("fleet.list", json!({})).unwrap();
+        assert!(!fleet.to_string().contains("unknown"), "{fleet}");
+        host.stop(&session, None).unwrap();
         server.stop().unwrap();
     }
 

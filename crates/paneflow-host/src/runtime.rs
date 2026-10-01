@@ -26,6 +26,7 @@ const QUEUE_RETRY: Duration = Duration::from_millis(5);
 const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
 const DESCENDANT_RECONCILE_MAX: Duration = Duration::from_secs(1);
+pub const BELL_SIGNAL_INTERVAL_MS: u64 = 2_000;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const ROOT_EXIT_DISCOVERY_DEADLINE: Duration = Duration::from_secs(2);
 const UNATTENDED_STOP_RETRY: Duration = Duration::from_secs(1);
@@ -287,6 +288,8 @@ struct Shared {
     stop_requested: AtomicBool,
     retired: AtomicBool,
     output_changed_at_ms: AtomicU64,
+    bell_at_ms: AtomicU64,
+    input_at_ms: AtomicU64,
     stream: Arc<OutputStream>,
     inbox: PtyInbox,
 }
@@ -301,6 +304,8 @@ impl Shared {
             stop_requested: AtomicBool::new(false),
             retired: AtomicBool::new(false),
             output_changed_at_ms: AtomicU64::new(0),
+            bell_at_ms: AtomicU64::new(0),
+            input_at_ms: AtomicU64::new(0),
             stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
             inbox: PtyInbox::default(),
         })
@@ -474,6 +479,16 @@ impl SessionRuntime {
     pub fn output_changed_at_ms(&self) -> Option<u64> {
         let changed_at = self.shared.output_changed_at_ms.load(Ordering::Acquire);
         (changed_at != 0).then_some(changed_at)
+    }
+
+    pub fn bell_at_ms(&self) -> Option<u64> {
+        let rang_at = self.shared.bell_at_ms.load(Ordering::Acquire);
+        (rang_at != 0).then_some(rang_at)
+    }
+
+    pub fn input_at_ms(&self) -> Option<u64> {
+        let typed_at = self.shared.input_at_ms.load(Ordering::Acquire);
+        (typed_at != 0).then_some(typed_at)
     }
 
     pub fn is_live(&self) -> bool {
@@ -1163,8 +1178,10 @@ impl Session {
                 ghostty::BackendEvent::WorkingDirectory(cwd) => {
                     (self.observer)(RuntimeNotice::WorkingDirectory(cwd));
                 }
+                ghostty::BackendEvent::Bell => {
+                    note_bell(&self.shared.bell_at_ms, crate::manifest::now_ms());
+                }
                 ghostty::BackendEvent::ClipboardStore(_)
-                | ghostty::BackendEvent::Bell
                 | ghostty::BackendEvent::DesktopNotification { .. }
                 | ghostty::BackendEvent::Progress(_) => {}
                 ghostty::BackendEvent::UnknownSequence { .. }
@@ -1224,12 +1241,18 @@ impl Session {
                 let _ = reply.send(modes.map(|modes| modes.bracketed_paste));
             }
             Command::Input(bytes, reply) => {
+                let typed = is_user_input(&bytes);
                 let result = if self.exit.is_some() || self.writer.is_none() {
                     Err(RuntimeError::NotLive)
                 } else {
                     write_pty(&mut self.writer, &self.shared, bytes)
                         .map_err(|e| RuntimeError::Pty(e.to_string()))
                 };
+                if result.is_ok() && typed {
+                    self.shared
+                        .input_at_ms
+                        .store(crate::manifest::now_ms(), Ordering::Release);
+                }
                 let _ = reply.send(result);
             }
             Command::Resize {
@@ -1756,9 +1779,102 @@ fn pty_size(cols: u16, rows: u16, cell: CellSize) -> PtySize {
     }
 }
 
+fn note_bell(rang_at: &AtomicU64, now_ms: u64) -> bool {
+    let previous = rang_at.load(Ordering::Acquire);
+    if previous != 0 && now_ms.saturating_sub(previous) < BELL_SIGNAL_INTERVAL_MS {
+        return false;
+    }
+    rang_at.store(now_ms.max(1), Ordering::Release);
+    true
+}
+
+fn is_user_input(bytes: &[u8]) -> bool {
+    !matches!(bytes, b"\x1b[I" | b"\x1b[O")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_focus_report_is_not_user_input() {
+        assert!(!is_user_input(b"\x1b[I"));
+        assert!(!is_user_input(b"\x1b[O"));
+        assert!(is_user_input(b"y"));
+        assert!(is_user_input(b"\r"));
+        assert!(is_user_input(b"\x1b[A"));
+        assert!(is_user_input(b"\x1b[Ix"));
+    }
+
+    #[test]
+    fn a_bell_flood_records_one_signal_per_interval() {
+        let rang_at = AtomicU64::new(0);
+        let accepted = (0..1_000)
+            .filter(|offset| note_bell(&rang_at, 10_000 + offset))
+            .count();
+        assert_eq!(accepted, 1);
+        assert_eq!(rang_at.load(Ordering::Acquire), 10_000);
+        assert!(!note_bell(&rang_at, 10_000 + BELL_SIGNAL_INTERVAL_MS - 1));
+        assert!(note_bell(&rang_at, 10_000 + BELL_SIGNAL_INTERVAL_MS));
+        assert_eq!(
+            rang_at.load(Ordering::Acquire),
+            10_000 + BELL_SIGNAL_INTERVAL_MS
+        );
+    }
+
+    #[cfg(unix)]
+    fn ring_and_title_commands() -> (&'static [u8], &'static [u8]) {
+        (
+            b"printf '\\033]0;quiet\\007'; echo TITLE_\"\"DONE\r\n",
+            b"printf '\\007'; echo BELL_\"\"DONE\r\n",
+        )
+    }
+
+    #[cfg(windows)]
+    fn ring_and_title_commands() -> (&'static [u8], &'static [u8]) {
+        (
+            b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']0;quiet' + [char]7); 'TITLE_' + 'DONE'\"\r\n",
+            b"powershell -NoProfile -Command \"[Console]::Write([char]7); 'BELL_' + 'DONE'\"\r\n",
+        )
+    }
+
+    #[test]
+    fn a_bell_the_shell_rings_is_recorded_but_an_osc_terminator_is_not() {
+        let titles = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&titles);
+        let observer: RuntimeObserver = Arc::new(move |notice| {
+            if let RuntimeNotice::Title(title) = notice {
+                sink.lock().unwrap().push(title);
+            }
+        });
+        let runtime =
+            SessionRuntime::spawn(echo_shell_spec(80, 24), SessionGeneration::FIRST, observer)
+                .expect("shell spawns");
+        assert_eq!(runtime.bell_at_ms(), None);
+        let (title, bell) = ring_and_title_commands();
+        runtime.input(title.to_vec()).expect("title command");
+        let (offset, _) = wait_for_output(&runtime, "TITLE_DONE", 0);
+        assert!(
+            wait_until(Duration::from_secs(5), || titles
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|title| title.contains("quiet"))),
+            "the OSC title reached the engine"
+        );
+        assert!(runtime.input_at_ms().is_some(), "typed input is stamped");
+        assert_eq!(
+            runtime.bell_at_ms(),
+            None,
+            "a BEL that terminates an OSC sequence is not a bell"
+        );
+        runtime.input(bell.to_vec()).expect("bell command");
+        wait_for_output(&runtime, "BELL_DONE", offset);
+        assert!(
+            wait_until(Duration::from_secs(5), || runtime.bell_at_ms().is_some()),
+            "the host observes the bell without any desktop attached"
+        );
+    }
 
     pub(crate) fn echo_shell_spec(cols: u16, rows: u16) -> SpawnSpec {
         #[cfg(windows)]
