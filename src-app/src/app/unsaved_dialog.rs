@@ -39,6 +39,7 @@ pub(crate) struct UnsavedDialog {
     tabs: Vec<u64>,
     saving: bool,
     focused: bool,
+    return_focus: crate::FocusReturn,
 }
 
 pub(crate) fn unsaved_summary(count: usize) -> String {
@@ -112,6 +113,7 @@ impl PaneFlowApp {
                 tabs,
                 saving: false,
                 focused: false,
+                return_focus: crate::FocusReturn::default(),
             });
             cx.notify();
         }
@@ -119,10 +121,8 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_unsaved_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.unsaved_dialog.take().is_some() {
-            if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
-                ws.focus_first(window, cx);
-            }
+        if let Some(dialog) = self.unsaved_dialog.take() {
+            self.return_focus(&dialog.return_focus, window, cx);
             cx.notify();
         }
     }
@@ -132,9 +132,11 @@ impl PaneFlowApp {
         then: UnsavedContinuation,
         tabs: Vec<u64>,
         discard: Vec<Entity<CodeView>>,
+        origin: &crate::FocusReturn,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.return_focus(origin, window, cx);
         match then {
             UnsavedContinuation::Close(target) => {
                 if close_target_tabs(&self.workspaces, &target) != tabs {
@@ -156,7 +158,14 @@ impl PaneFlowApp {
             self.unsaved_dialog = Some(dialog);
             return;
         }
-        self.continue_after_unsaved(dialog.then, dialog.tabs, dialog.files, window, cx);
+        self.continue_after_unsaved(
+            dialog.then,
+            dialog.tabs,
+            dialog.files,
+            &dialog.return_focus,
+            window,
+            cx,
+        );
         cx.notify();
     }
 
@@ -188,6 +197,7 @@ impl PaneFlowApp {
                             return;
                         };
                         if let Some(first) = failures.first() {
+                            app.return_focus(&dialog.return_focus, window, cx);
                             app.show_toast(format!("Nothing was closed: {first}"), cx);
                             cx.notify();
                             return;
@@ -196,6 +206,7 @@ impl PaneFlowApp {
                             dialog.then,
                             dialog.tabs,
                             Vec::new(),
+                            &dialog.return_focus,
                             window,
                             cx,
                         );
@@ -235,6 +246,7 @@ impl PaneFlowApp {
         };
         if !dialog.focused {
             dialog.focused = true;
+            dialog.return_focus.capture_once(window, cx);
             self.unsaved_dialog_focus.focus(window, cx);
         }
         let Some(dialog) = self.unsaved_dialog.as_ref() else {

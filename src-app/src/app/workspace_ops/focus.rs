@@ -55,8 +55,9 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn handle_focus_lost(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.focused(cx).is_none() {
-            self.focus_active_pane(window, cx);
+        match window.focus_lost_restore_target(cx) {
+            Some(ancestor) => window.focus(&ancestor, cx),
+            None => self.focus_active_pane(window, cx),
         }
     }
 
