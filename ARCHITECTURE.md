@@ -497,7 +497,8 @@ stale code.
   stamp per second, so an idle TUI repainting identical content costs zero
   writes), `screen_activity` (`working`, `idle` or `blocked`) from the
   foreground runtime's layered screen rules (local override, signed remote
-  catalog, built-in `screen.toml`; see `runtimes/README.md`),
+  catalog, built-in `screen.toml`; see `runtimes/README.md`), where the tool the
+  hooks declared stands in only when the foreground job cannot be observed,
   `menu_prompt_active` while a `visible_blocker` rule matches, and
   `observed_runtime` with the foreground runtime identity, dropped when the
   runtime declares a `title_prefix` the pane title does not carry. Nothing is

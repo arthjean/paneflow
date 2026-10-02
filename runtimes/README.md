@@ -43,7 +43,7 @@ A runtime whose turns Paneflow reads from the screen ships `runtimes/<slug>/scre
 - `id`, unique in the file, and `state`, one of `working`, `idle`, or `blocked`
 - `priority`, an integer: the highest matching priority wins, and a tie keeps file order
 - `region`: `all` (default), `last:N`, `first:N` over the non-blank lines of the viewport, or `title` for the last OSC title
-- `all`, `any`, and `not`: regex lists, each pattern capped at 1 MiB of compiled program. A rule matches when every `all` pattern, at least one `any` pattern (when present) and no `not` pattern match. Patterns are case-sensitive unless they start with `(?i)`
+- `all`, `any`, and `not`: regex lists of at most 64 patterns, each capped at 1 MiB of compiled program; a source holds at most 256 rules. A rule matches when every `all` pattern, at least one `any` pattern (when present) and no `not` pattern match. Patterns are case-sensitive unless they start with `(?i)`
 - `progress`: optional OSC 9;4 states (`none`, `set`, `error`, `indeterminate`, `pause`) the rule requires
 - `visible_blocker = true` on a `blocked` rule marks a prompt the user must answer; it raises attention and needs two consecutive misses to clear
 - `disabled = true` in an override file removes the rule with that id

@@ -41,6 +41,12 @@ impl RuntimeObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForegroundRuntime {
+    Unobservable,
+    Observed(Option<RuntimeObservation>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ForegroundProcess {
     pid: u32,
     parent_pid: u32,
@@ -72,15 +78,17 @@ struct RuntimeMatch {
 pub fn observe_foreground_runtime(
     session_leader: ProcessIdentity,
     foreground_process_group: Option<i32>,
-) -> Option<RuntimeObservation> {
+) -> ForegroundRuntime {
     if session_leader.pid <= 1 || !session_leader.is_provably_live() {
-        return None;
+        return ForegroundRuntime::Unobservable;
     }
-    let job = platform::foreground_job(session_leader.pid, foreground_process_group)?;
+    let Some(job) = platform::foreground_job(session_leader.pid, foreground_process_group) else {
+        return ForegroundRuntime::Unobservable;
+    };
     if !session_leader.is_provably_live() {
-        return None;
+        return ForegroundRuntime::Unobservable;
     }
-    identify_runtime_in_job(&job)
+    ForegroundRuntime::Observed(identify_runtime_in_job(&job))
 }
 
 fn identify_runtime_in_job(job: &ForegroundJob) -> Option<RuntimeObservation> {
@@ -826,12 +834,18 @@ mod tests {
             pid: std::process::id(),
             started_at: Some(u64::MAX),
         };
-        assert_eq!(observe_foreground_runtime(leader, Some(1_234)), None);
+        assert_eq!(
+            observe_foreground_runtime(leader, Some(1_234)),
+            ForegroundRuntime::Unobservable
+        );
         let unverifiable = ProcessIdentity {
             pid: std::process::id(),
             started_at: None,
         };
-        assert_eq!(observe_foreground_runtime(unverifiable, Some(1_234)), None);
+        assert_eq!(
+            observe_foreground_runtime(unverifiable, Some(1_234)),
+            ForegroundRuntime::Unobservable
+        );
     }
 
     #[test]

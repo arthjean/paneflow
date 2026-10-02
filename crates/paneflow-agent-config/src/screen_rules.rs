@@ -9,6 +9,10 @@ pub const SCREEN_ENGINE: u32 = 2;
 
 pub const MAX_REGEX_BYTES: usize = 1 << 20;
 
+pub const MAX_RULES_PER_SOURCE: usize = 256;
+
+pub const MAX_PATTERNS_PER_RULE: usize = 64;
+
 const MAX_REGION_LINES: usize = 10_000;
 
 const PROGRESS_STATES: &[&str] = &["none", "set", "error", "indeterminate", "pause"];
@@ -179,6 +183,15 @@ pub fn parse_rule_file(text: &str, origin: RuleOrigin) -> Result<Vec<RuleEntry>,
             ),
         });
     }
+    if let Some(extra) = raw.rules.get(MAX_RULES_PER_SOURCE) {
+        return Err(RuleError {
+            line: Some(line_of(text, extra.id.span().start)),
+            message: format!(
+                "a source holds at most {MAX_RULES_PER_SOURCE} rules, this one holds {}",
+                raw.rules.len()
+            ),
+        });
+    }
     let mut ids = BTreeSet::new();
     let mut entries = Vec::with_capacity(raw.rules.len());
     for rule in raw.rules {
@@ -296,6 +309,14 @@ fn compile_all(
     id: &str,
     patterns: &[Spanned<String>],
 ) -> Result<Vec<Regex>, RuleError> {
+    if let Some(extra) = patterns.get(MAX_PATTERNS_PER_RULE) {
+        return Err(RuleError {
+            line: Some(line_of(text, extra.span().start)),
+            message: format!(
+                "rule {id:?} lists more than {MAX_PATTERNS_PER_RULE} patterns in one condition"
+            ),
+        });
+    }
     patterns
         .iter()
         .map(|pattern| {

@@ -10,7 +10,7 @@ use paneflow_config::schema::{SessionGeneration, SessionId};
 use crate::host::{HostError, ScanTarget, SessionHost};
 use crate::manifest::{HostedSessionRuntime, now_ms};
 use crate::runtime::ViewportScan;
-use crate::runtime_observer::{RuntimeObservation, observe_foreground_runtime};
+use crate::runtime_observer::{ForegroundRuntime, RuntimeObservation, observe_foreground_runtime};
 use crate::screen_rule_registry::ScreenRuleRegistry;
 
 pub const VIEWPORT_SCAN_INTERVAL: Duration = Duration::from_millis(500);
@@ -237,6 +237,16 @@ fn runtime_for(
         .or_else(|| declared_tool.and_then(runtime_catalog::runtime_for_tool))
 }
 
+fn foreground_evidence(
+    foreground: ForegroundRuntime,
+    declared_tool: impl FnOnce() -> Option<String>,
+) -> (Option<RuntimeObservation>, Option<String>) {
+    match foreground {
+        ForegroundRuntime::Observed(observation) => (observation, None),
+        ForegroundRuntime::Unobservable => (None, declared_tool()),
+    }
+}
+
 pub struct ViewportCapture {
     pub scan: ViewportScan,
     pub runtime: Option<&'static paneflow_agent_config::runtime_catalog::Runtime>,
@@ -245,10 +255,12 @@ pub struct ViewportCapture {
 pub fn capture(host: &SessionHost, session: &SessionId) -> Result<ViewportCapture, HostError> {
     let target = host.scan_target(session)?;
     let scan = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET)?;
+    let (observation, declared_tool) = foreground_evidence(
+        observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group),
+        || declared_tool(&target),
+    );
     let observation =
-        observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group)
-            .filter(|observed| observed.confirmed_by_title(scan.title.as_deref()));
-    let declared_tool = declared_tool(&target);
+        observation.filter(|observed| observed.confirmed_by_title(scan.title.as_deref()));
     let runtime = runtime_for(observation.as_ref(), declared_tool.as_deref());
     Ok(ViewportCapture { scan, runtime })
 }
@@ -387,9 +399,10 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
         let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
             continue;
         };
-        let observation =
-            observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group);
-        let declared_tool = declared_tool(&target);
+        let (observation, declared_tool) = foreground_evidence(
+            observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group),
+            || declared_tool(&target),
+        );
         let tracker = trackers.entry(key).or_default();
         let edges = tracker.observe(
             ScreenView::of(&scan),
@@ -744,6 +757,32 @@ mod tests {
             claude.menu_prompt_active,
             "the same footer under a recognized agent is a blocker, so only the runtime gate keeps the shell quiet"
         );
+    }
+
+    #[test]
+    fn a_hook_left_by_an_agent_that_exited_arms_no_rule_over_the_observed_shell() {
+        let menu = "$ npm init\nPress enter to confirm or esc to cancel";
+        let claude_hook = || Some("claude".to_string());
+        let mut tracker = ViewportTracker::default();
+        let (observation, declared) =
+            foreground_evidence(ForegroundRuntime::Observed(None), claude_hook);
+        let edges = observe(&mut tracker, menu, observation, declared.as_deref(), 1_000);
+        assert!(!edges.menu_prompt_active);
+        assert_eq!(edges.screen_activity, None);
+
+        let (observation, declared) =
+            foreground_evidence(ForegroundRuntime::Unobservable, claude_hook);
+        assert!(
+            observe(&mut tracker, menu, observation, declared.as_deref(), 2_500).menu_prompt_active,
+            "only an unobservable foreground falls back to the tool the hooks declared"
+        );
+
+        let (observation, declared) = foreground_evidence(
+            ForegroundRuntime::Observed(Some(claude_observation())),
+            claude_hook,
+        );
+        assert_eq!(declared, None);
+        assert_eq!(observation, Some(claude_observation()));
     }
 
     #[test]

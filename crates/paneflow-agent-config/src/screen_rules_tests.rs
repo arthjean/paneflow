@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 use crate::runtime_catalog::SCREEN_RULE_SOURCES;
 use crate::screen_rules::{
     apply_overrides, evaluate, parse_base_rules, parse_rule_file, Region, RuleEntry, RuleOrigin,
-    ScreenInput, ScreenRule, ScreenState, MAX_REGEX_BYTES,
+    ScreenInput, ScreenRule, ScreenState, MAX_PATTERNS_PER_RULE, MAX_REGEX_BYTES,
+    MAX_RULES_PER_SOURCE,
 };
 
 const CORPUS_RUNTIMES: &[&str] = &[
@@ -200,6 +201,34 @@ fn a_regex_beyond_one_mebibyte_of_program_is_refused() {
     let error = parse_rule_file(&oversized, RuleOrigin::Local).unwrap_err();
     assert!(error.to_string().contains("invalid regex"), "{error}");
     assert_eq!(error.line, Some(5));
+}
+
+#[test]
+fn a_source_with_too_many_rules_or_patterns_is_refused() {
+    let mut many = String::from("engine = 2\n");
+    for index in 0..=MAX_RULES_PER_SOURCE {
+        many.push_str(&format!(
+            "[[rules]]\nid = \"rule-{index}\"\nstate = \"idle\"\nany = ['x']\n"
+        ));
+    }
+    let error = parse_rule_file(&many, RuleOrigin::Remote(1)).unwrap_err();
+    assert!(error.to_string().contains("at most 256 rules"), "{error}");
+    assert_eq!(error.line, Some(2 + 4 * MAX_RULES_PER_SOURCE + 1));
+
+    let patterns = vec!["'x'"; MAX_PATTERNS_PER_RULE + 1].join(", ");
+    let wide =
+        format!("engine = 2\n[[rules]]\nid = \"wide\"\nstate = \"idle\"\nany = [{patterns}]\n");
+    let error = parse_rule_file(&wide, RuleOrigin::Local).unwrap_err();
+    assert!(
+        error.to_string().contains("more than 64 patterns"),
+        "{error}"
+    );
+    let fits = vec!["'x'"; MAX_PATTERNS_PER_RULE].join(", ");
+    assert!(parse_rule_file(
+        &format!("engine = 2\n[[rules]]\nid = \"wide\"\nstate = \"idle\"\nany = [{fits}]\n"),
+        RuleOrigin::Local
+    )
+    .is_ok());
 }
 
 #[test]
@@ -521,6 +550,84 @@ fn the_screen_corpus_classifies_as_its_recorded_baseline() {
         "the corpus no longer classifies as {}; rerun with {BLESS_ENV}=1 once the change is intended",
         path.display()
     );
+}
+
+const PRE_ENGINE_PATTERNS: &[(&str, &[&str], &[&str])] = &[
+    ("claude-code", &["… (", "esc to interrupt"], &["❯"]),
+    ("codex", &["esc to interrupt", "• Working"], &["›"]),
+    (
+        "gemini",
+        &["esc to cancel"],
+        &["Type your message", "> Type your message"],
+    ),
+];
+
+fn pre_engine_verdict(screen: &str, working: &[&str], idle: &[&str]) -> Option<ScreenState> {
+    let bottom: Vec<&str> = screen
+        .lines()
+        .rev()
+        .filter(|line| !line.trim().is_empty())
+        .take(15)
+        .collect();
+    if bottom.iter().any(|line| {
+        let lowered = line.to_lowercase();
+        working
+            .iter()
+            .any(|marker| lowered.contains(&marker.to_lowercase()))
+    }) {
+        return Some(ScreenState::Working);
+    }
+    bottom
+        .iter()
+        .any(|line| {
+            idle.iter()
+                .any(|marker| line.trim_start().starts_with(marker))
+        })
+        .then_some(ScreenState::Idle)
+}
+
+#[test]
+fn the_converted_working_and_idle_rules_classify_as_the_pre_engine_patterns() {
+    let mut window = vec!["old: Thinking… (9s)".to_string()];
+    window.extend((0..20).map(|index| format!("line {index}")));
+    let window = window.join("\n");
+    let claude_menu_screen = corpus_screen("claude-code", "blocked-approval-menu.txt");
+    let screens: &[(&str, &str)] = &[
+        ("claude-code", "✽ Levitating… (1m 52s · ↓ 5.1k tokens)\n  ⎿  Tip: Use /btw\n────\n❯\n────\n  ⏵⏵ auto mode on"),
+        ("claude-code", "◇ Double checking (5s · esc to interrupt)\n── Voice input ──\n❯"),
+        ("claude-code", "✻ Brewed for 3s · done 10:05 AM\n   97533 tokens\n────\n❯\n────\n  ⏵⏵ auto mode on"),
+        ("claude-code", ""),
+        ("claude-code", "just some shell output\n$ "),
+        ("claude-code", &window),
+        ("codex", "────\n⠁      ⠄\n› Ask Codex to do anything\n  gpt-6 xhigh · ~/dev/paneflow"),
+        ("codex", "• Working (12s • Esc to interrupt)\n› "),
+        ("gemini", "  > Type your message or @path/to/file"),
+        ("gemini", "⠏ Thinking (esc to cancel, 3s)\n> Type your message"),
+        ("claude-code", "✻ Levitating… (1m 52s · ↓ 5.1k tokens)\nesc to interrupt"),
+        ("claude-code", "❯"),
+        ("claude-code", &claude_menu_screen),
+        ("codex", "• Working (12s • Esc to interrupt)"),
+        ("codex", "› Ask Codex to do anything"),
+        ("codex", "Shell command\n\n  rm -rf build\n  Remove the build directory\n\n  1. Yes, proceed\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel"),
+        ("gemini", "Working (esc to cancel)"),
+        ("gemini", "Type your message"),
+    ];
+    let mut compared = 0;
+    for (slug, working, idle) in PRE_ENGINE_PATTERNS {
+        let steady: Vec<ScreenRule> = builtin(slug)
+            .into_iter()
+            .filter(|rule| rule.state != ScreenState::Blocked)
+            .collect();
+        for (_, screen) in screens.iter().filter(|(held, _)| held == slug) {
+            assert_eq!(
+                verdict(&steady, screen),
+                pre_engine_verdict(screen, working, idle),
+                "{slug}:\n{screen}"
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, screens.len());
 }
 
 #[test]

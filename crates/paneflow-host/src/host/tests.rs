@@ -644,15 +644,7 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
         !host.inspect(&session).unwrap().manifest.menu_prompt_active,
         "a menu footer in a pane without an agent runtime is not an agent blocker"
     );
-    let hook = crate::agent::AgentEvent::from_params(&json!({
-        "session": session,
-        "runtime_generation": 1,
-        "kind": "ai.stop",
-        "tool": "claude",
-        "hook_payload": {"hook_event_name": "Stop"}
-    }))
-    .unwrap();
-    host.ingest_agent_event(&hook).unwrap();
+    let bin = tempfile::tempdir().unwrap();
 
     let manifest = Arc::clone(&host.lock_sessions()[&session].manifest);
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -675,9 +667,10 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        b"echo Enter to select - up/down to navigate - Esc to cancel
-"
-        .to_vec(),
+        claude_in_foreground_after_echo(
+            bin.path(),
+            "Enter to select - up/down to navigate - Esc to cancel",
+        ),
     )
     .unwrap();
     assert!(
@@ -2474,6 +2467,32 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
     assert_eq!(removed["session"], session.to_string());
 }
 
+#[cfg(unix)]
+fn claude_in_foreground_after_echo(bin: &Path, line: &str) -> Vec<u8> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let claude = bin.join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nsleep 30\n").unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    format!("echo {line}; {}\r\n", claude.display()).into_bytes()
+}
+
+#[cfg(windows)]
+fn claude_in_foreground_after_echo(bin: &Path, line: &str) -> Vec<u8> {
+    let system_root = std::env::var_os("SystemRoot").unwrap();
+    let claude = bin.join("claude.exe");
+    std::fs::copy(
+        Path::new(&system_root).join("System32").join("PING.EXE"),
+        &claude,
+    )
+    .unwrap();
+    format!(
+        "echo {line} & \"{}\" -n 30 127.0.0.1 >NUL\r\n",
+        claude.display()
+    )
+    .into_bytes()
+}
+
 fn control_call(host: &SessionHost, method: &str, params: Value) -> Value {
     let permissions = crate::control::ControlPermissions {
         scripting: false,
@@ -2518,7 +2537,32 @@ fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        b"echo LOCAL_BUSY_MARKER\r\n".to_vec(),
+        b"echo Press enter to confirm or esc to cancel\r\n".to_vec(),
+    )
+    .unwrap();
+    assert!(wait_until(Duration::from_secs(15), || {
+        host.text(&session)
+            .is_ok_and(|text| text.text.contains("esc to cancel"))
+    }));
+    std::thread::sleep(crate::viewport_scan::VIEWPORT_SCAN_INTERVAL * 3);
+    let shell = control_call(&host, "agent.capture", json!({"session": session}));
+    assert_eq!(
+        shell["runtime_id"],
+        Value::Null,
+        "a hook left by an agent that exited does not make the shell an agent"
+    );
+    let manifest = host.inspect(&session).unwrap().manifest;
+    assert!(
+        !manifest.menu_prompt_active,
+        "the exited agent's blocker rules never run over the shell"
+    );
+    assert_eq!(manifest.screen_activity, None);
+
+    let bin = tempfile::tempdir().unwrap();
+    host.input(
+        &session,
+        Some(SessionGeneration::FIRST),
+        claude_in_foreground_after_echo(bin.path(), "LOCAL_BUSY_MARKER"),
     )
     .unwrap();
     assert!(wait_until(Duration::from_secs(15), || {
@@ -2526,8 +2570,14 @@ fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control
             .is_ok_and(|text| text.text.contains("LOCAL_BUSY_MARKER"))
     }));
 
-    let captured = control_call(&host, "agent.capture", json!({"session": session}));
-    assert_eq!(captured["runtime_id"], "com.anthropic.claude-code");
+    let mut captured = Value::Null;
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            captured = control_call(&host, "agent.capture", json!({"session": session}));
+            captured["runtime_id"] == "com.anthropic.claude-code"
+        }),
+        "a process named claude in the foreground is the agent: {captured}"
+    );
     assert_eq!(captured["cols"], 100);
     assert_eq!(captured["rows"], 24);
     assert!(
