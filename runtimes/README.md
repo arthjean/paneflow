@@ -52,7 +52,7 @@ The host scans every 500 ms and evaluates only the rules of the pane's foregroun
 
 Rules are layered by id: `~/.paneflow/runtimes/<slug>/screen.toml` (the local override, reloaded within a second of an edit) over the signed remote catalog over the built-in file. An override entry with an existing id replaces the rule, `disabled = true` removes it, and a new id adds one. An invalid override keeps the previous rules and reports the error.
 
-The remote catalog is `screen-catalog.json` on a `screen-catalog-vN` GitHub prerelease, published by `.github/workflows/screen-catalog.yml` whenever a `screen.toml` changes on `main`. The host checks it one minute after start, then daily, and applies it only when its minisign signature verifies against the key embedded in the build, its trusted comment carries this engine, and its version is strictly newer than the cached one. `agents.remote_screen_catalog = false` turns the download off. Until a catalog key is embedded, the host makes no request.
+The remote catalog is `screen-catalog.json` on a `screen-catalog-vN` GitHub prerelease, published by `.github/workflows/screen-catalog.yml` whenever a `screen.toml` changes on `main`. The host checks it one minute after start, then daily, retrying within the hour when GitHub cannot be reached, and applies it only when its minisign signature verifies against the key embedded in the build, its trusted comment carries this engine, and its version is strictly newer than the cached one. `agents.remote_screen_catalog = false` turns the download off. Until a catalog key is embedded, the host makes no request.
 
 ### Captures and the corpus
 

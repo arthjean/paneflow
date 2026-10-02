@@ -20,6 +20,8 @@ pub const FIRST_CHECK_DELAY: Duration = Duration::from_secs(60);
 
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
+pub const UNREACHABLE_RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 const TAG_PREFIX: &str = "screen-catalog-v";
@@ -145,26 +147,28 @@ pub fn check(
     keys: &[PublicKey],
     registry: &ScreenRuleRegistry,
     source: &dyn CatalogSource,
-) {
+) -> Duration {
     if !remote_catalog_enabled(home) || keys.is_empty() {
-        return;
+        return CHECK_INTERVAL;
     }
     let cached = registry.remote_version();
     let latest = match source.latest_version() {
         Ok(latest) => latest,
         Err(error) => {
-            log::info!("paneflow-host: the screen catalog is unreachable, rules stay: {error}");
-            return;
+            log::info!(
+                "paneflow-host: the screen catalog is unreachable, rules stay and the check is retried within the hour: {error}"
+            );
+            return UNREACHABLE_RETRY_INTERVAL;
         }
     };
     let Some(latest) = latest.filter(|latest| cached.is_none_or(|cached| *latest > cached)) else {
-        return;
+        return CHECK_INTERVAL;
     };
     let (body, signature) = match source.download(latest) {
         Ok(downloaded) => downloaded,
         Err(error) => {
             registry.reject_remote(error);
-            return;
+            return UNREACHABLE_RETRY_INTERVAL;
         }
     };
     match accept(&body, &signature, keys, cached) {
@@ -176,6 +180,7 @@ pub fn check(
         }
         Err(reason) => registry.reject_remote(reason),
     }
+    CHECK_INTERVAL
 }
 
 fn write_cache(home: &Path, body: &[u8], signature: &str) -> std::io::Result<()> {
@@ -287,9 +292,9 @@ fn run(host: Weak<SessionHost>) {
         let Some(live) = host.upgrade() else {
             return;
         };
-        check(live.home(), &keys, live.screen_rules(), &GithubReleases);
+        let wait = check(live.home(), &keys, live.screen_rules(), &GithubReleases);
         drop(live);
-        next = Instant::now() + CHECK_INTERVAL;
+        next = Instant::now() + wait;
     }
 }
 
@@ -517,6 +522,49 @@ mod tests {
         let source = served(&pair, 3, 3);
         check(home.path(), &[], &registry, &source);
         assert_eq!(source.calls.get(), 0);
+    }
+
+    struct Unreachable {
+        listed: bool,
+    }
+
+    impl CatalogSource for Unreachable {
+        fn latest_version(&self) -> Result<Option<u64>, String> {
+            if self.listed {
+                Ok(Some(4))
+            } else {
+                Err("api.github.com: http status: 403".to_string())
+            }
+        }
+
+        fn download(&self, _version: u64) -> Result<(Vec<u8>, String), String> {
+            Err("github.com: http status: 503".to_string())
+        }
+    }
+
+    #[test]
+    fn an_unreachable_catalog_is_retried_within_the_hour_and_a_reached_one_tomorrow() {
+        let home = tempfile::tempdir().unwrap();
+        let (pair, public) = keypair();
+        let registry = ScreenRuleRegistry::with_builtin();
+        let keys = std::slice::from_ref(&public);
+        for listed in [false, true] {
+            assert_eq!(
+                check(home.path(), keys, &registry, &Unreachable { listed }),
+                UNREACHABLE_RETRY_INTERVAL,
+                "listed: {listed}"
+            );
+        }
+        assert_eq!(registry.remote_version(), None);
+        assert_eq!(
+            check(home.path(), keys, &registry, &served(&pair, 3, 3)),
+            CHECK_INTERVAL
+        );
+        assert_eq!(
+            check(home.path(), keys, &registry, &served(&pair, 3, 3)),
+            CHECK_INTERVAL,
+            "an up-to-date catalog waits a full day"
+        );
     }
 
     #[test]
