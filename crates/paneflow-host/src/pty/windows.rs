@@ -4,6 +4,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 use windows_sys::Win32::System::LibraryLoader::{
     GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
     LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
@@ -19,6 +20,16 @@ static INITIALIZED: OnceLock<Result<(), String>> = OnceLock::new();
 
 pub(super) fn initialize() -> Result<(), String> {
     INITIALIZED.get_or_init(load).clone()
+}
+
+pub(super) fn deliver_ctrl_c_to_children() -> Result<(), String> {
+    if unsafe { SetConsoleCtrlHandler(None, 0) } == 0 {
+        return Err(format!(
+            "cannot restore Ctrl+C for terminal sessions: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 fn load() -> Result<(), String> {
