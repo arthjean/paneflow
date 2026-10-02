@@ -74,17 +74,7 @@ fn shell_request(cols: u16, rows: u16) -> CreateSession {
 #[cfg(unix)]
 #[test]
 fn a_process_named_fx_becomes_an_agent_only_once_its_title_confirms_it() {
-    use std::os::unix::fs::PermissionsExt;
-
     let home = tempfile::tempdir().unwrap();
-    let bin = tempfile::tempdir().unwrap();
-    let fx = bin.path().join("fx");
-    std::fs::write(
-        &fx,
-        "#!/bin/sh\nprintf '{\\n  \"ok\": true\\n}\\n'\nsleep 4\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&fx, std::fs::Permissions::from_mode(0o755)).unwrap();
     let endpoint = home.path().join("host.sock");
     let host = SessionHost::open(home.path(), &endpoint).unwrap();
     let session = host
@@ -106,7 +96,7 @@ fn a_process_named_fx_becomes_an_agent_only_once_its_title_confirms_it() {
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        format!("{} data.json\n", fx.display()).into_bytes(),
+        format!("{}\n", process_named("fx", 4)).into_bytes(),
     )
     .unwrap();
     let started = Instant::now();
@@ -123,7 +113,7 @@ fn a_process_named_fx_becomes_an_agent_only_once_its_title_confirms_it() {
         Some(SessionGeneration::FIRST),
         format!(
             "printf '\\033]2;fx v0.0.12 | paneflow\\007'; {}\n",
-            fx.display()
+            process_named("fx", 4)
         )
         .into_bytes(),
     )
@@ -2468,13 +2458,13 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
 }
 
 #[cfg(unix)]
-fn claude_in_foreground_after_echo(bin: &Path, line: &str) -> Vec<u8> {
-    use std::os::unix::fs::PermissionsExt;
+fn process_named(name: &str, seconds: u32) -> String {
+    format!("bash -c 'exec -a {name} bash -c \"sleep {seconds}; :\"'")
+}
 
-    let claude = bin.join("claude");
-    std::fs::write(&claude, "#!/bin/sh\nsleep 30\n").unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-    format!("echo {line}; {}\r\n", claude.display()).into_bytes()
+#[cfg(unix)]
+fn claude_in_foreground_after_echo(_bin: &Path, line: &str) -> Vec<u8> {
+    format!("echo {line}; {}\r\n", process_named("claude", 30)).into_bytes()
 }
 
 #[cfg(windows)]
