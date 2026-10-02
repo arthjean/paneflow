@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Unifier le catalogue, les installateurs et les boucles de rafraîchissement",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-005",
@@ -277,106 +277,106 @@
       "id": "US-017",
       "title": "Générer depuis le catalogue la connaissance par agent de l'application",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T10:25:55Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-018",
       "title": "Vérifier les listes de shims du packaging contre le catalogue",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T10:25:55Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-019",
       "title": "Fusionner les moteurs d'installation des intégrations",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T15:40:00Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-020",
       "title": "Installer et versionner le skill conductor",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T16:20:00Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-021",
       "title": "Remplacer le poll IPC de 50 ms du thread GPUI par un réveil poussé",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T10:50:05Z",
+      "completed_at": "2026-10-02T14:04:37+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-022",
       "title": "Remplacer le poll de snapshot de 2 s du worker par les événements du host",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T10:50:05Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-023",
       "title": "Sortir l'attente de durabilité du verrou d'ingestion des hooks",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T10:50:05Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-024",
       "title": "Supprimer le code mort et les doublons de l'intégration agents",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-017",
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02T16:45:00Z",
+      "completed_at": "2026-10-02T13:39:25+02:00",
+      "reviewed_at": "2026-10-02T14:04:37+02:00"
     },
     {
       "id": "US-025",
