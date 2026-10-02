@@ -9,6 +9,7 @@
 | 1.1 | 2026-09-30 | Arthur Jean | Coordination : l'US-040 de `prd-fork-audit-fixes.md` conditionne toute ligne de l'Attention Queue. |
 | 1.2 | 2026-10-01 | Arthur Jean | US-010 : `wait --idle` rend aussi la main sur `blocked` et aussitôt sur un agent qui attend déjà, pour ne pas tenir jusqu'au timeout un tour fini avant son démarrage. |
 | 1.3 | 2026-10-02 | Arthur Jean | EP-005 : le corpus et la précision portent sur les runtimes à repli écran (claude-code, codex, gemini, fx) ; opencode, pi et hermes, qui n'ont pas de règles d'écran, passent dans le nouvel EP-007 (US-036). US-028 : un contrôle périodique du fichier local dans le thread de scan remplace le watcher, sans nouvelle dépendance et avec la même borne d'une seconde. US-030 : fx 0.0.12, mesuré, titre sa fenêtre `fx v<version> \| <dossier>` et nomme ses sessions sur 12 caractères alphanumériques ; le préfixe et le format d'id suivent ces faits. Un runtime confirmé par son titre n'a pas de shim, car le shim annonce une session dès que l'alias tourne. |
+| 1.4 | 2026-10-02 | Arthur Jean | US-030 : la description et le critère d'échec reprennent le titre mesuré de fx 0.0.12 (`fx v<version> \| <dossier>`) au lieu de `fx · <titre> · <modèle>`. |
 
 ## Problem Statement
 
@@ -151,7 +152,7 @@ Key findings that informed this PRD:
   - Il sait forker une conversation vers un split, garde le propriétaire vivant, et fournit une compatibilité tmux (`cmux claude-teams`, environ 20 verbes).
   - Ses PTY meurent avec l'application, et il ne tourne que sous macOS.
 - **fx** (vercel-labs, Zig, v0.0.5)
-  - Pas de hooks. Il émet un BEL quand il demande l'attention, et son titre OSC 2 a la forme `fx · <titre> · <modèle>`.
+  - Pas de hooks. Il émet un BEL quand il demande l'attention, et fx 0.0.12 titre sa fenêtre `fx v<version> | <dossier>`.
   - Sa seule sortie de statut est le protocole herdr.
   - Pas de Windows.
   - Il se reprend avec `fx --resume <id>` et `fx --continue`.
@@ -769,7 +770,7 @@ Aujourd'hui `RuntimeScreen` n'a que `working` et `idle_prompt` (`crates/paneflow
 #### US-030: Intégrer fx comme runtime déclaratif
 **Description:** As a développeur qui utilise fx, I want que Paneflow reconnaisse fx, signale ses attentes, l'intègre au MCP et reprenne sa dernière session so that fx ait le même traitement que les autres agents sans code dédié.
 
-fx n'a pas de hook, émet un BEL pour demander l'attention, et son titre OSC 2 a la forme `fx · <titre> · <modèle>`. L'alias `fx` est aujourd'hui interdit, à cause de la collision avec le visualiseur JSON fx (`crates/paneflow-agent-config/src/runtime_catalog.rs:189`).
+fx n'a pas de hook, émet un BEL pour demander l'attention, et fx 0.0.12 titre sa fenêtre `fx v<version> | <dossier>`. L'alias `fx` est aujourd'hui interdit, à cause de la collision avec le visualiseur JSON fx (`crates/paneflow-agent-config/src/runtime_catalog.rs:189`).
 
 **Priority:** P1
 **Size:** M (3 pts)
@@ -784,7 +785,7 @@ fx n'a pas de hook, émet un BEL pour demander l'attention, et son titre OSC 2 a
 - [ ] Le moteur d'installation écrit l'entrée `paneflow` dans `~/.fx/mcp.json` sans bloc `environment`, puisque fx remplace l'environnement de l'enfant ; test sur le JSON produit.
 - [ ] Après une perte du host, un pane fx seul dans son cwd reprend par `continue_argv`. Si plusieurs panes fx partagent ce cwd, aucun ne reprend, et chacun affiche la bannière de US-013.
 - [ ] Sous Windows, fx n'apparaît ni dans le lanceur ni dans les réglages (test du filtre de plateforme).
-- [ ] Échec : given `fx data.json` (visualiseur JSON) dans un pane, when le titre ne commence pas par `fx · `, then aucune ligne d'agent n'est créée (test).
+- [ ] Échec : given `fx data.json` (visualiseur JSON) dans un pane, when le titre ne commence pas par `fx v`, then aucune ligne d'agent n'est créée (test).
 
 ---
 

@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Détecter l'état des agents par des règles d'écran déclaratives",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-006",
@@ -390,61 +390,61 @@
       "id": "US-025",
       "title": "Constituer le corpus d'écrans de référence et la commande de capture",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-10-02T12:12:26Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T19:48:10+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-026",
       "title": "Définir les règles d'écran v2 et leur évaluateur dans le host",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-025"
       ],
       "started_at": "2026-10-02T12:19:43Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T16:30:33+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-027",
       "title": "Exposer titre et progression OSC aux règles et laisser un bloqueur visible l'emporter",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-026"
       ],
       "started_at": "2026-10-02T12:32:05Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T16:30:33+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-028",
       "title": "Surcharger localement les règles, les recharger à chaud et expliquer une décision",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-026"
       ],
       "started_at": "2026-10-02T12:33:13Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T15:54:19+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-029",
       "title": "Distribuer un catalogue de règles signé et versionné",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
@@ -452,14 +452,14 @@
         "US-028"
       ],
       "started_at": "2026-10-02T12:35:33Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T19:48:10+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-030",
       "title": "Intégrer fx comme runtime déclaratif",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -469,8 +469,8 @@
         "US-027"
       ],
       "started_at": "2026-10-02T12:40:49Z",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-02T15:54:19+02:00",
+      "reviewed_at": "2026-10-02T19:48:10+02:00"
     },
     {
       "id": "US-031",
