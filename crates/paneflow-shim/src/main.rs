@@ -17,6 +17,7 @@ const PANEFLOW_AI_EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const PANEFLOW_AI_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
 const PANEFLOW_SHIM_TARGET_ENV: &str = "PANEFLOW_SHIM_TARGET";
 
+mod claude;
 mod codex;
 mod detect;
 mod exec;
@@ -53,13 +54,16 @@ fn main() -> ExitCode {
     };
 
     let args: Vec<OsString> = env::args_os().skip(1).collect();
-    let args = if tool == "codex" {
-        codex::pane_session_args(args, in_pane_session())
-    } else {
-        args
+    let (args, preassigned) = match tool {
+        "codex" => (codex::pane_session_args(args, in_pane_session()), None),
+        "claude" if claude_preassign_enabled() && claude::starts_fresh_session(&args) => {
+            let session_id = claude::new_session_id();
+            (claude::with_session_id(args, &session_id), Some(session_id))
+        }
+        _ => (args, None),
     };
 
-    notify_session_start(tool);
+    notify_session_start(tool, preassigned);
 
     let (code, agent_exit) = run_real(tool, &real, &args);
 
@@ -71,6 +75,11 @@ fn main() -> ExitCode {
     notify_session_end(tool, interrupted_exit);
 
     code
+}
+
+fn claude_preassign_enabled() -> bool {
+    env::var_os(paneflow_agent_config::CLAUDE_PREASSIGN_SESSION_ID_ENV)
+        .is_some_and(|value| value == "1")
 }
 
 fn in_pane_session() -> bool {
@@ -103,10 +112,11 @@ fn notify_exit(tool: &str, exit_code: i32, interrupted: bool) {
     let _ = cmd.status();
 }
 
-fn notify_session_start(tool: &str) {
+fn notify_session_start(tool: &str, preassigned: Option<String>) {
     let Some(hook_path) = locate_sibling_hook_binary() else {
         return;
     };
+    let payload = session_start_payload(preassigned.as_deref());
     let tool = tool.to_owned();
     let pid = std::process::id().to_string();
     let spawned = std::thread::Builder::new()
@@ -125,11 +135,18 @@ fn notify_session_start(tool: &str) {
             };
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write as _;
-                let _ = stdin.write_all(b"{}");
+                let _ = stdin.write_all(payload.as_bytes());
             }
             let _ = child.wait();
         });
     let _ = spawned;
+}
+
+fn session_start_payload(preassigned: Option<&str>) -> String {
+    preassigned.map_or_else(
+        || "{}".to_string(),
+        |session_id| format!("{{\"session_id\":\"{session_id}\"}}"),
+    )
 }
 
 fn notify_session_end(tool: &str, interrupted: bool) {
@@ -162,3 +179,15 @@ pub(crate) fn locate_sibling_hook_binary() -> Option<PathBuf> {
 #[cfg(test)]
 #[path = "tests/detect.rs"]
 mod detect_tests;
+
+#[cfg(test)]
+mod session_start_tests {
+    #[test]
+    fn a_preassigned_id_reaches_the_session_start_hook() {
+        assert_eq!(super::session_start_payload(None), "{}");
+        assert_eq!(
+            super::session_start_payload(Some("6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e")),
+            r#"{"session_id":"6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e"}"#
+        );
+    }
+}

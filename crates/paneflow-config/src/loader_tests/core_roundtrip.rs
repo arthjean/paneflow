@@ -70,6 +70,7 @@ fn test_serialization_roundtrip() {
         telemetry: None,
         terminal: None,
         agent_panel: None,
+        agents: None,
         external_editor: None,
         agent_profiles: Vec::new(),
     };

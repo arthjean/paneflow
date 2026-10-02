@@ -44,6 +44,7 @@ impl LayoutTree {
                                 agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
                                 font_size: tv_ref.terminal.font_size_override,
                                 session: Some(tv_ref.terminal.session_id.clone()),
+                                agent_session: tv_ref.agent_session().cloned(),
                             }
                         }
                         crate::pane::PaneSurface::Markdown(markdown) => {
@@ -62,6 +63,7 @@ impl LayoutTree {
                                 agent: None,
                                 font_size: None,
                                 session: None,
+                                agent_session: None,
                             }
                         }
                     })

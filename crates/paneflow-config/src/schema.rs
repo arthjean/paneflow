@@ -135,6 +135,10 @@ mod tests {
             agent_panel: Some(AgentPanelConfig {
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),
             }),
+            agents: Some(AgentsConfig {
+                restore_conversations: Some(true),
+                claude_preassign_session_id: Some(false),
+            }),
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),
                 agent: "claude_code".to_string(),
@@ -196,6 +200,11 @@ mod tests {
             "AgentPanelConfig and public JSON Schema drifted"
         );
         assert_eq!(
+            object_keys(&serialized["agents"]),
+            object_keys(&schema["properties"]["agents"]["properties"]),
+            "AgentsConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
             object_keys(&serialized["agent_profiles"][0]),
             object_keys(&schema["definitions"]["agentProfile"]["properties"]),
             "AgentProfileConfig and public JSON Schema drifted"
@@ -226,6 +235,11 @@ mod tests {
                             agent: Some("claude_code".to_string()),
                             font_size: Some(13.0),
                             session: Some(SessionId::new()),
+                            agent_session: Some(AgentSessionRef {
+                                runtime: "com.anthropic.claude-code".to_string(),
+                                id: "3922faec-860a-47b1-8f2d-e6b9488c467c".to_string(),
+                                cwd: Some("~/dev/app".to_string()),
+                            }),
                         }],
                     }),
                 },
@@ -301,6 +315,11 @@ mod tests {
             &doc,
             &schema["properties"]["agent_panel"]["properties"],
             "agent_panel",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["properties"]["agents"]["properties"],
+            "agents",
         );
         assert_doc_mentions_property_keys(
             &doc,

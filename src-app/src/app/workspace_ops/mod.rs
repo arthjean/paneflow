@@ -713,7 +713,7 @@ impl PaneFlowApp {
         launch: SurfaceLaunch,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<Entity<TerminalView>, String> {
         let Some(ws) = self.active_workspace() else {
             return Err("No active project".to_string());
         };
@@ -753,7 +753,7 @@ impl PaneFlowApp {
         new_pane.read(cx).focus_handle(cx).focus(window, cx);
         self.save_session(cx);
         cx.notify();
-        Ok(())
+        Ok(new_terminal)
     }
 
     pub(crate) fn handle_split_h(

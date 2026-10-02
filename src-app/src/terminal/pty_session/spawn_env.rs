@@ -387,6 +387,14 @@ impl TerminalState {
             merged_env,
             home.helper_bin_dir,
         );
+        if config.agents.as_ref().is_some_and(
+            paneflow_config::schema::AgentsConfig::resolved_claude_preassign_session_id,
+        ) {
+            env.insert(
+                paneflow_agent_config::CLAUDE_PREASSIGN_SESSION_ID_ENV.into(),
+                "1".into(),
+            );
+        }
         if is_wsl_shell(&shell) {
             augment_wslenv(&mut env);
         }
@@ -424,6 +432,35 @@ mod tests {
         assemble_pty_env(env, workspace_id, surface_id, user_env, bins)
     }
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_claude_session_id_preassignment_reaches_the_pane_only_when_enabled() {
+        let home = tempfile::tempdir().expect("temporary Paneflow home");
+        let spawn = |config: &paneflow_config::schema::PaneFlowConfig| {
+            TerminalState::resolve_spawn_launch_in(
+                config,
+                None,
+                1,
+                2,
+                None,
+                None,
+                TerminalSurfaceProfile::Normal,
+                SpawnHome::at(home.path()),
+            )
+            .0
+            .env
+        };
+        let key = paneflow_agent_config::CLAUDE_PREASSIGN_SESSION_ID_ENV;
+        assert!(!spawn(&paneflow_config::schema::PaneFlowConfig::default()).contains_key(key));
+        let enabled = paneflow_config::schema::PaneFlowConfig {
+            agents: Some(paneflow_config::schema::AgentsConfig {
+                claude_preassign_session_id: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(spawn(&enabled).get(key).map(String::as_str), Some("1"));
+    }
 
     fn platform_sep() -> char {
         if cfg!(windows) { ';' } else { ':' }

@@ -6,7 +6,6 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::agent_launcher::AgentCommandSpec;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::pane_drag::{DragPreview, SessionDrag};
@@ -943,75 +942,17 @@ fn agent_icon_element(agent: SessionAgent, size: Pixels, ui: crate::theme::UiCol
     )
 }
 
-fn claude_bypass_enabled(config: &paneflow_config::schema::PaneFlowConfig) -> bool {
-    config.claude_code_bypass_permissions.unwrap_or(false)
-}
-
 pub(crate) fn resume_command(
     agent: SessionAgent,
     session_id: &str,
     config: &paneflow_config::schema::PaneFlowConfig,
 ) -> Option<String> {
-    resume_command_spec(agent, session_id, config).map(|spec| spec.render_shell_command())
-}
-
-fn resume_command_spec(
-    agent: SessionAgent,
-    session_id: &str,
-    config: &paneflow_config::schema::PaneFlowConfig,
-) -> Option<AgentCommandSpec> {
-    if !crate::agent_sessions::is_valid_session_id(session_id) {
-        log::warn!("resume_command: refused invalid session id, not sending to PTY");
-        return None;
-    }
-    let spec = match agent {
-        SessionAgent::Claude => {
-            let mut spec = AgentCommandSpec::new("claude");
-            spec.push_arg("--resume");
-            spec.push_arg(session_id);
-            if claude_bypass_enabled(config) {
-                spec.push_arg("--permission-mode");
-                spec.push_arg("bypassPermissions");
-            }
-            spec
-        }
-        SessionAgent::Codex => {
-            let mut spec = AgentCommandSpec::new("codex");
-            spec.push_arg("resume");
-            spec.push_arg(session_id);
-            spec
-        }
-        SessionAgent::OpenCode => {
-            let mut spec = AgentCommandSpec::new("opencode");
-            spec.push_arg("--session");
-            spec.push_arg(session_id);
-            spec
-        }
-        SessionAgent::Pi => {
-            let mut spec = AgentCommandSpec::new("pi");
-            spec.push_arg("--session");
-            spec.push_arg(session_id);
-            spec
-        }
-        SessionAgent::Grok => resume_flag_spec("grok", session_id),
-        SessionAgent::Gemini => resume_flag_spec("gemini", session_id),
-        SessionAgent::Kiro => {
-            let mut spec = AgentCommandSpec::new("kiro-cli");
-            spec.push_arg("chat");
-            spec.push_arg("--resume-id");
-            spec.push_arg(session_id);
-            spec
-        }
-    };
-    debug_assert!(crate::agent_launcher::is_plain_shell_token(session_id));
-    Some(spec)
-}
-
-fn resume_flag_spec(program: &'static str, session_id: &str) -> AgentCommandSpec {
-    let mut spec = AgentCommandSpec::new(program);
-    spec.push_arg("--resume");
-    spec.push_arg(session_id);
-    spec
+    crate::agent_resume::conversation_command(
+        agent.terminal_agent(),
+        crate::agent_resume::ConversationTemplate::Resume,
+        session_id,
+        config,
+    )
 }
 
 #[cfg(test)]
@@ -1038,9 +979,15 @@ mod tests {
             assert_eq!(resume_command(agent, "ses_x; rm -rf ~", &cfg), None);
             assert_eq!(resume_command(agent, "$(reboot)", &cfg), None);
         }
-        let valid = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
         for agent in SessionAgent::ALL {
-            assert!(resume_command(agent, valid, &cfg).is_some());
+            assert!(resume_command(agent, valid_session_id(agent), &cfg).is_some());
+        }
+    }
+
+    fn valid_session_id(agent: SessionAgent) -> &'static str {
+        match agent {
+            SessionAgent::OpenCode => "ses_1f80d49aeffeaKV4Lq4mc0c3cu",
+            _ => "019dc9ea-38d7-7372-9cc4-253ce944d41b",
         }
     }
 
@@ -1048,22 +995,33 @@ mod tests {
     fn resume_command_renders_expected_agent_commands() {
         let cfg = paneflow_config::schema::PaneFlowConfig::default();
         let id = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
+        let ses = "ses_1f80d49aeffeaKV4Lq4mc0c3cu";
 
         let cases = [
-            (SessionAgent::Claude, format!("claude --resume {id}")),
-            (SessionAgent::Codex, format!("codex resume {id}")),
-            (SessionAgent::OpenCode, format!("opencode --session {id}")),
-            (SessionAgent::Pi, format!("pi --session {id}")),
-            (SessionAgent::Grok, format!("grok --resume {id}")),
-            (SessionAgent::Gemini, format!("gemini --resume {id}")),
+            (SessionAgent::Claude, id, format!("claude --resume {id}")),
+            (SessionAgent::Codex, id, format!("codex resume {id}")),
+            (
+                SessionAgent::OpenCode,
+                ses,
+                format!("opencode --session {ses}"),
+            ),
+            (SessionAgent::Pi, id, format!("pi --session {id}")),
+            (SessionAgent::Grok, id, format!("grok --resume {id}")),
+            (SessionAgent::Gemini, id, format!("gemini --resume {id}")),
             (
                 SessionAgent::Kiro,
+                id,
                 format!("kiro-cli chat --resume-id {id}"),
             ),
         ];
 
-        for (agent, expected) in cases {
-            assert_eq!(resume_command(agent, id, &cfg), Some(expected));
+        assert_eq!(
+            cases.iter().map(|(agent, _, _)| *agent).collect::<Vec<_>>(),
+            SessionAgent::ALL.to_vec(),
+            "the table written before the catalog migration covers every session agent"
+        );
+        for (agent, session_id, expected) in cases {
+            assert_eq!(resume_command(agent, session_id, &cfg), Some(expected));
         }
     }
 

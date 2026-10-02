@@ -669,7 +669,18 @@ impl PaneFlowApp {
             }
             terminal::TerminalEvent::ShellPromptReady => {
                 let child_pid = terminal.read(cx).terminal.child_pid;
-                self.reap_sessions_at_shell_prompt(terminal.entity_id().as_u64(), child_pid, cx);
+                let reaped = self.reap_sessions_at_shell_prompt(
+                    terminal.entity_id().as_u64(),
+                    child_pid,
+                    cx,
+                );
+                self.conversation_returned_to_shell(&terminal, reaped, cx);
+            }
+            terminal::TerminalEvent::AgentSessionChanged => {
+                self.save_session(cx);
+            }
+            terminal::TerminalEvent::ConversationReady => {
+                self.conversation_ready(terminal.entity_id().as_u64(), cx);
             }
             terminal::TerminalEvent::ChildExited => {
                 self.purge_sessions_for_surface(terminal.entity_id().as_u64(), cx);

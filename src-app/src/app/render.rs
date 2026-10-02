@@ -338,6 +338,7 @@ impl Render for PaneFlowApp {
             .cursor(CursorStyle::Arrow)
             .on_action(cx.listener(Self::handle_split_h))
             .on_action(cx.listener(Self::handle_split_v))
+            .on_action(cx.listener(Self::handle_fork_conversation))
             .on_action(cx.listener(Self::handle_close_pane))
             .on_action(cx.listener(Self::handle_hide_pane))
             .on_action(cx.listener(Self::handle_stop_session))

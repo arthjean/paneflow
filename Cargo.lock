@@ -4363,6 +4363,7 @@ dependencies = [
  "dirs",
  "log",
  "paneflow-home",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

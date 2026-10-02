@@ -110,6 +110,10 @@ impl TerminalAgent {
         })
     }
 
+    pub fn from_runtime_id(id: &str) -> Option<TerminalAgent> {
+        runtime_by_id(id).map(|runtime| TerminalAgent(runtime.id))
+    }
+
     pub fn from_tag(tag: &str) -> Option<TerminalAgent> {
         runtime_by_preset_id(tag).map(|runtime| TerminalAgent(runtime.id))
     }
@@ -160,13 +164,17 @@ impl TerminalAgent {
             .split_whitespace();
         let mut spec = AgentCommandSpec::new(tokens.next().unwrap_or(self.binary()));
         spec.extend_args(tokens);
+        self.push_launch_flags(&mut spec, config);
+        spec
+    }
+
+    pub(crate) fn push_launch_flags(self, spec: &mut AgentCommandSpec, config: &PaneFlowConfig) {
         if self == TerminalAgent::ClaudeCode
             && config.claude_code_bypass_permissions.unwrap_or(false)
         {
             spec.push_arg("--permission-mode");
             spec.push_arg("bypassPermissions");
         }
-        spec
     }
 
     fn command(self, config: &PaneFlowConfig) -> String {

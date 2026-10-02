@@ -464,6 +464,23 @@
         }
       }
     },
+    "agents": {
+      "type": ["object", "null"],
+      "description": "Agent conversation settings.",
+      "additionalProperties": false,
+      "properties": {
+        "restore_conversations": {
+          "type": ["boolean", "null"],
+          "description": "Reopen each agent conversation in its pane when the hosted session did not survive, for instance after a reboot.",
+          "default": true
+        },
+        "claude_preassign_session_id": {
+          "type": ["boolean", "null"],
+          "description": "Have the Claude Code shim pass a generated --session-id to a fresh interactive launch, so the conversation can be reopened even without Paneflow's hooks.",
+          "default": false
+        }
+      }
+    },
     "agent_profiles": {
       "type": "array",
       "description": "Custom launcher entries. Each profile launches one of the built-in agents with extra environment variables and arguments, for example a second Claude Code account through CLAUDE_CONFIG_DIR. Profiles appear in the pane palette next to the built-in agents and inherit the base agent's status tracking, hooks, and sessions.",
@@ -700,6 +717,26 @@
           "type": ["string", "null"],
           "description": "UUID of the persistent host session this terminal surface reattaches to on restore. Written by Paneflow; leave unset in hand-written commands.",
           "format": "uuid"
+        },
+        "agent_session": {
+          "type": ["object", "null"],
+          "description": "Agent conversation last started in this terminal surface, reported by the agent's SessionStart hook. Paneflow reopens it in the same pane when the host session did not survive. Written by Paneflow; leave unset in hand-written commands.",
+          "additionalProperties": false,
+          "required": ["runtime", "id"],
+          "properties": {
+            "runtime": {
+              "type": "string",
+              "description": "Catalog id of the agent runtime, such as 'com.anthropic.claude-code'."
+            },
+            "id": {
+              "type": "string",
+              "description": "Provider session id of the conversation."
+            },
+            "cwd": {
+              "type": ["string", "null"],
+              "description": "Working directory the conversation was started in."
+            }
+          }
         }
       }
     }

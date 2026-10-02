@@ -86,6 +86,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
+| `agents` | object/null | defaults below | Restore and next launch | Agent conversation restore and Claude Code session-id preassignment. |
 | `telemetry` | object/null | `{ "enabled": null }` | Startup/consent | Desktop telemetry consent. `PANEFLOW_NO_TELEMETRY=1` overrides it. |
 
 ## Agent launcher buttons
@@ -141,6 +142,13 @@ and macOS keep every agent below.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `agent_panel.notify_when_agent_waiting` | string/null | `PrimaryScreen` | `PrimaryScreen`, `AllScreens`, or `Never`. |
+
+## `agents`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
+| `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
 
 ## `worktrees`
 
@@ -268,6 +276,7 @@ Surface keys inside a pane:
 | `commands[].workspace.layout.surfaces[].agent` | string/null | none | Stable tag of the agent CLI last detected in the surface. |
 | `commands[].workspace.layout.surfaces[].font_size` | number/null | global `font_size` | Per-surface font-size override, range `8.0` to `32.0`. |
 | `commands[].workspace.layout.surfaces[].session` | string/null | none | UUID of the persistent host session the terminal reattaches to on restore. Written by Paneflow. |
+| `commands[].workspace.layout.surfaces[].agent_session` | object/null | none | Agent conversation last started in the surface: `runtime` (catalog id), `id` (provider session id), and `cwd`. Paneflow reopens it when the host session did not survive. Written by Paneflow. |
 
 ## `telemetry`
 

@@ -344,6 +344,16 @@ pub struct SurfaceDefinition {
     pub font_size: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<super::SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<AgentSessionRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentSessionRef {
+    pub runtime: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl SurfaceDefinition {
@@ -368,6 +378,7 @@ impl Default for SurfaceDefinition {
             agent: None,
             font_size: None,
             session: None,
+            agent_session: None,
         }
     }
 }

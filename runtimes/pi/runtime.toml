@@ -30,6 +30,11 @@ anchor_start_event_to_output = true
 summary = "Pi reports turn activity through the Paneflow status extension; its stream is not a lifecycle authority."
 hook_adapter = "none"
 
+[resume]
+session_argv = ["pi", "--session", "{session_id}"]
+session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
+failure_markers = []
+
 [[suggested_presets]]
 id = "pi"
 command = "pi"

@@ -76,6 +76,17 @@ pub struct RuntimeIntegration {
     pub hook_adapter: RuntimeHookAdapter,
 }
 
+pub const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
+
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeResume {
+    pub session_argv: &'static [&'static str],
+    pub continue_argv: Option<&'static [&'static str]>,
+    pub fork_argv: Option<&'static [&'static str]>,
+    pub session_id_pattern: &'static str,
+    pub failure_markers: &'static [&'static str],
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeSuggestedPreset {
     pub id: &'static str,
@@ -294,6 +305,85 @@ mod tests {
         }
         for unknown in ["node", "sh", "python", "fx", "claude-code"] {
             assert_eq!(command_alias_literal(unknown), None, "{unknown}");
+        }
+    }
+
+    #[test]
+    fn only_runtimes_with_a_session_reader_declare_resume_and_only_verified_clis_fork() {
+        let resumable = RUNTIMES
+            .iter()
+            .filter(|runtime| runtime_resume(runtime.id).is_some())
+            .map(|runtime| runtime.slug)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resumable,
+            vec![
+                "claude-code",
+                "codex",
+                "opencode",
+                "pi",
+                "grok",
+                "gemini",
+                "kiro"
+            ]
+        );
+        let forkable = RUNTIMES
+            .iter()
+            .filter(|runtime| {
+                runtime_resume(runtime.id).is_some_and(|resume| resume.fork_argv.is_some())
+            })
+            .map(|runtime| runtime.slug)
+            .collect::<Vec<_>>();
+        assert_eq!(forkable, vec!["claude-code", "codex"]);
+        let claude = runtime_resume("com.anthropic.claude-code").expect("claude resume");
+        assert_eq!(
+            claude.fork_argv,
+            Some(
+                &[
+                    "claude",
+                    "--resume",
+                    SESSION_ID_PLACEHOLDER,
+                    "--fork-session"
+                ][..]
+            )
+        );
+        let codex = runtime_resume("com.openai.codex").expect("codex resume");
+        assert_eq!(
+            codex.fork_argv,
+            Some(&["codex", "fork", SESSION_ID_PLACEHOLDER][..])
+        );
+    }
+
+    #[test]
+    fn captured_resume_failures_contain_a_declared_marker_and_normal_screens_do_not() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("runtimes");
+        for slug in ["claude-code", "codex"] {
+            let runtime = runtime_by_slug(slug).expect("runtime");
+            let resume = runtime_resume(runtime.id).expect("resume");
+            assert!(!resume.failure_markers.is_empty(), "{slug}");
+            let fixtures = root.join(slug).join("fixtures");
+            let failure = std::fs::read_to_string(fixtures.join("resume-failure.txt"))
+                .expect("resume failure fixture");
+            assert!(
+                resume
+                    .failure_markers
+                    .iter()
+                    .any(|marker| failure.contains(marker)),
+                "{slug} resume failure fixture"
+            );
+            for normal in ["working.txt", "idle.txt", "approval-menu.txt"] {
+                let screen = std::fs::read_to_string(fixtures.join(normal)).expect("fixture");
+                assert!(
+                    !resume
+                        .failure_markers
+                        .iter()
+                        .any(|marker| screen.contains(marker)),
+                    "{slug} {normal} false positive"
+                );
+            }
         }
     }
 

@@ -67,6 +67,7 @@ pub(crate) struct HostAgentRow {
     pub(crate) unread: bool,
     pub(crate) state_seq: u64,
     pub(crate) attention_reason: Option<String>,
+    pub(crate) provider_session_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -80,6 +81,23 @@ pub(crate) struct HostAgentView {
 }
 
 impl HostAgentView {
+    pub(crate) fn live_session_with_provider_id(
+        &self,
+        tool: TerminalAgent,
+        provider_session_id: &str,
+        except: &SessionId,
+    ) -> Option<SessionId> {
+        self.rows
+            .values()
+            .find(|row| {
+                row.live
+                    && row.tool == Some(tool)
+                    && &row.session != except
+                    && row.provider_session_id.as_deref() == Some(provider_session_id)
+            })
+            .map(|row| row.session.clone())
+    }
+
     pub(crate) fn row(&self, session: &SessionId) -> Option<&HostAgentRow> {
         self.rows.get(session)
     }
@@ -195,6 +213,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .get("unread")
             .and_then(Value::as_bool)
             .unwrap_or_default(),
+        provider_session_id: agent
+            .and_then(|agent| agent.get("provider_session_id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 

@@ -423,7 +423,7 @@ impl PaneFlowApp {
                 };
                 match self.split_with_target(target, direction, profile, launch, window, cx) {
                     Err(message) => self.pane_palette_set_error(message, cx),
-                    Ok(()) => self.discard_pane_palette(cx),
+                    Ok(_) => self.discard_pane_palette(cx),
                 }
             }
         }

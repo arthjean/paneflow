@@ -19,6 +19,7 @@ pub struct Descriptor {
     pub lifecycle: Lifecycle,
     pub screen: Option<Screen>,
     pub integration: Integration,
+    pub resume: Option<Resume>,
     pub suggested_presets: Vec<SuggestedPreset>,
 }
 
@@ -141,6 +142,19 @@ impl TryFrom<String> for HookAdapter {
             )),
         }
     }
+}
+
+pub const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
+pub const MAX_SESSION_ID_PATTERN_BYTES: usize = 1 << 20;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Resume {
+    pub session_argv: Vec<String>,
+    pub continue_argv: Option<Vec<String>>,
+    pub fork_argv: Option<Vec<String>>,
+    pub session_id_pattern: String,
+    pub failure_markers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -351,6 +365,14 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 path.display()
             ));
         }
+        if let Some(resume) = &runtime.resume {
+            validate_resume(
+                path,
+                &runtime.detection.command_aliases,
+                resume,
+                &mut errors,
+            );
+        }
         if runtime.suggested_presets.is_empty() {
             errors.push(format!(
                 "{}: suggested_presets must not be empty",
@@ -371,6 +393,89 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
     } else {
         Err(errors.join("\n"))
     }
+}
+
+fn validate_resume(
+    path: &Path,
+    command_aliases: &[String],
+    resume: &Resume,
+    errors: &mut Vec<String>,
+) {
+    let templates = [
+        ("resume.session_argv", Some(&resume.session_argv), true),
+        ("resume.continue_argv", resume.continue_argv.as_ref(), false),
+        ("resume.fork_argv", resume.fork_argv.as_ref(), true),
+    ];
+    for (field, argv, needs_session_id) in templates {
+        let Some(argv) = argv else {
+            continue;
+        };
+        let Some(program) = argv.first() else {
+            errors.push(format!("{}: {field} must not be empty", path.display()));
+            continue;
+        };
+        if program == SESSION_ID_PLACEHOLDER {
+            errors.push(format!(
+                "{}: {field} must not put {SESSION_ID_PLACEHOLDER} in program position",
+                path.display()
+            ));
+        } else if !command_aliases.contains(program) {
+            errors.push(format!(
+                "{}: {field} program '{program}' is not one of the runtime's detection.command_aliases",
+                path.display()
+            ));
+        }
+        let placeholders = argv
+            .iter()
+            .filter(|arg| arg.as_str() == SESSION_ID_PLACEHOLDER)
+            .count();
+        if needs_session_id && placeholders != 1 {
+            errors.push(format!(
+                "{}: {field} must contain {SESSION_ID_PLACEHOLDER} exactly once as a whole argument",
+                path.display()
+            ));
+        }
+        if !needs_session_id && placeholders != 0 {
+            errors.push(format!(
+                "{}: {field} must not contain {SESSION_ID_PLACEHOLDER}",
+                path.display()
+            ));
+        }
+        for arg in argv.iter().skip(1) {
+            if arg != SESSION_ID_PLACEHOLDER && !is_plain_argument(arg) {
+                errors.push(format!(
+                    "{}: {field} argument '{arg}' must use only ASCII letters, digits, '-', '_', '.' or '='",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Err(error) = regex::RegexBuilder::new(&resume.session_id_pattern)
+        .size_limit(MAX_SESSION_ID_PATTERN_BYTES)
+        .build()
+    {
+        errors.push(format!(
+            "{}: resume.session_id_pattern is not a valid regex: {error}",
+            path.display()
+        ));
+    }
+    if resume
+        .failure_markers
+        .iter()
+        .any(|marker| marker.trim().is_empty())
+    {
+        errors.push(format!(
+            "{}: resume.failure_markers must not contain empty markers",
+            path.display()
+        ));
+    }
+}
+
+fn is_plain_argument(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'='))
 }
 
 fn is_reverse_dns(value: &str) -> bool {
@@ -520,7 +625,33 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         }
     }
     output.push_str("_ => None,\n}\n}\n");
+    output.push_str(
+        "pub fn runtime_resume(runtime_id: &str) -> Option<&'static RuntimeResume> {\nmatch runtime_id {\n",
+    );
+    for located in descriptors {
+        let runtime = &located.descriptor;
+        let Some(resume) = &runtime.resume else {
+            continue;
+        };
+        output.push_str(&format!(
+            "{:?} => Some(&RuntimeResume {{ session_argv: &{}, continue_argv: {}, fork_argv: {}, session_id_pattern: {:?}, failure_markers: &{} }}),\n",
+            runtime.id,
+            strings(&resume.session_argv),
+            option_strings(resume.continue_argv.as_deref()),
+            option_strings(resume.fork_argv.as_deref()),
+            resume.session_id_pattern,
+            strings(&resume.failure_markers)
+        ));
+    }
+    output.push_str("_ => None,\n}\n}\n");
     Ok(output)
+}
+
+fn option_strings(values: Option<&[String]>) -> String {
+    values.map_or_else(
+        || "None".to_string(),
+        |values| format!("Some(&{})", strings(values)),
+    )
 }
 
 fn strings(values: &[String]) -> String {
@@ -777,5 +908,88 @@ command = "{alias}"
         let error = discover_and_validate(temp.path()).unwrap_err();
         assert!(error.contains("requires [screen]"));
         assert!(error.contains("authority = 'none'"));
+    }
+
+    fn with_resume(resume: &str) -> String {
+        descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "[[suggested_presets]]",
+            &format!("[resume]\n{resume}\n[[suggested_presets]]"),
+        )
+    }
+
+    fn resume_error(resume: &str) -> String {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_runtime(temp.path(), "alpha", &with_resume(resume));
+        discover_and_validate(temp.path()).unwrap_err()
+    }
+
+    #[test]
+    fn a_resume_section_with_alias_programs_and_a_valid_pattern_is_generated() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = with_resume(
+            "session_argv = [\"alpha\", \"--resume\", \"{session_id}\"]\ncontinue_argv = [\"alpha\", \"--continue\"]\nfork_argv = [\"alpha\", \"fork\", \"{session_id}\"]\nsession_id_pattern = \"^[0-9a-f-]{36}$\"\nfailure_markers = [\"No session\"]\n",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(generated.contains("pub fn runtime_resume"), "{generated}");
+        assert!(
+            generated.contains("session_argv: &[\"alpha\", \"--resume\", \"{session_id}\"]"),
+            "{generated}"
+        );
+        assert!(
+            generated.contains("continue_argv: Some(&[\"alpha\", \"--continue\"])"),
+            "{generated}"
+        );
+    }
+
+    #[test]
+    fn a_resume_program_outside_the_command_aliases_is_refused() {
+        let error = resume_error(
+            "session_argv = [\"sh\", \"-c\", \"{session_id}\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\n",
+        );
+        assert!(
+            error.contains("resume.session_argv program 'sh'"),
+            "{error}"
+        );
+        assert!(error.contains("detection.command_aliases"), "{error}");
+    }
+
+    #[test]
+    fn a_session_id_in_program_position_is_refused() {
+        let error = resume_error(
+            "session_argv = [\"alpha\", \"{session_id}\"]\nfork_argv = [\"{session_id}\", \"alpha\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\n",
+        );
+        assert!(
+            error.contains("resume.fork_argv must not put {session_id} in program position"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_invalid_session_id_pattern_is_refused() {
+        let error = resume_error(
+            "session_argv = [\"alpha\", \"{session_id}\"]\nsession_id_pattern = \"(unclosed\"\nfailure_markers = []\n",
+        );
+        assert!(
+            error.contains("resume.session_id_pattern is not a valid regex"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_template_without_exactly_one_session_id_or_with_shell_syntax_is_refused() {
+        let error = resume_error(
+            "session_argv = [\"alpha\", \"--resume\"]\ncontinue_argv = [\"alpha\", \"{session_id}\", \"$(id)\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\n",
+        );
+        assert!(
+            error.contains("resume.session_argv must contain {session_id} exactly once"),
+            "{error}"
+        );
+        assert!(
+            error.contains("resume.continue_argv must not contain {session_id}"),
+            "{error}"
+        );
+        assert!(error.contains("argument '$(id)'"), "{error}");
     }
 }

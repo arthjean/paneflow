@@ -1,5 +1,5 @@
 use super::{
-    AgentPanelConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
+    AgentPanelConfig, AgentsConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
     Osc52ClipboardConfig, TelemetryConfig, TerminalConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -118,6 +118,8 @@ pub struct PaneFlowConfig {
     pub terminal: Option<TerminalConfig>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_panel: Option<AgentPanelConfig>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agents: Option<AgentsConfig>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",

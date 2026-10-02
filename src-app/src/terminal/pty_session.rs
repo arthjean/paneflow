@@ -772,6 +772,27 @@ impl TerminalState {
         results
     }
 
+    pub(crate) fn input_sent(&self) -> bool {
+        self.keyboard_input_sent
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_raw_input_for_test(&self) -> Vec<Vec<u8>> {
+        self.pending_input
+            .lock()
+            .map(|queued| {
+                queued
+                    .iter()
+                    .filter_map(|input| match input {
+                        PendingTerminalInput::Raw(bytes) => Some(bytes.to_vec()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) -> BackendInputResult {
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);

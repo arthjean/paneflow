@@ -20,3 +20,5 @@ pub use io::{
 #[cfg(feature = "config-io")]
 pub use lock::{lock_config, lock_config_in, ConfigLock};
 pub use runtime_catalog::*;
+
+pub const CLAUDE_PREASSIGN_SESSION_ID_ENV: &str = "PANEFLOW_CLAUDE_PREASSIGN_SESSION_ID";

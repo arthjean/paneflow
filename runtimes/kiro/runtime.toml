@@ -30,6 +30,11 @@ anchor_start_event_to_output = true
 summary = "Kiro has no Paneflow lifecycle hook integration."
 hook_adapter = "none"
 
+[resume]
+session_argv = ["kiro-cli", "chat", "--resume-id", "{session_id}"]
+session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
+failure_markers = []
+
 [[suggested_presets]]
 id = "kiro"
 command = "kiro-cli chat"

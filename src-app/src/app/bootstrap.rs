@@ -335,6 +335,7 @@ impl PaneFlowApp {
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),
             resume_batch: None,
+            conversation_restore: Default::default(),
             close_dialog: None,
             close_dialog_focus: cx.focus_handle(),
             unsaved_dialog: None,
@@ -439,6 +440,7 @@ impl PaneFlowApp {
             app.record_recent_workspaces(&restored_paths, cx);
             let restored_terminals = app.attached_terminals(cx);
             app.track_resume_batch(restored_terminals, cx);
+            app.plan_conversation_restore(cx);
         }
 
         app.spawn_restore_probe(cx);

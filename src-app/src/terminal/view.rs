@@ -26,6 +26,7 @@ use super::types::{
 use super::ghostty_session::GhosttyStartError;
 use super::path_picker::{PathPicker, PathPickerEvent};
 
+pub(crate) mod conversation;
 mod host_attach;
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
@@ -242,6 +243,7 @@ pub struct TerminalView {
     pump_epoch: u64,
     exit_announced: bool,
     relaunch_pending: bool,
+    conversation: conversation::Conversation,
 }
 
 impl TerminalView {
@@ -665,6 +667,7 @@ impl TerminalView {
             pump_epoch: 0,
             exit_announced: false,
             relaunch_pending: false,
+            conversation: conversation::Conversation::default(),
         }
     }
 
@@ -981,6 +984,8 @@ pub enum TerminalEvent {
         title: String,
         body: String,
     },
+    AgentSessionChanged,
+    ConversationReady,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -1675,6 +1680,16 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &crate::JumpNextPrompt, _window, cx| {
                 this.jump_to_prompt(false, cx);
             }))
+            .on_action(
+                cx.listener(|this, _: &crate::AcceptConversationNotice, _window, cx| {
+                    this.accept_conversation_banner(cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::DismissConversationNotice, _window, cx| {
+                    this.dismiss_conversation_banner(cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &crate::ToggleSearch, window, cx| {
                 this.toggle_search(window, cx);
             }))
@@ -1735,6 +1750,10 @@ impl Render for TerminalView {
 
         if let Some(bar) = self.render_host_link_bar(crate::theme::ui_colors(), cx) {
             el = el.child(bar);
+        }
+
+        if let Some(banner) = self.render_conversation_banner(crate::theme::ui_colors(), cx) {
+            el = el.child(banner);
         }
 
         if self.copy_mode_active {

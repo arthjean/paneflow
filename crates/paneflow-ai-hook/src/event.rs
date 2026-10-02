@@ -495,6 +495,23 @@ mod tests {
     }
 
     #[test]
+    fn a_shim_preassigned_session_id_is_forwarded_on_session_start() {
+        let frame = sent_frame(
+            build_frame(
+                HookEvent::SessionStart,
+                test_context(),
+                json!({"session_id": "6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e"}),
+            )
+            .expect("shim session start"),
+        );
+        assert_eq!(frame["kind"], "ai.session_start");
+        assert_eq!(
+            frame["hook_payload"]["session_id"],
+            "6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e"
+        );
+    }
+
+    #[test]
     fn ask_user_question_pre_tool_use_is_latch_only() {
         let frame = sent_frame(
             build_frame(

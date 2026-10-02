@@ -648,6 +648,20 @@ impl PaneFlowApp {
 
         let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
 
+        let restore_conversations = crate::config_snapshot::current(cx)
+            .agents
+            .clone()
+            .unwrap_or_default()
+            .resolved_restore_conversations();
+        let agent_session = crate::terminal::view::conversation::restorable_agent_session(
+            surface.agent_session.clone(),
+        );
+        let conversation_cwd = agent_session
+            .as_ref()
+            .filter(|_| restore_conversations)
+            .and_then(|recorded| recorded.cwd.as_deref())
+            .map(PathBuf::from);
+
         let surface_env = surface.env.clone();
         let t = match surface.session.clone() {
             Some(session) => cx.new(|cx| {
@@ -656,10 +670,17 @@ impl PaneFlowApp {
             None => cx.new(|cx| {
                 TerminalView::spawned(
                     workspace_id,
-                    crate::workspace::SpawnCwd {
-                        cwd: Some(cwd),
-                        confine_to: None,
-                        fallback: Some(fallback_cwd.to_path_buf()),
+                    match conversation_cwd {
+                        Some(recorded_cwd) => crate::workspace::SpawnCwd {
+                            cwd: Some(recorded_cwd),
+                            confine_to: None,
+                            fallback: dirs::home_dir(),
+                        },
+                        None => crate::workspace::SpawnCwd {
+                            cwd: Some(cwd),
+                            confine_to: None,
+                            fallback: Some(fallback_cwd.to_path_buf()),
+                        },
                     },
                     surface_env,
                     paneflow_config::schema::TerminalSurfaceProfile::Normal,
@@ -699,6 +720,12 @@ impl PaneFlowApp {
                 view.terminal.font_size_override = Some(size);
             });
         }
+        t.update(cx, |view, _cx| {
+            view.restore_agent_session(agent_session, restore_conversations);
+            if surface.session.is_none() {
+                view.expect_fresh_shell_for_conversation();
+            }
+        });
         cx.subscribe(&t, Self::handle_terminal_event).detach();
         Some(crate::pane::PaneSurface::Terminal(t))
     }

@@ -144,6 +144,7 @@ impl TerminalView {
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
+                            view.conversation_host_attached(cx);
                         }
                         AttachOutcome::Ended(end, final_text) => {
                             match final_text {
@@ -157,7 +158,9 @@ impl TerminalView {
                             }
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
+                            let kind = end.kind.clone();
                             view.terminal.mark_host_link(HostLinkState::Ended(end));
+                            view.conversation_host_ended(&kind, cx);
                         }
                         AttachOutcome::Unavailable(message) => {
                             view.restore_saved_scrollback();
@@ -251,7 +254,7 @@ impl TerminalView {
         }
     }
 
-    fn start_hosted_session(
+    pub(super) fn start_hosted_session(
         &mut self,
         intent: SessionIntent,
         fresh_identity: bool,

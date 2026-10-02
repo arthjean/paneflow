@@ -35,6 +35,13 @@ summary = "Installs Paneflow lifecycle hooks in Codex's global hooks file."
 post_install_step = "Trust the Paneflow hooks once in Codex with /hooks."
 hook_adapter = "codex"
 
+[resume]
+session_argv = ["codex", "resume", "{session_id}"]
+continue_argv = ["codex", "resume", "--last"]
+fork_argv = ["codex", "fork", "{session_id}"]
+session_id_pattern = '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+failure_markers = ["No saved session found with ID"]
+
 [[suggested_presets]]
 id = "codex"
 command = "codex"

@@ -829,3 +829,83 @@ fn a_detached_window_saved_by_a_retired_view_is_dropped_without_losing_the_sessi
         }
     );
 }
+
+const PRE_AGENT_SESSION_FIXTURE: &str = r#"{
+    "version": 2,
+    "active_workspace": 0,
+    "workspaces": [
+        {
+            "title": "paneflow",
+            "cwd": "/home/user/dev/paneflow",
+            "tabs": [
+                {
+                    "title": "claude",
+                    "layout": {
+                        "type": "pane",
+                        "surfaces": [
+                            { "surface_type": "terminal", "name": "claude", "cwd": "/home/user/dev/paneflow", "command": null, "env": null, "focus": true, "agent": "claude_code", "session": "6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e" }
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+}"#;
+
+fn first_surface(state: &SessionState) -> &SurfaceDefinition {
+    match state.workspaces[0].tabs[0].layout.as_ref().expect("layout") {
+        LayoutNode::Pane { surfaces } => &surfaces[0],
+        LayoutNode::Split { .. } => panic!("fixture is a single pane"),
+    }
+}
+
+#[test]
+fn a_session_json_written_before_agent_session_restores_exactly_as_before() {
+    let restored: SessionState = serde_json::from_str(PRE_AGENT_SESSION_FIXTURE).unwrap();
+    let surface = first_surface(&restored);
+    assert_eq!(surface.agent_session, None);
+    assert_eq!(
+        surface,
+        &SurfaceDefinition {
+            surface_type: Some("terminal".to_string()),
+            name: Some("claude".to_string()),
+            cwd: Some("/home/user/dev/paneflow".to_string()),
+            focus: Some(true),
+            agent: Some("claude_code".to_string()),
+            session: Some(
+                SessionId::parse("6f1c2a8e-58b4-4c1e-9f0c-7a2d3b4c5d6e").expect("session uuid")
+            ),
+            ..Default::default()
+        }
+    );
+    let written = serde_json::to_string(&restored).unwrap();
+    assert!(!written.contains("agent_session"));
+}
+
+#[test]
+fn an_agent_session_round_trips_and_an_older_reader_ignores_it() {
+    let surface = SurfaceDefinition {
+        agent_session: Some(AgentSessionRef {
+            runtime: "com.openai.codex".to_string(),
+            id: "01a0f952-1fa0-7e91-a35c-899b9dbfe97e".to_string(),
+            cwd: Some("/home/user/dev/paneflow".to_string()),
+        }),
+        ..Default::default()
+    };
+    let json = serde_json::to_value(&surface).unwrap();
+    assert_eq!(
+        json["agent_session"],
+        serde_json::json!({
+            "runtime": "com.openai.codex",
+            "id": "01a0f952-1fa0-7e91-a35c-899b9dbfe97e",
+            "cwd": "/home/user/dev/paneflow"
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<SurfaceDefinition>(json.clone()).unwrap(),
+        surface
+    );
+    let mut from_the_future = json;
+    from_the_future["agent_session_v2"] = serde_json::json!({ "unknown": true });
+    assert!(serde_json::from_value::<SurfaceDefinition>(from_the_future).is_ok());
+}

@@ -30,6 +30,11 @@ anchor_start_event_to_output = false
 summary = "Grok is detected from its process; Paneflow reads no turn status from it."
 hook_adapter = "none"
 
+[resume]
+session_argv = ["grok", "--resume", "{session_id}"]
+session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
+failure_markers = []
+
 [[suggested_presets]]
 id = "grok"
 command = "grok"

@@ -105,7 +105,7 @@ impl PaneFlowApp {
         surface_id: u64,
         surface_child_pid: u32,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let mut changed = false;
         for ws in &mut self.workspaces {
             if ws.agent_sessions.is_empty() {
@@ -124,6 +124,7 @@ impl PaneFlowApp {
             self.agent_sessions_changed(cx);
             cx.notify();
         }
+        changed
     }
 
     pub(crate) fn reap_sessions_without_agent(

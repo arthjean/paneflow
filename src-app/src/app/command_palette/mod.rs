@@ -38,6 +38,10 @@ const PALETTE_TOP_MARGIN: f32 = 96.;
 pub(crate) struct PaletteContext {
     terminal: bool,
     terminal_search: bool,
+    conversation_fork: bool,
+    conversation_resume_offer: bool,
+    conversation_failure: bool,
+    conversation_notice: bool,
     markdown: bool,
     markdown_search: bool,
 }
@@ -133,11 +137,27 @@ impl PaneFlowApp {
         };
         let pane = pane.read(cx);
         match pane.surfaces().get(pane.active_surface_idx()) {
-            Some(PaneSurface::Terminal(view)) => PaletteContext {
-                terminal: true,
-                terminal_search: view.read(cx).search_active(),
-                ..PaletteContext::default()
-            },
+            Some(PaneSurface::Terminal(view)) => {
+                let view = view.read(cx);
+                let banner = view.conversation_banner();
+                PaletteContext {
+                    terminal: true,
+                    terminal_search: view.search_active(),
+                    conversation_fork: view.can_fork_conversation(),
+                    conversation_resume_offer: matches!(
+                        banner,
+                        Some(crate::terminal::view::conversation::ConversationBanner::OfferResume)
+                    ),
+                    conversation_failure: matches!(
+                        banner,
+                        Some(
+                            crate::terminal::view::conversation::ConversationBanner::ResumeFailed { .. }
+                        )
+                    ),
+                    conversation_notice: banner.is_some(),
+                    ..PaletteContext::default()
+                }
+            }
             Some(PaneSurface::Markdown(view)) => PaletteContext {
                 markdown: true,
                 markdown_search: view.read(cx).search_active(),
@@ -152,6 +172,12 @@ impl PaneFlowApp {
             Needs::Always => true,
             Needs::Terminal => self.command_palette_context.terminal,
             Needs::TerminalSearch => self.command_palette_context.terminal_search,
+            Needs::ForkableConversation => self.command_palette_context.conversation_fork,
+            Needs::ConversationResumeOffer => {
+                self.command_palette_context.conversation_resume_offer
+            }
+            Needs::ConversationFailure => self.command_palette_context.conversation_failure,
+            Needs::ConversationNotice => self.command_palette_context.conversation_notice,
             Needs::Markdown => self.command_palette_context.markdown,
             Needs::MarkdownSearch => self.command_palette_context.markdown_search,
             Needs::Workspace => self.active_workspace().is_some(),

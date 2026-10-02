@@ -1,0 +1,10 @@
+
+  >_ OpenAI Codex (v0.159.3)
+     ~
+  Resuming session…
+
+› Ask Codex to do anything
+
+  ? for shortcuts
+
+ERROR: No saved session found with ID 00000000-0000-4000-8000-000000000000. Run `codex resume` without an ID to choose from existing sessions.

@@ -12,7 +12,7 @@ use crate::pane::PaneSurface;
 use crate::settings::components::{
     MENU_ROW_HEIGHT, menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
 };
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt};
 use crate::{
     PaneContextMenu, PaneFlowApp, SessionContextMenu, TabContextMenu, WorkspaceContextMenu,
 };
@@ -763,7 +763,13 @@ impl PaneFlowApp {
             .map(|t| t.entity_id().as_u64())
             .filter(|sid| self.broadcast.pending.contains_key(sid));
 
-        let rows = 2 + usize::from(pending_sid.is_some()) + 2;
+        let fork_source = source
+            .read(cx)
+            .surface()
+            .as_terminal()
+            .is_some_and(|terminal| terminal.read(cx).can_fork_conversation())
+            .then(|| source.clone());
+        let rows = 2 + usize::from(pending_sid.is_some()) + usize::from(fork_source.is_some()) + 2;
         let menu_height = menu_height(rows as f32, 18.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -834,6 +840,31 @@ impl PaneFlowApp {
                     cx.notify();
                 }),
             ));
+        }
+
+        if let Some(fork_source) = fork_source {
+            context_menu = context_menu.child(
+                crate::settings::components::menu_row("pane-context-fork-conversation", false, ui)
+                    .cursor(CursorStyle::Arrow)
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                        crate::app::conversation_restore::FORK_TOOLTIP,
+                    ))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.pane_menu_open = None;
+                        this.fork_conversation_in(fork_source.clone(), window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(ui.text)
+                            .child("Fork conversation"),
+                    ),
+            );
         }
 
         context_menu = context_menu.child(

@@ -353,6 +353,7 @@ mod tests {
             unread: false,
             state_seq: 0,
             attention_reason: None,
+            provider_session_id: None,
         }
     }
 

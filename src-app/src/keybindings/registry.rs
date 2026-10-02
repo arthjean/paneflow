@@ -507,6 +507,27 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Terminal,
     },
     ActionMeta {
+        name: "fork_conversation",
+        factory: || Box::new(crate::ForkConversation),
+        context: "",
+        description: "Fork the agent conversation into a split",
+        group: ShortcutGroup::Terminal,
+    },
+    ActionMeta {
+        name: "accept_conversation_notice",
+        factory: || Box::new(crate::AcceptConversationNotice),
+        context: "Terminal",
+        description: "Run the action of the pane's conversation notice",
+        group: ShortcutGroup::Terminal,
+    },
+    ActionMeta {
+        name: "dismiss_conversation_notice",
+        factory: || Box::new(crate::DismissConversationNotice),
+        context: "Terminal",
+        description: "Dismiss the pane's conversation notice",
+        group: ShortcutGroup::Terminal,
+    },
+    ActionMeta {
         name: "clear_scroll_history",
         factory: || Box::new(ClearScrollHistory),
         context: "Terminal",

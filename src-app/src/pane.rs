@@ -786,6 +786,8 @@ impl Pane {
             | TerminalEvent::FontZoomChanged
             | TerminalEvent::FleetSearchRequested { .. }
             | TerminalEvent::ProgramNotification { .. }
+            | TerminalEvent::AgentSessionChanged
+            | TerminalEvent::ConversationReady
             | TerminalEvent::ShellPromptReady => {}
         })
         .detach();

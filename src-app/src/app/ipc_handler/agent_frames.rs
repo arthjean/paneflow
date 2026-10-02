@@ -197,6 +197,7 @@ impl PaneFlowApp {
         surface_id: u64,
         cx: &mut Context<Self>,
     ) {
+        self.apply_conversation_signal(method, params, surface_id, cx);
         let session_key = self
             .workspaces
             .iter()

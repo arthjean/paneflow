@@ -44,6 +44,25 @@ impl AgentPanelConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+pub struct AgentsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_conversations: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_preassign_session_id: Option<bool>,
+}
+
+impl AgentsConfig {
+    pub fn resolved_restore_conversations(&self) -> bool {
+        self.restore_conversations.unwrap_or(true)
+    }
+
+    pub fn resolved_claude_preassign_session_id(&self) -> bool {
+        self.claude_preassign_session_id.unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct TelemetryConfig {
     pub enabled: Option<bool>,
 }

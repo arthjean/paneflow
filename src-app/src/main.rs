@@ -9,6 +9,7 @@
 )]
 
 mod agent_launcher;
+mod agent_resume;
 mod agent_sessions;
 mod agents;
 mod ai_hooks;
@@ -269,6 +270,7 @@ struct PaneFlowApp {
     closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
+    conversation_restore: crate::app::conversation_restore::ConversationRestoreQueue,
     close_dialog: Option<crate::app::close_policy::CloseDialog>,
     close_dialog_focus: FocusHandle,
     unsaved_dialog: Option<crate::app::unsaved_dialog::UnsavedDialog>,

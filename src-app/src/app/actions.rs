@@ -94,6 +94,9 @@ actions!(
         DiffNewTerminalTab,
         OpenCommandPalette,
         CloneRepository,
-        InsertPath
+        InsertPath,
+        ForkConversation,
+        AcceptConversationNotice,
+        DismissConversationNotice
     ]
 );
