@@ -99,7 +99,10 @@ transition.
 Install the hooks once per machine: click **Install hooks** on the agent's row
 in **Settings > Agents**, or run `paneflow integrations install claude-code` or
 `paneflow integrations install codex`. Codex asks you once to trust the new
-hooks with `/hooks`. The hooks exit immediately outside a Paneflow pane. Other
+hooks with `/hooks`. The same command registers the Paneflow MCP bridge and, for
+Claude Code, the conductor skill. An entry that another Paneflow home owns (a
+debug build next to a release, or a second `PANEFLOW_HOME`) is left alone: the
+command names both homes, and `--force` takes the entry over. The hooks exit immediately outside a Paneflow pane. Other
 CLI agents still run in panes, but Paneflow only knows what it can infer from
 the process tree and terminal activity.
 

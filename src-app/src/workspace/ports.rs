@@ -10,27 +10,10 @@ pub struct PortEntry {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaneScan {
     pub ports: Vec<PortEntry>,
-    pub agents: Vec<String>,
     pub foreground_command: Option<String>,
 }
 
 const MAX_PIDS_PER_ROOT: usize = 512;
-
-fn agents_in_bfs_order<'a>(
-    comms_in_bfs_order: impl Iterator<Item = &'a str>,
-    agent_binaries: &[&str],
-) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for comm in comms_in_bfs_order {
-        if agent_binaries.contains(&comm) && !found.iter().any(|f| f == comm) {
-            found.push(comm.to_string());
-            if found.len() == agent_binaries.len() {
-                break;
-            }
-        }
-    }
-    found
-}
 
 #[cfg(any(target_os = "linux", test))]
 fn command_from_nul_args(bytes: &[u8]) -> Option<String> {
@@ -301,10 +284,7 @@ fn socket_inodes_of(pid: u32, inodes: &mut Vec<u64>) {
 }
 
 #[cfg(target_os = "linux")]
-pub fn scan_panes(
-    roots: &[(u64, u32)],
-    agent_binaries: &[&str],
-) -> std::collections::HashMap<u64, PaneScan> {
+pub fn scan_panes(roots: &[(u64, u32)]) -> std::collections::HashMap<u64, PaneScan> {
     let mut results: std::collections::HashMap<u64, PaneScan> = std::collections::HashMap::new();
     if roots.is_empty() {
         return results;
@@ -327,19 +307,6 @@ pub fn scan_panes(
             .iter()
             .find(|(root_key, _)| root_key == key)
             .and_then(|(_, root_pid)| linux_representative_command(*root_pid, pids));
-        let comms: Vec<String> = if agent_binaries.is_empty() {
-            Vec::new()
-        } else {
-            pids.iter()
-                .filter_map(|pid| {
-                    std::fs::read_to_string(format!("/proc/{pid}/comm"))
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                })
-                .collect()
-        };
-        let agents = agents_in_bfs_order(comms.iter().map(String::as_str), agent_binaries);
-
         for &pid in pids {
             let mut inodes: Vec<u64> = Vec::new();
             socket_inodes_of(pid, &mut inodes);
@@ -352,7 +319,6 @@ pub fn scan_panes(
             *key,
             PaneScan {
                 ports: Vec::new(),
-                agents,
                 foreground_command,
             },
         );
@@ -521,12 +487,7 @@ fn macos_representative_command(root_pid: u32, pids: &[u32]) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn scan_panes(
-    roots: &[(u64, u32)],
-    agent_binaries: &[&str],
-) -> std::collections::HashMap<u64, PaneScan> {
-    use libproc::libproc::proc_pid::name;
-
+pub fn scan_panes(roots: &[(u64, u32)]) -> std::collections::HashMap<u64, PaneScan> {
     let mut results: std::collections::HashMap<u64, PaneScan> = std::collections::HashMap::new();
     if roots.is_empty() {
         return results;
@@ -539,15 +500,6 @@ pub fn scan_panes(
             continue;
         }
         let pids = bfs_descendants_macos(root_pid, &children_of, &mut visited);
-
-        let comms: Vec<String> = if agent_binaries.is_empty() {
-            Vec::new()
-        } else {
-            pids.iter()
-                .filter_map(|&pid| name(pid as i32).ok().map(|n| n.trim().to_string()))
-                .collect()
-        };
-        let agents = agents_in_bfs_order(comms.iter().map(String::as_str), agent_binaries);
 
         let mut ports: Vec<PortEntry> = Vec::new();
         for &pid in &pids {
@@ -571,7 +523,6 @@ pub fn scan_panes(
             key,
             PaneScan {
                 ports,
-                agents,
                 foreground_command: macos_representative_command(root_pid, &pids),
             },
         );
@@ -743,10 +694,7 @@ fn windows_listen_ports_by_pid() -> std::collections::HashMap<u32, Vec<u16>> {
 }
 
 #[cfg(windows)]
-pub fn scan_panes(
-    roots: &[(u64, u32)],
-    agent_binaries: &[&str],
-) -> std::collections::HashMap<u64, PaneScan> {
+pub fn scan_panes(roots: &[(u64, u32)]) -> std::collections::HashMap<u64, PaneScan> {
     let mut results: std::collections::HashMap<u64, PaneScan> = std::collections::HashMap::new();
     if roots.is_empty() {
         return results;
@@ -765,16 +713,6 @@ pub fn scan_panes(
             continue;
         }
         let pids = bfs_descendants_windows(root_pid, &entries, &mut visited);
-        let comms: Vec<String> = if agent_binaries.is_empty() {
-            Vec::new()
-        } else {
-            pids.iter()
-                .filter_map(|pid| exe_by_pid.get(pid))
-                .map(|exe| crate::agent_launcher::executable_stem(exe).to_string())
-                .collect()
-        };
-        let agents = agents_in_bfs_order(comms.iter().map(String::as_str), agent_binaries);
-
         let mut ports = Vec::new();
         for pid in pids {
             let Some(pid_ports) = listen_ports.get(&pid) else {
@@ -801,7 +739,6 @@ pub fn scan_panes(
             key,
             PaneScan {
                 ports,
-                agents,
                 foreground_command: windows_representative_command(root_pid, &entries, &exe_by_pid),
             },
         );
@@ -813,25 +750,6 @@ pub fn scan_panes(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn agents_in_bfs_order_picks_nearest_root_first_and_dedups() {
-        let comms = ["zsh", "claude", "node", "codex", "claude"];
-        let agents = agents_in_bfs_order(comms.into_iter(), &["claude", "codex", "opencode"]);
-        assert_eq!(agents, vec!["claude".to_string(), "codex".to_string()]);
-    }
-
-    #[test]
-    fn agents_in_bfs_order_exact_match_only() {
-        let comms = ["claude-code-cli", "Claude", "claudex"];
-        assert!(agents_in_bfs_order(comms.into_iter(), &["claude"]).is_empty());
-    }
-
-    #[test]
-    fn agents_in_bfs_order_empty_inputs() {
-        assert!(agents_in_bfs_order(std::iter::empty(), &["claude"]).is_empty());
-        assert!(agents_in_bfs_order(["claude"].into_iter(), &[]).is_empty());
-    }
 
     #[test]
     fn the_representative_is_the_foreground_group_not_the_deepest_helper() {
@@ -952,7 +870,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let scan = scan_panes(&[(1, std::process::id())], &[]);
+        let scan = scan_panes(&[(1, std::process::id())]);
         let ports = scan
             .get(&1)
             .map(|s| s.ports.iter().map(|e| e.port).collect::<Vec<_>>())
@@ -966,32 +884,10 @@ mod tests {
 
     #[test]
     fn scan_panes_ignores_pid_zero_roots() {
-        let scan = scan_panes(&[(1, 0)], &[]);
+        let scan = scan_panes(&[(1, 0)]);
         assert!(
             scan.is_empty(),
             "pid 0 is a display-only sentinel and must not scan the system tree"
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_scan_panes_detects_live_child_subtree() {
-        let mut child = std::process::Command::new("/bin/sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(250));
-
-        let roots = [(1u64, std::process::id())];
-        let scan = scan_panes(&roots, &["sleep"]);
-
-        let _ = child.kill();
-        let _ = child.wait();
-
-        let agents = scan.get(&1).map(|s| s.agents.clone()).unwrap_or_default();
-        assert!(
-            agents.iter().any(|a| a == "sleep"),
-            "macOS subtree scan must detect the live `sleep` child; got {agents:?}"
         );
     }
 }

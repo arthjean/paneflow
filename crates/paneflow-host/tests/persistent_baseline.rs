@@ -883,3 +883,80 @@ fn persistent_session_endurance() {
         );
     }
 }
+
+fn kill_hard(pid: u32) {
+    let status = if cfg!(windows) {
+        Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .status()
+    } else {
+        Command::new("kill").args(["-9", &pid.to_string()]).status()
+    };
+    assert!(status.unwrap().success(), "process {pid} is killed");
+}
+
+#[test]
+fn an_acknowledged_durable_hook_survives_a_host_kill() {
+    allow_breakaway_like_the_desktop_does();
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption = bootstrap::ensure_host_running(home.path(), &host_executable(), "hook-kill")
+        .expect("the detached host starts");
+    let host_identity = paneflow_host::ProcessIdentity::capture(adoption.identity.pid);
+    let mut client = HostClient::connect(&endpoint, &ClientHello::local("hook-kill")).unwrap();
+    let session = client
+        .create(&CreateSession {
+            shell: Some(fixture_executable().display().to_string()),
+            args: vec!["idle".to_string()],
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(80),
+            rows: Some(24),
+            ..CreateSession::default()
+        })
+        .expect("the fixture session starts")
+        .manifest
+        .session;
+    let mut hook =
+        HostClient::connect(&endpoint, &ClientHello::control("hook-kill-ai-hook")).unwrap();
+    let ack = hook
+        .call(
+            paneflow_host::protocol::METHOD_AGENT_EVENT,
+            json!({
+                "session": session,
+                "runtime_generation": 1,
+                "kind": "ai.prompt_submit",
+                "tool": "claude",
+                "hook_payload": {"hook_event_name": "UserPromptSubmit", "session_id": "survivor"},
+            }),
+        )
+        .unwrap();
+    assert_eq!(ack["accepted"], true, "{ack}");
+    assert_eq!(ack["durable"], true, "{ack}");
+    drop(hook);
+    drop(client);
+
+    kill_hard(adoption.identity.pid);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while host_identity.is_provably_live() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!host_identity.is_provably_live(), "the host is gone");
+
+    let on_disk = paneflow_host::manifest::read_manifest(&paneflow_host::manifest::manifest_path(
+        home.path(),
+        &session,
+    ))
+    .unwrap();
+    if let Some(process) = on_disk
+        .process
+        .as_ref()
+        .filter(|process| process.is_provably_live())
+    {
+        kill_hard(process.pid);
+    }
+    assert_eq!(on_disk.hook_revision, ack["revision"].as_u64().unwrap());
+    let hook = on_disk.last_hook.expect("the acknowledged hook is on disk");
+    assert_eq!(hook.hook_event_name, "UserPromptSubmit");
+    assert_eq!(hook.provider_session_id.as_deref(), Some("survivor"));
+}

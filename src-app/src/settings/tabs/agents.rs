@@ -161,6 +161,7 @@ impl PaneFlowApp {
                             hook_binary,
                             bridge_binary,
                         },
+                        false,
                     )
                 } else {
                     paneflow_mcp_install::remove_integration(&action_slug)
@@ -171,8 +172,15 @@ impl PaneFlowApp {
             let _ = this.update(cx, |this, cx| {
                 this.integration_busy = None;
                 this.integration_status = Some(statuses);
-                if let Err(error) = result {
-                    this.integration_errors.insert(slug, error);
+                match result {
+                    Err(error) => {
+                        this.integration_errors.insert(slug, error);
+                    }
+                    Ok(status) if !status.notes.is_empty() => {
+                        this.integration_errors
+                            .insert(slug, status.notes.join("\n"));
+                    }
+                    Ok(_) => {}
                 }
                 cx.notify();
             });

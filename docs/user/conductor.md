@@ -18,7 +18,9 @@ For CLI fields, events, config keys, and exit codes, keep the [Conductor referen
 
 ## Install the conductor skill
 
-Install the conductor skill before asking Codex, Claude Code, OpenCode, or another CLI agent to coordinate panes:
+Paneflow installs the conductor skill for Claude Code itself: `paneflow integrations install claude-code`, or **Install hooks** in **Settings > Agents**, writes `skills/paneflow-conductor/SKILL.md` under the Claude config directory (`~/.claude`, or `CLAUDE_CONFIG_DIR` when set). The copy carries the Paneflow version in its frontmatter, and each install replaces it with the current release's copy. If you edited the installed copy, Paneflow keeps your version and says so; delete it and install again to get the shipped one. `paneflow integrations remove claude-code` removes the skill only when it is unmodified.
+
+For Codex, OpenCode, or another CLI agent, install the conductor skill before asking it to coordinate panes:
 
 ```bash
 bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor

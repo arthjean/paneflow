@@ -27,6 +27,7 @@ dirs.workspace = true
 anyhow.workspace = true
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
 paneflow-home.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -225,6 +225,12 @@ impl Persistence {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    #[cfg(test)]
+    pub(crate) fn stop_writer(&self) {
+        self.lock().stopped = true;
+        self.shared.wake.notify_all();
+    }
+
     pub fn reserve_final(&self, state: &SessionPersistence) {
         if !state.reserved.swap(true, Ordering::AcqRel) {
             self.lock().reserved_bytes += FINAL_RESERVE_BYTES;

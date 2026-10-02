@@ -76,42 +76,8 @@ pub struct PaneFlowConfig {
     pub on_quit: Option<OnQuit>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_ended_sessions: Option<u8>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub claude_code_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub codex_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub opencode_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub pi_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub hermes_agent_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub grok_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub amp_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub cursor_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub gemini_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub kiro_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub antigravity_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub copilot_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub codebuddy_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub factory_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub qoder_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub openclaw_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub deepseek_harness_button_visible: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub muse_button_visible: Option<bool>,
+    #[serde(flatten, deserialize_with = "agent_button_visibility")]
+    pub agent_button_visibility: BTreeMap<String, bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub telemetry: Option<TelemetryConfig>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -243,6 +209,20 @@ impl SidebarShow {
     }
 }
 
+pub const AGENT_BUTTON_VISIBILITY_SUFFIX: &str = "_button_visible";
+
+fn agent_button_visibility<'de, D>(d: D) -> Result<BTreeMap<String, bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries = BTreeMap::<String, serde_json::Value>::deserialize(d)?;
+    Ok(entries
+        .into_iter()
+        .filter(|(key, _)| key.ends_with(AGENT_BUTTON_VISIBILITY_SUFFIX))
+        .filter_map(|(key, value)| value.as_bool().map(|visible| (key, visible)))
+        .collect())
+}
+
 impl PaneFlowConfig {
     pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
     pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
@@ -251,6 +231,10 @@ impl PaneFlowConfig {
     pub const DEFAULT_SUBMIT_PASTE_DELAY_MS: u64 = 70;
     pub const MIN_SUBMIT_PASTE_DELAY_MS: u64 = 10;
     pub const MAX_SUBMIT_PASTE_DELAY_MS: u64 = 5_000;
+
+    pub fn agent_button_visible(&self, key: &str) -> Option<bool> {
+        self.agent_button_visibility.get(key).copied()
+    }
 
     pub fn windows_terminal_material_enabled(&self) -> bool {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)

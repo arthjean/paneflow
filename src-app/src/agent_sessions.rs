@@ -1,60 +1,54 @@
+use paneflow_agent_config::RuntimeSessionReader;
+
+use crate::agent_launcher::TerminalAgent;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SessionAgent {
-    Claude,
-    Codex,
-    OpenCode,
-    Pi,
-    Grok,
-    Gemini,
-    Kiro,
+pub struct SessionAgent {
+    agent: TerminalAgent,
+    reader: RuntimeSessionReader,
 }
 
 impl SessionAgent {
-    pub const ALL: [SessionAgent; 7] = [
-        SessionAgent::Claude,
-        SessionAgent::Codex,
-        SessionAgent::OpenCode,
-        SessionAgent::Pi,
-        SessionAgent::Grok,
-        SessionAgent::Gemini,
-        SessionAgent::Kiro,
-    ];
-
-    pub(crate) fn index(self) -> usize {
-        match self {
-            SessionAgent::Claude => 0,
-            SessionAgent::Codex => 1,
-            SessionAgent::OpenCode => 2,
-            SessionAgent::Pi => 3,
-            SessionAgent::Grok => 4,
-            SessionAgent::Gemini => 5,
-            SessionAgent::Kiro => 6,
-        }
+    pub fn of(agent: TerminalAgent) -> Option<SessionAgent> {
+        agent.runtime().sessions.map(|sessions| SessionAgent {
+            agent,
+            reader: sessions.reader,
+        })
     }
 
-    pub(crate) fn terminal_agent(self) -> crate::agent_launcher::TerminalAgent {
-        use crate::agent_launcher::TerminalAgent;
-        match self {
-            SessionAgent::Claude => TerminalAgent::ClaudeCode,
-            SessionAgent::Codex => TerminalAgent::Codex,
-            SessionAgent::OpenCode => TerminalAgent::OpenCode,
-            SessionAgent::Pi => TerminalAgent::Pi,
-            SessionAgent::Grok => TerminalAgent::Grok,
-            SessionAgent::Gemini => TerminalAgent::Gemini,
-            SessionAgent::Kiro => TerminalAgent::Kiro,
-        }
+    pub fn all() -> impl Iterator<Item = SessionAgent> {
+        TerminalAgent::all().filter_map(SessionAgent::of)
+    }
+
+    pub(crate) fn index(self) -> usize {
+        SessionAgent::all()
+            .position(|agent| agent == self)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn reader(self) -> RuntimeSessionReader {
+        self.reader
+    }
+
+    pub(crate) fn terminal_agent(self) -> TerminalAgent {
+        self.agent
     }
 
     pub(crate) fn icon_path(self) -> &'static str {
-        self.terminal_agent().icon_path()
+        self.agent.icon_path()
     }
 
     pub(crate) fn label(self) -> &'static str {
-        self.terminal_agent().display_name()
+        self.agent.display_name()
     }
 }
 
-pub(crate) const SESSION_AGENT_COUNT: usize = SessionAgent::ALL.len();
+#[cfg(test)]
+pub(crate) fn session_agent_of(agent: TerminalAgent) -> SessionAgent {
+    SessionAgent::of(agent).expect("the runtime declares a session reader")
+}
+
+pub(crate) const SESSION_AGENT_COUNT: usize = paneflow_agent_config::SESSION_RUNTIME_COUNT;
 pub(crate) const MAX_SESSION_ID_CHARS: usize = 128;
 
 pub mod cache {
@@ -220,14 +214,18 @@ pub mod cache {
 
         #[test]
         fn session_cache_evicts_lru() {
-            use super::super::SessionAgent;
             use super::Entry;
             let _serial = serial();
             super::clear();
             {
                 let mut guard = super::store().lock().expect("lock");
                 for i in 0..super::MAX_CACHE_ENTRIES {
-                    let key = (SessionAgent::Claude, format!("/proj-{i}"));
+                    let key = (
+                        crate::agent_sessions::session_agent_of(
+                            crate::agent_launcher::TerminalAgent::ClaudeCode,
+                        ),
+                        format!("/proj-{i}"),
+                    );
                     guard.insert(
                         key,
                         Entry {
@@ -239,10 +237,17 @@ pub mod cache {
                     );
                 }
                 assert_eq!(guard.len(), super::MAX_CACHE_ENTRIES);
-                assert!(guard.contains_key(&(SessionAgent::Claude, "/proj-0".to_string())));
+                assert!(guard.contains_key(&(
+                    crate::agent_sessions::session_agent_of(
+                        crate::agent_launcher::TerminalAgent::ClaudeCode
+                    ),
+                    "/proj-0".to_string()
+                )));
             }
             super::store_result_with_mtime(
-                SessionAgent::Claude,
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode,
+                ),
                 "/proj-N",
                 SystemTime::UNIX_EPOCH,
                 &[],
@@ -256,11 +261,21 @@ pub mod cache {
                     "cache must stay at cap after store_result eviction"
                 );
                 assert!(
-                    guard.contains_key(&(SessionAgent::Claude, "/proj-N".to_string())),
+                    guard.contains_key(&(
+                        crate::agent_sessions::session_agent_of(
+                            crate::agent_launcher::TerminalAgent::ClaudeCode
+                        ),
+                        "/proj-N".to_string()
+                    )),
                     "new entry must be present"
                 );
                 assert!(
-                    !guard.contains_key(&(SessionAgent::Claude, "/proj-0".to_string())),
+                    !guard.contains_key(&(
+                        crate::agent_sessions::session_agent_of(
+                            crate::agent_launcher::TerminalAgent::ClaudeCode
+                        ),
+                        "/proj-0".to_string()
+                    )),
                     "LRU victim (proj-0) must have been evicted"
                 );
             }
@@ -270,8 +285,6 @@ pub mod cache {
         #[test]
         #[traced_test]
         fn poisoned_session_cache_logs_warning() {
-            use super::super::SessionAgent;
-
             let _serial = serial();
             super::clear();
             let _ = std::thread::spawn(|| {
@@ -281,7 +294,9 @@ pub mod cache {
             .join();
 
             super::store_result_with_mtime(
-                SessionAgent::Claude,
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode,
+                ),
                 "/poisoned",
                 SystemTime::UNIX_EPOCH,
                 &[],
@@ -297,27 +312,51 @@ pub mod cache {
 
         #[test]
         fn lookup_with_mtime_invalidates_on_leaf_file_advance() {
-            use super::super::{SessionAgent, SessionMeta};
+            use super::super::SessionMeta;
 
             let _serial = serial();
             super::clear();
             let cached = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
             let advanced = cached + Duration::from_secs(1);
             let sessions = vec![SessionMeta {
-                agent: SessionAgent::Claude,
+                agent: crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode,
+                ),
                 session_id: "s1".into(),
                 timestamp: "2026-07-03T10:00:00Z".into(),
                 cwd: "/repo".into(),
                 summary: Some("old".into()),
             }];
 
-            super::store_result_with_mtime(SessionAgent::Claude, "/repo", cached, &sessions, 0);
+            super::store_result_with_mtime(
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode,
+                ),
+                "/repo",
+                cached,
+                &sessions,
+                0,
+            );
             assert!(
-                super::lookup_with_mtime(SessionAgent::Claude, "/repo", cached).is_some(),
+                super::lookup_with_mtime(
+                    crate::agent_sessions::session_agent_of(
+                        crate::agent_launcher::TerminalAgent::ClaudeCode
+                    ),
+                    "/repo",
+                    cached
+                )
+                .is_some(),
                 "same fingerprint should hit"
             );
             assert!(
-                super::lookup_with_mtime(SessionAgent::Claude, "/repo", advanced).is_none(),
+                super::lookup_with_mtime(
+                    crate::agent_sessions::session_agent_of(
+                        crate::agent_launcher::TerminalAgent::ClaudeCode
+                    ),
+                    "/repo",
+                    advanced
+                )
+                .is_none(),
                 "advanced leaf-file fingerprint should invalidate"
             );
             super::clear();
@@ -338,14 +377,28 @@ pub(crate) fn read_sessions_for_cwd_with_omitted(
     agent: SessionAgent,
     cwd: &str,
 ) -> (Vec<SessionMeta>, usize) {
-    match agent {
-        SessionAgent::Claude => crate::claude_sessions::read_sessions_for_cwd_with_omitted(cwd),
-        SessionAgent::Codex => crate::codex_sessions::read_sessions_for_cwd_with_omitted(cwd),
-        SessionAgent::OpenCode => crate::opencode_sessions::read_sessions_for_cwd_with_omitted(cwd),
-        SessionAgent::Pi => crate::pi_sessions::read_sessions_for_cwd_with_omitted(cwd),
-        SessionAgent::Gemini => crate::command_sessions::read_gemini_sessions_for_cwd(cwd),
-        SessionAgent::Kiro => crate::command_sessions::read_kiro_sessions_for_cwd(cwd),
-        SessionAgent::Grok => crate::command_sessions::read_grok_sessions_for_cwd(cwd),
+    match agent.reader() {
+        RuntimeSessionReader::Claude => {
+            crate::claude_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)
+        }
+        RuntimeSessionReader::Codex => {
+            crate::codex_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)
+        }
+        RuntimeSessionReader::OpenCode => {
+            crate::opencode_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)
+        }
+        RuntimeSessionReader::Pi => {
+            crate::pi_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)
+        }
+        RuntimeSessionReader::Gemini => {
+            crate::command_sessions::read_gemini_sessions_for_cwd(agent, cwd)
+        }
+        RuntimeSessionReader::Kiro => {
+            crate::command_sessions::read_kiro_sessions_for_cwd(agent, cwd)
+        }
+        RuntimeSessionReader::Grok => {
+            crate::command_sessions::read_grok_sessions_for_cwd(agent, cwd)
+        }
     }
 }
 
@@ -681,23 +734,31 @@ mod tests {
 
     #[test]
     fn enabled_session_agents_from_config_uses_visible_session_capable_agents() {
-        let cfg = paneflow_config::schema::PaneFlowConfig {
-            claude_code_button_visible: Some(true),
-            codex_button_visible: Some(false),
-            opencode_button_visible: Some(true),
-            pi_button_visible: Some(false),
-            hermes_agent_button_visible: Some(false),
-            grok_button_visible: Some(false),
-            cursor_button_visible: Some(false),
-            gemini_button_visible: Some(false),
-            kiro_button_visible: Some(false),
-            amp_button_visible: Some(true),
-            ..Default::default()
-        };
+        let cfg: paneflow_config::schema::PaneFlowConfig =
+            serde_json::from_value(serde_json::json!({
+                "claude_code_button_visible": true,
+                "codex_button_visible": false,
+                "opencode_button_visible": true,
+                "pi_button_visible": false,
+                "hermes_agent_button_visible": false,
+                "grok_button_visible": false,
+                "cursor_button_visible": false,
+                "gemini_button_visible": false,
+                "kiro_button_visible": false,
+                "amp_button_visible": true,
+            }))
+            .unwrap();
 
         assert_eq!(
             enabled_session_agents_from_config(&cfg),
-            vec![SessionAgent::Claude, SessionAgent::OpenCode],
+            vec![
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode
+                ),
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::Opencode
+                )
+            ],
             "visible agents without session readers must not create sidebar groups"
         );
     }
@@ -840,7 +901,9 @@ mod tests {
 
     fn meta(id: &str, ts: &str) -> SessionMeta {
         SessionMeta {
-            agent: SessionAgent::Claude,
+            agent: crate::agent_sessions::session_agent_of(
+                crate::agent_launcher::TerminalAgent::ClaudeCode,
+            ),
             session_id: id.into(),
             timestamp: ts.into(),
             cwd: "/repo".into(),

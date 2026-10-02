@@ -961,7 +961,7 @@ mod tests {
 
     #[test]
     fn agent_index_is_stable() {
-        for (idx, agent) in SessionAgent::ALL.into_iter().enumerate() {
+        for (idx, agent) in SessionAgent::all().enumerate() {
             assert_eq!(agent_index(agent), idx);
         }
     }
@@ -969,7 +969,7 @@ mod tests {
     #[test]
     fn resume_command_neutralizes_flag_shaped_session_id() {
         let cfg = paneflow_config::schema::PaneFlowConfig::default();
-        for agent in SessionAgent::ALL {
+        for agent in SessionAgent::all() {
             assert_eq!(
                 resume_command(agent, "--dangerously-skip-permissions", &cfg),
                 None,
@@ -979,15 +979,16 @@ mod tests {
             assert_eq!(resume_command(agent, "ses_x; rm -rf ~", &cfg), None);
             assert_eq!(resume_command(agent, "$(reboot)", &cfg), None);
         }
-        for agent in SessionAgent::ALL {
+        for agent in SessionAgent::all() {
             assert!(resume_command(agent, valid_session_id(agent), &cfg).is_some());
         }
     }
 
     fn valid_session_id(agent: SessionAgent) -> &'static str {
-        match agent {
-            SessionAgent::OpenCode => "ses_1f80d49aeffeaKV4Lq4mc0c3cu",
-            _ => "019dc9ea-38d7-7372-9cc4-253ce944d41b",
+        if agent.reader() == paneflow_agent_config::RuntimeSessionReader::OpenCode {
+            "ses_1f80d49aeffeaKV4Lq4mc0c3cu"
+        } else {
+            "019dc9ea-38d7-7372-9cc4-253ce944d41b"
         }
     }
 
@@ -998,18 +999,46 @@ mod tests {
         let ses = "ses_1f80d49aeffeaKV4Lq4mc0c3cu";
 
         let cases = [
-            (SessionAgent::Claude, id, format!("claude --resume {id}")),
-            (SessionAgent::Codex, id, format!("codex resume {id}")),
             (
-                SessionAgent::OpenCode,
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode,
+                ),
+                id,
+                format!("claude --resume {id}"),
+            ),
+            (
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::Codex,
+                ),
+                id,
+                format!("codex resume {id}"),
+            ),
+            (
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::Opencode,
+                ),
                 ses,
                 format!("opencode --session {ses}"),
             ),
-            (SessionAgent::Pi, id, format!("pi --session {id}")),
-            (SessionAgent::Grok, id, format!("grok --resume {id}")),
-            (SessionAgent::Gemini, id, format!("gemini --resume {id}")),
             (
-                SessionAgent::Kiro,
+                crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Pi),
+                id,
+                format!("pi --session {id}"),
+            ),
+            (
+                crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
+                id,
+                format!("grok --resume {id}"),
+            ),
+            (
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::Gemini,
+                ),
+                id,
+                format!("gemini --resume {id}"),
+            ),
+            (
+                crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
                 id,
                 format!("kiro-cli chat --resume-id {id}"),
             ),
@@ -1017,7 +1046,7 @@ mod tests {
 
         assert_eq!(
             cases.iter().map(|(agent, _, _)| *agent).collect::<Vec<_>>(),
-            SessionAgent::ALL.to_vec(),
+            SessionAgent::all().collect::<Vec<_>>(),
             "the table written before the catalog migration covers every session agent"
         );
         for (agent, session_id, expected) in cases {
@@ -1034,7 +1063,13 @@ mod tests {
         let id = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
 
         assert_eq!(
-            resume_command(SessionAgent::Claude, id, &cfg),
+            resume_command(
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode
+                ),
+                id,
+                &cfg
+            ),
             Some(format!(
                 "claude --resume {id} --permission-mode bypassPermissions"
             ))

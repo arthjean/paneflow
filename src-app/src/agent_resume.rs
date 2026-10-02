@@ -121,7 +121,7 @@ mod tests {
             None
         );
         assert!(can_fork(TerminalAgent::ClaudeCode));
-        assert!(!can_fork(TerminalAgent::OpenCode));
+        assert!(!can_fork(TerminalAgent::Opencode));
         assert!(!can_fork(TerminalAgent::Amp));
     }
 
@@ -129,10 +129,10 @@ mod tests {
     fn the_runtime_pattern_applies_on_top_of_the_generic_session_id_check() {
         assert!(accepts_session_id(TerminalAgent::ClaudeCode, UUID));
         assert!(!accepts_session_id(TerminalAgent::ClaudeCode, "ses_abc"));
-        assert!(accepts_session_id(TerminalAgent::OpenCode, "ses_abc"));
-        assert!(!accepts_session_id(TerminalAgent::OpenCode, UUID));
+        assert!(accepts_session_id(TerminalAgent::Opencode, "ses_abc"));
+        assert!(!accepts_session_id(TerminalAgent::Opencode, UUID));
         assert!(!accepts_session_id(TerminalAgent::Amp, UUID));
-        for agent in [TerminalAgent::Gemini, TerminalAgent::OpenCode] {
+        for agent in [TerminalAgent::Gemini, TerminalAgent::Opencode] {
             assert!(!accepts_session_id(agent, "--dangerously-skip-permissions"));
         }
     }

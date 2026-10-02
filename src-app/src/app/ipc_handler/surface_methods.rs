@@ -1437,7 +1437,7 @@ mod tests {
         );
         assert_eq!(
             agent_from_command("'/opt/OpenCode/opencode' run"),
-            Some(TerminalAgent::OpenCode)
+            Some(TerminalAgent::Opencode)
         );
         assert_eq!(agent_from_command("bash -lc claude"), None);
     }
@@ -1823,7 +1823,7 @@ mod tests {
         );
         let mut detected = HashSet::new();
         detected.insert(TerminalAgent::ClaudeCode.binary().to_string());
-        detected.insert(TerminalAgent::Copilot.binary().to_string());
+        detected.insert(TerminalAgent::GithubCopilot.binary().to_string());
         let fleets = [WsFleet {
             idx: 0,
             sessions: &sessions,

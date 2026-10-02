@@ -279,6 +279,7 @@ impl UpdateCheckTrigger {
 
 pub fn spawn_check(
     telemetry: std::sync::Arc<crate::telemetry::client::TelemetryClient>,
+    wake: crate::app::wake::AppWake,
 ) -> (SharedUpdateSlot, UpdateCheckTrigger) {
     let slot: SharedUpdateSlot =
         std::sync::Arc::new(std::sync::Mutex::new(Some(UpdateStatus::Checking)));
@@ -290,6 +291,7 @@ pub fn spawn_check(
             let status = check_github_release(&telemetry);
             let next_check = recheck_delay(&status);
             *writer.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
+            wake.notify();
             wait_for_next_check(&requests, next_check);
         }
     });

@@ -3,34 +3,17 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use paneflow_agent_config::{
-    RUNTIMES, Runtime, runtime_by_command_alias, runtime_by_id, runtime_by_preset_id,
+    RUNTIMES, Runtime, launcher_runtimes, runtime_by_command_alias, runtime_by_id,
+    runtime_by_preset_id,
 };
 use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TerminalAgent(&'static str);
 
-#[allow(non_upper_case_globals)]
-impl TerminalAgent {
-    pub const ClaudeCode: TerminalAgent = TerminalAgent("com.anthropic.claude-code");
-    pub const Codex: TerminalAgent = TerminalAgent("com.openai.codex");
-    pub const OpenCode: TerminalAgent = TerminalAgent("ai.opencode.cli");
-    pub const Pi: TerminalAgent = TerminalAgent("dev.mariozechner.pi");
-    pub const Hermes: TerminalAgent = TerminalAgent("ai.hermes.agent");
-    pub const Grok: TerminalAgent = TerminalAgent("ai.x.grok-cli");
-    pub const Amp: TerminalAgent = TerminalAgent("com.sourcegraph.amp");
-    pub const Cursor: TerminalAgent = TerminalAgent("com.cursor.agent");
-    pub const Gemini: TerminalAgent = TerminalAgent("com.google.gemini-cli");
-    pub const Kiro: TerminalAgent = TerminalAgent("com.amazon.kiro-cli");
-    pub const Antigravity: TerminalAgent = TerminalAgent("com.google.antigravity-cli");
-    pub const Copilot: TerminalAgent = TerminalAgent("com.github.copilot-cli");
-    pub const CodeBuddy: TerminalAgent = TerminalAgent("com.tencent.codebuddy");
-    pub const Factory: TerminalAgent = TerminalAgent("com.factory.droid");
-    pub const Qoder: TerminalAgent = TerminalAgent("com.alibaba.qoder-cli");
-    pub const Openclaw: TerminalAgent = TerminalAgent("ai.openclaw.cli");
-    pub const DeepSeekHarness: TerminalAgent = TerminalAgent("ai.deepseek.harness");
-    pub const Muse: TerminalAgent = TerminalAgent("com.muse.code");
+paneflow_agent_config::runtime_identity_constants!(TerminalAgent);
 
+impl TerminalAgent {
     pub fn all() -> impl Iterator<Item = TerminalAgent> {
         RUNTIMES.iter().map(|runtime| TerminalAgent(runtime.id))
     }
@@ -119,28 +102,9 @@ impl TerminalAgent {
     }
 
     pub fn is_visible(self, config: &PaneFlowConfig) -> bool {
-        let explicit: Option<bool> = match self {
-            TerminalAgent::ClaudeCode => config.claude_code_button_visible,
-            TerminalAgent::Codex => config.codex_button_visible,
-            TerminalAgent::OpenCode => config.opencode_button_visible,
-            TerminalAgent::Pi => config.pi_button_visible,
-            TerminalAgent::Hermes => config.hermes_agent_button_visible,
-            TerminalAgent::Grok => config.grok_button_visible,
-            TerminalAgent::Amp => config.amp_button_visible,
-            TerminalAgent::Cursor => config.cursor_button_visible,
-            TerminalAgent::Gemini => config.gemini_button_visible,
-            TerminalAgent::Kiro => config.kiro_button_visible,
-            TerminalAgent::Antigravity => config.antigravity_button_visible,
-            TerminalAgent::Copilot => config.copilot_button_visible,
-            TerminalAgent::CodeBuddy => config.codebuddy_button_visible,
-            TerminalAgent::Factory => config.factory_button_visible,
-            TerminalAgent::Qoder => config.qoder_button_visible,
-            TerminalAgent::Openclaw => config.openclaw_button_visible,
-            TerminalAgent::DeepSeekHarness => config.deepseek_harness_button_visible,
-            TerminalAgent::Muse => config.muse_button_visible,
-            _ => None,
-        };
-        explicit.unwrap_or_else(|| self.is_installed())
+        config
+            .agent_button_visible(self.visibility_config_key())
+            .unwrap_or_else(|| self.is_installed())
     }
 
     pub fn binary(self) -> &'static str {
@@ -182,17 +146,7 @@ impl TerminalAgent {
     }
 
     pub fn session_agent(self) -> Option<crate::agent_sessions::SessionAgent> {
-        use crate::agent_sessions::SessionAgent;
-        match self {
-            TerminalAgent::ClaudeCode => Some(SessionAgent::Claude),
-            TerminalAgent::Codex => Some(SessionAgent::Codex),
-            TerminalAgent::OpenCode => Some(SessionAgent::OpenCode),
-            TerminalAgent::Pi => Some(SessionAgent::Pi),
-            TerminalAgent::Grok => Some(SessionAgent::Grok),
-            TerminalAgent::Gemini => Some(SessionAgent::Gemini),
-            TerminalAgent::Kiro => Some(SessionAgent::Kiro),
-            _ => None,
-        }
+        crate::agent_sessions::SessionAgent::of(self)
     }
 
     pub fn launch_command(self, config: &PaneFlowConfig) -> String {
@@ -200,9 +154,13 @@ impl TerminalAgent {
     }
 
     pub fn visible(config: &PaneFlowConfig) -> Vec<TerminalAgent> {
-        TerminalAgent::all()
-            .filter(|agent| agent.is_visible(config))
-            .collect()
+        launcher_runtimes(
+            |key| config.agent_button_visible(key),
+            |runtime| installed_binaries_contains(runtime.detection.command_aliases[0]),
+        )
+        .into_iter()
+        .map(|runtime| TerminalAgent(runtime.id))
+        .collect()
     }
 
     pub fn supports_current_platform(self) -> bool {
@@ -684,16 +642,12 @@ mod tests {
 
     #[test]
     fn explicit_visibility_overrides_install_detection() {
-        let shown = PaneFlowConfig {
-            gemini_button_visible: Some(true),
-            ..Default::default()
-        };
+        let shown: PaneFlowConfig =
+            serde_json::from_value(serde_json::json!({ "gemini_button_visible": true })).unwrap();
         assert!(TerminalAgent::Gemini.is_visible(&shown));
 
-        let hidden = PaneFlowConfig {
-            gemini_button_visible: Some(false),
-            ..Default::default()
-        };
+        let hidden: PaneFlowConfig =
+            serde_json::from_value(serde_json::json!({ "gemini_button_visible": false })).unwrap();
         assert!(!TerminalAgent::Gemini.is_visible(&hidden));
     }
 
@@ -782,44 +736,98 @@ mod tests {
     const SAMPLE_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
     #[test]
-    fn session_agent_maps_only_readable_stores() {
-        use crate::agent_sessions::SessionAgent;
+    fn catalog_tables_match_the_pre_catalog_reference() {
+        let reference: [(&str, &str, Option<&str>); 18] = [
+            (
+                "com.anthropic.claude-code",
+                "claude_code_button_visible",
+                Some("claude"),
+            ),
+            ("com.openai.codex", "codex_button_visible", Some("codex")),
+            (
+                "ai.opencode.cli",
+                "opencode_button_visible",
+                Some("opencode"),
+            ),
+            ("dev.mariozechner.pi", "pi_button_visible", Some("pi")),
+            ("ai.hermes.agent", "hermes_agent_button_visible", None),
+            ("ai.x.grok-cli", "grok_button_visible", Some("grok")),
+            ("com.sourcegraph.amp", "amp_button_visible", None),
+            ("com.cursor.agent", "cursor_button_visible", None),
+            (
+                "com.google.gemini-cli",
+                "gemini_button_visible",
+                Some("gemini"),
+            ),
+            ("com.amazon.kiro-cli", "kiro_button_visible", Some("kiro")),
+            (
+                "com.google.antigravity-cli",
+                "antigravity_button_visible",
+                None,
+            ),
+            ("com.github.copilot-cli", "copilot_button_visible", None),
+            ("com.tencent.codebuddy", "codebuddy_button_visible", None),
+            ("com.factory.droid", "factory_button_visible", None),
+            ("com.alibaba.qoder-cli", "qoder_button_visible", None),
+            ("ai.openclaw.cli", "openclaw_button_visible", None),
+            (
+                "ai.deepseek.harness",
+                "deepseek_harness_button_visible",
+                None,
+            ),
+            ("com.muse.code", "muse_button_visible", None),
+        ];
+        let generated = TerminalAgent::all()
+            .map(|agent| {
+                (
+                    agent.runtime().id,
+                    agent.visibility_config_key(),
+                    agent.session_agent().map(|session| session.reader().name()),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(generated, reference);
+
+        let everything_visible: PaneFlowConfig = serde_json::from_value(serde_json::Value::Object(
+            reference
+                .iter()
+                .map(|(_, key, _)| (key.to_string(), serde_json::Value::Bool(true)))
+                .collect(),
+        ))
+        .unwrap();
         assert_eq!(
-            TerminalAgent::ClaudeCode.session_agent(),
-            Some(SessionAgent::Claude)
+            TerminalAgent::visible(&everything_visible)
+                .into_iter()
+                .map(|agent| agent.runtime().id)
+                .collect::<Vec<_>>(),
+            reference.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+            "launcher order"
         );
         assert_eq!(
-            TerminalAgent::Codex.session_agent(),
-            Some(SessionAgent::Codex)
+            crate::agent_sessions::SessionAgent::all()
+                .map(|session| session.terminal_agent().runtime().id)
+                .collect::<Vec<_>>(),
+            [
+                "com.anthropic.claude-code",
+                "com.openai.codex",
+                "ai.opencode.cli",
+                "dev.mariozechner.pi",
+                "ai.x.grok-cli",
+                "com.google.gemini-cli",
+                "com.amazon.kiro-cli",
+            ],
+            "session sidebar groups keep the order of the former SessionAgent enum"
         );
         assert_eq!(
-            TerminalAgent::OpenCode.session_agent(),
-            Some(SessionAgent::OpenCode)
+            crate::auto_naming::summarizers().collect::<Vec<_>>(),
+            [
+                TerminalAgent::ClaudeCode,
+                TerminalAgent::Codex,
+                TerminalAgent::Opencode,
+                TerminalAgent::Pi,
+            ],
+            "summarizer order"
         );
-        assert_eq!(TerminalAgent::Pi.session_agent(), Some(SessionAgent::Pi));
-        assert_eq!(TerminalAgent::Hermes.session_agent(), None);
-        assert_eq!(
-            TerminalAgent::Grok.session_agent(),
-            Some(SessionAgent::Grok)
-        );
-        assert_eq!(TerminalAgent::Cursor.session_agent(), None);
-        assert_eq!(
-            TerminalAgent::Gemini.session_agent(),
-            Some(SessionAgent::Gemini)
-        );
-        assert_eq!(
-            TerminalAgent::Kiro.session_agent(),
-            Some(SessionAgent::Kiro)
-        );
-        assert_eq!(TerminalAgent::Amp.session_agent(), None);
-        assert_eq!(TerminalAgent::Antigravity.session_agent(), None);
-        assert_eq!(TerminalAgent::Copilot.session_agent(), None);
-        assert_eq!(TerminalAgent::CodeBuddy.session_agent(), None);
-        assert_eq!(TerminalAgent::Factory.session_agent(), None);
-        assert_eq!(TerminalAgent::Qoder.session_agent(), None);
-        assert_eq!(TerminalAgent::Openclaw.session_agent(), None);
-        assert_eq!(TerminalAgent::DeepSeekHarness.session_agent(), None);
-        assert_eq!(TerminalAgent::Muse.session_agent(), None);
     }
 
     #[test]
@@ -828,10 +836,10 @@ mod tests {
         assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
         assert_eq!(
-            TerminalAgent::DeepSeekHarness.command(&cfg),
+            TerminalAgent::DeepseekHarness.command(&cfg),
             "dsh --profile tui"
         );
-        assert_eq!(TerminalAgent::Muse.command(&cfg), "muse");
+        assert_eq!(TerminalAgent::MuseCode.command(&cfg), "muse");
     }
 
     fn profile_entry(name: &str, agent: &str) -> AgentProfileConfig {

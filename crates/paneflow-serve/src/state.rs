@@ -117,6 +117,7 @@ pub struct SessionEntry {
     pub screen_activity: Option<String>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
+    pub foreground_runtime: Option<&'static str>,
     pub bell_at_ms: Option<u64>,
     pub input_at_ms: Option<u64>,
     bell_seen_at_ms: u64,
@@ -133,6 +134,9 @@ const BELL_OUTPUT_GRACE_MS: u64 = 1_000;
 impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
         let launch_hook_capable = command_is_hook_capable(&manifest.launch.shell);
+        let observed_runtime = manifest
+            .runtime
+            .and_then(|runtime| runtime.current_observation);
         let mut entry = Self {
             hook_revision: 0,
             session: manifest.session,
@@ -159,9 +163,8 @@ impl SessionEntry {
             output_changed_at_ms: None,
             screen_activity: manifest.screen_activity,
             menu_prompt_active: manifest.menu_prompt_active,
-            observed_runtime: manifest
-                .runtime
-                .and_then(|runtime| runtime.current_observation),
+            foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
+            observed_runtime,
             bell_at_ms: None,
             input_at_ms: None,
             bell_seen_at_ms: 0,
@@ -302,6 +305,7 @@ impl SessionEntry {
             "activity_source": self.activity_source.wire_str(),
             "outcome": self.outcome,
             "runtime_id": self.runtime().map(|runtime| runtime.id),
+            "foreground_runtime_id": self.foreground_runtime,
             "menu_prompt_active": self.menu_prompt_active,
             "attention_reason": (self.status == Status::Attention && self.bell_attention_since.is_some())
                 .then_some(ATTENTION_REASON_BELL),
@@ -458,9 +462,27 @@ impl WorkerState {
     }
 
     pub fn apply_core_snapshot(&mut self, entries: &[Value]) -> Vec<Projection> {
+        self.apply_core_rows(entries, true)
+    }
+
+    pub fn apply_core_session(&mut self, entry: &Value) -> Vec<Projection> {
+        self.apply_core_rows(std::slice::from_ref(entry), false)
+    }
+
+    pub fn forget_core_session(&mut self, session: &SessionId) -> bool {
+        if self.sessions.remove(session).is_none() {
+            return false;
+        }
+        let kept = self.sessions.keys().cloned().collect::<BTreeSet<_>>();
+        self.engine.retain_sessions(&kept);
+        true
+    }
+
+    fn apply_core_rows(&mut self, entries: &[Value], prune: bool) -> Vec<Projection> {
         let mut seen = BTreeSet::new();
         let mut discovered = BTreeSet::new();
         let mut recovered = BTreeMap::new();
+        let mut foreground_moved = BTreeSet::new();
         for raw in entries {
             let Some(session) = raw["session"]
                 .as_str()
@@ -480,6 +502,7 @@ impl WorkerState {
             if held.is_none() {
                 discovered.insert(session.clone());
             }
+            let foreground_before = held.as_ref().and_then(|entry| entry.foreground_runtime);
             let mut entry = merge_core_row(session.clone(), raw, held);
             entry.refresh_health();
             self.sessions.insert(entry.session.clone(), entry);
@@ -490,9 +513,18 @@ impl WorkerState {
                     recovered.insert(session.clone(), projection);
                 }
             }
+            let foreground_after = self
+                .sessions
+                .get(&session)
+                .and_then(|entry| entry.foreground_runtime);
+            if foreground_after != foreground_before {
+                foreground_moved.insert(session.clone());
+            }
         }
-        self.sessions.retain(|session, _| seen.contains(session));
-        self.engine.retain_sessions(&seen);
+        if prune {
+            self.sessions.retain(|session, _| seen.contains(session));
+            self.engine.retain_sessions(&seen);
+        }
         self.reconcile_adopted_activity();
         let now = SystemTime::now();
         seen.into_iter()
@@ -505,7 +537,8 @@ impl WorkerState {
                 }
                 let announce = (projection.changed
                     && (recovered_event || !discovered.contains(&session)))
-                    || projection.notification.is_some();
+                    || projection.notification.is_some()
+                    || foreground_moved.contains(&session);
                 announce.then_some(projection)
             })
             .collect()
@@ -944,6 +977,12 @@ fn payload_has_background_tasks(payload: &Value) -> bool {
     }
 }
 
+fn foreground_runtime_id(observation: Option<&RuntimeObservation>) -> Option<&'static str> {
+    observation
+        .and_then(RuntimeObservation::runtime)
+        .map(|runtime| runtime.id)
+}
+
 fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -> SessionEntry {
     let generation =
         serde_json::from_value(raw["generation"].clone()).unwrap_or(SessionGeneration::FIRST);
@@ -979,6 +1018,10 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         (Some(_), None) => (0, None),
         (None, None) => (bell_at_ms.unwrap_or_default(), None),
     };
+    let current_observation: Option<RuntimeObservation> =
+        serde_json::from_value(raw["observed_runtime"].clone())
+            .ok()
+            .flatten();
     SessionEntry {
         hook_revision: held
             .as_ref()
@@ -1030,13 +1073,11 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         output_changed_at_ms: raw["output_changed_at_ms"].as_u64(),
         screen_activity: raw["screen_activity"].as_str().map(str::to_owned),
         menu_prompt_active: raw["menu_prompt_active"].as_bool().unwrap_or_default(),
-        observed_runtime: serde_json::from_value(raw["observed_runtime"].clone())
-            .ok()
-            .flatten()
-            .or_else(|| {
-                held.as_ref()
-                    .and_then(|entry| entry.observed_runtime.clone())
-            }),
+        foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
+        observed_runtime: current_observation.or_else(|| {
+            held.as_ref()
+                .and_then(|entry| entry.observed_runtime.clone())
+        }),
         bell_at_ms,
         input_at_ms: raw["input_at_ms"].as_u64(),
         bell_seen_at_ms,
@@ -2544,6 +2585,44 @@ mod tests {
         let mut state = running_state(home, session);
         state.apply_core_snapshot(&[bell_row(session, runtime_id, 0)]);
         state
+    }
+
+    #[test]
+    fn a_runtime_observed_without_any_activity_is_announced_once_and_again_when_it_leaves() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.apply_core_snapshot(&[bell_row(&session, None, 0)]);
+
+        let observed =
+            state.apply_core_session(&bell_row(&session, Some("com.sourcegraph.amp"), 0));
+        let projection = observed
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the observed runtime reaches the desktop");
+        assert_eq!(
+            projection.session["foreground_runtime_id"],
+            "com.sourcegraph.amp"
+        );
+        assert_eq!(projection.session["activity"], Value::Null);
+
+        assert!(
+            state
+                .apply_core_session(&bell_row(&session, Some("com.sourcegraph.amp"), 0))
+                .is_empty(),
+            "an unchanged observation is not announced again"
+        );
+
+        let left = state.apply_core_session(&bell_row(&session, None, 0));
+        let projection = left
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the agent leaving reaches the desktop");
+        assert_eq!(projection.session["foreground_runtime_id"], Value::Null);
+        assert_eq!(
+            projection.session["runtime_id"], "com.sourcegraph.amp",
+            "the latched runtime keeps its rules while only the foreground leaves"
+        );
     }
 
     #[test]

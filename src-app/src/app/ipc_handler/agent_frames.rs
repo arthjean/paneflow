@@ -523,7 +523,7 @@ mod tests {
         for tool in [
             TerminalAgent::Codex,
             TerminalAgent::Pi,
-            TerminalAgent::OpenCode,
+            TerminalAgent::Opencode,
             TerminalAgent::Gemini,
         ] {
             assert!(

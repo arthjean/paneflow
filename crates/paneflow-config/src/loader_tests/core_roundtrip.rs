@@ -1,6 +1,6 @@
 use super::super::*;
 use crate::schema::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[test]
 fn test_serialization_roundtrip() {
@@ -49,24 +49,7 @@ fn test_serialization_roundtrip() {
         menu_attention_detection: None,
         on_quit: None,
         sidebar_ended_sessions: None,
-        claude_code_button_visible: None,
-        codex_button_visible: None,
-        opencode_button_visible: None,
-        pi_button_visible: None,
-        hermes_agent_button_visible: None,
-        grok_button_visible: None,
-        amp_button_visible: None,
-        cursor_button_visible: None,
-        gemini_button_visible: None,
-        kiro_button_visible: None,
-        antigravity_button_visible: None,
-        copilot_button_visible: None,
-        codebuddy_button_visible: None,
-        factory_button_visible: None,
-        qoder_button_visible: None,
-        openclaw_button_visible: None,
-        deepseek_harness_button_visible: None,
-        muse_button_visible: None,
+        agent_button_visibility: BTreeMap::new(),
         telemetry: None,
         terminal: None,
         agent_panel: None,
@@ -312,4 +295,34 @@ fn test_resolved_ratios_fallback_equal() {
     for r in &rs {
         assert!((r - 1.0 / 3.0).abs() < f64::EPSILON);
     }
+}
+
+#[test]
+fn agent_button_visibility_reads_any_catalog_key_and_ignores_other_values() {
+    let config = crate::loader::try_parse_and_validate(
+        r#"{
+            "$schema": "https://example.invalid/schema.json",
+            "codex_button_visible": false,
+            "alpha_button_visible": true,
+            "beta_button_visible": "yes",
+            "gamma_button_visible": null,
+            "font_size": 14
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        config.agent_button_visible("codex_button_visible"),
+        Some(false)
+    );
+    assert_eq!(
+        config.agent_button_visible("alpha_button_visible"),
+        Some(true)
+    );
+    assert_eq!(config.agent_button_visible("beta_button_visible"), None);
+    assert_eq!(config.agent_button_visible("gamma_button_visible"), None);
+    assert_eq!(config.agent_button_visibility.len(), 2);
+    assert_eq!(config.font_size, Some(14.0));
+    let reloaded =
+        crate::loader::try_parse_and_validate(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(reloaded, config);
 }

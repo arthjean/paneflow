@@ -69,11 +69,26 @@ pub struct RuntimeScreen {
     pub idle_prompt: &'static [&'static str],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMcpConfig {
+    Claude,
+    Codex,
+    Gemini,
+    OpenCode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSkillsDir {
+    Claude,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeIntegration {
     pub summary: &'static str,
     pub post_install_step: Option<&'static str>,
     pub hook_adapter: RuntimeHookAdapter,
+    pub mcp_config: Option<RuntimeMcpConfig>,
+    pub skills_dir: Option<RuntimeSkillsDir>,
 }
 
 pub const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
@@ -85,6 +100,40 @@ pub struct RuntimeResume {
     pub fork_argv: Option<&'static [&'static str]>,
     pub session_id_pattern: &'static str,
     pub failure_markers: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeSessionReader {
+    Claude,
+    Codex,
+    OpenCode,
+    Pi,
+    Gemini,
+    Kiro,
+    Grok,
+}
+
+impl RuntimeSessionReader {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::OpenCode => "opencode",
+            Self::Pi => "pi",
+            Self::Gemini => "gemini",
+            Self::Kiro => "kiro",
+            Self::Grok => "grok",
+        }
+    }
+
+    pub fn summarizes(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex | Self::OpenCode | Self::Pi)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeSessions {
+    pub reader: RuntimeSessionReader,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,6 +154,7 @@ pub struct Runtime {
     pub lifecycle: RuntimeLifecycle,
     pub screen: Option<RuntimeScreen>,
     pub integration: RuntimeIntegration,
+    pub sessions: Option<RuntimeSessions>,
     pub suggested_presets: &'static [RuntimeSuggestedPreset],
 }
 
@@ -121,6 +171,27 @@ impl Runtime {
         };
         self.platforms.contains(&platform)
     }
+}
+
+pub fn launcher_runtimes(
+    explicit_visibility: impl Fn(&str) -> Option<bool>,
+    installed: impl Fn(&Runtime) -> bool,
+) -> Vec<&'static Runtime> {
+    let mut runtimes = RUNTIMES
+        .iter()
+        .filter(|runtime| {
+            explicit_visibility(runtime.display.visibility_config_key)
+                .unwrap_or_else(|| installed(runtime))
+        })
+        .collect::<Vec<_>>();
+    runtimes.sort_by_key(|runtime| runtime.display.order);
+    runtimes
+}
+
+pub fn visibility_config_keys() -> impl Iterator<Item = &'static str> {
+    RUNTIMES
+        .iter()
+        .map(|runtime| runtime.display.visibility_config_key)
 }
 
 pub fn runtime_by_id(id: &str) -> Option<&'static Runtime> {

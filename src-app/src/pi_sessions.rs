@@ -17,18 +17,26 @@ pub(crate) fn sessions_root() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".pi").join("agent").join("sessions"))
 }
 
-pub(crate) fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub(crate) fn read_sessions_for_cwd_with_omitted(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let Some(root) = sessions_root() else {
         return (Vec::new(), 0);
     };
-    read_sessions_under_root(&root, cwd)
+    read_sessions_under_root(agent, &root, cwd)
 }
 
-fn read_sessions_under_root(root: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) {
-    read_sessions_within(root, cwd, MAX_WALK_ENTRIES, MAX_DISCOVERY_BYTES)
+fn read_sessions_under_root(
+    agent: SessionAgent,
+    root: &Path,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
+    read_sessions_within(agent, root, cwd, MAX_WALK_ENTRIES, MAX_DISCOVERY_BYTES)
 }
 
 fn read_sessions_within(
+    agent: SessionAgent,
     root: &Path,
     cwd: &str,
     max_entries: usize,
@@ -41,7 +49,7 @@ fn read_sessions_within(
     let mut budget = max_bytes;
     let sessions = paths
         .iter()
-        .map_while(|path| (budget > 0).then(|| read_session_meta(path, &mut budget)))
+        .map_while(|path| (budget > 0).then(|| read_session_meta(agent, path, &mut budget)))
         .flatten()
         .filter(|meta| crate::agent_sessions::cwd_matches(&meta.cwd, cwd));
     crate::agent_sessions::collect_recent_sessions(
@@ -87,7 +95,7 @@ fn jsonl_files(root: &Path, max_entries: usize) -> Vec<PathBuf> {
     out.into_iter().map(|(_, path)| path).collect()
 }
 
-fn read_session_meta(path: &Path, budget: &mut u64) -> Option<SessionMeta> {
+fn read_session_meta(agent: SessionAgent, path: &Path, budget: &mut u64) -> Option<SessionMeta> {
     let mut reader = BufReader::new(crate::agent_sessions::open_session_file(path)?);
     let mut header: Option<PiHeader> = None;
     let mut summary: Option<String> = None;
@@ -134,7 +142,7 @@ fn read_session_meta(path: &Path, budget: &mut u64) -> Option<SessionMeta> {
 
     let header = header?;
     Some(SessionMeta {
-        agent: SessionAgent::Pi,
+        agent,
         session_id: header.id,
         timestamp: header.timestamp,
         cwd: header.cwd,
@@ -215,6 +223,10 @@ fn content_to_string(value: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    fn pi() -> SessionAgent {
+        crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Pi)
+    }
+
     use super::*;
 
     #[test]
@@ -233,15 +245,22 @@ mod tests {
         )
         .unwrap();
 
-        let (sessions, omitted) = read_sessions_under_root(dir.path(), "/repo");
+        let (sessions, omitted) = read_sessions_under_root(pi(), dir.path(), "/repo");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].agent, SessionAgent::Pi);
+        assert_eq!(
+            sessions[0].agent,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Pi)
+        );
         assert_eq!(
             sessions[0].summary.as_deref(),
             Some("Ship the sidebar sessions")
         );
-        assert!(read_sessions_under_root(dir.path(), "/other").0.is_empty());
+        assert!(
+            read_sessions_under_root(pi(), dir.path(), "/other")
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -262,7 +281,7 @@ mod tests {
         )
         .unwrap();
 
-        let (sessions, omitted) = read_sessions_under_root(dir.path(), "/repo");
+        let (sessions, omitted) = read_sessions_under_root(pi(), dir.path(), "/repo");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].summary.as_deref(), Some("Still readable"));
@@ -293,7 +312,11 @@ mod tests {
             r#"{"type":"session","version":3,"id":"ses_x; rm -rf ~","timestamp":"2026-06-29T09:10:11Z","cwd":"/repo"}"#,
         )
         .unwrap();
-        assert!(read_sessions_under_root(dir.path(), "/repo").0.is_empty());
+        assert!(
+            read_sessions_under_root(pi(), dir.path(), "/repo")
+                .0
+                .is_empty()
+        );
     }
 
     const HEADER: &str = r#"{"type":"session","version":3,"id":"550e8400-e29b-41d4-a716-446655440000","timestamp":"2026-06-29T09:10:11Z","cwd":"/repo"}"#;
@@ -322,7 +345,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let (sessions, _) = read_sessions_under_root(dir.path(), "/repo");
+        let (sessions, _) = read_sessions_under_root(pi(), dir.path(), "/repo");
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].summary.as_deref(), Some("After the emoji"));
     }
@@ -340,7 +363,7 @@ mod tests {
         if fs::File::open(&locked).is_ok() {
             return;
         }
-        let (sessions, _) = read_sessions_under_root(dir.path(), "/repo");
+        let (sessions, _) = read_sessions_under_root(pi(), dir.path(), "/repo");
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].summary.as_deref(), Some("kept"));
     }
@@ -355,7 +378,7 @@ mod tests {
         assert_eq!(jsonl_files(dir.path(), 10).len(), 6);
 
         let one_file = fs::metadata(dir.path().join("0.jsonl")).unwrap().len();
-        let (sessions, omitted) = read_sessions_within(dir.path(), "/repo", 10, one_file * 2);
+        let (sessions, omitted) = read_sessions_within(pi(), dir.path(), "/repo", 10, one_file * 2);
         assert_eq!(
             sessions.len() + omitted,
             2,

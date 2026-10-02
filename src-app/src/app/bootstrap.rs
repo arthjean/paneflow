@@ -5,6 +5,8 @@ use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL
 use crate::window_chrome::title_bar;
 use crate::{FocusReturn, PaneFlowApp, ipc, keybindings, update};
 
+const SURFACE_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
 impl PaneFlowApp {
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
@@ -29,6 +31,9 @@ impl PaneFlowApp {
             .detach();
         let (ipc_rx, ipc_status, event_bus) = ipc::start_server();
         crate::startup_trace::mark("ipc_server_started");
+        let (app_wake, wake_rx) = super::wake::AppWake::channel();
+        Self::spawn_ipc_dispatch(ipc_rx, cx);
+        Self::spawn_surface_broadcast(event_bus.subscription_signal(), cx);
         cx.spawn(
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 smol::unblock(crate::agent_launcher::refresh_installed_binaries).await;
@@ -42,7 +47,7 @@ impl PaneFlowApp {
         crate::theme::install_theme_signal(cx);
         Self::spawn_cursor_blink(cx);
 
-        let (pending_config, running_config_watcher) = Self::start_config_watcher();
+        let (pending_config, running_config_watcher) = Self::start_config_watcher(app_wake.clone());
 
         let cached_config = paneflow_config::loader::load_config();
         crate::config_snapshot::publish(&cached_config, cx);
@@ -79,7 +84,7 @@ impl PaneFlowApp {
         let (git_watcher, git_event_rx, git_watch_counts) = Self::start_git_watcher(&workspaces);
 
         Self::spawn_git_event_refresh(cx);
-        Self::spawn_automation_tick(running_config_watcher, cx);
+        Self::spawn_wake_dispatch(wake_rx, running_config_watcher, cx);
         Self::spawn_git_poll(cx);
         Self::spawn_stale_pid_sweep(cx);
         Self::spawn_port_rescans(cx);
@@ -115,7 +120,7 @@ impl PaneFlowApp {
             );
         }
         let (pending_update, check_trigger) =
-            update::checker::spawn_check(std::sync::Arc::clone(&telemetry));
+            update::checker::spawn_check(std::sync::Arc::clone(&telemetry), app_wake.clone());
         Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
 
         #[cfg(target_os = "linux")]
@@ -233,7 +238,7 @@ impl PaneFlowApp {
             session_exit_pending: false,
             session_save_error_shown: false,
             cached_config,
-            ipc_rx,
+            app_wake,
             ipc_status,
             event_bus,
             last_broadcast_gen: std::collections::HashMap::new(),
@@ -487,7 +492,9 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn start_config_watcher() -> (
+    fn start_config_watcher(
+        wake: super::wake::AppWake,
+    ) -> (
         std::sync::Arc<std::sync::Mutex<Option<paneflow_config::schema::PaneFlowConfig>>>,
         Option<paneflow_config::watcher::RunningConfigWatcher>,
     ) {
@@ -500,6 +507,7 @@ impl PaneFlowApp {
                 *pending_config_writer
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(cfg);
+                wake.notify();
             }),
         )
         .and_then(|config_watcher| match config_watcher.start() {
@@ -512,7 +520,33 @@ impl PaneFlowApp {
         (pending_config, running_config_watcher)
     }
 
-    fn spawn_automation_tick(
+    fn spawn_ipc_dispatch(
+        requests: smol::channel::Receiver<crate::ipc::IpcRequest>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let end = super::ipc_handler::serve_ipc_requests(&requests, |batch| {
+                    cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.process_ipc_requests(batch, cx);
+                        })
+                    })
+                    .is_ok()
+                })
+                .await;
+                if end == super::ipc_handler::IpcServeEnd::Closed {
+                    log::error!(
+                        "paneflow: the IPC server stopped feeding requests; scripting and CLI requests are no longer served"
+                    );
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn spawn_wake_dispatch(
+        wake: smol::channel::Receiver<()>,
         running_config_watcher: Option<paneflow_config::watcher::RunningConfigWatcher>,
         cx: &mut Context<Self>,
     ) {
@@ -520,14 +554,49 @@ impl PaneFlowApp {
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let _config_watcher = running_config_watcher;
                 loop {
-                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
                     let result = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.process_automation_tick(cx);
+                            app.process_host_agent_frames(cx);
+                            app.process_config_changes(cx);
+                            app.process_update_check(cx);
                         })
                     });
-                    if result.is_err() {
+                    if result.is_err() || wake.recv().await.is_err() {
                         break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn spawn_surface_broadcast(subscribed: smol::channel::Receiver<()>, cx: &mut Context<Self>) {
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    let active = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, _: &mut Context<Self>| {
+                            app.event_bus.has_subscribers()
+                        })
+                    });
+                    match active {
+                        Ok(true) => {
+                            smol::Timer::after(SURFACE_BROADCAST_INTERVAL).await;
+                            let result = cx.update(|cx| {
+                                this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                                    app.broadcast_surface_changes(cx);
+                                })
+                            });
+                            if result.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(false) => {
+                            if subscribed.recv().await.is_err() {
+                                break;
+                            }
+                        }
+                        _ => break,
                     }
                 }
             },

@@ -8,10 +8,9 @@ pub fn helper_path(home: &std::path::Path, stem: &str) -> PathBuf {
     home.join("bin").join(format!("{stem}{EXE_SUFFIX}"))
 }
 
-pub fn resolve_binaries() -> Option<IntegrationBinaries> {
-    let home = paneflow_home::paneflow_home()?;
-    let hook_binary = helper_path(&home, "paneflow-ai-hook");
-    let bridge_binary = helper_path(&home, "paneflow-mcp");
+pub fn resolve_binaries(home: &std::path::Path) -> Option<IntegrationBinaries> {
+    let hook_binary = helper_path(home, "paneflow-ai-hook");
+    let bridge_binary = helper_path(home, "paneflow-mcp");
     if !hook_binary.is_file() || !bridge_binary.is_file() {
         return None;
     }
@@ -38,17 +37,33 @@ mod tests {
     }
 
     #[test]
-    fn a_home_with_no_staged_helpers_refuses_to_refresh_integrations() {
-        let home = tempfile::tempdir().unwrap();
+    fn the_refresh_resolves_helpers_in_the_home_it_was_given_not_the_process_home() {
+        let given = tempfile::tempdir().unwrap();
+        let process_home = tempfile::tempdir().unwrap();
+        for stem in ["paneflow-ai-hook", "paneflow-mcp"] {
+            let helper = helper_path(process_home.path(), stem);
+            std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
+            std::fs::write(&helper, b"helper").unwrap();
+        }
         let previous = std::env::var_os(paneflow_home::HOME_ENV);
-        unsafe { std::env::set_var(paneflow_home::HOME_ENV, home.path()) };
-        assert!(
-            resolve_binaries().is_none(),
-            "a refresh never runs against helpers that are not staged"
-        );
+        unsafe { std::env::set_var(paneflow_home::HOME_ENV, process_home.path()) };
+        let unstaged = resolve_binaries(given.path());
+        for stem in ["paneflow-ai-hook", "paneflow-mcp"] {
+            let helper = helper_path(given.path(), stem);
+            std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
+            std::fs::write(&helper, b"helper").unwrap();
+        }
+        let staged = resolve_binaries(given.path());
         match previous {
             Some(value) => unsafe { std::env::set_var(paneflow_home::HOME_ENV, value) },
             None => unsafe { std::env::remove_var(paneflow_home::HOME_ENV) },
         }
+        assert!(
+            unstaged.is_none(),
+            "the process home's helpers never stand in for the given home's"
+        );
+        let staged = staged.expect("the given home's helpers");
+        assert!(staged.hook_binary.starts_with(given.path()));
+        assert!(staged.bridge_binary.starts_with(given.path()));
     }
 }

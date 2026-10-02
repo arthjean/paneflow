@@ -101,6 +101,7 @@ struct Subscriber {
 pub struct EventBus {
     subscribers: Mutex<Vec<Subscriber>>,
     next_id: AtomicU64,
+    subscribed: (smol::channel::Sender<()>, smol::channel::Receiver<()>),
 }
 
 pub struct Subscription {
@@ -127,7 +128,12 @@ impl EventBus {
         Arc::new(Self {
             subscribers: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
+            subscribed: smol::channel::bounded(1),
         })
+    }
+
+    pub fn subscription_signal(&self) -> smol::channel::Receiver<()> {
+        self.subscribed.1.clone()
     }
 
     pub fn subscribe(self: &Arc<Self>, filter: EventFilter) -> Subscription {
@@ -142,6 +148,7 @@ impl EventBus {
                 dropped: Arc::clone(&dropped),
             });
         }
+        let _ = self.subscribed.0.try_send(());
         Subscription {
             id,
             rx,

@@ -93,11 +93,14 @@ fn run_setup(
             let _ = writeln!(out, "{}: not detected (skipped)", status.slug);
             continue;
         }
-        match integrations::install_integration(status.slug, binaries) {
+        match integrations::install_integration(status.slug, binaries, false) {
             Ok(installed) => {
                 let _ = writeln!(out, "{}: hooks installed", installed.slug);
                 if let Some(step) = installed.post_install_step {
                     let _ = writeln!(out, "{step}");
+                }
+                for note in &installed.notes {
+                    let _ = writeln!(err, "{note}");
                 }
             }
             Err(error) => {

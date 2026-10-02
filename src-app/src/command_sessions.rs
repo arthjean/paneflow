@@ -16,10 +16,13 @@ struct CommandSessionConfig {
     parse_line: fn(&str, SessionAgent, &str) -> Option<SessionMeta>,
 }
 
-pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub(crate) fn read_gemini_sessions_for_cwd(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     read_command_sessions(
         CommandSessionConfig {
-            agent: SessionAgent::Gemini,
+            agent,
             program: "gemini",
             args: &["--list-sessions"],
             parse_line: parse_gemini_line,
@@ -28,10 +31,13 @@ pub(crate) fn read_gemini_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usiz
     )
 }
 
-pub(crate) fn read_kiro_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub(crate) fn read_kiro_sessions_for_cwd(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     read_command_sessions(
         CommandSessionConfig {
-            agent: SessionAgent::Kiro,
+            agent,
             program: "kiro-cli",
             args: &["chat", "--list-sessions"],
             parse_line: parse_session_line,
@@ -40,10 +46,13 @@ pub(crate) fn read_kiro_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize)
     )
 }
 
-pub(crate) fn read_grok_sessions_for_cwd(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub(crate) fn read_grok_sessions_for_cwd(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     read_command_sessions(
         CommandSessionConfig {
-            agent: SessionAgent::Grok,
+            agent,
             program: "grok",
             args: &["sessions", "list", "--limit", "100"],
             parse_line: parse_session_line,
@@ -61,7 +70,7 @@ fn read_command_sessions(config: CommandSessionConfig, cwd: &str) -> (Vec<Sessio
         config.args,
         Some(cwd),
         COMMAND_STDOUT_CAP,
-        &format!("{:?}", config.agent),
+        config.agent.label(),
     ) else {
         return (Vec::new(), 0);
     };
@@ -383,22 +392,33 @@ mod tests {
     #[test]
     fn parse_command_sessions_extracts_uuid_from_a_listed_line() {
         let out = b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor auth flow\n";
-        let (sessions, omitted) =
-            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
+        let (sessions, omitted) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
+            "/repo",
+            parse_session_line,
+        );
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
             sessions[0].session_id,
             "550e8400-e29b-41d4-a716-446655440000"
         );
-        assert_eq!(sessions[0].agent, SessionAgent::Grok);
+        assert_eq!(
+            sessions[0].agent,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok)
+        );
     }
 
     #[test]
     fn parse_gemini_sessions_returns_only_the_trailing_bracketed_ids() {
         let out = b"\nAvailable sessions for this project (3):\n  1. Fix the flaky auth test (2 days ago) [5f0c2a7e-1b3d-4e8a-9c21-7d4b6e0f9a13]\n  2. [draft] Refactor the parser (3 hours ago) [a8e1d9b2-6c4f-4f1a-8b7e-2d9c0e5f4a61]\n  3. Update docs (Just now, current) [0d7e3f4a-9b2c-4a6e-b1d8-5f3c2e1a7b90]\n";
-        let (sessions, omitted) =
-            parse_command_sessions(out, SessionAgent::Gemini, "/repo", parse_gemini_line);
+        let (sessions, omitted) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Gemini),
+            "/repo",
+            parse_gemini_line,
+        );
         assert_eq!(omitted, 0);
         let ids: Vec<&str> = sessions
             .iter()
@@ -425,16 +445,24 @@ mod tests {
     #[test]
     fn parse_gemini_sessions_skips_lines_without_a_bracketed_id() {
         let out = b"No previous sessions found for this project.\n  1. Untitled (2 days ago)\n  2. Bad id (1 day ago) [--resume]\n";
-        let (sessions, _) =
-            parse_command_sessions(out, SessionAgent::Gemini, "/repo", parse_gemini_line);
+        let (sessions, _) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Gemini),
+            "/repo",
+            parse_gemini_line,
+        );
         assert!(sessions.is_empty(), "got {sessions:?}");
     }
 
     #[test]
     fn parse_command_sessions_accepts_short_explicit_session_id() {
         let out = b"Session ID: abc123\n";
-        let (sessions, _) =
-            parse_command_sessions(out, SessionAgent::Kiro, "/repo", parse_session_line);
+        let (sessions, _) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
+            "/repo",
+            parse_session_line,
+        );
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary, None);
@@ -444,8 +472,12 @@ mod tests {
     fn parse_command_sessions_does_not_pick_long_summary_word_as_id() {
         let out =
             b"550e8400-e29b-41d4-a716-446655440000 2026-06-29T09:10:11Z Refactor authentication\n";
-        let (sessions, omitted) =
-            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
+        let (sessions, omitted) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
+            "/repo",
+            parse_session_line,
+        );
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
@@ -461,8 +493,12 @@ mod tests {
     #[test]
     fn parse_command_sessions_accepts_labeled_token_id() {
         let out = b"id=abc123 label from command\n";
-        let (sessions, _) =
-            parse_command_sessions(out, SessionAgent::Kiro, "/repo", parse_session_line);
+        let (sessions, _) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
+            "/repo",
+            parse_session_line,
+        );
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "abc123");
         assert_eq!(sessions[0].summary.as_deref(), Some("label from command"));
@@ -485,8 +521,12 @@ SESSION ID                            CREATED     UPDATED     STATUS      SUMMAR
 019f1501-50e7-76d0-bb9e-4a72ede6b35d  2026-06-29  2026-06-29  local  List Sessions Command in Software Codebase
 019f1501-69f1-7800-bc1e-cb269e1d985b  2026-06-29  2026-06-29  local  (no summary)
 "#;
-        let (sessions, omitted) =
-            parse_command_sessions(out, SessionAgent::Grok, "/repo", parse_session_line);
+        let (sessions, omitted) = parse_command_sessions(
+            out,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
+            "/repo",
+            parse_session_line,
+        );
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 2);
         assert_eq!(

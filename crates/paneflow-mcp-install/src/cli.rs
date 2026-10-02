@@ -3,13 +3,16 @@ use std::path::{Path, PathBuf};
 
 use crate::agents::{self, AgentConfigWriter};
 use crate::api::{self, InstallKind, StatusKind, UninstallKind};
+use crate::integrations::{InstallMode, FORCE_FLAG};
 
 const USAGE: &str = "\
 paneflow mcp - register the Paneflow MCP bridge with your CLI agents
 
 Usage:
   paneflow mcp install      Register the bridge with every detected agent
-                            (a debug build also needs --force-dev)
+                            (--force takes over entries another Paneflow
+                            home owns; a debug build needs it for any
+                            existing entry)
   paneflow mcp uninstall    Remove the Paneflow entry from every agent
   paneflow mcp status       Report the bridge registration state per agent";
 
@@ -30,8 +33,6 @@ impl Command {
         }
     }
 }
-
-const FORCE_DEV: &str = "--force-dev";
 
 #[must_use]
 pub fn run_cli(args: &[String], bridge_path: Option<PathBuf>) -> i32 {
@@ -58,23 +59,15 @@ pub(crate) fn run_with(
         let _ = writeln!(err, "{USAGE}");
         return 2;
     };
-    let force_dev =
-        command == Command::Install && args.get(1).map(String::as_str) == Some(FORCE_DEV);
-    if args.len() != 1 + usize::from(force_dev) {
+    let force = command == Command::Install && args.get(1).map(String::as_str) == Some(FORCE_FLAG);
+    if args.len() != 1 + usize::from(force) {
         let _ = writeln!(err, "unexpected argument after `{}`\n\n{USAGE}", args[0]);
         return 2;
     }
-    if command == Command::Install && debug_build && !force_dev {
-        let _ = writeln!(
-            err,
-            "error: this is a debug build; `paneflow mcp install` would point every agent at a \
-             development bridge. Re-run with {FORCE_DEV} if that is what you want."
-        );
-        return 2;
-    }
+    let mode = InstallMode { force, debug_build };
 
     match command {
-        Command::Install => run_install(bridge_path, writers, out, err),
+        Command::Install => run_install(bridge_path, writers, mode, out, err),
         Command::Uninstall => run_uninstall(writers, out),
         Command::Status => run_status(bridge_path, writers, out),
     }
@@ -83,10 +76,11 @@ pub(crate) fn run_with(
 fn run_install(
     bridge_path: Option<&Path>,
     writers: &[Box<dyn AgentConfigWriter>],
+    mode: InstallMode,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let results = match api::install_with(bridge_path, writers) {
+    let results = match api::install_with(bridge_path, writers, mode) {
         Ok(r) => r,
         Err(msg) => {
             let _ = writeln!(err, "error: {msg}");
@@ -256,17 +250,42 @@ mod tests {
         )
     }
 
-    #[test]
-    fn a_debug_build_refuses_a_durable_install_without_force_dev() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let bridge_file = dir.path().join("paneflow-mcp");
-        std::fs::write(&bridge_file, b"bridge").unwrap();
-        let writers = vec![boxed(Mock::present("claude-code"))];
-        let bridge = Some(bridge_file.as_path());
+    fn staged_home(root: &Path, name: &str) -> PathBuf {
+        let bin = root.join(name).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let bridge = bin.join(format!(
+            "paneflow-mcp{}",
+            if cfg!(windows) { ".exe" } else { "" }
+        ));
+        std::fs::write(&bridge, b"bridge").unwrap();
+        bridge
+    }
 
-        let (code, out, err) = run_as(&["install"], bridge, &writers, true);
-        assert_eq!(code, 2, "{out}");
-        assert!(err.contains("--force-dev"), "{err}");
+    fn owned_by(found: &Path, expected: &Path) -> Mock {
+        Mock::present("claude-code").with_status(Ok(crate::agents::StatusOutcome::StalePath {
+            found: found.display().to_string(),
+            expected: expected.display().to_string(),
+        }))
+    }
+
+    #[test]
+    fn an_entry_owned_by_another_live_home_is_kept_without_force_naming_both_homes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let release = staged_home(dir.path(), "release-home");
+        let dev = staged_home(dir.path(), "dev-home");
+
+        let writers = vec![boxed(owned_by(&release, &dev))];
+        let (code, out, _) = run_as(&["install"], Some(&dev), &writers, false);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains(&dir.path().join("release-home").display().to_string()),
+            "{out}"
+        );
+        assert!(
+            out.contains(&dir.path().join("dev-home").display().to_string()),
+            "{out}"
+        );
+        assert!(out.contains("--force"), "{out}");
         assert!(
             matches!(
                 writers[0].install(Path::new("/x")),
@@ -275,15 +294,47 @@ mod tests {
             "the refused run never reached the writer"
         );
 
-        let writers = vec![boxed(Mock::present("claude-code"))];
-        let (code, out, err) = run_as(&["install", "--force-dev"], bridge, &writers, true);
+        let writers = vec![boxed(owned_by(&release, &dev))];
+        let (code, out, err) = run_as(&["install", "--force"], Some(&dev), &writers, false);
         assert_eq!(code, 0, "{err}");
-        assert!(out.contains("claude-code"), "{out}");
+        assert!(out.contains("claude-code: installed"), "{out}");
 
-        let (code, _, err) = run_as(&["status", "--force-dev"], bridge, &writers, true);
-        assert_eq!(code, 2, "--force-dev only belongs to install: {err}");
-        let (code, _, _) = run_as(&["status"], bridge, &writers, true);
-        assert_eq!(code, 0, "status stays available in a debug build");
+        let (code, _, err) = run_as(&["status", "--force"], Some(&dev), &writers, false);
+        assert_eq!(code, 2, "--force only belongs to install: {err}");
+    }
+
+    #[test]
+    fn a_debug_build_overwrites_no_existing_entry_without_force_but_installs_a_fresh_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dev = staged_home(dir.path(), "dev-home");
+        let gone = dir
+            .path()
+            .join("deleted-home")
+            .join("bin")
+            .join("paneflow-mcp");
+
+        let writers = vec![boxed(owned_by(&gone, &dev))];
+        let (code, out, _) = run_as(&["install"], Some(&dev), &writers, true);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains(&dir.path().join("deleted-home").display().to_string()),
+            "{out}"
+        );
+
+        let writers = vec![boxed(owned_by(&gone, &dev))];
+        let (code, out, _) = run_as(&["install"], Some(&dev), &writers, false);
+        assert_eq!(
+            code, 0,
+            "a release build replaces an entry whose home is gone: {out}"
+        );
+
+        let writers = vec![boxed(
+            Mock::present("claude-code")
+                .with_status(Ok(crate::agents::StatusOutcome::NotInstalled)),
+        )];
+        let (code, out, err) = run_as(&["install"], Some(&dev), &writers, true);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.contains("claude-code: installed"), "{out}");
     }
 
     #[test]

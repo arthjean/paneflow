@@ -4,14 +4,21 @@ use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
 
 const LABEL_MAX_CHARS: usize = 80;
 
-pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub fn read_sessions_for_cwd_with_omitted(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let Some(home) = paneflow_home::paneflow_home() else {
         return (Vec::new(), 0);
     };
-    read_sessions_from_home(&home, cwd)
+    read_sessions_from_home(agent, &home, cwd)
 }
 
-fn read_sessions_from_home(home: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) {
+fn read_sessions_from_home(
+    agent: SessionAgent,
+    home: &Path,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let paths = paneflow_host::manifest::list_manifest_paths(home).unwrap_or_default();
     let cache_mtime = paths
         .iter()
@@ -25,11 +32,8 @@ fn read_sessions_from_home(home: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) 
         });
     let cache_key = cache_key(home, cwd);
     if let Some(cache_mtime) = cache_mtime
-        && let Some(cached) = crate::agent_sessions::cache::lookup_with_mtime(
-            SessionAgent::Codex,
-            &cache_key,
-            cache_mtime,
-        )
+        && let Some(cached) =
+            crate::agent_sessions::cache::lookup_with_mtime(agent, &cache_key, cache_mtime)
     {
         return cached;
     }
@@ -38,14 +42,14 @@ fn read_sessions_from_home(home: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) 
         crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
     );
     for path in paths {
-        if let Some(session) = session_from_manifest(&path, cwd) {
+        if let Some(session) = session_from_manifest(agent, &path, cwd) {
             collector.push(session);
         }
     }
     let result = collector.finish();
     if let Some(cache_mtime) = cache_mtime {
         crate::agent_sessions::cache::store_result_with_mtime(
-            SessionAgent::Codex,
+            agent,
             &cache_key,
             cache_mtime,
             &result.0,
@@ -59,7 +63,11 @@ fn cache_key(home: &Path, cwd: &str) -> String {
     format!("{}\u{0}{cwd}", home.display())
 }
 
-fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
+fn session_from_manifest(
+    session_agent: SessionAgent,
+    path: &Path,
+    cwd: &str,
+) -> Option<SessionMeta> {
     let manifest = paneflow_host::manifest::read_manifest(path).ok()?;
     let agent = manifest.last_hook?;
     if !agent.tool.eq_ignore_ascii_case("codex") {
@@ -85,7 +93,7 @@ fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
         .as_deref()
         .and_then(|value| clean_session_label(value, LABEL_MAX_CHARS));
     Some(SessionMeta {
-        agent: SessionAgent::Codex,
+        agent: session_agent,
         session_id: provider_session_id,
         timestamp: crate::agent_sessions::unix_millis_to_iso8601(agent.received_at_ms),
         cwd: recorded_cwd.to_string(),
@@ -95,6 +103,10 @@ fn session_from_manifest(path: &Path, cwd: &str) -> Option<SessionMeta> {
 
 #[cfg(test)]
 mod tests {
+    fn codex() -> SessionAgent {
+        crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Codex)
+    }
+
     use super::*;
 
     fn write_manifest(home: &Path, agent: serde_json::Value) {
@@ -133,7 +145,8 @@ mod tests {
                 "received_at_ms": 42
             }),
         );
-        let (sessions, omitted) = read_sessions_from_home(home.path(), "C:\\dev\\paneflow");
+        let (sessions, omitted) =
+            read_sessions_from_home(codex(), home.path(), "C:\\dev\\paneflow");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
@@ -179,7 +192,7 @@ mod tests {
             }),
         );
         assert!(
-            read_sessions_from_home(home.path(), "C:\\dev\\paneflow")
+            read_sessions_from_home(codex(), home.path(), "C:\\dev\\paneflow")
                 .0
                 .is_empty()
         );

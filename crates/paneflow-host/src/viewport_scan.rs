@@ -59,6 +59,7 @@ pub struct ViewportTracker {
     menu_prompt_active: bool,
     observation: Option<RuntimeObservation>,
     scanned_output_end: Option<u64>,
+    terminal_signals: Option<[Option<u64>; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +72,12 @@ pub struct ViewportEdges {
 }
 
 impl ViewportTracker {
+    pub fn terminal_signals_changed(&mut self, signals: [Option<u64>; 3]) -> bool {
+        let changed = self.terminal_signals.is_some_and(|held| held != signals);
+        self.terminal_signals = Some(signals);
+        changed
+    }
+
     pub fn scan_due(&self, output_end: u64) -> bool {
         self.scanned_output_end != Some(output_end) || self.screen.write_pending()
     }
@@ -174,6 +181,18 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
     });
     for target in targets {
         let key = (target.session.clone(), target.generation);
+        let signals = [
+            target.runtime.output_changed_at_ms(),
+            target.runtime.bell_at_ms(),
+            target.runtime.input_at_ms(),
+        ];
+        if trackers
+            .entry(key.clone())
+            .or_default()
+            .terminal_signals_changed(signals)
+        {
+            host.announce_session_change(&target.session);
+        }
         let output_end = target.runtime.stream().end_offset();
         if trackers
             .get(&key)

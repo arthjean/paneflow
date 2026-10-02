@@ -2161,3 +2161,221 @@ fn a_hook_without_a_tool_takes_the_runtime_the_pane_runs() {
     assert_eq!(host.attribute_agent_tool(&named).unwrap()["tool"], "claude");
     host.stop(&session, None).unwrap();
 }
+
+fn burst_event(session: &SessionId, sequence: usize) -> AgentEvent {
+    AgentEvent::from_params(&json!({
+        "session": session,
+        "runtime_generation": 1,
+        "kind": "ai.tool_use",
+        "tool": "claude",
+        "hook_payload": {"hook_event_name": "PostToolUse", "sequence": sequence},
+    }))
+    .unwrap()
+}
+
+fn slow_durability(host: &SessionHost, latency: Duration) {
+    host.set_barrier(Arc::new(move |point| {
+        if point == Barrier::ManifestPersist {
+            std::thread::sleep(latency);
+        }
+    }));
+}
+
+fn percentile(sorted: &[Duration], fraction: f64) -> Duration {
+    let rank = ((sorted.len() as f64) * fraction).ceil() as usize;
+    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
+}
+
+struct HookBurst {
+    home: tempfile::TempDir,
+    host: Arc<SessionHost>,
+    session: SessionId,
+    p95: Duration,
+    by_revision: Vec<(u64, usize)>,
+}
+
+fn run_hook_burst(label: &str) -> HookBurst {
+    const HOOKS: usize = 200;
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new(label)).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    slow_durability(&host, Duration::from_millis(100));
+    let start = Arc::new(std::sync::Barrier::new(HOOKS));
+    let workers = (0..HOOKS)
+        .map(|sequence| {
+            let host = Arc::clone(&host);
+            let session = session.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                let event = burst_event(&session, sequence);
+                start.wait();
+                let began = Instant::now();
+                let response = host.ingest_agent_event(&event).unwrap();
+                (began.elapsed(), response, sequence)
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    let mut latencies = results
+        .iter()
+        .map(|(elapsed, _, _)| *elapsed)
+        .collect::<Vec<_>>();
+    latencies.sort();
+    let p50 = percentile(&latencies, 0.50);
+    let p95 = percentile(&latencies, 0.95);
+    let max = latencies[latencies.len() - 1];
+    eprintln!(
+        "hook burst: {HOOKS} hooks, 100 ms durability latency: p50 {p50:?} p95 {p95:?} max {max:?}"
+    );
+    let mut by_revision = results
+        .iter()
+        .map(|(_, response, sequence)| {
+            assert_eq!(response["accepted"], true, "{response}");
+            assert_eq!(response["durable"], true, "{response}");
+            (response["revision"].as_u64().unwrap(), *sequence)
+        })
+        .collect::<Vec<_>>();
+    by_revision.sort_unstable();
+    assert_eq!(
+        by_revision
+            .iter()
+            .map(|(revision, _)| *revision)
+            .collect::<Vec<_>>(),
+        (1..=HOOKS as u64).collect::<Vec<_>>(),
+        "no event is lost"
+    );
+    HookBurst {
+        home,
+        host,
+        session,
+        p95,
+        by_revision,
+    }
+}
+
+#[test]
+fn a_hook_burst_with_slow_durability_loses_nothing_and_never_queues_behind_the_lock() {
+    const HOOKS: usize = 200;
+    let HookBurst {
+        home,
+        host,
+        session,
+        p95,
+        by_revision,
+    } = run_hook_burst("hook-burst");
+    assert!(
+        p95 < Duration::from_secs(2),
+        "p95 {p95:?}: hooks must not wait for each other's durability"
+    );
+
+    for (revision, sequence) in &by_revision[HOOKS - MAX_HOOK_RECEIPTS..] {
+        let duplicate = host
+            .ingest_agent_event(&burst_event(&session, *sequence))
+            .unwrap();
+        assert_eq!(duplicate["duplicate"], true, "{duplicate}");
+        assert_eq!(duplicate["durable"], true, "{duplicate}");
+        assert_eq!(duplicate["revision"], *revision, "{duplicate}");
+    }
+    let (_, evicted) = by_revision[HOOKS - MAX_HOOK_RECEIPTS - 1];
+    let replayed = host
+        .ingest_agent_event(&burst_event(&session, evicted))
+        .unwrap();
+    assert_eq!(
+        replayed["duplicate"],
+        Value::Null,
+        "receipts are evicted in acceptance order: {replayed}"
+    );
+
+    host.set_barrier(Arc::new(|_| {}));
+    let manifest_path = paneflow_home::host_session_manifest_path_in(home.path(), session.as_str());
+    let on_disk = read_manifest(&manifest_path).unwrap();
+    assert_eq!(
+        on_disk.hook_revision,
+        HOOKS as u64 + 1,
+        "every acknowledged hook reached disk"
+    );
+    host.stop(&session, None).unwrap();
+}
+
+#[test]
+#[ignore = "bench: cargo test -p paneflow-host --lib hook_burst_bench -- --ignored --nocapture, on an idle machine"]
+fn hook_burst_bench_answers_within_the_ai_hook_deadline() {
+    let burst = run_hook_burst("hook-burst-bench");
+    assert!(
+        burst.p95 < Duration::from_millis(350),
+        "p95 {:?}",
+        burst.p95
+    );
+    burst.host.stop(&burst.session, None).unwrap();
+}
+
+#[test]
+fn a_hook_reaching_a_stopped_persistence_writer_is_answered_not_durable_at_once() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("hook-stopped-writer")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    host.persistence.stop_writer();
+    let began = Instant::now();
+    let response = host.ingest_agent_event(&burst_event(&session, 0)).unwrap();
+    let elapsed = began.elapsed();
+    assert_eq!(response["accepted"], true, "{response}");
+    assert_eq!(response["durable"], false, "{response}");
+    assert_eq!(
+        response["persistence_error"],
+        "the persistence service has stopped"
+    );
+    assert!(elapsed < Duration::from_millis(350), "{elapsed:?}");
+    let duplicate = host.ingest_agent_event(&burst_event(&session, 0)).unwrap();
+    assert_eq!(duplicate["duplicate"], true);
+    assert_eq!(
+        duplicate["durable"], false,
+        "a retry still reports the stopped writer"
+    );
+}
+
+fn next_frame_of_type(subscription: &crate::agent::AgentSubscription, kind: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match subscription.frames.recv_timeout(remaining) {
+            Ok(frame) if frame["type"] == kind => return frame,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    panic!("no {kind} frame was broadcast");
+}
+
+#[test]
+fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("session-frames")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let subscription = host.follow_agents();
+
+    host.bind_runtime(&session, None, Some("com.openai.codex"))
+        .unwrap();
+    let bound = next_frame_of_type(&subscription, "session");
+    assert_eq!(bound["entry"]["session"], session.to_string());
+
+    let target = host
+        .live_scan_targets()
+        .into_iter()
+        .find(|target| target.session == session)
+        .unwrap();
+    assert!(host.commit_scan(&target, |record| record.menu_prompt_active = true));
+    let observed = next_frame_of_type(&subscription, "session");
+    assert_eq!(observed["entry"]["menu_prompt_active"], true);
+
+    while subscription.frames.try_recv().is_ok() {}
+    host.ingest_agent_event(&burst_event(&session, 0)).unwrap();
+    assert_eq!(next_frame_of_type(&subscription, "event")["type"], "event");
+
+    host.stop(&session, None).unwrap();
+    while subscription.frames.try_recv().is_ok() {}
+    host.remove(&session).unwrap();
+    let removed = next_frame_of_type(&subscription, "session_removed");
+    assert_eq!(removed["session"], session.to_string());
+}

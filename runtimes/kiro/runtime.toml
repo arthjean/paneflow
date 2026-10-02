@@ -35,6 +35,9 @@ session_argv = ["kiro-cli", "chat", "--resume-id", "{session_id}"]
 session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
 failure_markers = []
 
+[sessions]
+reader = "kiro"
+
 [[suggested_presets]]
 id = "kiro"
 command = "kiro-cli chat"

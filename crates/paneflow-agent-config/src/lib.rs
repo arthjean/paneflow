@@ -12,6 +12,8 @@ pub mod runtime_catalog;
 #[cfg(test)]
 #[path = "../build_support.rs"]
 mod build_support;
+#[cfg(test)]
+mod packaging_tests;
 
 #[cfg(feature = "config-io")]
 pub use io::{

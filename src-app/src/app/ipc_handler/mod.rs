@@ -56,17 +56,46 @@ pub(crate) fn answer_off_thread(
     })
 }
 
-fn drain_ipc_requests_for_tick(
-    rx: &std::sync::mpsc::Receiver<crate::ipc::IpcRequest>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IpcServeEnd {
+    Closed,
+    AppGone,
+}
+
+pub(crate) async fn serve_ipc_requests(
+    rx: &smol::channel::Receiver<crate::ipc::IpcRequest>,
+    mut handle: impl FnMut(Vec<crate::ipc::IpcRequest>) -> bool,
+) -> IpcServeEnd {
+    while let Ok(first) = rx.recv().await {
+        let batch = drain_ipc_requests(rx, Some(first));
+        if !batch.is_empty() && !handle(batch) {
+            return IpcServeEnd::AppGone;
+        }
+        smol::future::yield_now().await;
+    }
+    IpcServeEnd::Closed
+}
+
+fn drain_ipc_requests(
+    rx: &smol::channel::Receiver<crate::ipc::IpcRequest>,
+    first: Option<crate::ipc::IpcRequest>,
 ) -> Vec<crate::ipc::IpcRequest> {
     let mut ready = Vec::with_capacity(crate::ipc::IPC_DRAIN_MAX_PER_TICK);
     let mut dequeued = 0usize;
+    let mut next = first;
 
-    while ready.len() < crate::ipc::IPC_DRAIN_MAX_PER_TICK
-        && dequeued < crate::ipc::IPC_DRAIN_MAX_DEQUEUES_PER_TICK
-    {
-        let Ok(req) = rx.try_recv() else {
-            break;
+    loop {
+        let req = match next.take() {
+            Some(req) => req,
+            None if ready.len() < crate::ipc::IPC_DRAIN_MAX_PER_TICK
+                && dequeued < crate::ipc::IPC_DRAIN_MAX_DEQUEUES_PER_TICK =>
+            {
+                let Ok(req) = rx.try_recv() else {
+                    break;
+                };
+                req
+            }
+            None => break,
         };
         dequeued += 1;
 
@@ -81,16 +110,12 @@ fn drain_ipc_requests_for_tick(
 }
 
 impl PaneFlowApp {
-    pub(crate) fn process_automation_tick(&mut self, cx: &mut Context<Self>) {
-        self.process_host_agent_frames(cx);
-        self.process_ipc_requests(cx);
-        self.broadcast_surface_changes(cx);
-        self.process_config_changes(cx);
-        self.process_update_check(cx);
-    }
-
-    pub(crate) fn process_ipc_requests(&mut self, cx: &mut Context<Self>) {
-        for req in drain_ipc_requests_for_tick(&self.ipc_rx) {
+    pub(crate) fn process_ipc_requests(
+        &mut self,
+        batch: Vec<crate::ipc::IpcRequest>,
+        cx: &mut Context<Self>,
+    ) {
+        for req in batch {
             if !req.state.try_start() {
                 continue;
             }
@@ -173,6 +198,7 @@ impl PaneFlowApp {
 mod tests {
     use super::*;
     use std::sync::{Arc, mpsc};
+    use std::time::Instant;
 
     fn test_ipc_request(method: &str, cancelled: bool) -> crate::ipc::IpcRequest {
         let (response_tx, _response_rx) = mpsc::channel();
@@ -193,13 +219,13 @@ mod tests {
 
     #[test]
     fn ipc_drain_caps_live_requests_per_tick() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = smol::channel::unbounded();
         for _ in 0..=crate::ipc::IPC_DRAIN_MAX_PER_TICK {
-            tx.send(test_ipc_request("surface.read", false))
+            tx.try_send(test_ipc_request("surface.read", false))
                 .expect("queue test request");
         }
 
-        let ready = drain_ipc_requests_for_tick(&rx);
+        let ready = drain_ipc_requests(&rx, None);
 
         assert_eq!(ready.len(), crate::ipc::IPC_DRAIN_MAX_PER_TICK);
         assert!(
@@ -210,15 +236,15 @@ mod tests {
 
     #[test]
     fn ipc_drain_skips_cancelled_without_spending_live_budget() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(test_ipc_request("surface.split", true))
+        let (tx, rx) = smol::channel::unbounded();
+        tx.try_send(test_ipc_request("surface.split", true))
             .expect("queue cancelled request");
         for _ in 0..crate::ipc::IPC_DRAIN_MAX_PER_TICK {
-            tx.send(test_ipc_request("surface.read", false))
+            tx.try_send(test_ipc_request("surface.read", false))
                 .expect("queue live request");
         }
 
-        let ready = drain_ipc_requests_for_tick(&rx);
+        let ready = drain_ipc_requests(&rx, None);
 
         assert_eq!(ready.len(), crate::ipc::IPC_DRAIN_MAX_PER_TICK);
         assert!(
@@ -229,18 +255,100 @@ mod tests {
 
     #[test]
     fn ipc_drain_caps_cancelled_dequeues_per_tick() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = smol::channel::unbounded();
         for _ in 0..=crate::ipc::IPC_DRAIN_MAX_DEQUEUES_PER_TICK {
-            tx.send(test_ipc_request("surface.split", true))
+            tx.try_send(test_ipc_request("surface.split", true))
                 .expect("queue cancelled request");
         }
 
-        let ready = drain_ipc_requests_for_tick(&rx);
+        let ready = drain_ipc_requests(&rx, None);
 
         assert!(ready.is_empty());
         assert!(
             rx.try_recv().is_ok(),
             "cancelled backlog drain is also bounded per tick"
         );
+    }
+
+    #[test]
+    fn a_pushed_request_starts_within_five_milliseconds_at_p95() {
+        const REQUESTS: usize = 1_000;
+        let (tx, rx) = smol::channel::bounded(crate::ipc::IPC_REQUEST_QUEUE_CAPACITY);
+        let origin = Instant::now();
+        let sender = std::thread::spawn(move || {
+            for sequence in 0..REQUESTS {
+                let mut request = test_ipc_request("surface.read", false);
+                request.params = serde_json::json!({
+                    "sent_ns": origin.elapsed().as_nanos() as u64,
+                    "sequence": sequence,
+                });
+                tx.try_send(request).expect("the queue has room");
+                std::thread::sleep(std::time::Duration::from_micros(200));
+            }
+        });
+        let mut delays = Vec::with_capacity(REQUESTS);
+        let end = smol::block_on(serve_ipc_requests(&rx, |batch| {
+            let started = origin.elapsed().as_nanos() as u64;
+            for request in batch {
+                let sent = request.params["sent_ns"].as_u64().unwrap();
+                delays.push(std::time::Duration::from_nanos(started - sent));
+            }
+            true
+        }));
+        sender.join().unwrap();
+        assert_eq!(
+            end,
+            IpcServeEnd::Closed,
+            "the loop ends once every sender is gone"
+        );
+        assert_eq!(delays.len(), REQUESTS);
+        delays.sort();
+        let p95 = delays[REQUESTS * 95 / 100 - 1];
+        eprintln!(
+            "ipc push: {REQUESTS} requests, p95 {p95:?}, max {:?}",
+            delays[REQUESTS - 1]
+        );
+        assert!(p95 <= std::time::Duration::from_millis(5), "p95 {p95:?}");
+    }
+
+    #[test]
+    fn a_request_flood_yields_the_thread_between_batches() {
+        let (tx, rx) = smol::channel::unbounded();
+        for _ in 0..crate::ipc::IPC_DRAIN_MAX_PER_TICK * 2 {
+            tx.try_send(test_ipc_request("surface.read", false))
+                .expect("queue flood request");
+        }
+        drop(tx);
+        let other_task_ran = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut seen_by_batch = Vec::new();
+        let executor = smol::LocalExecutor::new();
+        let flag = std::rc::Rc::clone(&other_task_ran);
+        let serving = executor.spawn(async move {
+            serve_ipc_requests(&rx, |_| {
+                seen_by_batch.push(flag.get());
+                true
+            })
+            .await;
+            seen_by_batch
+        });
+        let flag = std::rc::Rc::clone(&other_task_ran);
+        executor.spawn(async move { flag.set(true) }).detach();
+        let seen_by_batch = smol::block_on(executor.run(serving));
+        assert_eq!(seen_by_batch, vec![false, true]);
+    }
+
+    #[test]
+    fn a_closed_request_channel_ends_the_loop_instead_of_spinning() {
+        let (tx, rx) = smol::channel::bounded::<crate::ipc::IpcRequest>(1);
+        drop(tx);
+        let mut handled = 0usize;
+        let started = Instant::now();
+        let end = smol::block_on(serve_ipc_requests(&rx, |_| {
+            handled += 1;
+            true
+        }));
+        assert_eq!(end, IpcServeEnd::Closed);
+        assert_eq!(handled, 0);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 }

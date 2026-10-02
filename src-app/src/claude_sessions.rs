@@ -77,24 +77,24 @@ fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Opti
     }
 }
 
-pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
+pub fn read_sessions_for_cwd_with_omitted(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let Some(project_dir) = project_dir_for_cwd(cwd) else {
         return (Vec::new(), 0);
     };
     let snapshot_mtime = project_snapshot_mtime(&project_dir);
     if let Some(snapshot_mtime) = snapshot_mtime
-        && let Some(cached) = crate::agent_sessions::cache::lookup_with_mtime(
-            SessionAgent::Claude,
-            cwd,
-            snapshot_mtime,
-        )
+        && let Some(cached) =
+            crate::agent_sessions::cache::lookup_with_mtime(agent, cwd, snapshot_mtime)
     {
         return cached;
     }
-    let (sessions, omitted) = sessions_in_project_dir(&project_dir, cwd);
+    let (sessions, omitted) = sessions_in_project_dir(agent, &project_dir, cwd);
     if let Some(snapshot_mtime) = project_snapshot_mtime(&project_dir) {
         crate::agent_sessions::cache::store_result_with_mtime(
-            SessionAgent::Claude,
+            agent,
             cwd,
             snapshot_mtime,
             &sessions,
@@ -104,7 +104,11 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     (sessions, omitted)
 }
 
-fn sessions_in_project_dir(project_dir: &Path, cwd: &str) -> (Vec<SessionMeta>, usize) {
+fn sessions_in_project_dir(
+    agent: SessionAgent,
+    project_dir: &Path,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let Ok(entries) = fs::read_dir(project_dir) else {
         return (Vec::new(), 0);
     };
@@ -113,7 +117,8 @@ fn sessions_in_project_dir(project_dir: &Path, cwd: &str) -> (Vec<SessionMeta>, 
         if !is_jsonl_file(&path) {
             return None;
         }
-        read_session_meta(&path).filter(|meta| crate::agent_sessions::cwd_matches(&meta.cwd, cwd))
+        read_session_meta(agent, &path)
+            .filter(|meta| crate::agent_sessions::cwd_matches(&meta.cwd, cwd))
     });
     crate::agent_sessions::collect_recent_sessions(
         sessions,
@@ -129,10 +134,10 @@ fn is_jsonl_file(path: &Path) -> bool {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
 }
 
-fn read_session_meta(path: &Path) -> Option<SessionMeta> {
+fn read_session_meta(agent: SessionAgent, path: &Path) -> Option<SessionMeta> {
     let head = scan_session_head(path)?;
     Some(SessionMeta {
-        agent: SessionAgent::Claude,
+        agent,
         session_id: head.envelope.session_id,
         timestamp: head.envelope.timestamp,
         cwd: head.envelope.cwd,
@@ -301,6 +306,10 @@ fn extract_xml_block(haystack: &str, tag: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    fn claude() -> SessionAgent {
+        crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::ClaudeCode)
+    }
+
     use super::*;
 
     #[test]
@@ -384,8 +393,13 @@ mod tests {
         )
         .expect("write fixture");
 
-        let meta = read_session_meta(&path).expect("envelope extracted");
-        assert_eq!(meta.agent, SessionAgent::Claude);
+        let meta = read_session_meta(claude(), &path).expect("envelope extracted");
+        assert_eq!(
+            meta.agent,
+            crate::agent_sessions::session_agent_of(
+                crate::agent_launcher::TerminalAgent::ClaudeCode
+            )
+        );
         assert_eq!(meta.session_id, "aaaaaaaa-1111-2222-3333-444444444444");
         assert_eq!(meta.cwd, "/tmp/proj");
         assert_eq!(meta.timestamp, "2026-04-26T13:38:41.095Z");
@@ -405,7 +419,7 @@ mod tests {
             "no ai-title yet means ask again after the next turn"
         );
         assert_eq!(
-            read_session_meta(&untitled)
+            read_session_meta(claude(), &untitled)
                 .expect("meta")
                 .summary
                 .as_deref(),
@@ -450,7 +464,7 @@ mod tests {
             ),
         )
         .expect("write fixture");
-        let meta = read_session_meta(&path).expect("meta");
+        let meta = read_session_meta(claude(), &path).expect("meta");
         assert_eq!(meta.summary.as_deref(), Some("Fix the thing"));
     }
 
@@ -470,7 +484,7 @@ mod tests {
         )
         .expect("write fixture");
 
-        let meta = read_session_meta(&path).expect("meta");
+        let meta = read_session_meta(claude(), &path).expect("meta");
         let summary = meta.summary.as_deref().expect("summary");
         assert!(!summary.contains('\n'));
         assert!(!summary.contains('\t'));
@@ -490,7 +504,7 @@ mod tests {
             ),
         )
         .expect("write fixture");
-        let meta = read_session_meta(&path).expect("meta");
+        let meta = read_session_meta(claude(), &path).expect("meta");
         assert_eq!(meta.summary.as_deref(), Some("Refactor the auth flow"));
     }
 
@@ -506,7 +520,7 @@ mod tests {
             ),
         )
         .expect("write fixture");
-        let meta = read_session_meta(&path).expect("meta");
+        let meta = read_session_meta(claude(), &path).expect("meta");
         assert_eq!(
             meta.summary.as_deref(),
             Some("/implement-story @tasks/prd-x.md US-001")
@@ -570,7 +584,7 @@ mod tests {
         )
         .expect("write fixture");
 
-        let meta = read_session_meta(&path).expect("meta");
+        let meta = read_session_meta(claude(), &path).expect("meta");
         assert_eq!(
             meta.summary.as_deref(),
             Some("Corrige la sidebar agent sessions")
@@ -593,7 +607,7 @@ mod tests {
         std::fs::write(&path, &big).expect("write fixture");
         let meta = std::fs::metadata(&path).expect("metadata");
         assert_eq!(meta.len(), 1024 * 1024);
-        assert!(read_session_meta(&path).is_none());
+        assert!(read_session_meta(claude(), &path).is_none());
     }
 
     #[test]
@@ -607,7 +621,7 @@ mod tests {
 "#,
         )
         .expect("write fixture");
-        assert!(read_session_meta(&path).is_none());
+        assert!(read_session_meta(claude(), &path).is_none());
     }
 
     #[test]
@@ -623,7 +637,7 @@ mod tests {
         )
         .expect("write fixture");
         assert!(
-            read_session_meta(&path).is_none(),
+            read_session_meta(claude(), &path).is_none(),
             "session with control chars in sessionId must be dropped"
         );
     }
@@ -640,7 +654,7 @@ mod tests {
             ),
         )
         .expect("write fixture");
-        let meta = read_session_meta(&path).expect("legitimate UUID must pass the guard");
+        let meta = read_session_meta(claude(), &path).expect("legitimate UUID must pass the guard");
         assert_eq!(meta.session_id, "550e8400-e29b-41d4-a716-446655440000");
     }
 
@@ -657,7 +671,7 @@ mod tests {
         )
         .expect("write fixture");
         assert!(
-            read_session_meta(&path).is_none(),
+            read_session_meta(claude(), &path).is_none(),
             "session with control chars in cwd must be dropped"
         );
     }
@@ -672,28 +686,57 @@ mod tests {
         let stored = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
 
         assert!(
-            cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored).is_none(),
+            cache::lookup_with_mtime(
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode
+                ),
+                cwd,
+                stored
+            )
+            .is_none(),
             "freshly-cleared cache must miss"
         );
 
         let fixture = vec![SessionMeta {
-            agent: SessionAgent::Claude,
+            agent: crate::agent_sessions::session_agent_of(
+                crate::agent_launcher::TerminalAgent::ClaudeCode,
+            ),
             session_id: "abc".into(),
             timestamp: "2026-04-26T13:00:00Z".into(),
             cwd: cwd.into(),
             summary: None,
         }];
-        cache::store_result_with_mtime(SessionAgent::Claude, cwd, stored, &fixture, 7);
+        cache::store_result_with_mtime(
+            crate::agent_sessions::session_agent_of(
+                crate::agent_launcher::TerminalAgent::ClaudeCode,
+            ),
+            cwd,
+            stored,
+            &fixture,
+            7,
+        );
 
-        let (hit, omitted) = cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored)
-            .expect("post-store lookup must hit");
+        let (hit, omitted) = cache::lookup_with_mtime(
+            crate::agent_sessions::session_agent_of(
+                crate::agent_launcher::TerminalAgent::ClaudeCode,
+            ),
+            cwd,
+            stored,
+        )
+        .expect("post-store lookup must hit");
         assert_eq!(hit.len(), 1);
         assert_eq!(hit[0].session_id, "abc");
         assert_eq!(omitted, 7);
 
         assert!(
-            cache::lookup_with_mtime(SessionAgent::Claude, cwd, stored + Duration::from_secs(2))
-                .is_none(),
+            cache::lookup_with_mtime(
+                crate::agent_sessions::session_agent_of(
+                    crate::agent_launcher::TerminalAgent::ClaudeCode
+                ),
+                cwd,
+                stored + Duration::from_secs(2)
+            )
+            .is_none(),
             "mtime bump must invalidate the cached entry"
         );
     }
@@ -713,7 +756,8 @@ mod tests {
             "fixture must be exactly the cap"
         );
         std::fs::write(&path, &line).expect("write");
-        let meta = read_session_meta(&path).expect("exactly-MAX complete record must parse");
+        let meta =
+            read_session_meta(claude(), &path).expect("exactly-MAX complete record must parse");
         assert_eq!(meta.cwd, "/tmp/proj");
     }
 
@@ -727,7 +771,7 @@ mod tests {
         );
         std::fs::write(&path, &line).expect("write");
         assert!(
-            read_session_meta(&path).is_none(),
+            read_session_meta(claude(), &path).is_none(),
             "an oversized line must be skipped, not parsed"
         );
     }
@@ -750,7 +794,8 @@ mod tests {
             r#"{"type":"ai-title","aiTitle":"After the emoji"}"#
         );
         std::fs::write(&path, body).expect("write");
-        let meta = read_session_meta(&path).expect("the session survives the split emoji");
+        let meta =
+            read_session_meta(claude(), &path).expect("the session survives the split emoji");
         assert_eq!(meta.summary.as_deref(), Some("After the emoji"));
     }
 
@@ -763,7 +808,8 @@ mod tests {
             "x".repeat(MAX_LINE_BYTES as usize * 2)
         );
         std::fs::write(&path, body).expect("write");
-        let meta = read_session_meta(&path).expect("EOF mid-line never cancels the session");
+        let meta =
+            read_session_meta(claude(), &path).expect("EOF mid-line never cancels the session");
         assert_eq!(meta.cwd, "/tmp/proj");
         assert_eq!(meta.summary.as_deref(), Some("hi"));
     }
@@ -781,7 +827,7 @@ mod tests {
         if std::fs::File::open(&locked).is_ok() {
             return;
         }
-        let (sessions, omitted) = sessions_in_project_dir(dir.path(), "/tmp/proj");
+        let (sessions, omitted) = sessions_in_project_dir(claude(), dir.path(), "/tmp/proj");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1, "the readable session is still listed");
     }

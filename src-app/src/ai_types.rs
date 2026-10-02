@@ -254,13 +254,13 @@ mod tests {
         let sessions = [s(TerminalAgent::ClaudeCode, AgentState::Thinking)];
         let mut detected = HashSet::new();
         detected.insert(TerminalAgent::ClaudeCode.binary().to_string());
-        detected.insert(TerminalAgent::Copilot.binary().to_string());
+        detected.insert(TerminalAgent::GithubCopilot.binary().to_string());
 
         let status = workspace_agent_status(sessions.iter(), &detected);
 
         assert_eq!(status.hooked.len(), 1);
         assert_eq!(status.hooked[0].tool, TerminalAgent::ClaudeCode);
-        assert_eq!(status.unhooked, vec![TerminalAgent::Copilot]);
+        assert_eq!(status.unhooked, vec![TerminalAgent::GithubCopilot]);
         assert_eq!(
             status.active_labels,
             vec!["Claude Code".to_string(), "Copilot".to_string()]

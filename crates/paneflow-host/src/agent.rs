@@ -194,7 +194,20 @@ pub struct AgentSubscription {
 #[derive(Default)]
 pub struct AgentBus {
     next_id: AtomicU64,
-    subscribers: Mutex<Vec<(u64, SyncSender<Value>)>>,
+    subscribers: Mutex<Vec<AgentSubscriber>>,
+}
+
+struct AgentSubscriber {
+    id: u64,
+    tx: SyncSender<Value>,
+    manifest_changes: bool,
+}
+
+fn is_manifest_change(frame: &Value) -> bool {
+    matches!(
+        frame.get("type").and_then(Value::as_str),
+        Some("session" | "session_removed")
+    )
 }
 
 impl AgentBus {
@@ -203,14 +216,26 @@ impl AgentBus {
     }
 
     pub fn subscribe(&self) -> AgentSubscription {
+        self.subscribe_with(false)
+    }
+
+    pub fn follow(&self) -> AgentSubscription {
+        self.subscribe_with(true)
+    }
+
+    fn subscribe_with(&self, manifest_changes: bool) -> AgentSubscription {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, frames) = sync_channel(SUBSCRIBER_QUEUE_SLOTS);
-        self.lock().push((id, tx));
+        self.lock().push(AgentSubscriber {
+            id,
+            tx,
+            manifest_changes,
+        });
         AgentSubscription { id, frames }
     }
 
     pub fn unsubscribe(&self, id: u64) {
-        self.lock().retain(|(held, _)| *held != id);
+        self.lock().retain(|subscriber| subscriber.id != id);
     }
 
     #[cfg(test)]
@@ -219,18 +244,27 @@ impl AgentBus {
     }
 
     pub fn broadcast(&self, frame: &Value) {
+        let manifest_change = is_manifest_change(frame);
         let mut subscribers = self.lock();
-        subscribers.retain(|(id, tx)| match tx.try_send(frame.clone()) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_)) => {
-                log::warn!("paneflow-host: agent subscriber {id} fell behind and was dropped");
-                false
+        subscribers.retain(|subscriber| {
+            if manifest_change && !subscriber.manifest_changes {
+                return true;
             }
-            Err(TrySendError::Disconnected(_)) => false,
+            match subscriber.tx.try_send(frame.clone()) {
+                Ok(()) => true,
+                Err(TrySendError::Full(_)) => {
+                    log::warn!(
+                        "paneflow-host: agent subscriber {} fell behind and was dropped",
+                        subscriber.id
+                    );
+                    false
+                }
+                Err(TrySendError::Disconnected(_)) => false,
+            }
         });
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(u64, SyncSender<Value>)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<AgentSubscriber>> {
         self.subscribers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

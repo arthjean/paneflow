@@ -59,6 +59,27 @@ struct SeedLedger {
     refusal_reported_for: Option<SessionGeneration>,
 }
 
+#[derive(Default)]
+struct CriticalFlush {
+    state: Mutex<CriticalFlushState>,
+    settled: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct CriticalFlushState {
+    durable_hook_revision: u64,
+    failed: Option<(u64, String)>,
+    in_flight: bool,
+}
+
+impl CriticalFlush {
+    fn lock(&self) -> std::sync::MutexGuard<'_, CriticalFlushState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 struct PendingLaunch {
     operation: OperationId,
     generation: SessionGeneration,
@@ -82,6 +103,7 @@ struct SessionRecord {
     escape_fence: bool,
     seed: Arc<Mutex<SeedLedger>>,
     durability: Durability,
+    critical: Arc<CriticalFlush>,
     appearance: Option<SessionAppearance>,
     cell: Option<CellSize>,
 }
@@ -104,6 +126,7 @@ impl SessionRecord {
             escape_fence,
             seed: Arc::new(Mutex::new(SeedLedger::default())),
             durability: Arc::new(SessionPersistence::default()),
+            critical: Arc::new(CriticalFlush::default()),
             appearance: None,
             cell: None,
         }
@@ -580,6 +603,10 @@ impl SessionHost {
         self.agent_bus.subscribe()
     }
 
+    pub fn follow_agents(&self) -> AgentSubscription {
+        self.agent_bus.follow()
+    }
+
     pub fn unsubscribe_agents(&self, id: u64) {
         self.agent_bus.unsubscribe(id);
     }
@@ -790,10 +817,22 @@ impl SessionHost {
     }
 
     pub fn agent_snapshot(&self) -> Vec<AgentSnapshotEntry> {
+        self.snapshot_entries(None)
+    }
+
+    pub(crate) fn announce_session_change(&self, session: &SessionId) {
+        if let Some(entry) = self.snapshot_entries(Some(session)).pop() {
+            self.agent_bus
+                .broadcast(&json!({"type": "session", "entry": entry}));
+        }
+    }
+
+    fn snapshot_entries(&self, only: Option<&SessionId>) -> Vec<AgentSnapshotEntry> {
         let terminal_signals: BTreeMap<SessionId, [Option<u64>; 3]> = {
             let sessions = self.lock_sessions();
             sessions
                 .iter()
+                .filter(|(session, _)| only.is_none_or(|only| only == *session))
                 .filter_map(|(session, record)| {
                     record.runtime.as_deref().map(|runtime| {
                         (
@@ -808,7 +847,11 @@ impl SessionHost {
                 })
                 .collect()
         };
-        self.list(None)
+        let summaries = match only {
+            Some(session) => self.inspect(session).into_iter().collect(),
+            None => self.list(None),
+        };
+        summaries
             .into_iter()
             .map(|summary| {
                 let [output_changed_at_ms, bell_at_ms, input_at_ms] = terminal_signals
@@ -908,7 +951,7 @@ impl SessionHost {
     }
 
     pub fn ingest_agent_event(&self, event: &AgentEvent) -> Result<Value, HostError> {
-        let (manifest, seed, durability) = {
+        let (manifest, seed, durability, critical) = {
             let sessions = self.lock_sessions();
             let record = sessions
                 .get(&event.session)
@@ -917,6 +960,7 @@ impl SessionHost {
                 Arc::clone(&record.manifest),
                 Arc::clone(&record.seed),
                 Arc::clone(&record.durability),
+                Arc::clone(&record.critical),
             )
         };
         let mut ledger = seed
@@ -974,10 +1018,10 @@ impl SessionHost {
             if let Some((_, revision)) = ledger.receipts.iter().find(|(held, _)| *held == key) {
                 let revision = *revision;
                 drop(guard);
+                drop(ledger);
                 let persistence_error = self
-                    .persist(&manifest, &durability, WriteClass::Critical)
-                    .err()
-                    .map(|error| error.to_string());
+                    .await_critical_durability(&manifest, &durability, &critical, revision, true)
+                    .err();
                 return Ok(json!({
                         "accepted": true,
                         "duplicate": true,
@@ -1038,10 +1082,6 @@ impl SessionHost {
             (snapshot, record)
         };
         let revision = snapshot.hook_revision;
-        let persistence_error = self
-            .persist(&manifest, &durability, WriteClass::Critical)
-            .err()
-            .map(|error| error.to_string());
         if ledger.receipts.len() >= MAX_HOOK_RECEIPTS {
             ledger.receipts.pop_front();
         }
@@ -1050,6 +1090,9 @@ impl SessionHost {
             self.publish_agent_frame(frame);
         }
         drop(ledger);
+        let persistence_error = self
+            .await_critical_durability(&manifest, &durability, &critical, revision, false)
+            .err();
         Ok(json!({
                 "accepted": true,
                 "durable": persistence_error.is_none(),
@@ -1878,6 +1921,8 @@ impl SessionHost {
         seed.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .removed = true;
+        self.agent_bus
+            .broadcast(&json!({"type": "session_removed", "session": session}));
         self.persistence
             .remove_and_wait(session, &durability, CRITICAL_DEADLINE)?;
         Ok(removed)
@@ -2387,6 +2432,22 @@ impl SessionHost {
         durability: &Durability,
         class: WriteClass,
     ) -> Result<(), PersistError> {
+        let outcome = self.persist_revision(manifest, durability, class);
+        let session = manifest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .session
+            .clone();
+        self.announce_session_change(&session);
+        outcome
+    }
+
+    fn persist_revision(
+        &self,
+        manifest: &Arc<Mutex<SessionManifest>>,
+        durability: &Durability,
+        class: WriteClass,
+    ) -> Result<(), PersistError> {
         #[cfg(test)]
         self.barrier(Barrier::ManifestPersist);
         let (snapshot, revision) = {
@@ -2400,6 +2461,52 @@ impl SessionHost {
             WriteClass::Critical => self.persistence.submit_and_wait(record, CRITICAL_DEADLINE),
             WriteClass::Metadata | WriteClass::Final => self.persistence.submit(record),
         }
+    }
+
+    fn await_critical_durability(
+        &self,
+        manifest: &Arc<Mutex<SessionManifest>>,
+        durability: &Durability,
+        critical: &CriticalFlush,
+        hook_revision: u64,
+        retry_failed: bool,
+    ) -> Result<(), String> {
+        let mut state = critical.lock();
+        loop {
+            if state.durable_hook_revision >= hook_revision {
+                return Ok(());
+            }
+            if !retry_failed
+                && let Some((covered, error)) = &state.failed
+                && *covered >= hook_revision
+            {
+                return Err(error.clone());
+            }
+            if !state.in_flight {
+                break;
+            }
+            state = critical
+                .settled
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        state.in_flight = true;
+        drop(state);
+        let covered = manifest
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .hook_revision;
+        let outcome = self
+            .persist_revision(manifest, durability, WriteClass::Critical)
+            .map_err(|error| error.to_string());
+        let mut state = critical.lock();
+        state.in_flight = false;
+        match &outcome {
+            Ok(()) => state.durable_hook_revision = state.durable_hook_revision.max(covered),
+            Err(error) => state.failed = Some((covered, error.clone())),
+        }
+        critical.settled.notify_all();
+        outcome
     }
 
     fn persist_final(&self, manifest: &Arc<Mutex<SessionManifest>>, durability: &Durability) {

@@ -183,7 +183,7 @@ impl PaneFlowApp {
                         crate::runtime_paths::bridge_binary_path()
                     }
                 };
-                let install = paneflow_mcp_install::install_all(bridge.as_deref());
+                let install = paneflow_mcp_install::install_all(bridge.as_deref(), false);
                 let status = paneflow_mcp_install::status_all(bridge.as_deref());
                 (install, status)
             })

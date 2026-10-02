@@ -1,7 +1,4 @@
-use std::fmt;
-use std::path::Path;
-
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub use crate::hook_command::{
     cmd_command_word, command_program_token, display_hook_program, is_paneflow_hook_command,
@@ -9,80 +6,18 @@ pub use crate::hook_command::{
 };
 
 pub const CLAUDE_HOOK_EVENTS: &[&str] = &[
+    "SessionStart",
     "UserPromptSubmit",
-    "Notification",
     "Stop",
+    "StopFailure",
     "PreToolUse",
-    "PostToolUse",
+    "PermissionRequest",
+    "SubagentStart",
+    "SubagentStop",
+    "Notification",
 ];
+pub const CLAUDE_RETIRED_HOOK_EVENTS: &[&str] = &["PostToolUse"];
 pub const MANAGED_MARKER: &str = "_paneflow_managed";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HookConfigError(String);
-
-impl HookConfigError {
-    fn invalid(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl fmt::Display for HookConfigError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for HookConfigError {}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ReconcileResult {
-    pub had_prior: bool,
-    pub changed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HookStatus {
-    NotInstalled,
-    Installed {
-        path: String,
-    },
-    Stale {
-        found: String,
-        expected: String,
-    },
-    NeedsRepair {
-        path: Option<String>,
-        reason: String,
-    },
-}
-
-fn managed_group_for_command(command: String) -> Value {
-    json!({
-        MANAGED_MARKER: true,
-        "hooks": [command_handler(command)],
-    })
-}
-
-pub fn command_handler(command: String) -> Value {
-    let mut handler = serde_json::Map::new();
-    handler.insert("type".into(), Value::String("command".into()));
-    handler.insert("command".into(), Value::String(command.clone()));
-    handler.insert("timeout".into(), json!(5));
-    #[cfg(windows)]
-    handler.insert("commandWindows".into(), Value::String(command));
-
-    Value::Object(handler)
-}
-
-pub fn is_managed_group(group: &Value) -> bool {
-    if group.get(MANAGED_MARKER).and_then(Value::as_bool) == Some(true) {
-        return true;
-    }
-    group
-        .get("hooks")
-        .and_then(Value::as_array)
-        .is_some_and(|hooks| hooks.iter().any(is_managed_handler))
-}
 
 fn is_managed_handler(handler: &Value) -> bool {
     handler
@@ -124,87 +59,16 @@ fn strip_managed_handlers(groups: &mut Vec<Value>) -> bool {
     removed
 }
 
-fn validate_shape(root: &Value) -> Result<(), HookConfigError> {
-    validate_matcher_shape(root, CLAUDE_HOOK_EVENTS)
-}
-
-fn validate_matcher_shape(root: &Value, events: &[&str]) -> Result<(), HookConfigError> {
-    let object = root
-        .as_object()
-        .ok_or_else(|| HookConfigError::invalid("config root must be a JSON object"))?;
-    let Some(hooks) = object.get("hooks") else {
-        return Ok(());
-    };
-    let hooks = hooks
-        .as_object()
-        .ok_or_else(|| HookConfigError::invalid("config key `hooks` must be an object"))?;
-    for event in events {
-        if let Some(value) = hooks.get(*event) {
-            if !value.is_array() {
-                return Err(HookConfigError::invalid(format!(
-                    "hook event `{event}` must be an array"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn reconcile_hooks(
-    root: &mut Value,
-    command_for_event: impl Fn(&str) -> String,
-) -> Result<ReconcileResult, HookConfigError> {
-    validate_shape(root)?;
-    reconcile_valid_matcher_hooks(root, CLAUDE_HOOK_EVENTS, |event| {
-        managed_group_for_command(command_for_event(event))
-    })
-}
-
-fn reconcile_valid_matcher_hooks(
-    root: &mut Value,
-    events: &[&str],
-    group_for_event: impl Fn(&str) -> Value,
-) -> Result<ReconcileResult, HookConfigError> {
-    let before = root.clone();
-    let object = root
-        .as_object_mut()
-        .ok_or_else(|| HookConfigError::invalid("config root must be a JSON object"))?;
-    let hooks = object.entry("hooks").or_insert_with(|| json!({}));
-    let hooks = hooks
-        .as_object_mut()
-        .ok_or_else(|| HookConfigError::invalid("config key `hooks` must be an object"))?;
-    let had_prior = events.iter().any(|event| {
-        hooks
-            .get(*event)
-            .and_then(Value::as_array)
-            .is_some_and(|groups| groups.iter().any(is_managed_group))
-    });
-
-    for event in events {
-        let groups = hooks.entry(*event).or_insert_with(|| json!([]));
-        let groups = groups.as_array_mut().ok_or_else(|| {
-            HookConfigError::invalid(format!("hook event `{event}` must be an array"))
-        })?;
-        strip_managed_handlers(groups);
-        groups.push(group_for_event(event));
-    }
-
-    Ok(ReconcileResult {
-        had_prior,
-        changed: *root != before,
-    })
-}
-
-pub fn remove_hooks(root: &mut Value) -> Result<bool, HookConfigError> {
-    validate_shape(root)?;
-    Ok(remove_hooks_lenient(root))
-}
-
 pub fn remove_hooks_lenient(root: &mut Value) -> bool {
-    remove_matcher_hooks_lenient(root, CLAUDE_HOOK_EVENTS)
+    let events: Vec<&str> = CLAUDE_HOOK_EVENTS
+        .iter()
+        .chain(CLAUDE_RETIRED_HOOK_EVENTS)
+        .copied()
+        .collect();
+    remove_matcher_hooks_lenient(root, &events)
 }
 
-pub fn remove_matcher_hooks_lenient(root: &mut Value, events: &[&str]) -> bool {
+fn remove_matcher_hooks_lenient(root: &mut Value, events: &[&str]) -> bool {
     let object = root.as_object_mut();
     let Some(object) = object else {
         return false;
@@ -228,215 +92,33 @@ pub fn remove_matcher_hooks_lenient(root: &mut Value, events: &[&str]) -> bool {
     removed
 }
 
-pub fn inspect_hooks(root: &Value, expected: Option<&Path>) -> HookStatus {
-    let Some(object) = root.as_object() else {
-        return repair(None, "config root must be a JSON object");
-    };
-    let Some(hooks_value) = object.get("hooks") else {
-        return HookStatus::NotInstalled;
-    };
-    let Some(hooks) = hooks_value.as_object() else {
-        return repair(None, "config key `hooks` must be an object");
-    };
-
-    let any_managed = CLAUDE_HOOK_EVENTS.iter().any(|event| {
-        hooks
-            .get(*event)
-            .and_then(Value::as_array)
-            .is_some_and(|groups| groups.iter().any(is_managed_group))
-    });
-    if !any_managed {
-        if let Some(event) = CLAUDE_HOOK_EVENTS
-            .iter()
-            .find(|event| hooks.get(**event).is_some_and(|value| !value.is_array()))
-        {
-            return repair(None, format!("hook event `{event}` must be an array"));
-        }
-        return HookStatus::NotInstalled;
-    }
-
-    let mut paths = Vec::with_capacity(CLAUDE_HOOK_EVENTS.len());
-    for event in CLAUDE_HOOK_EVENTS {
-        let Some(groups) = hooks.get(*event).and_then(Value::as_array) else {
-            return repair(
-                paths.first().cloned(),
-                format!("hook event `{event}` is missing"),
-            );
-        };
-        let managed: Vec<&Value> = groups
-            .iter()
-            .filter(|group| is_managed_group(group))
-            .collect();
-        if managed.len() != 1 {
-            return repair(
-                paths.first().cloned(),
-                format!("hook event `{event}` must contain exactly one Paneflow group"),
-            );
-        }
-        match validate_group(managed[0], event) {
-            Ok(path) => paths.push(path),
-            Err(reason) => return repair(paths.first().cloned(), reason),
-        }
-    }
-
-    let found = paths[0].clone();
-    if paths.iter().any(|path| path != &found) {
-        return repair(
-            Some(found),
-            "Paneflow hook events point at different binaries",
-        );
-    }
-    if let Some(expected) = expected {
-        let expected = display_hook_program(expected);
-        if found != expected {
-            return HookStatus::Stale { found, expected };
-        }
-    }
-    HookStatus::Installed { path: found }
-}
-
-fn validate_group(group: &Value, event: &str) -> Result<String, String> {
-    let hooks = group
-        .get("hooks")
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("Paneflow group for `{event}` has no hook array"))?;
-    if hooks.len() != 1 {
-        return Err(format!(
-            "Paneflow group for `{event}` must contain one hook"
-        ));
-    }
-    let handler = hooks[0]
-        .as_object()
-        .ok_or_else(|| format!("Paneflow hook for `{event}` must be an object"))?;
-    if handler.get("type").and_then(Value::as_str) != Some("command")
-        || handler.get("timeout").and_then(Value::as_u64) != Some(5)
-    {
-        return Err(format!(
-            "Paneflow hook for `{event}` must be a five-second command hook"
-        ));
-    }
-    let command = handler
-        .get("command")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("Paneflow hook for `{event}` has no command"))?;
-    let path = paneflow_hook_program_token(command)
-        .ok_or_else(|| format!("Paneflow hook for `{event}` has an invalid command"))?;
-    let canonical = render_hook_command(Path::new(&path), event);
-    if group != &managed_group_for_command(canonical) {
-        return Err(format!(
-            "Paneflow group for `{event}` does not match the canonical shape"
-        ));
-    }
-    Ok(path)
-}
-
-fn repair(path: Option<String>, reason: impl Into<String>) -> HookStatus {
-    HookStatus::NeedsRepair {
-        path,
-        reason: reason.into(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use serde_json::json;
+
     use super::*;
 
-    fn command_for(path: &Path) -> impl Fn(&str) -> String + '_ {
-        move |event| render_hook_command(path, event)
+    fn managed_group(path: &Path, event: &str) -> Value {
+        json!({
+            MANAGED_MARKER: true,
+            "hooks": [{ "type": "command", "command": render_hook_command(path, event), "timeout": 5 }],
+        })
     }
 
     #[test]
-    fn reconcile_and_remove_preserve_user_state() {
-        let path = Path::new("/opt/Pane Flow/paneflow-ai-hook");
+    fn lenient_cleanup_also_removes_a_retired_event() {
+        let path = Path::new("/bin/paneflow-ai-hook");
         let mut root = json!({
-            "theme": "dark",
             "hooks": {
-                "Stop": [{ "hooks": [{ "type": "command", "command": "my-hook" }] }]
+                "PostToolUse": [managed_group(path, "PostToolUse")],
+                "Stop": [managed_group(path, "Stop"), { "hooks": [{ "type": "command", "command": "my-hook" }] }]
             }
         });
-
-        let result = reconcile_hooks(&mut root, command_for(path)).unwrap();
-        assert!(!result.had_prior && result.changed);
-        assert_eq!(
-            inspect_hooks(&root, Some(path)),
-            HookStatus::Installed {
-                path: display_hook_program(path),
-            }
-        );
-        assert_eq!(root["theme"], json!("dark"));
-        assert_eq!(root["hooks"]["Stop"].as_array().unwrap().len(), 2);
-
-        assert!(remove_hooks(&mut root).unwrap());
-        assert_eq!(root["hooks"]["Stop"].as_array().unwrap().len(), 1);
-        assert_eq!(root["theme"], json!("dark"));
-    }
-
-    #[test]
-    fn reconcile_and_remove_preserve_handlers_in_mixed_groups() {
-        let path = Path::new("/bin/paneflow-ai-hook");
-        let mut mixed = managed_group_for_command(render_hook_command(path, "Stop"));
-        mixed["matcher"] = json!("Write");
-        mixed["hooks"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({ "type": "command", "command": "my-hook" }));
-        let mut root = json!({ "hooks": { "Stop": [mixed] } });
-
-        reconcile_hooks(&mut root, command_for(path)).unwrap();
-        let groups = root["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0]["matcher"], json!("Write"));
-        assert_eq!(groups[0]["hooks"][0]["command"], json!("my-hook"));
-
-        assert!(remove_hooks(&mut root).unwrap());
-        let groups = root["hooks"]["Stop"].as_array().unwrap();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0]["hooks"][0]["command"], json!("my-hook"));
-    }
-
-    #[test]
-    fn reconcile_refuses_invalid_boundaries_without_mutating() {
-        for mut root in [
-            json!([]),
-            json!({ "hooks": "broken" }),
-            json!({ "hooks": { "Stop": "broken" } }),
-        ] {
-            let before = root.clone();
-            assert!(
-                reconcile_hooks(&mut root, command_for(Path::new("/bin/paneflow-ai-hook")))
-                    .is_err()
-            );
-            assert_eq!(root, before);
-        }
-    }
-
-    #[test]
-    fn inspect_rejects_partial_and_inconsistent_sets() {
-        let path = Path::new("/bin/paneflow-ai-hook");
-        let mut root = json!({});
-        reconcile_hooks(&mut root, command_for(path)).unwrap();
-        root["hooks"].as_object_mut().unwrap().remove("Stop");
-        assert!(matches!(
-            inspect_hooks(&root, Some(path)),
-            HookStatus::NeedsRepair { .. }
-        ));
-
-        reconcile_hooks(&mut root, command_for(path)).unwrap();
-        root["hooks"]["Stop"][0] = managed_group_for_command(render_hook_command(
-            Path::new("/old/paneflow-ai-hook"),
-            "Stop",
-        ));
-        assert!(matches!(
-            inspect_hooks(&root, Some(path)),
-            HookStatus::NeedsRepair { .. }
-        ));
-
-        reconcile_hooks(&mut root, command_for(path)).unwrap();
-        root["hooks"]["Stop"][0]["matcher"] = json!("Write");
-        assert!(matches!(
-            inspect_hooks(&root, Some(path)),
-            HookStatus::NeedsRepair { .. }
-        ));
+        assert!(remove_hooks_lenient(&mut root));
+        assert!(root["hooks"].get("PostToolUse").is_none());
+        assert_eq!(root["hooks"]["Stop"].as_array().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -445,7 +127,7 @@ mod tests {
         let mut root = json!({
             "hooks": {
                 "Stop": "broken",
-                "Notification": [managed_group_for_command(render_hook_command(path, "Notification"))]
+                "Notification": [managed_group(path, "Notification")]
             }
         });
         assert!(remove_hooks_lenient(&mut root));

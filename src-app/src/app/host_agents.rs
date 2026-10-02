@@ -53,6 +53,7 @@ pub(crate) enum HostAgentFrame {
 pub(crate) struct HostAgentRow {
     pub(crate) session: SessionId,
     pub(crate) tool: Option<TerminalAgent>,
+    pub(crate) runtime: Option<TerminalAgent>,
     pub(crate) state: Option<AgentState>,
     pub(crate) message: Option<String>,
     pub(crate) last_result: Option<String>,
@@ -151,6 +152,19 @@ impl WorkerNotification {
     }
 }
 
+pub(crate) fn host_observed_agent(row: Option<&HostAgentRow>) -> Option<TerminalAgent> {
+    row.filter(|row| row.live)
+        .and_then(|row| row.runtime.or(row.tool))
+}
+
+fn declaration_survives_observation(
+    observed: Option<TerminalAgent>,
+    declared_until: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    observed.is_none() && declared_until.is_some_and(|until| now < until)
+}
+
 pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
     let session = SessionId::parse(entry.get("session")?.as_str()?).ok()?;
     let live = entry
@@ -164,6 +178,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .and_then(|agent| agent.get("tool"))
             .and_then(Value::as_str)
             .and_then(TerminalAgent::from_binary),
+        runtime: entry
+            .get("foreground_runtime_id")
+            .and_then(Value::as_str)
+            .and_then(TerminalAgent::from_runtime_id),
         state: agent
             .and_then(|agent| agent.get("state"))
             .and_then(Value::as_str)
@@ -326,7 +344,12 @@ pub(crate) fn seed_projected_session(
     true
 }
 
-fn follow_once(endpoint: &std::path::Path, tx: &SyncSender<HostAgentFrame>) -> Result<(), String> {
+struct FrameSink {
+    tx: SyncSender<HostAgentFrame>,
+    wake: crate::app::wake::AppWake,
+}
+
+fn follow_once(endpoint: &std::path::Path, tx: &FrameSink) -> Result<(), String> {
     let mut control = HostControl::connect(endpoint, CLIENT_NAME)?;
     let capabilities: Vec<String> = control.identity()["capabilities"]
         .as_array()
@@ -396,8 +419,10 @@ fn follow_once(endpoint: &std::path::Path, tx: &SyncSender<HostAgentFrame>) -> R
     }
 }
 
-fn send(tx: &SyncSender<HostAgentFrame>, frame: HostAgentFrame) -> Result<(), String> {
-    match tx.try_send(frame) {
+fn send(sink: &FrameSink, frame: HostAgentFrame) -> Result<(), String> {
+    let sent = sink.tx.try_send(frame);
+    sink.wake.notify();
+    match sent {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => Ok(()),
         Err(TrySendError::Disconnected(_)) => Err("the desktop stopped reading".to_string()),
@@ -436,9 +461,12 @@ pub(crate) fn acknowledge_worker_unread(
         .detach();
 }
 
-pub(crate) fn spawn_follow_thread() -> Option<Receiver<HostAgentFrame>> {
+pub(crate) fn spawn_follow_thread(
+    wake: crate::app::wake::AppWake,
+) -> Option<Receiver<HostAgentFrame>> {
     let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
     let (tx, rx) = sync_channel(FRAME_QUEUE_SLOTS);
+    let tx = FrameSink { tx, wake };
     let spawned = std::thread::Builder::new()
         .name("paneflow-worker-agents".into())
         .spawn(move || {
@@ -467,7 +495,7 @@ impl PaneFlowApp {
         if self.host_agents.frames.is_some() {
             return;
         }
-        self.host_agents.frames = spawn_follow_thread();
+        self.host_agents.frames = spawn_follow_thread(self.app_wake.clone());
     }
 
     pub(crate) fn process_host_agent_frames(&mut self, cx: &mut Context<Self>) {
@@ -479,6 +507,9 @@ impl PaneFlowApp {
                 };
                 pending.push(frame);
             }
+        }
+        if pending.len() == DRAIN_MAX_PER_TICK {
+            self.app_wake.notify();
         }
         for frame in pending {
             match frame {
@@ -514,9 +545,60 @@ impl PaneFlowApp {
         self.host_agents.connected = true;
         self.host_agents.disconnect_reason = None;
         self.host_agents.bootstrapped = true;
+        self.apply_host_observed_agents(cx);
         self.seed_attached_sessions_from_host(cx);
         self.refresh_owned_sessions(cx);
         cx.notify();
+    }
+
+    fn apply_host_observed_agents(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::Instant::now();
+        let mut agentless: Vec<(u64, u32)> = Vec::new();
+        let mut changed = false;
+        for ws_idx in 0..self.workspaces.len() {
+            let mut detected = std::collections::HashSet::new();
+            for pane in self.workspaces[ws_idx].collect_panes() {
+                let terminals: Vec<gpui::Entity<crate::terminal::TerminalView>> =
+                    pane.read(cx).terminals().cloned().collect();
+                let mut pane_changed = false;
+                for tv in terminals {
+                    let surface_id = tv.entity_id().as_u64();
+                    let observed =
+                        host_observed_agent(self.host_agents.row(&tv.read(cx).terminal.session_id));
+                    if let Some(agent) = observed {
+                        detected.insert(agent.binary().to_string());
+                    }
+                    tv.update(cx, |view, _cx| {
+                        let t = &mut view.terminal;
+                        if declaration_survives_observation(observed, t.agent_declared_until, now) {
+                            return;
+                        }
+                        t.agent_declared_until = None;
+                        if t.detected_agent != observed || !t.agent_confirmed {
+                            if observed.is_none() && t.detected_agent.is_some() {
+                                agentless.push((surface_id, t.child_pid));
+                            }
+                            t.detected_agent = observed;
+                            t.agent_confirmed = true;
+                            pane_changed = true;
+                        }
+                    });
+                }
+                if pane_changed {
+                    pane.update(cx, |_, cx| cx.notify());
+                    changed = true;
+                }
+            }
+            let ws = &mut self.workspaces[ws_idx];
+            if ws.detected_agents != detected {
+                ws.detected_agents = detected;
+                changed = true;
+            }
+        }
+        self.reap_sessions_without_agent(&agentless, cx);
+        if changed {
+            cx.notify();
+        }
     }
 
     fn seed_attached_sessions_from_host(&mut self, cx: &mut Context<Self>) {
@@ -613,6 +695,7 @@ impl PaneFlowApp {
             }
         }
         self.host_agents.connected = true;
+        self.apply_host_observed_agents(cx);
         let Some((workspace_id, surface_id)) = self.surface_for_session(&session, cx) else {
             cx.notify();
             return;
@@ -818,6 +901,77 @@ mod tests {
 
         assert!(row_from_snapshot(&json!({"live": true})).is_none());
         assert!(row_from_snapshot(&json!({"session": "not-a-uuid"})).is_none());
+    }
+
+    #[test]
+    fn a_declaration_survives_only_absent_observation_before_its_deadline() {
+        let now = std::time::Instant::now();
+        let future = now.checked_add(std::time::Duration::from_secs(5));
+        let past = now.checked_sub(std::time::Duration::from_secs(5));
+
+        assert!(declaration_survives_observation(None, future, now));
+        assert!(!declaration_survives_observation(None, past, now));
+        assert!(!declaration_survives_observation(None, None, now));
+        assert!(!declaration_survives_observation(
+            Some(TerminalAgent::ClaudeCode),
+            future,
+            now
+        ));
+    }
+
+    #[test]
+    fn a_hosted_codex_pane_yields_one_sidebar_row_from_the_host_observation() {
+        let row = HostAgentRow {
+            live: true,
+            ..projected_row(Some("codex"), Some(4242))
+        };
+        let observed = host_observed_agent(Some(&row));
+        assert_eq!(observed, Some(TerminalAgent::Codex));
+        assert_eq!(
+            host_observed_agent(Some(&HostAgentRow {
+                live: false,
+                ..row.clone()
+            })),
+            None
+        );
+
+        let session = projected_session(&row, 9, None).expect("the host row projects a session");
+        let detected: std::collections::HashSet<String> = observed
+            .map(|agent| agent.binary().to_string())
+            .into_iter()
+            .collect();
+        let status = crate::ai_types::workspace_agent_status([&session], &detected);
+        assert_eq!(status.active_labels, vec!["Codex".to_string()]);
+        assert!(status.unhooked.is_empty(), "{:?}", status.unhooked);
+        assert_eq!(
+            crate::workspace::PaneScan::default(),
+            crate::workspace::PaneScan {
+                ports: Vec::new(),
+                foreground_command: None,
+            },
+            "the port scan carries no agent evidence that could add a second row"
+        );
+    }
+
+    #[test]
+    fn an_agent_without_hooks_is_observed_from_the_host_runtime_before_any_activity() {
+        let row = row_from_snapshot(&json!({
+            "session": SessionId::new().to_string(),
+            "live": true,
+            "activity": null,
+            "runtime_id": "com.sourcegraph.amp",
+            "foreground_runtime_id": "com.sourcegraph.amp",
+        }))
+        .expect("row");
+        assert_eq!(row.tool, None);
+        assert_eq!(host_observed_agent(Some(&row)), Some(TerminalAgent::Amp));
+        assert_eq!(
+            host_observed_agent(Some(&HostAgentRow {
+                runtime: None,
+                ..row
+            })),
+            None
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::agents::{self, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
+use crate::integrations::{self, InstallMode};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallKind {
@@ -58,13 +59,21 @@ pub enum OverallState {
     AllInstalled,
 }
 
-pub fn install_all(bridge: Option<&Path>) -> Result<Vec<AgentResult<InstallKind>>, String> {
-    install_with(bridge, &agents::default_writers())
+pub fn install_all(
+    bridge: Option<&Path>,
+    force: bool,
+) -> Result<Vec<AgentResult<InstallKind>>, String> {
+    install_with(
+        bridge,
+        &agents::default_writers(),
+        InstallMode::for_this_build(force),
+    )
 }
 
 pub(crate) fn install_with(
     bridge: Option<&Path>,
     writers: &[Box<dyn AgentConfigWriter>],
+    mode: InstallMode,
 ) -> Result<Vec<AgentResult<InstallKind>>, String> {
     let presences: Vec<bool> = writers.iter().map(|w| w.presence().is_present()).collect();
     let any_present = presences.iter().any(|&p| p);
@@ -92,7 +101,7 @@ pub(crate) fn install_with(
     for (w, &present) in writers.iter().zip(&presences) {
         let kind = match (present, bridge) {
             (false, _) => InstallKind::SkippedAbsent,
-            (true, Some(b)) => match w.install(b) {
+            (true, Some(b)) => match integrations::install_mcp_entry(w.as_ref(), b, mode) {
                 Ok(InstallOutcome::Installed) => InstallKind::Installed,
                 Ok(InstallOutcome::Updated) => InstallKind::Updated,
                 Ok(InstallOutcome::AlreadyCurrent) => InstallKind::AlreadyCurrent,
@@ -209,14 +218,19 @@ mod tests {
     #[test]
     fn install_refuses_when_bridge_missing_and_agents_present() {
         let writers = vec![boxed(Mock::present("claude"))];
-        let err = install_with(Some(Path::new("/no/such/bin")), &writers).unwrap_err();
+        let err = install_with(
+            Some(Path::new("/no/such/bin")),
+            &writers,
+            InstallMode::default(),
+        )
+        .unwrap_err();
         assert!(err.contains("missing"));
     }
 
     #[test]
     fn install_no_agents_is_ok_empty() {
         let writers = vec![boxed(Mock::absent("claude"))];
-        let res = install_with(None, &writers).unwrap();
+        let res = install_with(None, &writers, InstallMode::default()).unwrap();
         assert_eq!(res[0].kind, InstallKind::SkippedAbsent);
     }
 
@@ -230,7 +244,7 @@ mod tests {
             boxed(Mock::present("b").with_install(Ok(InstallOutcome::AlreadyCurrent))),
             boxed(Mock::absent("c")),
         ];
-        let res = install_with(Some(&bridge), &writers).unwrap();
+        let res = install_with(Some(&bridge), &writers, InstallMode::default()).unwrap();
         assert_eq!(res[0].kind, InstallKind::Installed);
         assert_eq!(res[1].kind, InstallKind::AlreadyCurrent);
         assert_eq!(res[2].kind, InstallKind::SkippedAbsent);

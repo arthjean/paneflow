@@ -21,6 +21,12 @@ impl ClaudeCode {
         }
     }
 
+    pub(crate) fn at(config_path: PathBuf) -> Self {
+        Self {
+            config_path: Some(config_path),
+        }
+    }
+
     fn path(&self) -> Result<&Path> {
         self.config_path
             .as_deref()

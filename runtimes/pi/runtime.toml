@@ -35,6 +35,9 @@ session_argv = ["pi", "--session", "{session_id}"]
 session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
 failure_markers = []
 
+[sessions]
+reader = "pi"
+
 [[suggested_presets]]
 id = "pi"
 command = "pi"

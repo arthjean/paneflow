@@ -29,22 +29,6 @@ fn scan_workspace_ports(
     ports
 }
 
-fn declaration_survives_scan(
-    scanned: Option<crate::agent_launcher::TerminalAgent>,
-    declared_until: Option<std::time::Instant>,
-    now: std::time::Instant,
-) -> bool {
-    scanned.is_none() && declared_until.is_some_and(|until| now < until)
-}
-
-fn scan_detected_agents(
-    scan: &std::collections::HashMap<u64, crate::workspace::PaneScan>,
-) -> std::collections::HashSet<String> {
-    scan.values()
-        .flat_map(|s| s.agents.iter().cloned())
-        .collect()
-}
-
 fn merge_frontend_scan_labels(
     labels: &mut std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
     scan: &std::collections::HashMap<u64, crate::workspace::PaneScan>,
@@ -93,11 +77,9 @@ fn merge_frontend_scan_labels(
 fn merge_scan_workspace_state(
     active_ports: &mut Vec<u16>,
     service_labels: &mut std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
-    detected_agents: &mut std::collections::HashSet<String>,
     scan: &std::collections::HashMap<u64, crate::workspace::PaneScan>,
 ) -> bool {
     let ports = scan_workspace_ports(scan);
-    let next_agents = scan_detected_agents(scan);
     let mut changed = false;
 
     if *active_ports != ports {
@@ -120,10 +102,6 @@ fn merge_scan_workspace_state(
             info.is_frontend = false;
             changed = true;
         }
-    }
-    if *detected_agents != next_agents {
-        *detected_agents = next_agents;
-        changed = true;
     }
     merge_frontend_scan_labels(service_labels, scan) || changed
 }
@@ -177,7 +155,7 @@ impl PaneFlowApp {
             ws.collect_panes().iter().any(|pane| {
                 pane.read(cx).terminals().any(|tv| {
                     let t = &tv.read(cx).terminal;
-                    t.child_pid > 0 && !t.agent_confirmed
+                    t.child_pid > 0 && !t.pane_scanned
                 })
             })
         })
@@ -275,14 +253,7 @@ impl PaneFlowApp {
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let mut scan = smol::unblock(move || {
-                    let agent_binaries: Vec<&'static str> =
-                        crate::agent_launcher::TerminalAgent::all()
-                            .map(|agent| agent.binary())
-                            .collect();
-                    crate::workspace::scan_panes(&roots, &agent_binaries)
-                })
-                .await;
+                let mut scan = smol::unblock(move || crate::workspace::scan_panes(&roots)).await;
                 for key in submitted {
                     scan.entry(key).or_default();
                 }
@@ -312,12 +283,8 @@ impl PaneFlowApp {
             return;
         };
 
-        let mut changed = merge_scan_workspace_state(
-            &mut ws.active_ports,
-            &mut ws.service_labels,
-            &mut ws.detected_agents,
-            &scan,
-        );
+        let mut changed =
+            merge_scan_workspace_state(&mut ws.active_ports, &mut ws.service_labels, &scan);
 
         let live_ports: Vec<u16> = ws.active_ports.clone();
 
@@ -355,8 +322,6 @@ impl PaneFlowApp {
             }
         }
 
-        let mut agentless: Vec<(u64, u32)> = Vec::new();
-
         for pane in &leaves {
             let terminals: Vec<gpui::Entity<crate::terminal::TerminalView>> =
                 pane.read(cx).terminals().cloned().collect();
@@ -366,29 +331,10 @@ impl PaneFlowApp {
                 let Some(s) = scan.get(&tid) else {
                     continue;
                 };
-                let agent = s
-                    .agents
-                    .first()
-                    .and_then(|b| crate::agent_launcher::TerminalAgent::from_binary(b));
                 tv.update(cx, |view, _cx| {
                     let t = &mut view.terminal;
                     t.retain_reported_ports(&live_ports);
-                    let in_grace = declaration_survives_scan(
-                        agent,
-                        t.agent_declared_until,
-                        std::time::Instant::now(),
-                    );
-                    if !in_grace {
-                        t.agent_declared_until = None;
-                        if t.detected_agent != agent || !t.agent_confirmed {
-                            if agent.is_none() && t.detected_agent.is_some() {
-                                agentless.push((tid, t.child_pid));
-                            }
-                            t.detected_agent = agent;
-                            t.agent_confirmed = true;
-                            pane_changed = true;
-                        }
-                    }
+                    t.pane_scanned = true;
                     let ports_with_links: Vec<(u16, Option<String>)> = s
                         .ports
                         .iter()
@@ -420,8 +366,6 @@ impl PaneFlowApp {
                 changed = true;
             }
         }
-
-        self.reap_sessions_without_agent(&agentless, cx);
 
         if changed {
             cx.notify();
@@ -455,7 +399,7 @@ mod tests {
     use super::*;
     use crate::terminal::ServiceInfo;
     use crate::workspace::{PaneScan, PortEntry};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     #[test]
     fn merge_service_label_keeps_frontend_when_backend_mentions_same_port() {
@@ -487,28 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn declaration_survives_only_absent_evidence_before_its_deadline() {
-        use crate::agent_launcher::TerminalAgent;
-        let now = std::time::Instant::now();
-        let future = now.checked_add(std::time::Duration::from_secs(5));
-        let past = now.checked_sub(std::time::Duration::from_secs(5));
-
-        assert!(declaration_survives_scan(None, future, now));
-        assert!(!declaration_survives_scan(None, past, now));
-        assert!(!declaration_survives_scan(None, None, now));
-        assert!(!declaration_survives_scan(
-            Some(TerminalAgent::ClaudeCode),
-            future,
-            now
-        ));
-        assert!(!declaration_survives_scan(
-            Some(TerminalAgent::Codex),
-            future,
-            now
-        ));
-    }
-
-    #[test]
     fn merge_scan_workspace_state_adds_frontend_fallback_and_prunes_stale_labels() {
         let mut active_ports = vec![9999];
         let mut service_labels = HashMap::from([(
@@ -520,7 +442,6 @@ mod tests {
                 is_frontend: true,
             },
         )]);
-        let mut detected_agents = HashSet::new();
         let scan = HashMap::from([(
             7,
             PaneScan {
@@ -528,7 +449,6 @@ mod tests {
                     port: 5173,
                     frontend: Some("Vite"),
                 }],
-                agents: vec!["codex".to_string()],
                 foreground_command: None,
             },
         )]);
@@ -536,7 +456,6 @@ mod tests {
         assert!(merge_scan_workspace_state(
             &mut active_ports,
             &mut service_labels,
-            &mut detected_agents,
             &scan,
         ));
 
@@ -546,7 +465,6 @@ mod tests {
         assert_eq!(info.url.as_deref(), Some("http://localhost:5173"));
         assert_eq!(info.label.as_deref(), Some("Vite"));
         assert!(info.is_frontend);
-        assert!(detected_agents.contains("codex"));
     }
 
     #[test]
@@ -561,7 +479,6 @@ mod tests {
                 is_frontend: true,
             },
         )]);
-        let mut detected_agents = HashSet::new();
         let scan = HashMap::from([(
             7,
             PaneScan {
@@ -569,7 +486,6 @@ mod tests {
                     port: 5173,
                     frontend: Some("Vite"),
                 }],
-                agents: Vec::new(),
                 foreground_command: None,
             },
         )]);
@@ -577,7 +493,6 @@ mod tests {
         assert!(!merge_scan_workspace_state(
             &mut active_ports,
             &mut service_labels,
-            &mut detected_agents,
             &scan,
         ));
         assert_eq!(
@@ -598,7 +513,6 @@ mod tests {
                 is_frontend: true,
             },
         )]);
-        let mut detected_agents = HashSet::new();
         let scan = HashMap::from([(
             7,
             PaneScan {
@@ -606,7 +520,6 @@ mod tests {
                     port: 5173,
                     frontend: None,
                 }],
-                agents: Vec::new(),
                 foreground_command: None,
             },
         )]);
@@ -614,7 +527,6 @@ mod tests {
         assert!(merge_scan_workspace_state(
             &mut active_ports,
             &mut service_labels,
-            &mut detected_agents,
             &scan,
         ));
         let info = service_labels.get(&5173).unwrap();
@@ -635,7 +547,6 @@ mod tests {
                 is_frontend: false,
             },
         )]);
-        let mut detected_agents = HashSet::new();
         let scan = HashMap::from([(
             7,
             PaneScan {
@@ -643,7 +554,6 @@ mod tests {
                     port: 5173,
                     frontend: Some("Vite"),
                 }],
-                agents: Vec::new(),
                 foreground_command: None,
             },
         )]);
@@ -651,7 +561,6 @@ mod tests {
         assert!(merge_scan_workspace_state(
             &mut active_ports,
             &mut service_labels,
-            &mut detected_agents,
             &scan,
         ));
         let info = service_labels.get(&5173).unwrap();
@@ -669,7 +578,6 @@ mod tests {
                         port: 3000,
                         frontend: None,
                     }],
-                    agents: Vec::new(),
                     foreground_command: None,
                 },
             ),
@@ -680,7 +588,6 @@ mod tests {
                         port: 3000,
                         frontend: None,
                     }],
-                    agents: Vec::new(),
                     foreground_command: None,
                 },
             ),
@@ -697,7 +604,6 @@ mod tests {
                     port: 5173,
                     frontend: Some("Vite"),
                 }],
-                agents: Vec::new(),
                 foreground_command: None,
             },
         )]);

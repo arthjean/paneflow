@@ -34,6 +34,8 @@ idle_prompt = ["❯"]
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Claude Code's global settings."
 hook_adapter = "claude"
+mcp_config = "claude"
+skills_dir = "claude"
 
 [resume]
 session_argv = ["claude", "--resume", "{session_id}"]
@@ -41,6 +43,9 @@ continue_argv = ["claude", "--continue"]
 fork_argv = ["claude", "--resume", "{session_id}", "--fork-session"]
 session_id_pattern = '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
 failure_markers = ["No conversation found with session ID"]
+
+[sessions]
+reader = "claude"
 
 [[suggested_presets]]
 id = "claude_code"

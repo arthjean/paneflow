@@ -33,11 +33,15 @@ idle_prompt = ["Type your message", "> Type your message"]
 [integration]
 summary = "Gemini CLI turn status is read from its screen."
 hook_adapter = "none"
+mcp_config = "gemini"
 
 [resume]
 session_argv = ["gemini", "--resume", "{session_id}"]
 session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
 failure_markers = []
+
+[sessions]
+reader = "gemini"
 
 [[suggested_presets]]
 id = "gemini"

@@ -16,7 +16,9 @@ use crate::protocol::{
 use crate::server::{ServerHandle, Worker};
 use crate::state::{WorkerState, now_ms};
 
-const HEALTH_REFRESH: Duration = Duration::from_secs(2);
+const HEALTH_REFRESH: Duration = Duration::from_secs(30);
+const SWEEP_INTERVAL: Duration = Duration::from_secs(2);
+const POLL_FALLBACK: Duration = Duration::from_secs(2);
 const FRAME_WAIT: Duration = Duration::from_millis(100);
 const DRAIN_PER_TICK: usize = 256;
 const MENU_EVIDENCE_DEADLINE: Duration = Duration::from_millis(100);
@@ -170,15 +172,15 @@ fn refresh_integrations_as(home: &Path, debug_build: bool) -> bool {
     remove_legacy_project_hooks(home);
     if debug_build {
         log::info!(
-            "paneflow-serve: a debug build leaves the agent integrations untouched; `paneflow mcp install --force-dev` points them at it"
+            "paneflow-serve: a debug build leaves the agent integrations untouched; `paneflow integrations install <runtime> --force` points them at it"
         );
         return false;
     }
-    let Some(binaries) = crate::integrations::resolve_binaries() else {
+    let Some(binaries) = crate::integrations::resolve_binaries(home) else {
         log::info!("paneflow-serve: no helper binaries staged; integrations are left untouched");
         return false;
     };
-    for (runtime, result) in paneflow_mcp_install::adopt_and_refresh_installed(&binaries) {
+    for (runtime, result) in paneflow_mcp_install::adopt_and_refresh_installed(home, &binaries) {
         match result {
             Ok(()) => log::info!("paneflow-serve: refreshed the {runtime} integration"),
             Err(error) => {
@@ -254,16 +256,21 @@ fn pump(worker: &Arc<Worker>, home: &Path) {
         }
     };
     let mut last_health = std::time::Instant::now();
+    let mut last_sweep = std::time::Instant::now();
+    let mut following = false;
     while !worker.shutdown.load(Ordering::Acquire) {
         if let Some(frame) = link.wait(FRAME_WAIT) {
-            apply(worker, frame);
+            following = apply(worker, frame, following);
             for frame in link.drain(DRAIN_PER_TICK) {
-                apply(worker, frame);
+                following = apply(worker, frame, following);
             }
         }
-        if last_health.elapsed() >= HEALTH_REFRESH {
+        if last_health.elapsed() >= core_poll_interval(following) {
             last_health = std::time::Instant::now();
             refresh_core_snapshot(worker);
+        }
+        if last_sweep.elapsed() >= SWEEP_INTERVAL {
+            last_sweep = std::time::Instant::now();
             let core_endpoint = worker.core_endpoint.clone();
             let evidence = move |session: &paneflow_config::schema::SessionId| {
                 crate::core_link::menu_prompt_active(
@@ -289,6 +296,14 @@ fn pump(worker: &Arc<Worker>, home: &Path) {
     }
 }
 
+fn core_poll_interval(following: bool) -> Duration {
+    if following {
+        HEALTH_REFRESH
+    } else {
+        POLL_FALLBACK
+    }
+}
+
 fn refresh_core_snapshot(worker: &Arc<Worker>) {
     match crate::core_link::call_core(&worker.core_endpoint, METHOD_AGENT_SNAPSHOT, &json!({})) {
         Ok(snapshot) => {
@@ -306,7 +321,7 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
     }
 }
 
-fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
+fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
     match frame {
         CoreFrame::Snapshot(entries) => {
             let projections = {
@@ -324,6 +339,24 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
             worker
                 .bus
                 .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+            return true;
+        }
+        CoreFrame::Session(entry) => {
+            let projections = worker.lock_state().apply_core_session(&entry);
+            worker.core_connected.store(true, Ordering::Release);
+            for projection in projections {
+                broadcast_projection(worker, &projection, &json!({}));
+            }
+        }
+        CoreFrame::SessionRemoved(session) => {
+            let removed = paneflow_config::schema::SessionId::parse(&session)
+                .is_ok_and(|session| worker.lock_state().forget_core_session(&session));
+            if removed {
+                let sessions = worker.lock_state().snapshot();
+                worker
+                    .bus
+                    .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+            }
         }
         CoreFrame::Event(value) => {
             worker.core_connected.store(true, Ordering::Release);
@@ -349,8 +382,18 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame) {
         CoreFrame::Disconnected(reason) => {
             worker.core_connected.store(false, Ordering::Release);
             log::warn!("paneflow-serve: the core link dropped: {reason}");
+            return false;
+        }
+        CoreFrame::Refused(reason) => {
+            log::warn!(
+                "paneflow-serve: the core refused the agent subscription ({reason}); polling its snapshot every {}s until the next attempt in {}s",
+                POLL_FALLBACK.as_secs(),
+                crate::core_link::REFUSED_RETRY.as_secs()
+            );
+            return false;
         }
     }
+    following
 }
 
 fn broadcast_projection(
@@ -365,6 +408,27 @@ fn broadcast_projection(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_refused_subscription_falls_back_to_the_two_second_snapshot_poll() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        let worker = running.worker();
+        assert!(!apply(
+            worker,
+            CoreFrame::Refused("refused".to_string()),
+            true
+        ));
+        assert_eq!(core_poll_interval(false), Duration::from_secs(2));
+        assert!(apply(worker, CoreFrame::Snapshot(Vec::new()), false));
+        assert_eq!(core_poll_interval(true), Duration::from_secs(30));
+        assert!(!apply(
+            worker,
+            CoreFrame::Disconnected("gone".to_string()),
+            true
+        ));
+        running.stop();
+    }
+
     fn open_with_config(home: &Path, body: &str) -> RunningWorker {
         std::fs::write(home.join("paneflow.json"), body).expect("the config is written");
         open_with_build_id(home, "test-build".to_string()).expect("the worker opens")
@@ -376,10 +440,15 @@ mod tests {
         let project = tempfile::tempdir().expect("a project");
         let untracked = tempfile::tempdir().expect("a project absent from the session");
         let mut legacy = json!({ "permissions": { "allow": ["Bash(ls)"] }, "hooks": {} });
-        paneflow_agent_config::claude_hooks::reconcile_hooks(&mut legacy, |event| {
-            format!("/old/bin/paneflow-ai-hook {event}")
-        })
-        .expect("legacy hooks");
+        for event in paneflow_agent_config::claude_hooks::CLAUDE_HOOK_EVENTS
+            .iter()
+            .chain(paneflow_agent_config::claude_hooks::CLAUDE_RETIRED_HOOK_EVENTS)
+        {
+            legacy["hooks"][*event] = json!([{
+                "_paneflow_managed": true,
+                "hooks": [{ "type": "command", "command": format!("/old/bin/paneflow-ai-hook {event}"), "timeout": 5 }],
+            }]);
+        }
         legacy["hooks"]["Stop"]
             .as_array_mut()
             .unwrap()

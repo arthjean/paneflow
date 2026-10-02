@@ -5,6 +5,13 @@
   "description": "Schema for paneflow.json. Lives at ~/.config/paneflow/paneflow.json on Linux, ~/Library/Application Support/paneflow/paneflow.json on macOS, and %APPDATA%\\paneflow\\paneflow.json on Windows. The runtime is lenient: unknown top-level keys are ignored, so the schema's `additionalProperties: false` is an editor-side aid, not a runtime constraint.",
   "type": "object",
   "additionalProperties": false,
+  "patternProperties": {
+    "^[a-z][a-z0-9_]*_button_visible$": {
+      "type": ["boolean", "null"],
+      "description": "Show the built-in command button of the runtime whose catalog display.visibility_config_key is this key. Null/omitted auto-detects the CLI binary.",
+      "default": null
+    }
+  },
   "properties": {
     "$schema": {
       "type": "string",

@@ -29,11 +29,15 @@ anchor_start_event_to_output = true
 [integration]
 summary = "OpenCode is detected from its process; Paneflow reads no turn status from it."
 hook_adapter = "none"
+mcp_config = "opencode"
 
 [resume]
 session_argv = ["opencode", "--session", "{session_id}"]
 session_id_pattern = '^ses_[A-Za-z0-9_]+$'
 failure_markers = []
+
+[sessions]
+reader = "opencode"
 
 [[suggested_presets]]
 id = "opencode"

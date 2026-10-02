@@ -20,6 +20,7 @@ pub struct Descriptor {
     pub screen: Option<Screen>,
     pub integration: Integration,
     pub resume: Option<Resume>,
+    pub sessions: Option<Sessions>,
     pub suggested_presets: Vec<SuggestedPreset>,
 }
 
@@ -102,6 +103,76 @@ pub struct Integration {
     pub summary: String,
     pub post_install_step: Option<String>,
     pub hook_adapter: HookAdapter,
+    #[serde(default)]
+    pub mcp_config: Option<McpConfig>,
+    #[serde(default)]
+    pub skills_dir: Option<SkillsDir>,
+}
+
+pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode";
+pub const ACCEPTED_SKILLS_DIRS: &str = "claude";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum McpConfig {
+    Claude,
+    Codex,
+    Gemini,
+    OpenCode,
+}
+
+impl McpConfig {
+    fn variant(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::Gemini => "Gemini",
+            Self::OpenCode => "OpenCode",
+        }
+    }
+}
+
+impl TryFrom<String> for McpConfig {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            "gemini" => Ok(Self::Gemini),
+            "opencode" => Ok(Self::OpenCode),
+            other => Err(format!(
+                "integration.mcp_config '{other}' has no MCP config writer; accepted writers: {ACCEPTED_MCP_CONFIGS}"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum SkillsDir {
+    Claude,
+}
+
+impl SkillsDir {
+    fn variant(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+        }
+    }
+}
+
+impl TryFrom<String> for SkillsDir {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "claude" => Ok(Self::Claude),
+            other => Err(format!(
+                "integration.skills_dir '{other}' is not a verified skills directory; accepted directories: {ACCEPTED_SKILLS_DIRS}"
+            )),
+        }
+    }
 }
 
 pub const ACCEPTED_HOOK_ADAPTERS: &str = "none, claude, codex";
@@ -139,6 +210,60 @@ impl TryFrom<String> for HookAdapter {
             "none" => Ok(Self::None),
             other => Err(format!(
                 "integration.hook_adapter '{other}' has no installer; accepted adapters: {ACCEPTED_HOOK_ADAPTERS}"
+            )),
+        }
+    }
+}
+
+pub const ACCEPTED_SESSION_READERS: &str = "claude, codex, opencode, pi, gemini, kiro, grok";
+pub const VISIBILITY_CONFIG_KEY_SUFFIX: &str = "_button_visible";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sessions {
+    pub reader: SessionReader,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum SessionReader {
+    Claude,
+    Codex,
+    OpenCode,
+    Pi,
+    Gemini,
+    Kiro,
+    Grok,
+}
+
+impl SessionReader {
+    fn variant(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+            Self::OpenCode => "OpenCode",
+            Self::Pi => "Pi",
+            Self::Gemini => "Gemini",
+            Self::Kiro => "Kiro",
+            Self::Grok => "Grok",
+        }
+    }
+}
+
+impl TryFrom<String> for SessionReader {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            "opencode" => Ok(Self::OpenCode),
+            "pi" => Ok(Self::Pi),
+            "gemini" => Ok(Self::Gemini),
+            "kiro" => Ok(Self::Kiro),
+            "grok" => Ok(Self::Grok),
+            other => Err(format!(
+                "sessions.reader '{other}' is not a session reader; accepted readers: {ACCEPTED_SESSION_READERS}"
             )),
         }
     }
@@ -205,6 +330,7 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
     let mut ids = BTreeMap::<&str, &Path>::new();
     let mut aliases = BTreeMap::<String, (&str, &Path)>::new();
     let mut display_orders = BTreeMap::<u16, &Path>::new();
+    let mut visibility_keys = BTreeMap::<&str, &Path>::new();
     for located in descriptors {
         let path = located.path.as_path();
         let runtime = &located.descriptor;
@@ -246,6 +372,20 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 "{}: display.order {} first declared in {}",
                 path.display(),
                 runtime.display.order,
+                first.display()
+            ));
+        }
+        let visibility_key = runtime.display.visibility_config_key.as_str();
+        if !is_visibility_config_key(visibility_key) {
+            errors.push(format!(
+                "{}: display.visibility_config_key '{visibility_key}' must be a lowercase snake_case key ending in '{VISIBILITY_CONFIG_KEY_SUFFIX}'",
+                path.display()
+            ));
+        }
+        if let Some(first) = visibility_keys.insert(visibility_key, path) {
+            errors.push(format!(
+                "{}: display.visibility_config_key '{visibility_key}' first declared in {}",
+                path.display(),
                 first.display()
             ));
         }
@@ -332,6 +472,13 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
         if runtime.lifecycle.authority == LifecycleAuthority::Complete && !adapter.has_installer() {
             errors.push(format!(
                 "{}: lifecycle.authority = 'complete' requires an integration.hook_adapter with an installer, got '{}'; accepted adapters: {INSTALLER_HOOK_ADAPTERS}",
+                path.display(),
+                adapter.name()
+            ));
+        }
+        if adapter.has_installer() && runtime.integration.mcp_config.is_none() {
+            errors.push(format!(
+                "{}: integration.hook_adapter = '{}' installs the MCP bridge with the hooks and requires an integration.mcp_config; accepted writers: {ACCEPTED_MCP_CONFIGS}",
                 path.display(),
                 adapter.name()
             ));
@@ -478,6 +625,17 @@ fn is_plain_argument(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'='))
 }
 
+fn is_visibility_config_key(value: &str) -> bool {
+    value
+        .strip_suffix(VISIBILITY_CONFIG_KEY_SUFFIX)
+        .is_some_and(|stem| {
+            stem.starts_with(|c: char| c.is_ascii_lowercase())
+                && stem
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        })
+}
+
 fn is_reverse_dns(value: &str) -> bool {
     let parts = value.split('.').collect::<Vec<_>>();
     parts.len() >= 3
@@ -567,11 +725,32 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             None => output.push_str("screen: None,\n"),
         }
         output.push_str(&format!(
-            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{} }},\n",
+            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {} }},\n",
             runtime.integration.summary,
             option_string(runtime.integration.post_install_step.as_deref()),
-            hook_adapter(runtime.integration.hook_adapter)
+            hook_adapter(runtime.integration.hook_adapter),
+            runtime
+                .integration
+                .mcp_config
+                .map_or("None".to_string(), |config| format!(
+                    "Some(RuntimeMcpConfig::{})",
+                    config.variant()
+                )),
+            runtime
+                .integration
+                .skills_dir
+                .map_or("None".to_string(), |dir| format!(
+                    "Some(RuntimeSkillsDir::{})",
+                    dir.variant()
+                ))
         ));
+        match &runtime.sessions {
+            Some(sessions) => output.push_str(&format!(
+                "sessions: Some(RuntimeSessions {{ reader: RuntimeSessionReader::{} }}),\n",
+                sessions.reader.variant()
+            )),
+            None => output.push_str("sessions: None,\n"),
+        }
         output.push_str("suggested_presets: &[\n");
         for preset in &runtime.suggested_presets {
             output.push_str(&format!(
@@ -582,6 +761,23 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         output.push_str("] },\n");
     }
     output.push_str("];\n");
+    output.push_str(&format!(
+        "pub const RUNTIME_COUNT: usize = {};\npub const SESSION_RUNTIME_COUNT: usize = {};\n",
+        descriptors.len(),
+        descriptors
+            .iter()
+            .filter(|located| located.descriptor.sessions.is_some())
+            .count()
+    ));
+    output.push_str("#[macro_export]\nmacro_rules! runtime_identity_constants {\n($ty:ident) => {\n#[allow(non_upper_case_globals)]\nimpl $ty {\n");
+    for located in descriptors {
+        output.push_str(&format!(
+            "pub const {}: $ty = $ty({:?});\n",
+            constant_name(&located.descriptor.slug),
+            located.descriptor.id
+        ));
+    }
+    output.push_str("}\n};\n}\n");
     output.push_str("pub fn canonical_command_for_alias(alias: &str) -> Option<&'static str> {\nmatch alias {\n");
     for located in descriptors {
         let runtime = &located.descriptor;
@@ -645,6 +841,17 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
     }
     output.push_str("_ => None,\n}\n}\n");
     Ok(output)
+}
+
+fn constant_name(slug: &str) -> String {
+    slug.split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + chars.as_str()
+            })
+        })
+        .collect()
 }
 
 fn option_strings(values: Option<&[String]>) -> String {
@@ -728,7 +935,7 @@ order = 0
 tint = "#112233"
 icon_asset_path = "agents/alpha.svg"
 icon_multicolor = false
-visibility_config_key = "alpha_visible"
+visibility_config_key = "{slug}_button_visible"
 
 [detection]
 command_aliases = ["{alias}"]
@@ -874,6 +1081,32 @@ command = "{alias}"
     }
 
     #[test]
+    fn an_installer_adapter_requires_an_mcp_writer_and_unknown_writers_are_named() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("hook_adapter = \"none\"", "hook_adapter = \"claude\"");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("requires an integration.mcp_config"),
+            "{error}"
+        );
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "hook_adapter = \"none\"",
+            "hook_adapter = \"none\"\nmcp_config = \"cursor\"\nskills_dir = \"gemini\"",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("integration.mcp_config 'cursor'")
+                && error.contains(ACCEPTED_MCP_CONFIGS),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn an_installer_adapter_requires_the_complete_authority() {
         let temp = tempfile::TempDir::new().unwrap();
         let text = descriptor("alpha", "com.example.alpha", "alpha")
@@ -991,5 +1224,134 @@ command = "{alias}"
             "{error}"
         );
         assert!(error.contains("argument '$(id)'"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_session_reader_fails_listing_the_accepted_readers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "[[suggested_presets]]",
+            "[sessions]\nreader = \"inconnu\"\n\n[[suggested_presets]]",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(error.contains("runtime.toml"), "{error}");
+        assert!(error.contains("sessions.reader 'inconnu'"), "{error}");
+        assert!(
+            error.contains("accepted readers: claude, codex, opencode, pi, gemini, kiro, grok"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_visibility_key_outside_the_button_visible_convention_or_duplicated_is_refused() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("alpha_button_visible", "AlphaVisible");
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("display.visibility_config_key 'AlphaVisible'"),
+            "{error}"
+        );
+
+        let temp = tempfile::TempDir::new().unwrap();
+        write_runtime(
+            temp.path(),
+            "alpha",
+            &descriptor("alpha", "com.example.alpha", "alpha"),
+        );
+        write_runtime(
+            temp.path(),
+            "beta",
+            &descriptor("beta", "com.example.beta", "beta")
+                .replace("order = 0", "order = 1")
+                .replace("beta_button_visible", "alpha_button_visible"),
+        );
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("display.visibility_config_key 'alpha_button_visible' first declared"),
+            "{error}"
+        );
+    }
+
+    fn fixture_catalog_with_an_added_runtime() -> tempfile::TempDir {
+        let catalog = tempfile::TempDir::new().unwrap();
+        let runtimes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtimes");
+        for entry in fs::read_dir(&runtimes).unwrap() {
+            let source = entry.unwrap().path().join("runtime.toml");
+            if source.is_file() {
+                let slug = source.parent().unwrap().file_name().unwrap();
+                fs::create_dir_all(catalog.path().join(slug)).unwrap();
+                fs::copy(&source, catalog.path().join(slug).join("runtime.toml")).unwrap();
+            }
+        }
+        write_runtime(
+            catalog.path(),
+            "alpha",
+            &descriptor("alpha", "dev.example.alpha", "alpha-cli")
+                .replace("order = 0", "order = 99"),
+        );
+        catalog
+    }
+
+    #[test]
+    fn a_runtime_added_without_rust_edits_compiles_into_the_launcher_and_visibility_table() {
+        let catalog = fixture_catalog_with_an_added_runtime();
+        let descriptors = discover_and_validate(catalog.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        let build = tempfile::TempDir::new().unwrap();
+        fs::write(build.path().join("runtime_catalog.rs"), generated).unwrap();
+        let catalog_module = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("runtime_catalog.rs");
+        let program = format!(
+            r#"#![allow(dead_code)]
+#[macro_use]
+#[path = {catalog_module:?}]
+mod runtime_catalog;
+use runtime_catalog::*;
+struct Agent(&'static str);
+runtime_identity_constants!(Agent);
+fn main() {{
+    let explicit = launcher_runtimes(|key| (key == "alpha_button_visible").then_some(true), |_| false);
+    assert_eq!(explicit.iter().map(|runtime| runtime.slug).collect::<Vec<_>>(), vec!["alpha"]);
+    let installed = launcher_runtimes(|_| None, |runtime| runtime.slug == "alpha" || runtime.slug == "codex");
+    assert_eq!(installed.iter().map(|runtime| runtime.slug).collect::<Vec<_>>(), vec!["codex", "alpha"]);
+    let hidden = launcher_runtimes(|key| (key == "alpha_button_visible").then_some(false), |_| true);
+    assert!(hidden.iter().all(|runtime| runtime.slug != "alpha"));
+    assert!(visibility_config_keys().any(|key| key == "alpha_button_visible"));
+    assert_eq!(Agent::Alpha.0, "dev.example.alpha");
+    assert_eq!(Agent::ClaudeCode.0, "com.anthropic.claude-code");
+    assert_eq!(RUNTIME_COUNT, RUNTIMES.len());
+    assert!(runtime_by_id("dev.example.alpha").is_some_and(|runtime| runtime.sessions.is_none()));
+}}
+"#
+        );
+        let source = build.path().join("main.rs");
+        fs::write(&source, program).unwrap();
+        let binary = build
+            .path()
+            .join(format!("catalog_probe{}", std::env::consts::EXE_SUFFIX));
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let compiled = std::process::Command::new(rustc)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env("OUT_DIR", build.path())
+            .args(["--edition", "2021", "--crate-name", "catalog_probe", "-o"])
+            .arg(&binary)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let run = std::process::Command::new(&binary).output().unwrap();
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
     }
 }

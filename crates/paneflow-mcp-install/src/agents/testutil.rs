@@ -37,6 +37,11 @@ impl Mock {
         self.install.set(Some(r));
         self
     }
+
+    pub(crate) fn with_status(self, r: Result<StatusOutcome>) -> Self {
+        self.status.set(Some(r));
+        self
+    }
 }
 
 impl AgentConfigWriter for Mock {

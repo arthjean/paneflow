@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use paneflow_agent_config::RuntimeSessionReader;
+
 use crate::agent_launcher::TerminalAgent;
 
 pub const MIN_INTERVAL: Duration = Duration::from_secs(180);
@@ -11,12 +13,6 @@ const KEPT_MESSAGES: usize = 12;
 const CONTEXT_TAIL_MESSAGES: usize = 4;
 const MESSAGE_MAX_CHARS: usize = 600;
 const TITLE_MAX_CHARS: usize = 48;
-const SUMMARIZER_ORDER: [TerminalAgent; 4] = [
-    TerminalAgent::ClaudeCode,
-    TerminalAgent::Codex,
-    TerminalAgent::OpenCode,
-    TerminalAgent::Pi,
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -175,13 +171,22 @@ pub fn sanitize_response(raw: &str, current_title: Option<&str>) -> Option<Strin
     Some(title)
 }
 
+fn summarizer_reader(agent: TerminalAgent) -> Option<RuntimeSessionReader> {
+    agent
+        .session_agent()
+        .map(|session| session.reader())
+        .filter(|reader| reader.summarizes())
+}
+
+pub(crate) fn summarizers() -> impl Iterator<Item = TerminalAgent> {
+    TerminalAgent::all().filter(|agent| summarizer_reader(*agent).is_some())
+}
+
 pub fn pick_summarizer(session_agent: TerminalAgent) -> Option<TerminalAgent> {
-    if SUMMARIZER_ORDER.contains(&session_agent) && session_agent.is_installed() {
+    if summarizer_reader(session_agent).is_some() && session_agent.is_installed() {
         return Some(session_agent);
     }
-    SUMMARIZER_ORDER
-        .into_iter()
-        .find(|agent| agent.is_installed())
+    summarizers().find(|agent| agent.is_installed())
 }
 
 fn summarizer_environment(agent: TerminalAgent) -> Vec<(String, String)> {
@@ -212,7 +217,10 @@ fn summarizer_environment(agent: TerminalAgent) -> Vec<(String, String)> {
                 && key != "NODE_OPTIONS"
                 && !crate::terminal::INHERITED_AGENT_SESSION_ENV.contains(&key.as_str())
         })
-        .filter(|(key, _)| agent != TerminalAgent::Codex || CODEX_ALLOWED.contains(&key.as_str()))
+        .filter(|(key, _)| {
+            summarizer_reader(agent) != Some(RuntimeSessionReader::Codex)
+                || CODEX_ALLOWED.contains(&key.as_str())
+        })
         .collect()
 }
 
@@ -290,8 +298,8 @@ fn summarizer_command(
 ) -> (Command, Option<PathBuf>) {
     let mut command = Command::new(binary);
     command.current_dir(&scratch.dir);
-    match agent {
-        TerminalAgent::Codex => {
+    match summarizer_reader(agent) {
+        Some(RuntimeSessionReader::Codex) => {
             let output = scratch.path("title.txt");
             command.args([
                 "exec",
@@ -322,14 +330,14 @@ fn summarizer_command(
                 .arg(prompt);
             (command, Some(output))
         }
-        TerminalAgent::OpenCode => {
+        Some(RuntimeSessionReader::OpenCode) => {
             command
                 .args(["run", "--pure", "--format", "default", "--dir"])
                 .arg(&scratch.dir)
                 .arg(prompt);
             (command, None)
         }
-        TerminalAgent::Pi => {
+        Some(RuntimeSessionReader::Pi) => {
             command
                 .args([
                     "--print",

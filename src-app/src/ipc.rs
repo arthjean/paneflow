@@ -116,7 +116,7 @@ impl IpcStatus {
 }
 
 pub fn start_server() -> (
-    mpsc::Receiver<IpcRequest>,
+    smol::channel::Receiver<IpcRequest>,
     IpcStatus,
     Arc<crate::ipc_events::EventBus>,
 ) {
@@ -134,7 +134,7 @@ pub fn start_server() -> (
         );
     }
 
-    let (tx, rx) = mpsc::sync_channel(IPC_REQUEST_QUEUE_CAPACITY);
+    let (tx, rx) = smol::channel::bounded(IPC_REQUEST_QUEUE_CAPACITY);
     let status = IpcStatus::online();
     let thread_status = status.clone();
 
@@ -634,7 +634,7 @@ fn peer_pid(_stream: &Stream) -> Option<i64> {
 
 fn handle_connection(
     stream: Stream,
-    request_tx: mpsc::SyncSender<IpcRequest>,
+    request_tx: smol::channel::Sender<IpcRequest>,
     event_bus: Arc<crate::ipc_events::EventBus>,
     active_subscriptions: Arc<AtomicUsize>,
 ) {
@@ -1097,7 +1097,7 @@ fn subscriber_connected(writer: &Stream) -> bool {
 }
 
 fn dispatch_to_gpui(
-    request_tx: &mpsc::SyncSender<IpcRequest>,
+    request_tx: &smol::channel::Sender<IpcRequest>,
     method: String,
     params: Value,
     id: Value,
@@ -1115,10 +1115,10 @@ fn dispatch_to_gpui(
 
     match request_tx.try_send(ipc_req) {
         Ok(()) => {}
-        Err(mpsc::TrySendError::Full(_)) => {
+        Err(smol::channel::TrySendError::Full(_)) => {
             return json!({"jsonrpc": "2.0", "error": {"code": -32000, "message": "Paneflow is busy; retry shortly"}, "id": id});
         }
-        Err(mpsc::TrySendError::Disconnected(_)) => {
+        Err(smol::channel::TrySendError::Closed(_)) => {
             return json!({"jsonrpc": "2.0", "error": {"code": -32000, "message": "App shutting down"}, "id": id});
         }
     }
@@ -1497,7 +1497,7 @@ mod dispatch_tests {
 
     #[test]
     fn dispatch_to_gpui_returns_overload_when_request_queue_full() {
-        let (tx, _rx) = mpsc::sync_channel(1);
+        let (tx, _rx) = smol::channel::bounded(1);
         tx.try_send(test_ipc_request()).unwrap();
 
         let resp = dispatch_to_gpui(
@@ -1515,7 +1515,7 @@ mod dispatch_tests {
 
     #[test]
     fn dispatch_to_gpui_returns_shutdown_when_receiver_dropped() {
-        let (tx, rx) = mpsc::sync_channel(1);
+        let (tx, rx) = smol::channel::bounded::<IpcRequest>(1);
         drop(rx);
 
         let resp = dispatch_to_gpui(

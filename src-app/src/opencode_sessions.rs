@@ -4,11 +4,18 @@ use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
 
 const OPENCODE_STDOUT_CAP: u64 = 8 * 1024 * 1024;
 
-pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
-    read_sessions_with_program("opencode", cwd)
+pub fn read_sessions_for_cwd_with_omitted(
+    agent: SessionAgent,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
+    read_sessions_with_program(agent, "opencode", cwd)
 }
 
-fn read_sessions_with_program(program: &str, cwd: &str) -> (Vec<SessionMeta>, usize) {
+fn read_sessions_with_program(
+    agent: SessionAgent,
+    program: &str,
+    cwd: &str,
+) -> (Vec<SessionMeta>, usize) {
     let Some(stdout) = crate::command_sessions::run_list_command(
         program,
         &["session", "list", "--format", "json"],
@@ -18,10 +25,10 @@ fn read_sessions_with_program(program: &str, cwd: &str) -> (Vec<SessionMeta>, us
     ) else {
         return (Vec::new(), 0);
     };
-    parse_sessions(&stdout, cwd)
+    parse_sessions(agent, &stdout, cwd)
 }
 
-fn parse_sessions(stdout: &[u8], cwd: &str) -> (Vec<SessionMeta>, usize) {
+fn parse_sessions(agent: SessionAgent, stdout: &[u8], cwd: &str) -> (Vec<SessionMeta>, usize) {
     if stdout.is_empty() {
         return (Vec::new(), 0);
     }
@@ -45,14 +52,14 @@ fn parse_sessions(stdout: &[u8], cwd: &str) -> (Vec<SessionMeta>, usize) {
 
     let sessions = array
         .into_iter()
-        .filter_map(|record| record_to_session(&record, cwd));
+        .filter_map(|record| record_to_session(agent, &record, cwd));
     crate::agent_sessions::collect_recent_sessions(
         sessions,
         crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
     )
 }
 
-fn record_to_session(record: &Value, cwd: &str) -> Option<SessionMeta> {
+fn record_to_session(agent: SessionAgent, record: &Value, cwd: &str) -> Option<SessionMeta> {
     let session_id = record.get("id").and_then(|v| v.as_str())?.to_string();
     if !crate::agent_sessions::is_valid_session_id(&session_id) {
         return None;
@@ -78,7 +85,7 @@ fn record_to_session(record: &Value, cwd: &str) -> Option<SessionMeta> {
         .and_then(|title| clean_session_label(title, 80));
 
     Some(SessionMeta {
-        agent: SessionAgent::OpenCode,
+        agent,
         session_id,
         timestamp,
         cwd: record_cwd,
@@ -116,6 +123,10 @@ fn unix_ms_to_iso8601(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    fn opencode() -> SessionAgent {
+        crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Opencode)
+    }
+
     use super::*;
 
     const FIXTURE: &str = include_str!("../tests/fixtures/opencode-session-list.json");
@@ -137,18 +148,21 @@ mod tests {
         let cwd = workspace.path().canonicalize().unwrap();
         let cwd = cwd.to_str().unwrap();
 
-        let (sessions, _) = read_sessions_with_program(program.to_str().unwrap(), cwd);
+        let (sessions, _) = read_sessions_with_program(opencode(), program.to_str().unwrap(), cwd);
         assert_eq!(sessions.len(), 1, "the CLI saw the workspace as its cwd");
         assert_eq!(sessions[0].session_id, "ses_here");
     }
 
     #[test]
     fn parse_sessions_happy_path_extracts_real_cli_record() {
-        let (sessions, omitted) = parse_sessions(FIXTURE.as_bytes(), "/home/arthur");
+        let (sessions, omitted) = parse_sessions(opencode(), FIXTURE.as_bytes(), "/home/arthur");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1, "fixture has one record at /home/arthur");
         let meta = &sessions[0];
-        assert_eq!(meta.agent, SessionAgent::OpenCode);
+        assert_eq!(
+            meta.agent,
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Opencode)
+        );
         assert_eq!(meta.session_id, "ses_1f80d49aeffeaKV4Lq4mc0c3cu");
         assert_eq!(meta.cwd, "/home/arthur");
         assert_eq!(
@@ -165,7 +179,7 @@ mod tests {
             {"id":"b","directory":"/p","title":"newer","updated":2000},
             {"id":"c","directory":"/elsewhere","title":"other","updated":9000}
         ]"#;
-        let (sessions, omitted) = parse_sessions(multi, "/p");
+        let (sessions, omitted) = parse_sessions(opencode(), multi, "/p");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 2, "the /elsewhere record must be filtered");
         assert_eq!(sessions[0].session_id, "b", "newer first");
@@ -177,7 +191,7 @@ mod tests {
         let payload = br#"[
             {"id":"ses_clean","directory":"/p","title":"  messy\n\tlabel\u001b  ","updated":1000}
         ]"#;
-        let (sessions, omitted) = parse_sessions(payload, "/p");
+        let (sessions, omitted) = parse_sessions(opencode(), payload, "/p");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].summary.as_deref(), Some("messy label"));
@@ -189,7 +203,7 @@ mod tests {
             {"id":"ses_abc\rrm -rf /","directory":"/p","title":"evil","updated":1000},
             {"id":"ses_clean","directory":"/p","title":"ok","updated":2000}
         ]"#;
-        let (sessions, omitted) = parse_sessions(payload, "/p");
+        let (sessions, omitted) = parse_sessions(opencode(), payload, "/p");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1, "the \\r-tainted record must be dropped");
         assert_eq!(sessions[0].session_id, "ses_clean");
@@ -201,7 +215,7 @@ mod tests {
             {"directory":"/p","title":"no id here","updated":1000},
             {"id":"keepme","directory":"/p","title":"valid","updated":2000}
         ]"#;
-        let (sessions, omitted) = parse_sessions(mixed, "/p");
+        let (sessions, omitted) = parse_sessions(opencode(), mixed, "/p");
         assert_eq!(omitted, 0);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "keepme");
@@ -209,22 +223,25 @@ mod tests {
 
     #[test]
     fn parse_sessions_handles_empty_stdout() {
-        let (sessions, omitted) = parse_sessions(b"", "/anywhere");
+        let (sessions, omitted) = parse_sessions(opencode(), b"", "/anywhere");
         assert_eq!(omitted, 0);
         assert!(sessions.is_empty());
     }
 
     #[test]
     fn parse_sessions_handles_malformed_json() {
-        let (sessions, omitted) = parse_sessions(b"{not valid json", "/anywhere");
+        let (sessions, omitted) = parse_sessions(opencode(), b"{not valid json", "/anywhere");
         assert_eq!(omitted, 0);
         assert!(sessions.is_empty());
     }
 
     #[test]
     fn read_sessions_returns_empty_when_binary_missing() {
-        let (sessions, omitted) =
-            read_sessions_with_program("opencode-does-not-exist-zzz-9d2c1a", "/home/arthur");
+        let (sessions, omitted) = read_sessions_with_program(
+            opencode(),
+            "opencode-does-not-exist-zzz-9d2c1a",
+            "/home/arthur",
+        );
         assert_eq!(omitted, 0);
         assert!(sessions.is_empty());
     }

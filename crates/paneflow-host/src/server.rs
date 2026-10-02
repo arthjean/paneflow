@@ -911,7 +911,7 @@ fn stream_agent_follow(
     shutdown: &AtomicBool,
     id: &Value,
 ) -> Flow {
-    let subscription = host.subscribe_agents();
+    let subscription = host.follow_agents();
     let header = result_envelope(id, json!({"sessions": host.agent_snapshot()}));
     if wire.write_json(&header).is_err() {
         host.unsubscribe_agents(subscription.id);

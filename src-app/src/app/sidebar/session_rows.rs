@@ -339,6 +339,7 @@ mod tests {
         HostAgentRow {
             session: paneflow_config::schema::SessionId::new(),
             tool: None,
+            runtime: None,
             state,
             message: None,
             last_result: None,
