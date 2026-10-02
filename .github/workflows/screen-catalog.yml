@@ -1,0 +1,108 @@
+name: screen-catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "runtimes/*/screen.toml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: screen-catalog
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+
+      - name: Validate the rules with the runtime parser
+        run: cargo test -p paneflow-agent-config --locked
+
+      - name: Build the catalog
+        id: catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          engine="$(sed -n 's/^pub const SCREEN_ENGINE: u32 = \([0-9]*\);$/\1/p' crates/paneflow-agent-config/src/screen_rules.rs)"
+          if [ -z "$engine" ]; then
+            echo "::error::cannot read SCREEN_ENGINE from crates/paneflow-agent-config/src/screen_rules.rs"
+            exit 1
+          fi
+          latest="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/screen-catalog-v" \
+            --jq '[.[].ref | ltrimstr("refs/tags/screen-catalog-v") | select(test("^[0-9]+$")) | tonumber] | max // 0')"
+          version=$((latest + 1))
+          mkdir -p catalog
+          ENGINE="$engine" VERSION="$version" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runtimes = {
+              path.parent.name: path.read_text(encoding="utf-8")
+              for path in sorted(Path("runtimes").glob("*/screen.toml"))
+          }
+          catalog = {
+              "engine": int(os.environ["ENGINE"]),
+              "version": int(os.environ["VERSION"]),
+              "runtimes": runtimes,
+          }
+          data = json.dumps(catalog, ensure_ascii=False, sort_keys=True).encode("utf-8")
+          if len(data) > 1 << 20:
+              raise SystemExit(f"the catalog is {len(data)} bytes, over the 1 MiB the host accepts")
+          Path("catalog/screen-catalog.json").write_bytes(data)
+          PY
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the catalog
+        env:
+          SCREEN_CATALOG_MINISIGN_SECRET_KEY: ${{ secrets.SCREEN_CATALOG_MINISIGN_SECRET_KEY }}
+          ENGINE: ${{ steps.catalog.outputs.engine }}
+          VERSION: ${{ steps.catalog.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SCREEN_CATALOG_MINISIGN_SECRET_KEY}" ]; then
+            echo "::error::SCREEN_CATALOG_MINISIGN_SECRET_KEY is required. Hosts accept only a catalog signed with the screen catalog key."
+            exit 1
+          fi
+          MINISIGN_VERSION=0.12
+          MINISIGN_SHA256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+          curl -sSfL --retry 3 -o /tmp/minisign.tar.gz \
+            "https://github.com/jedisct1/minisign/releases/download/${MINISIGN_VERSION}/minisign-${MINISIGN_VERSION}-linux.tar.gz"
+          echo "${MINISIGN_SHA256}  /tmp/minisign.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/minisign.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/minisign-linux/x86_64/minisign /usr/local/bin/minisign
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s\n' "${SCREEN_CATALOG_MINISIGN_SECRET_KEY}" > "$key_file"
+          chmod 600 "$key_file"
+          minisign -S -s "$key_file" -m catalog/screen-catalog.json \
+            -t "engine=${ENGINE} version=${VERSION}" >/dev/null
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.catalog.outputs.version }}
+          ENGINE: ${{ steps.catalog.outputs.engine }}
+        run: |
+          set -euo pipefail
+          gh release create "screen-catalog-v${VERSION}" \
+            catalog/screen-catalog.json catalog/screen-catalog.json.minisig \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Screen rule catalog v${VERSION}" \
+            --notes "Screen rules for engine ${ENGINE}, built from runtimes/*/screen.toml at ${GITHUB_SHA}. Paneflow hosts apply it only when its minisign signature, engine and strictly newer version check out." \
+            --prerelease \
+            --latest=false

@@ -1,0 +1,20 @@
+paneflow-screen-capture: 1
+state: working
+runtime: fx
+cols: 100
+rows: 30
+cli: 0.0.12
+paneflow: unknown
+captured: 2026-10-02T12:47:03Z
+title: fx v0.0.12 | fxprobe
+origin: script(1) recording of fx 0.0.12 in WSL Ubuntu, not signed in, rendered offline frame by frame
+---
+𝒇x v0.0.12 · Run /help for commands
+
+┃ hello
+
+• Thinking
+
+┃
+
+run /login · auto · grok-4.7

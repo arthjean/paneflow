@@ -84,13 +84,18 @@ fn packaged_lists() -> (String, String) {
 }
 
 #[test]
-fn windows_packaging_ships_one_shim_per_catalog_runtime() {
+fn windows_packaging_ships_one_shim_per_shimmed_catalog_runtime() {
+    let shimmed = RUNTIMES
+        .iter()
+        .filter(|runtime| runtime.has_launch_shim())
+        .collect::<Vec<_>>();
     let expected = shim_files(
-        RUNTIMES
+        shimmed
             .iter()
             .map(|runtime| runtime.detection.command_aliases[0]),
     );
-    assert_eq!(expected.len(), RUNTIMES.len());
+    assert_eq!(expected.len(), shimmed.len());
+    assert!(!expected.contains("fx.exe"));
     let (wix, workflow) = packaged_lists();
     let drift = check_packaging(&expected, &wix, &workflow).err();
     assert!(drift.is_none(), "{}", drift.unwrap_or_default());
@@ -106,6 +111,10 @@ fn a_fixture_runtime_without_a_wix_entry_fails_naming_its_alias() {
             let slug = source.parent().unwrap().file_name().unwrap();
             fs::create_dir_all(catalog.path().join(slug)).unwrap();
             fs::copy(&source, catalog.path().join(slug).join("runtime.toml")).unwrap();
+            let rules = source.with_file_name("screen.toml");
+            if rules.is_file() {
+                fs::copy(&rules, catalog.path().join(slug).join("screen.toml")).unwrap();
+            }
         }
     }
     let fixture = fs::read_to_string(runtimes.join("amp").join("runtime.toml"))
@@ -125,6 +134,7 @@ fn a_fixture_runtime_without_a_wix_entry_fails_naming_its_alias() {
     let expected = shim_files(
         descriptors
             .iter()
+            .filter(|located| located.descriptor.detection.title_prefix.is_none())
             .map(|located| located.descriptor.detection.command_aliases[0].as_str()),
     );
     let (wix, workflow) = packaged_lists();

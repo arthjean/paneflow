@@ -4417,6 +4417,7 @@ dependencies = [
  "paneflow-host",
  "paneflow-ipc-client",
  "paneflow-mcp-install",
+ "paneflow-minisign",
  "paneflow-process",
  "paneflow-serve",
  "paneflow-telemetry",
@@ -4515,10 +4516,12 @@ dependencies = [
  "interprocess",
  "libc",
  "log",
+ "minisign",
  "paneflow-agent-config",
  "paneflow-config",
  "paneflow-home",
  "paneflow-ipc-client",
+ "paneflow-minisign",
  "paneflow-terminal-ghostty",
  "portable-pty",
  "serde",
@@ -4526,6 +4529,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "ureq",
  "which 8.0.5",
  "widestring",
  "windows-sys 0.59.0",
@@ -4576,6 +4580,14 @@ dependencies = [
  "tempfile",
  "toml_edit 0.22.27",
  "which 8.0.5",
+]
+
+[[package]]
+name = "paneflow-minisign"
+version = "0.1.0"
+dependencies = [
+ "minisign",
+ "minisign-verify",
 ]
 
 [[package]]

@@ -568,7 +568,10 @@ impl PaneFlowApp {
                     if let Some(agent) = observed {
                         detected.insert(agent.binary().to_string());
                     }
-                    tv.update(cx, |view, _cx| {
+                    tv.update(cx, |view, cx| {
+                        if let Some(agent) = observed {
+                            view.record_observed_conversation(agent, cx);
+                        }
                         let t = &mut view.terminal;
                         if declaration_survives_observation(observed, t.agent_declared_until, now) {
                             return;

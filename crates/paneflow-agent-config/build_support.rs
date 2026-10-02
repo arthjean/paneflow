@@ -1,5 +1,15 @@
 #![cfg_attr(test, allow(dead_code))]
 
+#[cfg(not(all(test, feature = "screen-rules")))]
+#[path = "src/screen_rules.rs"]
+#[allow(
+    dead_code,
+    reason = "the build script only parses and validates rules, the evaluator serves the host"
+)]
+mod screen_rules;
+#[cfg(all(test, feature = "screen-rules"))]
+use crate::screen_rules;
+
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -17,7 +27,6 @@ pub struct Descriptor {
     pub detection: Detection,
     pub environment: Environment,
     pub lifecycle: Lifecycle,
-    pub screen: Option<Screen>,
     pub integration: Integration,
     pub resume: Option<Resume>,
     pub sessions: Option<Sessions>,
@@ -48,7 +57,11 @@ pub struct Detection {
     pub command_aliases: Vec<String>,
     pub process_aliases: Vec<String>,
     pub script_path_signatures: Vec<String>,
+    #[serde(default)]
+    pub title_prefix: Option<String>,
 }
+
+pub const CONTESTED_ALIASES: &[&str] = &["fx"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -65,6 +78,15 @@ pub struct Lifecycle {
     pub escape_cancels_turn: bool,
     pub attention_clears_on_output: bool,
     pub anchor_start_event_to_output: bool,
+    #[serde(default)]
+    pub bell_attention: Option<bool>,
+}
+
+impl Lifecycle {
+    fn resolved_bell_attention(&self) -> bool {
+        self.bell_attention
+            .unwrap_or(self.authority != LifecycleAuthority::Complete)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -92,13 +114,6 @@ pub enum LifecycleFallback {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Screen {
-    pub working: Vec<String>,
-    pub idle_prompt: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Integration {
     pub summary: String,
     pub post_install_step: Option<String>,
@@ -109,7 +124,7 @@ pub struct Integration {
     pub skills_dir: Option<SkillsDir>,
 }
 
-pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode";
+pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode, fx";
 pub const ACCEPTED_SKILLS_DIRS: &str = "claude";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -119,6 +134,7 @@ pub enum McpConfig {
     Codex,
     Gemini,
     OpenCode,
+    Fx,
 }
 
 impl McpConfig {
@@ -128,6 +144,7 @@ impl McpConfig {
             Self::Codex => "Codex",
             Self::Gemini => "Gemini",
             Self::OpenCode => "OpenCode",
+            Self::Fx => "Fx",
         }
     }
 }
@@ -141,6 +158,7 @@ impl TryFrom<String> for McpConfig {
             "codex" => Ok(Self::Codex),
             "gemini" => Ok(Self::Gemini),
             "opencode" => Ok(Self::OpenCode),
+            "fx" => Ok(Self::Fx),
             other => Err(format!(
                 "integration.mcp_config '{other}' has no MCP config writer; accepted writers: {ACCEPTED_MCP_CONFIGS}"
             )),
@@ -293,6 +311,28 @@ pub struct SuggestedPreset {
 pub struct LocatedDescriptor {
     pub path: PathBuf,
     pub descriptor: Descriptor,
+    pub screen: Option<ScreenRules>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScreenRules {
+    pub path: PathBuf,
+    pub states: BTreeSet<&'static str>,
+}
+
+pub const SCREEN_RULES_FILE: &str = "screen.toml";
+
+fn read_screen_rules(path: &Path) -> Result<Option<ScreenRules>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let rules = screen_rules::parse_base_rules(&text, screen_rules::RuleOrigin::Builtin)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Some(ScreenRules {
+        path: path.to_path_buf(),
+        states: rules.iter().map(|rule| rule.state.as_str()).collect(),
+    }))
 }
 
 pub fn discover_and_validate(root: &Path) -> Result<Vec<LocatedDescriptor>, String> {
@@ -318,7 +358,12 @@ pub fn discover_and_validate(root: &Path) -> Result<Vec<LocatedDescriptor>, Stri
             fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let descriptor = toml::from_str::<Descriptor>(&text)
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        descriptors.push(LocatedDescriptor { path, descriptor });
+        let screen = read_screen_rules(&path.with_file_name(SCREEN_RULES_FILE))?;
+        descriptors.push(LocatedDescriptor {
+            path,
+            descriptor,
+            screen,
+        });
     }
     descriptors.sort_by_key(|located| located.descriptor.display.order);
     validate(&descriptors)?;
@@ -434,6 +479,14 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                         path.display()
                     ));
                 }
+                if CONTESTED_ALIASES.contains(&alias.as_str())
+                    && runtime.detection.title_prefix.is_none()
+                {
+                    errors.push(format!(
+                        "{}: {field} alias '{alias}' is also the name of another program and requires detection.title_prefix to confirm the runtime from its terminal title",
+                        path.display()
+                    ));
+                }
                 let key = alias.to_ascii_lowercase();
                 if let Some((owner, owner_path)) = aliases.insert(key, (&runtime.id, path)) {
                     if owner_path != path {
@@ -446,9 +499,32 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 }
             }
         }
-        if runtime.lifecycle.fallback == LifecycleFallback::Screen && runtime.screen.is_none() {
+        if runtime
+            .detection
+            .title_prefix
+            .as_deref()
+            .is_some_and(|prefix| prefix.trim().is_empty())
+        {
             errors.push(format!(
-                "{}: lifecycle.fallback = 'screen' requires [screen]",
+                "{}: detection.title_prefix must not be blank",
+                path.display()
+            ));
+        }
+        if runtime.lifecycle.bell_attention == Some(true)
+            && runtime.lifecycle.authority == LifecycleAuthority::Complete
+        {
+            errors.push(format!(
+                "{}: lifecycle.bell_attention = true conflicts with authority = 'complete', whose hooks own attention",
+                path.display()
+            ));
+        }
+        let screen_states = located.screen.as_ref().map(|screen| &screen.states);
+        if runtime.lifecycle.fallback == LifecycleFallback::Screen
+            && !screen_states
+                .is_some_and(|states| states.contains("working") && states.contains("idle"))
+        {
+            errors.push(format!(
+                "{}: lifecycle.fallback = 'screen' requires a {SCREEN_RULES_FILE} beside it with at least one working and one idle rule",
                 path.display()
             ));
         }
@@ -489,14 +565,6 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 path.display(),
                 adapter.name()
             ));
-        }
-        if let Some(screen) = &runtime.screen {
-            if screen.working.is_empty() || screen.idle_prompt.is_empty() {
-                errors.push(format!(
-                    "{}: [screen] requires working and idle_prompt patterns",
-                    path.display()
-                ));
-            }
         }
         if parse_tint(runtime.display.tint.as_deref()).is_err() {
             errors.push(format!(
@@ -698,32 +766,26 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             runtime.display.visibility_config_key
         ));
         output.push_str(&format!(
-            "detection: RuntimeDetection {{ command_aliases: &{}, process_aliases: &{}, script_path_signatures: &{} }},\n",
+            "detection: RuntimeDetection {{ command_aliases: &{}, process_aliases: &{}, script_path_signatures: &{}, title_prefix: {} }},\n",
             strings(&runtime.detection.command_aliases),
             strings(&runtime.detection.process_aliases),
-            strings(&runtime.detection.script_path_signatures)
+            strings(&runtime.detection.script_path_signatures),
+            option_string(runtime.detection.title_prefix.as_deref())
         ));
         output.push_str(&format!(
             "environment: RuntimeEnvironment {{ strip_inherited: &{} }},\n",
             strings(&runtime.environment.strip_inherited)
         ));
         output.push_str(&format!(
-            "lifecycle: RuntimeLifecycle {{ source: RuntimeLifecycleSource::{}, authority: RuntimeLifecycleAuthority::{}, fallback: RuntimeLifecycleFallback::{}, escape_cancels_turn: {}, attention_clears_on_output: {}, anchor_start_event_to_output: {} }},\n",
+            "lifecycle: RuntimeLifecycle {{ source: RuntimeLifecycleSource::{}, authority: RuntimeLifecycleAuthority::{}, fallback: RuntimeLifecycleFallback::{}, escape_cancels_turn: {}, attention_clears_on_output: {}, anchor_start_event_to_output: {}, bell_attention: {} }},\n",
             source(runtime.lifecycle.source),
             authority(runtime.lifecycle.authority),
             fallback(runtime.lifecycle.fallback),
             runtime.lifecycle.escape_cancels_turn,
             runtime.lifecycle.attention_clears_on_output,
-            runtime.lifecycle.anchor_start_event_to_output
+            runtime.lifecycle.anchor_start_event_to_output,
+            runtime.lifecycle.resolved_bell_attention()
         ));
-        match &runtime.screen {
-            Some(screen) => output.push_str(&format!(
-                "screen: Some(RuntimeScreen {{ working: &{}, idle_prompt: &{} }}),\n",
-                strings(&screen.working),
-                strings(&screen.idle_prompt)
-            )),
-            None => output.push_str("screen: None,\n"),
-        }
         output.push_str(&format!(
             "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {} }},\n",
             runtime.integration.summary,
@@ -840,6 +902,23 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         ));
     }
     output.push_str("_ => None,\n}\n}\n");
+    output.push_str("#[cfg(feature = \"screen-rules\")]\npub static SCREEN_RULE_SOURCES: &[(&str, &str)] = &[\n");
+    for located in descriptors {
+        let Some(screen) = &located.screen else {
+            continue;
+        };
+        let path = fs::canonicalize(&screen.path)
+            .map_err(|error| format!("{}: {error}", screen.path.display()))?;
+        let path = path
+            .to_str()
+            .ok_or_else(|| format!("{}: the path is not valid UTF-8", screen.path.display()))?;
+        output.push_str(&format!(
+            "({:?}, include_str!({:?})),\n",
+            located.descriptor.slug,
+            path.strip_prefix(r"\\?\").unwrap_or(path)
+        ));
+    }
+    output.push_str("];\n");
     Ok(output)
 }
 
@@ -1133,13 +1212,54 @@ command = "{alias}"
     }
 
     #[test]
+    fn an_invalid_screen_rule_file_fails_the_build_with_its_path_and_line() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("authority = \"none\"", "authority = \"screen\"")
+            .replace("fallback = \"none\"", "fallback = \"screen\"");
+        write_runtime(temp.path(), "alpha", &text);
+        fs::write(
+            temp.path().join("alpha").join(SCREEN_RULES_FILE),
+            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['(open']\n",
+        )
+        .unwrap();
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(error.contains("screen.toml: line 6"), "{error}");
+        assert!(error.contains("invalid regex"), "{error}");
+
+        fs::write(
+            temp.path().join("alpha").join(SCREEN_RULES_FILE),
+            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['busy']\n",
+        )
+        .unwrap();
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("at least one working and one idle rule"),
+            "{error}"
+        );
+
+        fs::write(
+            temp.path().join("alpha").join(SCREEN_RULES_FILE),
+            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['busy']\n\n[[rules]]\nid = \"prompt\"\nstate = \"idle\"\nany = ['>']\n",
+        )
+        .unwrap();
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(generated.contains("SCREEN_RULE_SOURCES"), "{generated}");
+        assert!(
+            generated.contains("(\"alpha\", include_str!("),
+            "{generated}"
+        );
+    }
+
+    #[test]
     fn rejects_screen_and_authority_inconsistencies() {
         let temp = tempfile::TempDir::new().unwrap();
         let text = descriptor("alpha", "com.example.alpha", "alpha")
             .replace("fallback = \"none\"", "fallback = \"screen\"");
         write_runtime(temp.path(), "alpha", &text);
         let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(error.contains("requires [screen]"));
+        assert!(error.contains("requires a screen.toml"));
         assert!(error.contains("authority = 'none'"));
     }
 
@@ -1275,6 +1395,75 @@ command = "{alias}"
         );
     }
 
+    #[test]
+    fn a_contested_alias_is_refused_unless_a_title_prefix_confirms_the_runtime() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_runtime(
+            temp.path(),
+            "alpha",
+            &descriptor("alpha", "com.example.alpha", "fx"),
+        );
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("alias 'fx' is also the name of another program and requires detection.title_prefix"),
+            "{error}"
+        );
+
+        let confirmed = descriptor("alpha", "com.example.alpha", "fx").replace(
+            "script_path_signatures = []",
+            "script_path_signatures = []\ntitle_prefix = \"fx v\"",
+        );
+        write_runtime(temp.path(), "alpha", &confirmed);
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(
+            generated.contains("title_prefix: Some(\"fx v\")"),
+            "{generated}"
+        );
+        assert!(generated.contains("bell_attention: true"), "{generated}");
+
+        write_runtime(
+            temp.path(),
+            "alpha",
+            &confirmed.replace("title_prefix = \"fx v\"", "title_prefix = \" \""),
+        );
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("detection.title_prefix must not be blank"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn bell_attention_defaults_from_the_authority_and_is_refused_beside_complete_hooks() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let hooked = descriptor("alpha", "com.example.alpha", "alpha")
+            .replace("authority = \"none\"", "authority = \"complete\"")
+            .replace("source = \"output\"", "source = \"hooks\"")
+            .replace(
+                "hook_adapter = \"none\"",
+                "hook_adapter = \"claude\"\nmcp_config = \"claude\"",
+            );
+        write_runtime(temp.path(), "alpha", &hooked);
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(generated.contains("bell_attention: false"), "{generated}");
+
+        write_runtime(
+            temp.path(),
+            "alpha",
+            &hooked.replace(
+                "anchor_start_event_to_output = true",
+                "anchor_start_event_to_output = true\nbell_attention = true",
+            ),
+        );
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("lifecycle.bell_attention = true conflicts with authority = 'complete'"),
+            "{error}"
+        );
+    }
+
     fn fixture_catalog_with_an_added_runtime() -> tempfile::TempDir {
         let catalog = tempfile::TempDir::new().unwrap();
         let runtimes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtimes");
@@ -1284,6 +1473,10 @@ command = "{alias}"
                 let slug = source.parent().unwrap().file_name().unwrap();
                 fs::create_dir_all(catalog.path().join(slug)).unwrap();
                 fs::copy(&source, catalog.path().join(slug).join("runtime.toml")).unwrap();
+                let rules = source.with_file_name("screen.toml");
+                if rules.is_file() {
+                    fs::copy(&rules, catalog.path().join(slug).join("screen.toml")).unwrap();
+                }
             }
         }
         write_runtime(

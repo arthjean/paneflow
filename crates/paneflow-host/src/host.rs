@@ -237,6 +237,7 @@ pub struct SessionHost {
     helper_dir: Option<PathBuf>,
     permissions: crate::control::ControlPermissions,
     submit_paste_delay: std::time::Duration,
+    screen_rules: Arc<crate::screen_rule_registry::ScreenRuleRegistry>,
     next_operation: AtomicU64,
     shutting_down: AtomicBool,
     #[cfg(test)]
@@ -358,6 +359,7 @@ impl SessionHost {
             helper_dir,
             permissions,
             submit_paste_delay,
+            screen_rules: Arc::new(crate::screen_rule_registry::ScreenRuleRegistry::with_builtin()),
             next_operation: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
             #[cfg(test)]
@@ -372,7 +374,9 @@ impl SessionHost {
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
+        host.reload_local_screen_rules();
         crate::viewport_scan::spawn(&host);
+        crate::screen_catalog::spawn(&host);
         crate::cancellation_scan::spawn(&host);
         crate::maintenance::spawn(&host);
         Ok(host)
@@ -544,6 +548,27 @@ impl SessionHost {
             .collect()
     }
 
+    pub(crate) fn scan_target(&self, session: &SessionId) -> Result<ScanTarget, HostError> {
+        let sessions = self.lock_sessions();
+        let record = sessions
+            .get(session)
+            .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+        if record.launch.is_some() {
+            return Err(HostError::LaunchPending(session.clone()));
+        }
+        let runtime = record
+            .runtime
+            .clone()
+            .filter(|runtime| record.is_live() && !runtime.retired())
+            .ok_or_else(|| HostError::SessionNotLive(session.clone()))?;
+        Ok(ScanTarget {
+            session: session.clone(),
+            generation: record.generation(),
+            manifest: Arc::clone(&record.manifest),
+            runtime,
+        })
+    }
+
     pub fn retire(&self) {
         let path = paneflow_home::host_instance_record_path_in(&self.home);
         let removed = self.persistence.run_exclusive(CRITICAL_DEADLINE, move || {
@@ -593,6 +618,18 @@ impl SessionHost {
             .permission_override
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions);
+    }
+
+    pub fn screen_rules(&self) -> &crate::screen_rule_registry::ScreenRuleRegistry {
+        &self.screen_rules
+    }
+
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    pub fn reload_local_screen_rules(&self) -> bool {
+        self.screen_rules.reload_local(&self.home)
     }
 
     pub fn submit_paste_delay(&self) -> std::time::Duration {

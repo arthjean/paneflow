@@ -1,0 +1,38 @@
+paneflow-screen-capture: 1
+state: blocked
+runtime: gemini
+cols: 100
+rows: 30
+cli: 0.62.0
+paneflow: unknown
+captured: 2026-10-02T13:42:00Z
+title: ◇  Ready (project)
+origin: script(1) recording of gemini-cli 0.62.0 in WSL Ubuntu with an empty HOME, not signed in, rendered offline frame by frame
+---
+Tips for getting started:
+1. Create GEMINI.md files to customize your interactions
+2. /help for more information
+3. Ask coding questions, edit code or run commands
+4. Be specific for the best results
+
+ℹ Skipping project agents due to untrusted folder. To enable, ensure that the project root is
+  trusted.
+
+⚠  Warning: True color (24-bit) support not detected. Using a terminal with true color enabled will
+   result in a better visual experience.
+
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                                                                                                │
+ │ Do you trust the files in this folder?                                                         │
+ │                                                                                                │
+ │ Trusting a folder allows Gemini CLI to load its local configurations, including custom         │
+ │ commands, hooks, MCP servers, agent skills, and settings. These configurations could execute   │
+ │ code on your behalf or change the behavior of the CLI.                                         │
+ │                                                                                                │
+ │                                                                                                │
+ │ ● 1. Trust folder (project)                                                                    │
+ │   2. Trust parent folder (paneflow-gemini-probe)                                               │
+ │   3. Don't trust                                                                               │
+ │                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯

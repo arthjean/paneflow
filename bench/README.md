@@ -22,6 +22,19 @@ allocated bytes, allocation calls, and live bytes (allocations minus
 deallocations), which is how a retained-memory metric can be reported at all.
 It exists only in `cfg(test)` builds.
 
+## Screen rule corpus
+
+`bench/screen-corpus-baseline.json` is not a timing baseline: it records how
+the built-in screen rules classify every capture under
+`runtimes/<slug>/fixtures/screens/`, with the accuracy and the states still
+missing per runtime. `cargo test -p paneflow-agent-config` fails when the
+classification drifts from it. After an intended rule or corpus change,
+regenerate it with `PANEFLOW_SCREEN_CORPUS_BLESS=1 cargo test -p
+paneflow-agent-config the_screen_corpus` and review the diff. The evaluation
+cost is the ignored test
+`twenty_rules_on_a_200_by_60_viewport_evaluate_within_a_millisecond_p95`, run
+with `cargo test -p paneflow-agent-config --release -- --ignored`.
+
 ## Persistent session suite
 
 The suite is the ignored integration test `persistent_session_baseline` in

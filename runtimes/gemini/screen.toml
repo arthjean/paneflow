@@ -1,0 +1,59 @@
+engine = 2
+
+[[rules]]
+id = "menu-navigate-select"
+state = "blocked"
+priority = 30
+region = "last:15"
+any = [
+  '(?i)(to\s+navigate|↑/↓|↑ ↓|▲/▼|arrow\s+keys)[^\n]*(\n[^\n]*)?(to\s+select|to\s+confirm|to\s+choose|enter\s+to|esc\s+to\s+cancel|return\s+to)',
+  '(?i)(to\s+select|to\s+confirm|to\s+choose|enter\s+to|esc\s+to\s+cancel|return\s+to)[^\n]*(\n[^\n]*)?(to\s+navigate|↑/↓|↑ ↓|▲/▼|arrow\s+keys)',
+]
+not = ['(?i)to\s+view', '(?i)↑/↓\s+to\s+select']
+visible_blocker = true
+
+[[rules]]
+id = "menu-qualified-selector"
+state = "blocked"
+priority = 30
+region = "last:15"
+all = [
+  '(?i)↑/↓\s+to\s+select',
+  '(?i)to\s+navigate|to\s+confirm|to\s+choose|esc\s+to\s+cancel|escape\s+to\s+cancel',
+]
+not = ['(?i)to\s+view']
+visible_blocker = true
+
+[[rules]]
+id = "menu-confirm-cancel"
+state = "blocked"
+priority = 30
+region = "last:15"
+any = [
+  '(?i)(enter|return)\s+to\s+confirm[^\n]*(\n[^\n]*)?(esc|escape)\s+to\s+cancel',
+  '(?i)(esc|escape)\s+to\s+cancel[^\n]*(\n[^\n]*)?(enter|return)\s+to\s+confirm',
+]
+not = ['(?i)to\s+view']
+visible_blocker = true
+
+[[rules]]
+id = "radio-choice-dialog"
+state = "blocked"
+priority = 30
+region = "last:20"
+all = ['(?m)^[\s│]*● \d+\. ', '(?m)^[\s│]*\d+\. ']
+visible_blocker = true
+
+[[rules]]
+id = "working-cancel-hint"
+state = "working"
+priority = 20
+region = "last:15"
+any = ['(?i)esc to cancel']
+
+[[rules]]
+id = "idle-prompt"
+state = "idle"
+priority = 10
+region = "last:15"
+any = ['(?m)^\s*Type your message', '(?m)^\s*> Type your message']

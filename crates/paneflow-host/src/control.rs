@@ -30,6 +30,8 @@ pub const CONTROL_METHODS: &[&str] = &[
     "surface.status",
     "surface.send_text",
     "fleet.list",
+    "agent.capture",
+    "agent.explain",
 ];
 
 pub const CONTROLLER_ONLY_METHODS: &[&str] = &[
@@ -627,6 +629,27 @@ fn answer(
             );
             status["foreground_runtime"] = foreground_runtime(&summary);
             Ok(status)
+        }
+        "agent.capture" => {
+            let scope = read_scope(host, params)?;
+            let session = resolve_session(aliases, params)?;
+            authorize_scoped_session(host, scope.as_ref(), &session)?;
+            let capture = crate::viewport_scan::capture(host, &session)?;
+            Ok(json!({
+                "session": session,
+                "screen": capture.scan.screen,
+                "cols": capture.scan.cols,
+                "rows": capture.scan.rows,
+                "title": capture.scan.title,
+                "progress": capture.scan.progress,
+                "runtime_id": capture.runtime.map(|runtime| runtime.id),
+            }))
+        }
+        "agent.explain" => {
+            let scope = read_scope(host, params)?;
+            let session = resolve_session(aliases, params)?;
+            authorize_scoped_session(host, scope.as_ref(), &session)?;
+            Ok(crate::viewport_scan::explain(host, &session, now_ms)?)
         }
         "fleet.list" => {
             let mut sessions = host.list(None);

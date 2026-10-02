@@ -1,3 +1,13 @@
+paneflow-screen-capture: 1
+state: blocked
+runtime: claude-code
+cols: unknown
+rows: unknown
+cli: unknown
+paneflow: unknown
+captured: unknown
+origin: fixtures/approval-menu.txt, captured before the capture command existed
+---
 Bash command
 
   git add -A && git status --short

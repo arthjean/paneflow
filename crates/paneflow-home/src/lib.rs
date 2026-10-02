@@ -101,6 +101,14 @@ pub fn cache_dir_in(home: &Path) -> PathBuf {
     home.join("cache")
 }
 
+pub fn screen_rule_overrides_dir_in(home: &Path) -> PathBuf {
+    home.join("runtimes")
+}
+
+pub fn screen_catalog_cache_dir_in(home: &Path) -> PathBuf {
+    cache_dir_in(home).join("screen-catalog")
+}
+
 pub fn worktrees_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("worktrees"))
 }

@@ -7,6 +7,7 @@ use paneflow_agent_config::{RuntimeMcpConfig, RUNTIMES};
 
 pub mod claude_code;
 pub mod codex;
+pub mod fx;
 pub mod gemini;
 pub mod opencode;
 mod support;
@@ -79,5 +80,6 @@ pub fn writer_for(config: RuntimeMcpConfig) -> Box<dyn AgentConfigWriter> {
         RuntimeMcpConfig::Codex => Box::new(codex::Codex::new()),
         RuntimeMcpConfig::Gemini => Box::new(gemini::Gemini::new()),
         RuntimeMcpConfig::OpenCode => Box::new(opencode::OpenCode::new()),
+        RuntimeMcpConfig::Fx => Box::new(fx::Fx::new()),
     }
 }

@@ -106,6 +106,10 @@ pub struct Checkpoint {
 pub struct ViewportScan {
     pub screen: String,
     pub foreground_process_group: Option<i32>,
+    pub cols: u16,
+    pub rows: u16,
+    pub title: Option<String>,
+    pub progress: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -688,6 +692,8 @@ struct Session {
     cols: u16,
     rows: u16,
     cell: CellSize,
+    title: Option<String>,
+    progress: Option<&'static str>,
     pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
@@ -950,6 +956,8 @@ fn start(
         cols: spec.cols,
         rows: spec.rows,
         cell,
+        title: None,
+        progress: None,
         pty_wired: false,
         reader_eof: false,
         exit: None,
@@ -1174,16 +1182,21 @@ impl Session {
                         log::debug!("paneflow-host: terminal reply to the PTY failed: {error}");
                     }
                 }
-                ghostty::BackendEvent::Title(title) => (self.observer)(RuntimeNotice::Title(title)),
+                ghostty::BackendEvent::Title(title) => {
+                    self.title = Some(title.clone());
+                    (self.observer)(RuntimeNotice::Title(title));
+                }
                 ghostty::BackendEvent::WorkingDirectory(cwd) => {
                     (self.observer)(RuntimeNotice::WorkingDirectory(cwd));
                 }
                 ghostty::BackendEvent::Bell => {
                     note_bell(&self.shared.bell_at_ms, crate::manifest::now_ms());
                 }
+                ghostty::BackendEvent::Progress(report) => {
+                    self.progress = progress_wire(report.state);
+                }
                 ghostty::BackendEvent::ClipboardStore(_)
-                | ghostty::BackendEvent::DesktopNotification { .. }
-                | ghostty::BackendEvent::Progress(_) => {}
+                | ghostty::BackendEvent::DesktopNotification { .. } => {}
                 ghostty::BackendEvent::UnknownSequence { .. }
                 | ghostty::BackendEvent::CallbackPanicked
                 | ghostty::BackendEvent::InputDropped { .. }
@@ -1294,6 +1307,10 @@ impl Session {
         Ok(ViewportScan {
             screen,
             foreground_process_group,
+            cols: self.cols,
+            rows: self.rows,
+            title: self.title.clone(),
+            progress: self.progress,
         })
     }
 
@@ -1779,6 +1796,16 @@ fn pty_size(cols: u16, rows: u16, cell: CellSize) -> PtySize {
     }
 }
 
+fn progress_wire(state: ghostty::ProgressState) -> Option<&'static str> {
+    match state {
+        ghostty::ProgressState::Remove => None,
+        ghostty::ProgressState::Set => Some("set"),
+        ghostty::ProgressState::Error => Some("error"),
+        ghostty::ProgressState::Indeterminate => Some("indeterminate"),
+        ghostty::ProgressState::Pause => Some("pause"),
+    }
+}
+
 fn note_bell(rang_at: &AtomicU64, now_ms: u64) -> bool {
     let previous = rang_at.load(Ordering::Acquire);
     if previous != 0 && now_ms.saturating_sub(previous) < BELL_SIGNAL_INTERVAL_MS {
@@ -1874,6 +1901,48 @@ mod tests {
             wait_until(Duration::from_secs(5), || runtime.bell_at_ms().is_some()),
             "the host observes the bell without any desktop attached"
         );
+    }
+
+    #[cfg(unix)]
+    const PROGRESS_COMMAND: &[u8] = b"printf '\\033]9;4;3\\007'; echo PROGRESS_\"\"DONE\r\n";
+
+    #[cfg(windows)]
+    const PROGRESS_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']9;4;3' + [char]7); 'PROGRESS_' + 'DONE'\"\r\n";
+
+    #[test]
+    fn the_viewport_scan_carries_the_last_osc_title_and_progress() {
+        let observer: RuntimeObserver = Arc::new(|_| {});
+        let runtime =
+            SessionRuntime::spawn(echo_shell_spec(80, 24), SessionGeneration::FIRST, observer)
+                .expect("shell spawns");
+        let (title, _) = ring_and_title_commands();
+        runtime.input(title.to_vec()).expect("title command");
+        let (offset, _) = wait_for_output(&runtime, "TITLE_DONE", 0);
+        runtime
+            .input(PROGRESS_COMMAND.to_vec())
+            .expect("progress command");
+        wait_for_output(&runtime, "PROGRESS_DONE", offset);
+        assert!(
+            wait_until(Duration::from_secs(5), || {
+                runtime
+                    .viewport_scan(Duration::from_secs(1))
+                    .is_ok_and(|scan| {
+                        scan.title
+                            .as_deref()
+                            .is_some_and(|title| cfg!(windows) || title.contains("quiet"))
+                            && scan.progress == Some("indeterminate")
+                    })
+            }),
+            "the scan carries the OSC 0 title and the OSC 9;4 progress: {:?}",
+            runtime.viewport_scan(Duration::from_secs(1)).map(|scan| (
+                scan.title,
+                scan.progress,
+                scan.cols,
+                scan.rows
+            ))
+        );
+        let scan = runtime.viewport_scan(Duration::from_secs(1)).expect("scan");
+        assert_eq!((scan.cols, scan.rows), (80, 24));
     }
 
     pub(crate) fn echo_shell_spec(cols: u16, rows: u16) -> SpawnSpec {

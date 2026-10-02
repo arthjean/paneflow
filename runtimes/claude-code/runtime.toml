@@ -27,10 +27,6 @@ escape_cancels_turn = true
 attention_clears_on_output = true
 anchor_start_event_to_output = true
 
-[screen]
-working = ["… (", "esc to interrupt"]
-idle_prompt = ["❯"]
-
 [integration]
 summary = "Installs Paneflow lifecycle hooks in Claude Code's global settings."
 hook_adapter = "claude"

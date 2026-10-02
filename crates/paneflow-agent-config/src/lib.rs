@@ -8,12 +8,16 @@ pub mod jsonc;
 #[cfg(feature = "config-io")]
 pub mod lock;
 pub mod runtime_catalog;
+#[cfg(feature = "screen-rules")]
+pub mod screen_rules;
 
 #[cfg(test)]
 #[path = "../build_support.rs"]
 mod build_support;
 #[cfg(test)]
 mod packaging_tests;
+#[cfg(all(test, feature = "screen-rules"))]
+mod screen_rules_tests;
 
 #[cfg(feature = "config-io")]
 pub use io::{

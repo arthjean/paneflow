@@ -1,0 +1,44 @@
+schema_version = 1
+id = "sh.fx.cli"
+slug = "fx"
+label = "fx"
+platforms = ["linux", "macos"]
+
+[display]
+order = 18
+icon_asset_path = "icons/terminal.svg"
+icon_multicolor = false
+visibility_config_key = "fx_button_visible"
+
+[detection]
+command_aliases = ["fx"]
+process_aliases = ["fx"]
+script_path_signatures = []
+title_prefix = "fx v"
+
+[environment]
+strip_inherited = []
+
+[lifecycle]
+source = "output"
+authority = "screen"
+fallback = "screen"
+escape_cancels_turn = false
+attention_clears_on_output = true
+anchor_start_event_to_output = true
+bell_attention = true
+
+[integration]
+summary = "fx is confirmed from its terminal title, its turns are read from screen rules, and its bell asks for attention."
+hook_adapter = "none"
+mcp_config = "fx"
+
+[resume]
+session_argv = ["fx", "--resume", "{session_id}"]
+continue_argv = ["fx", "--continue"]
+session_id_pattern = '^(?:\d+-\d+-[0-9a-f]{16}|[A-Za-z0-9]{12})$'
+failure_markers = []
+
+[[suggested_presets]]
+id = "fx"
+command = "fx"

@@ -1,0 +1,15 @@
+[package]
+name = "paneflow-minisign"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Fail-closed minisign verification shared by the updater and the host"
+
+[dependencies]
+minisign-verify = "0.2.5"
+
+[dev-dependencies]
+minisign = "0.9.1"
+
+[lints]
+workspace = true

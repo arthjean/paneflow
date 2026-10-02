@@ -356,6 +356,12 @@ pub struct AgentSessionRef {
     pub cwd: Option<String>,
 }
 
+impl AgentSessionRef {
+    pub fn continues_latest(&self) -> bool {
+        self.id.is_empty()
+    }
+}
+
 impl SurfaceDefinition {
     pub fn is_terminal(&self) -> bool {
         matches!(self.surface_type.as_deref(), None | Some("terminal"))

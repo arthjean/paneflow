@@ -26,10 +26,6 @@ escape_cancels_turn = true
 attention_clears_on_output = true
 anchor_start_event_to_output = true
 
-[screen]
-working = ["esc to cancel"]
-idle_prompt = ["Type your message", "> Type your message"]
-
 [integration]
 summary = "Gemini CLI turn status is read from its screen."
 hook_adapter = "none"

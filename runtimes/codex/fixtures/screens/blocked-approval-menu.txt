@@ -1,0 +1,19 @@
+paneflow-screen-capture: 1
+state: blocked
+runtime: codex
+cols: unknown
+rows: unknown
+cli: unknown
+paneflow: unknown
+captured: unknown
+origin: fixtures/approval-menu.txt, captured before the capture command existed
+---
+Shell command
+
+  rm -rf build
+  Remove the build directory
+
+  1. Yes, proceed
+  2. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel

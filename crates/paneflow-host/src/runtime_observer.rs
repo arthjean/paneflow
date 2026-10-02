@@ -33,6 +33,11 @@ impl RuntimeObservation {
     pub fn runtime(&self) -> Option<&'static Runtime> {
         runtime_catalog::runtime_by_id(&self.id)
     }
+
+    pub fn confirmed_by_title(&self, title: Option<&str>) -> bool {
+        self.runtime()
+            .is_none_or(|runtime| runtime.title_confirms_identity(title))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -794,14 +799,24 @@ mod tests {
     }
 
     #[test]
-    fn a_generic_interpreter_never_becomes_the_observed_runtime() {
+    fn a_generic_interpreter_or_the_fx_json_viewer_never_becomes_the_observed_runtime() {
         assert_eq!(
             identify_runtime_in_job(&job(vec![
                 process(100, 1, "bash", &["bash"]),
                 process(110, 100, "node", &["node", "server.js"]),
-                process(120, 100, "fx", &["fx", "payload.json"]),
             ])),
             None
+        );
+        let viewer = identify_runtime_in_job(&job(vec![
+            process(100, 1, "bash", &["bash"]),
+            process(120, 100, "fx", &["fx", "payload.json"]),
+        ]));
+        assert!(
+            viewer.as_ref().is_none_or(|observed| {
+                !observed.confirmed_by_title(None)
+                    && !observed.confirmed_by_title(Some("fx payload.json"))
+            }),
+            "an fx process is the fx agent only once its title confirms it: {viewer:?}"
         );
     }
 

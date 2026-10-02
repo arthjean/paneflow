@@ -7,7 +7,7 @@ use serde_json::Value;
 
 const REDUCED_METHODS: [&str; 2] = ["surface.status", "fleet.list"];
 
-const PROJECTED_FACTS: [&str; 2] = ["outcome", "menu_prompt_active"];
+const PROJECTED_FACTS: [&str; 3] = ["outcome", "menu_prompt_active", "activity_source"];
 
 const FOREGROUND_RUNTIME: &str = "foreground_runtime";
 

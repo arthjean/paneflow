@@ -1,0 +1,12 @@
+paneflow-screen-capture: 1
+state: working
+runtime: claude-code
+cols: unknown
+rows: unknown
+cli: unknown
+paneflow: unknown
+captured: unknown
+origin: fixtures/working.txt, captured before the capture command existed
+---
+✻ Levitating… (1m 52s · ↓ 5.1k tokens)
+esc to interrupt

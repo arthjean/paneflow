@@ -119,6 +119,7 @@ and macOS keep every agent below.
 | `openclaw_button_visible` | OpenClaw |
 | `deepseek_harness_button_visible` | DeepSeek Harness |
 | `muse_button_visible` | Muse Code |
+| `fx_button_visible` | fx (Linux and macOS) |
 
 ## `terminal`
 
@@ -149,6 +150,7 @@ and macOS keep every agent below.
 | --- | --- | --- | --- |
 | `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
 | `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
+| `agents.remote_screen_catalog` | boolean/null | `true` | The host fetches the signed screen rule catalog from GitHub Releases one minute after it starts, then once a day, and applies it only when its signature, engine and strictly newer version check out. `false` makes no network call; the cached and built-in rules stay active. |
 
 ## `worktrees`
 

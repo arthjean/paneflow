@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use paneflow_agent_config::runtime_catalog::{
-    Runtime, RuntimeLifecycleAuthority, RuntimeLifecycleSource,
+    Runtime, RuntimeLifecycleFallback, RuntimeLifecycleSource,
 };
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
@@ -23,6 +23,7 @@ pub const MAX_SEED_BYTES: u64 = hook_assets::MAX_SEED_BYTES;
 
 pub const SCREEN_WORKING: &str = "working";
 pub const SCREEN_IDLE: &str = "idle";
+pub const SCREEN_BLOCKED: &str = "blocked";
 
 pub type MenuEvidence<'a> = dyn Fn(&SessionId) -> Option<bool> + 'a;
 
@@ -218,7 +219,7 @@ impl SessionEntry {
         self.bell_seen_at_ms = self.bell_seen_at_ms.max(rang_at);
         let runtime = self
             .foreground_runtime()
-            .filter(|runtime| runtime.lifecycle.authority != RuntimeLifecycleAuthority::Complete)
+            .filter(|runtime| runtime.lifecycle.bell_attention)
             .filter(|_| self.lifecycle.is_running());
         let Some(runtime) = runtime else {
             self.bell_attention_since = None;
@@ -327,10 +328,13 @@ pub use paneflow_agent_config::runtime_catalog::runtime_for_tool;
 
 fn screen_fallback(entry: &SessionEntry) -> Option<Status> {
     let runtime = entry.runtime()?;
-    runtime.screen?;
+    if runtime.lifecycle.fallback != RuntimeLifecycleFallback::Screen {
+        return None;
+    }
     match entry.screen_activity.as_deref()? {
         SCREEN_WORKING => Some(Status::Busy),
         SCREEN_IDLE => Some(Status::Idle),
+        SCREEN_BLOCKED => Some(Status::Attention),
         _ => None,
     }
 }
@@ -2367,6 +2371,17 @@ mod tests {
     }
 
     #[test]
+    fn a_blocked_screen_verdict_without_any_hook_asks_for_attention() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_BLOCKED))]);
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "attention");
+        assert_eq!(entry.activity_source, ActivitySource::Screen);
+    }
+
+    #[test]
     fn a_screen_owned_activity_ends_when_the_screen_stops_recognizing_the_agent() {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
@@ -2655,6 +2670,25 @@ mod tests {
             Some(KIND_NEEDS_INPUT),
             "a bell notifies exactly like a hook that asks for input"
         );
+    }
+
+    #[test]
+    fn the_bell_fx_declares_as_its_attention_signal_asks_for_attention() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = bell_state(home.path(), &session, Some("sh.fx.cli"));
+        let projections =
+            state.apply_core_snapshot(&[bell_row(&session, Some("sh.fx.cli"), now_ms())]);
+        let projection = projections
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the fx bell is announced");
+        assert_eq!(projection.session["status"], "attention");
+        assert_eq!(
+            projection.session["attention_reason"],
+            ATTENTION_REASON_BELL
+        );
+        assert_eq!(projection.session["activity"]["tool"], "fx");
     }
 
     #[test]

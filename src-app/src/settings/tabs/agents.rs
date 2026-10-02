@@ -37,11 +37,11 @@ const HOOK_GLYPH: f32 = 14.;
 const HOOK_STEP_DOT: f32 = 6.;
 
 fn installed_agents() -> impl Iterator<Item = TerminalAgent> {
-    TerminalAgent::all().filter(|agent| agent.is_installed())
+    TerminalAgent::for_this_platform().filter(|agent| agent.is_installed())
 }
 
 fn missing_agents() -> impl Iterator<Item = TerminalAgent> {
-    TerminalAgent::all().filter(|agent| !agent.is_installed())
+    TerminalAgent::for_this_platform().filter(|agent| !agent.is_installed())
 }
 
 fn folded_missing_count() -> usize {
@@ -915,7 +915,7 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }));
-            for agent in TerminalAgent::all() {
+            for agent in TerminalAgent::for_this_platform() {
                 let item = menu_row(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,
@@ -1379,6 +1379,16 @@ fn agent_icon_sized(agent: TerminalAgent, size: f32, ui: crate::theme::UiColors)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_settings_agent_lists_hold_exactly_this_platforms_runtimes() {
+        let listed: std::collections::HashSet<TerminalAgent> =
+            installed_agents().chain(missing_agents()).collect();
+        let expected: std::collections::HashSet<TerminalAgent> =
+            TerminalAgent::for_this_platform().collect();
+        assert_eq!(listed, expected);
+        assert_eq!(listed.contains(&TerminalAgent::Fx), !cfg!(windows));
+    }
 
     #[test]
     fn collect_env_skips_blank_rows_and_rejects_nameless_or_duplicate_keys() {

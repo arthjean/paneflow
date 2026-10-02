@@ -1,0 +1,11 @@
+paneflow-screen-capture: 1
+state: idle
+runtime: codex
+cols: unknown
+rows: unknown
+cli: unknown
+paneflow: unknown
+captured: unknown
+origin: fixtures/idle.txt, captured before the capture command existed
+---
+› Ask Codex to do anything

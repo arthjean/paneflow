@@ -3,8 +3,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use paneflow_agent_config::{
-    RUNTIMES, Runtime, launcher_runtimes, runtime_by_command_alias, runtime_by_id,
-    runtime_by_preset_id,
+    RUNTIMES, Runtime, RuntimePlatform, current_platform, launcher_runtimes,
+    runtime_by_command_alias, runtime_by_id, runtime_by_preset_id,
 };
 use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig};
 
@@ -16,6 +16,17 @@ paneflow_agent_config::runtime_identity_constants!(TerminalAgent);
 impl TerminalAgent {
     pub fn all() -> impl Iterator<Item = TerminalAgent> {
         RUNTIMES.iter().map(|runtime| TerminalAgent(runtime.id))
+    }
+
+    pub fn on_platform(platform: RuntimePlatform) -> impl Iterator<Item = TerminalAgent> {
+        RUNTIMES
+            .iter()
+            .filter(move |runtime| runtime.supports(platform))
+            .map(|runtime| TerminalAgent(runtime.id))
+    }
+
+    pub fn for_this_platform() -> impl Iterator<Item = TerminalAgent> {
+        Self::on_platform(current_platform())
     }
 
     #[allow(
@@ -461,8 +472,7 @@ pub enum AgentLaunch {
 
 impl AgentLaunch {
     pub fn all(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
-        TerminalAgent::all()
-            .filter(|agent| agent.supports_current_platform())
+        TerminalAgent::for_this_platform()
             .map(AgentLaunch::Builtin)
             .chain(
                 AgentProfile::all(config)
@@ -737,7 +747,7 @@ mod tests {
 
     #[test]
     fn catalog_tables_match_the_pre_catalog_reference() {
-        let reference: [(&str, &str, Option<&str>); 18] = [
+        let reference: [(&str, &str, Option<&str>); 19] = [
             (
                 "com.anthropic.claude-code",
                 "claude_code_button_visible",
@@ -776,6 +786,7 @@ mod tests {
                 None,
             ),
             ("com.muse.code", "muse_button_visible", None),
+            ("sh.fx.cli", "fx_button_visible", None),
         ];
         let generated = TerminalAgent::all()
             .map(|agent| {
@@ -986,6 +997,29 @@ mod tests {
         } else {
             assert_eq!(builtins.len(), TerminalAgent::all().count());
         }
+    }
+
+    #[test]
+    fn fx_is_offered_on_linux_and_macos_and_never_on_windows() {
+        assert!(
+            !TerminalAgent::on_platform(RuntimePlatform::Windows).any(|a| a == TerminalAgent::Fx)
+        );
+        for platform in [RuntimePlatform::Linux, RuntimePlatform::Macos] {
+            assert!(TerminalAgent::on_platform(platform).any(|a| a == TerminalAgent::Fx));
+        }
+        assert_eq!(
+            TerminalAgent::on_platform(RuntimePlatform::Windows)
+                .map(|agent| agent.runtime().slug)
+                .collect::<Vec<_>>(),
+            ["claude-code", "codex", "amp", "gemini", "github-copilot"]
+        );
+        let launcher = AgentLaunch::all(&PaneFlowConfig::default());
+        assert_eq!(
+            launcher
+                .iter()
+                .any(|launch| launch.agent() == TerminalAgent::Fx),
+            !cfg!(windows)
+        );
     }
 
     #[test]

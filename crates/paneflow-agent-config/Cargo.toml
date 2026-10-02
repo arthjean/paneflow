@@ -7,14 +7,18 @@ license.workspace = true
 description = "Dependency-light shared primitives for safely editing coding-agent configuration."
 
 [features]
-default = ["config-io"]
+default = ["config-io", "screen-rules"]
 config-io = ["dep:dirs", "dep:log", "dep:paneflow-home"]
+screen-rules = ["dep:regex", "dep:serde", "dep:toml"]
 
 [dependencies]
 dirs = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 paneflow-home = { workspace = true, optional = true }
+regex = { version = "1", optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 serde_json.workspace = true
+toml = { version = "0.8", optional = true }
 
 [build-dependencies]
 regex = "1"

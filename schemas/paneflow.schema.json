@@ -459,6 +459,11 @@
       "description": "Show the built-in 'Muse Code' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
+    "fx_button_visible": {
+      "type": ["boolean", "null"],
+      "description": "Show the built-in 'fx' command button on Linux and macOS. Null/omitted auto-detects the CLI binary.",
+      "default": null
+    },
     "agent_panel": {
       "type": ["object", "null"],
       "description": "Agents-view notification settings.",
@@ -485,6 +490,11 @@
           "type": ["boolean", "null"],
           "description": "Have the Claude Code shim pass a generated --session-id to a fresh interactive launch, so the conversation can be reopened even without Paneflow's hooks.",
           "default": false
+        },
+        "remote_screen_catalog": {
+          "type": ["boolean", "null"],
+          "description": "Let the host fetch the signed screen rule catalog from GitHub Releases one minute after it starts and then once a day. false makes no network call; the cached and built-in rules stay active.",
+          "default": true
         }
       }
     },

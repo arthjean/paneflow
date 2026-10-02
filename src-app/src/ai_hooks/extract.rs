@@ -14,6 +14,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn extract_plan() -> Vec<(&'static str, &'static str)> {
     let mut plan: Vec<(&'static str, &'static str)> = crate::agent_launcher::TerminalAgent::all()
+        .filter(|agent| agent.runtime().has_launch_shim())
         .map(|agent| (agent.binary(), "paneflow-shim"))
         .collect();
     plan.push(("paneflow-ai-hook", "paneflow-ai-hook"));
@@ -535,6 +536,7 @@ mod tests {
         assert_eq!(dir, home.path().join("cache").join("bin").join(VERSION));
         let suffix = exe_suffix();
         let mut expected: Vec<String> = crate::agent_launcher::TerminalAgent::all()
+            .filter(|a| a.runtime().has_launch_shim())
             .map(|a| format!("{}{suffix}", a.binary()))
             .collect();
         expected.push(format!("paneflow-ai-hook{suffix}"));
@@ -549,14 +551,21 @@ mod tests {
     }
 
     #[test]
-    fn catalog_detection_rejects_generic_interpreters_and_fx() {
+    fn catalog_detection_rejects_generic_interpreters_and_never_shims_fx() {
         assert!(
             crate::agent_launcher::TerminalAgent::all()
                 .all(|agent| { !agent.runtime().detection.command_aliases.is_empty() })
         );
-        for false_positive in ["node", "sh", "python", "fx"] {
+        for false_positive in ["node", "sh", "python"] {
             assert!(crate::agent_launcher::TerminalAgent::from_binary(false_positive).is_none());
         }
+        assert!(
+            extract_plan().iter().all(|(name, _)| *name != "fx"),
+            "an fx shim would announce a SessionStart for the fx JSON viewer"
+        );
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = extract_binaries_in_home(home.path()).unwrap();
+        assert!(!dir.join(format!("fx{}", exe_suffix())).exists());
     }
 
     #[test]

@@ -46,6 +46,7 @@ pub struct RuntimeDetection {
     pub command_aliases: &'static [&'static str],
     pub process_aliases: &'static [&'static str],
     pub script_path_signatures: &'static [&'static str],
+    pub title_prefix: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -61,12 +62,7 @@ pub struct RuntimeLifecycle {
     pub escape_cancels_turn: bool,
     pub attention_clears_on_output: bool,
     pub anchor_start_event_to_output: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RuntimeScreen {
-    pub working: &'static [&'static str],
-    pub idle_prompt: &'static [&'static str],
+    pub bell_attention: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +71,7 @@ pub enum RuntimeMcpConfig {
     Codex,
     Gemini,
     OpenCode,
+    Fx,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +149,6 @@ pub struct Runtime {
     pub detection: RuntimeDetection,
     pub environment: RuntimeEnvironment,
     pub lifecycle: RuntimeLifecycle,
-    pub screen: Option<RuntimeScreen>,
     pub integration: RuntimeIntegration,
     pub sessions: Option<RuntimeSessions>,
     pub suggested_presets: &'static [RuntimeSuggestedPreset],
@@ -160,16 +156,33 @@ pub struct Runtime {
 
 include!(concat!(env!("OUT_DIR"), "/runtime_catalog.rs"));
 
+pub fn current_platform() -> RuntimePlatform {
+    if cfg!(target_os = "windows") {
+        RuntimePlatform::Windows
+    } else if cfg!(target_os = "macos") {
+        RuntimePlatform::Macos
+    } else {
+        RuntimePlatform::Linux
+    }
+}
+
 impl Runtime {
     pub fn supports_current_platform(&self) -> bool {
-        let platform = if cfg!(target_os = "windows") {
-            RuntimePlatform::Windows
-        } else if cfg!(target_os = "macos") {
-            RuntimePlatform::Macos
-        } else {
-            RuntimePlatform::Linux
-        };
+        self.supports(current_platform())
+    }
+
+    pub fn supports(&self, platform: RuntimePlatform) -> bool {
         self.platforms.contains(&platform)
+    }
+
+    pub fn title_confirms_identity(&self, title: Option<&str>) -> bool {
+        self.detection
+            .title_prefix
+            .is_none_or(|prefix| title.is_some_and(|title| title.starts_with(prefix)))
+    }
+
+    pub fn has_launch_shim(&self) -> bool {
+        self.detection.title_prefix.is_none()
     }
 }
 
@@ -246,8 +259,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_eighteen_complete_runtime_packages() {
-        assert_eq!(RUNTIMES.len(), 18);
+    fn catalog_has_nineteen_complete_runtime_packages() {
+        assert_eq!(RUNTIMES.len(), 19);
         for runtime in RUNTIMES {
             assert!(
                 !runtime.detection.command_aliases.is_empty(),
@@ -259,8 +272,8 @@ mod tests {
     }
 
     #[test]
-    fn generic_interpreters_and_the_fx_json_viewer_are_not_runtimes() {
-        for false_positive in ["node", "sh", "python", "fx"] {
+    fn generic_interpreters_are_not_runtimes() {
+        for false_positive in ["node", "sh", "python"] {
             assert!(
                 runtime_by_command_alias(false_positive).is_none(),
                 "{false_positive}"
@@ -268,6 +281,48 @@ mod tests {
             assert!(
                 runtime_by_process_alias(false_positive).is_none(),
                 "{false_positive}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fx_alias_names_the_agent_only_when_its_title_confirms_it() {
+        let fx = runtime_by_process_alias("fx").expect("fx runtime");
+        assert_eq!(fx.slug, "fx");
+        assert!(!fx.has_launch_shim());
+        assert!(fx.title_confirms_identity(Some("fx v0.0.12 | paneflow")));
+        assert!(!fx.title_confirms_identity(Some("fx data.json")));
+        assert!(!fx.title_confirms_identity(Some("~/projects")));
+        assert!(!fx.title_confirms_identity(None));
+        for runtime in RUNTIMES {
+            for alias in runtime
+                .detection
+                .command_aliases
+                .iter()
+                .chain(runtime.detection.process_aliases)
+            {
+                if *alias == "fx" {
+                    assert!(runtime.detection.title_prefix.is_some(), "{}", runtime.slug);
+                }
+            }
+        }
+        let codex = runtime_by_slug("codex").expect("codex");
+        assert!(codex.title_confirms_identity(None));
+        assert!(codex.has_launch_shim());
+    }
+
+    #[test]
+    fn fx_rings_for_attention_and_complete_hook_runtimes_do_not() {
+        let fx = runtime_by_slug("fx").expect("fx");
+        assert!(fx.lifecycle.bell_attention);
+        assert!(!fx.supports(RuntimePlatform::Windows));
+        assert!(fx.supports(RuntimePlatform::Linux) && fx.supports(RuntimePlatform::Macos));
+        for runtime in RUNTIMES {
+            assert_eq!(
+                runtime.lifecycle.bell_attention,
+                runtime.lifecycle.authority != RuntimeLifecycleAuthority::Complete,
+                "{}",
+                runtime.slug
             );
         }
     }
@@ -284,34 +339,6 @@ mod tests {
                 .map(|runtime| runtime.slug),
             Some("codex")
         );
-    }
-
-    #[test]
-    fn screen_fixtures_follow_the_catalog_rules() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("runtimes");
-        for slug in ["claude-code", "codex", "gemini"] {
-            let runtime = runtime_by_slug(slug).expect("fixture runtime");
-            let screen = runtime.screen.expect("screen rules");
-            let working = std::fs::read_to_string(root.join(slug).join("fixtures/working.txt"))
-                .expect("working fixture");
-            let idle = std::fs::read_to_string(root.join(slug).join("fixtures/idle.txt"))
-                .expect("idle fixture");
-            assert!(
-                matches_any(&working, screen.working),
-                "{slug} working fixture"
-            );
-            assert!(
-                matches_any(&idle, screen.idle_prompt),
-                "{slug} idle fixture"
-            );
-            assert!(
-                !matches_any(&idle, screen.working),
-                "{slug} idle false positive"
-            );
-        }
     }
 
     #[test]
@@ -374,13 +401,13 @@ mod tests {
                 assert_eq!(command_alias_literal(alias), Some(*alias), "{alias}");
             }
         }
-        for unknown in ["node", "sh", "python", "fx", "claude-code"] {
+        for unknown in ["node", "sh", "python", "claude-code"] {
             assert_eq!(command_alias_literal(unknown), None, "{unknown}");
         }
     }
 
     #[test]
-    fn only_runtimes_with_a_session_reader_declare_resume_and_only_verified_clis_fork() {
+    fn only_verified_clis_declare_resume_or_fork() {
         let resumable = RUNTIMES
             .iter()
             .filter(|runtime| runtime_resume(runtime.id).is_some())
@@ -395,9 +422,13 @@ mod tests {
                 "pi",
                 "grok",
                 "gemini",
-                "kiro"
+                "kiro",
+                "fx"
             ]
         );
+        let fx = runtime_resume("sh.fx.cli").expect("fx resume");
+        assert_eq!(fx.continue_argv, Some(&["fx", "--continue"][..]));
+        assert!(runtime_by_slug("fx").is_some_and(|runtime| runtime.sessions.is_none()));
         let forkable = RUNTIMES
             .iter()
             .filter(|runtime| {
@@ -445,23 +476,21 @@ mod tests {
                     .any(|marker| failure.contains(marker)),
                 "{slug} resume failure fixture"
             );
-            for normal in ["working.txt", "idle.txt", "approval-menu.txt"] {
-                let screen = std::fs::read_to_string(fixtures.join(normal)).expect("fixture");
+            let mut normal_screens = 0;
+            for entry in std::fs::read_dir(fixtures.join("screens")).expect("screen corpus") {
+                let path = entry.expect("corpus entry").path();
+                let screen = std::fs::read_to_string(&path).expect("capture");
+                normal_screens += 1;
                 assert!(
                     !resume
                         .failure_markers
                         .iter()
                         .any(|marker| screen.contains(marker)),
-                    "{slug} {normal} false positive"
+                    "{slug} {} false positive",
+                    path.display()
                 );
             }
+            assert!(normal_screens >= 3, "{slug} corpus");
         }
-    }
-
-    fn matches_any(viewport: &str, patterns: &[&str]) -> bool {
-        let viewport = viewport.to_lowercase();
-        patterns
-            .iter()
-            .any(|pattern| viewport.contains(&pattern.to_lowercase()))
     }
 }

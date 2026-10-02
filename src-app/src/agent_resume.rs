@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use paneflow_agent_config::{RuntimeResume, SESSION_ID_PLACEHOLDER, runtime_resume};
+use paneflow_agent_config::{
+    RuntimeHookAdapter, RuntimeResume, SESSION_ID_PLACEHOLDER, runtime_resume,
+};
 use paneflow_config::schema::PaneFlowConfig;
 
 use crate::agent_launcher::{AgentCommandSpec, TerminalAgent};
@@ -42,6 +44,19 @@ pub(crate) fn accepts_session_id(agent: TerminalAgent, session_id: &str) -> bool
             .is_some_and(|pattern| pattern.is_match(session_id))
 }
 
+pub(crate) fn continues_by_observation(agent: TerminalAgent) -> bool {
+    agent.runtime().integration.hook_adapter == RuntimeHookAdapter::None
+        && runtime_resume_of(agent).is_some_and(|resume| resume.continue_argv.is_some())
+}
+
+pub(crate) fn accepts_recorded_session(agent: TerminalAgent, session_id: &str) -> bool {
+    if session_id.is_empty() {
+        continues_by_observation(agent)
+    } else {
+        accepts_session_id(agent, session_id)
+    }
+}
+
 pub(crate) fn conversation_spec(
     agent: TerminalAgent,
     template: ConversationTemplate,
@@ -49,11 +64,13 @@ pub(crate) fn conversation_spec(
     config: &PaneFlowConfig,
 ) -> Option<AgentCommandSpec> {
     let resume = runtime_resume_of(agent)?;
+    let continues = session_id.is_empty() && continues_by_observation(agent);
     let argv = match template {
+        ConversationTemplate::Resume if continues => resume.continue_argv?,
         ConversationTemplate::Resume => resume.session_argv,
         ConversationTemplate::Fork => resume.fork_argv?,
     };
-    if !accepts_session_id(agent, session_id) {
+    if !continues && !accepts_session_id(agent, session_id) {
         tracing::warn!(
             target: "paneflow_app::agent_resume",
             runtime = agent.runtime().id,
@@ -65,13 +82,13 @@ pub(crate) fn conversation_spec(
     let mut spec = AgentCommandSpec::new(program);
     for arg in args {
         if *arg == SESSION_ID_PLACEHOLDER {
+            debug_assert!(crate::agent_launcher::is_plain_shell_token(session_id));
             spec.push_arg(session_id);
         } else {
             spec.push_arg(*arg);
         }
     }
     agent.push_launch_flags(&mut spec, config);
-    debug_assert!(crate::agent_launcher::is_plain_shell_token(session_id));
     Some(spec)
 }
 
@@ -123,6 +140,40 @@ mod tests {
         assert!(can_fork(TerminalAgent::ClaudeCode));
         assert!(!can_fork(TerminalAgent::Opencode));
         assert!(!can_fork(TerminalAgent::Amp));
+    }
+
+    #[test]
+    fn a_recorded_fx_conversation_without_an_id_resumes_with_continue_and_hooked_runtimes_never_do()
+    {
+        let config = PaneFlowConfig::default();
+        assert!(continues_by_observation(TerminalAgent::Fx));
+        assert!(accepts_recorded_session(TerminalAgent::Fx, ""));
+        assert_eq!(
+            conversation_command(TerminalAgent::Fx, ConversationTemplate::Resume, "", &config),
+            Some("fx --continue".to_string())
+        );
+        assert_eq!(
+            conversation_command(
+                TerminalAgent::Fx,
+                ConversationTemplate::Resume,
+                "9s89xjvfNpIu",
+                &config
+            ),
+            Some("fx --resume 9s89xjvfNpIu".to_string())
+        );
+        assert_eq!(
+            conversation_command(TerminalAgent::Fx, ConversationTemplate::Fork, "", &config),
+            None
+        );
+        for hooked in [TerminalAgent::ClaudeCode, TerminalAgent::Codex] {
+            assert!(!continues_by_observation(hooked));
+            assert!(!accepts_recorded_session(hooked, ""));
+            assert_eq!(
+                conversation_command(hooked, ConversationTemplate::Resume, "", &config),
+                None
+            );
+        }
+        assert!(!accepts_recorded_session(TerminalAgent::Opencode, ""));
     }
 
     #[test]

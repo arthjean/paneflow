@@ -1,0 +1,82 @@
+{
+  "runtimes": {
+    "claude-code": {
+      "accuracy": 1.0,
+      "captures": 3,
+      "correct": 3,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-approval-menu.txt": "blocked",
+        "idle-legacy.txt": "idle",
+        "working-legacy.txt": "working"
+      }
+    },
+    "codex": {
+      "accuracy": 1.0,
+      "captures": 3,
+      "correct": 3,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-approval-menu.txt": "blocked",
+        "idle-legacy.txt": "idle",
+        "working-legacy.txt": "working"
+      }
+    },
+    "fx": {
+      "accuracy": 1.0,
+      "captures": 4,
+      "correct": 4,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-sign-in-picker.txt": "blocked",
+        "idle-after-error.txt": "idle",
+        "idle-fresh-prompt.txt": "idle",
+        "working-thinking.txt": "working"
+      }
+    },
+    "gemini": {
+      "accuracy": 1.0,
+      "captures": 3,
+      "correct": 3,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-folder-trust.txt": "blocked",
+        "idle-legacy.txt": "idle",
+        "working-legacy.txt": "working"
+      }
+    },
+    "hermes": {
+      "accuracy": null,
+      "captures": 0,
+      "correct": 0,
+      "missing_states": [
+        "working",
+        "idle",
+        "blocked"
+      ],
+      "verdicts": {}
+    },
+    "opencode": {
+      "accuracy": null,
+      "captures": 0,
+      "correct": 0,
+      "missing_states": [
+        "working",
+        "idle",
+        "blocked"
+      ],
+      "verdicts": {}
+    },
+    "pi": {
+      "accuracy": null,
+      "captures": 0,
+      "correct": 0,
+      "missing_states": [
+        "working",
+        "idle",
+        "blocked"
+      ],
+      "verdicts": {}
+    }
+  }
+}

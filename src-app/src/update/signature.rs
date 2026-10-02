@@ -3,7 +3,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use minisign_verify::{PublicKey, Signature};
+use minisign_verify::PublicKey;
+use paneflow_minisign::VerifyError;
 
 use super::error::IntegrityMismatch;
 
@@ -51,48 +52,25 @@ fn reject(reason: impl Into<String>) -> anyhow::Error {
 }
 
 fn verify_with_keys(artifact: &Path, sig_text: &str, keys: &[PublicKey]) -> Result<()> {
-    if keys.is_empty() {
-        return Err(reject(
+    match paneflow_minisign::verify(sig_text, keys, || std::fs::File::open(artifact)) {
+        Ok(_) => Ok(()),
+        Err(VerifyError::NoKey) => Err(reject(
             "no verification key embedded in this build - refusing to install an unverifiable update",
-        ));
-    }
-
-    let signature =
-        Signature::decode(sig_text).map_err(|e| reject(format!("signature is malformed: {e}")))?;
-
-    let mut key_id_matched = false;
-    for key in keys {
-        let mut verifier = match key.verify_stream(&signature) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        key_id_matched = true;
-
-        let mut file = std::fs::File::open(artifact)
-            .with_context(|| format!("open {} for signature check", artifact.display()))?;
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .context("read artifact chunk for signature check")?;
-            if n == 0 {
-                break;
-            }
-            verifier.update(&buf[..n]);
+        )),
+        Err(VerifyError::Malformed(reason)) => {
+            Err(reject(format!("signature is malformed: {reason}")))
         }
-        if verifier.finalize().is_ok() {
-            return Ok(());
-        }
-    }
-
-    if key_id_matched {
-        Err(reject(
+        Err(VerifyError::Mismatch) => Err(reject(
             "artifact does not match its signature - corrupt or tampered",
-        ))
-    } else {
-        Err(reject(
+        )),
+        Err(VerifyError::UntrustedKey) => Err(reject(
             "signature was not made by any key trusted by this build",
-        ))
+        )),
+        Err(VerifyError::Open(error)) => Err(anyhow::Error::new(error)
+            .context(format!("open {} for signature check", artifact.display()))),
+        Err(VerifyError::Read(error)) => {
+            Err(anyhow::Error::new(error).context("read artifact chunk for signature check"))
+        }
     }
 }
 

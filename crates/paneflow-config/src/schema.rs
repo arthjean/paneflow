@@ -116,6 +116,7 @@ mod tests {
                 "openclaw_button_visible",
                 "deepseek_harness_button_visible",
                 "muse_button_visible",
+                "fx_button_visible",
             ]
             .into_iter()
             .map(|key| (key.to_string(), true))
@@ -143,6 +144,7 @@ mod tests {
             agents: Some(AgentsConfig {
                 restore_conversations: Some(true),
                 claude_preassign_session_id: Some(false),
+                remote_screen_catalog: Some(true),
             }),
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),

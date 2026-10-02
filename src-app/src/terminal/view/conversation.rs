@@ -65,7 +65,7 @@ pub(crate) fn restorable_agent_session(
 ) -> Option<AgentSessionRef> {
     recorded.filter(|recorded| {
         TerminalAgent::from_runtime_id(&recorded.runtime)
-            .is_some_and(|agent| crate::agent_resume::accepts_session_id(agent, &recorded.id))
+            .is_some_and(|agent| crate::agent_resume::accepts_recorded_session(agent, &recorded.id))
     })
 }
 
@@ -100,6 +100,7 @@ pub(crate) enum ConversationBanner {
     OfferResume,
     FolderMissing { path: String },
     ResumeFailed { reason: String },
+    SharedFolder { agent: &'static str },
 }
 
 impl ConversationBanner {
@@ -111,18 +112,32 @@ impl ConversationBanner {
             Self::OfferResume => {
                 "Input was typed before the conversation could be resumed".to_string()
             }
+            Self::SharedFolder { agent } => {
+                format!("Several {agent} panes share this folder, so none resumed on its own")
+            }
             Self::FolderMissing { path } => format!("Folder not found: {path}"),
             Self::ResumeFailed { reason } => format!("Resume failed: {reason}"),
         }
     }
 
+    pub(crate) fn resumes_on_accept(&self) -> bool {
+        matches!(self, Self::OfferResume | Self::SharedFolder { .. })
+    }
+
     pub(crate) fn primary_label(&self) -> Option<&'static str> {
         match self {
-            Self::OfferResume => Some("Resume conversation"),
+            Self::OfferResume | Self::SharedFolder { .. } => Some("Resume conversation"),
             Self::ResumeFailed { .. } => Some("New session"),
             Self::AlreadyResumed { .. } | Self::FolderMissing { .. } => None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumeWrite {
+    Skip,
+    Offer(ConversationBanner),
+    Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +229,7 @@ pub(crate) struct Conversation {
     watch: Option<FailureWatch>,
     watch_epoch: u64,
     failed_agent: Option<TerminalAgent>,
+    shared_folder: bool,
 }
 
 impl TerminalView {
@@ -250,6 +266,41 @@ impl TerminalView {
         self.conversation.restore = (restore_conversations && recorded.is_some())
             .then_some(RestorePhase::AwaitingHost { duplicate_of: None });
         self.conversation.recorded = recorded;
+    }
+
+    pub(crate) fn record_observed_conversation(
+        &mut self,
+        agent: TerminalAgent,
+        cx: &mut Context<Self>,
+    ) {
+        if !crate::agent_resume::continues_by_observation(agent) {
+            return;
+        }
+        let runtime = agent.runtime().id;
+        if self
+            .conversation
+            .recorded
+            .as_ref()
+            .is_some_and(|recorded| recorded.runtime == runtime && recorded.continues_latest())
+        {
+            return;
+        }
+        self.conversation.live = true;
+        let cwd = self.terminal.current_cwd.clone();
+        self.set_recorded_agent_session(
+            Some(AgentSessionRef {
+                runtime: runtime.to_string(),
+                id: String::new(),
+                cwd,
+            }),
+            cx,
+        );
+    }
+
+    pub(crate) fn mark_conversation_shared_folder(&mut self) {
+        if self.conversation.restore.is_some() {
+            self.conversation.shared_folder = true;
+        }
     }
 
     pub(crate) fn expect_fresh_shell_for_conversation(&mut self) {
@@ -459,31 +510,48 @@ impl TerminalView {
     }
 
     pub(crate) fn write_conversation_resume(&mut self, cx: &mut Context<Self>) {
-        if self.conversation.restore.take().is_none() {
-            return;
+        match self.take_resume_write() {
+            ResumeWrite::Skip => {}
+            ResumeWrite::Offer(banner) => {
+                self.conversation.banner = Some(banner);
+                cx.notify();
+            }
+            ResumeWrite::Type => self.type_conversation_resume(cx),
         }
-        if self.terminal.input_sent() {
-            self.conversation.banner = Some(ConversationBanner::OfferResume);
-            cx.notify();
-            return;
-        }
-        self.type_conversation_resume(cx);
     }
 
-    fn type_conversation_resume(&mut self, cx: &mut Context<Self>) {
-        let Some(agent) = self.conversation_agent() else {
-            return;
-        };
-        let Some(recorded) = self.conversation.recorded.clone() else {
-            return;
-        };
+    fn take_resume_write(&mut self) -> ResumeWrite {
+        if self.conversation.restore.take().is_none() {
+            return ResumeWrite::Skip;
+        }
+        if std::mem::take(&mut self.conversation.shared_folder)
+            && let Some(agent) = self.conversation_agent()
+        {
+            return ResumeWrite::Offer(ConversationBanner::SharedFolder {
+                agent: agent.display_name(),
+            });
+        }
+        if self.terminal.input_sent() {
+            return ResumeWrite::Offer(ConversationBanner::OfferResume);
+        }
+        ResumeWrite::Type
+    }
+
+    fn conversation_resume_command(&self, cx: &gpui::App) -> Option<(TerminalAgent, String)> {
+        let agent = self.conversation_agent()?;
+        let recorded = self.conversation.recorded.as_ref()?;
         let config = crate::config_snapshot::current(cx);
-        let Some(command) = crate::agent_resume::conversation_command(
+        let command = crate::agent_resume::conversation_command(
             agent,
             ConversationTemplate::Resume,
             &recorded.id,
             &config,
-        ) else {
+        )?;
+        Some((agent, command))
+    }
+
+    fn type_conversation_resume(&mut self, cx: &mut Context<Self>) {
+        let Some((agent, command)) = self.conversation_resume_command(cx) else {
             return;
         };
         let epoch = self.next_watch_epoch();
@@ -615,7 +683,7 @@ impl TerminalView {
 
     pub(crate) fn accept_conversation_banner(&mut self, cx: &mut Context<Self>) {
         match self.conversation.banner.take() {
-            Some(ConversationBanner::OfferResume) => self.type_conversation_resume(cx),
+            Some(banner) if banner.resumes_on_accept() => self.type_conversation_resume(cx),
             Some(ConversationBanner::ResumeFailed { .. }) => self.start_new_agent_session(cx),
             other => self.conversation.banner = other,
         }
@@ -1082,6 +1150,81 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(changes.get(), 1);
+    }
+
+    const FX: &str = "sh.fx.cli";
+
+    #[gpui::test]
+    fn an_observed_fx_is_recorded_as_a_conversation_to_continue_until_it_returns_to_the_shell(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        let (changes, _subscription) = count_changes(&view, cx);
+        view.update(cx, |view, cx| {
+            view.terminal.current_cwd = Some("/home/u/project".to_string());
+            view.record_observed_conversation(TerminalAgent::Fx, cx);
+            view.record_observed_conversation(TerminalAgent::Fx, cx);
+            assert_eq!(
+                view.agent_session().cloned(),
+                Some(AgentSessionRef {
+                    runtime: FX.to_string(),
+                    id: String::new(),
+                    cwd: Some("/home/u/project".to_string()),
+                })
+            );
+            assert!(view.conversation_is_live());
+            assert!(!view.can_fork_conversation());
+            view.record_observed_conversation(TerminalAgent::Amp, cx);
+            assert_eq!(
+                view.agent_session()
+                    .map(|recorded| recorded.runtime.as_str()),
+                Some(FX),
+                "a runtime without continue_argv records nothing"
+            );
+            view.apply_agent_session_signal(AgentSessionSignal::ReturnedToShell, cx);
+            assert_eq!(view.agent_session(), None);
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.get(), 2);
+    }
+
+    #[gpui::test]
+    fn a_lone_fx_restored_after_a_host_loss_types_fx_continue(cx: &mut gpui::TestAppContext) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(FX, ""), true);
+            assert!(view.conversation_restore_pending());
+            assert_eq!(
+                view.conversation_resume_command(cx),
+                Some((TerminalAgent::Fx, "fx --continue".to_string()))
+            );
+            view.conversation.restore = Some(RestorePhase::Ready);
+            assert_eq!(view.take_resume_write(), ResumeWrite::Type);
+            assert!(!view.conversation_restore_pending());
+        });
+    }
+
+    #[gpui::test]
+    fn an_fx_sharing_its_folder_offers_the_banner_and_types_only_when_accepted(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(FX, ""), true);
+            view.mark_conversation_shared_folder();
+            view.conversation.restore = Some(RestorePhase::Ready);
+            view.write_conversation_resume(cx);
+            let banner = ConversationBanner::SharedFolder { agent: "fx" };
+            assert_eq!(view.conversation_banner(), Some(&banner));
+            assert!(!view.conversation_restore_pending());
+            assert!(view.terminal.queued_raw_input_for_test().is_empty());
+            assert!(banner.resumes_on_accept());
+            assert_eq!(banner.primary_label(), Some("Resume conversation"));
+            assert_eq!(
+                view.conversation_resume_command(cx),
+                Some((TerminalAgent::Fx, "fx --continue".to_string()))
+            );
+        });
     }
 
     #[gpui::test]

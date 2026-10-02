@@ -71,6 +71,70 @@ fn shell_request(cols: u16, rows: u16) -> CreateSession {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_process_named_fx_becomes_an_agent_only_once_its_title_confirms_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let fx = bin.path().join("fx");
+    std::fs::write(
+        &fx,
+        "#!/bin/sh\nprintf '{\\n  \"ok\": true\\n}\\n'\nsleep 4\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fx, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let endpoint = home.path().join("host.sock");
+    let host = SessionHost::open(home.path(), &endpoint).unwrap();
+    let session = host
+        .create(shell_request(100, 24))
+        .unwrap()
+        .manifest
+        .session;
+    let observed_fx = |host: &SessionHost| {
+        host.inspect(&session).is_ok_and(|summary| {
+            summary
+                .manifest
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.current_observation.as_ref())
+                .is_some_and(|observation| observation.id == "sh.fx.cli")
+        })
+    };
+
+    host.input(
+        &session,
+        Some(SessionGeneration::FIRST),
+        format!("{} data.json\n", fx.display()).into_bytes(),
+    )
+    .unwrap();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(3) {
+        assert!(
+            !observed_fx(&host),
+            "the fx JSON viewer has no fx title and must not become an agent row"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    host.input(
+        &session,
+        Some(SessionGeneration::FIRST),
+        format!(
+            "printf '\\033]2;fx v0.0.12 | paneflow\\007'; {}\n",
+            fx.display()
+        )
+        .into_bytes(),
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(15), || observed_fx(&host)),
+        "the fx agent title confirms the runtime"
+    );
+    host.stop(&session, None).unwrap();
+}
+
 fn wait_until(deadline: Duration, mut check: impl FnMut() -> bool) -> bool {
     let until = Instant::now() + deadline;
     while Instant::now() < until {
@@ -559,6 +623,36 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
         stamped.runtime.is_none(),
         "a plain shell is never mistaken for an agent runtime"
     );
+
+    host.input(
+        &session,
+        Some(SessionGeneration::FIRST),
+        b"echo Enter to select - up/down to navigate - Esc to cancel
+"
+        .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            host.inspect(&session).is_ok_and(|summary| {
+                summary.manifest.screen_changed_at_ms > stamped.screen_changed_at_ms
+            })
+        }),
+        "the echoed footer is scanned"
+    );
+    assert!(
+        !host.inspect(&session).unwrap().manifest.menu_prompt_active,
+        "a menu footer in a pane without an agent runtime is not an agent blocker"
+    );
+    let hook = crate::agent::AgentEvent::from_params(&json!({
+        "session": session,
+        "runtime_generation": 1,
+        "kind": "ai.stop",
+        "tool": "claude",
+        "hook_payload": {"hook_event_name": "Stop"}
+    }))
+    .unwrap();
+    host.ingest_agent_event(&hook).unwrap();
 
     let manifest = Arc::clone(&host.lock_sessions()[&session].manifest);
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -2378,4 +2472,131 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
     host.remove(&session).unwrap();
     let removed = next_frame_of_type(&subscription, "session_removed");
     assert_eq!(removed["session"], session.to_string());
+}
+
+fn control_call(host: &SessionHost, method: &str, params: Value) -> Value {
+    let permissions = crate::control::ControlPermissions {
+        scripting: false,
+        orchestration: false,
+        fenced_reads: true,
+    };
+    crate::control::dispatch(
+        host,
+        &mut crate::control::ConnectionAliases::default(),
+        permissions,
+        method,
+        &params,
+        crate::manifest::now_ms(),
+    )
+    .expect("a host-served method")
+    .unwrap_or_else(|error| panic!("{method} failed: {error:?}"))
+}
+
+#[test]
+fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control_plane() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("screen-rules-hot-reload")).unwrap();
+    let created = host.create(shell_request(100, 24)).unwrap();
+    let session = created.manifest.session.clone();
+
+    let unrecognized = control_call(&host, "agent.capture", json!({"session": session}));
+    assert_eq!(
+        unrecognized["runtime_id"],
+        Value::Null,
+        "a plain shell has no recognized agent, so a capture is refused by the CLI"
+    );
+
+    let hook = crate::agent::AgentEvent::from_params(&json!({
+        "session": session,
+        "runtime_generation": 1,
+        "kind": "ai.stop",
+        "tool": "claude",
+        "hook_payload": {"hook_event_name": "Stop"}
+    }))
+    .unwrap();
+    host.ingest_agent_event(&hook).unwrap();
+    host.input(
+        &session,
+        Some(SessionGeneration::FIRST),
+        b"echo LOCAL_BUSY_MARKER\r\n".to_vec(),
+    )
+    .unwrap();
+    assert!(wait_until(Duration::from_secs(15), || {
+        host.text(&session)
+            .is_ok_and(|text| text.text.contains("LOCAL_BUSY_MARKER"))
+    }));
+
+    let captured = control_call(&host, "agent.capture", json!({"session": session}));
+    assert_eq!(captured["runtime_id"], "com.anthropic.claude-code");
+    assert_eq!(captured["cols"], 100);
+    assert_eq!(captured["rows"], 24);
+    assert!(
+        captured["screen"]
+            .as_str()
+            .is_some_and(|screen| screen.contains("LOCAL_BUSY_MARKER"))
+    );
+
+    let rules_dir = paneflow_home::screen_rule_overrides_dir_in(home.path()).join("claude-code");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    let written = Instant::now();
+    std::fs::write(
+        rules_dir.join("screen.toml"),
+        "engine = 2\n\n[[rules]]\nid = \"local-busy\"\nstate = \"working\"\npriority = 50\nany = ['LOCAL_BUSY_MARKER']\n",
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(1), || {
+            host.screen_rules()
+                .rules_for("claude-code")
+                .is_some_and(|rules| rules.iter().any(|rule| rule.id == "local-busy"))
+        }),
+        "a valid local edit is active within one second"
+    );
+    let active_after = written.elapsed();
+    assert!(active_after < Duration::from_secs(1), "{active_after:?}");
+
+    let explained = control_call(&host, "agent.explain", json!({"session": session}));
+    assert_eq!(explained["runtime_slug"], "claude-code");
+    assert_eq!(explained["winner"], "local-busy");
+    assert_eq!(explained["screen_state"], "working");
+    assert_eq!(explained["last_hook"]["event"], "Stop");
+    assert_eq!(explained["last_hook"]["current_generation"], true);
+    let local = explained["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["id"] == "local-busy")
+        .cloned()
+        .unwrap();
+    assert_eq!(local["origin"], "local");
+    assert_eq!(local["matched"], true);
+    assert!(
+        explained["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|rule| rule["id"] == "idle-prompt" && rule["origin"] == "builtin")
+    );
+
+    std::thread::sleep(Duration::from_millis(50));
+    std::fs::write(
+        rules_dir.join("screen.toml"),
+        "engine = 2\n\n[[rules]]\nid = \"local-busy\"\nstate = \"working\"\npriority = 50\nany = ['(LOCAL']\n",
+    )
+    .unwrap();
+    assert!(wait_until(Duration::from_secs(1), || {
+        host.screen_rules()
+            .status("claude-code")
+            .local_error
+            .is_some()
+    }));
+    let explained = control_call(&host, "agent.explain", json!({"session": session}));
+    let error = explained["sources"]["local_error"].as_str().unwrap();
+    assert!(error.contains("screen.toml: line 7"), "{error}");
+    assert_eq!(
+        explained["winner"], "local-busy",
+        "the previous valid local rules stay active"
+    );
+
+    host.stop(&session, None).unwrap();
 }

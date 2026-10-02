@@ -23,6 +23,7 @@ pub(crate) struct RestoreCandidate {
     pub(crate) surface: u64,
     pub(crate) runtime: String,
     pub(crate) id: String,
+    pub(crate) cwd: Option<String>,
     pub(crate) location: String,
 }
 
@@ -30,12 +31,33 @@ pub(crate) struct RestoreCandidate {
 pub(crate) struct RestorePlan {
     pub(crate) order: Vec<u64>,
     pub(crate) duplicates: Vec<(u64, String)>,
+    pub(crate) shared_folder: Vec<u64>,
 }
 
 pub(crate) fn plan_restore_order(candidates: Vec<RestoreCandidate>) -> RestorePlan {
     let mut owners: HashMap<(String, String), String> = HashMap::new();
+    let mut continuing: HashMap<(String, Option<String>), usize> = HashMap::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.id.is_empty())
+    {
+        *continuing
+            .entry((candidate.runtime.clone(), candidate.cwd.clone()))
+            .or_default() += 1;
+    }
     let mut plan = RestorePlan::default();
     for candidate in candidates {
+        if candidate.id.is_empty() {
+            if continuing
+                .get(&(candidate.runtime, candidate.cwd))
+                .is_some_and(|count| *count > 1)
+            {
+                plan.shared_folder.push(candidate.surface);
+            } else {
+                plan.order.push(candidate.surface);
+            }
+            continue;
+        }
         let key = (candidate.runtime, candidate.id);
         match owners.get(&key) {
             Some(owner) => plan.duplicates.push((candidate.surface, owner.clone())),
@@ -185,6 +207,7 @@ impl PaneFlowApp {
                         surface,
                         runtime: recorded.runtime.clone(),
                         id: recorded.id.clone(),
+                        cwd: recorded.cwd.clone(),
                         location: format!("pane {} of {}", pane_index + 1, workspace.title),
                     });
                     views.insert(surface, terminal.clone());
@@ -197,6 +220,11 @@ impl PaneFlowApp {
                 view.update(cx, |view, cx| {
                     view.mark_conversation_duplicate(location, cx)
                 });
+            }
+        }
+        for surface in plan.shared_folder {
+            if let Some(view) = views.get(&surface) {
+                view.update(cx, |view, _cx| view.mark_conversation_shared_folder());
             }
         }
         for surface in plan.order {
@@ -275,7 +303,9 @@ impl PaneFlowApp {
     ) -> Option<String> {
         let view = terminal.read(cx);
         let agent = view.conversation_agent()?;
-        let recorded = view.agent_session()?;
+        let recorded = view
+            .agent_session()
+            .filter(|recorded| !recorded.continues_latest())?;
         let owner = self.host_agents.live_session_with_provider_id(
             agent,
             &recorded.id,
@@ -401,8 +431,32 @@ mod tests {
             surface,
             runtime: "com.anthropic.claude-code".to_string(),
             id: id.to_string(),
+            cwd: Some("/repo".to_string()),
             location: location.to_string(),
         }
+    }
+
+    fn fx_candidate(surface: u64, cwd: &str) -> RestoreCandidate {
+        RestoreCandidate {
+            surface,
+            runtime: "sh.fx.cli".to_string(),
+            id: String::new(),
+            cwd: Some(cwd.to_string()),
+            location: format!("pane {surface} of main"),
+        }
+    }
+
+    #[test]
+    fn a_lone_fx_resumes_and_fx_panes_sharing_a_folder_all_wait_for_the_user() {
+        let plan = plan_restore_order(vec![
+            candidate(1, "a", "pane 1 of main"),
+            fx_candidate(2, "/repo"),
+            fx_candidate(3, "/other"),
+            fx_candidate(4, "/repo"),
+        ]);
+        assert_eq!(plan.order, vec![1, 3]);
+        assert_eq!(plan.shared_folder, vec![2, 4]);
+        assert!(plan.duplicates.is_empty());
     }
 
     const CLAUDE_SESSION_START: &str = r#"{"session_id":"3922faec-860a-47b1-8f2d-e6b9488c467c","transcript_path":"C:\\Users\\Arthur\\.claude\\projects\\C--dev-paneflow\\3922faec-860a-47b1-8f2d-e6b9488c467c.jsonl","cwd":"C:\\dev\\paneflow","scratchpad_dir":"C:\\Users\\Arthur\\AppData\\Local\\Temp\\claude\\C--dev-paneflow\\3922faec-860a-47b1-8f2d-e6b9488c467c\\scratchpad","hook_event_name":"SessionStart","source":"startup","model":"claude-opus-5-5"}"#;

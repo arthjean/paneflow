@@ -232,6 +232,7 @@ notify-rust = "4"
 # so it adds no system build deps and compiles identically on the three
 # targets. The matching signing side runs in CI (US-002, `minisign`/`rsign2`).
 minisign-verify = "0.2.5"
+paneflow-minisign.workspace = true
 
 # US-001 (prd-file-editor-2026-Q3): the rope backing `CodeDocument`
 # (`app/agents_diff/code/document.rs`). An edit in the middle of a large file
