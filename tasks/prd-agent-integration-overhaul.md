@@ -8,6 +8,7 @@
 | 1.0 | 2026-09-30 | Arthur Jean | PRD initial : met en œuvre les recommandations de l'analyse concurrentielle du 2026-09-30 (herdr, Unpeel, cmux face à Paneflow `main` @ `a23713b9`). 6 epics, 35 stories, livraisons R1 à R4. |
 | 1.1 | 2026-09-30 | Arthur Jean | Coordination : l'US-040 de `prd-fork-audit-fixes.md` conditionne toute ligne de l'Attention Queue. |
 | 1.2 | 2026-10-01 | Arthur Jean | US-010 : `wait --idle` rend aussi la main sur `blocked` et aussitôt sur un agent qui attend déjà, pour ne pas tenir jusqu'au timeout un tour fini avant son démarrage. |
+| 1.3 | 2026-10-02 | Arthur Jean | EP-005 : le corpus et la précision portent sur les runtimes à repli écran (claude-code, codex, gemini, fx) ; opencode, pi et hermes, qui n'ont pas de règles d'écran, passent dans le nouvel EP-007 (US-036). US-028 : un contrôle périodique du fichier local dans le thread de scan remplace le watcher, sans nouvelle dépendance et avec la même borne d'une seconde. US-030 : fx 0.0.12, mesuré, titre sa fenêtre `fx v<version> \| <dossier>` et nomme ses sessions sur 12 caractères alphanumériques ; le préfixe et le format d'id suivent ces faits. Un runtime confirmé par son titre n'a pas de shim, car le shim annonce une session dès que l'alias tourne. |
 
 ## Problem Statement
 
@@ -666,7 +667,7 @@ Aujourd'hui, deux moteurs appliquent des politiques de symlink différentes :
 Livraison R3. Les deux motifs d'écran figés deviennent un moteur de règles vérifié par un corpus, surchargeable localement, mis à jour par un catalogue signé, et fx y entre sans code dédié.
 
 **Definition of Done:**
-- Le corpus couvre au moins sept runtimes dans les trois états.
+- Le corpus couvre chaque runtime à repli écran (claude-code, codex, gemini, fx) dans les trois états.
 - Chaque runtime du corpus atteint au moins 95 % de bonne classification.
 - `paneflow agent explain` justifie chaque décision.
 - Un catalogue signé plus récent est appliqué sans mise à jour de l'application.
@@ -682,7 +683,7 @@ Livraison R3. Les deux motifs d'écran figés deviennent un moteur de règles v�
 - [ ] `paneflow agent capture <surface> --state working|idle|blocked` écrit l'écran courant, lu dans le viewport du host, en texte brut sans espaces finaux. L'en-tête du fichier porte les colonnes, les lignes, la version de la CLI, la version de Paneflow et la date.
 - [ ] La destination par défaut est `~/.paneflow/cache/captures/` ; `--out` permet d'écrire dans le dépôt.
 - [ ] La capture remplace le chemin du home par `~` et masque les motifs de secrets connus (`sk-`, `ghp_`, `xox`, `AKIA`, JWT). Test avec un écran piégé.
-- [ ] Le corpus versionné `runtimes/<slug>/fixtures/screens/` contient au moins une capture `working`, `idle` et `blocked` pour claude-code, codex, opencode, gemini, pi, hermes et fx.
+- [ ] Le corpus versionné `runtimes/<slug>/fixtures/screens/` contient au moins une capture `working`, `idle` et `blocked` pour chaque runtime à repli écran : claude-code, codex, gemini et fx. opencode, pi et hermes entrent dans le corpus avec leurs règles (US-036).
 - [ ] Un test classe chaque capture avec les règles actuelles et écrit la précision par runtime dans `bench/screen-corpus-baseline.json`.
 - [ ] Échec : given un pane sans runtime reconnu, when la capture est demandée, then elle est refusée avec « aucun agent reconnu dans la surface N ».
 
@@ -736,7 +737,7 @@ Aujourd'hui `RuntimeScreen` n'a que `working` et `idle_prompt` (`crates/paneflow
   - même `id` : la règle remplace l'intégrée ;
   - `disabled = true` : la règle est retirée ;
   - nouvel `id` : la règle est ajoutée.
-- [ ] Un watcher non récursif, au plus à deux niveaux, tourne dans le host hors de tout thread UI. Une modification valide est active en moins de 1 s.
+- [ ] Un contrôle non récursif des fichiers locaux (date et taille), au plus à deux niveaux, tourne dans le thread de scan du host, hors de tout thread UI. Une modification valide est active en moins de 1 s.
 - [ ] `paneflow agent explain <surface>` affiche :
   - le runtime et la source du signal (hook, écran, BEL) ;
   - chaque règle évaluée, avec son résultat et son origine (intégrée, distante vN, locale) ;
@@ -777,8 +778,8 @@ fx n'a pas de hook, émet un BEL pour demander l'attention, et son titre OSC 2 a
 **Acceptance Criteria:**
 - [ ] `runtimes/fx/runtime.toml` :
   - déclare les plateformes `linux` et `macos` et l'alias `fx` ;
-  - exige la confirmation d'identité `detection.title_prefix = "fx · "` ;
-  - déclare les règles d'écran tirées du corpus, le BEL comme signal d'attention, et les gabarits `fx --resume {session_id}` et `fx --continue`, avec l'id au format `^\d+-\d+-[0-9a-f]{16}$`.
+  - exige la confirmation d'identité `detection.title_prefix = "fx v"`, le titre que fx 0.0.12 émet (`fx v0.0.12 | <dossier>`) ;
+  - déclare les règles d'écran tirées du corpus, le BEL comme signal d'attention, et les gabarits `fx --resume {session_id}` et `fx --continue`, avec l'id au format `^(?:\d+-\d+-[0-9a-f]{16}|[A-Za-z0-9]{12})$` (fx 0.0.12 nomme ses sessions comme `9s89xjvfNpIu`).
 - [ ] Le test de `runtime_catalog.rs:189` devient : un alias `fx` sans confirmation par titre est refusé.
 - [ ] Le moteur d'installation écrit l'entrée `paneflow` dans `~/.fx/mcp.json` sans bloc `environment`, puisque fx remplace l'environnement de l'enfant ; test sur le JSON produit.
 - [ ] Après une perte du host, un pane fx seul dans son cwd reprend par `continue_argv`. Si plusieurs panes fx partagent ce cwd, aucun ne reprend, et chacun affiche la bannière de US-013.
@@ -890,6 +891,29 @@ Modèle : les approbations par paire d'Unpeel, liées à `agent_ref`.
 - [ ] Les autres panes gardent leur PATH. Un vrai `tmux` lancé dans un pane ordinaire n'est pas affecté (test).
 - [ ] Si US-034 montre que le mode tmux n'existe pas sous Windows, le préréglage y est masqué par le filtre de plateforme, et `docs/user` le dit.
 - [ ] Échec : given le pane du meneur fermé, when un coéquipier tourne encore, then son pane reste ouvert et se comporte comme un pane ordinaire.
+
+---
+
+### EP-007: Étendre la détection par écran à opencode, pi et hermes
+
+Livraison après R3. Ces trois runtimes sont détectés par leur processus mais n'ont aucune règle d'écran (`authority = "none"`). Ils passent au repli écran quand leurs écrans réels sont capturés.
+
+**Definition of Done:**
+- opencode, pi et hermes déclarent `authority = "screen"` et un `screen.toml`.
+- Le corpus couvre leurs trois états avec au moins 95 % de bonne classification.
+
+#### US-036: Capturer opencode, pi et hermes et leur donner des règles d'écran
+**Description:** As a développeur qui utilise opencode, pi ou hermes, I want que Paneflow lise leur état à l'écran so that leurs panes montrent occupé, inactif ou bloqué comme ceux des autres agents.
+
+**Priority:** P2
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-025, US-026
+
+**Acceptance Criteria:**
+- [ ] `runtimes/{opencode,pi,hermes}/fixtures/screens/` contient au moins une capture `working`, `idle` et `blocked` de la CLI réelle, prise avec `paneflow agent capture`.
+- [ ] Chaque runtime déclare `authority = "screen"`, `fallback = "screen"` et un `screen.toml` tiré de ses captures.
+- [ ] `bench/screen-corpus-baseline.json` montre au moins 95 % de bonne classification pour chacun.
+- [ ] Échec : given un pane qui affiche l'aide de la CLI (`--help`), when l'écran est évalué, then il n'est classé ni `working` ni `blocked` (test).
 
 ---
 

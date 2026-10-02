@@ -41,7 +41,7 @@
     {
       "id": "EP-005",
       "title": "Détecter l'état des agents par des règles d'écran déclaratives",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 6,
       "stories_done": 0
@@ -52,6 +52,14 @@
       "status": "TODO",
       "priority": "P2",
       "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "Étendre la détection par écran à opencode, pi et hermes",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 1,
       "stories_done": 0
     }
   ],
@@ -382,11 +390,11 @@
       "id": "US-025",
       "title": "Constituer le corpus d'écrans de référence et la commande de capture",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-10-02T12:12:26Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -394,13 +402,13 @@
       "id": "US-026",
       "title": "Définir les règles d'écran v2 et leur évaluateur dans le host",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-025"
       ],
-      "started_at": null,
+      "started_at": "2026-10-02T12:19:43Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -408,13 +416,13 @@
       "id": "US-027",
       "title": "Exposer titre et progression OSC aux règles et laisser un bloqueur visible l'emporter",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-026"
       ],
-      "started_at": null,
+      "started_at": "2026-10-02T12:32:05Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -422,13 +430,13 @@
       "id": "US-028",
       "title": "Surcharger localement les règles, les recharger à chaud et expliquer une décision",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-026"
       ],
-      "started_at": null,
+      "started_at": "2026-10-02T12:33:13Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -436,14 +444,14 @@
       "id": "US-029",
       "title": "Distribuer un catalogue de règles signé et versionné",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-026",
         "US-028"
       ],
-      "started_at": null,
+      "started_at": "2026-10-02T12:35:33Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -451,7 +459,7 @@
       "id": "US-030",
       "title": "Intégrer fx comme runtime déclaratif",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -460,7 +468,7 @@
         "US-019",
         "US-027"
       ],
-      "started_at": null,
+      "started_at": "2026-10-02T12:40:49Z",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -531,6 +539,21 @@
         "US-034",
         "US-006",
         "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-036",
+      "title": "Capturer opencode, pi et hermes et leur donner des règles d'écran",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-025",
+        "US-026"
       ],
       "started_at": null,
       "completed_at": null,
