@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Reprendre les conversations d'agents après perte du host",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-004",
@@ -192,86 +192,86 @@
       "id": "US-011",
       "title": "Déclarer les commandes de reprise et de fork dans le catalogue",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:23:40Z",
+      "completed_at": "2026-10-02T00:16:33+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-012",
       "title": "Mémoriser par surface l'id de session de l'agent",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:28:15Z",
+      "completed_at": "2026-10-02T00:16:33+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-013",
       "title": "Relancer l'agent dans son pane après perte du host",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:33:00Z",
+      "completed_at": "2026-10-02T10:22:46+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-014",
       "title": "Détecter l'échec d'une reprise et proposer une nouvelle session",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-013"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:33:00Z",
+      "completed_at": "2026-10-02T10:22:46+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-015",
       "title": "Forker une conversation dans un nouveau split",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-012",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:33:00Z",
+      "completed_at": "2026-10-02T10:22:46+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-016",
       "title": "Pré-assigner l'id de session de Claude Code au lancement",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-01T21:45:28Z",
+      "completed_at": "2026-10-02T00:16:33+02:00",
+      "reviewed_at": "2026-10-02T10:22:46+02:00"
     },
     {
       "id": "US-017",

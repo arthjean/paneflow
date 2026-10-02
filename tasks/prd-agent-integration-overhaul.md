@@ -465,7 +465,7 @@ Modèles :
   1. lance le shell de login dans le cwd enregistré ;
   2. attend la première géométrie d'une vue attachée et 300 ms sans sortie, au plus 5 s ;
   3. écrit en une seule fois la séquence d'effacement de ligne du shell, la commande de reprise et `\r`.
-- [ ] La séquence d'effacement vaut Ctrl-U pour bash, zsh et fish, et Escape pour PowerShell et cmd. Test par famille de shell.
+- [ ] La séquence d'effacement vaut Ctrl-U pour bash, zsh et fish, et Fin puis Ctrl+Origine (`ESC[F ESC[1;5H`) pour PowerShell et cmd sous Windows. Escape suivi de la commande dans la même écriture ne vide pas la ligne sous ConPTY (mesuré le 2026-10-02 avec pwsh 7 et cmd.exe). Test par famille de shell.
 - [ ] Les reprises sont espacées de 250 ms dans l'ordre des workspaces et des panes.
 - [ ] Deux surfaces avec le même couple (runtime, id) : seule la première reprend. Les autres ouvrent un shell et affichent la bannière « Conversation déjà reprise dans le pane N ».
 - [ ] Si une session vivante du host courant porte déjà ce couple, aucune reprise n'a lieu et la même bannière s'affiche.
