@@ -1,0 +1,48 @@
+paneflow-screen-capture: 1
+state: idle
+runtime: claude-code
+cols: 127
+rows: 38
+cli: 2.1.287 (Claude Code)
+paneflow: 0.17.5
+captured: 2026-10-02T16:32:15Z
+title: ✳ Claude Code
+---
+
+ ▐▛███▛█   Claude Code v2.1.287
+▝▜██████▀  Opus 5.5 with high effort · Claude Max
+ ▝▝   ▝▝   ~\AppData\Local\Temp\claude\C--dev-paneflow\5907e4eb-56d3-48ad-bc9a-132e8803393f\scratchpad\capture\claude-probe
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "refactor <filepath>"
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  claude-probe · Opus 5.5 high · ████████████ ready · session (0%) · hebdo (66%) · fable (0%)
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

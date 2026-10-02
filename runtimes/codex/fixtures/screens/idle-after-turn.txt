@@ -1,0 +1,50 @@
+paneflow-screen-capture: 1
+state: idle
+runtime: codex
+cols: 120
+rows: 40
+cli: codex-cli 0.160.0
+paneflow: 0.17.5
+captured: 2026-10-02T16:43:38Z
+title: Write a story about forgotten dreams | codex-probe
+---
+› Without running any command or tool, write a 600-word short story about a cartographer who maps forgotten dreams.
+  Mara had never mapped her own dreams. Her teacher had forbidden it: the cartographer must remain outside the country.
+  Otherwise, roads could lead backward, rivers could enter rooms, and names could disappear from waking mouths. Yet here
+  was her mother’s house, drowned thirty years ago, waiting inside a stranger’s sleep.
+
+  At dawn, the fisherman returned. He studied the map without recognition until Mara inked a little boat beside the
+  shore. Then he wept. “She ferried us across,” he whispered. “All the people we lose. I forgot her face, but she never
+  forgot anyone.” He left without reclaiming his empty jar.
+
+  That night, Mara spread the map across her bed and placed one foot upon the staircase. The paper softened. Water rose
+  around her ankle. Somewhere a kettle whistled. She stepped forward, leaving her room behind, and climbed toward the
+  yellow square of light she had spent half her life avoiding.
+
+  Her mother opened the door wearing flour on her wrists. She looked neither young nor old. Behind her, the kitchen
+  shelves held hundreds of jars, each filled with weather. “You’re late,” she said. Mara tried to answer, but every
+  question she had saved dissolved into the smell of baking bread.
+
+  They sat together until the windows paled. Mara asked whether she could stay. Her mother shook her head and slid a jar
+  across the table. Inside, a girl slept beneath the bridge, clutching a blue bowl. “Someone has forgotten this dream,”
+  she said. “You must find out whose it is.”
+
+  Mara woke with the jar beside her pillow. Her shop was gone. The bridge remained, but nobody remembered its tenant,
+  and her name meant nothing to the baker next door. She had crossed the border. On the pavement, stars glittered where
+  her threshold had been. She knelt to collect them.
+
+  A child approached, carrying a shoe full of sand. “Can you help?” she asked. Mara almost said no. Then she recognized
+  the blue bowl tucked beneath the child’s arm, and understood: forgetting was not an empty place. It was a shore.
+  Someone was arriving, frightened, with something precious to save.
+
+  “Yes,” Mara said. She drew a coastline in the dust. The child watched a harbor appear, then a house, then a boat with
+  room for two. Above them, the bridge hummed with passing feet. Mara did not remember her name, but her hand remembered
+  the way home, and kept drawing.
+
+  Worked for 1m 28s • 18:43
+
+
+› Ask Codex to do anything
+
+  GPT-6.1-Sol high fast · ~\AppData\Local\Temp\claude\C--dev-paneflow\5907e4eb-56d3-48ad-bc9a-132e8803393f\scratchpad\c…
+  ? for shortcuts

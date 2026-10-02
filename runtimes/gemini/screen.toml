@@ -45,6 +45,14 @@ all = ['(?m)^[\s│]*● \d+\. ', '(?m)^[\s│]*\d+\. ']
 visible_blocker = true
 
 [[rules]]
+id = "input-dialog"
+state = "blocked"
+priority = 30
+region = "last:20"
+all = ['(?i)press\s+enter\s+to\s+submit', '(?i)(esc|escape)\s+to\s+cancel']
+visible_blocker = true
+
+[[rules]]
 id = "working-cancel-hint"
 state = "working"
 priority = 20
@@ -56,4 +64,4 @@ id = "idle-prompt"
 state = "idle"
 priority = 10
 region = "last:15"
-any = ['(?m)^\s*Type your message', '(?m)^\s*> Type your message']
+any = ['(?m)^\s*(>\s+)?Type your message']

@@ -2,24 +2,27 @@
   "runtimes": {
     "claude-code": {
       "accuracy": 1.0,
-      "captures": 3,
-      "correct": 3,
+      "captures": 5,
+      "correct": 5,
       "missing_states": [],
       "verdicts": {
         "blocked-approval-menu.txt": "blocked",
-        "idle-legacy.txt": "idle",
-        "working-legacy.txt": "working"
+        "blocked-question-menu.txt": "blocked",
+        "idle-after-turn.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-thinking.txt": "working"
       }
     },
     "codex": {
       "accuracy": 1.0,
-      "captures": 3,
-      "correct": 3,
+      "captures": 4,
+      "correct": 4,
       "missing_states": [],
       "verdicts": {
         "blocked-approval-menu.txt": "blocked",
-        "idle-legacy.txt": "idle",
-        "working-legacy.txt": "working"
+        "idle-after-turn.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-story.txt": "working"
       }
     },
     "fx": {
@@ -36,13 +39,17 @@
     },
     "gemini": {
       "accuracy": 1.0,
-      "captures": 3,
-      "correct": 3,
+      "captures": 7,
+      "correct": 7,
       "missing_states": [],
       "verdicts": {
+        "blocked-api-key-entry.txt": "blocked",
+        "blocked-auth-method.txt": "blocked",
+        "blocked-folder-trust-windows.txt": "blocked",
         "blocked-folder-trust.txt": "blocked",
-        "idle-legacy.txt": "idle",
-        "working-legacy.txt": "working"
+        "idle-after-cancel.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-thinking.txt": "working"
       }
     },
     "hermes": {

@@ -1,0 +1,46 @@
+paneflow-screen-capture: 1
+state: blocked
+runtime: gemini
+cols: 120
+rows: 40
+cli: 0.62.0
+paneflow: 0.17.5
+captured: 2026-10-02T16:51:15Z
+title: ◇  Ready (gemini-probe)
+origin: paneflow agent capture on Windows, gemini-cli 0.62.0 run through npx with a placeholder GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL pointed at a local endpoint that never answers, so the working screen is the real wait for a model reply
+---
+
+...\scratchpad\capture\gemini-probe
+❯ & '~\AppData\Local\Temp\claude\C--dev-paneflow\5907e4eb-56d3-48ad-bc9a-132e8803393f\scratchpad\capture\gemini-probe.ps1'
+
+ ▝▜▄      ▗█▀▀▜▙▝█▛▀▀▌▜██▖▟██▘▜█▘▜██▖▝█▛▝█▛
+   ▝▜▄    █▌     █▙▟  ▐█▝█▛▐█ ▐█ ▐█▝█▖█▌ █▌
+  ▗▟▀     ▜▙ ▝█▛ █▌▝ ▖▐█   ▐█ ▐█ ▐█ ▝██▌ █▌
+ ▝▀        ▀▀▀▀▘▝▀▀▀▀▘▀▀▘  ▀▀▘▀▀▘▀▀▘ ▝▀▀▝▀▀
+
+ Gemini CLI v0.62.0
+
+
+
+Tips for getting started:
+1. Create GEMINI.md files to customize your interactions
+2. /help for more information
+3. Ask coding questions, edit code or run commands
+4. Be specific for the best results
+
+ℹ Skipping project agents due to untrusted folder. To enable, ensure that the project root is trusted.
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                                                                                                                    │
+ │ Do you trust the files in this folder?                                                                             │
+ │                                                                                                                    │
+ │ Trusting a folder allows Gemini CLI to load its local configurations, including custom commands, hooks, MCP        │
+ │ servers, agent skills, and settings. These configurations could execute code on your behalf or change the behavior │
+ │ of the CLI.                                                                                                        │
+ │                                                                                                                    │
+ │                                                                                                                    │
+ │ ● 1. Trust folder (gemini-probe)                                                                                   │
+ │   2. Trust parent folder (capture)                                                                                 │
+ │   3. Don't trust                                                                                                   │
+ │                                                                                                                    │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
