@@ -37,6 +37,17 @@ not = ['(?i)to\s+view']
 visible_blocker = true
 
 [[rules]]
+id = "menu-enter-esc-footer"
+state = "blocked"
+priority = 30
+region = "last:15"
+all = [
+  '(?m)^\s*›\s*\d+\.',
+  '(?i)enter\s+\w+\s+·\s+esc\s+\w+',
+]
+visible_blocker = true
+
+[[rules]]
 id = "working-status"
 state = "working"
 priority = 20

@@ -15,11 +15,13 @@
     },
     "codex": {
       "accuracy": 1.0,
-      "captures": 4,
-      "correct": 4,
+      "captures": 6,
+      "correct": 6,
       "missing_states": [],
       "verdicts": {
         "blocked-approval-menu.txt": "blocked",
+        "blocked-hooks-review.txt": "blocked",
+        "blocked-update-prompt.txt": "blocked",
         "idle-after-turn.txt": "idle",
         "idle-fresh-session.txt": "idle",
         "working-story.txt": "working"
