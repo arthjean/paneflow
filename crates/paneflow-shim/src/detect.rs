@@ -89,8 +89,32 @@ pub(crate) const HOOK_BINARY_NAME: &str = if cfg!(windows) {
     "paneflow-ai-hook"
 };
 
+const HOST_BINARY_NAME: &str = if cfg!(windows) {
+    "paneflow-host.exe"
+} else {
+    "paneflow-host"
+};
+
 pub(crate) fn is_helper_dir(dir: &Path) -> bool {
     dir.join(HOOK_BINARY_NAME).is_file()
+        && (is_versioned_cache_dir(dir) || is_packaged_bin_dir(dir))
+}
+
+fn is_versioned_cache_dir(dir: &Path) -> bool {
+    let bin = dir.parent();
+    let cache = bin.and_then(Path::parent);
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_digit()))
+        && bin.and_then(Path::file_name) == Some("bin".as_ref())
+        && cache.and_then(Path::file_name) == Some("cache".as_ref())
+}
+
+fn is_packaged_bin_dir(dir: &Path) -> bool {
+    dir.file_name() == Some("bin".as_ref())
+        && dir
+            .parent()
+            .is_some_and(|parent| parent.join(HOST_BINARY_NAME).is_file())
 }
 
 pub(crate) fn launched_as_another_shims_target(

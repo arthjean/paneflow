@@ -214,25 +214,35 @@ fn write_tool(dir: &std::path::Path, name: &str) -> PathBuf {
     path
 }
 
+fn helper_layouts(root: &std::path::Path) -> [PathBuf; 2] {
+    let versioned = root.join("home").join("cache").join("bin").join("0.17.5");
+    let packaged = root.join("app").join("bin");
+    for dir in [&versioned, &packaged] {
+        std::fs::create_dir_all(dir).unwrap();
+        write_tool(dir, &candidate_names("claude")[0]);
+        write_tool(dir, crate::detect::HOOK_BINARY_NAME);
+    }
+    write_tool(
+        &root.join("app"),
+        if cfg!(windows) {
+            "paneflow-host.exe"
+        } else {
+            "paneflow-host"
+        },
+    );
+    [versioned, packaged]
+}
+
 #[test]
 fn find_real_binary_in_skips_every_paneflow_helper_dir() {
-    let release = tempfile::TempDir::new().unwrap();
-    let nested = tempfile::TempDir::new().unwrap();
+    let root = tempfile::TempDir::new().unwrap();
     let real = tempfile::TempDir::new().unwrap();
-    let tool = &candidate_names("claude")[0];
-    for helper in [release.path(), nested.path()] {
-        write_tool(helper, tool);
-        write_tool(helper, crate::detect::HOOK_BINARY_NAME);
-    }
-    let expected = write_tool(real.path(), tool);
+    let [versioned, packaged] = helper_layouts(root.path());
+    let expected = write_tool(real.path(), &candidate_names("claude")[0]);
 
     let found = find_real_binary_in(
         "claude",
-        vec![
-            nested.path().to_path_buf(),
-            release.path().to_path_buf(),
-            real.path().to_path_buf(),
-        ],
+        vec![versioned, packaged, real.path().to_path_buf()],
         None,
         None,
     );
@@ -242,22 +252,23 @@ fn find_real_binary_in_skips_every_paneflow_helper_dir() {
 
 #[test]
 fn find_real_binary_in_finds_nothing_when_only_helper_dirs_hold_the_tool() {
-    let release = tempfile::TempDir::new().unwrap();
-    let nested = tempfile::TempDir::new().unwrap();
-    let tool = &candidate_names("claude")[0];
-    for helper in [release.path(), nested.path()] {
-        write_tool(helper, tool);
-        write_tool(helper, crate::detect::HOOK_BINARY_NAME);
-    }
+    let root = tempfile::TempDir::new().unwrap();
+    let [versioned, packaged] = helper_layouts(root.path());
 
-    let found = find_real_binary_in(
-        "claude",
-        vec![nested.path().to_path_buf(), release.path().to_path_buf()],
-        None,
-        None,
-    );
+    let found = find_real_binary_in("claude", vec![versioned, packaged], None, None);
 
     assert_eq!(found, None);
+}
+
+#[test]
+fn a_stray_hook_beside_the_real_tool_does_not_hide_it() {
+    let local_bin = tempfile::TempDir::new().unwrap();
+    write_tool(local_bin.path(), crate::detect::HOOK_BINARY_NAME);
+    let expected = write_tool(local_bin.path(), &candidate_names("claude")[0]);
+
+    let found = find_real_binary_in("claude", vec![local_bin.path().to_path_buf()], None, None);
+
+    assert_eq!(found, Some(expected));
 }
 
 #[test]
