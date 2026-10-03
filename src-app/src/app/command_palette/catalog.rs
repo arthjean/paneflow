@@ -15,6 +15,7 @@ pub(crate) enum Needs {
     ConversationResumeOffer,
     ConversationFailure,
     ConversationNotice,
+    WriteRequest,
     Markdown,
     MarkdownSearch,
     Workspace,
@@ -943,6 +944,20 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "agent resume failed restart claude codex",
         needs: Needs::ConversationFailure,
         kind: Kind::Action("accept_conversation_notice"),
+    },
+    Command {
+        label: "Allow agent write for this session",
+        icon: None,
+        keywords: "agent write request approve permit message orchestrate",
+        needs: Needs::WriteRequest,
+        kind: Kind::Action("accept_conversation_notice"),
+    },
+    Command {
+        label: "Deny agent write",
+        icon: None,
+        keywords: "agent write request refuse reject block message",
+        needs: Needs::WriteRequest,
+        kind: Kind::Action("dismiss_conversation_notice"),
     },
     Command {
         label: "Dismiss conversation notice",

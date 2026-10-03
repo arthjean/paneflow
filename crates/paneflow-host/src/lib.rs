@@ -9,6 +9,7 @@
 )]
 
 pub mod agent;
+pub mod agent_write;
 pub mod bootstrap;
 pub mod cancellation_scan;
 pub mod client;

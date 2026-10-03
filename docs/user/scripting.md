@@ -35,7 +35,7 @@ text unless you deliberately pass `--raw`.
 | --- | --- | --- |
 | `paneflow <verb>` | Human scripts and in-pane agents | Some verbs |
 | JSON-RPC socket | Custom clients in any language | Some methods |
-| `paneflow mcp install` | Let MCP-capable agents read panes | No |
+| `paneflow mcp install` | Let MCP-capable agents read panes and message each other | Only after a human allows the pair |
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
 | `paneflow hooks setup` | Report agent lifecycle state to Paneflow | No |
@@ -228,9 +228,42 @@ creating partial work.
 
 ## How does MCP fit in?
 
-`paneflow-mcp` is read-only. It exposes `list_panes`, `read_pane`, and
-`search_pane` to supported agents. It cannot type, submit prompts,
-send keystrokes, or control another pane.
+`paneflow-mcp` exposes `list_panes`, `read_pane`, and `search_pane`,
+which only read, and `write_pane`, which lets one agent send a message
+to another agent's pane under human control. It cannot send keystrokes
+or control a pane in any other way.
+
+- The first write from one agent session to another raises a request in
+  the target pane and in the Attention Queue: "*source* wants to write
+  into this pane", with **Allow for this agent session** and **Deny**.
+  The command palette offers both, so the decision never needs a mouse.
+  Until a human decides, the tool answers `approval_pending` and writes
+  nothing; the agent calls it again after the decision.
+- An approval binds the two agent occurrences: host session, launch
+  generation, process id, and process start time. It ends when either
+  agent exits or is relaunched, and when the host restarts. A request
+  nobody answers is refused after 120 seconds. With no Paneflow window
+  open, the tool says that no window can approve the write.
+- An agent cannot write into its own pane. A write stays inside the
+  workspace of the calling pane unless the bridge runs with
+  `PANEFLOW_MCP_SCOPE=all` and the host has `PANEFLOW_IPC_ORCHESTRATION=1`.
+- The host prefixes each message with
+  `[Paneflow: message from <name>, surface <N>]`, strips every control
+  character except newline and tab (bracketed paste markers included),
+  relays at most 16 KiB, allows one write per second per pair with a
+  burst of three, refuses a pane that waits for a human decision, and
+  logs each request and decision at info level without the text. With
+  `submit`, the result reports `started` and `state` like
+  `paneflow send --submit`.
+- Only the Paneflow window grants an approval. No CLI verb, MCP tool,
+  or control client of the socket can.
+
+Each tool carries MCP annotations: the read tools declare
+`readOnlyHint: true`, and `write_pane` declares `readOnlyHint: false`,
+`destructiveHint: true`, `idempotentHint: false`, and
+`openWorldHint: false`. Annotations only help a client choose its
+confirmation prompt; they are not a security boundary. The host
+enforces every control listed above.
 
 ```bash
 paneflow mcp install

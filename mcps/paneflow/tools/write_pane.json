@@ -1,0 +1,44 @@
+{
+  "name": "write_pane",
+  "description": "Send a message to another agent's surface. The first write from your agent session to a given agent session waits for a human to allow it in Paneflow: the call then answers approval_pending and writes nothing, so call it again after the decision. Paneflow prefixes the text with a line naming your surface, strips control characters, relays at most 16 KiB, and refuses a surface that is waiting for a human decision.",
+  "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+  },
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "submit": {
+        "default": false,
+        "description": "Press Enter after the text so the target agent starts a turn; the result reports whether it did.",
+        "type": "boolean"
+      },
+      "target": {
+        "description": "Surface to target: its name (e.g. \"cargo-run\", from list_panes) or numeric surface_id. Names match exactly, case-insensitively, then by unique prefix.",
+        "oneOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "text": {
+        "description": "Message to paste into the target surface (at most 16 KiB).",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "target",
+      "text"
+    ],
+    "type": "object"
+  }
+}

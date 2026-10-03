@@ -426,6 +426,49 @@ impl HostClient {
         })
     }
 
+    pub fn follow_approvals(
+        &mut self,
+        mut on_snapshot: impl FnMut(&Value) -> bool,
+    ) -> Result<(), HostClientError> {
+        let header = self.call(crate::agent_write::METHOD_APPROVAL_FOLLOW, json!({}))?;
+        if !on_snapshot(&header) {
+            return Ok(());
+        }
+        loop {
+            let frame = self.read_value()?;
+            match frame["type"].as_str() {
+                Some("approvals") => {
+                    if !on_snapshot(&frame) {
+                        return Ok(());
+                    }
+                }
+                Some("keepalive") => {}
+                Some("end") => {
+                    return Err(HostClientError::Protocol(
+                        frame["reason"]
+                            .as_str()
+                            .unwrap_or("the host ended the approval stream")
+                            .to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(result_or_error(frame).err().unwrap_or_else(|| {
+                        HostClientError::Protocol("unexpected frame in approval stream".to_string())
+                    }));
+                }
+            }
+        }
+    }
+
+    pub fn decide_approval(&mut self, id: u64, allow: bool) -> Result<(), HostClientError> {
+        let decision = if allow { "allow" } else { "deny" };
+        self.call(
+            crate::agent_write::METHOD_APPROVAL_DECIDE,
+            json!({"id": id, "decision": decision}),
+        )
+        .map(|_| ())
+    }
+
     pub fn output(
         &mut self,
         session: &SessionId,

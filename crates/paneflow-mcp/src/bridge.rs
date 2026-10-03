@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt;
 
 use paneflow_ipc_client::IpcTransport;
@@ -11,6 +12,8 @@ use crate::scope::BridgeScope;
 pub const MAX_LINES: u64 = 4000;
 pub const MAX_MATCHES: u64 = 1000;
 pub const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+
+pub const METHOD_PANE_WRITE: &str = "pane.write";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeError {
@@ -134,14 +137,102 @@ pub struct SurfaceSearchResult {
     pub truncated: bool,
 }
 
+pub type HostConnector<'a> = Box<dyn Fn() -> Result<Box<dyn IpcTransport>, String> + 'a>;
+
+pub enum HostLink<'a> {
+    Shared,
+    Connect(HostConnector<'a>),
+    Missing(String),
+}
+
 pub struct Bridge<'a, T: IpcTransport + ?Sized> {
     transport: &'a T,
     scope: BridgeScope,
+    source: Option<String>,
+    host: HostLink<'a>,
+    host_transport: RefCell<Option<Box<dyn IpcTransport>>>,
 }
 
 impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
     pub fn new(transport: &'a T, scope: BridgeScope) -> Self {
-        Self { transport, scope }
+        Self {
+            transport,
+            scope,
+            source: None,
+            host: HostLink::Shared,
+            host_transport: RefCell::new(None),
+        }
+    }
+
+    pub fn with_writer(mut self, source: Option<String>, host: HostLink<'a>) -> Self {
+        self.source = source;
+        self.host = host;
+        self
+    }
+
+    pub fn session_of(&self, surface_id: u64) -> Result<String, BridgeError> {
+        self.require_scope()?;
+        let params = Value::Object(self.surface_params(surface_id));
+        let status: Value = self.call("surface.status", params)?;
+        if let Some(error) = status.get("error").and_then(Value::as_str) {
+            return Err(BridgeError::Target(error.to_string()));
+        }
+        status
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                BridgeError::Target(format!(
+                    "surface_id {surface_id} is not backed by a Paneflow host session, so it cannot be written to"
+                ))
+            })
+    }
+
+    pub fn write_pane(
+        &self,
+        surface_id: u64,
+        text: &str,
+        submit: bool,
+    ) -> Result<Value, BridgeError> {
+        let source = self.source.clone().ok_or_else(|| {
+            BridgeError::Scope(
+                "write_pane needs PANEFLOW_SESSION_ID: launch the agent from a Paneflow pane"
+                    .to_string(),
+            )
+        })?;
+        let session = self.session_of(surface_id)?;
+        let mut params = json!({
+            "source_session": source,
+            "session": session,
+            "text": text,
+            "submit": submit,
+        });
+        if matches!(self.scope, BridgeScope::All) {
+            params["scope"] = json!("all");
+        }
+        self.call_host(METHOD_PANE_WRITE, params)
+    }
+
+    fn call_host(&self, method: &'static str, params: Value) -> Result<Value, BridgeError> {
+        let transport_error = |message: String| BridgeError::Transport { method, message };
+        match &self.host {
+            HostLink::Shared => self.transport.call(method, params).map_err(transport_error),
+            HostLink::Missing(reason) => Err(transport_error(reason.clone())),
+            HostLink::Connect(connect) => {
+                let mut held = self.host_transport.borrow_mut();
+                if held.is_none() {
+                    *held = Some(connect().map_err(transport_error)?);
+                }
+                let Some(host) = held.as_ref() else {
+                    return Err(transport_error("the host connection was lost".to_string()));
+                };
+                let answered = host.call(method, params);
+                if answered.is_err() {
+                    *held = None;
+                }
+                answered.map_err(transport_error)
+            }
+        }
     }
 
     pub fn scope(&self) -> &BridgeScope {

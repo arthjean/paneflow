@@ -278,6 +278,7 @@ struct PaneFlowApp {
     worktree_remove_dialog: Option<crate::app::worktree_remove::WorktreeRemoveDialog>,
     worktree_remove_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,
+    write_approvals: crate::app::write_approvals::WriteApprovalView,
     about_dialog: Option<crate::app::about_dialog::AboutDialog>,
     system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
     quit_dialog: Option<crate::app::quit_dialog::QuitDialog>,

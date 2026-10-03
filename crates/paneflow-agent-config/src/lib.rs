@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod claude_hooks;
+pub mod delivery;
 mod hook_command;
 #[cfg(feature = "config-io")]
 pub mod io;

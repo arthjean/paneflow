@@ -2,17 +2,13 @@ use paneflow_ipc_client::IpcTransport;
 use paneflow_ipc_client::host_control::session_id_from;
 use serde_json::{Value, json};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use super::selector::{resolve_all, resolve_target};
-use super::worker_state::{
-    BLOCKED, agent_runtime, blocked_reason, foreground_departure, reduced_state, reports_turns,
-    with_host_foreground,
-};
+use super::worker_state::{agent_runtime, with_host_foreground};
 use super::{CliError, EXIT_OK, EXIT_RUNTIME};
+use paneflow_agent_config::delivery::{DeliveryRefusal, TurnStart};
 
-pub(super) const SUBMIT_START_TIMEOUT: Duration = Duration::from_secs(5);
-const SUBMIT_START_POLL: Duration = Duration::from_millis(60);
+pub(super) use paneflow_agent_config::delivery::SUBMIT_START_TIMEOUT;
 const CALLER_SESSION_ENV: &str = "PANEFLOW_SESSION_ID";
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -121,18 +117,14 @@ pub(super) fn add_write_scope(params: &mut Value, caller: Option<String>, scope_
 }
 
 pub(super) fn delivery_refusal(surface_id: u64, status: &Value) -> Option<String> {
-    if reduced_state(status) == Some(BLOCKED) {
-        return Some(format!(
-            "surface {surface_id} is waiting for a decision ({}): answer in the pane or rerun with --force",
-            blocked_reason(status)
-        ));
+    match paneflow_agent_config::delivery::delivery_refusal(status)? {
+        DeliveryRefusal::Blocked { reason } => Some(format!(
+            "surface {surface_id} is waiting for a decision ({reason}): answer in the pane or rerun with --force"
+        )),
+        DeliveryRefusal::LeftForeground { runtime, holder } => Some(format!(
+            "surface {surface_id} no longer runs {runtime} in the foreground ({holder} has it): rerun with --force to write anyway"
+        )),
     }
-    let runtime = agent_runtime(status)?;
-    let holder = foreground_departure(status, runtime)?;
-    Some(format!(
-        "surface {surface_id} no longer runs {} in the foreground ({holder} has it): rerun with --force to write anyway",
-        runtime.label
-    ))
 }
 
 fn send_to(
@@ -186,24 +178,6 @@ pub(super) fn status_of(client: &impl IpcTransport, surface_id: u64) -> Option<V
         .filter(|status| status.get("error").is_none())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TurnStart {
-    pub started: Option<bool>,
-    pub reason: &'static str,
-    pub state: Option<&'static str>,
-}
-
-impl TurnStart {
-    fn annotate(&self, result: &mut Value) {
-        result["delivered"] = json!(true);
-        result["started"] = json!(self.started);
-        result["reason"] = json!(self.reason);
-        if let Some(state) = self.state {
-            result["state"] = json!(state);
-        }
-    }
-}
-
 pub(super) fn start_unconfirmed(result: &Value) -> bool {
     result.get("started") == Some(&Value::Bool(false))
 }
@@ -213,45 +187,12 @@ pub(super) fn confirm_turn_start(
     surface_id: u64,
     before: Option<&Value>,
 ) -> TurnStart {
-    let baseline = before
-        .filter(|status| agent_runtime(status).is_some_and(reports_turns))
-        .and_then(|status| status.get("state_seq").and_then(Value::as_u64));
-    let Some(baseline) = baseline else {
-        return TurnStart {
-            started: None,
-            reason: "no_signal",
-            state: status_of(client, surface_id)
-                .as_ref()
-                .and_then(reduced_state),
-        };
-    };
-    let deadline = Instant::now() + SUBMIT_START_TIMEOUT;
-    let mut last_state = before.and_then(reduced_state);
-    loop {
-        if let Some(status) = status_of(client, surface_id) {
-            let state = reduced_state(&status);
-            last_state = state.or(last_state);
-            let advanced = status
-                .get("state_seq")
-                .and_then(Value::as_u64)
-                .is_some_and(|seq| seq > baseline);
-            if advanced && state.is_some() {
-                return TurnStart {
-                    started: Some(true),
-                    reason: "state_transition",
-                    state,
-                };
-            }
-        }
-        if Instant::now() >= deadline {
-            return TurnStart {
-                started: Some(false),
-                reason: "no_state_transition",
-                state: last_state,
-            };
-        }
-        std::thread::sleep(SUBMIT_START_POLL);
-    }
+    paneflow_agent_config::delivery::confirm_turn_start(
+        || status_of(client, surface_id),
+        before,
+        SUBMIT_START_TIMEOUT,
+        paneflow_agent_config::delivery::SUBMIT_START_POLL,
+    )
 }
 
 pub(super) fn should_wait_for_submit_start(result: &Value) -> bool {
@@ -330,6 +271,7 @@ fn method_disabled_error(error: &str, method: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use paneflow_agent_config::delivery::reports_turns;
     use std::cell::RefCell;
 
     struct ScriptedTransport {

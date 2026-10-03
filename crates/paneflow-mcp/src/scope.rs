@@ -103,6 +103,14 @@ impl BridgeScope {
     }
 }
 
+pub fn calling_session() -> Option<String> {
+    read_env(SESSION_ENV)
+        .ok()
+        .flatten()
+        .map(|session| session.trim().to_string())
+        .filter(|session| !session.is_empty())
+}
+
 fn read_env(name: &'static str) -> Result<Option<String>, ScopeConfigError> {
     match std::env::var(name) {
         Ok(value) => Ok(Some(value)),

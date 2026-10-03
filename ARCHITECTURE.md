@@ -31,7 +31,7 @@ focused library crates:
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping every agent CLI of the `runtimes/` catalog so Paneflow can observe its lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
-| `paneflow-mcp` | `crates/paneflow-mcp/` | Stdio MCP server exposing read-only pane access (`list_panes`, `read_pane`, `search_pane`) |
+| `paneflow-mcp` | `crates/paneflow-mcp/` | Stdio MCP server exposing pane reads (`list_panes`, `read_pane`, `search_pane`) and `write_pane`, a relay to the host's human-approved `pane.write` |
 | `paneflow-mcp-install` | `crates/paneflow-mcp-install/` | GPU-free install engine behind `paneflow integrations` and `paneflow mcp`: hooks, MCP entry and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force` |
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
@@ -374,13 +374,18 @@ close the UI would confirm first (busy agents, unsaved files), and `-32800`
 a search superseded by a newer search on the same pane. Text budgets count the
 JSON-escaped size, so a reply always fits the 256 KiB frame.
 
-The MCP bridge re-exposes a read-only slice of this to agents themselves:
+The MCP bridge re-exposes a slice of this to agents themselves:
 `paneflow mcp install` registers a stdio MCP server with Claude Code, Codex,
-Gemini CLI and opencode, giving any agent the ability to *read* (never write)
-other panes' scrollback. An agent debugging a failing dev server can read the
-server pane's output directly instead of asking you to paste it. The bridge
-binary ships embedded in the main binary and is extracted to a stable path at
-launch, so there is nothing extra to install.
+Gemini CLI and opencode, giving any agent the ability to read other panes'
+scrollback. An agent debugging a failing dev server can read the server pane's
+output directly instead of asking you to paste it. Its one write tool,
+`write_pane`, only relays to the host's `pane.write`: the host binds each
+(source, target) pair of agent occurrences to a human approval granted from the
+window over `approval.follow` / `approval.decide`, which only a client that
+attaches a terminal engine may call, then sanitizes, rate-limits and prefixes
+the text with its provenance (`crates/paneflow-host/src/agent_write.rs`). The
+bridge binary ships embedded in the main binary and is extracted to a stable
+path at launch, so there is nothing extra to install.
 
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch

@@ -95,6 +95,21 @@ pub(crate) fn host_session_was_lost(kind: &HostLinkEndKind) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WriteRequest {
+    pub(crate) id: u64,
+    pub(crate) source: String,
+}
+
+impl WriteRequest {
+    pub(crate) fn message(&self) -> String {
+        format!("{} wants to write into this pane", self.source)
+    }
+}
+
+pub(crate) const ALLOW_WRITE_LABEL: &str = "Allow for this agent session";
+pub(crate) const DENY_WRITE_LABEL: &str = "Deny";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConversationBanner {
     AlreadyResumed { location: String },
     OfferResume,
@@ -226,6 +241,7 @@ pub(crate) struct Conversation {
     live: bool,
     restore: Option<RestorePhase>,
     banner: Option<ConversationBanner>,
+    write_request: Option<WriteRequest>,
     watch: Option<FailureWatch>,
     watch_epoch: u64,
     failed_agent: Option<TerminalAgent>,
@@ -681,7 +697,34 @@ impl TerminalView {
         cx.notify();
     }
 
+    pub(crate) fn write_request(&self) -> Option<&WriteRequest> {
+        self.conversation.write_request.as_ref()
+    }
+
+    pub(crate) fn show_write_request(
+        &mut self,
+        request: Option<WriteRequest>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conversation.write_request != request {
+            self.conversation.write_request = request;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn decide_write_request(&mut self, allow: bool, cx: &mut Context<Self>) -> bool {
+        let Some(request) = self.conversation.write_request.take() else {
+            return false;
+        };
+        crate::app::write_approvals::decide(request.id, allow);
+        cx.notify();
+        true
+    }
+
     pub(crate) fn accept_conversation_banner(&mut self, cx: &mut Context<Self>) {
+        if self.decide_write_request(true, cx) {
+            return;
+        }
         match self.conversation.banner.take() {
             Some(banner) if banner.resumes_on_accept() => self.type_conversation_resume(cx),
             Some(ConversationBanner::ResumeFailed { .. }) => self.start_new_agent_session(cx),
@@ -691,6 +734,9 @@ impl TerminalView {
     }
 
     pub(crate) fn dismiss_conversation_banner(&mut self, cx: &mut Context<Self>) {
+        if self.decide_write_request(false, cx) {
+            return;
+        }
         if self.conversation.banner.take().is_some() {
             cx.notify();
         }
@@ -717,22 +763,28 @@ impl TerminalView {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
+        if let Some(request) = self.conversation.write_request.as_ref() {
+            let bar = banner_bar(request.message(), ui)
+                .child(crate::settings::components::secondary_button(
+                    "write-request-allow",
+                    ALLOW_WRITE_LABEL,
+                    ui,
+                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                        this.decide_write_request(true, cx);
+                    }),
+                ))
+                .child(crate::settings::components::secondary_button(
+                    "write-request-deny",
+                    DENY_WRITE_LABEL,
+                    ui,
+                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                        this.decide_write_request(false, cx);
+                    }),
+                ));
+            return Some(banner_frame(bar, ui));
+        }
         let banner = self.conversation.banner.as_ref()?;
-        let mut bar = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(gpui::px(10.0))
-            .px(gpui::px(12.0))
-            .py(gpui::px(7.0))
-            .child(
-                div()
-                    .min_w_0()
-                    .text_xs()
-                    .text_color(ui.muted)
-                    .truncate()
-                    .child(banner.message()),
-            );
+        let mut bar = banner_bar(banner.message(), ui);
         if let Some(label) = banner.primary_label() {
             bar = bar.child(crate::settings::components::secondary_button(
                 "conversation-banner-action",
@@ -751,29 +803,49 @@ impl TerminalView {
                 this.dismiss_conversation_banner(cx);
             }),
         ));
-        Some(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .pt(gpui::px(10.0))
-                .child(
-                    crate::ui_primitives::squircle_skin(
-                        div().id("conversation-banner").max_w(gpui::px(480.0)),
-                        "conversation-banner",
-                        crate::ui_primitives::ROW_RADIUS,
-                        Some(ui.overlay),
-                        None,
-                    )
-                    .child(bar),
-                )
-                .into_any_element(),
-        )
+        Some(banner_frame(bar, ui))
     }
+}
+
+fn banner_bar(message: String, ui: crate::theme::UiColors) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(gpui::px(10.0))
+        .px(gpui::px(12.0))
+        .py(gpui::px(7.0))
+        .child(
+            div()
+                .min_w_0()
+                .text_xs()
+                .text_color(ui.muted)
+                .truncate()
+                .child(message),
+        )
+}
+
+fn banner_frame(bar: gpui::Div, ui: crate::theme::UiColors) -> gpui::AnyElement {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .pt(gpui::px(10.0))
+        .child(
+            crate::ui_primitives::squircle_skin(
+                div().id("conversation-banner").max_w(gpui::px(480.0)),
+                "conversation-banner",
+                crate::ui_primitives::ROW_RADIUS,
+                Some(ui.overlay),
+                None,
+            )
+            .child(bar),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -1280,6 +1352,41 @@ mod tests {
                     path: missing.display().to_string()
                 })
             );
+        });
+    }
+
+    #[gpui::test]
+    fn a_write_request_takes_the_notice_actions_until_the_human_decides(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.conversation.banner = Some(ConversationBanner::OfferResume);
+            let request = |id| WriteRequest {
+                id,
+                source: "conductor".to_string(),
+            };
+            view.show_write_request(Some(request(7)), cx);
+            assert_eq!(
+                view.write_request().map(WriteRequest::message).as_deref(),
+                Some("conductor wants to write into this pane")
+            );
+            view.dismiss_conversation_banner(cx);
+            assert_eq!(view.write_request(), None, "dismissing denies the write");
+            assert_eq!(
+                view.conversation_banner(),
+                Some(&ConversationBanner::OfferResume),
+                "a decision leaves the resume notice in place"
+            );
+
+            view.show_write_request(Some(request(8)), cx);
+            view.accept_conversation_banner(cx);
+            assert_eq!(view.write_request(), None, "accepting allows the write");
+            assert_eq!(
+                view.conversation_banner(),
+                Some(&ConversationBanner::OfferResume)
+            );
+            assert!(view.terminal.queued_raw_input_for_test().is_empty());
         });
     }
 }

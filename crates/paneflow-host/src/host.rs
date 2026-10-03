@@ -234,6 +234,7 @@ pub struct SessionHost {
     streaming_connections: AtomicUsize,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
     agent_bus: AgentBus,
+    write_approvals: crate::agent_write::WriteApprovals,
     helper_dir: Option<PathBuf>,
     permissions: crate::control::ControlPermissions,
     submit_paste_delay: std::time::Duration,
@@ -356,6 +357,7 @@ impl SessionHost {
             streaming_connections: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
             agent_bus: AgentBus::new(),
+            write_approvals: crate::agent_write::WriteApprovals::default(),
             helper_dir,
             permissions,
             submit_paste_delay,
@@ -646,6 +648,10 @@ impl SessionHost {
 
     pub fn unsubscribe_agents(&self, id: u64) {
         self.agent_bus.unsubscribe(id);
+    }
+
+    pub fn write_approvals(&self) -> &crate::agent_write::WriteApprovals {
+        &self.write_approvals
     }
 
     pub fn publish_agent_frame(&self, frame: &Value) {

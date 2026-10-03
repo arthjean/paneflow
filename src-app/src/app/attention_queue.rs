@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
@@ -9,6 +9,7 @@ use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::terminal::view::conversation::{ALLOW_WRITE_LABEL, DENY_WRITE_LABEL};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 pub(crate) struct QueueRow {
@@ -17,7 +18,10 @@ pub(crate) struct QueueRow {
     pub(crate) tool_label: &'static str,
     pub(crate) message: Option<String>,
     pub(crate) waiting_secs: u64,
+    pub(crate) write_request: Option<u64>,
 }
+
+pub(crate) const WRITE_REQUEST_LABEL: &str = "Write request";
 
 pub(crate) fn sort_rows(rows: &mut [QueueRow]) {
     rows.sort_by(|a, b| {
@@ -41,12 +45,31 @@ pub(crate) fn wait_label(secs: u64) -> String {
 impl PaneFlowApp {
     pub(crate) fn attention_queue_rows(&self, cx: &Context<Self>) -> Vec<QueueRow> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
-        for pane in crate::workspace::panes_across(&self.workspaces) {
-            for t in pane.read(cx).terminals() {
-                live_surfaces.insert(t.entity_id().as_u64());
+        let mut session_surfaces = HashMap::new();
+        for ws in &self.workspaces {
+            for pane in ws.collect_panes() {
+                for t in pane.read(cx).terminals() {
+                    let surface_id = t.entity_id().as_u64();
+                    live_surfaces.insert(surface_id);
+                    session_surfaces.insert(
+                        t.read(cx).terminal.session_id.clone(),
+                        (surface_id, ws.title.clone()),
+                    );
+                }
             }
         }
         let mut rows = Vec::new();
+        for pending in &self.write_approvals.pending {
+            let place = session_surfaces.get(&pending.target);
+            rows.push(QueueRow {
+                surface_id: place.map(|(surface_id, _)| *surface_id),
+                ws_title: place.map(|(_, title)| title.clone()).unwrap_or_default(),
+                tool_label: WRITE_REQUEST_LABEL,
+                message: Some(pending.request().message()),
+                waiting_secs: pending.asked_at.elapsed().as_secs(),
+                write_request: Some(pending.id),
+            });
+        }
         for ws in &self.workspaces {
             for session in ws.agent_sessions.values() {
                 if session.state != AgentState::WaitingForInput {
@@ -66,6 +89,7 @@ impl PaneFlowApp {
                         .waiting_since
                         .map(|t| t.elapsed().as_secs())
                         .unwrap_or(0),
+                    write_request: None,
                 });
             }
         }
@@ -138,6 +162,12 @@ impl PaneFlowApp {
                 let idx = self.attention_queue_selected.min(len - 1);
                 if let Some(sid) = rows[idx].surface_id {
                     self.attention_queue_activate(sid, window, cx);
+                }
+            }
+            "a" | "d" if len > 0 => {
+                let idx = self.attention_queue_selected.min(len - 1);
+                if let Some(id) = rows[idx].write_request {
+                    self.decide_write_request(id, key == "a", cx);
                 }
             }
             "up" if len > 0 && self.attention_queue_selected > 0 => {
@@ -268,6 +298,27 @@ impl PaneFlowApp {
                             .text_color(ui.muted)
                             .child(wait_label(row.waiting_secs)),
                     );
+                if let Some(id) = row.write_request {
+                    r = r
+                        .child(crate::settings::components::secondary_button(
+                            SharedString::from(format!("attention-write-allow-{id}")),
+                            ALLOW_WRITE_LABEL,
+                            ui,
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.decide_write_request(id, true, cx);
+                                cx.stop_propagation();
+                            }),
+                        ))
+                        .child(crate::settings::components::secondary_button(
+                            SharedString::from(format!("attention-write-deny-{id}")),
+                            DENY_WRITE_LABEL,
+                            ui,
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.decide_write_request(id, false, cx);
+                                cx.stop_propagation();
+                            }),
+                        ));
+                }
                 if navigable {
                     let r = r
                         .cursor_pointer()
@@ -301,7 +352,11 @@ impl PaneFlowApp {
                     .border_color(ui.border)
                     .text_size(px(10.))
                     .text_color(ui.muted)
-                    .child("Enter focuses the pane · Esc closes"),
+                    .child(if rows.iter().any(|row| row.write_request.is_some()) {
+                        "Enter focuses the pane · A allows · D denies a write request · Esc closes"
+                    } else {
+                        "Enter focuses the pane · Esc closes"
+                    }),
             );
         }
 
@@ -335,6 +390,7 @@ mod tests {
             tool_label: "Claude",
             message: None,
             waiting_secs,
+            write_request: None,
         }
     }
 

@@ -29,6 +29,7 @@ pub const CONTROL_METHODS: &[&str] = &[
     "surface.search",
     "surface.status",
     "surface.send_text",
+    "pane.write",
     "fleet.list",
     "agent.capture",
     "agent.explain",
@@ -192,7 +193,7 @@ fn agent_hook_fields(
     fields
 }
 
-fn agent_status_value(
+pub(crate) fn agent_status_value(
     alias: u64,
     session: &SessionId,
     generation: SessionGeneration,
@@ -210,7 +211,7 @@ fn agent_status_value(
     Value::Object(value)
 }
 
-fn foreground_runtime(summary: &SessionSummary) -> Value {
+pub(crate) fn foreground_runtime(summary: &SessionSummary) -> Value {
     json!(
         summary
             .manifest
@@ -221,7 +222,7 @@ fn foreground_runtime(summary: &SessionSummary) -> Value {
     )
 }
 
-fn output_generation(host: &SessionHost, session: &SessionId) -> Option<u64> {
+pub(crate) fn output_generation(host: &SessionHost, session: &SessionId) -> Option<u64> {
     match host.output_stream(session, None) {
         Ok(Ok(stream)) => Some(stream.end_offset()),
         Ok(Err(ended)) => Some(ended.end_offset),
@@ -382,6 +383,52 @@ fn submit_after_echo(
     }
     host.input(session, generation, b"\r".to_vec())?;
     Ok(())
+}
+
+pub(crate) struct Delivered {
+    pub paste: bool,
+    pub submit_mode: Value,
+    pub terminal_bracketed_paste: bool,
+}
+
+pub(crate) fn deliver_text(
+    host: &SessionHost,
+    session: &SessionId,
+    generation: Option<SessionGeneration>,
+    text: &str,
+    paste_param: Option<bool>,
+    submit: bool,
+    agent_target: bool,
+) -> Result<Delivered, ControlError> {
+    let before = output_generation(host, session).unwrap_or_default();
+    let terminal_bracketed_paste = host.bracketed_paste_enabled(session)?;
+    let paste = resolve_paste_mode(paste_param, submit, agent_target, terminal_bracketed_paste);
+    let paste = resolve_send_text_body_mode(text, paste_param, paste, terminal_bracketed_paste)
+        .map_err(|message| ControlError::Params(message.to_string()))?;
+    if !text.is_empty() {
+        let body = if paste && terminal_bracketed_paste {
+            bracketed_paste_frame(text)
+        } else {
+            text.to_string()
+        };
+        host.input(session, generation, body.into_bytes())?;
+    }
+    let submit_mode = match (submit, paste && !text.is_empty()) {
+        (false, _) => Value::Null,
+        (true, true) => {
+            submit_after_echo(host, session, generation, before)?;
+            json!("deferred_paste_cr")
+        }
+        (true, false) => {
+            host.input(session, generation, b"\r".to_vec())?;
+            json!("inline_cr")
+        }
+    };
+    Ok(Delivered {
+        paste,
+        submit_mode,
+        terminal_bracketed_paste,
+    })
 }
 
 pub fn send_text_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
@@ -678,6 +725,7 @@ fn answer(
                 .collect();
             Ok(json!({"agents": agents}))
         }
+        "pane.write" => crate::agent_write::pane_write(host, permissions, params, now_ms),
         "surface.send_text" => {
             send_text_gate(permissions)?;
             let text = params.get("text").and_then(Value::as_str).unwrap_or("");
@@ -703,32 +751,15 @@ fn answer(
                 .get("force")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let before = output_generation(host, &session).unwrap_or_default();
-            let terminal_bracketed_paste = host.bracketed_paste_enabled(&session)?;
-            let paste =
-                resolve_paste_mode(paste_param, submit, agent_target, terminal_bracketed_paste);
-            let paste =
-                resolve_send_text_body_mode(text, paste_param, paste, terminal_bracketed_paste)
-                    .map_err(|message| ControlError::Params(message.to_string()))?;
-            if !text.is_empty() {
-                let body = if paste && terminal_bracketed_paste {
-                    bracketed_paste_frame(text)
-                } else {
-                    text.to_string()
-                };
-                host.input(&session, generation, body.into_bytes())?;
-            }
-            let submit_mode = match (submit, paste && !text.is_empty()) {
-                (false, _) => Value::Null,
-                (true, true) => {
-                    submit_after_echo(host, &session, generation, before)?;
-                    json!("deferred_paste_cr")
-                }
-                (true, false) => {
-                    host.input(&session, generation, b"\r".to_vec())?;
-                    json!("inline_cr")
-                }
-            };
+            let delivered = deliver_text(
+                host,
+                &session,
+                generation,
+                text,
+                paste_param,
+                submit,
+                agent_target,
+            )?;
             log::info!(
                 "paneflow-host: surface.send_text wrote {} bytes to session {session}{}",
                 text.len(),
@@ -742,11 +773,11 @@ fn answer(
                 "sent": true,
                 "length": text.len(),
                 "submitted": submit,
-                "paste": paste,
-                "submit_mode": submit_mode,
+                "paste": delivered.paste,
+                "submit_mode": delivered.submit_mode,
                 "agent_target": agent_target,
                 "agent_tool": summary.manifest.last_hook.as_ref().map(|hook| hook.tool.clone()),
-                "terminal_bracketed_paste": terminal_bracketed_paste,
+                "terminal_bracketed_paste": delivered.terminal_bracketed_paste,
             }))
         }
         _ => Err(ControlError::Params(format!(

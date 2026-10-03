@@ -42,6 +42,7 @@ pub(crate) struct PaletteContext {
     conversation_resume_offer: bool,
     conversation_failure: bool,
     conversation_notice: bool,
+    write_request: bool,
     markdown: bool,
     markdown_search: bool,
 }
@@ -155,6 +156,7 @@ impl PaneFlowApp {
                         )
                     ),
                     conversation_notice: banner.is_some(),
+                    write_request: view.write_request().is_some(),
                     ..PaletteContext::default()
                 }
             }
@@ -178,6 +180,7 @@ impl PaneFlowApp {
             }
             Needs::ConversationFailure => self.command_palette_context.conversation_failure,
             Needs::ConversationNotice => self.command_palette_context.conversation_notice,
+            Needs::WriteRequest => self.command_palette_context.write_request,
             Needs::Markdown => self.command_palette_context.markdown,
             Needs::MarkdownSearch => self.command_palette_context.markdown_search,
             Needs::Workspace => self.active_workspace().is_some(),

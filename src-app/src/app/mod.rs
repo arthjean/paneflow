@@ -51,6 +51,7 @@ pub mod win_timer;
 pub mod window;
 pub mod workspace_ops;
 pub mod worktree_remove;
+pub(crate) mod write_approvals;
 
 pub(crate) fn plural(count: usize, one: &str, many: &str) -> String {
     if count == 1 {

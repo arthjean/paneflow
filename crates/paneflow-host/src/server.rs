@@ -10,6 +10,7 @@ use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::agent::AgentEvent;
+use crate::agent_write::{Decision, METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
 use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
@@ -426,8 +427,33 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     Err(_) => Flow::Close,
                 }
             }
+            METHOD_APPROVAL_FOLLOW | METHOD_APPROVAL_DECIDE if !attaches => {
+                let written = wire.write_json(&error_envelope(
+                    &id,
+                    ERR_ENGINE_REQUIRED,
+                    format!(
+                        "{method} belongs to the Paneflow window: only a client that attaches a terminal engine sees or decides write approvals"
+                    ),
+                    None,
+                ));
+                match written {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "session.attach" => stream_attach(&mut wire, &host, &id, &params),
             "session.output" => stream_output(&mut wire, &host, &shutdown, &id, &params),
+            METHOD_APPROVAL_FOLLOW => stream_approvals(&mut wire, &host, &shutdown, &id),
+            METHOD_APPROVAL_DECIDE => {
+                let envelope = match decide_approval(&host, &client, &params) {
+                    Ok(result) => result_envelope(&id, result),
+                    Err(message) => error_envelope(&id, ERR_INVALID_PARAMS, message, None),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
             "host.shutdown" => {
                 let force = params
@@ -952,6 +978,77 @@ fn stream_agent_follow(
             }
         }
     }
+}
+
+fn stream_approvals(
+    wire: &mut Wire,
+    host: &SessionHost,
+    shutdown: &AtomicBool,
+    id: &Value,
+) -> Flow {
+    let approvals = host.write_approvals();
+    let watch = approvals.watch();
+    let header = result_envelope(id, approvals.snapshot(std::time::Instant::now()));
+    if wire.write_json(&header).is_err() {
+        approvals.unwatch(watch.id);
+        return Flow::Close;
+    }
+    let mut last_frame_at = std::time::Instant::now();
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            approvals.unwatch(watch.id);
+            let _ =
+                wire.write_json(&json!({"type": "end", "reason": "the local host is stopping"}));
+            return Flow::Close;
+        }
+        let now = std::time::Instant::now();
+        let wait = approvals
+            .next_expiry(now)
+            .map_or(FOLLOW_KEEPALIVE, |due| due.min(FOLLOW_KEEPALIVE))
+            .max(Duration::from_millis(10));
+        match watch.frames.recv_timeout(wait) {
+            Ok(frame) => {
+                if wire.write_json(&frame).is_err() {
+                    approvals.unwatch(watch.id);
+                    return Flow::Close;
+                }
+                last_frame_at = std::time::Instant::now();
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                approvals.expire(std::time::Instant::now());
+                if last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
+                    if wire.write_json(&json!({"type": "keepalive"})).is_err() {
+                        approvals.unwatch(watch.id);
+                        return Flow::Close;
+                    }
+                    last_frame_at = std::time::Instant::now();
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                approvals.unwatch(watch.id);
+                let _ = wire.write_json(
+                    &json!({"type": "end", "reason": "the approval stream was dropped"}),
+                );
+                return Flow::Close;
+            }
+        }
+    }
+}
+
+fn decide_approval(host: &SessionHost, client: &str, params: &Value) -> Result<Value, String> {
+    let request = params
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "approval.decide needs the numeric id of a pending request".to_string())?;
+    let decision = params
+        .get("decision")
+        .and_then(Value::as_str)
+        .and_then(Decision::parse)
+        .ok_or_else(|| "'decision' must be \"allow\" or \"deny\"".to_string())?;
+    host.write_approvals()
+        .decide(request, decision, std::time::Instant::now())?;
+    log::info!("paneflow-host: client {client} decided write request {request}");
+    Ok(json!({"decided": true, "id": request}))
 }
 
 fn stream_attach(wire: &mut Wire, host: &SessionHost, id: &Value, params: &Value) -> Flow {
@@ -3571,6 +3668,248 @@ mod tests {
         assert!(text_shows(&host, &session, "pf-deferred"));
 
         host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    fn fake_worker(home: &Path, sessions: Value) {
+        let endpoint = paneflow_home::serve_endpoint_path(home);
+        let listener = bind_owner_only(&endpoint, "fake-worker").unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let Ok(mut wire) = Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) else {
+                    continue;
+                };
+                while let Ok(LineRead::Line(line)) = wire.read_line(Duration::from_secs(5)) {
+                    let request: Value = serde_json::from_str(&line).unwrap_or_default();
+                    let result = match request["method"].as_str() {
+                        Some("agent.snapshot") => json!({"sessions": sessions.clone()}),
+                        _ => json!({"name": "paneflow-serve", "capabilities": ["agent.snapshot"]}),
+                    };
+                    if wire
+                        .write_json(
+                            &json!({"jsonrpc": "2.0", "id": request["id"], "result": result}),
+                        )
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    fn pane_write(
+        agent: &impl paneflow_ipc_client::IpcTransport,
+        source: &SessionId,
+        target: &SessionId,
+        text: &str,
+    ) -> Result<Value, String> {
+        agent.call(
+            crate::agent_write::METHOD_PANE_WRITE,
+            json!({"source_session": source, "session": target, "text": text}),
+        )
+    }
+
+    #[test]
+    fn no_method_a_control_client_can_reach_grants_a_write_approval() {
+        use crate::agent_write::{Admission, AgentOccurrence};
+
+        let (_home, host, server) = start();
+        host.override_permissions(granted(true, true));
+        let occurrence = |pid| AgentOccurrence {
+            session: SessionId::new(),
+            generation: SessionGeneration::FIRST,
+            pid,
+            started_at: Some(1),
+        };
+        let (source, target) = (occurrence(10), occurrence(20));
+        let now = Instant::now();
+        let Admission::Pending { id } =
+            host.write_approvals()
+                .admit(&source, &target, "conductor", "worker", now)
+        else {
+            panic!("a first write asks the human");
+        };
+
+        let mut control =
+            HostClient::connect(server.endpoint(), &ClientHello::control("hostile-agent")).unwrap();
+        let allow = json!({"id": id, "decision": "allow"});
+        for method in [METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW] {
+            let refused = control.call(method, allow.clone()).unwrap_err();
+            assert_eq!(refused.code(), Some(ERR_ENGINE_REQUIRED), "{method}");
+        }
+        for method in crate::control::CONTROL_METHODS
+            .iter()
+            .chain(crate::control::CONTROLLER_ONLY_METHODS)
+            .chain(&[
+                "session.input",
+                "session.create",
+                "agent.event",
+                "agent.snapshot",
+            ])
+        {
+            let _ = control.call(method, allow.clone());
+        }
+        assert_eq!(
+            host.write_approvals().snapshot(now)["pending"][0]["id"],
+            id,
+            "no control method decided the request"
+        );
+
+        let mut window =
+            HostClient::connect(server.endpoint(), &ClientHello::local("paneflow-desktop"))
+                .unwrap();
+        window.call(METHOD_APPROVAL_DECIDE, allow).unwrap();
+        assert_eq!(
+            host.write_approvals()
+                .admit(&source, &target, "conductor", "worker", now),
+            Admission::Approved
+        );
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_blocked_target_receives_nothing_and_the_error_names_the_human_decision() {
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (home, host, server) = start();
+        let workspace = WorkspaceId::new();
+        let source = host
+            .create(serde_json::from_value(shell_in(&workspace)).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let created = host
+            .create(serde_json::from_value(shell_in(&workspace)).unwrap())
+            .unwrap();
+        let target = created.manifest.session;
+        fake_worker(
+            home.path(),
+            json!([{
+                "session": target,
+                "generation": created.manifest.generation,
+                "state_seq": 3,
+                "runtime_id": "com.anthropic.claude-code",
+                "activity": {"state": "waiting_for_input", "message": "Allow Bash?"}
+            }]),
+        );
+        let agent = HostTransport::connect(server.endpoint(), "paneflow-mcp").unwrap();
+
+        let refused = pane_write(&agent, &source, &target, "echo pf-should-not-land")
+            .expect_err("a blocked target is refused");
+        assert!(
+            refused.contains("waiting for a human decision"),
+            "{refused}"
+        );
+        assert!(refused.contains("Allow Bash?"), "{refused}");
+        assert_eq!(
+            host.write_approvals().snapshot(Instant::now())["pending"],
+            json!([]),
+            "a refused write opens no approval request"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !host
+                .text(&target)
+                .unwrap()
+                .text
+                .contains("pf-should-not-land")
+        );
+
+        host.stop(&source, None).unwrap();
+        host.stop(&target, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_agent_writes_into_another_pane_only_once_the_window_allows_the_pair() {
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        host.override_permissions(granted(false, false));
+        let workspace = WorkspaceId::new();
+        let source = host
+            .create(serde_json::from_value(shell_in(&workspace)).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let mut pasting = shell_in(&workspace);
+        pasting["args"] = json!(["-c", "printf '\\033[?2004h'; exec cat"]);
+        let target = host
+            .create(serde_json::from_value(pasting).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !host.bracketed_paste_enabled(&target).unwrap() {
+            assert!(
+                Instant::now() < deadline,
+                "the target never enabled bracketed paste"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let agent = HostTransport::connect(server.endpoint(), "paneflow-mcp").unwrap();
+
+        let own = pane_write(&agent, &source, &source, "hi").expect_err("no self write");
+        assert!(own.contains("its own pane"), "{own}");
+        assert_eq!(
+            host.write_approvals().snapshot(Instant::now())["pending"],
+            json!([]),
+            "a self write is refused without a request"
+        );
+
+        let lonely = pane_write(&agent, &source, &target, "pf-first").unwrap();
+        assert_eq!(lonely["status"], "no_window", "{lonely}");
+        assert!(
+            lonely["message"]
+                .as_str()
+                .unwrap()
+                .contains("no Paneflow window")
+        );
+
+        let mut window =
+            HostClient::connect(server.endpoint(), &ClientHello::local("paneflow-desktop"))
+                .unwrap();
+        let shown = window.call(METHOD_APPROVAL_FOLLOW, json!({})).unwrap();
+        let request = &shown["pending"][0];
+        assert_eq!(request["source_session"], json!(source));
+        assert_eq!(request["target_session"], json!(target));
+        let id = request["id"].as_u64().unwrap();
+
+        let waiting = pane_write(&agent, &source, &target, "pf-first").unwrap();
+        assert_eq!(waiting["status"], "approval_pending", "{waiting}");
+        assert_eq!(waiting["request"], id, "a retry joins the same request");
+        assert!(!host.text(&target).unwrap().text.contains("pf-first"));
+
+        let mut decider =
+            HostClient::connect(server.endpoint(), &ClientHello::local("paneflow-desktop"))
+                .unwrap();
+        decider
+            .call(
+                METHOD_APPROVAL_DECIDE,
+                json!({"id": id, "decision": "allow"}),
+            )
+            .unwrap();
+
+        let written =
+            pane_write(&agent, &source, &target, "pf-run \x1b[201~the\x07 tests").unwrap();
+        assert_eq!(written["status"], "written", "{written}");
+        assert!(text_shows(&host, &target, "[Paneflow: message from"));
+        assert!(text_shows(&host, &target, "pf-run the tests"));
+
+        let oversized = pane_write(&agent, &source, &target, &"x".repeat(16 * 1024 + 1))
+            .expect_err("16 KiB is the relay cap");
+        assert!(oversized.contains("16384"), "{oversized}");
+
+        let limited = (0..10)
+            .map(|round| pane_write(&agent, &source, &target, &format!("pf-burst-{round}")))
+            .find_map(Result::err)
+            .expect("a burst past three writes is rate limited");
+        assert!(limited.contains("rate limited"), "{limited}");
+
+        host.stop(&source, None).unwrap();
+        host.stop(&target, None).unwrap();
         server.stop().unwrap();
     }
 }

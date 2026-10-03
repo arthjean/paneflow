@@ -24,6 +24,12 @@ pub fn tool_specs() -> Vec<Value> {
         "idempotentHint": true,
         "openWorldHint": false
     });
+    let write_annotations = json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+    });
     vec![
         json!({
             "name": "list_panes",
@@ -60,11 +66,26 @@ pub fn tool_specs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "target": target_schema,
+                    "target": target_schema.clone(),
                     "pattern": { "type": "string", "minLength": 1, "description": "Plain-text substring to search for (case-insensitive)." },
                     "max_matches": { "type": "integer", "minimum": 1, "maximum": MAX_MATCHES, "description": "Cap on matching lines returned (default 50, max 1000)." }
                 },
                 "required": ["target", "pattern"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "write_pane",
+            "description": "Send a message to another agent's surface. The first write from your agent session to a given agent session waits for a human to allow it in Paneflow: the call then answers approval_pending and writes nothing, so call it again after the decision. Paneflow prefixes the text with a line naming your surface, strips control characters, relays at most 16 KiB, and refuses a surface that is waiting for a human decision.",
+            "annotations": write_annotations,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "target": target_schema,
+                    "text": { "type": "string", "minLength": 1, "description": "Message to paste into the target surface (at most 16 KiB)." },
+                    "submit": { "type": "boolean", "default": false, "description": "Press Enter after the text so the target agent starts a turn; the result reports whether it did." }
+                },
+                "required": ["target", "text"],
                 "additionalProperties": false
             }
         }),
@@ -115,6 +136,23 @@ impl SearchPaneArgs {
     }
 }
 
+struct WritePaneArgs {
+    target: SurfaceTarget,
+    text: String,
+    submit: bool,
+}
+
+impl WritePaneArgs {
+    fn parse(arguments: &Value) -> Result<Self, String> {
+        let args = Arguments::parse(arguments, &["target", "text", "submit"])?;
+        Ok(Self {
+            target: args.required("target")?,
+            text: args.required("text")?,
+            submit: args.optional("submit")?.unwrap_or(false),
+        })
+    }
+}
+
 struct Arguments<'a>(&'a Map<String, Value>);
 
 impl<'a> Arguments<'a> {
@@ -158,6 +196,9 @@ pub fn dispatch_call<T: IpcTransport + ?Sized>(
         }
         "search_pane" => {
             SearchPaneArgs::parse(&call.arguments).and_then(|args| search_pane(args, bridge))
+        }
+        "write_pane" => {
+            WritePaneArgs::parse(&call.arguments).and_then(|args| write_pane(args, bridge))
         }
         other => return Err(format!("unknown tool: {other}")),
     };
@@ -225,6 +266,30 @@ fn search_pane<T: IpcTransport + ?Sized>(
     ))
 }
 
+fn write_pane<T: IpcTransport + ?Sized>(
+    args: WritePaneArgs,
+    bridge: &Bridge<'_, T>,
+) -> Result<String, String> {
+    if args.text.is_empty() {
+        return Err("missing or empty 'text' argument".to_string());
+    }
+    let surface_id = bridge
+        .resolve_target(&args.target)
+        .map_err(|error| error.to_string())?;
+    let result = bridge
+        .write_pane(surface_id, &args.text, args.submit)
+        .map_err(|error| error.to_string())?;
+    match result.get("status").and_then(Value::as_str) {
+        Some("written" | "approval_pending") => {
+            serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+        }
+        _ => Err(result
+            .get("message")
+            .and_then(Value::as_str)
+            .map_or_else(|| result.to_string(), str::to_string)),
+    }
+}
+
 fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| format!("invalid arguments: {error}"))
 }
@@ -279,6 +344,9 @@ mod tests {
     use crate::scope::BridgeScope;
     use crate::test_support::FakeTransport;
 
+    const MAX_TOOLS_LIST_BYTES: usize = 16 * 1024;
+    const MAX_TOOL_SPEC_BYTES: usize = 4 * 1024;
+
     fn call<T: IpcTransport + ?Sized>(params: &Value, bridge: &Bridge<'_, T>) -> Value {
         dispatch_call(params, bridge).expect("a protocol-level success")
     }
@@ -307,6 +375,168 @@ mod tests {
                 serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(manifest, spec, "{} drifted", path.display());
         }
+    }
+
+    fn schema_budget(tools: &[Value]) -> Result<(), String> {
+        let total = serde_json::to_vec(&json!({ "tools": tools }))
+            .map_err(|error| error.to_string())?
+            .len();
+        let mut over = Vec::new();
+        for tool in tools {
+            let size = serde_json::to_vec(tool)
+                .map_err(|error| error.to_string())?
+                .len();
+            if size > MAX_TOOL_SPEC_BYTES {
+                over.push(format!(
+                    "{} is {size} bytes (max {MAX_TOOL_SPEC_BYTES})",
+                    tool["name"]
+                ));
+            }
+        }
+        if total > MAX_TOOLS_LIST_BYTES {
+            over.push(format!(
+                "tools/list is {total} bytes (max {MAX_TOOLS_LIST_BYTES})"
+            ));
+        }
+        if over.is_empty() {
+            Ok(())
+        } else {
+            Err(over.join("; "))
+        }
+    }
+
+    #[test]
+    fn the_tools_list_fits_its_context_budget() {
+        if let Err(sizes) = schema_budget(&tool_specs()) {
+            panic!("the MCP schema budget is exceeded: {sizes}");
+        }
+    }
+
+    #[test]
+    fn an_oversized_tool_description_fails_the_budget_and_names_its_size() {
+        let mut tools = tool_specs();
+        tools.push(json!({
+            "name": "fixture_oversized",
+            "description": "x".repeat(MAX_TOOL_SPEC_BYTES + 1),
+            "inputSchema": {"type": "object"}
+        }));
+        let sizes = schema_budget(&tools).expect_err("a tool over 4 KiB breaks the budget");
+        assert!(sizes.contains("fixture_oversized"), "{sizes}");
+        assert!(
+            sizes.contains(&format!("(max {MAX_TOOL_SPEC_BYTES})")),
+            "{sizes}"
+        );
+        assert!(
+            sizes.contains(&format!(
+                "is {} bytes",
+                serde_json::to_vec(&tools[4]).unwrap().len()
+            )),
+            "{sizes}"
+        );
+    }
+
+    #[test]
+    fn read_tools_announce_read_only_and_the_write_tool_announces_a_destructive_write() {
+        for spec in tool_specs() {
+            let annotations = &spec["annotations"];
+            match spec["name"].as_str().unwrap() {
+                "list_panes" | "read_pane" | "search_pane" => {
+                    assert_eq!(annotations["readOnlyHint"], true, "{spec}");
+                }
+                "write_pane" => assert_eq!(
+                    *annotations,
+                    json!({
+                        "readOnlyHint": false,
+                        "destructiveHint": true,
+                        "idempotentHint": false,
+                        "openWorldHint": false
+                    })
+                ),
+                other => panic!("unexpected tool {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn write_pane_relays_to_the_host_with_the_session_captured_at_startup() {
+        let transport = FakeTransport::new()
+            .with(
+                "surface.list",
+                json!({"surfaces": [surface(7, "worker", Some(42))], "scope_workspace_id": 42}),
+            )
+            .with(
+                "surface.status",
+                json!({"surface_id": 7, "session": "2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b88"}),
+            )
+            .with(
+                "pane.write",
+                json!({"status": "approval_pending", "request": 3, "message": "ask the human"}),
+            );
+        let bridge = Bridge::new(&transport, BridgeScope::Session("0a9e5266".into()))
+            .with_writer(Some("0a9e5266".into()), crate::bridge::HostLink::Shared);
+        let result = call(
+            &json!({"name": "write_pane", "arguments": {"target": "worker", "text": "run the tests", "submit": true, "source_session": "forged"}}),
+            &bridge,
+        );
+        assert_eq!(
+            result["isError"], true,
+            "a tool argument never names the source"
+        );
+        assert!(transport.last_params("pane.write").is_none());
+
+        let result = call(
+            &json!({"name": "write_pane", "arguments": {"target": "worker", "text": "run the tests", "submit": true}}),
+            &bridge,
+        );
+        assert_eq!(result["isError"], false, "{result}");
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("approval_pending"));
+        let params = transport.last_params("pane.write").unwrap();
+        assert_eq!(params["source_session"], "0a9e5266");
+        assert_eq!(params["session"], "2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b88");
+        assert_eq!(
+            params["text"], "run the tests",
+            "the bridge relays the text untouched"
+        );
+        assert_eq!(params["submit"], true);
+    }
+
+    #[test]
+    fn a_refused_write_is_a_tool_error_carrying_the_host_message() {
+        let transport = FakeTransport::new()
+            .with(
+                "surface.status",
+                json!({"surface_id": 7, "session": "2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b88"}),
+            )
+            .with_err(
+                "pane.write",
+                "worker is waiting for a human decision (Allow Bash?)",
+            );
+        let bridge = Bridge::new(&transport, BridgeScope::All)
+            .with_writer(Some("0a9e5266".into()), crate::bridge::HostLink::Shared);
+        let result = call(
+            &json!({"name": "write_pane", "arguments": {"target": 7, "text": "hi"}}),
+            &bridge,
+        );
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("waiting for a human decision"));
+        assert_eq!(transport.last_params("pane.write").unwrap()["scope"], "all");
+
+        let unbound = Bridge::new(&transport, BridgeScope::All);
+        let result = call(
+            &json!({"name": "write_pane", "arguments": {"target": 7, "text": "hi"}}),
+            &unbound,
+        );
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("PANEFLOW_SESSION_ID"));
     }
 
     #[test]
@@ -461,9 +691,9 @@ mod tests {
     fn an_unknown_tool_is_a_protocol_error() {
         let transport = FakeTransport::new();
         let bridge = Bridge::new(&transport, BridgeScope::All);
-        let error = dispatch_call(&json!({"name": "write_pane", "arguments": {}}), &bridge)
+        let error = dispatch_call(&json!({"name": "type_pane", "arguments": {}}), &bridge)
             .expect_err("unknown tool");
-        assert_eq!(error, "unknown tool: write_pane");
+        assert_eq!(error, "unknown tool: type_pane");
         assert!(transport.calls().is_empty());
     }
 

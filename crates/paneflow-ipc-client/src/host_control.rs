@@ -75,24 +75,34 @@ pub fn choose_control_target(
     }
 }
 
-pub fn resolve_control_target(
-    controller: Option<paneflow_home::IpcEndpoint>,
+pub fn resolve_host_endpoint(
+    controller: Option<&paneflow_home::IpcEndpoint>,
     home_host_endpoint: Option<PathBuf>,
     reserved_host_endpoint: Option<PathBuf>,
-) -> Option<ControlTarget> {
-    let home_is_isolated = controller
-        .as_ref()
-        .is_some_and(|endpoint| endpoint.home_is_isolated);
+) -> Option<PathBuf> {
+    let home_is_isolated = controller.is_some_and(|endpoint| endpoint.home_is_isolated);
     let owned_host_endpoint = home_is_isolated
         .then(|| home_host_endpoint.clone())
         .flatten();
-    let host_endpoint = paneflow_home::honored_endpoint_override(
+    paneflow_home::honored_endpoint_override(
         host_endpoint_from_env(),
         owned_host_endpoint.as_deref(),
         reserved_host_endpoint.as_deref(),
         paneflow_home::endpoint_override_allowed(),
     )
-    .or(home_host_endpoint);
+    .or(home_host_endpoint)
+}
+
+pub fn resolve_control_target(
+    controller: Option<paneflow_home::IpcEndpoint>,
+    home_host_endpoint: Option<PathBuf>,
+    reserved_host_endpoint: Option<PathBuf>,
+) -> Option<ControlTarget> {
+    let host_endpoint = resolve_host_endpoint(
+        controller.as_ref(),
+        home_host_endpoint,
+        reserved_host_endpoint,
+    );
     let controller = controller.map(|endpoint| endpoint.path);
     let listening = controller
         .as_deref()

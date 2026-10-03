@@ -27,8 +27,9 @@ Areas most relevant to Paneflow's threat model:
 
 - the **JSON-RPC IPC server** (Unix socket / named pipe) and any method it
   exposes,
-- the **MCP bridge** (`list_panes` / `read_pane` / `search_pane`) and how pane
-  output is wrapped as untrusted data,
+- the **MCP bridge** (`list_panes` / `read_pane` / `search_pane` /
+  `write_pane`), how pane output is wrapped as untrusted data, and the human
+  approval that gates every agent-to-agent write,
 - the **in-app updater** (download, signature verification, atomic install),
 - PTY handling and any path where untrusted agent or terminal output reaches a
   privileged surface (for example OS notifications).

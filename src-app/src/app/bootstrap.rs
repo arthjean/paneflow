@@ -348,6 +348,7 @@ impl PaneFlowApp {
             worktree_remove_dialog: None,
             worktree_remove_focus: cx.focus_handle(),
             host_agents: Default::default(),
+            write_approvals: Default::default(),
             about_dialog: None,
             system_info_dialog: None,
             quit_dialog: None,
@@ -453,6 +454,7 @@ impl PaneFlowApp {
         app.refresh_pull_requests(cx);
         app.refresh_owned_sessions(cx);
         app.start_host_agent_stream();
+        app.start_write_approval_stream();
 
         app.emit_app_started(is_first_run_for_telemetry);
         if let Some(info) = session_corruption {
@@ -557,6 +559,7 @@ impl PaneFlowApp {
                     let result = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                             app.process_host_agent_frames(cx);
+                            app.process_write_approval_frames(cx);
                             app.process_config_changes(cx);
                             app.process_update_check(cx);
                         })

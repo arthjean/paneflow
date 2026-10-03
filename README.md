@@ -44,7 +44,7 @@ Let one agent read another agent's pane, so you stop copy-pasting scrollback bet
 paneflow mcp install
 ```
 
-This registers a local read-only MCP bridge for supported agents it detects: Claude Code, Codex, Gemini CLI, and OpenCode. Its tools are `list_panes`, `read_pane`, and `search_pane`. The bridge cannot type into panes or control them, and terminal output comes back wrapped as untrusted data for the reading agent to analyze.
+This registers a local MCP bridge for supported agents it detects: Claude Code, Codex, Gemini CLI, and OpenCode. Its read tools are `list_panes`, `read_pane`, and `search_pane`, and terminal output comes back wrapped as untrusted data for the reading agent to analyze. Its one write tool, `write_pane`, sends a message to another agent's pane only after you allow that pair of agent sessions in Paneflow.
 
 [Bridge docs →](docs/user/scripting.md)
 

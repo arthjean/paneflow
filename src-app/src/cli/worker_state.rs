@@ -1,81 +1,12 @@
-use paneflow_agent_config::runtime_catalog::{
-    Runtime, RuntimeLifecycleAuthority, runtime_by_id, runtime_for_tool,
+pub(super) use paneflow_agent_config::delivery::{
+    ATTENTION, BLOCKED, IDLE, agent_runtime, reduced_state, reports_turns,
 };
+use paneflow_agent_config::delivery::{FOREGROUND_RUNTIME, reduce_row};
 use paneflow_ipc_client::IpcTransport;
 use paneflow_ipc_client::host_control::HostTransport;
 use serde_json::Value;
 
 const REDUCED_METHODS: [&str; 2] = ["surface.status", "fleet.list"];
-
-const PROJECTED_FACTS: [&str; 3] = ["outcome", "menu_prompt_active", "activity_source"];
-
-const FOREGROUND_RUNTIME: &str = "foreground_runtime";
-
-const MAX_BLOCKED_REASON_CHARS: usize = 120;
-
-pub(super) const WORKING: &str = "working";
-pub(super) const ATTENTION: &str = "attention";
-pub(super) const BLOCKED: &str = "blocked";
-pub(super) const IDLE: &str = "idle";
-
-pub(super) fn reduced_state(status: &Value) -> Option<&'static str> {
-    match status.get("state").and_then(Value::as_str)? {
-        "thinking" => Some(WORKING),
-        "waiting_for_input" if waits_without_a_decision(status) => Some(ATTENTION),
-        "waiting_for_input" => Some(BLOCKED),
-        "errored" => Some(ATTENTION),
-        "finished" | "idle" => Some(IDLE),
-        _ => None,
-    }
-}
-
-fn waits_without_a_decision(status: &Value) -> bool {
-    status.get("attention_reason").and_then(Value::as_str) == Some("bell")
-        || status
-            .get("outcome")
-            .and_then(Value::as_str)
-            .is_some_and(|outcome| outcome.starts_with("failed"))
-}
-
-pub(super) fn blocked_reason(status: &Value) -> String {
-    if status.get("menu_prompt_active").and_then(Value::as_bool) == Some(true) {
-        return "menu prompt".to_string();
-    }
-    status
-        .get("message")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|message| !message.is_empty())
-        .map(|message| message.chars().take(MAX_BLOCKED_REASON_CHARS).collect())
-        .unwrap_or_else(|| "permission or question".to_string())
-}
-
-pub(super) fn agent_runtime(status: &Value) -> Option<&'static Runtime> {
-    status
-        .get("agent_runtime")
-        .and_then(Value::as_str)
-        .and_then(runtime_by_id)
-        .or_else(|| {
-            status
-                .get("tool")
-                .and_then(Value::as_str)
-                .and_then(runtime_for_tool)
-        })
-}
-
-pub(super) fn reports_turns(runtime: &Runtime) -> bool {
-    runtime.lifecycle.authority != RuntimeLifecycleAuthority::None
-}
-
-pub(super) fn foreground_departure(status: &Value, runtime: &Runtime) -> Option<String> {
-    match status.get(FOREGROUND_RUNTIME)? {
-        Value::String(id) if id == runtime.id => None,
-        Value::String(id) => {
-            Some(runtime_by_id(id).map_or_else(|| id.clone(), |held| held.label.to_string()))
-        }
-        _ => Some("a shell or another program".to_string()),
-    }
-}
 
 pub(super) fn with_worker_state(method: &str, mut result: Value) -> Value {
     if !REDUCED_METHODS.contains(&method) {
@@ -131,61 +62,10 @@ fn apply_projections(method: &str, result: &mut Value, projections: &[Value]) {
     }
 }
 
-fn reduce_row(row: &mut Value, projections: &[Value]) {
-    let Some(session) = row.get("session").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(projection) = projections.iter().find(|projection| {
-        projection.get("session").and_then(Value::as_str) == Some(session)
-            && row
-                .get("generation")
-                .is_none_or(|generation| projection.get("generation") == Some(generation))
-    }) else {
-        return;
-    };
-    let state = projection
-        .get("activity")
-        .and_then(|activity| activity.get("state"))
-        .and_then(Value::as_str)
-        .unwrap_or("idle");
-    let Some(object) = row.as_object_mut() else {
-        return;
-    };
-    object.insert("state".into(), Value::String(state.to_owned()));
-    if let Some(state_seq) = projection.get("state_seq").and_then(Value::as_u64) {
-        object.insert("state_seq".into(), Value::from(state_seq));
-    }
-    if let Some(reason) = projection
-        .get("attention_reason")
-        .filter(|reason| !reason.is_null())
-    {
-        object.insert("attention_reason".into(), reason.clone());
-    }
-    for fact in PROJECTED_FACTS {
-        if let Some(value) = projection.get(fact) {
-            object.insert(fact.into(), value.clone());
-        }
-    }
-    if let Some(activity) = projection
-        .get("activity")
-        .filter(|activity| activity.is_object())
-    {
-        if let Some(runtime) = projection.get("runtime_id").filter(|id| id.is_string()) {
-            object.insert("agent_runtime".into(), runtime.clone());
-        }
-        if let Some(message) = activity
-            .get("message")
-            .filter(|message| message.is_string())
-        {
-            object.insert("message".into(), message.clone());
-        }
-    }
-    object.insert("reduced_by".into(), Value::String("worker".to_owned()));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use paneflow_agent_config::delivery::{WORKING, blocked_reason, foreground_departure};
     use serde_json::json;
 
     #[test]
