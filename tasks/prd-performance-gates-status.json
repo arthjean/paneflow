@@ -1,0 +1,329 @@
+{
+  "prd": {
+    "file": "tasks/prd-performance-gates.md",
+    "title": "Gates de performance stricts, mesurés sur le travail et appliqués en CI",
+    "created_at": "2026-10-03",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Compter le travail et rejouer des agents actifs",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "Corriger les régressions mesurées",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 7,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Verrouiller l'état corrigé par des gates déterministes en CI Linux",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Comparer le temps réel par un A/B calibré dans le même job",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Tenir des baselines propres par plateforme et mesurer le GPU sur matériel réel",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Exposer des compteurs de travail dans le host, le worker et le desktop",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Ajouter un scénario « agents actifs » à la suite persistante",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Valider l'hypothèse : le desktop GPUI tourne et se mesure sans écran dans un runner GitHub Linux",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "Faire avancer le spinner de la sidebar par pas plutôt qu'à chaque frame",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Dessiner les badges d'onglet sans reconstruire de chemin à chaque frame",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Partager un seul listing système des processus par host et par intervalle",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Réutiliser l'observation du premier plan tant que son groupe ne change pas",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Ne diffuser un snapshot du worker que s'il change, et ne rien redessiner sinon",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Mettre en cache la requête des filtres git par dépôt, sans affaiblir la neutralisation",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Démarrer sans attendre sur un socket IPC périmé",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Créer le job CI `perf-gates` et son format d'échec",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Poser les budgets du host et du worker",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-011",
+        "US-006",
+        "US-007",
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Poser les budgets du desktop sous un affichage virtuel",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-003",
+        "US-011",
+        "US-004",
+        "US-005",
+        "US-008",
+        "US-009",
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Passer en gate les allocations des suites terminal et éditeur",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Écrire le comparateur A/B base contre head, calibré par une cohorte A/A",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Faire tourner l'A/B en mode ombre, puis le promouvoir en gate",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Valider l'hypothèse : comptage d'instructions par Gungraun sur un runner Linux",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Rendre les baselines propres, par plateforme et vérifiées",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-004",
+        "US-005",
+        "US-006",
+        "US-007",
+        "US-008",
+        "US-009",
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Documenter et exécuter le protocole manuel GPU et temps de frame sur matériel réel",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
