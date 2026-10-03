@@ -173,6 +173,7 @@ pub(crate) fn conversation_effect<'a>(
                 runtime: tool.runtime().id,
                 id,
                 cwd: hook_text(params, "cwd").or(fallback_cwd),
+                has_transcript: hook_text(params, "transcript_path").is_some(),
             }),
             _ => ConversationEffect::None,
         },
@@ -489,6 +490,7 @@ mod tests {
                 runtime: "com.anthropic.claude-code",
                 id: "3922faec-860a-47b1-8f2d-e6b9488c467c",
                 cwd: Some("C:\\dev\\paneflow"),
+                has_transcript: true,
             })
         );
     }
@@ -503,6 +505,7 @@ mod tests {
                 runtime: "com.openai.codex",
                 id: "01a0f952-1fa0-7e91-a35c-899b9dbfe97e",
                 cwd: Some("/repo"),
+                has_transcript: false,
             })
         );
     }

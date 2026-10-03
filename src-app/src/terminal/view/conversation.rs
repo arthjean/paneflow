@@ -23,6 +23,7 @@ pub(crate) enum AgentSessionSignal<'a> {
         runtime: &'static str,
         id: &'a str,
         cwd: Option<&'a str>,
+        has_transcript: bool,
     },
     Ended {
         reason: Option<&'a str>,
@@ -35,7 +36,13 @@ pub(crate) fn next_agent_session(
     signal: AgentSessionSignal<'_>,
 ) -> Option<AgentSessionRef> {
     match signal {
-        AgentSessionSignal::Started { runtime, id, cwd } => Some(AgentSessionRef {
+        AgentSessionSignal::Started {
+            has_transcript: false,
+            ..
+        } if current.is_some() => current,
+        AgentSessionSignal::Started {
+            runtime, id, cwd, ..
+        } => Some(AgentSessionRef {
             runtime: runtime.to_string(),
             id: id.to_string(),
             cwd: cwd.map(str::to_string),
@@ -857,12 +864,14 @@ mod tests {
     const CLAUDE_STARTUP_ID: &str = "3922faec-860a-47b1-8f2d-e6b9488c467c";
     const CLAUDE_CLEAR_ID: &str = "8b0c4f6e-2d1a-4f3b-9c7e-5a6d7e8f9a0b";
     const CODEX_THREAD_ID: &str = "01a0f952-1fa0-7e91-a35c-899b9dbfe97e";
+    const CODEX_MEMORY_ID: &str = "01a10351-2773-7c02-9e8f-de826357e767";
 
     fn started<'a>(runtime: &'static str, id: &'a str) -> AgentSessionSignal<'a> {
         AgentSessionSignal::Started {
             runtime,
             id,
             cwd: Some("C:\\dev\\paneflow"),
+            has_transcript: true,
         }
     }
 
@@ -882,6 +891,31 @@ mod tests {
         assert_eq!(cleared, recorded(CLAUDE, CLAUDE_CLEAR_ID));
         let codex = next_agent_session(None, started(CODEX, CODEX_THREAD_ID));
         assert_eq!(codex, recorded(CODEX, CODEX_THREAD_ID));
+    }
+
+    #[test]
+    fn a_session_start_without_a_transcript_never_replaces_a_recorded_conversation() {
+        let memory_consolidation = AgentSessionSignal::Started {
+            runtime: CODEX,
+            id: CODEX_MEMORY_ID,
+            cwd: Some("/home/arthur/.codex/memories"),
+            has_transcript: false,
+        };
+        let current = recorded(CODEX, CODEX_THREAD_ID);
+        assert_eq!(
+            next_agent_session(current.clone(), memory_consolidation),
+            current
+        );
+        let shim_preassigned = AgentSessionSignal::Started {
+            runtime: CLAUDE,
+            id: CLAUDE_STARTUP_ID,
+            cwd: Some("C:\\dev\\paneflow"),
+            has_transcript: false,
+        };
+        assert_eq!(
+            next_agent_session(None, shim_preassigned),
+            recorded(CLAUDE, CLAUDE_STARTUP_ID)
+        );
     }
 
     #[test]
