@@ -57,10 +57,10 @@
     {
       "id": "EP-007",
       "title": "Étendre la détection par écran à opencode, pi et hermes",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-008",
@@ -556,16 +556,16 @@
       "id": "US-036",
       "title": "Capturer opencode, pi et hermes et leur donner des règles d'écran",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-025",
         "US-026"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-03T15:28:05Z",
+      "completed_at": "2026-10-03T18:02:54+02:00",
+      "reviewed_at": "2026-10-03T18:02:54+02:00"
     }
   ]
 }
