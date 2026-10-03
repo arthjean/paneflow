@@ -1,0 +1,163 @@
+# US-034 spike inventory: tmux commands issued by Claude Code agent teams
+# os: Linux 7.2.8-200.fc44.x86_64 x86_64 (Fedora 44), run 2026-10-03
+# claude: 2.1.288 (Claude Code), launched interactive with --teammate-mode tmux --model haiku --dangerously-skip-permissions
+# env: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 TMUX=/tmp/pf-fake-tmux.sock,4242,0 TMUX_PANE=%0, logging fake tmux first on PATH
+# prompt: two haiku teammates each send "ok" to the lead, then the lead shuts them down and cleans up the team
+# fake replies: -V "tmux 3.5a"; display-message #{pane_id} %0, #{window_id} @0; list-panes lists %0 plus live teammate panes;
+#   split-window/new-window/new-session print the next %N; respawn-pane runs the command in a PTY; everything else prints nothing, exit 0
+# lines: CALL (caller env), argv (shell-quoted), stdin (when any), out (stdout returned), respawn (decoded command), exit
+# concurrent calls interleaved two log lines, kept raw: the "argv:  argv:" line holds two kill-pane calls,
+#   kill-pane -t %1 and kill-pane -t %2, each prefixed by -S /tmp/pf-fake-tmux.sock; the argv line ending in
+#   "exit: 0" continues on the next line as set-option -p -t %1 remain-on-exit failed
+# redactions: <cwd> scratch workdir, <claude-exec> Claude executable path, session-<id8> team name, <session-uuid> parent session id
+#
+# distinct sub-command forms (observed unless marked static; static = present in the 2.1.288 bundle, reached only outside tmux):
+#  1 -V                                                     static, isAvailable() checks exit code 0 only, no version parsing
+#  2 display-message -p #{client_termtype}                  startup probe, leader
+#  3 display-message [-t <pane>] -p #{window_id}|#{pane_id} leader window and pane lookup (#{pane_id} only when TMUX_PANE is unset)
+#  4 show-environment -g                                    startup probe, leader
+#  5 show -Av mouse                                         startup probe, leader and every teammate
+#  6 show -gv focus-events                                  startup probe, leader and every teammate
+#  7 list-panes -t <window> -F #{pane_id}
+#  8 split-window -d -t <pane> -h -l 70% -P -F #{pane_id} -- cat   first teammate
+#  9 split-window -d -t <pane> -v|-h -P -F #{pane_id} -- cat       next teammates
+# 10 set-option -p -t <pane> <option> <value>   options: window-style, pane-border-style, pane-active-border-style, pane-border-format, remain-on-exit
+# 11 set-option -w -t <window> pane-border-status top
+# 12 select-pane -t <pane> -T <title>
+# 13 respawn-pane -k -t <pane> -- <sh command>   cd <cwd> && env CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 <claude-exec> --agent-id ... --team-name ...
+# 14 select-layout -t <window> main-vertical
+# 15 resize-pane -t <pane> -x 30%
+# 16 kill-pane -t <pane>
+# 17 has-session -t claude-swarm                                     static, -L claude-swarm-<pid>
+# 18 new-session -d -s claude-swarm -n swarm-view -P -F #{pane_id} -- cat   static, -L claude-swarm-<pid>
+# 19 new-window -t claude-swarm -n swarm-view -P -F #{pane_id} -- cat      static, -L claude-swarm-<pid>
+# 20 list-windows -t claude-swarm -F #{window_name}                  static, -L claude-swarm-<pid>
+#    plus select-layout -t <window> tiled (static, form 14)
+# global flags: -S <socket> taken from the first comma field of TMUX inside tmux; -L claude-swarm-<pid> outside tmux
+# control mode -C: never used. send-keys: never used (teammate commands go through respawn-pane)
+# cmux comparison (/home/arthur/dev/cmux @ ecba57ac71, CLI/cmux.swift:26915 runTmuxCompat switch): every verb above is in
+#   cmux's tmux compat except show-environment, which cmux does not list. cmux also answers select-window, kill-window,
+#   capture-pane, rename-window, wait-for, last-pane, show-buffer, save-buffer, last-window, next-window, previous-window,
+#   set-hook, set-buffer, list-buffers, source-file, refresh-client, attach-session and detach-client, none of which
+#   Claude Code 2.1.288 issued here, so Paneflow's shim leaves them out
+#
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: show -Av mouse
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: show -gv focus-events
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: display-message -p \#\{client_termtype\}
+  out: ''
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: show-environment -g
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: display-message -p \#\{client_termtype\}
+  out: ''
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock display-message -t %0 -p \#\{window_id\}
+  out: @0
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock list-panes -t @0 -F \#\{pane_id\}
+  out: %0
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock split-window -d -t %0 -h -l 70% -P -F \#\{pane_id\} -- cat
+  out: %1
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %1 window-style bg=default\,fg=blue
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %1 pane-border-style fg=blue
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %1 pane-active-border-style fg=blue
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock select-pane -t %1 -T teammate-1
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %1 pane-border-format \#\[fg=blue\,bold\]\ #\{pane_title\}\ #\[default\]
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock list-panes -t @0 -F \#\{pane_id\}
+  out: $'%0\n%1'
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock list-panes -t @0 -F \#\{pane_id\}
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -w -t @0 pane-border-status top
+  exit: 0
+  out: $'%0\n%1'
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock list-panes -t @0 -F \#\{pane_id\}
+  out: $'%0\n%1'
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock  exit: 0
+ set-option -p -t %1 remain-on-exit failed
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock split-window -d -t %1 -v -P -F \#\{pane_id\} -- cat
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock respawn-pane -k -t %1 -- cd\ <cwd>\ \&\&\ env\ CLAUDECODE=1\ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\ <claude-exec>\ --agent-id\ teammate-1@session-<id8>\ --agent-name\ teammate-1\ --team-name\ session-<id8>\ --agent-color\ blue\ --parent-session-id\ <session-uuid>\ --dangerously-skip-permissions\ --model\ haiku
+  respawn %1 cmd: cd <cwd> && env CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 <claude-exec> --agent-id teammate-1@session-<id8> --agent-name teammate-1 --team-name session-<id8> --agent-color blue --parent-session-id <session-uuid> --dangerously-skip-permissions --model haiku
+  exit: 0
+  out: %2
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %2 window-style bg=default\,fg=green
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%1
+  argv: show -Av mouse
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%1
+  argv: show -gv focus-events
+  exit: 0
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %2 pane-border-style fg=green
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %2 pane-active-border-style fg=green
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock select-pane -t %2 -T teammate-2
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %2 pane-border-format \#\[fg=green\,bold\]\ #\{pane_title\}\ #\[default\]
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock list-panes -t @0 -F \#\{pane_id\}
+  out: $'%0\n%1\n%2'
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock select-layout -t @0 main-vertical
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock resize-pane -t %0 -x 30%
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock set-option -p -t %2 remain-on-exit failed
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv: -S /tmp/pf-fake-tmux.sock respawn-pane -k -t %2 -- cd\ <cwd>\ \&\&\ env\ CLAUDECODE=1\ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\ <claude-exec>\ --agent-id\ teammate-2@session-<id8>\ --agent-name\ teammate-2\ --team-name\ session-<id8>\ --agent-color\ green\ --parent-session-id\ <session-uuid>\ --dangerously-skip-permissions\ --model\ haiku
+  respawn %2 cmd: cd <cwd> && env CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 <claude-exec> --agent-id teammate-2@session-<id8> --agent-name teammate-2 --team-name session-<id8> --agent-color green --parent-session-id <session-uuid> --dangerously-skip-permissions --model haiku
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%2
+  argv: show -Av mouse
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%2
+  argv: show -gv focus-events
+  exit: 0
+  exit: 0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+CALL TMUX=/tmp/pf-fake-tmux.sock\,4242\,0 TMUX_PANE=%0
+  argv:  argv: -S -S /tmp/pf-fake-tmux.sock /tmp/pf-fake-tmux.sock kill-pane kill-pane -t -t %2 %1
+
+  exit: 0
+  exit: 0

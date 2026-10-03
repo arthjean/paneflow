@@ -32,6 +32,7 @@ Thumbs.db
 
 # Logs
 *.log
+!src-app/tests/fixtures/claude-teams-tmux-*.log
 LOG_*.text
 
 # Local development artifacts
