@@ -10,6 +10,7 @@
 | 1.2 | 2026-10-01 | Arthur Jean | US-010 : `wait --idle` rend aussi la main sur `blocked` et aussitôt sur un agent qui attend déjà, pour ne pas tenir jusqu'au timeout un tour fini avant son démarrage. |
 | 1.3 | 2026-10-02 | Arthur Jean | EP-005 : le corpus et la précision portent sur les runtimes à repli écran (claude-code, codex, gemini, fx) ; opencode, pi et hermes, qui n'ont pas de règles d'écran, passent dans le nouvel EP-007 (US-036). US-028 : un contrôle périodique du fichier local dans le thread de scan remplace le watcher, sans nouvelle dépendance et avec la même borne d'une seconde. US-030 : fx 0.0.12, mesuré, titre sa fenêtre `fx v<version> \| <dossier>` et nomme ses sessions sur 12 caractères alphanumériques ; le préfixe et le format d'id suivent ces faits. Un runtime confirmé par son titre n'a pas de shim, car le shim annonce une session dès que l'alias tourne. |
 | 1.4 | 2026-10-02 | Arthur Jean | US-030 : la description et le critère d'échec reprennent le titre mesuré de fx 0.0.12 (`fx v<version> \| <dossier>`) au lieu de `fx · <titre> · <modèle>`. |
+| 1.5 | 2026-10-03 | Arthur Jean | EP-006 se limite à l'orchestration approuvée (US-031 à US-033) ; le spike tmux (US-034) et le shim (US-035) passent dans le nouvel EP-008, pour que la certification de l'orchestration n'attende pas les runs du spike sous Linux, macOS et Windows. Critères inchangés. |
 
 ## Problem Statement
 
@@ -791,13 +792,12 @@ fx n'a pas de hook, émet un BEL pour demander l'attention, et fx 0.0.12 titre s
 
 ### EP-006: Orchestrer les agents entre eux sous contrôle humain
 
-Livraison R4. Un agent peut écrire à un autre seulement avec l'accord d'un humain pour cette paire. Les équipes d'agents Claude ouvrent leurs coéquipiers dans des panes Paneflow.
+Livraison R4. Un agent peut écrire à un autre seulement avec l'accord d'un humain pour cette paire.
 
 **Definition of Done:**
 - L'outil MCP d'écriture est opérationnel.
 - Toute écriture passe par une approbation humaine liée aux deux occurrences d'agents, et porte une provenance visible.
 - Le budget de schéma est testé.
-- Le shim tmux est livré, ou annulé avec la preuve du spike.
 
 #### US-031: Borner le schéma des outils MCP et annoncer leur nature
 **Description:** As a développeur, I want que le bridge MCP reste léger dans le contexte des agents et annonce quels outils modifient un pane so that l'ajout d'outils ne gonfle pas chaque requête et que le client affiche la bonne confirmation.
@@ -852,6 +852,38 @@ Modèle : les approbations par paire d'Unpeel, liées à `agent_ref`.
 - [ ] Échec : given une cible `blocked`, when l'outil est appelé, then rien n'est écrit et l'erreur dit que la cible attend une décision humaine.
 - [ ] Échec : given un texte qui contient `\x1b[201~`, then la séquence est retirée (test).
 
+---
+
+### EP-007: Étendre la détection par écran à opencode, pi et hermes
+
+Livraison après R3. Ces trois runtimes sont détectés par leur processus mais n'ont aucune règle d'écran (`authority = "none"`). Ils passent au repli écran quand leurs écrans réels sont capturés.
+
+**Definition of Done:**
+- opencode, pi et hermes déclarent `authority = "screen"` et un `screen.toml`.
+- Le corpus couvre leurs trois états avec au moins 95 % de bonne classification.
+
+#### US-036: Capturer opencode, pi et hermes et leur donner des règles d'écran
+**Description:** As a développeur qui utilise opencode, pi ou hermes, I want que Paneflow lise leur état à l'écran so that leurs panes montrent occupé, inactif ou bloqué comme ceux des autres agents.
+
+**Priority:** P2
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-025, US-026
+
+**Acceptance Criteria:**
+- [ ] `runtimes/{opencode,pi,hermes}/fixtures/screens/` contient au moins une capture `working`, `idle` et `blocked` de la CLI réelle, prise avec `paneflow agent capture`.
+- [ ] Chaque runtime déclare `authority = "screen"`, `fallback = "screen"` et un `screen.toml` tiré de ses captures.
+- [ ] `bench/screen-corpus-baseline.json` montre au moins 95 % de bonne classification pour chacun.
+- [ ] Échec : given un pane qui affiche l'aide de la CLI (`--help`), when l'écran est évalué, then il n'est classé ni `working` ni `blocked` (test).
+
+---
+
+### EP-008: Ouvrir les coéquipiers Claude dans des panes Paneflow
+
+Livraison après R4. Les équipes d'agents Claude ouvrent leurs coéquipiers dans des panes Paneflow, si le spike le permet.
+
+**Definition of Done:**
+- Le shim tmux est livré, ou annulé avec la preuve du spike.
+
 #### US-034: Valider l'hypothèse : inventaire des commandes tmux des équipes d'agents Claude
 **Description:** As a mainteneur, I want connaître exactement les commandes tmux qu'exécutent les équipes d'agents Claude so that le shim tmux n'émule que ce qui est utilisé, ou soit abandonné avec la preuve.
 
@@ -892,29 +924,6 @@ Modèle : les approbations par paire d'Unpeel, liées à `agent_ref`.
 - [ ] Les autres panes gardent leur PATH. Un vrai `tmux` lancé dans un pane ordinaire n'est pas affecté (test).
 - [ ] Si US-034 montre que le mode tmux n'existe pas sous Windows, le préréglage y est masqué par le filtre de plateforme, et `docs/user` le dit.
 - [ ] Échec : given le pane du meneur fermé, when un coéquipier tourne encore, then son pane reste ouvert et se comporte comme un pane ordinaire.
-
----
-
-### EP-007: Étendre la détection par écran à opencode, pi et hermes
-
-Livraison après R3. Ces trois runtimes sont détectés par leur processus mais n'ont aucune règle d'écran (`authority = "none"`). Ils passent au repli écran quand leurs écrans réels sont capturés.
-
-**Definition of Done:**
-- opencode, pi et hermes déclarent `authority = "screen"` et un `screen.toml`.
-- Le corpus couvre leurs trois états avec au moins 95 % de bonne classification.
-
-#### US-036: Capturer opencode, pi et hermes et leur donner des règles d'écran
-**Description:** As a développeur qui utilise opencode, pi ou hermes, I want que Paneflow lise leur état à l'écran so that leurs panes montrent occupé, inactif ou bloqué comme ceux des autres agents.
-
-**Priority:** P2
-**Size:** M (3 pts)
-**Dependencies:** Blocked by US-025, US-026
-
-**Acceptance Criteria:**
-- [ ] `runtimes/{opencode,pi,hermes}/fixtures/screens/` contient au moins une capture `working`, `idle` et `blocked` de la CLI réelle, prise avec `paneflow agent capture`.
-- [ ] Chaque runtime déclare `authority = "screen"`, `fallback = "screen"` et un `screen.toml` tiré de ses captures.
-- [ ] `bench/screen-corpus-baseline.json` montre au moins 95 % de bonne classification pour chacun.
-- [ ] Échec : given un pane qui affiche l'aide de la CLI (`--help`), when l'écran est évalué, then il n'est classé ni `working` ni `blocked` (test).
 
 ---
 

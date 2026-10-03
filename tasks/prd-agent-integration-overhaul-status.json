@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Orchestrer les agents entre eux sous contrôle humain",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
-      "stories_total": 5,
-      "stories_done": 0
+      "stories_total": 3,
+      "stories_done": 3
     },
     {
       "id": "EP-007",
@@ -60,6 +60,14 @@
       "status": "TODO",
       "priority": "P2",
       "stories_total": 1,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "Ouvrir les coéquipiers Claude dans des panes Paneflow",
+      "status": "BLOCKED",
+      "priority": "P2",
+      "stories_total": 2,
       "stories_done": 0
     }
   ],
@@ -476,34 +484,34 @@
       "id": "US-031",
       "title": "Borner le schéma des outils MCP et annoncer leur nature",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02",
+      "completed_at": "2026-10-03T08:26:01+02:00",
+      "reviewed_at": "2026-10-03T08:26:01+02:00"
     },
     {
       "id": "US-032",
       "title": "Faire approuver par un humain chaque paire d'agents qui s'écrivent",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-006",
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02",
+      "completed_at": "2026-10-03T08:26:01+02:00",
+      "reviewed_at": "2026-10-03T08:26:01+02:00"
     },
     {
       "id": "US-033",
       "title": "Ajouter l'outil MCP d'écriture avec provenance",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -512,26 +520,26 @@
         "US-031",
         "US-032"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-02",
+      "completed_at": "2026-10-03T08:26:01+02:00",
+      "reviewed_at": "2026-10-03T08:26:01+02:00"
     },
     {
       "id": "US-034",
       "title": "Valider l'hypothèse : inventaire des commandes tmux des équipes d'agents Claude",
-      "epic": "EP-006",
-      "status": "TODO",
+      "epic": "EP-008",
+      "status": "BLOCKED",
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-10-02",
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-035",
       "title": "Ouvrir les coéquipiers Claude dans des panes Paneflow via un shim tmux",
-      "epic": "EP-006",
+      "epic": "EP-008",
       "status": "TODO",
       "priority": "P2",
       "size": "L",
