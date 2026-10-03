@@ -106,6 +106,18 @@ command names both homes, and `--force` takes the entry over. The hooks exit imm
 CLI agents still run in panes, but Paneflow only knows what it can infer from
 the process tree and terminal activity.
 
+On Linux and macOS, the **Claude Code (team)** launcher entry starts Claude Code
+with agent teams enabled and opens each teammate in its own Paneflow pane, next
+to the lead's pane, instead of inside the lead's terminal. Claude Code drives
+those panes through `tmux` commands, which Paneflow answers itself for that
+pane only: every other pane keeps your real `tmux` and `PATH`. A team can only
+open, list, rename, and close its own panes. Typing into a teammate with
+`send-keys` follows the same `PANEFLOW_IPC_SCRIPTING` rule as
+`paneflow send`. Closing the lead's pane leaves the teammates open as ordinary
+panes. The entry does not exist on Windows: Claude Code's terminal team mode
+needs tmux and a POSIX shell there, so on Windows teammates run inside the
+lead's pane.
+
 Inside a project, use project threads for independent agent sessions scoped to
 the codebase. For research, planning, or quick questions outside a project,
 open an agent chat from your home directory (`~`). Past chats stay reachable

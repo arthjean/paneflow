@@ -133,10 +133,21 @@ pub struct RuntimeSessions {
     pub reader: RuntimeSessionReader,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeSuggestedPreset {
     pub id: &'static str,
     pub command: &'static str,
+    pub name: Option<&'static str>,
+    pub platforms: Option<&'static [RuntimePlatform]>,
+    pub tmux_compat: bool,
+    pub env: &'static [(&'static str, &'static str)],
+}
+
+impl RuntimeSuggestedPreset {
+    pub fn supports_current_platform(&self) -> bool {
+        self.platforms
+            .is_none_or(|platforms| platforms.contains(&current_platform()))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -238,6 +238,7 @@ printf '%s\
 | `surface.send_text` | `surface_id`, `text`, `submit?`, `paste?` | Gated PTY text write |
 | `surface.send_keystroke` | `surface_id`, `keystroke` | Env-gated non-submitting keystroke |
 | `surface.split` | `direction`, `surface_id?`, `cwd?`, `command?`, `prompt?`, `env?`, `name?`, `managed_worktree?` | Split a pane |
+| `tmux.compat` | `team`, `surface_id`, `argv`, `scope_session?` | tmux command from a Claude Code team pane; `team` is the token Paneflow gave that team's panes, and the reply is `{stdout, stderr, exit}` |
 | `fleet.list` | - | Read-only fleet snapshot |
 | `events.subscribe` | `surfaces?`, `types?` | Persistent newline-delimited event stream |
 | `ai.session_start` | hook payload | Lifecycle telemetry |

@@ -112,6 +112,7 @@ pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_
         "surface.status",
         "fleet.list",
         "events.subscribe",
+        crate::tmux_compat::METHOD,
     ];
     serde_json::json!({
         "scripting": scripting,

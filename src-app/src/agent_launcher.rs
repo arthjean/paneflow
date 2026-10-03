@@ -3,8 +3,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use paneflow_agent_config::{
-    RUNTIMES, Runtime, RuntimePlatform, current_platform, launcher_runtimes,
-    runtime_by_command_alias, runtime_by_id, runtime_by_preset_id,
+    RUNTIMES, Runtime, RuntimePlatform, RuntimeSuggestedPreset, current_platform,
+    launcher_runtimes, runtime_by_command_alias, runtime_by_id, runtime_by_preset_id,
 };
 use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig};
 
@@ -134,9 +134,11 @@ impl TerminalAgent {
     }
 
     fn launch_spec(self, config: &PaneFlowConfig) -> AgentCommandSpec {
-        let mut tokens = self.runtime().suggested_presets[0]
-            .command
-            .split_whitespace();
+        self.preset_spec(self.runtime().suggested_presets[0].command, config)
+    }
+
+    fn preset_spec(self, command: &'static str, config: &PaneFlowConfig) -> AgentCommandSpec {
+        let mut tokens = command.split_whitespace();
         let mut spec = AgentCommandSpec::new(tokens.next().unwrap_or(self.binary()));
         spec.extend_args(tokens);
         self.push_launch_flags(&mut spec, config);
@@ -467,13 +469,30 @@ fn expand_profile_value(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentLaunch {
     Builtin(TerminalAgent),
+    Preset(TerminalAgent, &'static RuntimeSuggestedPreset),
     Profile(AgentProfile),
+}
+
+fn with_extra_presets(agents: impl Iterator<Item = TerminalAgent>) -> Vec<AgentLaunch> {
+    agents
+        .flat_map(|agent| {
+            std::iter::once(AgentLaunch::Builtin(agent)).chain(
+                agent
+                    .runtime()
+                    .suggested_presets
+                    .iter()
+                    .skip(1)
+                    .filter(|preset| preset.supports_current_platform())
+                    .map(move |preset| AgentLaunch::Preset(agent, preset)),
+            )
+        })
+        .collect()
 }
 
 impl AgentLaunch {
     pub fn all(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
-        TerminalAgent::for_this_platform()
-            .map(AgentLaunch::Builtin)
+        with_extra_presets(TerminalAgent::for_this_platform())
+            .into_iter()
             .chain(
                 AgentProfile::all(config)
                     .into_iter()
@@ -484,22 +503,24 @@ impl AgentLaunch {
     }
 
     pub fn visible(config: &PaneFlowConfig) -> Vec<AgentLaunch> {
-        TerminalAgent::visible(config)
-            .into_iter()
-            .filter(|agent| agent.supports_current_platform())
-            .map(AgentLaunch::Builtin)
-            .chain(
-                AgentProfile::all(config)
-                    .into_iter()
-                    .filter(|profile| profile.agent.supports_current_platform())
-                    .map(AgentLaunch::Profile),
-            )
-            .collect()
+        with_extra_presets(
+            TerminalAgent::visible(config)
+                .into_iter()
+                .filter(|agent| agent.supports_current_platform()),
+        )
+        .into_iter()
+        .chain(
+            AgentProfile::all(config)
+                .into_iter()
+                .filter(|profile| profile.agent.supports_current_platform())
+                .map(AgentLaunch::Profile),
+        )
+        .collect()
     }
 
     pub fn agent(&self) -> TerminalAgent {
         match self {
-            AgentLaunch::Builtin(agent) => *agent,
+            AgentLaunch::Builtin(agent) | AgentLaunch::Preset(agent, _) => *agent,
             AgentLaunch::Profile(profile) => profile.agent,
         }
     }
@@ -507,8 +528,16 @@ impl AgentLaunch {
     pub fn label(&self) -> String {
         match self {
             AgentLaunch::Builtin(agent) => agent.display_name().to_string(),
+            AgentLaunch::Preset(agent, preset) => preset
+                .name
+                .unwrap_or_else(|| agent.display_name())
+                .to_string(),
             AgentLaunch::Profile(profile) => profile.name.clone(),
         }
+    }
+
+    pub fn tmux_compat(&self) -> bool {
+        matches!(self, AgentLaunch::Preset(_, preset) if preset.tmux_compat)
     }
 
     pub fn is_installed(&self) -> bool {
@@ -518,13 +547,39 @@ impl AgentLaunch {
     pub fn launch_command(&self, config: &PaneFlowConfig) -> String {
         match self {
             AgentLaunch::Builtin(agent) => agent.launch_command(config),
+            AgentLaunch::Preset(agent, preset) => {
+                let command = agent
+                    .preset_spec(preset.command, config)
+                    .render_shell_command();
+                let command = match self.tmux_prefix() {
+                    Some(Ok(prefix)) => format!("{prefix} {command}"),
+                    _ => command,
+                };
+                wrap_for_shell(&command, config)
+            }
             AgentLaunch::Profile(profile) => profile.launch_command(config),
         }
+    }
+
+    pub fn tmux_prefix(&self) -> Option<Result<String, String>> {
+        self.tmux_compat().then(|| {
+            let dir = crate::tmux_compat::compat_dir()
+                .ok_or_else(|| "the Paneflow home directory cannot be resolved".to_string())?;
+            crate::tmux_compat::env_prefix(&dir, crate::tmux_compat::teams::LEADER)
+        })
     }
 
     pub fn process_env(&self) -> Option<HashMap<String, String>> {
         match self {
             AgentLaunch::Builtin(_) => None,
+            AgentLaunch::Preset(_, preset) => Some(
+                preset
+                    .env
+                    .iter()
+                    .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                    .collect::<HashMap<_, _>>(),
+            )
+            .filter(|env| !env.is_empty()),
             AgentLaunch::Profile(profile) => {
                 Some(profile.process_env()).filter(|env| !env.is_empty())
             }
@@ -909,7 +964,16 @@ mod tests {
             AgentLaunch::all(&config).len(),
             TerminalAgent::all()
                 .filter(|agent| agent.supports_current_platform())
-                .count()
+                .map(|agent| {
+                    1 + agent
+                        .runtime()
+                        .suggested_presets
+                        .iter()
+                        .skip(1)
+                        .filter(|preset| preset.supports_current_platform())
+                        .count()
+                })
+                .sum::<usize>()
                 + 1
         );
     }
@@ -979,7 +1043,7 @@ mod tests {
             .into_iter()
             .filter_map(|launch| match launch {
                 AgentLaunch::Builtin(agent) => Some(agent),
-                AgentLaunch::Profile(_) => None,
+                AgentLaunch::Preset(..) | AgentLaunch::Profile(_) => None,
             })
             .collect::<Vec<_>>();
         assert!(
@@ -997,6 +1061,45 @@ mod tests {
         } else {
             assert_eq!(builtins.len(), TerminalAgent::all().count());
         }
+    }
+
+    #[test]
+    fn the_claude_team_preset_launches_through_the_tmux_shim_off_windows_only() {
+        let config = PaneFlowConfig::default();
+        let team = AgentLaunch::all(&config)
+            .into_iter()
+            .find(AgentLaunch::tmux_compat);
+        if cfg!(windows) {
+            assert!(team.is_none(), "the tmux team mode has no Windows path");
+            return;
+        }
+        let team = team.expect("the team preset is offered on Linux and macOS");
+        assert_eq!(team.agent(), TerminalAgent::ClaudeCode);
+        assert_eq!(team.label(), "Claude Code (team)");
+        let command = team.launch_command(&config);
+        assert!(
+            command.contains("TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PATH=\""),
+            "{command}"
+        );
+        assert!(
+            command.contains("/bin/tmux-compat:$PATH\" claude --teammate-mode tmux"),
+            "{command}"
+        );
+        assert_eq!(
+            TerminalAgent::from_launch_command(&command),
+            Some(TerminalAgent::ClaudeCode)
+        );
+        assert_eq!(
+            team.process_env()
+                .and_then(|env| env.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS").cloned())
+                .as_deref(),
+            Some("1")
+        );
+        let preset = TerminalAgent::ClaudeCode.runtime().suggested_presets[1];
+        assert_eq!(
+            preset.platforms,
+            Some(&[RuntimePlatform::Linux, RuntimePlatform::Macos][..])
+        );
     }
 
     #[test]

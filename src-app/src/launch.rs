@@ -150,6 +150,13 @@ fn detach_lonely_windows_console_for_gui_launch(is_scriptable_invocation: bool) 
 }
 
 pub(crate) fn run() {
+    if crate::tmux_compat::is_shim_invocation(std::env::args_os().next().as_deref()) {
+        let argv: Vec<String> = std::env::args_os()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        std::process::exit(crate::tmux_compat::run_shim(&argv));
+    }
     startup_trace::begin();
     let args: Vec<String> = std::env::args().collect();
     if let Some(home) = paneflow_home::paneflow_home()
@@ -325,6 +332,8 @@ pub(crate) fn run() {
     if let Err(error) = ai_hooks::extract::ensure_binaries_extracted() {
         log::warn!("paneflow: agent shim extraction failed ({error:#})");
     }
+    #[cfg(unix)]
+    crate::tmux_compat::ensure_shim_link();
     startup_trace::mark("bridge_extracted");
 
     host_bootstrap::start_in_background();

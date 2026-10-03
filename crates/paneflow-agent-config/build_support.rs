@@ -305,6 +305,12 @@ pub struct Resume {
 pub struct SuggestedPreset {
     pub id: String,
     pub command: String,
+    pub name: Option<String>,
+    pub platforms: Option<Vec<Platform>>,
+    #[serde(default)]
+    pub tmux_compat: bool,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +607,19 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                     path.display()
                 ));
             }
+            validate_preset(path, &runtime.platforms, preset, &mut errors);
+        }
+        let first_has_extras = runtime.suggested_presets.first().is_some_and(|first| {
+            first.name.is_some()
+                || first.platforms.is_some()
+                || first.tmux_compat
+                || !first.env.is_empty()
+        });
+        if first_has_extras {
+            errors.push(format!(
+                "{}: the first suggested preset is the runtime's own launch and takes only id and command",
+                path.display()
+            ));
         }
     }
     if errors.is_empty() {
@@ -815,9 +834,22 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         }
         output.push_str("suggested_presets: &[\n");
         for preset in &runtime.suggested_presets {
+            let env = preset
+                .env
+                .iter()
+                .map(|(key, value)| format!("({key:?}, {value:?})"))
+                .collect::<Vec<_>>()
+                .join(", ");
             output.push_str(&format!(
-                "RuntimeSuggestedPreset {{ id: {:?}, command: {:?} }},\n",
-                preset.id, preset.command
+                "RuntimeSuggestedPreset {{ id: {:?}, command: {:?}, name: {}, platforms: {}, tmux_compat: {}, env: &[{env}] }},\n",
+                preset.id,
+                preset.command,
+                option_string(preset.name.as_deref()),
+                preset
+                    .platforms
+                    .as_deref()
+                    .map_or_else(|| "None".to_string(), |values| format!("Some(&{})", platforms(values))),
+                preset.tmux_compat
             ));
         }
         output.push_str("] },\n");
@@ -947,6 +979,61 @@ fn strings(values: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{values}]")
+}
+
+fn validate_preset(
+    path: &Path,
+    runtime_platforms: &[Platform],
+    preset: &SuggestedPreset,
+    errors: &mut Vec<String>,
+) {
+    if preset.name.as_deref().is_some_and(str::is_empty) {
+        errors.push(format!(
+            "{}: suggested preset '{}' has an empty name",
+            path.display(),
+            preset.id
+        ));
+    }
+    if let Some(platforms) = &preset.platforms {
+        let outside = platforms.iter().any(|platform| {
+            !runtime_platforms
+                .iter()
+                .any(|supported| *supported as u8 == *platform as u8)
+        });
+        if platforms.is_empty() || outside {
+            errors.push(format!(
+                "{}: suggested preset '{}' platforms must be a non-empty subset of the runtime platforms",
+                path.display(),
+                preset.id
+            ));
+        }
+    }
+    if preset.tmux_compat
+        && preset
+            .platforms
+            .as_deref()
+            .unwrap_or(runtime_platforms)
+            .iter()
+            .any(|platform| matches!(platform, Platform::Windows))
+    {
+        errors.push(format!(
+            "{}: suggested preset '{}' uses tmux_compat, which has no Windows path",
+            path.display(),
+            preset.id
+        ));
+    }
+    for key in preset.env.keys() {
+        let valid = !key.is_empty()
+            && !key.starts_with(|c: char| c.is_ascii_digit())
+            && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            errors.push(format!(
+                "{}: suggested preset '{}' has an invalid env key '{key}'",
+                path.display(),
+                preset.id
+            ));
+        }
+    }
 }
 
 fn platforms(values: &[Platform]) -> String {

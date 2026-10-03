@@ -29,6 +29,7 @@ mod params;
 mod split;
 use split::{PATH_PROBE_TIMEOUT, probe_off_thread, unresolved_path_error};
 mod surface_methods;
+mod tmux_compat;
 mod transcript;
 mod workspace_methods;
 
@@ -179,6 +180,7 @@ impl PaneFlowApp {
             "surface.read" => self.surface_read_reply(params, cx),
             "surface.search" => self.surface_search_reply(params, cx),
             "surface.split" => self.surface_split_reply(params, cx),
+            crate::tmux_compat::METHOD => self.tmux_compat_reply(params, caller_pid, cx),
             "workspace.create" => self.workspace_create_reply(params, cx),
             "workspace.up" => self.workspace_up_reply(params, cx),
             m if m.starts_with("workspace.") => {

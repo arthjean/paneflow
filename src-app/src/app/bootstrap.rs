@@ -242,6 +242,7 @@ impl PaneFlowApp {
             ipc_status,
             event_bus,
             last_broadcast_gen: std::collections::HashMap::new(),
+            tmux_teams: crate::tmux_compat::teams::TmuxTeams::default(),
             title_bar,
             primary_sidebar_visible: true,
             primary_sidebar_animation: None,

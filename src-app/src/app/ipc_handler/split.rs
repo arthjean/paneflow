@@ -308,15 +308,16 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        match self.prepare_split(params, cx) {
+        match self.prepare_split(params, ipc_orchestration_enabled(), cx) {
             Ok(task) => IpcReply::Async(task),
             Err(error) => IpcReply::Ready(error.into_value()),
         }
     }
 
-    fn prepare_split(
+    pub(super) fn prepare_split(
         &mut self,
         params: &serde_json::Value,
+        orchestration_allowed: bool,
         cx: &mut Context<Self>,
     ) -> Result<gpui::Task<serde_json::Value>, JsonRpcError> {
         let spec = split_spec(params)?;
@@ -329,7 +330,7 @@ impl PaneFlowApp {
                 ));
             }
         };
-        if pane_spec_requires_orchestration(params) && !ipc_orchestration_enabled() {
+        if pane_spec_requires_orchestration(params) && !orchestration_allowed {
             return Err(orchestration_disabled_error("surface.split"));
         }
         let managed_worktree = parse_managed_worktree(params.get("managed_worktree"));

@@ -106,12 +106,20 @@ impl Preset {
         }
     }
 
+    pub(crate) fn opens_a_team(&self) -> bool {
+        matches!(&self.source, PresetSource::Agent(launch) if launch.tmux_compat())
+    }
+
     pub(crate) fn ensure_launchable(&self) -> Result<(), String> {
         match &self.source {
             PresetSource::Agent(launch) if !launch.is_installed() => Err(format!(
                 "{} is not installed - install its CLI, or hide it in Settings > Agents",
                 launch.agent().display_name()
             )),
+            PresetSource::Agent(launch) => match launch.tmux_prefix() {
+                Some(Err(reason)) => Err(format!("{} cannot start: {reason}", launch.label())),
+                _ => Ok(()),
+            },
             _ => Ok(()),
         }
     }
@@ -397,9 +405,16 @@ impl PaneFlowApp {
         if self.pane_palette_create_branch_then_launch(idx, cx) {
             return;
         }
+        let mut env = preset.env();
+        if preset.opens_a_team() {
+            env.get_or_insert_with(Default::default).insert(
+                crate::tmux_compat::TEAM_ENV.to_string(),
+                self.tmux_teams.issue(),
+            );
+        }
         let launch = SurfaceLaunch {
             command: preset.command(&self.cached_config),
-            env: preset.env(),
+            env,
         };
         let profile = preset.profile();
         let title = preset.label.clone();

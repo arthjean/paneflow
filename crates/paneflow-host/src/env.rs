@@ -39,6 +39,7 @@ pub const PANE_CONTEXT_ENV: &[&str] = &[
     "PANEFLOW_BIN_DIR",
     "PANEFLOW_AI_TOOL",
     "PANEFLOW_AI_PID",
+    "PANEFLOW_TMUX_TEAM",
 ];
 
 const CONEMU_ENV_PREFIX: &str = "conemu";

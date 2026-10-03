@@ -46,3 +46,11 @@ reader = "claude"
 [[suggested_presets]]
 id = "claude_code"
 command = "claude"
+
+[[suggested_presets]]
+id = "claude_code_team"
+name = "Claude Code (team)"
+command = "claude --teammate-mode tmux"
+platforms = ["linux", "macos"]
+tmux_compat = true
+env = { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1" }

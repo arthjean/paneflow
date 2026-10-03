@@ -61,6 +61,7 @@ mod system_info;
 mod telemetry;
 mod terminal;
 pub mod theme;
+mod tmux_compat;
 mod ui_primitives;
 mod update;
 mod widgets;
@@ -187,6 +188,7 @@ struct PaneFlowApp {
     ipc_status: ipc::IpcStatus,
     event_bus: std::sync::Arc<ipc_events::EventBus>,
     last_broadcast_gen: std::collections::HashMap<u64, u64>,
+    tmux_teams: tmux_compat::teams::TmuxTeams,
     title_bar: Entity<title_bar::TitleBar>,
     primary_sidebar_visible: bool,
     primary_sidebar_animation: Option<SidebarWidthAnimation>,
