@@ -65,10 +65,10 @@
     {
       "id": "EP-008",
       "title": "Ouvrir les coéquipiers Claude dans des panes Paneflow",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     }
   ],
   "stories": [
@@ -528,19 +528,19 @@
       "id": "US-034",
       "title": "Valider l'hypothèse : inventaire des commandes tmux des équipes d'agents Claude",
       "epic": "EP-008",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-10-02",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-03",
+      "reviewed_at": "2026-10-03"
     },
     {
       "id": "US-035",
       "title": "Ouvrir les coéquipiers Claude dans des panes Paneflow via un shim tmux",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -548,9 +548,9 @@
         "US-006",
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-03",
+      "completed_at": "2026-10-03",
+      "reviewed_at": "2026-10-03"
     },
     {
       "id": "US-036",
