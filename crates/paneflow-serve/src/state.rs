@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use paneflow_agent_config::runtime_catalog::{
-    Runtime, RuntimeLifecycleFallback, RuntimeLifecycleSource,
+    Runtime, RuntimeLifecycleAuthority, RuntimeLifecycleFallback, RuntimeLifecycleSource,
 };
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
@@ -720,6 +720,9 @@ impl WorkerState {
         let runtime = entry.runtime();
         let hook_capable = runtime
             .is_some_and(|runtime| runtime.lifecycle.source == RuntimeLifecycleSource::Hooks);
+        let screen_authority = runtime.is_some_and(|runtime| {
+            runtime.lifecycle.authority == RuntimeLifecycleAuthority::Screen
+        });
         let launch_hook_capable = entry.launch_hook_capable;
         let attention_clears_on_output = runtime
             .map(|runtime| runtime.lifecycle.attention_clears_on_output)
@@ -769,7 +772,7 @@ impl WorkerState {
             .observe_menu_prompt(session, menu_prompt_active, now);
 
         let mut source = ActivitySource::None;
-        let mut status = if self.engine.is_latched(session) {
+        let mut status = if self.engine.is_latched(session) && !screen_authority {
             let mut allow_attention_clear = attention_clears_on_output;
             if allow_attention_clear
                 && self
@@ -2336,6 +2339,42 @@ mod tests {
         assert_eq!(entry.status(), "busy");
         assert_eq!(entry.activity_source, ActivitySource::Screen);
         assert_eq!(entry.outcome, None);
+    }
+
+    #[test]
+    fn a_shim_session_start_does_not_take_a_screen_authority_runtime_from_its_screen() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let row = |screen_activity: &str| {
+            json!({
+                "session": session,
+                "generation": SessionGeneration::FIRST,
+                "live": true,
+                "lifecycle": SessionLifecycle::Running,
+                "screen_activity": screen_activity,
+                "observed_runtime": observation("ai.opencode.cli", 10, 5),
+            })
+        };
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[row(SCREEN_IDLE)]);
+        state.apply_core_event(&json!({
+            "session": session.to_string(),
+            "kind": "ai.session_start",
+            "tool": "opencode",
+            "pid": 10,
+            "hook_payload": {"hook_event_name": "HookSeen"},
+        }));
+
+        for (screen_activity, status) in [
+            (SCREEN_WORKING, "busy"),
+            (SCREEN_BLOCKED, "attention"),
+            (SCREEN_IDLE, "idle"),
+        ] {
+            state.apply_core_snapshot(&[row(screen_activity)]);
+            let entry = state.get(&session).expect("the screen tier projects");
+            assert_eq!(entry.status(), status, "{screen_activity}");
+            assert_eq!(entry.activity_source, ActivitySource::Screen);
+        }
     }
 
     fn hookless_row(session: &SessionId, screen_activity: Option<&str>) -> Value {

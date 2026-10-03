@@ -1,0 +1,52 @@
+paneflow-screen-capture: 1
+state: idle
+runtime: pi
+cols: 120
+rows: 40
+cli: 0.87.1
+paneflow: 0.17.5
+captured: 2026-10-03T15:29:31Z
+title: π - lab-pi
+---
+
+dune /tmp/claude-1000/-home-arthur-dev-paneflow/8c7225e2-38d6-4e0f-b4fa-c8ff242563e7/scratchpad/lab-pi
+› pi
+
+ pi v0.87.1
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Skills]
+  agent-browser, ask-matt, baseline-ui, better-accessibility, better-auth-best-practices,
+better-auth-security-best-practices, better-colors, better-interface, better-layout, better-typography, better-ui,
+better-writing, break, claude-handoff, clerk-cli, code-review, codebase-design, context7-mcp, coss, coss-particles,
+create-auth, diagnosing-bugs, domain-modeling, email-and-password-best-practices, explain-interface, find-docs,
+find-skills, git-guardrails-claude-code, grill-me, grill-with-docs, grilling, handoff, impeccable, implement,
+implement-epic, implement-spec, improve-codebase-architecture, interface-review, loop-me, make-interfaces-feel-better,
+mcp-server-dev, meta-code, meta-debug, migrate-to-shoehorn, neon-cli, oklch-skill, organization-best-practices,
+paneflow-conductor, posthog-cli, pr, prototype, react-doctor, remotion-best-practices, research, resend-cli,
+resolving-merge-conflicts, retro, review-epic, scaffold-exercises, security-review, setup-matt-pocock-skills,
+setup-pre-commit, setup-ts-deep-modules, skill-creator, skill-doctor, tdd, teach, thermo-nuclear-code-quality-review,
+to-questionnaire, to-spec, to-tickets, triage, two-factor-authentication-best-practices, ui-skills-root, ui-ux-pro-max,
+variant, vercel-cli, wait-what, wayfinder, wizard, write-agent-guidance, write-prd, write-release-notes, writing-beats,
+writing-for-agents, writing-fragments, writing-great-skills, writing-shape
+
+[Skill conflicts]
+  "impeccable" collision:
+    ✓ auto (user) ~/.pi/agent/skills/impeccable/SKILL.md
+    ✗ ~/.agents/skills/impeccable/SKILL.md (skipped)
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 1.0.0 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/tmp/claude-1000/-home-arthur-dev-paneflow/8c7225e2-38d6-4e0f-b4fa-c8ff242563e7/scratchpad/lab-pi
+$0.000 (sub) 0.0%/272k (auto)                                                         (openai-codex) gpt-5.6-sol • xhigh

@@ -1,0 +1,50 @@
+paneflow-screen-capture: 1
+state: idle
+runtime: opencode
+cols: 120
+rows: 40
+cli: 1.18.34
+paneflow: 0.17.5
+captured: 2026-10-03T15:29:31Z
+title: OpenCode
+origin: paneflow agent capture on Linux; opencode updated itself to 1.18.34 after launch, the screen shows the 1.18.31 that was running
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                          ▄
+                                         █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                                         █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                                         ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+
+                       ┃
+                       ┃  Ask anything… "Fix a TODO in the codebase"
+                       ┃
+                       ┃  Build · GPT-5.5 OpenAI · xhigh
+                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                                       tab agents  ctrl+p commands
+
+
+
+
+
+
+
+
+
+
+
+
+  /tmp/claude-1000/-home-arthur-dev-paneflow/8c7225e2-38d6-4e0f-b4fa-c8ff242563e7/          ⊙ 1 MCP /status    1.18.31
+  scratchpad/lab-oc

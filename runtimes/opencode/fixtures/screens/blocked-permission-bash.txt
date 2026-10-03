@@ -1,0 +1,50 @@
+paneflow-screen-capture: 1
+state: blocked
+runtime: opencode
+cols: 120
+rows: 40
+cli: 1.18.34
+paneflow: 0.17.5
+captured: 2026-10-03T15:34:01Z
+title: OpenCode
+origin: paneflow agent capture on Linux, opencode with `permission.bash = ask` and a local OpenAI-compatible endpoint that requests `ls -la`, so the screen is its real permission prompt
+---
+
+  ┃
+  ┃  SLOW Explain how you would add input validation to calc.py.
+  ┃
+
+     Step 1: reading the module and weighing how validation should behave. Step 2: reading the module and weighing
+     how validation should behave. Step 3:
+
+     ▣  Build · Fake Model · interrupted
+
+  ┃
+  ┃  Explain how you would add input validation to calc.py.
+  ┃
+
+     I would check that both arguments are numbers with isinstance, raise a TypeError naming the offending argument
+     otherwise, and add a unit test for each rejected type.
+
+     ▣  Build · Fake Model · 1.4s
+
+  ┃
+  ┃  RUNLS List the files of this project.
+  ┃
+
+     $ ls -la
+
+     ▣  Build · Fake Model
+
+
+
+
+  ┃
+  ┃  △ Permission required
+  ┃    # Shell command
+  ┃
+  ┃  $ ls -la
+  ┃
+  ┃
+  ┃   Allow once   Allow always   Reject                                 ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃

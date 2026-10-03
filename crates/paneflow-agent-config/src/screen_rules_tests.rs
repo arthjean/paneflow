@@ -552,6 +552,23 @@ fn the_screen_corpus_classifies_as_its_recorded_baseline() {
     );
 }
 
+#[test]
+fn a_pane_showing_the_cli_help_is_neither_working_nor_blocked() {
+    for slug in ["opencode", "pi", "hermes"] {
+        let path = runtimes_root()
+            .join(slug)
+            .join("fixtures")
+            .join("help-screen.txt");
+        let screen = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let state = verdict(&builtin(slug), &screen);
+        assert!(
+            !matches!(state, Some(ScreenState::Working | ScreenState::Blocked)),
+            "{slug}: the --help screen classifies as {state:?}"
+        );
+    }
+}
+
 const PRE_ENGINE_PATTERNS: &[(&str, &[&str], &[&str])] = &[
     ("claude-code", &["… (", "esc to interrupt"], &["❯"]),
     ("codex", &["esc to interrupt", "• Working"], &["›"]),

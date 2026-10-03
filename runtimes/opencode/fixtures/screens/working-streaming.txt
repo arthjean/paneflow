@@ -1,0 +1,50 @@
+paneflow-screen-capture: 1
+state: working
+runtime: opencode
+cols: 120
+rows: 40
+cli: 1.18.34
+paneflow: 0.17.5
+captured: 2026-10-03T15:32:17Z
+title: OpenCode
+origin: paneflow agent capture on Linux, opencode pointed at a local OpenAI-compatible endpoint that streams slowly, never answers, or requests a shell tool call, so the screen is the real CLI waiting on a model
+---
+
+  ┃
+  ┃  SLOW Explain how you would add input validation to calc.py.
+  ┃
+
+     Step 1: reading the module and weighing how validation should behave. Step 2: reading the module
+
+     ▣  Build · Fake Model
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Fake Model Lab
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ■■■■■■⬝⬝  esc interrupt                                                                 tab agents  ctrl+p commands

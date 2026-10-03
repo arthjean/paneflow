@@ -20,14 +20,14 @@ strip_inherited = []
 
 [lifecycle]
 source = "hooks"
-authority = "none"
-fallback = "none"
+authority = "screen"
+fallback = "screen"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
 
 [integration]
-summary = "Pi reports turn activity through the Paneflow status extension; its stream is not a lifecycle authority."
+summary = "Pi turn status is read from its screen."
 hook_adapter = "none"
 
 [resume]

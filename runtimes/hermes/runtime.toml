@@ -20,14 +20,14 @@ strip_inherited = []
 
 [lifecycle]
 source = "output"
-authority = "none"
-fallback = "none"
+authority = "screen"
+fallback = "screen"
 escape_cancels_turn = false
 attention_clears_on_output = true
 anchor_start_event_to_output = true
 
 [integration]
-summary = "Hermes Agent is detected from its process; Paneflow reads no turn status from it."
+summary = "Hermes Agent turn status is read from its screen."
 hook_adapter = "none"
 
 [[suggested_presets]]

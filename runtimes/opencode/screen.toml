@@ -1,0 +1,23 @@
+engine = 2
+
+[[rules]]
+id = "permission-prompt"
+state = "blocked"
+priority = 30
+region = "last:15"
+any = ['△ Permission required', '⇆ select\s+enter confirm']
+visible_blocker = true
+
+[[rules]]
+id = "working-interrupt-hint"
+state = "working"
+priority = 20
+region = "last:3"
+any = ['\besc interrupt\b']
+
+[[rules]]
+id = "idle-prompt"
+state = "idle"
+priority = 10
+region = "last:3"
+any = ['\bctrl\+p\b']

@@ -1,0 +1,23 @@
+engine = 2
+
+[[rules]]
+id = "approval-selector"
+state = "blocked"
+priority = 30
+region = "last:8"
+any = ['↑/↓ to select, Enter to confirm', '(?m)^⚠ ❯']
+visible_blocker = true
+
+[[rules]]
+id = "working-interrupt-prompt"
+state = "working"
+priority = 20
+region = "last:4"
+any = ['(?m)^⚕ ❯', 'msg=interrupt', 'Ctrl\+C cancel']
+
+[[rules]]
+id = "idle-prompt"
+state = "idle"
+priority = 10
+region = "last:4"
+any = ['(?m)^❯', '│ ⏲ \d']

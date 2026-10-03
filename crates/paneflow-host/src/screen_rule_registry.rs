@@ -284,7 +284,7 @@ mod tests {
             state_of(&registry, "claude-code", "✻ Levitating… (1m 52s)\n❯"),
             Some(ScreenState::Working)
         );
-        assert!(registry.rules_for("pi").is_none());
+        assert!(registry.rules_for("amp").is_none());
     }
 
     #[test]

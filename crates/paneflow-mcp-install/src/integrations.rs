@@ -1172,7 +1172,7 @@ mod tests {
                 .expect("opencode")
                 .lifecycle
                 .authority,
-            RuntimeLifecycleAuthority::None
+            RuntimeLifecycleAuthority::Screen
         );
     }
 

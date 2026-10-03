@@ -53,37 +53,49 @@
       }
     },
     "hermes": {
-      "accuracy": null,
-      "captures": 0,
-      "correct": 0,
-      "missing_states": [
-        "working",
-        "idle",
-        "blocked"
-      ],
-      "verdicts": {}
+      "accuracy": 1.0,
+      "captures": 7,
+      "correct": 7,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-dangerous-command.txt": "blocked",
+        "idle-after-auth-error.txt": "idle",
+        "idle-after-cancel.txt": "idle",
+        "idle-after-turn.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-initializing.txt": "working",
+        "working-waiting.txt": "working"
+      }
     },
     "opencode": {
-      "accuracy": null,
-      "captures": 0,
-      "correct": 0,
-      "missing_states": [
-        "working",
-        "idle",
-        "blocked"
-      ],
-      "verdicts": {}
+      "accuracy": 1.0,
+      "captures": 7,
+      "correct": 7,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-permission-bash.txt": "blocked",
+        "idle-after-auth-error.txt": "idle",
+        "idle-after-cancel.txt": "idle",
+        "idle-after-turn.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-streaming.txt": "working",
+        "working-waiting.txt": "working"
+      }
     },
     "pi": {
-      "accuracy": null,
-      "captures": 0,
-      "correct": 0,
-      "missing_states": [
-        "working",
-        "idle",
-        "blocked"
-      ],
-      "verdicts": {}
+      "accuracy": 1.0,
+      "captures": 7,
+      "correct": 7,
+      "missing_states": [],
+      "verdicts": {
+        "blocked-project-trust.txt": "blocked",
+        "idle-after-auth-error.txt": "idle",
+        "idle-after-cancel.txt": "idle",
+        "idle-after-turn.txt": "idle",
+        "idle-fresh-session.txt": "idle",
+        "working-streaming.txt": "working",
+        "working-waiting.txt": "working"
+      }
     }
   }
 }

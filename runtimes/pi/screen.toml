@@ -1,0 +1,23 @@
+engine = 2
+
+[[rules]]
+id = "selector-footer"
+state = "blocked"
+priority = 30
+region = "last:8"
+all = ['↑↓ navigate', '\benter select\b']
+visible_blocker = true
+
+[[rules]]
+id = "working-loader"
+state = "working"
+priority = 20
+region = "last:6"
+any = ['(?m)^── \S+ Working']
+
+[[rules]]
+id = "idle-editor"
+state = "idle"
+priority = 10
+region = "last:2"
+any = ['\d+(?:\.\d+)?%/\d+[kM]\b']

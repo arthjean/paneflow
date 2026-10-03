@@ -48,7 +48,7 @@ A runtime whose turns Paneflow reads from the screen ships `runtimes/<slug>/scre
 - `visible_blocker = true` on a `blocked` rule marks a prompt the user must answer; it raises attention and needs two consecutive misses to clear
 - `disabled = true` in an override file removes the rule with that id
 
-The host scans every 500 ms and evaluates only the rules of the pane's foreground runtime, or of the runtime its hooks declared. A `blocked` verdict keeps the last steady state for activity.
+The host scans every 500 ms and evaluates only the rules of the pane's foreground runtime, or of the runtime its hooks declared. A `blocked` verdict keeps the last steady state for activity. For a runtime with `authority = "screen"`, the screen verdict owns the pane's status even after a hook arrives, such as the session announcement of its PATH shim.
 
 Rules are layered by id: `~/.paneflow/runtimes/<slug>/screen.toml` (the local override, reloaded within a second of an edit) over the signed remote catalog over the built-in file. An override entry with an existing id replaces the rule, `disabled = true` removes it, and a new id adds one. An invalid override keeps the previous rules and reports the error.
 

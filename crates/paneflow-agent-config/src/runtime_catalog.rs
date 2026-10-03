@@ -387,7 +387,16 @@ mod tests {
         assert!(!grok.lifecycle.attention_clears_on_output);
         assert!(!grok.lifecycle.anchor_start_event_to_output);
 
-        for slug in ["pi", "antigravity", "deepseek-harness"] {
+        for slug in ["opencode", "pi", "hermes"] {
+            let runtime = runtime_by_slug(slug).expect("runtime");
+            assert_eq!(
+                runtime.lifecycle.authority,
+                RuntimeLifecycleAuthority::Screen
+            );
+            assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
+        }
+
+        for slug in ["antigravity", "deepseek-harness"] {
             let runtime = runtime_by_slug(slug).expect("runtime");
             assert_eq!(runtime.lifecycle.authority, RuntimeLifecycleAuthority::None);
             assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::None);

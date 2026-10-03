@@ -583,7 +583,7 @@ mod tests {
             observe(&mut tracker, working, None, Some("claude"), 1_000).screen_activity,
             Some("working".to_string())
         );
-        let cleared = observe(&mut tracker, working, None, Some("pi"), 2_500);
+        let cleared = observe(&mut tracker, working, None, Some("amp"), 2_500);
         assert_eq!(cleared.screen_activity, None);
         assert!(cleared.write_due);
 
