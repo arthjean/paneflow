@@ -126,7 +126,9 @@ mod tests {
                 UUID,
                 &config
             ),
-            Some(format!("codex fork {UUID}"))
+            Some(format!(
+                "codex -c check_for_update_on_startup=false fork {UUID}"
+            ))
         );
         assert_eq!(
             conversation_command(

@@ -471,8 +471,26 @@ mod tests {
         );
         let codex = runtime_resume("com.openai.codex").expect("codex resume");
         assert_eq!(
+            codex.session_argv,
+            &[
+                "codex",
+                "-c",
+                "check_for_update_on_startup=false",
+                "resume",
+                SESSION_ID_PLACEHOLDER
+            ][..]
+        );
+        assert_eq!(
             codex.fork_argv,
-            Some(&["codex", "fork", SESSION_ID_PLACEHOLDER][..])
+            Some(
+                &[
+                    "codex",
+                    "-c",
+                    "check_for_update_on_startup=false",
+                    "fork",
+                    SESSION_ID_PLACEHOLDER
+                ][..]
+            )
         );
     }
 
