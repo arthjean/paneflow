@@ -474,7 +474,7 @@ impl SessionRuntime {
         self.generation
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
     fn tracked_descendants(&self) -> usize {
         self.shared.tracked_descendants.load(Ordering::Acquire)
     }
