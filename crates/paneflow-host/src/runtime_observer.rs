@@ -611,9 +611,11 @@ mod platform {
         session_leader_pid: u32,
         _foreground_process_group: Option<i32>,
     ) -> Option<ForegroundJob> {
-        let entries = crate::process::windows_process_entries_named().ok()?;
+        let listing =
+            crate::process_listing::shared().recent(crate::process_listing::LISTING_INTERVAL * 2);
+        let entries = listing.entries.as_ref().as_ref().ok()?;
         let mut processes = Vec::new();
-        for entry in descendants(session_leader_pid, &entries) {
+        for entry in descendants(session_leader_pid, entries) {
             let started_at = crate::process::process_start_time(entry.pid);
             if started_at.is_none() {
                 continue;

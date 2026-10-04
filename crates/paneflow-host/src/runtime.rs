@@ -4,7 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use paneflow_config::schema::SessionGeneration;
@@ -13,6 +13,7 @@ use portable_pty::{CommandBuilder, PtySize};
 
 use crate::host::{CellSize, SessionAppearance};
 use crate::process::ProcessIdentity;
+use crate::process_listing::{LISTING_INTERVAL, ListingSlot};
 use crate::protocol::{MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
 use crate::stream::OutputStream;
 
@@ -23,7 +24,6 @@ const CONTROL_QUEUE_SLOTS: usize = 64;
 const INPUT_QUEUE_SLOTS: usize = 64;
 pub const MAX_INPUT_QUEUE_BYTES: usize = 2 * 1024 * 1024;
 const QUEUE_RETRY: Duration = Duration::from_millis(5);
-const PROCESS_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const DESCENDANT_RECONCILE_MIN: Duration = Duration::from_millis(100);
 const DESCENDANT_RECONCILE_MAX: Duration = Duration::from_secs(1);
 pub const BELL_SIGNAL_INTERVAL_MS: u64 = 2_000;
@@ -186,6 +186,7 @@ enum Message {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     RootExiting(SyncSender<()>),
     Command(Command),
+    ProcessListing,
 }
 
 #[derive(Default)]
@@ -296,6 +297,8 @@ struct Shared {
     input_at_ms: AtomicU64,
     stream: Arc<OutputStream>,
     inbox: PtyInbox,
+    #[cfg(test)]
+    tracked_descendants: AtomicUsize,
 }
 
 impl Shared {
@@ -312,6 +315,8 @@ impl Shared {
             input_at_ms: AtomicU64::new(0),
             stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
             inbox: PtyInbox::default(),
+            #[cfg(test)]
+            tracked_descendants: AtomicUsize::new(0),
         })
     }
 
@@ -338,14 +343,14 @@ impl Shared {
 }
 
 pub struct SessionRuntime {
-    tx: SyncSender<Message>,
+    tx: Arc<SyncSender<Message>>,
     shared: Arc<Shared>,
     generation: SessionGeneration,
     process: ProcessIdentity,
 }
 
 pub struct LaunchHandle {
-    tx: SyncSender<Message>,
+    tx: Arc<SyncSender<Message>>,
     shared: Arc<Shared>,
     generation: SessionGeneration,
     startup_rx: Receiver<Result<ProcessIdentity, String>>,
@@ -415,13 +420,18 @@ impl SessionRuntime {
         let shared = Shared::new();
         let thread_shared = Arc::clone(&shared);
         let thread_tx = tx.clone();
+        let tx = Arc::new(tx);
+        let listing_wake = Arc::downgrade(&tx);
         std::thread::Builder::new()
             .name("paneflow-host-session".into())
             .spawn(move || {
                 run(
                     spec,
                     generation,
-                    thread_tx,
+                    SessionSenders {
+                        tx: thread_tx,
+                        listing_wake,
+                    },
                     rx,
                     thread_shared,
                     observer,
@@ -462,6 +472,11 @@ impl SessionRuntime {
 
     pub fn generation(&self) -> SessionGeneration {
         self.generation
+    }
+
+    #[cfg(test)]
+    fn tracked_descendants(&self) -> usize {
+        self.shared.tracked_descendants.load(Ordering::Acquire)
     }
 
     pub fn process(&self) -> ProcessIdentity {
@@ -702,7 +717,9 @@ struct Session {
     generation: SessionGeneration,
     observer: RuntimeObserver,
     shared: Arc<Shared>,
-    next_process_scan: Option<Instant>,
+    listing_slot: ListingSlot,
+    listing_check_at: Option<Instant>,
+    listing_wake: Weak<SyncSender<Message>>,
     reconcile_at: Option<Instant>,
     reconcile_backoff: Duration,
     drain_deadline: Option<Instant>,
@@ -714,16 +731,22 @@ struct Session {
     completed: bool,
 }
 
+struct SessionSenders {
+    tx: SyncSender<Message>,
+    listing_wake: Weak<SyncSender<Message>>,
+}
+
 fn run(
     spec: SpawnSpec,
     generation: SessionGeneration,
-    tx: SyncSender<Message>,
+    senders: SessionSenders,
     rx: Receiver<Message>,
     shared: Arc<Shared>,
     observer: RuntimeObserver,
     startup_tx: SyncSender<Result<ProcessIdentity, String>>,
 ) {
-    let mut session = match start(spec, generation, tx, &shared, observer) {
+    let SessionSenders { tx, listing_wake } = senders;
+    let mut session = match start(spec, generation, tx, listing_wake, &shared, observer) {
         Ok(session) => session,
         Err(reason) => {
             let _ = startup_tx.send(Err(reason));
@@ -790,7 +813,7 @@ fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
                 let _ = ack.send(());
             }
             Ok(Message::Command(command)) => session.handle(command),
-            Err(RecvTimeoutError::Timeout) => {}
+            Ok(Message::ProcessListing) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 disconnected = true;
                 if session.finished() {
@@ -916,6 +939,7 @@ fn start(
     spec: SpawnSpec,
     generation: SessionGeneration,
     tx: SyncSender<Message>,
+    listing_wake: Weak<SyncSender<Message>>,
     shared: &Arc<Shared>,
     observer: RuntimeObserver,
 ) -> Result<Session, String> {
@@ -966,7 +990,9 @@ fn start(
         generation,
         observer,
         shared: Arc::clone(shared),
-        next_process_scan: Some(Instant::now()),
+        listing_slot: ListingSlot::default(),
+        listing_check_at: None,
+        listing_wake,
         reconcile_at: None,
         reconcile_backoff: DESCENDANT_RECONCILE_MIN,
         drain_deadline: None,
@@ -977,6 +1003,7 @@ fn start(
         unobserved_exit: false,
         completed: false,
     };
+    session.request_listing(Instant::now());
     #[cfg(test)]
     let fail_wait = spec.env.contains_key("PANEFLOW_TEST_WAIT_FAILURE");
     #[cfg(not(test))]
@@ -1129,7 +1156,7 @@ impl Session {
             earliest([Some(stop.deadline), force, poll]).unwrap_or(stop.deadline)
         });
         earliest([
-            self.next_process_scan,
+            self.listing_check_at,
             self.reconcile_at,
             self.drain_deadline,
             self.tail_release_at,
@@ -1159,8 +1186,8 @@ impl Session {
         self.shared
             .output_changed_at_ms
             .store(crate::manifest::now_ms(), Ordering::Release);
-        if self.next_process_scan.is_none() && self.exit.is_none() {
-            self.next_process_scan = Some(Instant::now() + PROCESS_SCAN_INTERVAL);
+        if self.listing_check_at.is_none() && self.exit.is_none() {
+            self.request_listing(Instant::now() + LISTING_INTERVAL);
         }
         let Some(terminal) = self.terminal.as_mut() else {
             return;
@@ -1371,14 +1398,39 @@ impl Session {
         }
     }
 
+    fn request_listing(&mut self, due: Instant) {
+        self.listing_check_at = Some(due + LISTING_INTERVAL);
+        let wake = self.listing_wake.clone();
+        crate::process_listing::shared().request(due, Arc::clone(&self.listing_slot), move || {
+            if let Some(tx) = wake.upgrade() {
+                let _ = tx.try_send(Message::ProcessListing);
+            }
+        });
+    }
+
+    fn apply_shared_listing(&mut self, now: Instant) {
+        let Some(check_at) = self.listing_check_at else {
+            return;
+        };
+        let Some(listing) = crate::process_listing::take(&self.listing_slot) else {
+            if now >= check_at {
+                self.listing_check_at = Some(now + LISTING_INTERVAL);
+            }
+            return;
+        };
+        self.listing_check_at = None;
+        if self.exit.is_none() {
+            self.process_tree.discover_from(&listing.entries);
+            #[cfg(test)]
+            self.shared
+                .tracked_descendants
+                .store(self.process_tree.tracked(), Ordering::Release);
+        }
+    }
+
     fn advance(&mut self) {
         let now = Instant::now();
-        if self.next_process_scan.is_some_and(|at| now >= at) {
-            self.next_process_scan = None;
-            if self.exit.is_none() {
-                self.process_tree.discover();
-            }
-        }
+        self.apply_shared_listing(now);
         if self.reconcile_at.is_some_and(|at| now >= at) {
             self.reconcile_at = None;
             self.reconcile_descendants();
@@ -1462,7 +1514,7 @@ impl Session {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
         self.writer = None;
-        self.next_process_scan = None;
+        self.listing_check_at = None;
         self.release_master();
         if !self.reader_eof {
             self.drain_deadline = Some(Instant::now() + FINAL_DRAIN_BUDGET);
@@ -2206,6 +2258,29 @@ mod tests {
         assert_eq!(report.exit, None);
         assert!(report.unverified.is_some(), "{report:?}");
         assert!(!runtime.process().is_provably_live());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_short_lived_descendant_is_discovered_within_a_second_of_its_output() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.args = vec![
+            "-c".into(),
+            "sleep 1; sleep 30 & echo descendant-born; sleep 2; kill $!; wait; sleep 1".into(),
+        ];
+        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("shell spawns");
+        wait_for_output(&runtime, "descendant-born", 0);
+        let seen_at = Instant::now();
+        assert!(
+            wait_until(Duration::from_millis(1_000), || runtime
+                .tracked_descendants()
+                >= 1),
+            "the descendant was not discovered within 1000 ms of its output"
+        );
+        assert!(seen_at.elapsed() < Duration::from_millis(1_000));
+        let report = runtime.stop().expect("stop answers");
+        assert_eq!(report.descendants_unresolved, 0, "{report:?}");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

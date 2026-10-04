@@ -212,6 +212,22 @@ pub fn verified_process_group(child_pid: u32) -> Option<i32> {
 }
 
 #[cfg(unix)]
+pub(crate) type SystemEntries = Vec<(ProcessIdentity, u32, i32)>;
+
+#[cfg(windows)]
+pub(crate) type SystemEntries = Vec<WindowsProcessEntry>;
+
+#[cfg(unix)]
+pub(crate) fn list_system_processes() -> io::Result<SystemEntries> {
+    unix_process_entries()
+}
+
+#[cfg(windows)]
+pub(crate) fn list_system_processes() -> io::Result<SystemEntries> {
+    windows_process_entries_named()
+}
+
+#[cfg(unix)]
 pub(crate) struct UnixProcessTreeOwner {
     root: ProcessIdentity,
     group: Option<i32>,
@@ -325,12 +341,24 @@ impl UnixProcessTreeOwner {
         self.root.is_provably_live()
     }
 
+    fn root_is_identified(&self) -> bool {
+        self.root.pid != 0 && self.root.started_at.is_some()
+    }
+
     pub(crate) fn discover(&mut self) {
-        if self.root.pid == 0 || self.root.started_at.is_none() {
+        if !self.root_is_identified() {
             self.snapshot_failed = true;
             return;
         }
-        let entries = match unix_process_entries() {
+        self.discover_from(&unix_process_entries());
+    }
+
+    pub(crate) fn discover_from(&mut self, listing: &io::Result<SystemEntries>) {
+        if !self.root_is_identified() {
+            self.snapshot_failed = true;
+            return;
+        }
+        let entries = match listing {
             Ok(entries) => entries,
             Err(_) => {
                 self.snapshot_failed = true;
@@ -350,7 +378,7 @@ impl UnixProcessTreeOwner {
         }
         loop {
             let before = self.descendants.len();
-            for (identity, parent, group) in &entries {
+            for (identity, parent, group) in entries {
                 if identity.pid == self.root.pid || self.descendants.contains(identity) {
                     continue;
                 }
@@ -382,6 +410,11 @@ impl UnixProcessTreeOwner {
         self.descendants
             .retain(|identity| identity.verify() != ProcessVerdict::Gone);
         self.descendants.len() + usize::from(self.snapshot_failed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked(&self) -> usize {
+        self.descendants.len()
     }
 
     #[cfg(target_os = "macos")]
@@ -807,6 +840,27 @@ impl WindowsProcessTreeOwner {
     pub(crate) fn discover(&mut self) {
         match windows_process_entries() {
             Ok(entries) => self.discover_in(&entries),
+            Err(_) => self.snapshot_failed = true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked(&self) -> usize {
+        self.handles
+            .iter()
+            .filter(|process| process.identity != self.root)
+            .count()
+    }
+
+    pub(crate) fn discover_from(&mut self, listing: &io::Result<SystemEntries>) {
+        match listing {
+            Ok(entries) => {
+                let links: Vec<(u32, u32)> = entries
+                    .iter()
+                    .map(|entry| (entry.pid, entry.parent_pid))
+                    .collect();
+                self.discover_in(&links);
+            }
             Err(_) => self.snapshot_failed = true,
         }
     }
@@ -1335,6 +1389,24 @@ mod tests {
         assert_eq!(owner.unresolved(), 0);
         assert!(!descendant.is_provably_live());
         child.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_shared_listing_marks_the_snapshot_failed_until_a_good_one_arrives() {
+        let mut owner = UnixProcessTreeOwner::new(ProcessIdentity::capture(std::process::id()));
+        owner.discover_from(&Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "/proc is unreadable",
+        )));
+        assert_eq!(owner.unresolved(), 1, "a failed listing stays unresolved");
+        owner.discover_from(&list_system_processes());
+        let unresolved = owner.unresolved();
+        assert_eq!(
+            unresolved,
+            owner.tracked(),
+            "a good listing clears the failure"
+        );
     }
 
     #[test]

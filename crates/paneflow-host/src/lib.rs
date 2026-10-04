@@ -24,6 +24,7 @@ pub mod maintenance;
 pub mod manifest;
 pub mod persistence;
 pub mod process;
+mod process_listing;
 pub mod protocol;
 pub mod pty;
 pub mod runtime;
