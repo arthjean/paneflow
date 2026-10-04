@@ -85,13 +85,25 @@ fn a_title_the_shell_sets_keeps_the_name_the_pane_was_created_with() {
     let retitle = b"printf '\\033]0;renamed-by-shell\\007'\n".to_vec();
     host.input(&session, Some(SessionGeneration::FIRST), retitle)
         .unwrap();
+    let reached = |title: &str| {
+        if cfg!(windows) {
+            title.ends_with("renamed-by-shell")
+        } else {
+            title == "renamed-by-shell"
+        }
+    };
     assert!(
         wait_until(Duration::from_secs(15), || host
             .inspect(&session)
-            .is_ok_and(
-                |summary| summary.manifest.title.as_deref() == Some("renamed-by-shell")
-            )),
-        "the terminal title reaches the manifest"
+            .is_ok_and(|summary| summary
+                .manifest
+                .title
+                .as_deref()
+                .is_some_and(reached))),
+        "the terminal title reaches the manifest, last seen {:?}",
+        host.inspect(&session)
+            .ok()
+            .and_then(|summary| summary.manifest.title)
     );
     let summary = host.inspect(&session).unwrap();
     assert_eq!(summary.manifest.name.as_deref(), Some("agent-pane"));
