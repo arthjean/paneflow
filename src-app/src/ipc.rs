@@ -143,7 +143,10 @@ pub fn start_server() -> (
 
     if !multiple_instances_allowed(std::env::var("PANEFLOW_ALLOW_MULTIPLE").ok().as_deref())
         && let Some(socket_spec) = socket_path_spec()
-        && let Some(info) = detect_existing_instance(&socket_spec.path)
+        && let Some(info) = singleton_refusal(
+            claim_instance(&socket_spec),
+            detect_existing_instance(&socket_spec.path),
+        )
     {
         eprintln!(
             "paneflow: another Paneflow instance is already running on {}.\n\
@@ -189,6 +192,8 @@ pub fn start_server() -> (
 
             #[cfg(unix)]
             let mut our_ino = socket_inode(&socket_path).unwrap_or(0);
+            #[cfg(unix)]
+            remember_own_socket(&socket_path, our_ino);
             #[cfg(unix)]
             let mut last_health_check = std::time::Instant::now();
             #[cfg(unix)]
@@ -265,6 +270,7 @@ pub fn start_server() -> (
                                 l.set_nonblocking(ListenerNonblockingMode::Accept).ok();
                                 listener = l;
                                 our_ino = socket_inode(&socket_path).unwrap_or(0);
+                                remember_own_socket(&socket_path, our_ino);
                             }
                             None => {
                                 thread_status.disable();
@@ -477,6 +483,115 @@ fn socket_inode(path: &std::path::Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.ino())
 }
 
+const IDENTIFY_ATTEMPTS: usize = if cfg!(windows) { 3 } else { 1 };
+
+const IDENTIFY_REPLY_TIMEOUT: Duration = Duration::from_millis(300);
+
+const INSTANCE_STARTING: &str = "another instance holds the startup lock and is still starting";
+
+#[derive(Debug)]
+#[cfg_attr(
+    not(unix),
+    allow(
+        dead_code,
+        reason = "only the Unix instance lock claims or finds a held lock"
+    )
+)]
+enum InstanceClaim {
+    Claimed,
+    HeldElsewhere,
+    Unavailable,
+}
+
+fn singleton_refusal(claim: InstanceClaim, existing: Option<String>) -> Option<String> {
+    match (existing, claim) {
+        (Some(info), _) => Some(info),
+        (None, InstanceClaim::HeldElsewhere) => Some(INSTANCE_STARTING.to_string()),
+        (None, InstanceClaim::Claimed | InstanceClaim::Unavailable) => None,
+    }
+}
+
+#[cfg(unix)]
+fn claim_instance(socket_spec: &paneflow_home::IpcEndpoint) -> InstanceClaim {
+    static HELD: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+    if !prepare_socket_parent(socket_spec) {
+        return InstanceClaim::Unavailable;
+    }
+    match try_claim_instance_lock(&instance_lock_path(&socket_spec.path)) {
+        Ok(Some(lock)) => {
+            let _ = HELD.set(lock);
+            InstanceClaim::Claimed
+        }
+        Ok(None) => InstanceClaim::HeldElsewhere,
+        Err(error) => {
+            log::warn!(
+                "singleton guard: cannot take the instance lock next to {} ({error})",
+                socket_spec.path.display()
+            );
+            InstanceClaim::Unavailable
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn claim_instance(_socket_spec: &paneflow_home::IpcEndpoint) -> InstanceClaim {
+    InstanceClaim::Unavailable
+}
+
+#[cfg(unix)]
+fn instance_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    let mut path = socket_path.as_os_str().to_os_string();
+    path.push(".lock");
+    std::path::PathBuf::from(path)
+}
+
+#[cfg(unix)]
+fn try_claim_instance_lock(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(Some(lock)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn own_socket() -> &'static std::sync::Mutex<Option<(std::path::PathBuf, u64)>> {
+    static OWN: std::sync::OnceLock<std::sync::Mutex<Option<(std::path::PathBuf, u64)>>> =
+        std::sync::OnceLock::new();
+    OWN.get_or_init(Default::default)
+}
+
+#[cfg(unix)]
+fn remember_own_socket(path: &std::path::Path, inode: u64) {
+    *own_socket()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((path.to_path_buf(), inode));
+}
+
+pub(crate) fn release_own_socket() {
+    #[cfg(unix)]
+    {
+        let held = own_socket()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((path, inode)) = held
+            && socket_inode(&path) == Some(inode)
+        {
+            let _ = remove_socket_file_if_socket(&path, "quit cleanup");
+        }
+    }
+}
+
 fn detect_existing_instance(socket_path: &std::path::Path) -> Option<String> {
     #[cfg(unix)]
     if !socket_path.exists() {
@@ -485,19 +600,24 @@ fn detect_existing_instance(socket_path: &std::path::Path) -> Option<String> {
 
     let name = socket_path.to_fs_name::<GenericFilePath>().ok()?;
 
-    for attempt in 0..3 {
+    for attempt in 0..IDENTIFY_ATTEMPTS {
         if attempt > 0 {
             std::thread::sleep(Duration::from_millis(70));
         }
 
         let mut stream = match Stream::connect(name.clone()) {
             Ok(stream) => stream,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || (cfg!(unix) && error.kind() == std::io::ErrorKind::ConnectionRefused) =>
+            {
+                return None;
+            }
             Err(_) => continue,
         };
 
         if stream
-            .set_recv_timeout(Some(Duration::from_millis(300)))
+            .set_recv_timeout(Some(IDENTIFY_REPLY_TIMEOUT))
             .is_err()
         {
             continue;
@@ -1459,8 +1579,142 @@ mod framing_tests {
 
 #[cfg(test)]
 mod singleton_guard_tests {
-    use super::detect_existing_instance;
+    use super::{InstanceClaim, detect_existing_instance, singleton_refusal};
     use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    fn socket_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("pf-ipc")
+            .tempdir_in("/tmp")
+            .expect("short socket dir")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_socket_is_reported_at_once_without_retry_sleeps() {
+        let dir = socket_dir();
+        let path = dir.path().join("stale.sock");
+        drop(std::os::unix::net::UnixListener::bind(&path).expect("bind"));
+        assert!(
+            path.exists(),
+            "the closed listener leaves its socket file behind"
+        );
+        let mut samples: Vec<Duration> = (0..20)
+            .map(|_| {
+                let started = Instant::now();
+                assert!(detect_existing_instance(&path).is_none());
+                started.elapsed()
+            })
+            .collect();
+        samples.sort();
+        let p95 = samples[samples.len() * 95 / 100 - 1];
+        assert!(
+            p95 <= Duration::from_millis(5),
+            "p95 {p95:?} on a stale socket"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_live_paneflow_answer_refuses_the_second_instance() {
+        use std::io::{BufRead, Write};
+        let dir = socket_dir();
+        let path = dir.path().join("live.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut reader = std::io::BufReader::new(stream.try_clone().expect("clone"));
+            let mut request = String::new();
+            reader.read_line(&mut request).expect("request");
+            let mut stream = stream;
+            stream
+                .write_all(b"{\"jsonrpc\":\"2.0\",\"result\":{\"app\":\"PaneFlow\"},\"id\":1}\n")
+                .expect("reply");
+        });
+        let info = detect_existing_instance(&path).expect("a live instance answers");
+        assert!(info.contains("\"PaneFlow\""));
+        assert_eq!(
+            singleton_refusal(InstanceClaim::Claimed, Some(info.clone())),
+            Some(info)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_listener_that_never_answers_is_settled_within_350_ms() {
+        let dir = socket_dir();
+        let path = dir.path().join("silent.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let held = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            std::thread::sleep(Duration::from_secs(1));
+            drop(stream);
+        });
+        let started = Instant::now();
+        assert!(detect_existing_instance(&path).is_none());
+        assert!(
+            started.elapsed() <= Duration::from_millis(350),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(singleton_refusal(InstanceClaim::Claimed, None), None);
+        held.join().expect("silent listener");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_launches_racing_for_the_instance_lock_let_exactly_one_continue() {
+        let dir = socket_dir();
+        let lock = super::instance_lock_path(&dir.path().join("race.sock"));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let launches: Vec<_> = (0..2)
+            .map(|_| {
+                let lock = lock.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    super::try_claim_instance_lock(&lock).expect("lock file")
+                })
+            })
+            .collect();
+        let claims: Vec<_> = launches
+            .into_iter()
+            .map(|launch| launch.join().expect("launch"))
+            .collect();
+        assert_eq!(claims.iter().filter(|claim| claim.is_some()).count(), 1);
+        assert_eq!(
+            singleton_refusal(InstanceClaim::HeldElsewhere, None).as_deref(),
+            Some(super::INSTANCE_STARTING)
+        );
+        drop(claims);
+        assert!(
+            super::try_claim_instance_lock(&lock)
+                .expect("lock file")
+                .is_some(),
+            "an exited instance never leaves a stale lock"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quitting_removes_only_the_socket_this_instance_bound() {
+        let dir = socket_dir();
+        let path = dir.path().join("own.sock");
+        let listener = super::bind_socket(&path).expect("bind");
+        super::remember_own_socket(&path, super::socket_inode(&path).expect("inode"));
+        super::release_own_socket();
+        assert!(!path.exists(), "a normal quit removes the desktop socket");
+        drop(listener);
+
+        let ours = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        super::remember_own_socket(&path, super::socket_inode(&path).expect("inode"));
+        std::fs::remove_file(&path).expect("unlink");
+        let _successor = std::os::unix::net::UnixListener::bind(&path).expect("successor");
+        drop(ours);
+        super::release_own_socket();
+        assert!(path.exists(), "a successor's socket survives this quit");
+    }
 
     #[test]
     fn absent_endpoint_is_reported_without_retry_sleeps() {
