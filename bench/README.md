@@ -304,11 +304,27 @@ reported with the desktop log tail and the elapsed time and concludes "not
 validated" instead of measuring an absent render. Counters whose coefficient of
 variation exceeds 10 % will not be gated in absolute terms.
 
-Result: pending. The workflow has not run yet; the server kept, the
-installation time, the total job time and the unstable counters are recorded
-here after the first dispatch. If the hypothesis is not validated, the
-alternatives are counting inside `TestAppContext` or a third-party runner, and
-US-013 is marked `BLOCKED` with that reason.
+Result on 2026-10-04: **validated** on both servers, with Mesa lavapipe
+(`llvmpipe`, Vulkan 1.4) as the only adapter. The deciding run is
+[37198169856](https://github.com/arthjean/paneflow/actions/runs/37198169856)
+at `83fe98b4`, with the release build restored from the `perf-spike-` cache:
+
+| Server | Job | Installation | Cached build | Measurement | First frame | Idle `root_renders` per 30 s | Thinking | 4 streams |
+|---|---|---|---|---|---|---|---|---|
+| Xvfb | 13 min 53 s | 18 s | 5 min 13 s | 7 min 41 s | 1.4 s | 16 to 17 | 625 to 626 | 875 to 903 |
+| sway headless | 14 min 59 s | 17 s | 6 min 21 s | 7 min 42 s | 2.5 s | 29 to 30 | 727 to 747 | 620 to 625 |
+
+The server kept for US-013 is **Xvfb**: the shorter job, a first frame under
+2 s, and no compositor or runtime directory to manage; sway headless sits at
+the 15 min limit. No counter exceeded a 10 % coefficient of variation in this
+run or in the previous one,
+[37196774824](https://github.com/arthjean/paneflow/actions/runs/37196774824),
+whose cold build made each job last 21 to 23 min. The idle desktop still
+renders the root view once or twice per 2 s worker sweep (15 snapshots applied
+and 15 `session.list` calls per window), and one thinking agent drives about
+21 root renders per second under Xvfb: these are the regressions US-004 and
+US-008 remove. A spike that is not validated would have proposed counting
+inside `TestAppContext` or a third-party runner and blocked US-013.
 
 ## Terminal suite
 
