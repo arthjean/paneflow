@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$SetBaseline,
+    [switch]$Active,
     [switch]$WithWorker,
     [switch]$WithDesktop,
     [switch]$NoFollowers,
@@ -20,8 +21,9 @@ $dirty = if ((git status --porcelain --untracked-files=no | Measure-Object).Coun
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 New-Item -ItemType Directory -Force -Path "bench/results" | Out-Null
 $root = (Get-Location).Path
-$suite = if ($Endurance -gt 0) { "persistent-endurance" } else { "persistent" }
-$test = if ($Endurance -gt 0) { "persistent_session_endurance" } else { "persistent_session_baseline" }
+$suite = if ($Endurance -gt 0) { "persistent-endurance" } elseif ($Active) { "persistent-active" } else { "persistent" }
+$test = if ($Endurance -gt 0) { "persistent_session_endurance" } elseif ($Active) { "persistent_session_active" } else { "persistent_session_baseline" }
+$baseline = if ($Active) { "bench/persistent-active-baseline.json" } else { "bench/persistent-baseline.json" }
 $out = Join-Path $root "bench/results/$suite-$stamp-$sha.json"
 if ($Endurance -gt 0) {
     $env:PANEFLOW_BENCH_ENDURANCE_MINUTES = "$Endurance"
@@ -38,8 +40,8 @@ $env:PANEFLOW_BENCH_OUT = $out
 $env:PANEFLOW_BENCH_SHA = $sha
 $env:PANEFLOW_BENCH_DIRTY = $dirty
 $env:PANEFLOW_BENCH_STAMP = $stamp
-if (Test-Path "bench/persistent-baseline.json") {
-    $env:PANEFLOW_BENCH_BASELINE = Join-Path $root "bench/persistent-baseline.json"
+if (Test-Path $baseline) {
+    $env:PANEFLOW_BENCH_BASELINE = Join-Path $root $baseline
 } else {
     Remove-Item Env:PANEFLOW_BENCH_BASELINE -ErrorAction SilentlyContinue
 }
@@ -61,7 +63,7 @@ if (-not $harness -or -not (Test-Path $harness)) {
 }
 $env:PANEFLOW_BENCH_HOST = Join-Path $root "target/release/paneflow-host.exe"
 $env:PANEFLOW_BENCH_FIXTURE = Join-Path $root "target/release/paneflow-session-fixture.exe"
-if ($WithWorker -or $WithDesktop -or $WorkerReplacement) {
+if ($Active -or $WithWorker -or $WithDesktop -or $WorkerReplacement) {
     $env:PANEFLOW_BENCH_CONTROLLER = Join-Path $root "target/release/paneflow.exe"
 } else {
     Remove-Item Env:PANEFLOW_BENCH_CONTROLLER -ErrorAction SilentlyContinue
@@ -112,6 +114,6 @@ if ($status -ne 0) {
     exit $status
 }
 if ($SetBaseline -and $Endurance -eq 0) {
-    Copy-Item $out "bench/persistent-baseline.json" -Force
-    Write-Host "baseline: bench/persistent-baseline.json now points at $sha"
+    Copy-Item $out $baseline -Force
+    Write-Host "baseline: $baseline now points at $sha"
 }

@@ -48,6 +48,10 @@ pub(super) fn compare(document: &Value, decisions: &[Decision]) -> String {
         .is_some_and(|baseline| baseline_matches(baseline, document));
     match (&baseline, comparable) {
         (None, _) => text.push_str("no comparable baseline configured; thresholds only\n"),
+        (Some(baseline), false) if active::schema_refusal(baseline, document).is_some() => {
+            text.push_str(&active::schema_refusal(baseline, document).unwrap_or_default());
+            text.push('\n');
+        }
         (Some(_), false) => text.push_str(
             "baseline topology, schema, machine, or profile differs; no performance comparison is valid\n",
         ),

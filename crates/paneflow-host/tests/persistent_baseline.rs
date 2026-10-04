@@ -13,6 +13,8 @@ use paneflow_ipc_client::host_control::HostControl;
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::{Value, json};
 
+#[path = "persistent_baseline/active.rs"]
+mod active;
 #[path = "persistent_baseline/endurance.rs"]
 mod endurance;
 #[path = "persistent_baseline/metrics.rs"]
@@ -34,7 +36,7 @@ use report::*;
 
 use workloads::{Decision, FixtureLedger, automated_only, seed_failure, verdict};
 
-pub const SCHEMA_VERSION: u64 = 3;
+pub const SCHEMA_VERSION: u64 = 4;
 
 const SCENARIOS: [usize; 4] = [0, 1, 10, 50];
 const SETTLE: Duration = Duration::from_secs(4);
@@ -454,6 +456,217 @@ fn persistent_session_baseline() {
             failures.join("\n")
         );
     }
+}
+
+#[test]
+#[ignore = "active-agents measurement; run through scripts/bench-persistent.sh --active or .ps1 -Active"]
+fn persistent_session_active() {
+    allow_breakaway_like_the_desktop_does();
+    let path = output_path();
+    let source_fingerprint = diff_fingerprint_excluding(Some(&path));
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption =
+        bootstrap::ensure_host_running(home.path(), &host_executable(), "persistent-bench")
+            .expect("the detached host starts");
+    let hello = ClientHello::local("persistent-bench");
+    let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+    let host_identity = paneflow_host::ProcessIdentity::capture(adoption.identity.pid);
+    let worker = WorkerProcess::start(home.path());
+    let desktop_enabled = std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some();
+    let ledger = FixtureLedger::new();
+    let started = Instant::now();
+    let mut scenarios = Vec::new();
+    let mut failures = Vec::new();
+    for streams in active::ACTIVE_SCENARIOS {
+        let plan = active::ActivePlan {
+            streams,
+            stream_args: &active::STREAM_ARGS,
+            flood_args: Some(&active::FLOOD_ARGS),
+            settle: SETTLE,
+            window: active::ACTIVE_WINDOW,
+        };
+        let processes = active::ActiveProcesses {
+            host_pid: adoption.identity.pid,
+            worker: worker.as_ref(),
+            desktop_home: desktop_enabled.then_some(home.path()),
+        };
+        match active::run_active_scenario(&mut client, &ledger, &plan, &processes) {
+            Ok(scenario) => scenarios.push(scenario),
+            Err(reason) => {
+                failures.push(format!("{streams} sessions: {reason}"));
+                scenarios.push(json!({"sessions": streams, "failed": reason}));
+                break;
+            }
+        }
+    }
+    let elapsed = started.elapsed();
+    drop(worker);
+    let mut decisions = Vec::new();
+    let fixtures = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
+    let mut document = json!({
+        "suite": "paneflow-persistent-active",
+        "schema_version": SCHEMA_VERSION,
+        "status": if failures.is_empty() { "complete" } else { "failed" },
+        "stamp": stamp(),
+        "commit": git(&["rev-parse", "HEAD"]),
+        "commit_short": std::env::var("PANEFLOW_BENCH_SHA").ok(),
+        "diff": source_fingerprint,
+        "source_unchanged_during_measurement": source_fingerprint == diff_fingerprint_excluding(Some(&path)),
+        "machine": machine(),
+        "toolchain": toolchain(),
+        "engine": adoption.identity.engine,
+        "host": {"version": adoption.identity.version, "protocol": adoption.identity.protocol, "build_id": adoption.identity.build_id},
+        "executables": {"host": executable_identity(&host_executable()), "fixture": executable_identity(&fixture_executable())},
+        "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
+        "topology": topology_label(std::env::var_os("PANEFLOW_BENCH_CONTROLLER").is_some()),
+        "invocation": {
+            "test": "persistent_session_active",
+            "stream": active::STREAM_ARGS,
+            "flood": active::FLOOD_ARGS,
+            "scenarios": active::ACTIVE_SCENARIOS,
+            "settle_s": SETTLE.as_secs_f64(),
+            "window_s": active::ACTIVE_WINDOW.as_secs_f64(),
+            "args": std::env::args().collect::<Vec<_>>(),
+        },
+        "measurement_s": elapsed.as_secs_f64(),
+        "scenarios": scenarios,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+        "fixtures": fixtures,
+        "failures": failures,
+        "counters_note": "work_counters are deltas of the US-001 counters over the window; pending carries its reason and is never a measured zero",
+    });
+    let baseline = std::env::var_os("PANEFLOW_BENCH_BASELINE")
+        .and_then(|baseline| std::fs::read(baseline).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let comparison = active::compare_active(&document, baseline.as_ref());
+    document["comparison"] = json!({"text": comparison, "baseline": std::env::var_os("PANEFLOW_BENCH_BASELINE").map(|p| Path::new(&p).display().to_string())});
+    write_document(&path, &document);
+    println!("result: {}", path.display());
+    print!("{comparison}");
+    assert!(
+        failures.is_empty(),
+        "the active scenario failed; the artifact is retained at {}:\n{}",
+        path.display(),
+        failures.join("\n")
+    );
+    assert_eq!(
+        document["source_unchanged_during_measurement"], true,
+        "source changed during measurement; result is not candidate-qualified"
+    );
+    if let Err(failures) = verdict(&decisions, &[]) {
+        panic!(
+            "host shutdown checks failed; the artifact is retained at {}:\n{}",
+            path.display(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn an_active_scenario_whose_session_dies_fails_with_its_name_and_publishes_no_average() {
+    allow_breakaway_like_the_desktop_does();
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption = bootstrap::ensure_host_running(home.path(), &host_executable(), "active-death")
+        .expect("the detached host starts");
+    let mut client = HostClient::connect(&endpoint, &ClientHello::local("active-death")).unwrap();
+    let ledger = FixtureLedger::new();
+    let processes = active::ActiveProcesses {
+        host_pid: adoption.identity.pid,
+        worker: None,
+        desktop_home: None,
+    };
+    let none = active::ActivePlan {
+        streams: 0,
+        stream_args: &active::STREAM_ARGS,
+        flood_args: None,
+        settle: Duration::ZERO,
+        window: Duration::ZERO,
+    };
+    assert_eq!(
+        active::run_active_scenario(&mut client, &ledger, &none, &processes),
+        Err("no active session was opened".to_string())
+    );
+    let dying = active::ActivePlan {
+        streams: 1,
+        stream_args: &["delayed-exit", "300", "0"],
+        flood_args: None,
+        settle: Duration::ZERO,
+        window: Duration::from_secs(2),
+    };
+    let failure = active::run_active_scenario(&mut client, &ledger, &dying, &processes)
+        .expect_err("a session that exits inside the window fails the scenario");
+    let session = client
+        .list(None)
+        .unwrap()
+        .pop()
+        .expect("the dead session row");
+    assert!(
+        failure.contains(session.session.as_str()),
+        "the failure names the session: {failure}"
+    );
+    assert!(failure.contains("no average is published"), "{failure}");
+    let _ = client.call("host.shutdown", json!({}));
+}
+
+#[test]
+fn a_pending_counter_stays_pending_and_never_reads_as_an_improvement() {
+    let document = json!({
+        "schema_version": SCHEMA_VERSION,
+        "scenarios": [{"sessions": 8, "host": {"work_counters": {
+            "process_listings": {"pending": "counters unavailable: host 0.17.5 reports no counters object"},
+            "foreground_observations": 3,
+        }}}],
+    });
+    let baseline = json!({
+        "schema_version": SCHEMA_VERSION,
+        "scenarios": [{"sessions": 8, "host": {"work_counters": {
+            "process_listings": 480,
+            "foreground_observations": 9,
+        }}}],
+    });
+    let text = active::compare_active(&document, Some(&baseline));
+    let listings = text
+        .lines()
+        .find(|line| line.contains("process_listings"))
+        .unwrap();
+    assert!(
+        listings.ends_with("pending: counters unavailable: host 0.17.5 reports no counters object"),
+        "{listings}"
+    );
+    assert!(!listings.contains("lower"), "{listings}");
+    let observations = text
+        .lines()
+        .find(|line| line.contains("foreground_observations"))
+        .unwrap();
+    assert!(observations.ends_with("lower"), "{observations}");
+    let reading = paneflow_host::work_counters::Reading::Pending("why".to_string());
+    assert_eq!(active::reading_json(&reading), json!({"pending": "why"}));
+}
+
+#[test]
+fn a_baseline_of_another_schema_is_refused_with_an_explicit_message() {
+    let document = json!({"schema_version": SCHEMA_VERSION, "scenarios": []});
+    let old = json!({"schema_version": 3, "scenarios": []});
+    let text = active::compare_active(&document, Some(&old));
+    assert!(
+        text.starts_with(
+            "baseline schema 3 differs from candidate schema 4; comparison refused, record a new baseline"
+        ),
+        "{text}"
+    );
+    assert!(active::schema_refusal(&document, &document).is_none());
 }
 
 fn topology_label(worker: bool) -> &'static str {

@@ -72,7 +72,7 @@ The document records what a review needs to trust a number: commit, an FNV-1a
 fingerprint of the uncommitted diff, OS, architecture, CPU model, logical CPU
 count, RAM, rustc version, build profile, the terminal engine identity the
 host reported, the PTY implementation, the fixture invocation and the scenario
-list. The schema version is 3. Fingerprints include tracked and untracked
+list. The schema version is 4. Fingerprints include tracked and untracked
 source contents; controller executable identity is recorded when supplied.
 A fingerprint that changes between the start and the end of a run fails the
 run: the result is not candidate-qualified.
@@ -124,6 +124,7 @@ scripts/bench-persistent.sh --set-baseline  # also copies the result to bench/pe
 scripts/bench-persistent.sh --with-worker  # existing worker plus headless attachments
 scripts/bench-persistent.sh --with-desktop # native desktop restoration and per-process CPU
 scripts/bench-persistent.sh --no-followers # W01 host-only topology
+scripts/bench-persistent.sh --active       # 1, 4 and 8 streaming sessions plus one flood, with the worker and work counters
 scripts/bench-persistent.sh --with-worker --no-followers # W01 host+worker topology
 scripts/bench-persistent.sh --quick        # smoke protocol: 5 s streams, 200 echo samples, 2 worker cycles
 scripts/bench-persistent.sh --worker-replacement <paneflow-exe> # W04 build replacement with that worker binary
@@ -131,6 +132,39 @@ scripts/bench-persistent.sh --prior <result.json>  # rerun that keeps the earlie
 scripts/bench-persistent.sh --seed-failure # proves a failed decision exits nonzero and retains the artifact
 scripts/bench-persistent.sh --prebuilt <dir> # runs a packaged harness and binaries without Cargo (see docs/release/persistent-qualification.md)
 ```
+
+### Active agents scenario
+
+`scripts/bench-persistent.sh --active` (`-Active` on Windows) runs the ignored
+test `persistent_session_active` against the same release host, plus the
+existing worker. For each of 1, 4 and 8 sessions it opens that many fresh
+`paneflow-session-fixture stream 16384 60` sessions and one
+`paneflow-session-fixture flood 8388608` session, waits 4 s, then samples a
+30 s window. Each scenario records, for the host, the worker and, with
+`--with-desktop`, the desktop: CPU per named thread, resident memory, and the
+delta of every work counter below over the window (`work_counters`). The
+desktop readiness check only waits for every surface to be listed, because a
+streaming pane scrolls the fixture announcement away.
+
+A stream session that is no longer live, or whose generation changed, at the
+end of the window fails the scenario with the session id, and the scenario
+publishes no sample computed over fewer sessions than planned. The flood
+session is expected to finish; its state at the end of the window is recorded.
+A scenario that opens no session fails with "no active session was opened". A
+counter the process does not report is written as `{"pending": reason}`; the
+comparison prints it as pending with its reason and never as an improvement. A
+counter window that crosses a process restart is written as
+`{"invalid": "<process> restarted during the measurement"}`.
+
+The document is `bench/results/persistent-active-<stamp>-<sha>.json`, schema 4.
+It compares against `bench/persistent-active-baseline.json` when that file
+exists, and `--set-baseline` writes it. A baseline of another schema is refused
+with "baseline schema N differs from candidate schema 4; comparison refused,
+record a new baseline"; the regular suite prints the same refusal.
+
+The "before EP-002" reference is pending: it must be measured on a clean
+`main` that contains this scenario, on Arthur's Linux machine, before any
+EP-002 story lands, then committed under `bench/results/` and cited here.
 
 ### Workloads W02 to W08 and threshold decisions
 

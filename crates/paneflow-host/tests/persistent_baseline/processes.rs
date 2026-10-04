@@ -76,9 +76,11 @@ pub(super) struct Follower {
     pub(super) checkpoint_bytes: usize,
 }
 
+const DESKTOP_READY_DEADLINE: Duration = Duration::from_secs(30);
+
 pub(super) struct DesktopProcess {
     pub(super) child: std::process::Child,
-    endpoint: PathBuf,
+    pub(super) endpoint: PathBuf,
     pub(super) restored_ms: f64,
     pub(super) surfaces: Value,
 }
@@ -90,6 +92,19 @@ impl DesktopProcess {
     }
 
     pub(super) fn start_enabled(home: &Path, sessions: &[SessionId]) -> Self {
+        Self::start_ready(home, sessions, Some("fixture idle"), DESKTOP_READY_DEADLINE)
+    }
+
+    pub(super) fn start_listing(home: &Path, sessions: &[SessionId]) -> Self {
+        Self::start_ready(home, sessions, None, DESKTOP_READY_DEADLINE)
+    }
+
+    pub(super) fn start_ready(
+        home: &Path,
+        sessions: &[SessionId],
+        ready_marker: Option<&str>,
+        ready_deadline: Duration,
+    ) -> Self {
         let executable = std::env::var_os("PANEFLOW_BENCH_CONTROLLER")
             .expect("desktop benchmark requires PANEFLOW_BENCH_CONTROLLER");
         let workspaces: Vec<_> = sessions
@@ -151,7 +166,7 @@ impl DesktopProcess {
             surfaces: Value::Null,
         };
         let ipc = IpcClient::new(endpoint.clone());
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + ready_deadline;
         let mut listed = 0;
         let mut ready_prefix = 0;
         let mut last_attempt = String::from("no attempt yet");
@@ -163,7 +178,7 @@ impl DesktopProcess {
             );
             assert!(
                 Instant::now() < deadline,
-                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing fixture idle; last attempt: {last_attempt}\n{}\n{}",
+                "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing {ready_marker:?}; last attempt: {last_attempt}\n{}\n{}",
                 sessions.len(),
                 log_tail(&log_path),
                 stall_samples(desktop.child.id(), home)
@@ -182,12 +197,12 @@ impl DesktopProcess {
                                 ready_prefix = entries
                                     .iter()
                                     .take_while(|surface| {
-                                        ipc.call(
-                                            "surface.read",
-                                            json!({"surface_id": surface["surface_id"], "lines": 24}),
-                                        )
-                                        .is_ok_and(|result| {
-                                            result.to_string().contains("fixture idle")
+                                        ready_marker.is_none_or(|marker| {
+                                            ipc.call(
+                                                "surface.read",
+                                                json!({"surface_id": surface["surface_id"], "lines": 24}),
+                                            )
+                                            .is_ok_and(|result| result.to_string().contains(marker))
                                         })
                                     })
                                     .count();

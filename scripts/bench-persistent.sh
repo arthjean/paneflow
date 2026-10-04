@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mode="run"
+active=false
 worker=false
 desktop=false
 no_followers=false
@@ -19,6 +20,7 @@ while [ $# -gt 0 ]; do
     --endurance) shift; endurance="${1:-}" ;;
     --idle-minutes) shift; idle_minutes="${1:-}" ;;
     --set-baseline) mode="set-baseline" ;;
+    --active) active=true; worker=true ;;
     --with-worker) worker=true ;;
     --with-desktop) worker=true; desktop=true ;;
     --no-followers) no_followers=true ;;
@@ -74,6 +76,12 @@ mkdir -p bench/results
 root=$(pwd)
 suite="persistent"
 test="persistent_session_baseline"
+baseline="bench/persistent-baseline.json"
+if [ "$active" = "true" ]; then
+  suite="persistent-active"
+  test="persistent_session_active"
+  baseline="bench/persistent-active-baseline.json"
+fi
 if [ -n "$endurance" ]; then
   suite="persistent-endurance"
   test="persistent_session_endurance"
@@ -92,8 +100,10 @@ export PANEFLOW_BENCH_OUT="$out"
 export PANEFLOW_BENCH_SHA="$sha"
 export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
-if [ -f bench/persistent-baseline.json ]; then
-  export PANEFLOW_BENCH_BASELINE="$root/bench/persistent-baseline.json"
+if [ -f "$baseline" ]; then
+  export PANEFLOW_BENCH_BASELINE="$root/$baseline"
+else
+  unset PANEFLOW_BENCH_BASELINE
 fi
 
 if [ -z "$prebuilt" ]; then
@@ -162,6 +172,6 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 if [ "$mode" = "set-baseline" ] && [ -z "$endurance" ]; then
-  cp "$out" bench/persistent-baseline.json
-  echo "baseline: bench/persistent-baseline.json now points at $sha"
+  cp "$out" "$baseline"
+  echo "baseline: $baseline now points at $sha"
 fi
