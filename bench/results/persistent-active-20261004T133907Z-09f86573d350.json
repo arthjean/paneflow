@@ -1,0 +1,360 @@
+{
+  "commit": "09f86573d35086d0aa3e36665a02f420dc7876f7",
+  "commit_short": "09f86573d350",
+  "comparison": {
+    "baseline": null,
+    "text": "no active baseline configured; counters are reported only\ncounter delta over the window                                       candidate     baseline verdict\n1 sessions host agent_bus_cancellation_broadcasts                           0          n/a no baseline\n1 sessions host agent_bus_event_broadcasts                                  0          n/a no baseline\n1 sessions host agent_bus_session_broadcasts                               90          n/a no baseline\n1 sessions host agent_bus_session_removed_broadcasts                        0          n/a no baseline\n1 sessions host agent_bus_snapshot_broadcasts                               1          n/a no baseline\n1 sessions host foreground_observations                                    60          n/a no baseline\n1 sessions host process_listings                                           54          n/a no baseline\n1 sessions worker projection_broadcasts                                     0          n/a no baseline\n1 sessions worker snapshot_broadcasts                                      14          n/a no baseline\n1 sessions worker sweeps                                                   14          n/a no baseline\n4 sessions host agent_bus_cancellation_broadcasts                           0          n/a no baseline\n4 sessions host agent_bus_event_broadcasts                                  0          n/a no baseline\n4 sessions host agent_bus_session_broadcasts                              356          n/a no baseline\n4 sessions host agent_bus_session_removed_broadcasts                        0          n/a no baseline\n4 sessions host agent_bus_snapshot_broadcasts                               1          n/a no baseline\n4 sessions host foreground_observations                                   236          n/a no baseline\n4 sessions host process_listings                                          216          n/a no baseline\n4 sessions worker projection_broadcasts                                     0          n/a no baseline\n4 sessions worker snapshot_broadcasts                                      15          n/a no baseline\n4 sessions worker sweeps                                                   15          n/a no baseline\n8 sessions host agent_bus_cancellation_broadcasts                           0          n/a no baseline\n8 sessions host agent_bus_event_broadcasts                                  0          n/a no baseline\n8 sessions host agent_bus_session_broadcasts                              712          n/a no baseline\n8 sessions host agent_bus_session_removed_broadcasts                        0          n/a no baseline\n8 sessions host agent_bus_snapshot_broadcasts                               1          n/a no baseline\n8 sessions host foreground_observations                                   472          n/a no baseline\n8 sessions host process_listings                                          432          n/a no baseline\n8 sessions worker projection_broadcasts                                     0          n/a no baseline\n8 sessions worker snapshot_broadcasts                                      15          n/a no baseline\n8 sessions worker sweeps                                                   15          n/a no baseline\n"
+  },
+  "controller": {
+    "bytes": 87861464,
+    "fnv1a64": "b3294b9ab5825012",
+    "path": "/home/arthur/dev/paneflow/target/release/paneflow"
+  },
+  "counters_note": "work_counters are deltas of the US-001 counters over the window; pending carries its reason and is never a measured zero",
+  "diff": {
+    "bytes": 0,
+    "dirty": false,
+    "fnv1a64": "cbf29ce484222325",
+    "untracked_paths": []
+  },
+  "engine": {
+    "api_version": "0.1.0",
+    "app_version": "1.3.2-dev+0c2a290d3",
+    "engine": "libghostty-vt",
+    "source_sha": "0c2a290d3a3e2a599be3a43435d778a5896667ee"
+  },
+  "executables": {
+    "fixture": {
+      "bytes": 407200,
+      "fnv1a64": "ca451132db88015b",
+      "path": "/home/arthur/dev/paneflow/target/release/paneflow-session-fixture"
+    },
+    "host": {
+      "bytes": 9580504,
+      "fnv1a64": "347bf01974386d34",
+      "path": "/home/arthur/dev/paneflow/target/release/paneflow-host"
+    }
+  },
+  "failures": [],
+  "fixtures": {
+    "cleanup": "only recorded session/process identities are checked; the host owns and stops its fixtures on a private PANEFLOW_HOME",
+    "host_exited": true,
+    "host_shutdown": {
+      "ended_sessions": 0,
+      "host_instance": "e7881d20-2200-4219-b7ff-8e12b2c98320",
+      "stopping": true,
+      "unresolved": []
+    },
+    "owned": 16,
+    "survivors_after_shutdown": []
+  },
+  "host": {
+    "build_id": "0.17.5+0c2a290d3a3e",
+    "protocol": 1,
+    "version": "0.17.5"
+  },
+  "invocation": {
+    "args": [
+      "/home/arthur/dev/paneflow/target/release/deps/persistent_baseline-2175943e64bd486c",
+      "persistent_session_active",
+      "--ignored",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "flood": [
+      "flood",
+      "8388608"
+    ],
+    "scenarios": [
+      1,
+      4,
+      8
+    ],
+    "settle_s": 4.0,
+    "stream": [
+      "stream",
+      "16384",
+      "60"
+    ],
+    "test": "persistent_session_active",
+    "window_s": 30.0
+  },
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "hostname_hash": "1cf58166f5604e43",
+    "logical_cpus": 16,
+    "os": "linux",
+    "os_build": "Linux dune 7.2.8-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Fri Sep 25 21:05:44 UTC 2026 x86_64 GNU/Linux",
+    "total_ram_bytes": 32746323968
+  },
+  "measurement_s": 102.403363008,
+  "scenarios": [
+    {
+      "desktop": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; the desktop is unmeasured"
+      },
+      "flood_live_at_window_end": false,
+      "flood_session": "5eed5191-ae64-419a-b6d4-577f81c40d5e",
+      "host": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 11,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 9
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.session": 1.2333069942536208,
+            "host.viewport_scan": 0.03333262146631408,
+            "merged_truncated_names": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "paneflow-host": 0,
+            "paneflow-host-c": 0,
+            "paneflow-host-m": 0,
+            "paneflow-host-p": 0,
+            "paneflow-host-s": 370000000,
+            "paneflow-host-v": 10000000
+          },
+          "total_cpu_percent": 1.2666396157199349
+        },
+        "pid": 109965,
+        "resident_bytes": 13758464,
+        "work_counters": {
+          "agent_bus_cancellation_broadcasts": 0,
+          "agent_bus_event_broadcasts": 0,
+          "agent_bus_session_broadcasts": 90,
+          "agent_bus_session_removed_broadcasts": 0,
+          "agent_bus_snapshot_broadcasts": 1,
+          "foreground_observations": 60,
+          "process_listings": 54
+        }
+      },
+      "sessions": 1,
+      "settle_s": 4.0,
+      "stream_sessions": [
+        "d59df1ae-0de3-4107-bf55-3a968439ce6c"
+      ],
+      "window_s": 30.000640694,
+      "worker": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 7,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 4
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "other": 0.0,
+            "worker.core_link": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "paneflow": 0,
+            "paneflow-serve-": 0
+          },
+          "total_cpu_percent": 0.0
+        },
+        "pid": 109988,
+        "resident_bytes": 14733312,
+        "work_counters": {
+          "projection_broadcasts": 0,
+          "snapshot_broadcasts": 14,
+          "sweeps": 14
+        }
+      }
+    },
+    {
+      "desktop": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; the desktop is unmeasured"
+      },
+      "flood_live_at_window_end": false,
+      "flood_session": "d465e092-7faf-44c9-9af1-edfe4e261197",
+      "host": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 11,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 12
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.session": 4.6998793611466185,
+            "host.viewport_scan": 0.133329910954514,
+            "merged_truncated_names": 0.0,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "paneflow-host": 0,
+            "paneflow-host-c": 0,
+            "paneflow-host-m": 0,
+            "paneflow-host-p": 0,
+            "paneflow-host-s": 1410000000,
+            "paneflow-host-v": 40000000
+          },
+          "total_cpu_percent": 4.833209272101133
+        },
+        "pid": 109965,
+        "resident_bytes": 20684800,
+        "work_counters": {
+          "agent_bus_cancellation_broadcasts": 0,
+          "agent_bus_event_broadcasts": 0,
+          "agent_bus_session_broadcasts": 356,
+          "agent_bus_session_removed_broadcasts": 0,
+          "agent_bus_snapshot_broadcasts": 1,
+          "foreground_observations": 236,
+          "process_listings": 216
+        }
+      },
+      "sessions": 4,
+      "settle_s": 4.0,
+      "stream_sessions": [
+        "2ba548b4-ebe5-4ee1-8f44-dd705763a5b6",
+        "7802712b-8e28-45d0-98b6-6c7b912f10ce",
+        "bb75aaf4-c80f-4aaf-b3b9-c965cd2a7341",
+        "9582699d-98bf-46e4-aa80-214396486034"
+      ],
+      "window_s": 30.000770055,
+      "worker": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 7,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 4
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "other": 0.0333324777386285,
+            "worker.core_link": 0.066664955477257
+          },
+          "by_thread_cpu_ns": {
+            "paneflow": 10000000,
+            "paneflow-serve-": 20000000
+          },
+          "total_cpu_percent": 0.0999974332158855
+        },
+        "pid": 109988,
+        "resident_bytes": 14794752,
+        "work_counters": {
+          "projection_broadcasts": 0,
+          "snapshot_broadcasts": 15,
+          "sweeps": 15
+        }
+      }
+    },
+    {
+      "desktop": {
+        "pending": "PANEFLOW_BENCH_DESKTOP was not supplied; the desktop is unmeasured"
+      },
+      "flood_live_at_window_end": false,
+      "flood_session": "9b17161e-f1d0-479d-a606-79a6dc9664b7",
+      "host": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 10,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 16
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "host.session": 9.932882180831392,
+            "host.viewport_scan": 0.2999863745888675,
+            "merged_truncated_names": 0.033331819398763056,
+            "other": 0.0
+          },
+          "by_thread_cpu_ns": {
+            "paneflow-host": 0,
+            "paneflow-host-c": 0,
+            "paneflow-host-m": 0,
+            "paneflow-host-p": 10000000,
+            "paneflow-host-s": 2980000000,
+            "paneflow-host-v": 90000000
+          },
+          "total_cpu_percent": 10.266200374819022
+        },
+        "pid": 109965,
+        "resident_bytes": 27951104,
+        "work_counters": {
+          "agent_bus_cancellation_broadcasts": 0,
+          "agent_bus_event_broadcasts": 0,
+          "agent_bus_session_broadcasts": 712,
+          "agent_bus_session_removed_broadcasts": 0,
+          "agent_bus_snapshot_broadcasts": 1,
+          "foreground_observations": 472,
+          "process_listings": 432
+        }
+      },
+      "sessions": 8,
+      "settle_s": 4.0,
+      "stream_sessions": [
+        "05a93622-ec8f-44a8-9189-0bb00a614623",
+        "4413911e-c529-45b7-a984-b9d1195fefe3",
+        "0e4a152b-b7c7-45b4-9177-97b5a925cb6c",
+        "1df4531d-56f1-48f2-8df8-224cea792459",
+        "542063b0-a0b3-4015-9d8f-b6e700783983",
+        "4190a7e1-c47d-4058-8a58-efb6d431c268",
+        "cee0fc09-9c5d-40e9-9d24-0c68fc257fb2",
+        "1fc4a77e-9300-4df9-a796-5988d1b7dfb5"
+      ],
+      "window_s": 30.001362603,
+      "worker": {
+        "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+        "counters": {
+          "handles_or_fds": 7,
+          "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+          "threads": 4
+        },
+        "cpu": {
+          "by_role_cpu_percent": {
+            "other": 0.0,
+            "worker.core_link": 0.1666590969938153
+          },
+          "by_thread_cpu_ns": {
+            "paneflow": 0,
+            "paneflow-serve-": 50000000
+          },
+          "total_cpu_percent": 0.1666590969938153
+        },
+        "pid": 109988,
+        "resident_bytes": 14909440,
+        "work_counters": {
+          "projection_broadcasts": 0,
+          "snapshot_broadcasts": 15,
+          "sweeps": 15
+        }
+      }
+    }
+  ],
+  "schema_version": 4,
+  "source_unchanged_during_measurement": true,
+  "stamp": "20261004T133907Z",
+  "status": "complete",
+  "suite": "paneflow-persistent-active",
+  "thresholds": [
+    {
+      "id": "NFR-12.host_shutdown",
+      "metric": "host process exited after an acknowledged shutdown",
+      "observed": 1.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "acknowledged and exited within 10 s",
+      "workload": "harness"
+    },
+    {
+      "id": "NFR-12.fixture_orphans",
+      "metric": "fixture processes still alive after host shutdown",
+      "observed": 0.0,
+      "reason": "",
+      "result": "pass",
+      "threshold": "== 0",
+      "workload": "harness"
+    }
+  ],
+  "toolchain": {
+    "profile": "release",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+  },
+  "topology": "host-worker"
+}
