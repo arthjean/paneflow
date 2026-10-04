@@ -369,17 +369,22 @@ fn a_user_action_keeps_the_repository_filter_driver() {
 
 #[test]
 fn only_filter_drivers_from_the_repository_config_are_neutralized() {
-    let listing: &[u8] = b"system\0filter.lfs.process\0global\0filter.lfs.clean\0\
-        local\0filter.evil.clean\0worktree\0filter.my.driver.process\0\
-        command\0filter.cli.clean\0local\0filter.evil.required\0";
-    let drivers = repository_filter_drivers(listing).expect("utf-8 listing");
+    let listing: &[u8] = b"system\0file:/etc/gitconfig\0filter.lfs.process\ngit-lfs\0\
+        global\0file:/home/u/.gitconfig\0filter.lfs.clean\ngit-lfs\0\
+        local\0file:.git/config\0filter.evil.clean\nevil\0\
+        worktree\0file:.git/config.worktree\0filter.my.driver.process\nmine\0\
+        command\0command line:\0filter.cli.clean\ncli\0\
+        local\0file:.git/config\0filter.evil.required\0";
+    let drivers = repository_filter_listing(listing, None)
+        .expect("utf-8 listing")
+        .drivers;
     assert_eq!(
         drivers.into_iter().collect::<Vec<_>>(),
         vec!["evil".to_string(), "my.driver".to_string()]
     );
-    assert_eq!(
-        repository_filter_drivers(b"local\0filter.\xff.clean\0"),
-        None,
+    assert!(
+        repository_filter_listing(b"local\0file:.git/config\0filter.\xff.clean\nx\0", None)
+            .is_none(),
         "a driver name that cannot be neutralized exactly refuses the probe"
     );
 }
@@ -592,5 +597,269 @@ fn each_git_spawn_counts_once_under_its_profile_and_subcommand_with_the_filter_q
     assert_eq!(
         std::array::from_fn::<u64, 5, _>(|i| after_action[i] - after_probe[i]),
         [0, 1, 0, 0, 1]
+    );
+}
+
+fn backdate(path: &Path, seconds: u64) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("config file")
+        .set_modified(SystemTime::now() - Duration::from_secs(seconds))
+        .expect("backdated mtime");
+}
+
+fn git_spawns_on_this_thread() -> u64 {
+    use crate::work_counters::{counted_on_this_thread, git_profile_counter};
+    counted_on_this_thread(git_profile_counter(true))
+        + counted_on_this_thread(git_profile_counter(false))
+}
+
+fn filter_queries_on_this_thread() -> u64 {
+    crate::work_counters::counted_on_this_thread(crate::work_counters::git_subcommand_counter(
+        Some("config"),
+    ))
+}
+
+fn probe_status(
+    root: &Path,
+) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
+    let mut status = git(GitProfile::Probe, ["status", "--porcelain"]);
+    status.current_dir(root);
+    run(status, Duration::from_secs(30), 1 << 20)
+}
+
+#[test]
+fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    std::fs::write(tmp.path().join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
+    backdate(&tmp.path().join(".git").join("config"), 60);
+    let cwd = tmp.path().to_str().expect("utf-8 test path");
+
+    let before = git_spawns_on_this_thread();
+    let first = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let after_first = git_spawns_on_this_thread();
+    let second = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let after_second = git_spawns_on_this_thread();
+
+    assert_eq!(
+        after_first - before,
+        4,
+        "the first probe queries the filters once and its second worktree read reuses it"
+    );
+    assert_eq!(
+        after_second - after_first,
+        3,
+        "the second probe reuses the filter query"
+    );
+    assert_eq!(first, second);
+    assert!(!second.is_empty());
+}
+
+#[test]
+fn a_filter_added_through_an_included_file_is_neutralized_by_the_next_probe() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("repo");
+    committed_repo(&root);
+    let marker = tmp.path().join("filter-marker");
+    let script = tmp.path().join("filter.sh");
+    write_filter_script(&script, &marker);
+    std::fs::write(root.join(".gitattributes"), "*.txt filter=evil\n").expect("attributes");
+    assert!(fixture::git_succeeds(&root, &["add", ".gitattributes"]));
+    assert!(commit(&root, "attributes").status.success());
+    let included = root.join(".git").join("included.cfg");
+    std::fs::write(&included, "").expect("empty include");
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "include.path", "included.cfg"]
+    ));
+    backdate(&root.join(".git").join("config"), 60);
+    backdate(&included, 60);
+    make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string()]);
+
+    assert!(probe_status(&root).is_ok());
+    assert!(cached_filter_drivers(&root).is_some_and(|drivers| drivers.is_empty()));
+
+    std::fs::write(
+        &included,
+        format!(
+            "[filter \"evil\"]\n\tclean = sh {}\n\trequired = true\n",
+            sh_path(&script)
+        ),
+    )
+    .expect("included filter");
+    backdate(&included, 30);
+    let _ = fixture::output(&root, &["status", "--porcelain"]);
+    assert!(
+        marker.exists(),
+        "the included filter is live for an unisolated git"
+    );
+    std::fs::remove_file(&marker).expect("reset marker");
+    make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string()]);
+
+    let queries = filter_queries_on_this_thread();
+    assert!(probe_status(&root).is_ok());
+    assert_eq!(
+        filter_queries_on_this_thread() - queries,
+        1,
+        "the query ran again"
+    );
+    assert!(
+        !marker.exists(),
+        "a probe ran a filter driver added through include.path"
+    );
+    assert_eq!(
+        cached_filter_drivers(&root).map(|drivers| drivers.into_iter().collect::<Vec<_>>()),
+        Some(vec!["evil".to_string()])
+    );
+}
+
+#[test]
+fn a_probe_from_a_subdirectory_watches_the_included_file_git_actually_read() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("repo");
+    committed_repo(&root);
+    let marker = tmp.path().join("filter-marker");
+    let script = tmp.path().join("filter.sh");
+    write_filter_script(&script, &marker);
+    std::fs::write(root.join(".gitattributes"), "*.txt filter=evil\n").expect("attributes");
+    assert!(fixture::git_succeeds(&root, &["add", ".gitattributes"]));
+    assert!(commit(&root, "attributes").status.success());
+    let included = root.join(".git").join("included.cfg");
+    std::fs::write(&included, "").expect("empty include");
+    assert!(fixture::git_succeeds(
+        &root,
+        &["config", "include.path", "included.cfg"]
+    ));
+    let nested = root.join("nested").join("deeper");
+    std::fs::create_dir_all(&nested).expect("nested directory");
+    backdate(&root.join(".git").join("config"), 60);
+    backdate(&included, 60);
+    make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string()]);
+
+    assert!(probe_status(&nested).is_ok());
+    assert!(
+        cached_filter_drivers(&nested).is_some_and(|drivers| drivers.is_empty()),
+        "a probe from a subdirectory still caches its filter query"
+    );
+
+    std::fs::write(
+        &included,
+        format!(
+            "[filter \"evil\"]\n\tclean = sh {}\n\trequired = true\n",
+            sh_path(&script)
+        ),
+    )
+    .expect("included filter");
+    backdate(&included, 30);
+    make_tracked_files_stat_dirty(&root, &["tracked.txt".to_string()]);
+
+    let queries = filter_queries_on_this_thread();
+    assert!(probe_status(&nested).is_ok());
+    assert_eq!(
+        filter_queries_on_this_thread() - queries,
+        1,
+        "the included file git reported relative to the worktree root invalidates the cache"
+    );
+    assert!(
+        !marker.exists(),
+        "a subdirectory probe ran a filter driver added through include.path"
+    );
+}
+
+#[test]
+fn an_origin_that_does_not_resolve_to_a_file_is_never_cached() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let listing: &[u8] = b"local\0file:.git/missing.cfg\0filter.evil.clean\nevil\0";
+    let parsed = repository_filter_listing(listing, Some(tmp.path())).expect("utf-8 listing");
+    assert_eq!(
+        parsed.drivers.into_iter().collect::<Vec<_>>(),
+        vec!["evil".to_string()]
+    );
+    assert!(parsed.watched.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_config_replaced_with_the_same_size_and_mtime_but_a_new_inode_invalidates_the_cache() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    let config = tmp.path().join(".git").join("config");
+    backdate(&config, 60);
+    assert!(probe_status(tmp.path()).is_ok());
+    assert!(cached_filter_drivers(tmp.path()).is_some());
+
+    let held = std::fs::metadata(&config).expect("config metadata");
+    let replacement = tmp.path().join(".git").join("config.replacement");
+    std::fs::write(&replacement, std::fs::read(&config).expect("config bytes")).expect("copy");
+    std::fs::File::options()
+        .write(true)
+        .open(&replacement)
+        .expect("replacement")
+        .set_modified(held.modified().expect("mtime"))
+        .expect("same mtime");
+    std::fs::rename(&replacement, &config).expect("replace config");
+    let replaced = std::fs::metadata(&config).expect("replaced metadata");
+    assert_eq!(replaced.len(), held.len());
+    assert_eq!(replaced.modified().ok(), held.modified().ok());
+
+    assert!(cached_filter_drivers(tmp.path()).is_none());
+    let queries = filter_queries_on_this_thread();
+    assert!(probe_status(tmp.path()).is_ok());
+    assert_eq!(filter_queries_on_this_thread() - queries, 1);
+}
+
+#[test]
+fn a_failed_filter_query_fails_the_probe_and_writes_no_cache_entry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    let config = tmp.path().join(".git").join("config");
+    let valid = std::fs::read(&config).expect("config bytes");
+    std::fs::write(&config, "[[[ not a config\n").expect("corrupt config");
+    backdate(&config, 60);
+
+    let failed = probe_status(tmp.path());
+    assert!(failed.is_err() || failed.is_ok_and(|output| !output.status.success()));
+    assert!(
+        filter_cache()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(tmp.path())
+            .is_none()
+    );
+
+    std::fs::write(&config, valid).expect("restore config");
+    backdate(&config, 30);
+    assert!(probe_status(tmp.path()).is_ok_and(|output| output.status.success()));
+    assert!(cached_filter_drivers(tmp.path()).is_some());
+}
+
+#[test]
+fn a_repository_without_a_local_config_caches_its_absence_until_the_file_appears() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    let config = tmp.path().join(".git").join("config");
+    let valid = std::fs::read(&config).expect("config bytes");
+    std::fs::remove_file(&config).expect("remove local config");
+
+    assert!(probe_status(tmp.path()).is_ok_and(|output| output.status.success()));
+    assert!(cached_filter_drivers(tmp.path()).is_some());
+    let queries = filter_queries_on_this_thread();
+    assert!(probe_status(tmp.path()).is_ok());
+    assert_eq!(
+        filter_queries_on_this_thread(),
+        queries,
+        "the absence is cached"
+    );
+
+    std::fs::write(&config, valid).expect("create local config");
+    backdate(&config, 60);
+    assert!(cached_filter_drivers(tmp.path()).is_none());
+    assert!(probe_status(tmp.path()).is_ok());
+    assert_eq!(
+        filter_queries_on_this_thread() - queries,
+        1,
+        "creation invalidates"
     );
 }
