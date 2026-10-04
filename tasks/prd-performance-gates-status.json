@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Corriger les régressions mesurées",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 2
+      "stories_done": 7
     },
     {
       "id": "EP-003",
@@ -92,33 +92,33 @@
       "id": "US-004",
       "title": "Faire avancer le spinner de la sidebar par pas plutôt qu'à chaque frame",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": "2026-10-04T19:01:25+02:00"
+      "completed_at": "2026-10-04T20:01:38+02:00",
+      "reviewed_at": "2026-10-04T20:01:38+02:00"
     },
     {
       "id": "US-005",
       "title": "Dessiner les badges d'onglet sans reconstruire de chemin à chaque frame",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": "2026-10-04T19:01:25+02:00"
+      "completed_at": "2026-10-04T20:01:38+02:00",
+      "reviewed_at": "2026-10-04T20:01:38+02:00"
     },
     {
       "id": "US-006",
       "title": "Partager un seul listing système des processus par host et par intervalle",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -126,14 +126,14 @@
         "US-002"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": "2026-10-04T19:01:25+02:00"
+      "completed_at": "2026-10-04T20:01:38+02:00",
+      "reviewed_at": "2026-10-04T20:01:38+02:00"
     },
     {
       "id": "US-007",
       "title": "Réutiliser l'observation du premier plan tant que son groupe ne change pas",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -141,8 +141,8 @@
         "US-002"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": "2026-10-04T19:01:25+02:00"
+      "completed_at": "2026-10-04T20:01:38+02:00",
+      "reviewed_at": "2026-10-04T20:01:38+02:00"
     },
     {
       "id": "US-008",
@@ -176,13 +176,13 @@
       "id": "US-010",
       "title": "Démarrer sans attendre sur un socket IPC périmé",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": "2026-10-04T19:01:25+02:00"
+      "completed_at": "2026-10-04T20:01:38+02:00",
+      "reviewed_at": "2026-10-04T20:01:38+02:00"
     },
     {
       "id": "US-011",
