@@ -92,6 +92,93 @@ pub fn observe_foreground_runtime(
     ForegroundRuntime::Observed(identify_runtime_in_job(&job))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForegroundLeader {
+    pub process_group: u32,
+    pub started_at: u64,
+    pub name: String,
+}
+
+impl ForegroundLeader {
+    pub fn read(foreground_process_group: Option<i32>) -> Option<Self> {
+        let process_group = u32::try_from(foreground_process_group?)
+            .ok()
+            .filter(|group| *group > 1)?;
+        let (started_at, name) = platform::leader_stamp(process_group)?;
+        Some(Self {
+            process_group,
+            started_at,
+            name,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ForegroundCache {
+    held: Option<(ForegroundLeader, ForegroundRuntime)>,
+}
+
+impl ForegroundCache {
+    pub fn observe(
+        &mut self,
+        session_leader: ProcessIdentity,
+        foreground_process_group: Option<i32>,
+    ) -> ForegroundRuntime {
+        let leader = ForegroundLeader::read(foreground_process_group);
+        self.reuse_or_observe(
+            leader,
+            || {
+                if session_leader.is_provably_live() {
+                    None
+                } else {
+                    Some(ForegroundRuntime::Unobservable)
+                }
+            },
+            platform::leader_runs_alone,
+            || observe_foreground_runtime(session_leader, foreground_process_group),
+        )
+    }
+
+    fn reuse_or_observe(
+        &mut self,
+        leader: Option<ForegroundLeader>,
+        session_leader_gone: impl FnOnce() -> Option<ForegroundRuntime>,
+        leader_runs_alone: impl Fn(u32) -> bool,
+        observe: impl FnOnce() -> ForegroundRuntime,
+    ) -> ForegroundRuntime {
+        let reusable = |leader: &ForegroundLeader, runtime: &ForegroundRuntime| {
+            decided_by_leader(leader, runtime) || leader_runs_alone(leader.process_group)
+        };
+        if let (Some(leader), Some((held_leader, held))) = (leader.as_ref(), self.held.as_ref())
+            && leader == held_leader
+            && reusable(leader, held)
+        {
+            match session_leader_gone() {
+                None => return held.clone(),
+                Some(unobservable) => {
+                    self.held = None;
+                    return unobservable;
+                }
+            }
+        }
+        let observed = observe();
+        self.held = match (leader, &observed) {
+            (Some(leader), ForegroundRuntime::Observed(_)) if reusable(&leader, &observed) => {
+                Some((leader, observed.clone()))
+            }
+            _ => None,
+        };
+        observed
+    }
+}
+
+fn decided_by_leader(leader: &ForegroundLeader, runtime: &ForegroundRuntime) -> bool {
+    matches!(
+        runtime,
+        ForegroundRuntime::Observed(Some(observation)) if observation.pid == leader.process_group
+    )
+}
+
 fn identify_runtime_in_job(job: &ForegroundJob) -> Option<RuntimeObservation> {
     if let Some(leader) = job
         .processes
@@ -409,6 +496,32 @@ mod platform {
         })
     }
 
+    pub(super) fn leader_stamp(pid: u32) -> Option<(u64, String)> {
+        parse_leader_stamp(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    }
+
+    pub(super) fn leader_runs_alone(pid: u32) -> bool {
+        let tasks = process_task_ids(pid);
+        !tasks.is_empty()
+            && tasks
+                .into_iter()
+                .all(|task_id| process_task_children(pid, task_id).is_empty())
+    }
+
+    fn parse_leader_stamp(stat: &str) -> Option<(u64, String)> {
+        let open = stat.find('(')?;
+        let close = stat.rfind(')')?;
+        let name = stat.get(open + 1..close)?.to_string();
+        let fields = stat
+            .get(close + 2..)?
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        if matches!(fields.first(), Some(&"Z" | &"X")) {
+            return None;
+        }
+        Some((fields.get(19)?.parse().ok()?, name))
+    }
+
     fn process_tree_pids(roots: impl IntoIterator<Item = u32>) -> Vec<u32> {
         let mut pending = VecDeque::new();
         let mut visited = HashSet::new();
@@ -568,6 +681,21 @@ mod platform {
         Vec::new()
     }
 
+    pub(super) fn leader_stamp(pid: u32) -> Option<(u64, String)> {
+        let info = process_bsdinfo(pid)?;
+        if info.pbi_status == libc::SZOMB {
+            return None;
+        }
+        Some((
+            info.pbi_start_tvsec.saturating_mul(1_000_000) + info.pbi_start_tvusec,
+            process_name(&info)?,
+        ))
+    }
+
+    pub(super) fn leader_runs_alone(process_group: u32) -> bool {
+        process_group_pids(process_group) == [process_group]
+    }
+
     fn process_bsdinfo(pid: u32) -> Option<libc::proc_bsdinfo> {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
         let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
@@ -606,6 +734,14 @@ mod platform {
     use super::{ForegroundJob, ForegroundProcess};
 
     const MAX_OBSERVED_PROCESSES: usize = 64;
+
+    pub(super) fn leader_stamp(_pid: u32) -> Option<(u64, String)> {
+        None
+    }
+
+    pub(super) fn leader_runs_alone(_pid: u32) -> bool {
+        false
+    }
 
     pub(super) fn foreground_job(
         session_leader_pid: u32,
@@ -907,5 +1043,250 @@ mod tests {
         ] {
             assert_eq!(normalized_executable_name(raw), "claude", "{raw}");
         }
+    }
+
+    fn leader(process_group: u32, started_at: u64, name: &str) -> Option<ForegroundLeader> {
+        Some(ForegroundLeader {
+            process_group,
+            started_at,
+            name: name.to_string(),
+        })
+    }
+
+    fn observed(id: &str) -> ForegroundRuntime {
+        ForegroundRuntime::Observed(Some(RuntimeObservation {
+            id: id.to_string(),
+            pid: 100,
+            pid_started_at: Some(1_100),
+            process_group: 100,
+            process_name: "claude".to_string(),
+            argv: None,
+        }))
+    }
+
+    fn scan(
+        cache: &mut ForegroundCache,
+        current: Option<ForegroundLeader>,
+        walks: &mut usize,
+        result: ForegroundRuntime,
+    ) -> ForegroundRuntime {
+        cache.reuse_or_observe(
+            current,
+            || None,
+            |_| true,
+            || {
+                *walks += 1;
+                result
+            },
+        )
+    }
+
+    #[test]
+    fn sixty_scans_of_an_unchanged_foreground_leader_walk_the_job_once() {
+        let mut cache = ForegroundCache::default();
+        let mut walks = 0;
+        for _ in 0..60 {
+            let runtime = scan(
+                &mut cache,
+                leader(100, 7, "claude"),
+                &mut walks,
+                observed(CLAUDE),
+            );
+            assert_eq!(runtime, observed(CLAUDE));
+        }
+        assert_eq!(walks, 1);
+    }
+
+    #[test]
+    fn a_new_foreground_group_is_observed_again_and_published() {
+        let mut cache = ForegroundCache::default();
+        let mut walks = 0;
+        scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        let tool = scan(
+            &mut cache,
+            leader(200, 9, "cargo"),
+            &mut walks,
+            ForegroundRuntime::Observed(None),
+        );
+        assert_eq!(tool, ForegroundRuntime::Observed(None));
+        let back = scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        assert_eq!(back, observed(CLAUDE));
+        assert_eq!(walks, 3);
+    }
+
+    #[test]
+    fn a_recycled_leader_pid_or_an_exec_invalidates_the_held_observation() {
+        let mut cache = ForegroundCache::default();
+        let mut walks = 0;
+        scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        let recycled = scan(
+            &mut cache,
+            leader(100, 8, "claude"),
+            &mut walks,
+            observed(CODEX),
+        );
+        assert_eq!(recycled, observed(CODEX));
+        let execed = scan(
+            &mut cache,
+            leader(100, 8, "node"),
+            &mut walks,
+            ForegroundRuntime::Observed(None),
+        );
+        assert_eq!(execed, ForegroundRuntime::Observed(None));
+        assert_eq!(walks, 3);
+    }
+
+    #[test]
+    fn an_unobservable_leader_is_never_served_from_the_cache() {
+        let mut cache = ForegroundCache::default();
+        let mut walks = 0;
+        scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        let vanished = scan(
+            &mut cache,
+            None,
+            &mut walks,
+            ForegroundRuntime::Unobservable,
+        );
+        assert_eq!(vanished, ForegroundRuntime::Unobservable);
+        let walked = walks;
+        let again = scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        assert_eq!(again, observed(CLAUDE));
+        assert_eq!(walks, walked + 1, "the cleared cache walks again");
+
+        let mut walks_after_gone = 0;
+        let gone = cache.reuse_or_observe(
+            leader(100, 7, "claude"),
+            || Some(ForegroundRuntime::Unobservable),
+            |_| true,
+            || {
+                walks_after_gone += 1;
+                observed(CLAUDE)
+            },
+        );
+        assert_eq!(gone, ForegroundRuntime::Unobservable);
+        assert_eq!(walks_after_gone, 0);
+        let rewalked = scan(
+            &mut cache,
+            leader(100, 7, "claude"),
+            &mut walks,
+            observed(CLAUDE),
+        );
+        assert_eq!(rewalked, observed(CLAUDE));
+        assert_eq!(walks, walked + 2);
+    }
+
+    #[test]
+    fn a_job_whose_runtime_is_not_its_leader_is_walked_again_once_the_leader_has_children() {
+        let mut cache = ForegroundCache::default();
+        let mut walks = 0;
+        let alone = std::cell::Cell::new(true);
+        let mut scan_wrapper = |result: ForegroundRuntime, walks: &mut usize| {
+            cache.reuse_or_observe(
+                leader(300, 5, "bash"),
+                || None,
+                |_| alone.get(),
+                || {
+                    *walks += 1;
+                    result
+                },
+            )
+        };
+        assert_eq!(
+            scan_wrapper(ForegroundRuntime::Observed(None), &mut walks),
+            ForegroundRuntime::Observed(None)
+        );
+        assert_eq!(
+            scan_wrapper(observed(CLAUDE), &mut walks),
+            ForegroundRuntime::Observed(None),
+            "a childless leader keeps its observation"
+        );
+        assert_eq!(walks, 1);
+
+        alone.set(false);
+        assert_eq!(
+            scan_wrapper(observed(CLAUDE), &mut walks),
+            observed(CLAUDE),
+            "an agent spawned under an unrecognized leader is found"
+        );
+        assert_eq!(
+            scan_wrapper(ForegroundRuntime::Observed(None), &mut walks),
+            ForegroundRuntime::Observed(None),
+            "an observation that depends on the leader's children is never reused"
+        );
+        assert_eq!(walks, 3);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_leader_runs_alone_until_it_spawns_a_child() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "read line; sleep 5; true"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        assert!(platform::leader_runs_alone(child.id()));
+        {
+            use std::io::Write;
+            child.stdin.as_mut().unwrap().write_all(b"go\n").unwrap();
+        }
+        let started = std::time::Instant::now();
+        while platform::leader_runs_alone(child.id())
+            && started.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!platform::leader_runs_alone(child.id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(!platform::leader_runs_alone(child.id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_foreground_leader_stamp_follows_the_live_group_leader() {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = child.id() as i32;
+        let stamp = ForegroundLeader::read(Some(group)).expect("a live group leader");
+        assert_eq!(stamp.process_group, child.id());
+        assert_eq!(
+            Some(stamp.started_at),
+            crate::process::process_start_time(child.id())
+        );
+        assert_eq!(stamp.name, "sleep");
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(ForegroundLeader::read(Some(group)), None);
+        assert_eq!(ForegroundLeader::read(Some(1)), None);
+        assert_eq!(ForegroundLeader::read(None), None);
     }
 }
