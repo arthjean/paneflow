@@ -339,6 +339,7 @@ impl PaneFlowApp {
             toast: None,
             toast_queue: std::collections::VecDeque::new(),
             _toast_task: None,
+            spinner_clock: Default::default(),
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
             jump_cursor: None,

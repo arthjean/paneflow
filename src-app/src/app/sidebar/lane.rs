@@ -1,7 +1,9 @@
+use std::cell::Cell;
+use std::time::{Duration, Instant};
+
 use gpui::{
-    Animation, AnimationExt, AnyElement, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,
-    px, rgb, svg,
+    AnyElement, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Task, div, prelude::FluentBuilder, px, rgb, svg,
 };
 
 use crate::app::pull_request::{PrState, PullRequest};
@@ -69,7 +71,7 @@ pub(super) fn pull_request_tooltip(pr: PullRequest) -> SharedString {
     format!("Pull request #{} {state}", pr.number).into()
 }
 
-fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::Hsla, AnyElement) {
+fn lane_visual(lane: Lane, ui: crate::theme::UiColors) -> (gpui::Hsla, AnyElement) {
     let icon = |path: &'static str, color: gpui::Hsla| {
         svg()
             .size(px(SIDEBAR_LANE_GLYPH_SIZE))
@@ -89,7 +91,7 @@ fn lane_visual(lane: Lane, row_key: &str, ui: crate::theme::UiColors) -> (gpui::
             }
             SidebarAgentState::Thinking => {
                 let color = summary.tint.map_or(ui.muted, |tint| rgb(tint).into());
-                (color, render_comet_trail_loader(row_key, color))
+                (color, render_comet_trail_loader(color))
             }
             SidebarAgentState::Finished => {
                 let color = crate::app::constants::sidebar_finished_color();
@@ -124,7 +126,7 @@ pub(super) fn render_lane(
     reserve_action_slot: bool,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let (color, glyph) = lane_visual(lane, row_key, ui);
+    let (color, glyph) = lane_visual(lane, ui);
     div()
         .id(SharedString::from(format!("lane-{row_key}")))
         .flex_none()
@@ -209,12 +211,70 @@ pub(super) fn render_lane_slot(
 const COMET_TRAIL_DOT_SIZE: f32 = 3.0;
 const COMET_TRAIL_DOT_GAP: f32 = 1.0;
 
-pub(in crate::app) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
-    static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+const SPINNER_CYCLE_MS: u64 = 720;
+const SPINNER_STEPS: u64 = 8;
+const SPINNER_STEP_MS: u64 = SPINNER_CYCLE_MS / SPINNER_STEPS;
 
-    const CYCLE_MS: u64 = 720;
-    const PERIMETER: usize = 8;
+thread_local! {
+    static SPINNER_DRAWN: Cell<bool> = const { Cell::new(false) };
+}
 
+fn spinner_epoch() -> Instant {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+fn spinner_head(elapsed: Duration) -> usize {
+    let cycle_elapsed = elapsed.as_millis() % u128::from(SPINNER_CYCLE_MS);
+    (cycle_elapsed * u128::from(SPINNER_STEPS) / u128::from(SPINNER_CYCLE_MS)) as usize
+}
+
+fn spinner_next_step(elapsed: Duration) -> Duration {
+    let into_step = (elapsed.as_millis() % u128::from(SPINNER_STEP_MS)) as u64;
+    Duration::from_millis(SPINNER_STEP_MS - into_step + 1)
+}
+
+fn take_spinner_drawn() -> bool {
+    SPINNER_DRAWN.with(|drawn| drawn.replace(false))
+}
+
+#[derive(Default)]
+pub(crate) struct SpinnerClock {
+    ticker: Option<Task<()>>,
+}
+
+impl SpinnerClock {
+    pub(crate) fn sync<V: 'static>(&mut self, cx: &mut Context<V>) {
+        if !take_spinner_drawn() {
+            self.ticker = None;
+            return;
+        }
+        if self.ticker.is_some() {
+            return;
+        }
+        self.ticker = Some(cx.spawn(async move |view, cx| {
+            loop {
+                let executor = cx.background_executor().clone();
+                let elapsed = executor.now().saturating_duration_since(spinner_epoch());
+                executor.timer(spinner_next_step(elapsed)).await;
+                if view.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    #[cfg(test)]
+    fn running(&self) -> bool {
+        self.ticker.is_some()
+    }
+}
+
+pub(in crate::app) fn render_comet_trail_loader(color: gpui::Hsla) -> AnyElement {
+    comet_trail_loader(color, !crate::ui_primitives::reduce_motion())
+}
+
+fn comet_trail_loader(color: gpui::Hsla, animate: bool) -> AnyElement {
     let loader = div()
         .size(px(SIDEBAR_LANE_GLYPH_SIZE))
         .flex_none()
@@ -223,24 +283,13 @@ pub(in crate::app) fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla
         .items_center()
         .justify_center()
         .gap(px(COMET_TRAIL_DOT_GAP));
-    if crate::ui_primitives::reduce_motion() {
-        return comet_trail_matrix(loader, 0, color).into_any_element();
-    }
-    loader
-        .with_animation(
-            SharedString::from(format!("comet-trail-{row_key}")),
-            Animation::new(std::time::Duration::from_millis(CYCLE_MS)).repeat(),
-            move |loader, _delta| {
-                let cycle_elapsed = SYNC_EPOCH
-                    .get_or_init(std::time::Instant::now)
-                    .elapsed()
-                    .as_millis()
-                    % u128::from(CYCLE_MS);
-                let head = (cycle_elapsed * PERIMETER as u128 / u128::from(CYCLE_MS)) as usize;
-                comet_trail_matrix(loader, head, color)
-            },
-        )
-        .into_any_element()
+    let head = if animate {
+        SPINNER_DRAWN.with(|drawn| drawn.set(true));
+        spinner_head(spinner_epoch().elapsed())
+    } else {
+        0
+    };
+    comet_trail_matrix(loader, head, color).into_any_element()
 }
 
 fn comet_trail_matrix(loader: gpui::Div, head: usize, color: gpui::Hsla) -> gpui::Div {
@@ -336,5 +385,130 @@ mod tests {
         assert_eq!(Lane::PullRequest(pr(PrState::Open)).label(), "Review");
         assert_eq!(Lane::PullRequest(pr(PrState::Draft)).label(), "Draft");
         assert_eq!(Lane::PullRequest(pr(PrState::Merged)).label(), "Merged");
+    }
+
+    #[test]
+    fn the_stepped_spinner_keeps_eight_positions_over_a_720_ms_cycle() {
+        let heads: Vec<usize> = (0..SPINNER_CYCLE_MS)
+            .map(|ms| spinner_head(Duration::from_millis(ms)))
+            .collect();
+        for (step, window) in heads.chunks(SPINNER_STEP_MS as usize).enumerate() {
+            assert!(
+                window.iter().all(|head| *head == step),
+                "step {step}: {window:?}"
+            );
+        }
+        assert_eq!(spinner_head(Duration::from_millis(SPINNER_CYCLE_MS)), 0);
+        assert_eq!(
+            spinner_head(Duration::from_millis(SPINNER_CYCLE_MS + 91)),
+            1
+        );
+        assert_eq!(spinner_next_step(Duration::ZERO), Duration::from_millis(91));
+        assert_eq!(
+            spinner_next_step(Duration::from_millis(89)),
+            Duration::from_millis(2)
+        );
+        assert_eq!(
+            spinner_next_step(Duration::from_millis(181)),
+            Duration::from_millis(90)
+        );
+    }
+
+    struct SpinnerHarness {
+        spinners: usize,
+        animate: bool,
+        clock: SpinnerClock,
+    }
+
+    impl gpui::Render for SpinnerHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            let color = gpui::white();
+            let root =
+                div().children((0..self.spinners).map(|_| comet_trail_loader(color, self.animate)));
+            self.clock.sync(cx);
+            root
+        }
+    }
+
+    fn spinner_view(
+        cx: &mut gpui::TestAppContext,
+        spinners: usize,
+        animate: bool,
+    ) -> (
+        gpui::Entity<SpinnerHarness>,
+        &mut gpui::VisualTestContext,
+        std::rc::Rc<std::cell::Cell<usize>>,
+    ) {
+        let (view, cx) = cx.add_window_view(move |_, _| SpinnerHarness {
+            spinners,
+            animate,
+            clock: SpinnerClock::default(),
+        });
+        let notifies = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = notifies.clone();
+        cx.update(|window, cx| {
+            cx.observe(&view, move |_, _| counted.set(counted.get() + 1))
+                .detach();
+            window.draw(cx).clear(cx);
+        });
+        (view, cx, notifies)
+    }
+
+    fn run_for(cx: &mut gpui::VisualTestContext, span: Duration) {
+        let step = Duration::from_millis(10);
+        let mut elapsed = Duration::ZERO;
+        while elapsed < span {
+            cx.executor().advance_clock(step);
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            elapsed += step;
+        }
+    }
+
+    #[gpui::test]
+    fn one_thinking_agent_wakes_the_view_at_most_twelve_times_per_second(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (view, cx, notifies) = spinner_view(cx, 1, true);
+        assert!(view.read_with(cx, |view, _| view.clock.running()));
+        run_for(cx, Duration::from_secs(1));
+        let woken = notifies.get();
+        assert!((10..=12).contains(&woken), "{woken} wakes in one second");
+    }
+
+    #[gpui::test]
+    fn eight_thinking_agents_share_one_clock(cx: &mut gpui::TestAppContext) {
+        let (_view, cx, notifies) = spinner_view(cx, 8, true);
+        run_for(cx, Duration::from_secs(1));
+        let woken = notifies.get();
+        assert!((10..=12).contains(&woken), "{woken} wakes in one second");
+    }
+
+    #[gpui::test]
+    fn reduce_motion_draws_a_static_spinner_without_a_clock(cx: &mut gpui::TestAppContext) {
+        let (view, cx, notifies) = spinner_view(cx, 3, false);
+        assert!(!view.read_with(cx, |view, _| view.clock.running()));
+        run_for(cx, Duration::from_secs(1));
+        assert_eq!(notifies.get(), 0);
+    }
+
+    #[gpui::test]
+    fn the_clock_stops_when_the_last_spinner_leaves_the_tree(cx: &mut gpui::TestAppContext) {
+        let (view, cx, notifies) = spinner_view(cx, 2, true);
+        run_for(cx, Duration::from_millis(300));
+        assert!(notifies.get() > 0);
+        view.update(cx, |view, cx| {
+            view.spinners = 0;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(!view.read_with(cx, |view, _| view.clock.running()));
+        let after_close = notifies.get();
+        run_for(cx, Duration::from_secs(1));
+        assert_eq!(notifies.get(), after_close, "no periodic wake survives");
     }
 }
