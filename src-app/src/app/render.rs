@@ -740,6 +740,7 @@ impl Render for PaneFlowApp {
             app_backdrop_bg,
             crate::app::constants::window_border_color(ui.border, terminal_material_visible),
         );
+        self.spinner_clock.sync(cx);
         startup_trace::on_app_render_built();
         shell
     }

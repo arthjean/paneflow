@@ -19,6 +19,7 @@ use gpui::{
 
 use crate::ui_primitives::squircle_skin;
 use drop::*;
+pub(crate) use lane::SpinnerClock;
 use lane::{Lane, LaneSlot, infer_lane, render_lane_slot};
 use meta::*;
 pub(crate) use style::*;

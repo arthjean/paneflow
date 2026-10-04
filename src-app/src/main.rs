@@ -266,6 +266,7 @@ struct PaneFlowApp {
     toast: Option<Toast>,
     toast_queue: std::collections::VecDeque<Toast>,
     _toast_task: Option<gpui::Task<()>>,
+    spinner_clock: app::sidebar::SpinnerClock,
     #[cfg(target_os = "windows")]
     windows_backdrop_light: Option<bool>,
     jump_cursor: Option<u64>,
