@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use crate::ui_primitives::squircle::{
-    squircle_border, squircle_fill, squircle_path, squircle_stroke_path,
+    cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_fill,
 };
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color, squircle_skin};
 
@@ -225,19 +225,26 @@ fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement 
     let tile = gpui::canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
+            let scale = window.scale_factor();
             let lowered = gpui::Bounds {
                 origin: bounds.origin + gpui::point(px(0.), px(1.)),
                 size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
             };
             let layers = [
                 (
-                    squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
+                    cached_squircle_path(bounds.dilate(px(1.)), radius + px(1.), scale),
                     gpui::Background::from(ring),
                 ),
-                (squircle_path(bounds, radius), background),
-                (squircle_path(bounds, radius), highlight.into()),
-                (squircle_path(lowered, radius), background),
-                (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
+                (cached_squircle_path(bounds, radius, scale), background),
+                (
+                    cached_squircle_path(bounds, radius, scale),
+                    highlight.into(),
+                ),
+                (cached_squircle_path(lowered, radius, scale), background),
+                (
+                    cached_squircle_stroke_path(bounds, radius, px(1.), scale),
+                    rim.into(),
+                ),
             ];
             for (path, fill) in layers {
                 if let Some(path) = path {
@@ -2168,9 +2175,78 @@ mod tests {
     use super::{
         MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
         header_hover_animates, pane_card_background, pane_status_label, progress_chip_label,
-        truncate_surface_title,
+        tab_badge, truncate_surface_title,
     };
+    use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
+    use crate::ui_primitives::squircle::{cached_squircle_path, squircle_builds};
+
+    struct BadgeStrip {
+        tabs: usize,
+    }
+
+    impl gpui::Render for BadgeStrip {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{ParentElement, Styled};
+            gpui::div().flex().children((0..self.tabs).map(|tab| {
+                tab_badge(match tab % 3 {
+                    0 => None,
+                    1 => Some(TerminalAgent::ClaudeCode),
+                    _ => Some(TerminalAgent::Codex),
+                })
+            }))
+        }
+    }
+
+    #[gpui::test]
+    fn twelve_tab_badges_paint_the_next_frame_without_rebuilding_a_squircle(
+        cx: &mut TestAppContext,
+    ) {
+        let before = squircle_builds();
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip { tabs: 12 });
+        cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(80.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let first_frame = squircle_builds();
+        assert!(
+            first_frame > before && first_frame - before <= 4,
+            "the first frame builds the four badge shapes once: {}",
+            first_frame - before
+        );
+        view.update(cx, |_, cx| cx.notify());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            squircle_builds(),
+            first_frame,
+            "the second frame rebuilt a squircle"
+        );
+    }
+
+    #[test]
+    fn a_scale_change_rebuilds_each_badge_shape_once_then_reuses_it() {
+        let radius = gpui::px(5.);
+        let shape = |x: f32| {
+            gpui::Bounds::new(
+                gpui::point(gpui::px(x), gpui::px(4.)),
+                gpui::size(gpui::px(26.), gpui::px(17.)),
+            )
+        };
+        cached_squircle_path(shape(0.), radius, 1.5).unwrap();
+        let held = squircle_builds();
+        for tab in 0..12 {
+            cached_squircle_path(shape(30. * tab as f32), radius, 1.5).unwrap();
+        }
+        assert_eq!(squircle_builds(), held);
+        cached_squircle_path(shape(0.), radius, 3.).unwrap();
+        assert_eq!(squircle_builds(), held + 1);
+        for tab in 0..12 {
+            cached_squircle_path(shape(30. * tab as f32), radius, 3.).unwrap();
+        }
+        assert_eq!(squircle_builds(), held + 1);
+    }
 
     #[test]
     fn pane_states_carry_a_text_label_and_not_only_a_color() {
