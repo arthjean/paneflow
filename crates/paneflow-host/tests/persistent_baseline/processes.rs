@@ -105,8 +105,6 @@ impl DesktopProcess {
         ready_marker: Option<&str>,
         ready_deadline: Duration,
     ) -> Self {
-        let executable = std::env::var_os("PANEFLOW_BENCH_CONTROLLER")
-            .expect("desktop benchmark requires PANEFLOW_BENCH_CONTROLLER");
         let workspaces: Vec<_> = sessions
             .chunks(32)
             .enumerate()
@@ -123,11 +121,54 @@ impl DesktopProcess {
             })
             .collect();
         let saved = json!({"version": 3, "active_workspace": 0, "workspaces": workspaces});
+        Self::launch(home, &saved, sessions.len(), ready_marker, ready_deadline)
+    }
+
+    pub(super) fn start_in_two_panes(
+        home: &Path,
+        sessions: &[SessionId],
+        ready_deadline: Duration,
+    ) -> Self {
+        let pane = |sessions: &[SessionId]| {
+            json!({
+                "type": "pane",
+                "surfaces": sessions
+                    .iter()
+                    .map(|session| json!({"surface_type": "terminal", "session": session, "custom_name": session.as_str()}))
+                    .collect::<Vec<_>>(),
+            })
+        };
+        let (left, right) = sessions.split_at(sessions.len() / 2);
+        let saved = json!({
+            "version": 3,
+            "active_workspace": 0,
+            "workspaces": [{
+                "title": "Tab badges",
+                "cwd": home.display().to_string(),
+                "tabs": [{
+                    "title": "badges",
+                    "layout": {"type": "split", "direction": "horizontal", "children": [pane(left), pane(right)]},
+                }],
+                "active_tab": 0,
+            }],
+        });
+        Self::launch(home, &saved, sessions.len(), None, ready_deadline)
+    }
+
+    fn launch(
+        home: &Path,
+        saved: &Value,
+        expected_surfaces: usize,
+        ready_marker: Option<&str>,
+        ready_deadline: Duration,
+    ) -> Self {
+        let executable = std::env::var_os("PANEFLOW_BENCH_CONTROLLER")
+            .expect("desktop benchmark requires PANEFLOW_BENCH_CONTROLLER");
         let _: paneflow_config::schema::SessionState =
             serde_json::from_value(saved.clone()).unwrap();
         std::fs::write(
             home.join("session.json"),
-            serde_json::to_vec(&saved).unwrap(),
+            serde_json::to_vec(saved).unwrap(),
         )
         .unwrap();
         std::fs::write(
@@ -142,7 +183,7 @@ impl DesktopProcess {
         ));
         #[cfg(not(windows))]
         let endpoint = home.join("desktop.sock");
-        let log_path = home.join(format!("desktop-{}.log", sessions.len()));
+        let log_path = home.join(format!("desktop-{expected_surfaces}.log"));
         let log = std::fs::File::create(&log_path).unwrap();
         let started = Instant::now();
         let child = Command::new(executable)
@@ -179,7 +220,7 @@ impl DesktopProcess {
             assert!(
                 Instant::now() < deadline,
                 "desktop restoration watchdog: {listed} of {} surfaces listed, the first {ready_prefix} showing {ready_marker:?}; last attempt: {last_attempt}\n{}\n{}",
-                sessions.len(),
+                expected_surfaces,
                 log_tail(&log_path),
                 stall_samples(desktop.child.id(), home)
             );
@@ -193,7 +234,7 @@ impl DesktopProcess {
                         if let Some(entries) = surfaces["surfaces"].as_array() {
                             listed = entries.len();
                             last_attempt = format!("surface.list answered {listed} entries");
-                            if listed == sessions.len() {
+                            if listed == expected_surfaces {
                                 ready_prefix = entries
                                     .iter()
                                     .take_while(|surface| {
