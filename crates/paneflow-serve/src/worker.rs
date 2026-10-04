@@ -121,6 +121,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         sweeps: Default::default(),
         shutdown: Arc::new(AtomicBool::new(false)),
         core_connected: AtomicBool::new(false),
+        broadcast_snapshot: Mutex::new(None),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -293,9 +294,7 @@ fn sweep(worker: &Arc<Worker>) {
     for projection in settled {
         broadcast_projection(worker, &projection, &json!({}));
     }
-    worker
-        .bus
-        .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+    worker.broadcast_snapshot_if_changed(sessions);
 }
 
 fn core_poll_interval(following: bool) -> Duration {
@@ -338,9 +337,7 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
             }
             write_instance_record(worker);
             let sessions = worker.lock_state().snapshot();
-            worker
-                .bus
-                .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+            worker.broadcast_snapshot_if_changed(sessions);
             return true;
         }
         CoreFrame::Session(entry) => {
@@ -355,9 +352,7 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
                 .is_ok_and(|session| worker.lock_state().forget_core_session(&session));
             if removed {
                 let sessions = worker.lock_state().snapshot();
-                worker
-                    .bus
-                    .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+                worker.broadcast_snapshot_if_changed(sessions);
             }
         }
         CoreFrame::Event(value) => {
@@ -429,6 +424,87 @@ mod tests {
         assert_eq!(deltas["snapshot_broadcasts"], measured(1));
         assert_eq!(deltas["projection_broadcasts"], measured(0));
         running.stop();
+    }
+
+    fn snapshot_broadcasts(worker: &Worker) -> u64 {
+        worker.bus.broadcasts().snapshot.get()
+    }
+
+    fn running_row(session: &paneflow_config::schema::SessionId, title: &str) -> Value {
+        json!({
+            "session": session,
+            "generation": paneflow_config::schema::SessionGeneration::FIRST,
+            "live": true,
+            "lifecycle": paneflow_host::manifest::SessionLifecycle::Running,
+            "title": title,
+            "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
+            "host_build_id": "test-build",
+        })
+    }
+
+    #[test]
+    fn a_sweep_broadcasts_the_snapshot_only_when_its_content_changed() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        let worker = running.worker();
+        let session = paneflow_config::schema::SessionId::new();
+        worker
+            .lock_state()
+            .apply_core_session(&running_row(&session, "agent"));
+        sweep(worker);
+        let initial = snapshot_broadcasts(worker);
+        assert_eq!(initial, 1, "a fresh worker broadcasts its first snapshot");
+
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_millis(2));
+            worker
+                .lock_state()
+                .apply_core_session(&running_row(&session, "agent"));
+            sweep(worker);
+        }
+        assert_eq!(
+            snapshot_broadcasts(worker),
+            initial,
+            "an unchanged state is not rebroadcast, whatever its update stamp"
+        );
+
+        worker
+            .lock_state()
+            .apply_core_session(&running_row(&session, "renamed"));
+        sweep(worker);
+        assert_eq!(snapshot_broadcasts(worker), initial + 1);
+        sweep(worker);
+        assert_eq!(snapshot_broadcasts(worker), initial + 1);
+
+        assert!(apply(
+            worker,
+            CoreFrame::SessionRemoved(session.to_string()),
+            true
+        ));
+        assert_eq!(snapshot_broadcasts(worker), initial + 2);
+        running.stop();
+    }
+
+    #[test]
+    fn a_restarted_worker_broadcasts_its_initial_snapshot_even_when_identical() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let first = open_with_config(home.path(), "{}");
+        sweep(first.worker());
+        assert_eq!(snapshot_broadcasts(first.worker()), 1);
+        first.stop();
+
+        let restarted = open_with_config(home.path(), "{}");
+        let worker = restarted.worker();
+        assert!(apply(worker, CoreFrame::Snapshot(Vec::new()), false));
+        assert_eq!(snapshot_broadcasts(worker), 1);
+        sweep(worker);
+        assert_eq!(snapshot_broadcasts(worker), 1);
+        let header = worker.snapshot_frame();
+        assert!(
+            header["sessions"].is_array(),
+            "a reconnecting follower still receives the full snapshot header"
+        );
+        restarted.stop();
     }
 
     #[test]

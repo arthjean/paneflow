@@ -269,11 +269,11 @@ Nested counters are addressed with dots, for example
 | host, `host.status` | `agent_bus_cancellation_broadcasts` | frames of type `cancellation` | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_event_broadcasts` | hook event frames | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_snapshot_broadcasts` | full agent snapshots served (`agent.snapshot` replies and follow headers) | `SessionHost::agent_snapshot` |
-| worker, `worker.status` | `snapshot_broadcasts` | full snapshots broadcast to controllers | `AgentBus::broadcast` of type `snapshot` |
+| worker, `worker.status` | `snapshot_broadcasts` | full snapshots broadcast to controllers, only when their content (without `updated_at_ms`) changed since the last broadcast | `AgentBus::broadcast` of type `snapshot`, through `Worker::broadcast_snapshot_if_changed`; a follower still receives the full snapshot as its stream header |
 | worker, `worker.status` | `projection_broadcasts` | per-session projections broadcast | `AgentBus::broadcast` of type `event` |
 | worker, `worker.status` | `sweeps` | 2 s state sweeps | `worker::sweep` |
 | desktop, `system.counters` | `root_renders` | renders of the root view | `PaneFlowApp::render` |
-| desktop, `system.counters` | `host_agent_snapshots_applied` | host agent snapshots applied | `PaneFlowApp::apply_host_agent_snapshot` |
+| desktop, `system.counters` | `host_agent_snapshots_applied` | host agent snapshots applied; a snapshot identical to the last one applied is skipped unless it is the header of a new follow | `PaneFlowApp::apply_host_agent_snapshot` |
 | desktop, `system.counters` | `session_list_calls` | `session.list` calls to the host | `host_link::list_sessions` |
 | desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (16 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, the filter query, and the git clone |
 | desktop, `system.counters` | `process_spawns` | processes spawned through `paneflow-process` | `paneflow_process::run_supervised` and `spawn_detached` |

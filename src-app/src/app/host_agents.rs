@@ -44,6 +44,7 @@ pub(crate) enum HostAgentFrame {
     Snapshot {
         sessions: Vec<Value>,
         capabilities: Vec<String>,
+        initial: bool,
     },
     Event(Box<Value>),
     Disconnected(String),
@@ -79,9 +80,30 @@ pub(crate) struct HostAgentView {
     connected: bool,
     bootstrapped: bool,
     disconnect_reason: Option<String>,
+    applied_snapshot: Option<(Vec<Value>, Vec<String>)>,
 }
 
 impl HostAgentView {
+    fn accept_snapshot(
+        &mut self,
+        sessions: &[Value],
+        capabilities: &[String],
+        initial: bool,
+    ) -> bool {
+        let fingerprint = (
+            paneflow_serve::server::snapshot_fingerprint(sessions),
+            capabilities.to_vec(),
+        );
+        let redundant = !initial
+            && self.connected
+            && self.bootstrapped
+            && self.applied_snapshot.as_ref() == Some(&fingerprint);
+        if !redundant {
+            self.applied_snapshot = Some(fingerprint);
+        }
+        !redundant
+    }
+
     pub(crate) fn live_session_with_provider_id(
         &self,
         tool: TerminalAgent,
@@ -379,6 +401,7 @@ fn follow_once(endpoint: &std::path::Path, tx: &FrameSink) -> Result<(), String>
         HostAgentFrame::Snapshot {
             sessions,
             capabilities: capabilities.clone(),
+            initial: true,
         },
     )?;
     loop {
@@ -404,6 +427,7 @@ fn follow_once(endpoint: &std::path::Path, tx: &FrameSink) -> Result<(), String>
                     HostAgentFrame::Snapshot {
                         sessions,
                         capabilities: capabilities.clone(),
+                        initial: false,
                     },
                 )?;
             }
@@ -516,7 +540,15 @@ impl PaneFlowApp {
                 HostAgentFrame::Snapshot {
                     sessions,
                     capabilities,
-                } => self.apply_host_agent_snapshot(sessions, capabilities, cx),
+                    initial,
+                } => {
+                    if self
+                        .host_agents
+                        .accept_snapshot(&sessions, &capabilities, initial)
+                    {
+                        self.apply_host_agent_snapshot(sessions, capabilities, cx);
+                    }
+                }
                 HostAgentFrame::Event(frame) => self.apply_host_agent_event(&frame, cx),
                 HostAgentFrame::Disconnected(reason) => {
                     self.host_agents.connected = false;
@@ -861,6 +893,48 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stamped_entry(session: &SessionId, status: &str, updated_at_ms: u64) -> Value {
+        json!({
+            "session": session.to_string(),
+            "live": true,
+            "status": status,
+            "updated_at_ms": updated_at_ms,
+        })
+    }
+
+    #[test]
+    fn an_identical_snapshot_is_not_applied_again_but_a_reconnection_header_is() {
+        let session = SessionId::new();
+        let capabilities = vec!["agent.follow".to_string()];
+        let mut view = HostAgentView::default();
+        let first = vec![stamped_entry(&session, "busy", 1)];
+        assert!(view.accept_snapshot(&first, &capabilities, true));
+        view.connected = true;
+        view.bootstrapped = true;
+
+        let restamped = vec![stamped_entry(&session, "busy", 2)];
+        assert!(
+            !view.accept_snapshot(&restamped, &capabilities, false),
+            "an identical snapshot neither refreshes the session list nor renders"
+        );
+
+        let changed = vec![stamped_entry(&session, "idle", 3)];
+        assert!(view.accept_snapshot(&changed, &capabilities, false));
+        assert!(!view.accept_snapshot(&changed, &capabilities, false));
+        assert!(view.accept_snapshot(&changed, &["other".to_string()], false));
+
+        assert!(
+            view.accept_snapshot(&changed, &["other".to_string()], true),
+            "the header of a resumed follow is applied even when identical"
+        );
+
+        view.connected = false;
+        assert!(
+            view.accept_snapshot(&changed, &["other".to_string()], false),
+            "a snapshot after a disconnection is applied"
+        );
+    }
 
     #[test]
     fn a_snapshot_row_reads_the_worker_projection_without_inferring_idle() {

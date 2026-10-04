@@ -35,6 +35,7 @@ pub struct Worker {
     pub sweeps: Counter,
     pub shutdown: Arc<AtomicBool>,
     pub core_connected: AtomicBool,
+    pub broadcast_snapshot: Mutex<Option<Vec<Value>>>,
 }
 
 impl Worker {
@@ -42,6 +43,23 @@ impl Worker {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn broadcast_snapshot_if_changed(&self, sessions: Vec<Value>) -> bool {
+        let fingerprint = snapshot_fingerprint(&sessions);
+        {
+            let mut held = self
+                .broadcast_snapshot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if held.as_ref() == Some(&fingerprint) {
+                return false;
+            }
+            *held = Some(fingerprint);
+        }
+        self.bus
+            .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+        true
     }
 
     pub fn snapshot_frame(&self) -> Value {
@@ -177,6 +195,19 @@ impl Drop for ServerHandle {
             let _ = std::fs::remove_file(&self.endpoint);
         }
     }
+}
+
+pub fn snapshot_fingerprint(sessions: &[Value]) -> Vec<Value> {
+    sessions
+        .iter()
+        .map(|session| {
+            let mut session = session.clone();
+            if let Some(fields) = session.as_object_mut() {
+                fields.remove("updated_at_ms");
+            }
+            session
+        })
+        .collect()
 }
 
 fn accept_loop(
