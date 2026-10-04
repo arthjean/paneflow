@@ -1582,6 +1582,28 @@ mod singleton_guard_tests {
     use super::{InstanceClaim, detect_existing_instance, singleton_refusal};
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn a_live_answer_refuses_first_and_a_held_lock_refuses_only_without_one() {
+        let live = Some("{\"app\":\"PaneFlow\"}".to_string());
+        for claim in [
+            InstanceClaim::Claimed,
+            InstanceClaim::HeldElsewhere,
+            InstanceClaim::Unavailable,
+        ] {
+            assert_eq!(singleton_refusal(claim, live.clone()), live);
+        }
+        assert_eq!(
+            singleton_refusal(InstanceClaim::HeldElsewhere, None).as_deref(),
+            Some(super::INSTANCE_STARTING)
+        );
+        assert_eq!(singleton_refusal(InstanceClaim::Claimed, None), None);
+        assert_eq!(
+            singleton_refusal(InstanceClaim::Unavailable, None),
+            None,
+            "without a lock, as on Windows, only a live answer refuses the launch"
+        );
+    }
+
     #[cfg(unix)]
     fn socket_dir() -> tempfile::TempDir {
         tempfile::Builder::new()
