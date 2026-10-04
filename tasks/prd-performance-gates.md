@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-03 | Arthur Jean | PRD initial : instrumenter le travail des trois processus, corriger les sept régressions candidates relevées le 2026-10-03, puis verrouiller l'état corrigé par des gates déterministes en CI Linux, un A/B calibré, des baselines propres par plateforme et un protocole manuel sur matériel réel. 5 epics, 19 stories. |
 | 1.1 | 2026-10-03 | Arthur Jean | Les références à pf portent le préfixe `pf/`, défini une fois dans Research Findings avec les deux clones locaux (`/home/arthur/dev/pf` sous Linux, `C:/dev/pf` sous Windows) et le commit `4049d49` qui fixe les numéros de ligne. |
+| 1.2 | 2026-10-04 | Arthur Jean | US-006 : la latence p95 se mesure par l'aller-retour d'écho du scénario actif, car `terminal/perf_bench.rs` ne traverse pas le host et ne peut pas observer le thread de session. |
 
 ## Problem Statement
 
@@ -285,7 +286,7 @@ Aujourd'hui, toute sortie arme un scan à 500 ms (`crates/paneflow-host/src/runt
 - [ ] Given une seule session active, when un descendant naît puis meurt, then il est découvert dans les 1 000 ms qui suivent la sortie qui l'accompagne (test avec la fixture `descendants`).
 - [ ] Les tests existants de suivi des orphelins (fixture `descendants-orphan`) passent sans modification de leurs assertions.
 - [ ] Le même partage s'applique au snapshot Toolhelp sous Windows et au listing macOS, vérifié par inspection pour Windows dans la PR.
-- [ ] Le listing ne s'exécute plus sur le thread qui alimente le parseur d'une session : la latence p95 entre une écriture PTY et sa publication n'augmente pas dans `terminal/perf_bench.rs`.
+- [ ] Le listing ne s'exécute plus sur le thread qui alimente le parseur d'une session : la latence p95 de l'aller-retour d'écho par le host (entrée envoyée au PTY, écho publié au client), mesurée par le scénario actif d'US-002 sous 1, 4 et 8 sessions actives, n'augmente pas par rapport à `main` avant EP-002.
 - [ ] Échec : given un listing qui échoue (`/proc` illisible), when une session demande le snapshot partagé, then elle marque `snapshot_failed` comme aujourd'hui et le listing suivant est retenté à l'intervalle suivant, pas en boucle (test).
 
 #### US-007: Réutiliser l'observation du premier plan tant que son groupe ne change pas
