@@ -335,6 +335,32 @@ and 15 `session.list` calls per window), and one thinking agent drives about
 US-008 remove. A spike that is not validated would have proposed counting
 inside `TestAppContext` or a third-party runner and blocked US-013.
 
+### Tab badge cost
+
+The ignored test `desktop_tab_badges_cpu` measures what the pane tab badges
+cost the desktop main thread. It opens 12 idle fixture sessions in two side by
+side panes of 6 tabs, because a pane holds at most 8 tabs (`MAX_PANE_TABS`),
+sends an `ai.prompt_submit` hook event so one agent thinks and the sidebar
+spinner runs, waits 4 s, then measures 5 windows of 30 s: the CPU time of the
+desktop main thread, read from `/proc/<pid>/task/<pid>/stat` (Linux only; the
+other platforms report it pending and the test fails), and the desktop work
+counters. It needs a display and the release binaries:
+
+```bash
+cargo build --release --locked -p paneflow-app -p paneflow-host
+harness=$(cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
+  | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+cd crates/paneflow-host
+PANEFLOW_BENCH_HOST=$PWD/../../target/release/paneflow-host \
+PANEFLOW_BENCH_FIXTURE=$PWD/../../target/release/paneflow-session-fixture \
+PANEFLOW_BENCH_CONTROLLER=$PWD/../../target/release/paneflow \
+PANEFLOW_BENCH_OUT=/tmp/tab-badges.json \
+"$harness" desktop_tab_badges_cpu --ignored --exact --nocapture --test-threads=1
+```
+
+Under Xvfb, set `DISPLAY` to the virtual display and `VK_DRIVER_FILES` to the
+lavapipe ICD, as the headless spike does.
+
 ## Terminal suite
 
 The benchmark is the ignored test `terminal_pipeline_benchmark` in

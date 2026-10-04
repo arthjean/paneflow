@@ -792,6 +792,116 @@ fn desktop_headless_spike() {
     );
 }
 
+const TAB_BADGE_TABS: usize = 12;
+
+#[cfg(target_os = "linux")]
+fn main_thread_cpu_ns(pid: u32) -> Option<u64> {
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/stat")).ok()?;
+    let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+    let ticks: u64 = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
+    Some(ticks * (1_000_000_000 / u64::try_from(ticks_per_second).ok().filter(|t| *t > 0)?))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn main_thread_cpu_ns(_pid: u32) -> Option<u64> {
+    None
+}
+
+#[test]
+#[ignore = "US-005 tab badge cost; run under a display with PANEFLOW_BENCH_CONTROLLER, see bench/README.md"]
+fn desktop_tab_badges_cpu() {
+    allow_breakaway_like_the_desktop_does();
+    let path = output_path();
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption = bootstrap::ensure_host_running(home.path(), &host_executable(), "tab-badges")
+        .expect("the detached host starts");
+    let hello = ClientHello::local("tab-badges");
+    let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+    let host_identity = paneflow_host::ProcessIdentity::capture(adoption.identity.pid);
+    let ledger = FixtureLedger::new();
+    let sessions: Vec<SessionId> = (0..TAB_BADGE_TABS)
+        .map(|_| {
+            let created = client
+                .create(&workloads::fixture(&["idle"]))
+                .expect("the fixture session starts");
+            ledger.record(&mut client, &created.manifest.session);
+            created.manifest.session
+        })
+        .collect();
+    let desktop =
+        DesktopProcess::start_in_two_panes(home.path(), &sessions, headless::FIRST_FRAME_LIMIT);
+    let submitted = headless::submit_prompt(&endpoint, &sessions[0]);
+    std::thread::sleep(SETTLE);
+    let pid = desktop.child.id();
+    let runs: Vec<Value> = (0..headless::SPIKE_RUNS)
+        .map(|_| {
+            let counters_before = active::desktop_counters(&desktop);
+            let cpu_before = main_thread_cpu_ns(pid);
+            let started = Instant::now();
+            std::thread::sleep(headless::SPIKE_WINDOW);
+            let cpu_after = main_thread_cpu_ns(pid);
+            let window = started.elapsed();
+            let counters_after = active::desktop_counters(&desktop);
+            json!({
+                "window_s": window.as_secs_f64(),
+                "main_thread_cpu_percent": cpu_before.zip(cpu_after).map(|(before, after)| {
+                    after.saturating_sub(before) as f64 / window.as_nanos() as f64 * 100.0
+                }),
+                "work_counters": active::window_json(&counters_before, &counters_after),
+            })
+        })
+        .collect();
+    drop(desktop);
+    for session in &sessions {
+        let _ = client.stop(session, None);
+    }
+    let mut decisions = Vec::new();
+    let fixtures = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
+    let cpu: Vec<f64> = runs
+        .iter()
+        .filter_map(|run| run["main_thread_cpu_percent"].as_f64())
+        .collect();
+    let document = json!({
+        "suite": "paneflow-desktop-tab-badges",
+        "schema_version": SCHEMA_VERSION,
+        "tabs": TAB_BADGE_TABS,
+        "state": "two side by side panes of 6 terminal tabs each (12 tab badges, a pane holds at most 8), one agent thinking",
+        "prompt_submit": submitted,
+        "main_thread_cpu_percent": workloads::stats(&cpu, headless::SPIKE_RUNS),
+        "runs": runs,
+        "stamp": stamp(),
+        "commit": git(&["rev-parse", "HEAD"]),
+        "commit_short": std::env::var("PANEFLOW_BENCH_SHA").ok(),
+        "machine": machine(),
+        "toolchain": toolchain(),
+        "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
+        "fixtures": fixtures,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+    });
+    write_document(&path, &document);
+    println!("result: {}", path.display());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&document["main_thread_cpu_percent"]).unwrap()
+    );
+    assert_eq!(
+        cpu.len(),
+        headless::SPIKE_RUNS,
+        "a window lost its CPU sample"
+    );
+}
+
 fn topology_label(worker: bool) -> &'static str {
     if std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some() {
         "host-worker-native-desktop"
