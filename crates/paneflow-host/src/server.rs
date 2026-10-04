@@ -3323,18 +3323,22 @@ mod tests {
             false
         };
 
-        client
-            .input(&session, generation, b"echo BEFORE_RESET\r\n")
-            .unwrap();
+        #[cfg(unix)]
+        let command: &[u8] = b"printf 'BEFORE_%s\\n' RESET\r\n";
+        #[cfg(windows)]
+        let command: &[u8] = b"echo BEFORE_RESET\r\n";
+        client.input(&session, generation, command).unwrap();
         assert!(wait_for_text(&mut client, "BEFORE_RESET"));
         client.reset(&session, generation).unwrap();
         assert!(
             !client.text(&session).unwrap().text.contains("BEFORE_RESET"),
             "the host emulator forgot the screen"
         );
-        client
-            .input(&session, generation, b"echo AFTER_RESET\r\n")
-            .unwrap();
+        #[cfg(unix)]
+        let command: &[u8] = b"printf 'AFTER_%s\\n' RESET\r\n";
+        #[cfg(windows)]
+        let command: &[u8] = b"echo AFTER_RESET\r\n";
+        client.input(&session, generation, command).unwrap();
         assert!(
             wait_for_text(&mut client, "AFTER_RESET"),
             "the program kept running"
