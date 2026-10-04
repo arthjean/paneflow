@@ -22,6 +22,68 @@ allocated bytes, allocation calls, and live bytes (allocations minus
 deallocations), which is how a retained-memory metric can be reported at all.
 It exists only in `cfg(test)` builds.
 
+## Performance gates
+
+The `perf_gates` job of `.github/workflows/run_tests.yml` turns the work
+counters and the allocation columns into budgets that block a pull request.
+It runs on every `pull_request` and every `push` to `main`, is part of
+`tests_pass`, and reproduces locally with one command:
+
+```bash
+scripts/perf-gates.sh                           # needs Xvfb and Mesa lavapipe; XVFB=<path> overrides the Xvfb binary
+scripts/perf-gates.sh --refresh-alloc-baselines # rewrites bench/{terminal,editor}-alloc-baseline-linux.json
+```
+
+The script builds the release profile, runs the terminal and editor suites,
+the hook burst test and the startup suite, starts its own Xvfb with the
+lavapipe ICD forced, then runs the ignored test `perf_gates` in
+`crates/paneflow-host/tests/persistent_baseline.rs`. That test drives the real
+host, worker and desktop through four scenarios: 8 idle sessions and 8
+`stream 16384 60` sessions for the host and the worker (30 s windows), then
+the desktop idle with 4 panes, with one agent thinking, and on a workspace
+whose git repository does not change (35 s window, one 30 s git poll). It
+reads the other suites' results from `target/perf-gates/` and judges every
+budget.
+
+Every budget is a constant in one module,
+`crates/paneflow-host/tests/persistent_baseline/gates.rs`: its name, its
+value, its unit, the scenario that measures it and the margin that justifies
+it. The allocation columns (`alloc_bytes_per_iter`, `allocs_per_iter`) of
+every terminal and editor metric are judged against the committed Linux
+baselines within 1 % either way: a metric that drops by more than 1 % fails
+too, with "below the baseline, refresh it in this PR", so no improvement
+stays out of the baseline. `gate_trickle_publishes` is judged on its exact
+value. The suites' timing columns stay informative. Two runs of the same
+commit on Arthur's Fedora machine gave identical allocation columns; the
+comparison with a GitHub runner is the first CI run of the job.
+
+A failure prints one line per failed budget,
+`counter | measured | budget | excess | scenario`, then the local command
+that reproduces it, and the job writes the full table to
+`$GITHUB_STEP_SUMMARY`. The JSON report `target/perf-gates/perf-gates.json`
+is written before any assertion and uploaded with the suite results and logs
+as the `perf-gates` artifact (14 days), whatever the outcome. A measurement
+that is missing (a dead fixture, a `pending` counter, a window across a
+restart, a suite that wrote no result, a desktop or Vulkan adapter that did
+not start) fails its budget with the reason: it is never read as within
+budget. A metric the suite itself reports `available: false` (no real shaper
+on the machine) is listed as not measured, neither accepted nor a
+regression. The non-ignored tests `gates::` and `gate_runs::` of the same
+binary run in the job before the measurement: they feed the verifier a
+synthetic overrun and check the job's workflow (no `pull_request_target` in
+any workflow, a `perf-gates-` cache prefix that `release.yml` never uses,
+`tests_pass` depending on the job).
+
+The first local run of the gates, on Arthur's Fedora machine under Xvfb with
+lavapipe, failed one budget: with 8 printing sessions the host broadcast 2.97
+`session` frames per second and per session, against the PRD bound of 2. On
+a 500 ms scan tick where the screen changed, the viewport scan announced the
+session for its new terminal signals, then `commit_scan` persisted the screen
+stamp and `persist` announced it again. The scan now announces a session once
+per tick: it skips the signals announcement when its own commit already
+announced. The rerun measured 1.97, and every other budget passed both runs
+(local evidence in `tasks/perf-gates-ep003/`, not tracked).
+
 ## Screen rule corpus
 
 `bench/screen-corpus-baseline.json` is not a timing baseline: it records how
@@ -729,8 +791,10 @@ Both suites refuse to run under the debug profile, which would measure the
 compiler rather than the code, and exit non-zero with an explicit message. Set
 `PANEFLOW_BENCH_ALLOW_DEBUG=1` to override while developing a suite itself.
 
-Neither suite runs in CI. They are local artifacts compared against a local
-baseline, which is what makes the comparison meaningful.
+The timing comparison never runs in CI. The tables are local artifacts
+compared against a local baseline, which is what makes them meaningful. Only
+the allocation columns, which are deterministic, are gated in CI (see
+"Performance gates").
 
 ## Fairness rules
 

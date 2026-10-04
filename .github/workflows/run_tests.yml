@@ -353,6 +353,55 @@ jobs:
           fi
           exit $fail
 
+  # Performance gates (prd-performance-gates EP-003). Deterministic work
+  # budgets for the host, the worker and the desktop, the allocation columns
+  # of the terminal and editor suites, and two wide time bounds that protect
+  # a written contract (hook response, stale-socket startup). The budgets
+  # live in crates/paneflow-host/tests/persistent_baseline/gates.rs and
+  # scripts/perf-gates.sh reproduces the job locally. The desktop runs the
+  # release build under Xvfb with Mesa lavapipe, the configuration the
+  # US-003 spike validated on ubuntu-24.04 (bench/README.md, "Desktop sans
+  # écran"), which is why this job does not share the 22.04 image the
+  # release-parity jobs pin. Its cache prefix stays disjoint from release.yml.
+  perf_gates:
+    name: Performance gates (Linux x86_64)
+    needs: orchestrate
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
+
+      - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: mesa-vulkan-drivers xvfb
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: "perf-gates-"
+          key: perf_gates
+
+      - name: Run the performance gates
+        run: scripts/perf-gates.sh
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: perf-gates
+          path: target/perf-gates/
+          retention-days: 14
+          if-no-files-found: warn
+
   # cargo-deny gate. BLOCKING since 2026-05-27 - promoted from
   # warn-only after the lockfile reached audit-clean (Marvin Attack
   # ignored with documented rationale, GPL-3 transitive deps from
@@ -1331,6 +1380,7 @@ jobs:
       - check_style
       - run_tests_linux
       - release_build_linux
+      - perf_gates
       - security_audit
       - macos_check
       - macos_render_smoke
@@ -1346,6 +1396,7 @@ jobs:
           RESULT_CHECK_STYLE: ${{ needs.check_style.result }}
           RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
           RESULT_RELEASE_BUILD_LINUX: ${{ needs.release_build_linux.result }}
+          RESULT_PERF_GATES: ${{ needs.perf_gates.result }}
           RESULT_SECURITY_AUDIT: ${{ needs.security_audit.result }}
           RESULT_MACOS_CHECK: ${{ needs.macos_check.result }}
           RESULT_MACOS_RENDER_SMOKE: ${{ needs.macos_render_smoke.result }}
@@ -1367,6 +1418,7 @@ jobs:
           check_result "check_style"          "$RESULT_CHECK_STYLE"
           check_result "run_tests_linux"      "$RESULT_RUN_TESTS_LINUX"
           check_result "release_build_linux"  "$RESULT_RELEASE_BUILD_LINUX"
+          check_result "perf_gates"           "$RESULT_PERF_GATES"
           check_result "security_audit"       "$RESULT_SECURITY_AUDIT"
           check_result "macos_check"          "$RESULT_MACOS_CHECK"
           check_result "macos_render_smoke"   "$RESULT_MACOS_RENDER_SMOKE"

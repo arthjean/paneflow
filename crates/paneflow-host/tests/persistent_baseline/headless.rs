@@ -128,6 +128,17 @@ pub(super) fn start_desktop(
     .map_err(desktop_failure)
 }
 
+pub(super) fn start_desktop_in(
+    home: &Path,
+    cwd: &Path,
+    sessions: &[SessionId],
+) -> Result<DesktopProcess, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DesktopProcess::start_ready_in(home, cwd, sessions, Some("fixture idle"), FIRST_FRAME_LIMIT)
+    }))
+    .map_err(desktop_failure)
+}
+
 pub(super) fn submit_prompt(endpoint: &Path, session: &SessionId) -> Value {
     HostClient::connect(endpoint, &ClientHello::control("headless-spike-ai-hook"))
         .and_then(|mut hook| {

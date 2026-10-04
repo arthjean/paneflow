@@ -2398,6 +2398,21 @@ fn a_hook_burst_with_slow_durability_loses_nothing_and_never_queues_behind_the_l
         p95,
         by_revision,
     } = run_hook_burst("hook-burst");
+    if let Some(out) = std::env::var_os("PANEFLOW_GATE_HOOK_BURST_OUT") {
+        let durable: std::collections::BTreeSet<u64> =
+            by_revision.iter().map(|(revision, _)| *revision).collect();
+        std::fs::write(
+            out,
+            serde_json::to_vec_pretty(&json!({
+                "hooks": HOOKS,
+                "durability_latency_ms": 100,
+                "p95_ms": p95.as_secs_f64() * 1000.0,
+                "lost": HOOKS - durable.len(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
     assert!(
         p95 < Duration::from_secs(2),
         "p95 {p95:?}: hooks must not wait for each other's durability"
@@ -2430,18 +2445,6 @@ fn a_hook_burst_with_slow_durability_loses_nothing_and_never_queues_behind_the_l
         "every acknowledged hook reached disk"
     );
     host.stop(&session, None).unwrap();
-}
-
-#[test]
-#[ignore = "bench: cargo test -p paneflow-host --lib hook_burst_bench -- --ignored --nocapture, on an idle machine"]
-fn hook_burst_bench_answers_within_the_ai_hook_deadline() {
-    let burst = run_hook_burst("hook-burst-bench");
-    assert!(
-        burst.p95 < Duration::from_millis(350),
-        "p95 {:?}",
-        burst.p95
-    );
-    burst.host.stop(&burst.session, None).unwrap();
 }
 
 #[test]

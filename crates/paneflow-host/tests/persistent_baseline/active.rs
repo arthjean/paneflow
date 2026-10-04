@@ -36,7 +36,7 @@ fn unavailable(process: &str, names: &[&str], reason: String) -> CounterSample {
     }
 }
 
-fn host_counters(client: &mut HostClient) -> CounterSample {
+pub(super) fn host_counters(client: &mut HostClient) -> CounterSample {
     match client.call("host.status", json!({})) {
         Ok(status) => paneflow_host::work_counters::sample("host", &status, HOST_COUNTERS),
         Err(error) => unavailable(
@@ -47,7 +47,7 @@ fn host_counters(client: &mut HostClient) -> CounterSample {
     }
 }
 
-fn worker_counters(worker: &WorkerProcess) -> CounterSample {
+pub(super) fn worker_counters(worker: &WorkerProcess) -> CounterSample {
     let status = HostControl::connect_with_deadline(
         &worker.endpoint,
         "persistent-bench",

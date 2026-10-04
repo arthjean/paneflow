@@ -105,13 +105,23 @@ impl DesktopProcess {
         ready_marker: Option<&str>,
         ready_deadline: Duration,
     ) -> Self {
+        Self::start_ready_in(home, home, sessions, ready_marker, ready_deadline)
+    }
+
+    pub(super) fn start_ready_in(
+        home: &Path,
+        cwd: &Path,
+        sessions: &[SessionId],
+        ready_marker: Option<&str>,
+        ready_deadline: Duration,
+    ) -> Self {
         let workspaces: Vec<_> = sessions
             .chunks(32)
             .enumerate()
             .map(|(index, sessions)| {
                 json!({
                     "title": format!("Persistent baseline {index}"),
-                    "cwd": home.display().to_string(),
+                    "cwd": cwd.display().to_string(),
                     "tabs": sessions.iter().map(|session| json!({
                         "title": session.as_str(),
                         "layout": {"type": "pane", "surfaces": [{"surface_type": "terminal", "session": session, "custom_name": session.as_str()}]},

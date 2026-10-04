@@ -17,6 +17,10 @@ use serde_json::{Value, json};
 mod active;
 #[path = "persistent_baseline/endurance.rs"]
 mod endurance;
+#[path = "persistent_baseline/gate_runs.rs"]
+mod gate_runs;
+#[path = "persistent_baseline/gates.rs"]
+mod gates;
 #[path = "persistent_baseline/headless.rs"]
 mod headless;
 #[path = "persistent_baseline/metrics.rs"]
@@ -795,16 +799,31 @@ fn desktop_headless_spike() {
 const TAB_BADGE_TABS: usize = 12;
 
 #[cfg(target_os = "linux")]
-fn main_thread_cpu_ns(pid: u32) -> Option<u64> {
+fn stat_cpu_ns(stat_path: &str) -> Option<u64> {
     let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/stat")).ok()?;
+    let stat = std::fs::read_to_string(stat_path).ok()?;
     let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
     let ticks: u64 = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
     Some(ticks * (1_000_000_000 / u64::try_from(ticks_per_second).ok().filter(|t| *t > 0)?))
 }
 
+#[cfg(target_os = "linux")]
+fn main_thread_cpu_ns(pid: u32) -> Option<u64> {
+    stat_cpu_ns(&format!("/proc/{pid}/task/{pid}/stat"))
+}
+
+#[cfg(target_os = "linux")]
+fn process_cpu_ns(pid: u32) -> Option<u64> {
+    stat_cpu_ns(&format!("/proc/{pid}/stat"))
+}
+
 #[cfg(not(target_os = "linux"))]
 fn main_thread_cpu_ns(_pid: u32) -> Option<u64> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_cpu_ns(_pid: u32) -> Option<u64> {
     None
 }
 
@@ -900,6 +919,95 @@ fn desktop_tab_badges_cpu() {
         headless::SPIKE_RUNS,
         "a window lost its CPU sample"
     );
+}
+
+#[test]
+#[ignore = "performance gates; run through scripts/perf-gates.sh"]
+fn perf_gates() {
+    allow_breakaway_like_the_desktop_does();
+    let started = Instant::now();
+    let path = output_path();
+    let inputs = std::env::var_os("PANEFLOW_PERF_GATES_DIR")
+        .map(PathBuf::from)
+        .expect("PANEFLOW_PERF_GATES_DIR names the directory of the suite results; run scripts/perf-gates.sh");
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption = bootstrap::ensure_host_running(home.path(), &host_executable(), "perf-gates")
+        .expect("the detached host starts");
+    let hello = ClientHello::local("perf-gates");
+    let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+    let host_pid = adoption.identity.pid;
+    let host_identity = paneflow_host::ProcessIdentity::capture(host_pid);
+    let worker = WorkerProcess::start(home.path());
+    let ledger = FixtureLedger::new();
+    let mut values = BTreeMap::new();
+    let mut measurements = json!({});
+    measurements["host_worker_idle"] =
+        gate_runs::host_worker_idle(&mut client, &ledger, host_pid, worker.as_ref(), &mut values);
+    measurements["host_worker_active"] =
+        gate_runs::host_worker_active(&mut client, &ledger, host_pid, worker.as_ref(), &mut values);
+    measurements["desktop"] = gate_runs::desktop_idle_and_thinking(
+        &mut client,
+        &ledger,
+        home.path(),
+        &endpoint,
+        &mut values,
+    );
+    measurements["desktop_diff_stat"] =
+        gate_runs::desktop_diff_stat(&mut client, &ledger, home.path(), &mut values);
+    measurements["hook_burst"] = gate_runs::hook_burst(&inputs, &mut values);
+    measurements["desktop_startup"] = gate_runs::startup(&inputs, &mut values);
+    measurements["terminal_trickle"] = gate_runs::trickle(&inputs, &mut values);
+    drop(worker);
+    let mut decisions = Vec::new();
+    let fixtures = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
+    let mut verdicts = gates::verify(gates::BUDGETS, &values);
+    verdicts.extend(gate_runs::allocations(&inputs));
+    let document = json!({
+        "suite": "paneflow-perf-gates",
+        "schema_version": SCHEMA_VERSION,
+        "stamp": stamp(),
+        "commit": git(&["rev-parse", "HEAD"]),
+        "commit_short": std::env::var("PANEFLOW_BENCH_SHA").ok(),
+        "machine": machine(),
+        "toolchain": toolchain(),
+        "elapsed_s": started.elapsed().as_secs_f64(),
+        "gates": gates::verdicts_json(&verdicts),
+        "measurements": measurements,
+        "fixtures": fixtures,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+    });
+    write_document(&path, &document);
+    let summary = gates::markdown(&verdicts);
+    if let Some(step_summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(step_summary)
+            .and_then(|mut file| file.write_all(summary.as_bytes()));
+    }
+    print!("{summary}");
+    println!("report: {}", path.display());
+    if let Some(report) = gates::failure_report(&verdicts) {
+        panic!("{report}report: {}", path.display());
+    }
+    if let Err(failures) = verdict(&decisions, &[]) {
+        panic!(
+            "host shutdown checks failed; the report is retained at {}:\n{}",
+            path.display(),
+            failures.join("\n")
+        );
+    }
 }
 
 fn topology_label(worker: bool) -> &'static str {
