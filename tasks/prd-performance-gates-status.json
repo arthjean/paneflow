@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Compter le travail et rejouer des agents actifs",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-002",
@@ -52,41 +52,41 @@
       "id": "US-001",
       "title": "Exposer des compteurs de travail dans le host, le worker et le desktop",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-04T15:05:00+02:00",
+      "reviewed_at": "2026-10-04T15:05:00+02:00"
     },
     {
       "id": "US-002",
       "title": "Ajouter un scénario « agents actifs » à la suite persistante",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-04T15:05:00+02:00",
+      "reviewed_at": "2026-10-04T15:05:00+02:00"
     },
     {
       "id": "US-003",
       "title": "Valider l'hypothèse : le desktop GPUI tourne et se mesure sans écran dans un runner GitHub Linux",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-04T15:05:00+02:00",
+      "reviewed_at": "2026-10-04T15:05:00+02:00"
     },
     {
       "id": "US-004",
