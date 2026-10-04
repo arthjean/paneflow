@@ -2607,13 +2607,25 @@ impl SessionHost {
         class: WriteClass,
         apply: impl FnOnce(&mut SessionManifest),
     ) -> bool {
+        self.commit_reporting_change(manifest, durability, expected_generation, class, apply)
+            .is_some()
+    }
+
+    fn commit_reporting_change(
+        &self,
+        manifest: &Arc<Mutex<SessionManifest>>,
+        durability: &Durability,
+        expected_generation: Option<SessionGeneration>,
+        class: WriteClass,
+        apply: impl FnOnce(&mut SessionManifest),
+    ) -> Option<bool> {
         let changed = {
             let sessions = self.lock_sessions();
             if !sessions
                 .values()
                 .any(|record| Arc::ptr_eq(&record.manifest, manifest))
             {
-                return false;
+                return None;
             }
             let mut guard = manifest
                 .lock()
@@ -2626,7 +2638,7 @@ impl SessionHost {
                     guard.session,
                     guard.generation
                 );
-                return false;
+                return None;
             }
             let before = guard.clone();
             apply(&mut guard);
@@ -2651,26 +2663,23 @@ impl SessionHost {
                 }
             }
         }
-        true
+        Some(changed)
     }
 
     pub(crate) fn commit_scan(
         &self,
         target: &ScanTarget,
         apply: impl FnOnce(&mut SessionManifest),
-    ) -> bool {
+    ) -> Option<bool> {
         let durability = {
             let sessions = self.lock_sessions();
             sessions
                 .get(&target.session)
                 .map(|record| Arc::clone(&record.durability))
         };
-        let Some(durability) = durability else {
-            return false;
-        };
-        self.commit(
+        self.commit_reporting_change(
             &target.manifest,
-            &durability,
+            &durability?,
             Some(target.generation),
             WriteClass::Metadata,
             apply,

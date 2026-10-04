@@ -394,59 +394,68 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
             target.runtime.bell_at_ms(),
             target.runtime.input_at_ms(),
         ];
-        if trackers
+        let signals_changed = trackers
             .entry(key.clone())
             .or_default()
-            .terminal_signals_changed(signals)
-        {
+            .terminal_signals_changed(signals);
+        let announced = scan_target(host, trackers, &target, key);
+        if signals_changed && !announced {
             host.announce_session_change(&target.session);
         }
-        let output_end = target.runtime.stream().end_offset();
-        let rules_generation = host.screen_rules().generation();
-        if trackers
-            .get(&key)
-            .is_some_and(|tracker| !tracker.scan_due(output_end, rules_generation))
-        {
-            continue;
-        }
-        let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
-            continue;
-        };
-        let tracker = trackers.entry(key).or_default();
-        let (observation, declared_tool) = foreground_evidence(
-            tracker.observe_foreground(target.runtime.process(), scan.foreground_process_group),
-            || declared_tool(&target),
-        );
-        let edges = tracker.observe(
-            ScreenView::of(&scan),
-            observation,
-            declared_tool.as_deref(),
-            host.screen_rules(),
-            now_ms(),
-        );
-        tracker.record_scanned_output(output_end, rules_generation);
-        if !edges.write_due {
-            continue;
-        }
-        host.commit_scan(&target, |record| {
-            if let Some(stamp) = edges.screen_changed_at_ms {
-                record.screen_changed_at_ms = Some(stamp);
-            }
-            record.screen_activity = edges.screen_activity;
-            record.menu_prompt_active = edges.menu_prompt_active;
-            let launch_binding = record
-                .runtime
-                .as_ref()
-                .and_then(|runtime| runtime.launch_binding.clone());
-            record.runtime = match (edges.observed_runtime, launch_binding) {
-                (None, None) => None,
-                (current_observation, launch_binding) => Some(HostedSessionRuntime {
-                    current_observation,
-                    launch_binding,
-                }),
-            };
-        });
     }
+}
+
+fn scan_target(
+    host: &Arc<SessionHost>,
+    trackers: &mut BTreeMap<TrackerKey, ViewportTracker>,
+    target: &ScanTarget,
+    key: TrackerKey,
+) -> bool {
+    let output_end = target.runtime.stream().end_offset();
+    let rules_generation = host.screen_rules().generation();
+    if trackers
+        .get(&key)
+        .is_some_and(|tracker| !tracker.scan_due(output_end, rules_generation))
+    {
+        return false;
+    }
+    let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
+        return false;
+    };
+    let tracker = trackers.entry(key).or_default();
+    let (observation, declared_tool) = foreground_evidence(
+        tracker.observe_foreground(target.runtime.process(), scan.foreground_process_group),
+        || declared_tool(target),
+    );
+    let edges = tracker.observe(
+        ScreenView::of(&scan),
+        observation,
+        declared_tool.as_deref(),
+        host.screen_rules(),
+        now_ms(),
+    );
+    tracker.record_scanned_output(output_end, rules_generation);
+    if !edges.write_due {
+        return false;
+    }
+    host.commit_scan(target, |record| {
+        if let Some(stamp) = edges.screen_changed_at_ms {
+            record.screen_changed_at_ms = Some(stamp);
+        }
+        record.screen_activity = edges.screen_activity;
+        record.menu_prompt_active = edges.menu_prompt_active;
+        let launch_binding = record
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.launch_binding.clone());
+        record.runtime = match (edges.observed_runtime, launch_binding) {
+            (None, None) => None,
+            (current_observation, launch_binding) => Some(HostedSessionRuntime {
+                current_observation,
+                launch_binding,
+            }),
+        };
+    }) == Some(true)
 }
 
 #[cfg(test)]

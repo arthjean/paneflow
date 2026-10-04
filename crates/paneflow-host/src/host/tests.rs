@@ -1868,7 +1868,10 @@ fn a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation() {
                 .unwrap();
         }
     }));
-    assert!(host.commit_scan(&target, |manifest| manifest.title = Some("old scan".into())));
+    assert!(
+        host.commit_scan(&target, |manifest| manifest.title = Some("old scan".into()))
+            .is_some()
+    );
     host.set_barrier(Arc::new(|_| {}));
     let stored = read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
     assert_eq!(stored.generation, SessionGeneration::FIRST.next());
@@ -1895,11 +1898,17 @@ fn a_scan_waiting_to_persist_cannot_recreate_a_removed_record() {
             weak.upgrade().unwrap().remove(&named).unwrap();
         }
     }));
-    assert!(host.commit_scan(&target, |manifest| manifest.title = Some("old scan".into())));
+    assert!(
+        host.commit_scan(&target, |manifest| manifest.title = Some("old scan".into()))
+            .is_some()
+    );
     host.set_barrier(Arc::new(|_| {}));
     assert!(!crate::manifest::manifest_path(home.path(), &session).exists());
     assert!(!host.session_data_dir(&session).exists());
-    assert!(!host.commit_scan(&target, |_| panic!("removed state cannot be updated")));
+    assert!(
+        host.commit_scan(&target, |_| panic!("removed state cannot be updated"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -2488,7 +2497,10 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
         .into_iter()
         .find(|target| target.session == session)
         .unwrap();
-    assert!(host.commit_scan(&target, |record| record.menu_prompt_active = true));
+    assert_eq!(
+        host.commit_scan(&target, |record| record.menu_prompt_active = true),
+        Some(true)
+    );
     let observed = next_frame_of_type(&subscription, "session");
     assert_eq!(observed["entry"]["menu_prompt_active"], true);
 
