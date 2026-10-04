@@ -47,7 +47,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: perf-spike-
-          save-if: false
+          key: ${{ matrix.display }}
       - name: Build the release desktop, host and fixture
         run: |
           cargo build --release --locked -p paneflow-app -p paneflow-host

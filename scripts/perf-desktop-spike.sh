@@ -24,9 +24,7 @@ run_harness() {
 
 case "$display" in
   xvfb)
-    export -f run_harness
-    export harness
-    xvfb-run -a -s "-screen 0 1920x1080x24" bash -c run_harness 2>&1 | tee spike-xvfb.log
+    (cd crates/paneflow-host && xvfb-run -a -s "-screen 0 1920x1080x24" "$harness" desktop_headless_spike --ignored --exact --nocapture --test-threads=1) 2>&1 | tee spike-xvfb.log
     ;;
   sway)
     runtime=$(mktemp -d)
