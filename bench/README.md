@@ -263,7 +263,7 @@ Nested counters are addressed with dots, for example
 | Process and method | Counter | Unit | Counting point |
 |---|---|---|---|
 | host, `host.status` | `process_listings` | full system process listings | `process::unix_process_entries` (Linux `/proc`, macOS `proc_listpids`) and `process::windows_process_entries_named` (Toolhelp). Since EP-002 the periodic listing runs once per 500 ms for the whole host on the `paneflow-host-process-listing` thread (`process_listing.rs`) and every session that printed reads that shared snapshot; only exit and stop paths still list on the session thread |
-| host, `host.status` | `foreground_observations` | foreground job walks | `runtime_observer::observe_foreground_runtime`, once the leader is provably live |
+| host, `host.status` | `foreground_observations` | foreground job walks | `runtime_observer::observe_foreground_runtime`, once the leader is provably live. The viewport scan reuses its last walk while the foreground group, its leader's start instant and its leader's name are unchanged, and only when the leader itself was identified or still has no child process (`ForegroundCache`) |
 | host, `host.status` | `agent_bus_session_broadcasts` | agent bus frames of type `session` | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_session_removed_broadcasts` | frames of type `session_removed` | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_cancellation_broadcasts` | frames of type `cancellation` | `AgentBus::broadcast` |

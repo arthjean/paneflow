@@ -9,8 +9,11 @@ use paneflow_config::schema::{SessionGeneration, SessionId};
 
 use crate::host::{HostError, ScanTarget, SessionHost};
 use crate::manifest::{HostedSessionRuntime, now_ms};
+use crate::process::ProcessIdentity;
 use crate::runtime::ViewportScan;
-use crate::runtime_observer::{ForegroundRuntime, RuntimeObservation, observe_foreground_runtime};
+use crate::runtime_observer::{
+    ForegroundCache, ForegroundRuntime, RuntimeObservation, observe_foreground_runtime,
+};
 use crate::screen_rule_registry::ScreenRuleRegistry;
 
 pub const VIEWPORT_SCAN_INTERVAL: Duration = Duration::from_millis(500);
@@ -64,6 +67,7 @@ pub struct ViewportTracker {
     menu_prompt_active: bool,
     blocker_misses: u8,
     observation: Option<RuntimeObservation>,
+    foreground: ForegroundCache,
     scanned_output_end: Option<u64>,
     scanned_rules_generation: Option<u64>,
     terminal_signals: Option<[Option<u64>; 3]>,
@@ -125,6 +129,15 @@ impl ViewportTracker {
             || self
                 .scanned_rules_generation
                 .is_some_and(|scanned| scanned != rules_generation)
+    }
+
+    pub fn observe_foreground(
+        &mut self,
+        session_leader: ProcessIdentity,
+        foreground_process_group: Option<i32>,
+    ) -> ForegroundRuntime {
+        self.foreground
+            .observe(session_leader, foreground_process_group)
     }
 
     pub fn record_scanned_output(&mut self, output_end: u64, rules_generation: u64) {
@@ -399,11 +412,11 @@ fn scan_once(host: &Arc<SessionHost>, trackers: &mut BTreeMap<TrackerKey, Viewpo
         let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
             continue;
         };
+        let tracker = trackers.entry(key).or_default();
         let (observation, declared_tool) = foreground_evidence(
-            observe_foreground_runtime(target.runtime.process(), scan.foreground_process_group),
+            tracker.observe_foreground(target.runtime.process(), scan.foreground_process_group),
             || declared_tool(&target),
         );
-        let tracker = trackers.entry(key).or_default();
         let edges = tracker.observe(
             ScreenView::of(&scan),
             observation,
