@@ -1710,11 +1710,17 @@ mod singleton_guard_tests {
             Some(super::INSTANCE_STARTING)
         );
         drop(claims);
+        let released_by = Instant::now() + Duration::from_secs(5);
+        let reclaimed = loop {
+            let claim = super::try_claim_instance_lock(&lock).expect("lock file");
+            if claim.is_some() || Instant::now() >= released_by {
+                break claim;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert!(
-            super::try_claim_instance_lock(&lock)
-                .expect("lock file")
-                .is_some(),
-            "an exited instance never leaves a stale lock"
+            reclaimed.is_some(),
+            "an exited instance never leaves a stale lock, once a child forked by a parallel test has exec'd"
         );
     }
 
