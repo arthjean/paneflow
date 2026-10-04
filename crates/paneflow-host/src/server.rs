@@ -791,6 +791,7 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                     },
                     "sessions": resources.sessions,
                 },
+                "counters": host.work_counters(),
             }))
         }
         "session.list" => {
@@ -1336,6 +1337,41 @@ mod tests {
         assert_eq!(fitted["id"], id);
         let small = result_envelope(&id, json!({"text": "ok"}));
         assert_eq!(fit_control_frame(&id, small.clone()), small);
+    }
+
+    #[test]
+    fn host_status_reports_named_work_counters_with_the_process_identity() {
+        let (_home, _host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let names = crate::work_counters::HOST_COUNTERS;
+        let read = |client: &mut HostClient| {
+            let status = client.call("host.status", json!({})).unwrap();
+            crate::work_counters::sample("host", &status, names)
+        };
+        let before = read(&mut client);
+        assert_eq!(
+            before.identity,
+            Some(crate::process::ProcessIdentity::capture(std::process::id()))
+        );
+        client.call(METHOD_AGENT_SNAPSHOT, json!({})).unwrap();
+        let after = read(&mut client);
+        let crate::work_counters::Window::Deltas(deltas) =
+            crate::work_counters::window(&before, &after)
+        else {
+            panic!("the host did not restart between two reads");
+        };
+        assert_eq!(
+            deltas["agent_bus_snapshot_broadcasts"],
+            crate::work_counters::Reading::Measured(1)
+        );
+        for name in names {
+            assert!(
+                matches!(deltas[*name], crate::work_counters::Reading::Measured(_)),
+                "{name}: {:?}",
+                deltas[*name]
+            );
+        }
     }
 
     #[test]

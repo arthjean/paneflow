@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::manifest::{HookRecord, SessionLifecycle};
+use crate::work_counters::Counter;
 
 pub const MAX_AGENT_TEXT_BYTES: usize = 4 * 1024;
 
@@ -195,6 +196,31 @@ pub struct AgentSubscription {
 pub struct AgentBus {
     next_id: AtomicU64,
     subscribers: Mutex<Vec<AgentSubscriber>>,
+    broadcasts: BroadcastCounts,
+}
+
+#[derive(Debug, Default)]
+pub struct BroadcastCounts {
+    pub session: Counter,
+    pub session_removed: Counter,
+    pub cancellation: Counter,
+    pub snapshot: Counter,
+    pub event: Counter,
+    pub other: Counter,
+}
+
+impl BroadcastCounts {
+    fn record(&self, frame: &Value) {
+        let counter = match frame.get("type").and_then(Value::as_str) {
+            Some("session") => &self.session,
+            Some("session_removed") => &self.session_removed,
+            Some("cancellation") => &self.cancellation,
+            Some("snapshot") => &self.snapshot,
+            Some("event") => &self.event,
+            _ => &self.other,
+        };
+        counter.increment();
+    }
 }
 
 struct AgentSubscriber {
@@ -243,7 +269,12 @@ impl AgentBus {
         self.lock().len()
     }
 
+    pub fn broadcasts(&self) -> &BroadcastCounts {
+        &self.broadcasts
+    }
+
     pub fn broadcast(&self, frame: &Value) {
+        self.broadcasts.record(frame);
         let manifest_change = is_manifest_change(frame);
         let mut subscribers = self.lock();
         subscribers.retain(|subscriber| {
@@ -389,6 +420,33 @@ mod tests {
         assert_eq!(frame["emitted_at_ms"], 9);
         assert_eq!(frame["hook_payload"]["summary"], "interrupted");
         assert!(frame["agent"].is_null());
+    }
+
+    #[test]
+    fn each_broadcast_counts_exactly_once_under_its_frame_type_even_without_subscribers() {
+        let bus = AgentBus::new();
+        bus.broadcast(&json!({"type": "session", "entry": {}}));
+        let counts = bus.broadcasts();
+        assert_eq!(counts.session.get(), 1);
+        assert_eq!(counts.snapshot.get(), 0);
+        let _subscription = bus.subscribe();
+        bus.broadcast(&json!({"type": "snapshot", "sessions": []}));
+        bus.broadcast(&json!({"type": "event"}));
+        bus.broadcast(&json!({"type": "session_removed"}));
+        bus.broadcast(&json!({"type": "cancellation"}));
+        bus.broadcast(&json!({"kind": "untyped"}));
+        let counts = bus.broadcasts();
+        assert_eq!(
+            [
+                counts.session.get(),
+                counts.snapshot.get(),
+                counts.event.get(),
+                counts.session_removed.get(),
+                counts.cancellation.get(),
+                counts.other.get(),
+            ],
+            [1, 1, 1, 1, 1, 1]
+        );
     }
 
     #[test]

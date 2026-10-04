@@ -766,6 +766,9 @@ fn handle_connection(
                                     "protocol": "jsonrpc-2.0"
                                 }, "id": response_id})
                             }
+                            "system.counters" => {
+                                json!({"jsonrpc": "2.0", "result": crate::work_counters::counters(), "id": response_id})
+                            }
                             _ => dispatch_to_gpui(
                                 &request_tx,
                                 method,
@@ -1817,5 +1820,67 @@ mod windows_pipe_tests {
             started.elapsed() < Duration::from_secs(2),
             "timeout path must release promptly instead of pinning the handler slot"
         );
+    }
+}
+
+#[cfg(test)]
+mod counters_tests {
+    use super::*;
+
+    #[test]
+    fn system_counters_answers_on_the_connection_thread_without_the_gpui_queue() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(unix)]
+        let path = dir.path().join("counters.sock");
+        #[cfg(windows)]
+        let path = std::path::PathBuf::from(format!(
+            r"\\.\pipe\paneflow-counters-test-{}-{}",
+            std::process::id(),
+            dir.path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("x")
+        ));
+        let listener = bind_socket(&path).expect("the test socket binds");
+        let (request_tx, _never_drained) = smol::channel::bounded(1);
+        let server = std::thread::spawn(move || {
+            let stream = listener.accept().expect("the client connects");
+            handle_connection(
+                stream,
+                request_tx,
+                crate::ipc_events::EventBus::new(),
+                Arc::new(AtomicUsize::new(0)),
+            );
+        });
+        let name = path
+            .to_fs_name::<GenericFilePath>()
+            .expect("the socket name");
+        let mut client = Stream::connect(name).expect("the client connects");
+        client
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.counters\"}\n")
+            .expect("the request is written");
+        let mut line = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut line)
+            .expect("the reply arrives");
+        let reply: Value = serde_json::from_str(&line).expect("a JSON reply");
+        let sample = paneflow_host::work_counters::sample(
+            "desktop",
+            &reply["result"],
+            &["root_renders", "session_list_calls", "git_spawns.total"],
+        );
+        assert_eq!(
+            sample.identity.map(|identity| identity.pid),
+            Some(std::process::id())
+        );
+        assert!(
+            sample.readings.values().all(|reading| matches!(
+                reading,
+                paneflow_host::work_counters::Reading::Measured(_)
+            )),
+            "{reply}"
+        );
+        drop(client);
+        server.join().expect("the connection thread ends");
     }
 }

@@ -964,8 +964,16 @@ pub(crate) fn list_sessions(
     workspace: Option<&WorkspaceId>,
 ) -> Result<Vec<SessionRow>, HostLinkError> {
     let target = host_endpoint().ok_or(HostLinkError::NoHome)?;
-    let listed = connect(&target.endpoint)?
-        .call("session.list", serde_json::json!({"workspace": workspace}))?;
+    list_sessions_at(&target.endpoint, workspace)
+}
+
+fn list_sessions_at(
+    endpoint: &Path,
+    workspace: Option<&WorkspaceId>,
+) -> Result<Vec<SessionRow>, HostLinkError> {
+    crate::work_counters::count(&crate::work_counters::SESSION_LIST_CALLS);
+    let listed =
+        connect(endpoint)?.call("session.list", serde_json::json!({"workspace": workspace}))?;
     Ok(parse_session_rows(&listed))
 }
 
@@ -1483,5 +1491,22 @@ mod tests {
         drop(host);
         let reopened = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
         assert!(reopened.list(None).is_empty(), "no record survives on disk");
+    }
+
+    #[test]
+    fn each_session_list_call_counts_exactly_once() {
+        use crate::work_counters::{SESSION_LIST_CALLS, counted_on_this_thread};
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .unwrap();
+        let before = counted_on_this_thread(&SESSION_LIST_CALLS);
+        assert!(list_sessions_at(&endpoint, None).unwrap().is_empty());
+        assert_eq!(counted_on_this_thread(&SESSION_LIST_CALLS) - before, 1);
+        list_sessions_at(&endpoint, None).unwrap();
+        assert_eq!(counted_on_this_thread(&SESSION_LIST_CALLS) - before, 2);
+        server.stop().unwrap();
     }
 }

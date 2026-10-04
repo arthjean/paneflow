@@ -35,6 +35,7 @@ pub mod session_input;
 pub mod stream;
 pub mod tail;
 pub mod viewport_scan;
+pub mod work_counters;
 
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId};
 

@@ -557,3 +557,40 @@ fn a_user_action_keeps_the_stderr_tail_instead_of_failing_past_the_cap() {
             .ends_with("tail-marker")
     );
 }
+
+#[test]
+fn each_git_spawn_counts_once_under_its_profile_and_subcommand_with_the_filter_query() {
+    use crate::work_counters::{
+        counted_on_this_thread, git_profile_counter, git_subcommand_counter,
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    let counters = [
+        git_profile_counter(true),
+        git_profile_counter(false),
+        git_subcommand_counter(Some("status")),
+        git_subcommand_counter(Some("config")),
+        git_subcommand_counter(Some("rev-parse")),
+    ];
+    let read = || counters.map(counted_on_this_thread);
+    let before = read();
+
+    let mut status = git(GitProfile::Probe, ["status", "--porcelain"]);
+    status.current_dir(tmp.path());
+    assert!(run(status, Duration::from_secs(10), 4096).is_ok());
+    let after_probe = read();
+    assert_eq!(
+        std::array::from_fn::<u64, 5, _>(|i| after_probe[i] - before[i]),
+        [2, 0, 1, 1, 0],
+        "a worktree probe spawns itself and one filter query"
+    );
+
+    let mut head = git(GitProfile::UserAction, ["rev-parse", "HEAD"]);
+    head.current_dir(tmp.path());
+    assert!(run(head, Duration::from_secs(10), 4096).is_ok());
+    let after_action = read();
+    assert_eq!(
+        std::array::from_fn::<u64, 5, _>(|i| after_action[i] - after_probe[i]),
+        [0, 1, 0, 0, 1]
+    );
+}

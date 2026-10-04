@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{GenericFilePath, Listener, Stream, prelude::*};
 use paneflow_host::agent::AgentBus;
 use paneflow_host::server::{ConnectionGuard, bind_owner_only};
+use paneflow_host::work_counters::{Counter, counters_value};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
 
@@ -31,6 +32,7 @@ pub struct Worker {
     pub core_endpoint: PathBuf,
     pub state: Mutex<WorkerState>,
     pub bus: AgentBus,
+    pub sweeps: Counter,
     pub shutdown: Arc<AtomicBool>,
     pub core_connected: AtomicBool,
 }
@@ -61,7 +63,21 @@ impl Worker {
             "session_count": self.lock_state().len(),
             "core_connected": self.core_connected.load(Ordering::Acquire),
             "capabilities": self.identity.capabilities,
+            "counters": self.work_counters(),
         })
+    }
+
+    pub fn work_counters(&self) -> Value {
+        let broadcasts = self.bus.broadcasts();
+        let mut counters = serde_json::Map::new();
+        for (name, value) in [
+            ("snapshot_broadcasts", broadcasts.snapshot.get()),
+            ("projection_broadcasts", broadcasts.event.get()),
+            ("sweeps", self.sweeps.get()),
+        ] {
+            counters.insert(name.to_string(), json!(value));
+        }
+        counters_value(counters)
     }
 
     pub fn publish(&self, projection: &crate::state::Projection, source: &Value) {

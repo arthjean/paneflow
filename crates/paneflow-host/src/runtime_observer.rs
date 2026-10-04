@@ -82,6 +82,7 @@ pub fn observe_foreground_runtime(
     if session_leader.pid <= 1 || !session_leader.is_provably_live() {
         return ForegroundRuntime::Unobservable;
     }
+    crate::work_counters::FOREGROUND_OBSERVATIONS.increment();
     let Some(job) = platform::foreground_job(session_leader.pid, foreground_process_group) else {
         return ForegroundRuntime::Unobservable;
     };

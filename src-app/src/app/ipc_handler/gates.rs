@@ -94,6 +94,7 @@ pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_
         "system.ping",
         "system.capabilities",
         "system.identify",
+        "system.counters",
         "workspace.list",
         "workspace.create",
         "workspace.select",

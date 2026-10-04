@@ -234,6 +234,7 @@ pub struct SessionHost {
     streaming_connections: AtomicUsize,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
     agent_bus: AgentBus,
+    agent_snapshots: crate::work_counters::Counter,
     write_approvals: crate::agent_write::WriteApprovals,
     helper_dir: Option<PathBuf>,
     permissions: crate::control::ControlPermissions,
@@ -357,6 +358,7 @@ impl SessionHost {
             streaming_connections: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
             agent_bus: AgentBus::new(),
+            agent_snapshots: crate::work_counters::Counter::new(),
             write_approvals: crate::agent_write::WriteApprovals::default(),
             helper_dir,
             permissions,
@@ -860,7 +862,32 @@ impl SessionHost {
     }
 
     pub fn agent_snapshot(&self) -> Vec<AgentSnapshotEntry> {
+        self.agent_snapshots.increment();
         self.snapshot_entries(None)
+    }
+
+    pub fn work_counters(&self) -> Value {
+        use crate::work_counters::{FOREGROUND_OBSERVATIONS, PROCESS_LISTINGS, counters_value};
+        let broadcasts = self.agent_bus.broadcasts();
+        let mut counters = serde_json::Map::new();
+        for (name, value) in [
+            ("process_listings", PROCESS_LISTINGS.get()),
+            ("foreground_observations", FOREGROUND_OBSERVATIONS.get()),
+            ("agent_bus_session_broadcasts", broadcasts.session.get()),
+            (
+                "agent_bus_session_removed_broadcasts",
+                broadcasts.session_removed.get(),
+            ),
+            (
+                "agent_bus_cancellation_broadcasts",
+                broadcasts.cancellation.get(),
+            ),
+            ("agent_bus_event_broadcasts", broadcasts.event.get()),
+            ("agent_bus_snapshot_broadcasts", self.agent_snapshots.get()),
+        ] {
+            counters.insert(name.to_string(), json!(value));
+        }
+        counters_value(counters)
     }
 
     pub(crate) fn announce_session_change(&self, session: &SessionId) {

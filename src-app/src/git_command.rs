@@ -124,6 +124,12 @@ fn is_probe(command: &Command) -> bool {
         .any(|(key, value)| key == PROBE_ENV[0].0 && value == Some(OsStr::new(PROBE_ENV[0].1)))
 }
 
+pub(crate) fn record_spawn(command: &Command) {
+    let args: Vec<&OsStr> = command.get_args().collect();
+    let subcommand = subcommand_index(&args).and_then(|index| args[index].to_str());
+    crate::work_counters::record_git_spawn(is_probe(command), subcommand);
+}
+
 fn reads_the_worktree(command: &Command) -> bool {
     let args: Vec<&OsStr> = command.get_args().collect();
     subcommand_index(&args).is_some_and(|index| {
@@ -149,6 +155,7 @@ fn neutralize_repository_filters(command: &mut Command) -> Result<(), paneflow_p
     if let Some(dir) = command.get_current_dir() {
         query.current_dir(dir);
     }
+    record_spawn(&query);
     let output =
         paneflow_process::run_with_timeout(query, FILTER_QUERY_DEADLINE, FILTER_QUERY_STDOUT_CAP)?;
     let drivers = repository_filter_drivers(&output.stdout).ok_or_else(|| {
@@ -205,6 +212,7 @@ pub(crate) fn run(
     stdout_cap: u64,
 ) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
     neutralize_repository_filters(&mut command)?;
+    record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stderr_tail(command, deadline, stdout_cap)
 }
 
@@ -214,6 +222,7 @@ pub(crate) fn run_keeping_stdout_head(
     stdout_cap: u64,
 ) -> Result<(paneflow_process::BoundedOutput, bool), paneflow_process::ProcError> {
     neutralize_repository_filters(&mut command)?;
+    record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stdout_head(command, deadline, stdout_cap)
 }
 

@@ -222,7 +222,8 @@ pub(crate) struct UnixProcessTreeOwner {
 }
 
 #[cfg(target_os = "linux")]
-fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+pub fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+    crate::work_counters::PROCESS_LISTINGS.increment();
     let mut entries = Vec::new();
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
@@ -262,7 +263,8 @@ fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
 }
 
 #[cfg(target_os = "macos")]
-fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+pub fn unix_process_entries() -> io::Result<Vec<(ProcessIdentity, u32, i32)>> {
+    crate::work_counters::PROCESS_LISTINGS.increment();
     let bytes = unsafe { libc::proc_listpids(1, 0, std::ptr::null_mut(), 0) };
     if bytes <= 0 {
         return Err(io::Error::last_os_error());
@@ -570,6 +572,7 @@ pub fn windows_process_entries_named() -> io::Result<Vec<WindowsProcessEntry>> {
         TH32CS_SNAPPROCESS,
     };
 
+    crate::work_counters::PROCESS_LISTINGS.increment();
     let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snap == INVALID_HANDLE_VALUE {
         return Err(io::Error::last_os_error());

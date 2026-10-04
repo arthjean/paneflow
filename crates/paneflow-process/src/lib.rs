@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, Read};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::OnceLock;
 use std::thread;
@@ -104,6 +105,12 @@ impl Error for ProcError {
     }
 }
 
+static SPAWNS: AtomicU64 = AtomicU64::new(0);
+
+pub fn spawn_count() -> u64 {
+    SPAWNS.load(Ordering::Relaxed)
+}
+
 pub fn run_with_timeout(
     cmd: Command,
     deadline: Duration,
@@ -186,6 +193,7 @@ fn run_supervised(
 
     configure_process_tree(&mut cmd);
     let cleanup = spawn_cleanup_worker()?;
+    SPAWNS.fetch_add(1, Ordering::Relaxed);
     let child = cmd.spawn().map_err(ProcError::Spawn)?;
     let start = Instant::now();
     let mut process = RunningProcess::new(child, cleanup)?;
@@ -652,6 +660,7 @@ const DETACHED_REAP_INTERVAL: Duration = Duration::from_millis(500);
 static DETACHED_REAPER: OnceLock<Option<mpsc::Sender<Child>>> = OnceLock::new();
 
 pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
+    SPAWNS.fetch_add(1, Ordering::Relaxed);
     let child = command.spawn()?;
     hand_to_reaper(
         DETACHED_REAPER.get_or_init(start_detached_reaper).as_ref(),

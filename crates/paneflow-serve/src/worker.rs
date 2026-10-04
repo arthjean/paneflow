@@ -118,6 +118,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         core_endpoint: paneflow_home::host_endpoint_path(home),
         state: Mutex::new(state),
         bus: Default::default(),
+        sweeps: Default::default(),
         shutdown: Arc::new(AtomicBool::new(false)),
         core_connected: AtomicBool::new(false),
     });
@@ -271,29 +272,30 @@ fn pump(worker: &Arc<Worker>, home: &Path) {
         }
         if last_sweep.elapsed() >= SWEEP_INTERVAL {
             last_sweep = std::time::Instant::now();
-            let core_endpoint = worker.core_endpoint.clone();
-            let evidence = move |session: &paneflow_config::schema::SessionId| {
-                crate::core_link::menu_prompt_active(
-                    &core_endpoint,
-                    session,
-                    MENU_EVIDENCE_DEADLINE,
-                )
-            };
-            let (settled, sessions) = {
-                let mut state = worker.lock_state();
-                state.refresh_health();
-                let settled = state.sweep(std::time::SystemTime::now(), &evidence);
-                let sessions = state.snapshot();
-                (settled, sessions)
-            };
-            for projection in settled {
-                broadcast_projection(worker, &projection, &json!({}));
-            }
-            worker
-                .bus
-                .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
+            sweep(worker);
         }
     }
+}
+
+fn sweep(worker: &Arc<Worker>) {
+    worker.sweeps.increment();
+    let core_endpoint = worker.core_endpoint.clone();
+    let evidence = move |session: &paneflow_config::schema::SessionId| {
+        crate::core_link::menu_prompt_active(&core_endpoint, session, MENU_EVIDENCE_DEADLINE)
+    };
+    let (settled, sessions) = {
+        let mut state = worker.lock_state();
+        state.refresh_health();
+        let settled = state.sweep(std::time::SystemTime::now(), &evidence);
+        let sessions = state.snapshot();
+        (settled, sessions)
+    };
+    for projection in settled {
+        broadcast_projection(worker, &projection, &json!({}));
+    }
+    worker
+        .bus
+        .broadcast(&json!({"type": "snapshot", "sessions": sessions}));
 }
 
 fn core_poll_interval(following: bool) -> Duration {
@@ -407,6 +409,27 @@ fn broadcast_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_sweep_counts_one_sweep_and_one_snapshot_broadcast_in_worker_status() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        let worker = running.worker();
+        let names = paneflow_host::work_counters::WORKER_COUNTERS;
+        let before = paneflow_host::work_counters::sample("worker", &worker.status_frame(), names);
+        sweep(worker);
+        let after = paneflow_host::work_counters::sample("worker", &worker.status_frame(), names);
+        let paneflow_host::work_counters::Window::Deltas(deltas) =
+            paneflow_host::work_counters::window(&before, &after)
+        else {
+            panic!("the worker did not restart");
+        };
+        let measured = paneflow_host::work_counters::Reading::Measured;
+        assert_eq!(deltas["sweeps"], measured(1));
+        assert_eq!(deltas["snapshot_broadcasts"], measured(1));
+        assert_eq!(deltas["projection_broadcasts"], measured(0));
+        running.stop();
+    }
 
     #[test]
     fn a_refused_subscription_falls_back_to_the_two_second_snapshot_poll() {

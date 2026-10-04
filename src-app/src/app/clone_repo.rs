@@ -281,6 +281,9 @@ fn run_clone_command(
     mut on_progress: impl FnMut(CloneProgress) + Send + 'static,
 ) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
     let mut carry = Vec::new();
+    if command.get_program() == "git" {
+        crate::git_command::record_spawn(&command);
+    }
     paneflow_process::run_with_timeout_tapping_stderr(
         command,
         CLONE_DEADLINE,

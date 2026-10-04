@@ -68,6 +68,7 @@ mod widgets;
 mod window_chrome;
 mod window_state;
 mod windows_app_identity;
+mod work_counters;
 mod worker_bootstrap;
 mod workspace;
 

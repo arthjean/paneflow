@@ -108,6 +108,7 @@ impl PaneFlowApp {
 
 impl Render for PaneFlowApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::work_counters::count(&crate::work_counters::ROOT_RENDERS);
         startup_trace::on_app_render(window);
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();

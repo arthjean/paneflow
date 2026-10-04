@@ -536,6 +536,7 @@ impl PaneFlowApp {
         capabilities: Vec<String>,
         cx: &mut Context<Self>,
     ) {
+        crate::work_counters::count(&crate::work_counters::HOST_AGENT_SNAPSHOTS_APPLIED);
         self.host_agents.rows = entries
             .iter()
             .filter_map(row_from_snapshot)

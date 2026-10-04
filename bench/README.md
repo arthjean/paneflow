@@ -190,6 +190,49 @@ CI target. The workload inputs, thresholds, and the platform evidence they
 feed are frozen in
 [docs/release/persistent-qualification.md](../docs/release/persistent-qualification.md).
 
+## Work counters (Compteurs de travail)
+
+Each process exposes monotonic `u64` counters, relaxed atomics with no
+allocation and no I/O, through a status method that answers without waiting
+for the GPUI thread. Every `counters` object also carries `process_identity`
+(`pid` and the OS start instant `started_at`), so a reader can tell a restart
+from a counter going backwards. The shared vocabulary and the reader live in
+`crates/paneflow-host/src/work_counters.rs`: `HOST_COUNTERS`,
+`WORKER_COUNTERS`, `DESKTOP_COUNTERS`, `sample` (a missing `counters` object or
+counter reads as `pending` with its reason, never `0`) and `window` (a changed
+`process_identity` invalidates the sample instead of producing a delta).
+Nested counters are addressed with dots, for example
+`git_spawns.by_subcommand.status`.
+
+| Process and method | Counter | Unit | Counting point |
+|---|---|---|---|
+| host, `host.status` | `process_listings` | full system process listings | `process::unix_process_entries` (Linux `/proc`, macOS `proc_listpids`) and `process::windows_process_entries_named` (Toolhelp) |
+| host, `host.status` | `foreground_observations` | foreground job walks | `runtime_observer::observe_foreground_runtime`, once the leader is provably live |
+| host, `host.status` | `agent_bus_session_broadcasts` | agent bus frames of type `session` | `AgentBus::broadcast` |
+| host, `host.status` | `agent_bus_session_removed_broadcasts` | frames of type `session_removed` | `AgentBus::broadcast` |
+| host, `host.status` | `agent_bus_cancellation_broadcasts` | frames of type `cancellation` | `AgentBus::broadcast` |
+| host, `host.status` | `agent_bus_event_broadcasts` | hook event frames | `AgentBus::broadcast` |
+| host, `host.status` | `agent_bus_snapshot_broadcasts` | full agent snapshots served (`agent.snapshot` replies and follow headers) | `SessionHost::agent_snapshot` |
+| worker, `worker.status` | `snapshot_broadcasts` | full snapshots broadcast to controllers | `AgentBus::broadcast` of type `snapshot` |
+| worker, `worker.status` | `projection_broadcasts` | per-session projections broadcast | `AgentBus::broadcast` of type `event` |
+| worker, `worker.status` | `sweeps` | 2 s state sweeps | `worker::sweep` |
+| desktop, `system.counters` | `root_renders` | renders of the root view | `PaneFlowApp::render` |
+| desktop, `system.counters` | `host_agent_snapshots_applied` | host agent snapshots applied | `PaneFlowApp::apply_host_agent_snapshot` |
+| desktop, `system.counters` | `session_list_calls` | `session.list` calls to the host | `host_link::list_sessions` |
+| desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (16 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, the filter query, and the git clone |
+| desktop, `system.counters` | `process_spawns` | processes spawned through `paneflow-process` | `paneflow_process::run_supervised` and `spawn_detached` |
+
+`system.counters` sits next to `system.identify` in the IPC server: same
+connection checks, served on the connection thread, listed in
+`system.capabilities`. The helper binaries (`paneflow-shim`,
+`paneflow-ai-hook`, `paneflow-mcp`) do not depend on these crates. The cost
+bound is the ignored test
+`work_counters::tests::an_increment_costs_less_than_fifty_nanoseconds_in_release`:
+
+```bash
+cargo test --release --locked -p paneflow-host --lib work_counters -- --ignored
+```
+
 ## Terminal suite
 
 The benchmark is the ignored test `terminal_pipeline_benchmark` in
