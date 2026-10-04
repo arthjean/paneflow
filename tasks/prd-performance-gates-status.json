@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Corriger les régressions mesurées",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-003",
@@ -92,97 +92,97 @@
       "id": "US-004",
       "title": "Faire avancer le spinner de la sidebar par pas plutôt qu'à chaque frame",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-10-04",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-04T19:01:25+02:00"
     },
     {
       "id": "US-005",
       "title": "Dessiner les badges d'onglet sans reconstruire de chemin à chaque frame",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-10-04",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-04T19:01:25+02:00"
     },
     {
       "id": "US-006",
       "title": "Partager un seul listing système des processus par host et par intervalle",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-10-04",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-04T19:01:25+02:00"
     },
     {
       "id": "US-007",
       "title": "Réutiliser l'observation du premier plan tant que son groupe ne change pas",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-10-04",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-04T19:01:25+02:00"
     },
     {
       "id": "US-008",
       "title": "Ne diffuser un snapshot du worker que s'il change, et ne rien redessiner sinon",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-04",
+      "completed_at": "2026-10-04T17:23:34+02:00",
+      "reviewed_at": "2026-10-04T17:23:34+02:00"
     },
     {
       "id": "US-009",
       "title": "Mettre en cache la requête des filtres git par dépôt, sans affaiblir la neutralisation",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-04",
+      "completed_at": "2026-10-04T17:23:34+02:00",
+      "reviewed_at": "2026-10-04T17:23:34+02:00"
     },
     {
       "id": "US-010",
       "title": "Démarrer sans attendre sur un socket IPC périmé",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-10-04",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-10-04T19:01:25+02:00"
     },
     {
       "id": "US-011",
