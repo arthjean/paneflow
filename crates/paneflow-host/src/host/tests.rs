@@ -71,6 +71,34 @@ fn shell_request(cols: u16, rows: u16) -> CreateSession {
     }
 }
 
+#[test]
+fn a_title_the_shell_sets_keeps_the_name_the_pane_was_created_with() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = home.path().join("host.sock");
+    let host = SessionHost::open(home.path(), &endpoint).unwrap();
+    let mut request = shell_request(80, 24);
+    request.title = Some("agent-pane".to_string());
+    let session = host.create(request).unwrap().manifest.session;
+    #[cfg(windows)]
+    let retitle = b"title renamed-by-shell\r\n".to_vec();
+    #[cfg(unix)]
+    let retitle = b"printf '\\033]0;renamed-by-shell\\007'\n".to_vec();
+    host.input(&session, Some(SessionGeneration::FIRST), retitle)
+        .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(15), || host
+            .inspect(&session)
+            .is_ok_and(
+                |summary| summary.manifest.title.as_deref() == Some("renamed-by-shell")
+            )),
+        "the terminal title reaches the manifest"
+    );
+    let summary = host.inspect(&session).unwrap();
+    assert_eq!(summary.manifest.name.as_deref(), Some("agent-pane"));
+    assert_eq!(crate::control::surface_name(&summary), "agent-pane");
+    host.stop(&session, None).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn a_process_named_fx_becomes_an_agent_only_once_its_title_confirms_it() {
@@ -265,6 +293,7 @@ fn finished_manifest(
         },
         lifecycle,
         process: None,
+        name: None,
         title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
         current_cwd: Some(cwd.display().to_string()),
         last_hook: None,
@@ -309,6 +338,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
                 }
             },
             process: None,
+            name: None,
             title: None,
             current_cwd: None,
             last_hook: None,
@@ -831,11 +861,13 @@ fn the_host_assigns_durable_ids_persists_manifests_and_stops_owned_processes() {
     let on_disk = read_manifest(&manifest_path).unwrap();
     assert_eq!(
         SessionManifest {
+            name: None,
             title: None,
             updated_at_ms: 0,
             ..on_disk
         },
         SessionManifest {
+            name: None,
             title: None,
             updated_at_ms: 0,
             ..created.manifest.clone()
@@ -1356,6 +1388,7 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
             reason: reason.to_string(),
         },
         process: None,
+        name: None,
         title: None,
         current_cwd: None,
         last_hook: None,
@@ -1684,6 +1717,7 @@ fn admission_stops_at_eight_unresolved_launches() {
                 },
                 lifecycle: SessionLifecycle::Starting,
                 process: None,
+                name: None,
                 title: None,
                 current_cwd: None,
                 last_hook: None,

@@ -684,6 +684,7 @@ mod tests {
             },
             lifecycle: SessionLifecycle::Running,
             process: None,
+            name: None,
             title: Some(title.to_string()),
             current_cwd: None,
             last_hook: None,

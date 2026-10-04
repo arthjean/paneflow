@@ -1235,6 +1235,7 @@ impl SessionHost {
             launch,
             lifecycle: SessionLifecycle::Starting,
             process: None,
+            name: request.title.clone(),
             title: request.title.clone(),
             current_cwd: None,
             last_hook: None,

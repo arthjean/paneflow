@@ -113,14 +113,12 @@ impl ConnectionAliases {
 }
 
 pub fn surface_name(summary: &SessionSummary) -> String {
-    if let Some(title) = summary
-        .manifest
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
+    if let Some(label) = [&summary.manifest.name, &summary.manifest.title]
+        .into_iter()
+        .filter_map(|label| label.as_deref().map(str::trim))
+        .find(|label| !label.is_empty())
     {
-        return title.to_string();
+        return label.to_string();
     }
     let cwd = summary
         .manifest
@@ -810,6 +808,7 @@ mod tests {
                 },
                 lifecycle: SessionLifecycle::Running,
                 process: None,
+                name: None,
                 title: title.map(str::to_string),
                 current_cwd: None,
                 last_hook: None,
@@ -886,6 +885,15 @@ mod tests {
             surface_name(&summary(session.clone(), None, "/repo/web")),
             "web"
         );
+    }
+
+    #[test]
+    fn a_surface_name_keeps_the_creation_name_over_a_title_the_terminal_set() {
+        let mut renamed = summary(SessionId::new(), Some("Administrator: cmd"), "/repo/web");
+        renamed.manifest.name = Some("agent-blocked".to_string());
+        assert_eq!(surface_name(&renamed), "agent-blocked");
+        renamed.manifest.name = Some("  ".to_string());
+        assert_eq!(surface_name(&renamed), "Administrator: cmd");
     }
 
     #[test]

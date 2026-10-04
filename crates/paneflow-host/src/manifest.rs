@@ -120,6 +120,8 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ProcessIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_cwd: Option<String>,
@@ -414,6 +416,7 @@ mod tests {
                 pid: 4242,
                 started_at: Some(99),
             }),
+            name: None,
             title: None,
             current_cwd: None,
             last_hook: None,
