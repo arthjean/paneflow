@@ -162,9 +162,22 @@ exists, and `--set-baseline` writes it. A baseline of another schema is refused
 with "baseline schema N differs from candidate schema 4; comparison refused,
 record a new baseline"; the regular suite prints the same refusal.
 
-The "before EP-002" reference is pending: it must be measured on a clean
-`main` that contains this scenario, on Arthur's Linux machine, before any
-EP-002 story lands, then committed under `bench/results/` and cited here.
+The "before EP-002" reference is
+[persistent-active-20261004T105029Z-eda8d59c1725.json](results/persistent-active-20261004T105029Z-eda8d59c1725.json):
+`main` at `eda8d59c`, a clean tracked tree, no untracked file, release build,
+measured under WSL2 on Arthur's machine (Ryzen 7 7800X3D, 16 logical CPUs)
+before any EP-002 story. Over each 30 s window:
+
+| Active sessions | `process_listings` | `foreground_observations` | `agent_bus_session_broadcasts` | worker `snapshot_broadcasts` | host CPU | host RSS |
+|---|---|---|---|---|---|---|
+| 1 | 54 | 60 | 90 | 14 | 0.47 % | 13 MiB |
+| 4 | 216 | 236 | 356 | 15 | 1.73 % | 23 MiB |
+| 8 | 432 | 472 | 712 | 15 | 3.47 % | 29 MiB |
+
+Listings grow with each streaming session at about 1.8 per second (14.4 per
+second at 8 sessions), and the worker broadcasts a full snapshot on every 2 s
+sweep whatever the session count. The script took 103 s with an up-to-date build, 324 s including an
+incremental release rebuild, and 388 s from a cold release build.
 
 ### Workloads W02 to W08 and threshold decisions
 
