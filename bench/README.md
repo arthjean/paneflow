@@ -188,6 +188,75 @@ second at 8 sessions), and the worker broadcasts a full snapshot on every 2 s
 sweep whatever the session count. The script took 103 s with an up-to-date build, 324 s including an
 incremental release rebuild, and 388 s from a cold release build.
 
+### EP-002 before and after
+
+Both runs come from Arthur's Fedora machine (Ryzen 7 7800X3D, release build)
+on 2026-10-04. "Before" is
+[persistent-active-20261004T133907Z-09f86573d350.json](results/persistent-active-20261004T133907Z-09f86573d350.json),
+`main` at `09f86573` with a clean tree. "After" is the same command on the
+uncommitted EP-002 tree, so its document is local evidence
+(`tasks/perf-gates-ep002/`, not tracked) and must be rerun on the commit
+before it can become a baseline. Over each 30 s window at 8 active sessions:
+
+| Counter or measure | Before | After |
+|---|---|---|
+| `process_listings` (whole host) | 432 (14.4 per second) | 57 (1.9 per second) |
+| `foreground_observations` | 472 | 0 |
+| worker `snapshot_broadcasts` | 15 | 0 |
+| worker `projection_broadcasts` | 0 | 0 |
+| host CPU | 10.3 % | 3.0 % |
+| host session threads CPU time | 2.98 s | 0.53 s |
+
+The desktop side was measured with the `desktop_headless_spike` harness under
+a local Xvfb with Mesa lavapipe (`VK_DRIVER_FILES` forced to `lvp_icd`), mean
+over 5 windows of 30 s, with the main thread CPU sampled from
+`/proc/<pid>/task/<pid>/stat` (local scripts in `tasks/perf-gates-ep002/`):
+
+| State | Counter or measure | Before | After |
+|---|---|---|---|
+| idle, 4 panes | `root_renders` | 15.8 | 0.6 |
+| idle, 4 panes | `host_agent_snapshots_applied`, `session_list_calls` | 15 | 0.2 |
+| one agent thinking | `root_renders` | 625 (20.8 per second, the Xvfb frame rate) | 333 (11.1 per second) |
+| one agent thinking | desktop main thread CPU | 2.9 % | 1.9 % |
+| 4 `stream` sessions | `root_renders` | 1 013 | 1 050 |
+
+The streaming state is driven by terminal output, which EP-002 does not
+change. The remaining idle frames and the single snapshot are the follow
+header and the first frames after the window opens.
+
+The review of EP-002 added two measurements, run on the same machine on
+2026-10-04 in two alternating rounds (before, after, before, after). "Before"
+is `09f86573` built in a separate worktree with only the two instruments
+copied in; "after" is the EP-002 tree after the review fixes. Both documents
+are local evidence (`tasks/perf-gates-ep002/review/`, not tracked).
+
+The echo round trip of the active scenario (US-006), in ms over 200 samples per
+scenario, the two rounds side by side:
+
+| Active sessions | p95 before | p95 after | p99 before | p99 after |
+|---|---|---|---|---|
+| 1 | 0.112, 0.099 | 0.092, 0.097 | 0.421, 0.562 | 0.099, 0.109 |
+| 4 | 0.104, 0.096 | 0.106, 0.093 | 0.154, 0.482 | 0.131, 0.126 |
+| 8 | 0.096, 0.115 | 0.094, 0.096 | 0.570, 0.337 | 0.135, 0.123 |
+
+The p95 does not increase, and the tail shrinks: before EP-002 the session
+thread listed every process itself, which shows up as p99 spikes of 0.3 to
+0.6 ms.
+
+The tab badge cost (US-005), `desktop_tab_badges_cpu` with 12 tab badges and one
+agent thinking, median over 5 windows of 30 s:
+
+| Measure | Before | After |
+|---|---|---|
+| desktop main thread CPU | 4.65 %, 4.67 % | 2.30 %, 2.20 % |
+| `root_renders` per window | 625 | 333 |
+| main thread CPU time per frame | 2.23 ms | 2.03 ms |
+
+Most of the drop comes from US-004 drawing fewer frames. The per-frame cost,
+which the spinner change does not touch, falls by about 9 %. It mostly reflects the
+squircle paths no longer rebuilt on every frame, but US-004 also dropped the
+spinner's animation wrapper, so 9 % is an upper bound for US-005 alone.
+
 ### Workloads W02 to W08 and threshold decisions
 
 Schema 3 runs W02, W03, W04 (worker replacement), and W05 after the W01
