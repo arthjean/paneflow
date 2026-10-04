@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 mod active;
 #[path = "persistent_baseline/endurance.rs"]
 mod endurance;
+#[path = "persistent_baseline/headless.rs"]
+mod headless;
 #[path = "persistent_baseline/metrics.rs"]
 mod metrics;
 #[path = "persistent_baseline/processes.rs"]
@@ -667,6 +669,118 @@ fn a_baseline_of_another_schema_is_refused_with_an_explicit_message() {
         "{text}"
     );
     assert!(active::schema_refusal(&document, &document).is_none());
+}
+
+#[test]
+#[ignore = "US-003 headless desktop spike; run through .github/workflows/perf-desktop-spike.yml"]
+fn desktop_headless_spike() {
+    allow_breakaway_like_the_desktop_does();
+    let started = Instant::now();
+    let path = output_path();
+    let display = std::env::var("PANEFLOW_SPIKE_DISPLAY").unwrap_or_else(|_| "native".to_string());
+    let home = tempfile::tempdir().unwrap();
+    seed_home(home.path());
+    let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+    let adoption =
+        bootstrap::ensure_host_running(home.path(), &host_executable(), "headless-spike")
+            .expect("the detached host starts");
+    let hello = ClientHello::local("headless-spike");
+    let mut client = HostClient::connect(&endpoint, &hello).unwrap();
+    let host_identity = paneflow_host::ProcessIdentity::capture(adoption.identity.pid);
+    let ledger = FixtureLedger::new();
+    let open = |client: &mut HostClient, mode: &[&str]| -> Vec<SessionId> {
+        (0..4)
+            .map(|_| {
+                let created = client
+                    .create(&workloads::fixture(mode))
+                    .expect("the fixture session starts");
+                ledger.record(client, &created.manifest.session);
+                created.manifest.session
+            })
+            .collect()
+    };
+
+    let idle = open(&mut client, &["idle"]);
+    let desktop_started = Instant::now();
+    let mut states = json!({});
+    let mut failure = None;
+    let mut first_frame = None;
+    match headless::start_desktop(home.path(), &idle, true) {
+        Ok(desktop) => {
+            first_frame = Some(desktop_started.elapsed());
+            states["idle_4_panes"] =
+                headless::measure_state(&desktop, headless::SPIKE_RUNS, headless::SPIKE_WINDOW);
+            let submitted = headless::submit_prompt(&endpoint, &idle[0]);
+            std::thread::sleep(SETTLE);
+            states["one_agent_thinking"] =
+                headless::measure_state(&desktop, headless::SPIKE_RUNS, headless::SPIKE_WINDOW);
+            states["one_agent_thinking"]["prompt_submit"] = submitted;
+        }
+        Err(error) => failure = Some(error),
+    }
+    for session in &idle {
+        let _ = client.stop(session, None);
+    }
+    if failure.is_none() {
+        let streams = open(&mut client, &["stream", "16384", "600"]);
+        match headless::start_desktop(home.path(), &streams, false) {
+            Ok(desktop) => {
+                std::thread::sleep(SETTLE);
+                states["four_streams"] =
+                    headless::measure_state(&desktop, headless::SPIKE_RUNS, headless::SPIKE_WINDOW);
+            }
+            Err(error) => failure = Some(error),
+        }
+        for session in &streams {
+            let _ = client.stop(session, None);
+        }
+    }
+    let mut decisions = Vec::new();
+    let fixtures = shutdown_host(
+        &mut decisions,
+        client,
+        &host_identity,
+        home.path(),
+        &endpoint,
+        &hello,
+        &ledger,
+    );
+    let (validated, mut reasons) = headless::conclusion(first_frame, &states);
+    if let Some(error) = &failure {
+        reasons.insert(0, format!("desktop or Vulkan adapter failure: {error}"));
+    }
+    let validated = validated && failure.is_none();
+    let document = json!({
+        "suite": "paneflow-desktop-headless-spike",
+        "schema_version": SCHEMA_VERSION,
+        "display": display,
+        "validated": validated,
+        "conclusion": if validated { "validated" } else { "not validated" },
+        "reasons": reasons,
+        "first_frame_s": first_frame.map(|elapsed| elapsed.as_secs_f64()),
+        "elapsed_s": started.elapsed().as_secs_f64(),
+        "unstable_counters_cv_above_10_percent": headless::unstable_counters(&states),
+        "states": states,
+        "stamp": stamp(),
+        "commit": git(&["rev-parse", "HEAD"]),
+        "machine": machine(),
+        "toolchain": toolchain(),
+        "executables": {"host": executable_identity(&host_executable()), "fixture": executable_identity(&fixture_executable())},
+        "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
+        "fixtures": fixtures,
+        "thresholds": decisions.iter().map(Decision::to_json).collect::<Vec<_>>(),
+    });
+    write_document(&path, &document);
+    println!("result: {}", path.display());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&document["reasons"]).unwrap()
+    );
+    assert!(
+        validated,
+        "headless desktop spike not validated on {display}: {}",
+        document["reasons"]
+    );
 }
 
 fn topology_label(worker: bool) -> &'static str {

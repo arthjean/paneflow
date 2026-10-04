@@ -1,0 +1,110 @@
+name: Headless desktop spike
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  spike:
+    name: Desktop under ${{ matrix.display }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        display: [xvfb, sway]
+    steps:
+      - name: Record the job start
+        run: echo "SPIKE_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: ./.github/actions/fetch-libghostty
+      - name: Install the build dependencies, Mesa lavapipe and the display server
+        run: echo "SPIKE_INSTALL_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: mesa-vulkan-drivers vulkan-tools xvfb xauth sway
+      - name: Record the installation time
+        run: echo "SPIKE_INSTALL_S=$(( $(date +%s) - SPIKE_INSTALL_STARTED ))" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: perf-spike-
+          save-if: false
+      - name: Build the release desktop, host and fixture
+        run: |
+          cargo build --release --locked -p paneflow-app -p paneflow-host
+          harness=$(cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
+            | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+          test -x "$harness"
+          echo "SPIKE_HARNESS=$harness" >> "$GITHUB_ENV"
+      - name: Report the Vulkan adapter
+        run: |
+          if [ "${{ matrix.display }}" = "xvfb" ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" vulkaninfo --summary 2>&1 | tee vulkan.txt || true
+          else
+            vulkaninfo --summary 2>&1 | tee vulkan.txt || true
+          fi
+      - name: Run the spike
+        env:
+          DISPLAY_SERVER: ${{ matrix.display }}
+        run: bash scripts/perf-desktop-spike.sh
+      - name: Summarize
+        if: always()
+        run: |
+          result=$(ls bench/results/desktop-spike-*.json 2>/dev/null | tail -n 1 || true)
+          total=$(( $(date +%s) - SPIKE_STARTED ))
+          {
+            echo "## Headless desktop spike: ${{ matrix.display }}"
+            echo
+            echo "- job time so far: ${total} s (limit 900 s)"
+            echo "- installation time: ${SPIKE_INSTALL_S:-unknown} s"
+            if [ -n "$result" ]; then
+              python3 - "$result" <<'PY'
+          import json, sys
+          doc = json.load(open(sys.argv[1]))
+          print(f"- conclusion: {doc['conclusion']}")
+          print(f"- first frame: {doc['first_frame_s']} s")
+          print(f"- measurement: {doc['elapsed_s']:.0f} s")
+          for reason in doc["reasons"]:
+              print(f"- reason: {reason}")
+          print(f"- counters with CV above 10 %: {', '.join(doc['unstable_counters_cv_above_10_percent']) or 'none'}")
+          print()
+          print("| state | counter | mean | cv |")
+          print("|---|---|---|---|")
+          for state, data in doc["states"].items():
+              for name, stats in data.get("counters", {}).items():
+                  cv = stats.get("cv")
+                  print(f"| {state} | {name} | {stats.get('mean', stats.get('pending'))} | {'' if cv is None else f'{cv:.3f}'} |")
+          PY
+            else
+              echo "- no result document was written"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: desktop-spike-${{ matrix.display }}
+          path: |
+            bench/results/desktop-spike-*.json
+            vulkan.txt
+            spike-*.log
+          retention-days: 14
+          if-no-files-found: warn

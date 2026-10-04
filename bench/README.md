@@ -267,6 +267,36 @@ bound is the ignored test
 cargo test --release --locked -p paneflow-host --lib work_counters -- --ignored
 ```
 
+## Desktop sans écran (headless desktop)
+
+The US-003 spike asks whether the real release desktop runs and measures under
+a virtual display with Mesa lavapipe on a GitHub `ubuntu-24.04` runner. The
+`workflow_dispatch` workflow `.github/workflows/perf-desktop-spike.yml` runs
+`scripts/perf-desktop-spike.sh` once under Xvfb and once under sway headless.
+The script runs the ignored test `desktop_headless_spike`, which starts the
+release host with an isolated `PANEFLOW_HOME`, launches the desktop with
+`PANEFLOW_SOCKET_PATH` and `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1`, cursor blinking
+and telemetry off, and reads `system.counters` over IPC. It measures 5 windows
+of 30 s for three states: the desktop idle with 4 panes, one simulated agent
+thinking (an `ai.prompt_submit` hook event that starts the sidebar spinner),
+and 4 `stream` sessions. For each counter it reports the mean and the
+coefficient of variation across the 5 windows. The first frame is bounded by
+the time until every restored pane shows the fixture announcement, with a 90 s
+deadline.
+
+The spike is validated when the first frame arrives within 90 s, idle
+`root_renders` stays within ±1 frame of its mean in every 30 s window, and the
+job finishes within 15 min. A desktop or Vulkan adapter that fails to start is
+reported with the desktop log tail and the elapsed time and concludes "not
+validated" instead of measuring an absent render. Counters whose coefficient of
+variation exceeds 10 % will not be gated in absolute terms.
+
+Result: pending. The workflow has not run yet; the server kept, the
+installation time, the total job time and the unstable counters are recorded
+here after the first dispatch. If the hypothesis is not validated, the
+alternatives are counting inside `TestAppContext` or a third-party runner, and
+US-013 is marked `BLOCKED` with that reason.
+
 ## Terminal suite
 
 The benchmark is the ignored test `terminal_pipeline_benchmark` in
