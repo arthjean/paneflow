@@ -478,6 +478,7 @@ fn persistent_session_active() {
     let worker = WorkerProcess::start(home.path());
     let desktop_enabled = std::env::var_os("PANEFLOW_BENCH_DESKTOP").is_some();
     let ledger = FixtureLedger::new();
+    let echo = workloads::EchoProbe::start(&mut client, &endpoint, &ledger);
     let started = Instant::now();
     let mut scenarios = Vec::new();
     let mut failures = Vec::new();
@@ -493,6 +494,7 @@ fn persistent_session_active() {
             host_pid: adoption.identity.pid,
             worker: worker.as_ref(),
             desktop_home: desktop_enabled.then_some(home.path()),
+            echo: Some(&echo),
         };
         match active::run_active_scenario(&mut client, &ledger, &plan, &processes) {
             Ok(scenario) => scenarios.push(scenario),
@@ -504,6 +506,7 @@ fn persistent_session_active() {
         }
     }
     let elapsed = started.elapsed();
+    echo.finish(&mut client);
     drop(worker);
     let mut decisions = Vec::new();
     let fixtures = shutdown_host(
@@ -542,6 +545,7 @@ fn persistent_session_active() {
             "scenarios": active::ACTIVE_SCENARIOS,
             "settle_s": SETTLE.as_secs_f64(),
             "window_s": active::ACTIVE_WINDOW.as_secs_f64(),
+            "echo_samples": active::ACTIVE_ECHO_SAMPLES,
             "args": std::env::args().collect::<Vec<_>>(),
         },
         "measurement_s": elapsed.as_secs_f64(),
@@ -592,6 +596,7 @@ fn an_active_scenario_whose_session_dies_fails_with_its_name_and_publishes_no_av
         host_pid: adoption.identity.pid,
         worker: None,
         desktop_home: None,
+        echo: None,
     };
     let none = active::ActivePlan {
         streams: 0,

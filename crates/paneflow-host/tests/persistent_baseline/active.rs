@@ -8,6 +8,7 @@ pub(super) const ACTIVE_SCENARIOS: [usize; 3] = [1, 4, 8];
 pub(super) const ACTIVE_WINDOW: Duration = Duration::from_secs(30);
 pub(super) const STREAM_ARGS: [&str; 3] = ["stream", "16384", "60"];
 pub(super) const FLOOD_ARGS: [&str; 2] = ["flood", "8388608"];
+pub(super) const ACTIVE_ECHO_SAMPLES: usize = 200;
 
 pub(super) struct ActivePlan<'a> {
     pub(super) streams: usize,
@@ -21,6 +22,7 @@ pub(super) struct ActiveProcesses<'a> {
     pub(super) host_pid: u32,
     pub(super) worker: Option<&'a WorkerProcess>,
     pub(super) desktop_home: Option<&'a Path>,
+    pub(super) echo: Option<&'a workloads::EchoProbe>,
 }
 
 fn unavailable(process: &str, names: &[&str], reason: String) -> CounterSample {
@@ -159,6 +161,13 @@ pub(super) fn run_active_scenario(
     let worker_counters_after = processes.worker.map(worker_counters);
     let desktop_counters_after = desktop.as_ref().map(desktop_counters);
     let window = started.elapsed();
+    let echo = match processes.echo {
+        Some(probe) => workloads::stats(
+            &probe.measure(client, ACTIVE_ECHO_SAMPLES),
+            ACTIVE_ECHO_SAMPLES,
+        ),
+        None => json!({"pending": "no echo probe was opened"}),
+    };
 
     let dead: Vec<String> = streams
         .iter()
@@ -226,6 +235,7 @@ pub(super) fn run_active_scenario(
             (&host_counters_before, &host_counters_after),
             window,
         ),
+        "echo_ms": echo,
         "worker": worker,
         "desktop": desktop,
     }))
@@ -282,6 +292,23 @@ pub(super) fn compare_active(document: &Value, baseline: Option<&Value>) -> Stri
                 .flatten()
                 .find(|candidate| candidate["sessions"] == *sessions)
         });
+        let echo_p95 = &scenario["echo_ms"]["p95"];
+        let base_echo_p95 = base_scenario.map(|b| &b["echo_ms"]["p95"]);
+        text.push_str(&format!(
+            "{:<64} {:>12} {:>12} {}\n",
+            format!("{sessions} sessions host echo round trip p95 ms"),
+            echo_p95
+                .as_f64()
+                .map_or("pending".to_string(), |v| format!("{v:.3}")),
+            base_echo_p95
+                .and_then(Value::as_f64)
+                .map_or("n/a".to_string(), |v| format!("{v:.3}")),
+            match (echo_p95.as_f64(), base_echo_p95.and_then(Value::as_f64)) {
+                (None, _) => "pending".to_string(),
+                (Some(_), None) => "no baseline".to_string(),
+                (Some(now), Some(before)) => format!("{:+.1} %", (now / before - 1.0) * 100.0),
+            },
+        ));
         for process in ["host", "worker", "desktop"] {
             if let Some(invalid) = scenario[process]["work_counters"]["invalid"].as_str() {
                 text.push_str(&format!(

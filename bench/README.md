@@ -156,6 +156,15 @@ comparison prints it as pending with its reason and never as an improvement. A
 counter window that crosses a process restart is written as
 `{"invalid": "<process> restarted during the measurement"}`.
 
+An idle `paneflow-session-fixture echo` session stays open for the whole run.
+After each counter window, while the streams still print, the harness sends it
+200 numbered lines 10 ms apart through `session.input` and times each echo as a
+follower receives it (`echo_ms`: median, p95, p99, raw samples). The round trip
+crosses the host session thread twice, once for the PTY write and once for the
+publication, so it is the latency a process listing on that thread would
+inflate. The comparison prints the p95 per scenario next to the baseline. The
+probe is idle during the counter window and does not move the counters.
+
 The document is `bench/results/persistent-active-<stamp>-<sha>.json`, schema 4.
 It compares against `bench/persistent-active-baseline.json` when that file
 exists, and `--set-baseline` writes it. A baseline of another schema is refused
