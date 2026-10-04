@@ -530,7 +530,11 @@ fn persistent_session_active() {
         "host": {"version": adoption.identity.version, "protocol": adoption.identity.protocol, "build_id": adoption.identity.build_id},
         "executables": {"host": executable_identity(&host_executable()), "fixture": executable_identity(&fixture_executable())},
         "controller": std::env::var_os("PANEFLOW_BENCH_CONTROLLER").map(|path| executable_identity(Path::new(&path))),
-        "topology": topology_label(std::env::var_os("PANEFLOW_BENCH_CONTROLLER").is_some()),
+        "topology": match (desktop_enabled, std::env::var_os("PANEFLOW_BENCH_CONTROLLER").is_some()) {
+            (true, _) => "host-worker-native-desktop",
+            (false, true) => "host-worker",
+            (false, false) => "host-only",
+        },
         "invocation": {
             "test": "persistent_session_active",
             "stream": active::STREAM_ARGS,
