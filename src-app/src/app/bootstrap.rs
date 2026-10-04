@@ -31,6 +31,11 @@ impl PaneFlowApp {
             .detach();
         let (ipc_rx, ipc_status, event_bus) = ipc::start_server();
         crate::startup_trace::mark("ipc_server_started");
+        cx.on_app_quit(|_, _| {
+            ipc::release_own_socket();
+            async {}
+        })
+        .detach();
         let (app_wake, wake_rx) = super::wake::AppWake::channel();
         Self::spawn_ipc_dispatch(ipc_rx, cx);
         Self::spawn_surface_broadcast(event_bus.subscription_signal(), cx);
