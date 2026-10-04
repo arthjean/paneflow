@@ -20,21 +20,41 @@ const TOTAL_NOTE: &str =
 enum Scenario {
     Welcome,
     Restore,
+    #[cfg(unix)]
+    StaleSocket,
 }
 
 impl Scenario {
+    #[cfg(unix)]
+    const ALL: [Scenario; 3] = [Scenario::Welcome, Scenario::Restore, Scenario::StaleSocket];
+    #[cfg(not(unix))]
     const ALL: [Scenario; 2] = [Scenario::Welcome, Scenario::Restore];
 
     fn prefix(self) -> &'static str {
         match self {
             Scenario::Welcome => "welcome",
             Scenario::Restore => "restore3",
+            #[cfg(unix)]
+            Scenario::StaleSocket => "stale_socket",
         }
     }
+
+    #[cfg(unix)]
+    fn before_launch(self, home: &Path) {
+        match self {
+            Scenario::Welcome | Scenario::Restore => {}
+            Scenario::StaleSocket => leave_stale_socket(home),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn before_launch(self, _home: &Path) {}
 
     fn session(self, cwd: &Path) -> paneflow_config::schema::SessionState {
         let workspaces = match self {
             Scenario::Welcome => Vec::new(),
+            #[cfg(unix)]
+            Scenario::StaleSocket => Vec::new(),
             Scenario::Restore => (0..RESTORE_WORKSPACES)
                 .map(|index| {
                     serde_json::json!({
@@ -68,6 +88,38 @@ impl Scenario {
         });
         serde_json::from_value(document).expect("fixture session matches the session schema")
     }
+}
+
+#[cfg(unix)]
+fn stale_socket_path(home: &Path) -> PathBuf {
+    let env = paneflow_home::EndpointEnv {
+        paneflow_home: Some(home.as_os_str().to_owned()),
+        socket_path: None,
+        allow_socket_override: None,
+        ..paneflow_home::EndpointEnv::from_process()
+    };
+    paneflow_home::ipc_endpoint_in(&env)
+        .expect("an isolated home resolves an IPC endpoint")
+        .path
+}
+
+#[cfg(unix)]
+fn leave_stale_socket(home: &Path) {
+    let endpoint = stale_socket_path(home);
+    let _ = std::fs::remove_file(&endpoint);
+    drop(
+        std::os::unix::net::UnixListener::bind(&endpoint).unwrap_or_else(|error| {
+            panic!(
+                "cannot bind {} to leave it stale: {error}",
+                endpoint.display()
+            )
+        }),
+    );
+    assert!(
+        std::os::unix::net::UnixStream::connect(&endpoint).is_err(),
+        "the socket left at {} must refuse connections",
+        endpoint.display()
+    );
 }
 
 fn fixture_workspace_id(index: usize) -> String {
@@ -248,6 +300,7 @@ fn startup_first_frame_benchmark() {
     for scenario in Scenario::ALL {
         let home = fixture.join(format!("home-{}", scenario.prefix()));
         seed_home(&home, scenario, &cwd);
+        scenario.before_launch(&home);
         let warmup = launch_to_first_frame(&exe, &home, &fixture.join("warmup.json"));
         assert!(
             warmup.profile == "release" || std::env::var_os("PANEFLOW_BENCH_ALLOW_DEBUG").is_some(),
@@ -255,7 +308,10 @@ fn startup_first_frame_benchmark() {
             warmup.profile
         );
         let traces: Vec<Trace> = (0..runs)
-            .map(|run| launch_to_first_frame(&exe, &home, &fixture.join(format!("run-{run}.json"))))
+            .map(|run| {
+                scenario.before_launch(&home);
+                launch_to_first_frame(&exe, &home, &fixture.join(format!("run-{run}.json")))
+            })
             .collect();
         metrics.extend(metrics_from_traces(scenario.prefix(), &traces));
     }
@@ -324,6 +380,22 @@ mod tests {
         let text = serde_json::to_string(&restore).unwrap();
         let back: paneflow_config::schema::SessionState = serde_json::from_str(&text).unwrap();
         assert_eq!(back, restore);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_stale_socket_scenario_leaves_a_socket_that_refuses_connections() {
+        let home = tempfile::tempdir().unwrap();
+        Scenario::StaleSocket.before_launch(home.path());
+        let endpoint = super::stale_socket_path(home.path());
+        assert!(endpoint.exists());
+        assert!(std::os::unix::net::UnixStream::connect(&endpoint).is_err());
+        Scenario::StaleSocket.before_launch(home.path());
+        assert!(
+            endpoint.exists(),
+            "a second launch finds a stale socket again"
+        );
+        let _ = std::fs::remove_file(endpoint);
     }
 
     #[test]

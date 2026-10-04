@@ -834,13 +834,14 @@ names a file, the app records a mark at each stage of `main` and of
 presented, and quits. The probe ships in release builds so the shipping profile
 is what gets measured.
 
-Two scenarios run back to back, each against its own seeded `PANEFLOW_HOME`
-under the system temp directory:
+Three scenarios (two on Windows) run back to back, each against its own
+seeded `PANEFLOW_HOME` under the system temp directory:
 
 | Scenario | Prefix | Home contents |
 |---|---|---|
 | Welcome | `welcome_` | An empty session, so the first frame is the welcome screen. |
 | Restore | `restore3_` | A session of three workspaces with one terminal pane each, all in a scratch directory. The daily case: a restored layout whose panes spawn shells. |
+| Stale socket (Linux, macOS) | `stale_socket_` | The welcome home, with a desktop IPC socket left behind by an unclean exit bound before every launch: the file exists and refuses connections. `stale_socket_step_ipc_server_started` is the US-010 startup budget the performance gates enforce. |
 
 The seed writes `session.json`, `paneflow.json` (`{}`), `window-state.json`
 (a fixed 1400x900 window) and `telemetry_id` before the first launch. Every
