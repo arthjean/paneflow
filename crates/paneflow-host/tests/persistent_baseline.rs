@@ -1215,7 +1215,7 @@ fn persistent_session_endurance() {
     }
 }
 
-fn kill_hard(pid: u32) {
+fn kill_signal_delivered(pid: u32) -> bool {
     let status = if cfg!(windows) {
         Command::new("taskkill")
             .args(["/F", "/PID", &pid.to_string()])
@@ -1223,7 +1223,19 @@ fn kill_hard(pid: u32) {
     } else {
         Command::new("kill").args(["-9", &pid.to_string()]).status()
     };
-    assert!(status.unwrap().success(), "process {pid} is killed");
+    status.unwrap().success()
+}
+
+fn kill_hard(pid: u32) {
+    assert!(kill_signal_delivered(pid), "process {pid} is killed");
+}
+
+fn kill_unless_already_gone(process: &paneflow_host::ProcessIdentity) {
+    assert!(
+        kill_signal_delivered(process.pid) || !process.is_provably_live(),
+        "process {} is killed",
+        process.pid
+    );
 }
 
 #[test]
@@ -1284,7 +1296,7 @@ fn an_acknowledged_durable_hook_survives_a_host_kill() {
         .as_ref()
         .filter(|process| process.is_provably_live())
     {
-        kill_hard(process.pid);
+        kill_unless_already_gone(process);
     }
     assert_eq!(on_disk.hook_revision, ack["revision"].as_u64().unwrap());
     let hook = on_disk.last_hook.expect("the acknowledged hook is on disk");
