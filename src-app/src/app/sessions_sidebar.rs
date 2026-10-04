@@ -1011,7 +1011,7 @@ mod tests {
                     crate::agent_launcher::TerminalAgent::Codex,
                 ),
                 id,
-                format!("codex resume {id}"),
+                format!("codex -c check_for_update_on_startup=false resume {id}"),
             ),
             (
                 crate::agent_sessions::session_agent_of(
