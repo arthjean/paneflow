@@ -441,7 +441,7 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         drained_at.elapsed()
     );
     worker.stop();
-    let replacement = paneflow_serve::open(home.path()).expect("the replacement takes the home");
+    let (replacement, _) = reopen_once_the_endpoint_is_released(home.path());
     let sessions_after = owner
         .call("session.list", json!({}))
         .expect("the core lists its sessions after the replacement");
