@@ -1,7 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -34,11 +34,35 @@ pub struct Worker {
     pub bus: AgentBus,
     pub sweeps: Counter,
     pub shutdown: Arc<AtomicBool>,
+    pub(crate) shutdown_gate: Mutex<()>,
+    pub(crate) shutdown_requested: Condvar,
     pub core_connected: AtomicBool,
     pub broadcast_snapshot: Mutex<Option<Vec<Value>>>,
 }
 
 impl Worker {
+    pub fn request_shutdown(&self) {
+        let _gate = self
+            .shutdown_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.shutdown.store(true, Ordering::Release);
+        self.shutdown_requested.notify_all();
+    }
+
+    pub fn wait_for_shutdown(&self) {
+        let mut gate = self
+            .shutdown_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        while !self.shutdown.load(Ordering::Acquire) {
+            gate = self
+                .shutdown_requested
+                .wait(gate)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
     pub fn lock_state(&self) -> std::sync::MutexGuard<'_, WorkerState> {
         self.state
             .lock()
@@ -337,7 +361,7 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
                     &id,
                     json!({"stopping": true, "pid": worker.identity.pid}),
                 ));
-                worker.shutdown.store(true, Ordering::Release);
+                worker.request_shutdown();
                 let _ = answered;
                 Flow::Close
             }

@@ -64,13 +64,11 @@ impl RunningWorker {
     }
 
     pub fn wait_for_shutdown(&self) {
-        while !self.worker.shutdown.load(Ordering::Acquire) {
-            std::thread::sleep(FRAME_WAIT);
-        }
+        self.worker.wait_for_shutdown();
     }
 
     pub fn stop(mut self) {
-        self.worker.shutdown.store(true, Ordering::Release);
+        self.worker.request_shutdown();
         if let Some(pump) = self.pump.take() {
             let _ = pump.join();
         }
@@ -120,6 +118,8 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         bus: Default::default(),
         sweeps: Default::default(),
         shutdown: Arc::new(AtomicBool::new(false)),
+        shutdown_gate: Mutex::new(()),
+        shutdown_requested: Default::default(),
         core_connected: AtomicBool::new(false),
         broadcast_snapshot: Mutex::new(None),
     });
@@ -423,6 +423,24 @@ mod tests {
         assert_eq!(deltas["sweeps"], measured(1));
         assert_eq!(deltas["snapshot_broadcasts"], measured(1));
         assert_eq!(deltas["projection_broadcasts"], measured(0));
+        running.stop();
+    }
+
+    #[test]
+    fn a_shutdown_request_wakes_the_thread_waiting_for_it() {
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        let worker = Arc::clone(running.worker());
+        let waiter = std::thread::spawn(move || worker.wait_for_shutdown());
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!waiter.is_finished(), "nothing requested a shutdown yet");
+        running.worker().request_shutdown();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !waiter.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(waiter.is_finished(), "the request wakes the waiting thread");
+        waiter.join().expect("the waiter returns");
         running.stop();
     }
 
