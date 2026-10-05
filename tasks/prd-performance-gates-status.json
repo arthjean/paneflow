@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "Comparer le temps réel par un A/B calibré dans le même job",
-      "status": "IN_PROGRESS",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 3,
       "stories_done": 0
@@ -268,7 +268,7 @@
       "id": "US-016",
       "title": "Faire tourner l'A/B en mode ombre, puis le promouvoir en gate",
       "epic": "EP-004",
-      "status": "IN_PROGRESS",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
@@ -282,11 +282,11 @@
       "id": "US-017",
       "title": "Valider l'hypothèse : comptage d'instructions par Gungraun sur un runner Linux",
       "epic": "EP-004",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-10-05",
       "completed_at": null,
       "reviewed_at": null
     },
