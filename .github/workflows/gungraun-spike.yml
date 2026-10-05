@@ -2,6 +2,8 @@ name: Gungraun spike
 
 on:
   workflow_dispatch: {}
+  push:
+    branches: [spike/gungraun]
 
 permissions:
   contents: read

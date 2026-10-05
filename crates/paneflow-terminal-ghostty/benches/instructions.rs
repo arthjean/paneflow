@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
