@@ -52,5 +52,7 @@
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Programs you run in PaneFlow, such as voice input in coding agents, may use the microphone.</string>
 </dict>
 </plist>

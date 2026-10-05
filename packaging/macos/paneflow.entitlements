@@ -32,6 +32,13 @@
         hardened runtime. Apple recommends enabling both together for any
         app that calls into Metal or WebKit-derived shader compilers.
 
+    com.apple.security.device.audio-input = true
+        Programs run inside a pane (voice input, dictation, audio tools)
+        are attributed to PaneFlow by macOS privacy controls. Without this
+        key the hardened runtime denies them microphone access, even after
+        the user allows it. Pairs with NSMicrophoneUsageDescription in
+        assets/Info.plist, without which macOS never shows the prompt.
+
     com.apple.security.cs.disable-library-validation
         REMOVED 2026-05-07 to match Zed's release entitlements
         (zed/crates/zed/resources/zed.entitlements, where the key is
@@ -66,6 +73,8 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
 </dict>
 </plist>
