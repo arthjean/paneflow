@@ -2247,15 +2247,13 @@ mod tests {
     }
 
     fn spawn_follower(
-        endpoint: PathBuf,
-        hello: ClientHello,
+        mut client: HostClient,
         session: SessionId,
         generation: SessionGeneration,
         from: u64,
         pause_first_frame: Option<Duration>,
     ) -> JoinHandle<Result<(OutputEnd, String), HostClientError>> {
         std::thread::spawn(move || {
-            let mut client = HostClient::connect(&endpoint, &hello)?;
             let mut streamed = Vec::new();
             let mut paused = pause_first_frame;
             let end = client.output(
@@ -2308,8 +2306,7 @@ mod tests {
             .into_iter()
             .map(|pause| {
                 spawn_follower(
-                    server.endpoint().to_path_buf(),
-                    hello.clone(),
+                    HostClient::connect(server.endpoint(), &hello).unwrap(),
                     session.clone(),
                     generation,
                     from,
@@ -2382,6 +2379,7 @@ mod tests {
         let (_home, host, server) = start();
         let hello = ClientHello::local("paneflow-host-test");
         let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let follower_client = HostClient::connect(server.endpoint(), &hello).unwrap();
         #[cfg(windows)]
         let (shell, args) = ("cmd.exe", vec!["/Q", "/D", "/C", "exit 0"]);
         #[cfg(unix)]
@@ -2400,14 +2398,7 @@ mod tests {
             .unwrap();
         let session = created.manifest.session.clone();
         let generation = created.manifest.generation;
-        let follower = spawn_follower(
-            server.endpoint().to_path_buf(),
-            hello.clone(),
-            session.clone(),
-            generation,
-            0,
-            None,
-        );
+        let follower = spawn_follower(follower_client, session.clone(), generation, 0, None);
         let summary = wait_ended(&host, &session, Duration::from_secs(15));
         assert!(matches!(
             summary.manifest.lifecycle,
@@ -2819,8 +2810,7 @@ mod tests {
             .checkpoint
             .offset;
         let follower = spawn_follower(
-            server.endpoint().to_path_buf(),
-            hello.clone(),
+            HostClient::connect(server.endpoint(), &hello).unwrap(),
             session.clone(),
             generation,
             from,

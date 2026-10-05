@@ -1110,7 +1110,7 @@ mod tests {
         let (shell, args, before_command) = (
             "cmd.exe",
             vec!["/Q".to_string(), "/D".to_string()],
-            "echo MIRROR_BEFORE\r\n",
+            "echo MIRROR_BE^FORE\r\n",
         );
         #[cfg(unix)]
         let (shell, args, before_command) = (

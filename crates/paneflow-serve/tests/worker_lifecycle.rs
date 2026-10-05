@@ -96,6 +96,25 @@ fn wait_for_output(
     }
 }
 
+fn reopen_once_the_endpoint_is_released(
+    home: &std::path::Path,
+) -> (paneflow_serve::worker::RunningWorker, Instant) {
+    let released_by = Instant::now() + Duration::from_secs(10);
+    loop {
+        let attempt = Instant::now();
+        match paneflow_serve::open(home) {
+            Ok(worker) => return (worker, attempt),
+            Err(paneflow_serve::WorkerError::Endpoint { source, .. })
+                if source.kind() == std::io::ErrorKind::PermissionDenied
+                    && Instant::now() < released_by =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("the worker takes the home again: {error:?}"),
+        }
+    }
+}
+
 fn stable_session_identities(list: &Value) -> Vec<Value> {
     let mut sessions: Vec<Value> = list["sessions"]
         .as_array()
@@ -360,8 +379,7 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         "stopping the worker never signals a terminal"
     );
 
-    let restarted_at = Instant::now();
-    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home again");
+    let (worker, restarted_at) = reopen_once_the_endpoint_is_released(home.path());
     let rebuilt = worker
         .worker()
         .lock_state()
