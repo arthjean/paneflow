@@ -15,7 +15,10 @@ case "${1:-}" in
 esac
 
 for variable in $(compgen -e | grep '^PANEFLOW_' || true); do
-  [ "$variable" = PANEFLOW_PERF_GATES_DIR ] || unset "$variable"
+  case "$variable" in
+    PANEFLOW_PERF_GATES_DIR | PANEFLOW_PERF_GATES_DISPLAY_NUMBER) ;;
+    *) unset "$variable" ;;
+  esac
 done
 
 out="${PANEFLOW_PERF_GATES_DIR:-$root/target/perf-gates}"
@@ -122,10 +125,7 @@ run_step gates env \
   bash -c 'cd crates/paneflow-host && "$1" perf_gates --ignored --exact --nocapture --test-threads=1' _ "$harness"
 
 echo "performance gates finished in $(( $(date +%s) - started )) s; report: $out/perf-gates.json"
-for step in verifier gates; do
-  for failed in "${failed_steps[@]}"; do
-    if [ "$failed" = "$step" ]; then
-      exit 1
-    fi
-  done
-done
+if [ "${#failed_steps[@]}" -gt 0 ]; then
+  echo "::error::failed steps: ${failed_steps[*]}"
+  exit 1
+fi
