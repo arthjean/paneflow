@@ -102,6 +102,18 @@ failed with
 `worker.idle.snapshot_broadcasts | 15 snapshots per window | = 0 snapshots per window | +15 | host_worker_idle: ...`
 (Ubuntu 26.04 under WSL, release build of `26430c1b`).
 
+The job was soaked on GitHub runners before it became blocking, by rerunning it
+on `main` and on five dispatch branches. Earlier soaks found three parasitic
+failures, each fixed at its source rather than by widening a budget: a real
+`fsync` stall on the runner disk pushed `hooks.burst.p95` to 820 ms (the
+hook burst now keeps its home on tmpfs, so only the injected durability
+latency counts), `worker.idle.cpu_ms` sat at its bound because the idle
+worker polled for shutdown (it now blocks on a condition variable), and a
+stalled apt mirror plus a cold release build took one run to 28 minutes (apt
+retries, and the `gates` profile). On `2bb833e0` the job then passed 32
+consecutive runs out of 32, with no rerun of a failure: 12 to 16 minutes with
+a warm cache, 19 to 25 minutes cold, inside the 30 minute bound.
+
 ## Screen rule corpus
 
 `bench/screen-corpus-baseline.json` is not a timing baseline: it records how

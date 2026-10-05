@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Verrouiller l'état corrigé par des gates déterministes en CI Linux",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-004",
@@ -188,7 +188,7 @@
       "id": "US-011",
       "title": "Créer le job CI `perf-gates` et son format d'échec",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -196,14 +196,14 @@
         "US-002"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-05T18:13:21+02:00",
+      "reviewed_at": "2026-10-05T18:13:21+02:00"
     },
     {
       "id": "US-012",
       "title": "Poser les budgets du host et du worker",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -213,14 +213,14 @@
         "US-008"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-05T18:13:21+02:00",
+      "reviewed_at": "2026-10-05T18:13:21+02:00"
     },
     {
       "id": "US-013",
       "title": "Poser les budgets du desktop sous un affichage virtuel",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -233,22 +233,22 @@
         "US-010"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-05T18:13:21+02:00",
+      "reviewed_at": "2026-10-05T18:13:21+02:00"
     },
     {
       "id": "US-014",
       "title": "Passer en gate les allocations des suites terminal et éditeur",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-011"
       ],
       "started_at": "2026-10-04",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-05T18:13:21+02:00",
+      "reviewed_at": "2026-10-05T18:13:21+02:00"
     },
     {
       "id": "US-015",
