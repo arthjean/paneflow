@@ -74,7 +74,7 @@ if [ "$mode" = refresh ]; then
   exit 0
 fi
 
-run_step hook-burst env PANEFLOW_GATE_HOOK_BURST_OUT="$out/hook-burst.json" \
+run_step hook-burst env TMPDIR=/dev/shm PANEFLOW_GATE_HOOK_BURST_OUT="$out/hook-burst.json" \
   cargo test --release --locked -p paneflow-host --lib \
   host::tests::a_hook_burst_with_slow_durability_loses_nothing_and_never_queues_behind_the_lock \
   -- --exact --nocapture
