@@ -1507,7 +1507,14 @@ impl Session {
         #[cfg(target_os = "macos")]
         self.process_tree.root_reaped();
         self.exit = Some(outcome.clone());
-        self.shared.set_unverified(None);
+        if self.descendants_unresolved == 0 {
+            self.shared.set_unverified(None);
+        } else {
+            self.mark_unverified(format!(
+                "{} descendant process(es) remain unresolved",
+                self.descendants_unresolved
+            ));
+        }
         *self
             .shared
             .exit
@@ -1522,10 +1529,6 @@ impl Session {
         if self.descendants_unresolved == 0 {
             self.publish_exit();
         } else {
-            self.mark_unverified(format!(
-                "{} descendant process(es) remain unresolved",
-                self.descendants_unresolved
-            ));
             self.reconcile_backoff = DESCENDANT_RECONCILE_MIN;
             self.schedule_reconcile();
         }
