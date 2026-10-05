@@ -93,6 +93,13 @@ per tick: it skips the signals announcement when its own commit already
 announced. The rerun measured 1.97, and every other budget passed both runs
 (local evidence in `tasks/perf-gates-ep003/`, not tracked).
 
+Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
+snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate
+measured 15 snapshots in the 30 s idle window against a budget of 0 and
+failed with
+`worker.idle.snapshot_broadcasts | 15 snapshots per window | = 0 snapshots per window | +15 | host_worker_idle: ...`
+(Ubuntu 26.04 under WSL, release build of `26430c1b`).
+
 ## Screen rule corpus
 
 `bench/screen-corpus-baseline.json` is not a timing baseline: it records how
