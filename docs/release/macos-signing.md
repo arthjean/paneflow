@@ -45,12 +45,18 @@ sent to notarytool.**
 
 | File | When to use | Notable keys |
 |---|---|---|
-| `paneflow.entitlements` | Tagged `v*` releases (default for `sign-macos.sh`). | `app-sandbox=false`, `automation.apple-events`, `cs.allow-jit`, `cs.allow-unsigned-executable-memory`. |
+| `paneflow.entitlements` | Tagged `v*` releases (default for `sign-macos.sh`). | `app-sandbox=false`, `automation.apple-events`, `cs.allow-jit`, `cs.allow-unsigned-executable-memory`, `device.audio-input`. |
 | `paneflow.dev.entitlements` | **Local only.** Use when you need to attach `lldb` to a signed build on your own machine. | Adds `com.apple.security.get-task-allow=true`. **Notarization rejects any bundle carrying this entitlement** - never use for distribution. |
 
 The `cs.*` block is required for any GPUI / wgpu app under the hardened
 runtime: GPUI compiles `MTLComputePipelineState` objects at first use,
 which Apple classifies as JIT.
+
+`device.audio-input` lets programs run in a pane record from the
+microphone: macOS attributes their requests to PaneFlow, and the hardened
+runtime denies audio input without this key. It pairs with
+`NSMicrophoneUsageDescription` in `assets/Info.plist`, without which macOS
+denies the request without prompting.
 
 ## 3. One-time onboarding
 
