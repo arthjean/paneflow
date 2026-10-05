@@ -107,6 +107,14 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
+# Release split into 16 codegen units for the perf_gates CI job
+# (scripts/perf-gates.sh). The work counters and allocation columns it gates
+# are identical to release; a cold build is about a quarter shorter, which
+# keeps the job inside its 30 minute bound.
+[profile.gates]
+inherits = "release"
+codegen-units = 16
+
 # Size-optimized profile for the embedded AI-hook callback and shim binaries
 # (US-001 / US-004 / US-008). The hook callback runs ~6 times per AI turn, so
 # it's a hot path; smaller binaries also reduce the rust-embed footprint per

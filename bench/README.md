@@ -34,7 +34,9 @@ scripts/perf-gates.sh                           # needs Xvfb and Mesa lavapipe; 
 scripts/perf-gates.sh --refresh-alloc-baselines # rewrites bench/{terminal,editor}-alloc-baseline-linux.json
 ```
 
-The script builds the release profile, runs the terminal and editor suites,
+The script builds the `gates` profile (release with 16 codegen units, which
+leaves every gated counter and allocation column unchanged and shortens a
+cold build by about a quarter), runs the terminal and editor suites,
 the hook burst test and the startup suite, starts its own Xvfb with the
 lavapipe ICD forced, then runs the ignored test `perf_gates` in
 `crates/paneflow-host/tests/persistent_baseline.rs`. That test drives the real

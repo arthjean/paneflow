@@ -23,7 +23,7 @@ pub(super) const HOST_ACTIVE: Scenario = Scenario {
 pub(super) const HOOK_BURST: Scenario = Scenario {
     id: "hook_burst",
     description: "200 hooks in a burst on one session with 100 ms of injected durability latency, home on tmpfs so the disk adds none",
-    reproduce: "TMPDIR=/dev/shm cargo test --release --locked -p paneflow-host --lib a_hook_burst_with_slow_durability -- --nocapture",
+    reproduce: "TMPDIR=/dev/shm cargo test --profile gates --locked -p paneflow-host --lib a_hook_burst_with_slow_durability -- --nocapture",
 };
 
 pub(super) const DESKTOP_IDLE: Scenario = Scenario {
