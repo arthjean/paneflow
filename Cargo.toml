@@ -115,6 +115,11 @@ strip = true
 inherits = "release"
 codegen-units = 16
 
+# Gungraun instruction counts (US-017): Callgrind toggles collection on the
+# benchmark function by symbol name, so a stripped binary measures nothing.
+[profile.bench]
+strip = false
+
 # Size-optimized profile for the embedded AI-hook callback and shim binaries
 # (US-001 / US-004 / US-008). The hook callback runs ~6 times per AI turn, so
 # it's a hot path; smaller binaries also reduce the rust-embed footprint per

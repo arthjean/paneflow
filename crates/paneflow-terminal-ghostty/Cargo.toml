@@ -16,6 +16,17 @@ regex = "1"
 serde_json.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+gungraun = "0.20"
+
+[[bench]]
+name = "instructions"
+harness = false
+required-features = ["native"]
+
+[lib]
+bench = false
+
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

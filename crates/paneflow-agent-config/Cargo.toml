@@ -26,10 +26,19 @@ serde = { workspace = true, features = ["derive"] }
 toml = "0.8"
 
 [dev-dependencies]
+gungraun = "0.20"
 regex = "1"
 serde = { workspace = true, features = ["derive"] }
 tempfile.workspace = true
 toml = "0.8"
+
+[[bench]]
+name = "instructions"
+harness = false
+required-features = ["screen-rules"]
+
+[lib]
+bench = false
 
 [lints]
 workspace = true
