@@ -378,6 +378,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/fetch-libghostty
 
+      - name: Retry stalled apt downloads
+        run: |
+          printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-perf-gates-retries
+
       - uses: ./.github/actions/linux-build-deps
         with:
           extra-packages: mesa-vulkan-drivers xvfb
