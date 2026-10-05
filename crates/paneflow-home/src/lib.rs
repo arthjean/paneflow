@@ -101,6 +101,10 @@ pub fn cache_dir_in(home: &Path) -> PathBuf {
     home.join("cache")
 }
 
+pub fn path_index_path() -> Option<PathBuf> {
+    cache_dir().map(|cache| cache.join("path-index.bin"))
+}
+
 pub fn screen_rule_overrides_dir_in(home: &Path) -> PathBuf {
     home.join("runtimes")
 }
@@ -395,6 +399,10 @@ mod tests {
             home.join("path-history.json")
         );
         assert_eq!(cache_dir().expect("cache"), home.join("cache"));
+        assert_eq!(
+            path_index_path().expect("path index"),
+            home.join("cache").join("path-index.bin")
+        );
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
         assert_eq!(host_dir_in(&home), home.join("host"));
         assert_eq!(

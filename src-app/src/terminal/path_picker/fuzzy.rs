@@ -11,17 +11,22 @@ const BONUS_WHOLE_NAME: i32 = 32;
 
 pub(super) struct Pattern {
     folded: Vec<char>,
+    mask: u32,
 }
 
 impl Pattern {
     pub(super) fn new(query: &str) -> Self {
-        Self {
-            folded: query.chars().map(fold).collect(),
-        }
+        let folded: Vec<char> = query.chars().map(fold).collect();
+        let mask = folded.iter().fold(0, |mask, &ch| mask | char_bit(ch));
+        Self { folded, mask }
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.folded.is_empty()
+    }
+
+    pub(super) fn excluded_by(&self, text_mask: u32) -> bool {
+        self.mask & !text_mask != 0
     }
 }
 
@@ -31,6 +36,42 @@ pub(super) struct PathMatch {
     pub(super) highlights: Vec<Range<usize>>,
 }
 
+pub(super) fn mask_of(text: &str) -> u32 {
+    text.chars().fold(0, |mask, ch| mask | char_bit(fold(ch)))
+}
+
+pub(super) fn score_name(name: &str, pattern: &Pattern, positions: &mut Vec<usize>) -> Option<i32> {
+    if !align(name, &pattern.folded, positions) {
+        return None;
+    }
+    let mut total = score(name, positions) + BONUS_IN_NAME;
+    if name.chars().map(fold).eq(pattern.folded.iter().copied()) {
+        total += BONUS_WHOLE_NAME;
+    }
+    Some(total)
+}
+
+pub(super) fn score_path(path: &str, pattern: &Pattern, positions: &mut Vec<usize>) -> Option<i32> {
+    align(path, &pattern.folded, positions).then(|| score(path, positions))
+}
+
+pub(super) fn advance(text: &str, pattern: &Pattern, matched: usize) -> usize {
+    let mut matched = matched;
+    for ch in text.chars() {
+        let Some(&wanted) = pattern.folded.get(matched) else {
+            break;
+        };
+        if fold(ch) == wanted {
+            matched += 1;
+        }
+    }
+    matched
+}
+
+pub(super) fn is_complete(pattern: &Pattern, matched: usize) -> bool {
+    matched >= pattern.folded.len()
+}
+
 pub(super) fn match_path(path: &str, pattern: &Pattern) -> Option<PathMatch> {
     if pattern.is_empty() {
         return Some(PathMatch {
@@ -38,28 +79,25 @@ pub(super) fn match_path(path: &str, pattern: &Pattern) -> Option<PathMatch> {
             highlights: Vec::new(),
         });
     }
+    let mut positions = Vec::with_capacity(pattern.folded.len());
     let name_start = path
         .rfind(std::path::is_separator)
         .map_or(0, |index| index + 1);
-    let name = &path[name_start..];
-    if let Some(positions) = align(name, &pattern.folded) {
-        let mut score = score(name, &positions) + BONUS_IN_NAME;
-        if name.chars().map(fold).eq(pattern.folded.iter().copied()) {
-            score += BONUS_WHOLE_NAME;
-        }
+    if let Some(score) = score_name(&path[name_start..], pattern, &mut positions) {
         return Some(PathMatch {
             score,
-            highlights: ranges(path, positions.into_iter().map(|index| index + name_start)),
+            highlights: ranges(path, positions.iter().map(|index| index + name_start)),
         });
     }
-    let positions = align(path, &pattern.folded)?;
+    let score = score_path(path, pattern, &mut positions)?;
     Some(PathMatch {
-        score: score(path, &positions),
-        highlights: ranges(path, positions),
+        score,
+        highlights: ranges(path, positions.iter().copied()),
     })
 }
 
-fn align(haystack: &str, needle: &[char]) -> Option<Vec<usize>> {
+fn align(haystack: &str, needle: &[char], positions: &mut Vec<usize>) -> bool {
+    positions.clear();
     let mut remaining = needle.iter().peekable();
     let mut end = None;
     for (index, ch) in haystack.char_indices() {
@@ -74,8 +112,9 @@ fn align(haystack: &str, needle: &[char]) -> Option<Vec<usize>> {
             }
         }
     }
-    let end = end?;
-    let mut positions = Vec::with_capacity(needle.len());
+    let Some(end) = end else {
+        return false;
+    };
     let mut remaining = needle.iter().rev().peekable();
     for (index, ch) in haystack[..end].char_indices().rev() {
         let Some(&&wanted) = remaining.peek() else {
@@ -87,7 +126,7 @@ fn align(haystack: &str, needle: &[char]) -> Option<Vec<usize>> {
         }
     }
     positions.reverse();
-    Some(positions)
+    true
 }
 
 fn score(haystack: &str, positions: &[usize]) -> i32 {
@@ -131,6 +170,19 @@ fn ranges(text: &str, positions: impl IntoIterator<Item = usize>) -> Vec<Range<u
         }
     }
     merged
+}
+
+fn char_bit(folded: char) -> u32 {
+    match folded {
+        'a'..='z' => 1 << (folded as u32 - 'a' as u32),
+        '0'..='9' => 1 << 26,
+        '.' => 1 << 27,
+        '-' => 1 << 28,
+        '_' => 1 << 29,
+        ' ' => 1 << 30,
+        _ if std::path::is_separator(folded) => 0,
+        _ => 1 << 31,
+    }
 }
 
 fn fold(ch: char) -> char {
@@ -227,6 +279,39 @@ mod tests {
         let matched = found(&path, "été").expect("folded match");
         let start = path.find("Été").expect("name");
         assert_eq!(matched.highlights, vec![start..start + "Été".len()]);
+    }
+
+    #[test]
+    fn the_split_scorers_agree_with_the_highlighting_matcher() {
+        let mut positions = Vec::new();
+        let pattern = Pattern::new("lic");
+        assert_eq!(
+            score_name("License.ts", &pattern, &mut positions),
+            Some(score_of("License.ts", "lic"))
+        );
+        let path = ["apps", "license-lookup-app", "src"].join(std::path::MAIN_SEPARATOR_STR);
+        assert_eq!(score_name("src", &pattern, &mut positions), None);
+        assert_eq!(
+            score_path(&path, &pattern, &mut positions),
+            Some(score_of(&path, "lic"))
+        );
+    }
+
+    #[test]
+    fn advancing_across_folders_matches_an_in_order_path() {
+        let pattern = Pattern::new("srcmain");
+        let matched = advance("src", &pattern, 0);
+        assert_eq!(matched, 3);
+        assert!(is_complete(&pattern, advance("main.rs", &pattern, matched)));
+        assert!(!is_complete(&pattern, advance("mod.rs", &pattern, matched)));
+    }
+
+    #[test]
+    fn a_mask_rejects_text_missing_a_query_character() {
+        assert!(!Pattern::new("main").excluded_by(mask_of("src/Main.rs")));
+        assert!(Pattern::new("mainz").excluded_by(mask_of("src/Main.rs")));
+        assert!(!Pattern::new("été").excluded_by(mask_of("Été.md")));
+        assert!(!Pattern::new("v2_x-y.z").excluded_by(mask_of("V2_X-Y.Z")));
     }
 
     #[cfg(windows)]

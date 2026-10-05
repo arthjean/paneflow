@@ -1,24 +1,18 @@
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf, is_separator};
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicBool};
+use std::sync::atomic::{self, AtomicU64};
 
-use super::fuzzy::{self, PathMatch, Pattern};
+use super::fuzzy::{self, Pattern};
+use super::index::{self, Index, Located};
+use super::search::{self, LOCAL_BONUS, RECENT_BONUS, RecentTarget, Source};
 use super::wsl::WslRoots;
 use crate::terminal::types::ShellQuoting;
 
-const MAX_INDEXED: usize = 100_000;
 const MAX_RESULTS: usize = 200;
 const MAX_RECENT_BROWSED: usize = 5;
-const RECENT_BONUS: i32 = 24;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct IndexEntry {
-    pub(super) relative: String,
-    pub(super) is_dir: bool,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Row {
@@ -57,12 +51,48 @@ pub(super) enum Listing {
     Status(Status),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Recent {
+    pub(super) path: PathBuf,
+    pub(super) is_dir: bool,
+}
+
 pub(super) struct Request {
     pub(super) query: String,
     pub(super) base: Option<PathBuf>,
     pub(super) home: Option<PathBuf>,
     pub(super) wsl: Option<Arc<WslRoots>>,
-    pub(super) index: Option<Arc<[IndexEntry]>>,
+    pub(super) local: Option<Arc<Index>>,
+    pub(super) globals: Vec<Arc<Index>>,
+    pub(super) visited: Vec<Arc<Index>>,
+    pub(super) recents: Arc<[Recent]>,
+    pub(super) pending: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Outcome {
+    pub(super) listing: Listing,
+    pub(super) walk: Option<PathBuf>,
+}
+
+pub(super) struct Cancel {
+    generation: Arc<AtomicU64>,
+    mine: u64,
+}
+
+impl Cancel {
+    pub(super) fn new(generation: Arc<AtomicU64>, mine: u64) -> Self {
+        Self { generation, mine }
+    }
+
+    #[cfg(test)]
+    pub(super) fn never() -> Self {
+        Self::new(Arc::new(AtomicU64::new(0)), 0)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.generation.load(atomic::Ordering::Relaxed) != self.mine
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -94,41 +124,32 @@ pub(super) fn parse(query: &str) -> Query<'_> {
     }
 }
 
-pub(super) fn compute(request: &Request, recent: &[PathBuf]) -> Listing {
+pub(super) fn compute(request: &Request, cancel: &Cancel) -> Option<Outcome> {
     match parse(&request.query) {
-        Query::Browse => browse(request.base.as_deref(), recent),
-        Query::Search(text) => search(request, text, recent),
+        Query::Browse => Some(settled(browse(request))),
+        Query::Search(text) => search(request, text, cancel).map(settled),
         Query::Navigate {
             typed_dir,
             fragment,
-        } => navigate(request, typed_dir, fragment, recent),
+        } => navigate(request, typed_dir, fragment, cancel),
     }
 }
 
-pub(super) fn build_index(root: &Path, cancelled: &AtomicBool) -> Vec<IndexEntry> {
-    let mut entries = Vec::new();
-    for result in ignore::WalkBuilder::new(root).build() {
-        if cancelled.load(atomic::Ordering::Relaxed) || entries.len() == MAX_INDEXED {
-            break;
-        }
-        let Ok(entry) = result else {
-            continue;
-        };
-        if entry.depth() == 0 {
-            continue;
-        }
-        let Some(relative) = entry.path().strip_prefix(root).ok().and_then(Path::to_str) else {
-            continue;
-        };
-        if relative.chars().any(char::is_control) {
-            continue;
-        }
-        entries.push(IndexEntry {
-            relative: relative.to_owned(),
-            is_dir: entry.file_type().is_some_and(|kind| kind.is_dir()),
-        });
+pub(super) fn existing_recents(paths: Vec<PathBuf>) -> Vec<Recent> {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let is_dir = std::fs::metadata(&path).ok()?.is_dir();
+            Some(Recent { path, is_dir })
+        })
+        .collect()
+}
+
+fn settled(listing: Listing) -> Outcome {
+    Outcome {
+        listing,
+        walk: None,
     }
-    entries
 }
 
 pub(super) fn insertion_text(
@@ -192,33 +213,39 @@ pub(super) fn placeholder(
     }
 }
 
-fn browse(base: Option<&Path>, recent: &[PathBuf]) -> Listing {
-    let Some(base) = base else {
-        return Listing::Status(Status::NoWorkingDirectory);
+fn browse(request: &Request) -> Listing {
+    let mut shown = HashSet::new();
+    let mut rows = Vec::new();
+    for recent in request.recents.iter().take(MAX_RECENT_BROWSED) {
+        let Some(display) = display(&recent.path, request) else {
+            continue;
+        };
+        shown.insert(recent.path.clone());
+        rows.push(Row {
+            completion: completion(&display.label, recent.is_dir, display.separator),
+            label: display.label,
+            path: recent.path.clone(),
+            highlights: Vec::new(),
+            is_dir: recent.is_dir,
+            recent: true,
+        });
+    }
+    let Some(base) = request.base.as_deref() else {
+        return if rows.is_empty() {
+            Listing::Status(Status::NoWorkingDirectory)
+        } else {
+            Listing::Rows(rows)
+        };
     };
     let Some(listed) = list_dir(base, false) else {
         return Listing::Status(Status::FolderNotFound);
     };
-    let recents = existing_recents(base, recent);
-    let mut shown = HashSet::new();
-    let mut rows = Vec::new();
-    for entry in recents.into_iter().take(MAX_RECENT_BROWSED) {
-        shown.insert(entry.path.clone());
-        rows.push(Row {
-            completion: completion(&entry.relative, entry.is_dir, MAIN_SEPARATOR),
-            label: entry.relative,
-            path: entry.path,
-            highlights: Vec::new(),
-            is_dir: entry.is_dir,
-            recent: true,
-        });
-    }
     for entry in listed {
         if shown.contains(&entry.path) {
             continue;
         }
         rows.push(Row {
-            recent: recent.contains(&entry.path),
+            recent: is_recent(request, &entry.path),
             completion: completion(&entry.name, entry.is_dir, MAIN_SEPARATOR),
             label: entry.name,
             path: entry.path,
@@ -232,104 +259,165 @@ fn browse(base: Option<&Path>, recent: &[PathBuf]) -> Listing {
     Listing::Rows(rows)
 }
 
-struct Hit<'a> {
-    relative: &'a str,
-    is_dir: bool,
-    recent: bool,
-    found: PathMatch,
-}
-
-impl Hit<'_> {
-    fn score(&self) -> i32 {
-        self.found.score + if self.recent { RECENT_BONUS } else { 0 }
-    }
-
-    fn rank(&self, other: &Self) -> Ordering {
-        other
-            .score()
-            .cmp(&self.score())
-            .then_with(|| self.relative.len().cmp(&other.relative.len()))
-            .then_with(|| self.relative.cmp(other.relative))
-    }
-}
-
-fn search(request: &Request, text: &str, recent: &[PathBuf]) -> Listing {
-    let Some(base) = request.base.as_deref() else {
-        return Listing::Status(Status::NoWorkingDirectory);
-    };
-    let Some(index) = request.index.as_deref() else {
-        return Listing::Status(Status::Indexing);
-    };
+fn search(request: &Request, text: &str, cancel: &Cancel) -> Option<Listing> {
     let pattern = Pattern::new(text);
-    let recents = existing_recents(base, recent);
-    let mut recent_seen: HashMap<&str, bool> = recents
+    let base = request.base.as_deref();
+    let covered = base.is_some_and(|base| {
+        request
+            .globals
+            .iter()
+            .any(|global| global.locate(base).is_some())
+    });
+    let local = request
+        .local
+        .as_deref()
+        .filter(|local| local.complete() || !covered);
+    let mut sources = Vec::new();
+    if let Some(local) = local {
+        let skip = request
+            .globals
+            .iter()
+            .filter_map(|global| match local.locate(global.root())? {
+                Located::Root => None,
+                at => Some(local.subtree(at)),
+            })
+            .collect();
+        sources.push(search_source(
+            local,
+            skip,
+            Some(local.subtree(Located::Root)),
+            &request.recents,
+        ));
+    }
+    for global in &request.globals {
+        let at_base = base.and_then(|base| global.locate(base));
+        let (skip, local_range) = match (at_base, local.is_some()) {
+            (Some(Located::Root), true) => continue,
+            (Some(at), true) => (vec![global.subtree(at)], None),
+            (Some(at), false) => (Vec::new(), Some(global.subtree(at))),
+            (None, _) => (Vec::new(), None),
+        };
+        sources.push(search_source(global, skip, local_range, &request.recents));
+    }
+    let scan = search::scan(&sources, &pattern, MAX_RESULTS, &|| cancel.is_cancelled())?;
+    let mut ranked: Vec<(i32, usize, Row)> = scan
+        .hits
         .iter()
-        .map(|entry| (entry.relative.as_str(), false))
+        .filter_map(|hit| {
+            let source = &sources[hit.source as usize];
+            let path = source.index.path_of(hit.node);
+            let display = display(&path, request)?;
+            let is_dir = source.index.is_dir(hit.node);
+            Some((
+                hit.score,
+                hit.len as usize,
+                Row {
+                    highlights: highlights(&display, &pattern),
+                    completion: completion(&display.label, is_dir, display.separator),
+                    label: display.label,
+                    path,
+                    is_dir,
+                    recent: hit.recent,
+                },
+            ))
+        })
         .collect();
-    let mut hits = Vec::new();
-    for entry in index {
-        let Some(found) = fuzzy::match_path(&entry.relative, &pattern) else {
+    for recent in request.recents.iter().filter(|recent| {
+        !sources
+            .iter()
+            .any(|source| index::strip_root(&recent.path, source.index.root()).is_some())
+    }) {
+        let Some(display) = display(&recent.path, request) else {
             continue;
         };
-        let recent = match recent_seen.get_mut(entry.relative.as_str()) {
-            Some(seen) => {
-                *seen = true;
-                true
-            }
-            None => false,
+        let Some(found) = fuzzy::match_path(&display.label[display.tail..], &pattern) else {
+            continue;
         };
-        hits.push(Hit {
-            relative: &entry.relative,
-            is_dir: entry.is_dir,
-            recent,
-            found,
-        });
-    }
-    for entry in &recents {
-        if recent_seen.get(entry.relative.as_str()) == Some(&false)
-            && let Some(found) = fuzzy::match_path(&entry.relative, &pattern)
-        {
-            hits.push(Hit {
-                relative: &entry.relative,
-                is_dir: entry.is_dir,
+        let local = base.is_some_and(|base| is_inside(&recent.path, base));
+        ranked.push((
+            found.score + RECENT_BONUS + if local { LOCAL_BONUS } else { 0 },
+            display.label.len() - display.tail,
+            Row {
+                highlights: shifted(found.highlights, display.tail),
+                completion: completion(&display.label, recent.is_dir, display.separator),
+                label: display.label,
+                path: recent.path.clone(),
+                is_dir: recent.is_dir,
                 recent: true,
-                found,
-            });
-        }
+            },
+        ));
     }
-    if hits.len() > MAX_RESULTS {
-        hits.select_nth_unstable_by(MAX_RESULTS, Hit::rank);
-        hits.truncate(MAX_RESULTS);
+    if ranked.is_empty() {
+        return Some(Listing::Status(if request.pending {
+            Status::Indexing
+        } else if sources.is_empty() && base.is_none() {
+            Status::NoWorkingDirectory
+        } else {
+            Status::NoMatch
+        }));
     }
-    hits.sort_by(Hit::rank);
-    if hits.is_empty() {
-        return Listing::Status(Status::NoMatch);
-    }
-    Listing::Rows(
-        hits.into_iter()
-            .map(|hit| Row {
-                path: base.join(hit.relative),
-                label: hit.relative.to_owned(),
-                highlights: hit.found.highlights,
-                is_dir: hit.is_dir,
-                recent: hit.recent,
-                completion: completion(hit.relative, hit.is_dir, MAIN_SEPARATOR),
-            })
-            .collect(),
-    )
+    ranked.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.label.cmp(&right.2.label))
+    });
+    ranked.truncate(MAX_RESULTS);
+    Some(Listing::Rows(
+        ranked.into_iter().map(|(_, _, row)| row).collect(),
+    ))
 }
 
-fn navigate(request: &Request, typed_dir: &str, fragment: &str, recent: &[PathBuf]) -> Listing {
+fn search_source<'a>(
+    index: &'a Index,
+    skip: Vec<Range<u32>>,
+    local: Option<Range<u32>>,
+    recents: &[Recent],
+) -> Source<'a> {
+    Source {
+        index,
+        range: index.subtree(Located::Root),
+        skip,
+        from: Located::Root,
+        min_depth: 1,
+        local,
+        show_hidden: true,
+        recents: recent_targets(index, recents),
+    }
+}
+
+fn recent_targets(index: &Index, recents: &[Recent]) -> Vec<RecentTarget> {
+    recents
+        .iter()
+        .filter_map(|entry| {
+            let relative = index::strip_root(&entry.path, index.root())?.to_str()?;
+            let name = entry.path.file_name()?.to_str()?;
+            (!relative.is_empty()).then(|| RecentTarget {
+                name: name.to_owned(),
+                relative: relative.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn navigate(
+    request: &Request,
+    typed_dir: &str,
+    fragment: &str,
+    cancel: &Cancel,
+) -> Option<Outcome> {
     let Some(dir) = resolve_dir(
         typed_dir,
         request.base.as_deref(),
         request.home.as_deref(),
         request.wsl.as_deref(),
     ) else {
-        return Listing::Status(Status::NoWorkingDirectory);
+        return Some(settled(Listing::Status(Status::NoWorkingDirectory)));
     };
-    let Some(listed) = list_dir(&dir, fragment.starts_with('.')) else {
-        return Listing::Status(Status::FolderNotFound);
+    let show_hidden = fragment.starts_with('.');
+    let Some(listed) = list_dir(&dir, show_hidden) else {
+        return Some(settled(Listing::Status(Status::FolderNotFound)));
     };
     let separator = typed_dir
         .chars()
@@ -342,7 +430,8 @@ fn navigate(request: &Request, typed_dir: &str, fragment: &str, recent: &[PathBu
         typed_dir.to_owned()
     };
     let pattern = Pattern::new(fragment);
-    let mut hits: Vec<(i32, Row)> = listed
+    let has_entries = !listed.is_empty();
+    let mut ranked: Vec<(i32, Row)> = listed
         .into_iter()
         .filter_map(|entry| {
             let found = fuzzy::match_path(&entry.name, &pattern)?;
@@ -350,13 +439,9 @@ fn navigate(request: &Request, typed_dir: &str, fragment: &str, recent: &[PathBu
             Some((
                 found.score,
                 Row {
-                    recent: recent.contains(&entry.path),
+                    recent: is_recent(request, &entry.path),
                     completion: completion(&label, entry.is_dir, separator),
-                    highlights: found
-                        .highlights
-                        .into_iter()
-                        .map(|range| range.start + prefix.len()..range.end + prefix.len())
-                        .collect(),
+                    highlights: shifted(found.highlights, prefix.len()),
                     label,
                     path: entry.path,
                     is_dir: entry.is_dir,
@@ -364,16 +449,152 @@ fn navigate(request: &Request, typed_dir: &str, fragment: &str, recent: &[PathBu
             ))
         })
         .collect();
-    hits.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
-    hits.truncate(MAX_RESULTS);
-    if hits.is_empty() {
-        return Listing::Status(if pattern.is_empty() {
+    let mut walk = None;
+    if !pattern.is_empty() {
+        match indexed_subtree(request, &dir, has_entries) {
+            Some((index, at)) => {
+                let source = Source {
+                    index,
+                    range: index.subtree(at),
+                    skip: Vec::new(),
+                    from: at,
+                    min_depth: match at {
+                        Located::Root => 2,
+                        Located::Node(node) => index.depth(node) + 2,
+                    },
+                    local: None,
+                    show_hidden,
+                    recents: Vec::new(),
+                };
+                let scan =
+                    search::scan(&[source], &pattern, MAX_RESULTS, &|| cancel.is_cancelled())?;
+                let mut text = String::new();
+                let mut chain = Vec::new();
+                for hit in scan.hits {
+                    index.write_path(hit.node, at, &mut text, &mut chain);
+                    if separator != MAIN_SEPARATOR {
+                        text = text.replace(MAIN_SEPARATOR, &separator.to_string());
+                    }
+                    let path = index.path_of(hit.node);
+                    let is_dir = index.is_dir(hit.node);
+                    let label = format!("{prefix}{text}");
+                    let highlights = fuzzy::match_path(&text, &pattern)
+                        .map(|found| shifted(found.highlights, prefix.len()))
+                        .unwrap_or_default();
+                    ranked.push((
+                        hit.score,
+                        Row {
+                            recent: is_recent(request, &path),
+                            completion: completion(&label, is_dir, separator),
+                            label,
+                            highlights,
+                            path,
+                            is_dir,
+                        },
+                    ));
+                }
+            }
+            None => walk = Some(dir.clone()),
+        }
+    }
+    ranked.sort_by_key(|(score, _)| Reverse(*score));
+    ranked.truncate(MAX_RESULTS);
+    let listing = if ranked.is_empty() {
+        Listing::Status(if walk.is_some() {
+            Status::Indexing
+        } else if pattern.is_empty() {
             Status::EmptyFolder
         } else {
             Status::NoMatch
+        })
+    } else {
+        Listing::Rows(ranked.into_iter().map(|(_, row)| row).collect())
+    };
+    Some(Outcome { listing, walk })
+}
+
+fn indexed_subtree<'a>(
+    request: &'a Request,
+    dir: &Path,
+    has_entries: bool,
+) -> Option<(&'a Index, Located)> {
+    request
+        .local
+        .iter()
+        .chain(&request.visited)
+        .chain(&request.globals)
+        .find_map(|index| {
+            let at = index.locate(dir)?;
+            let descended = at == Located::Root || !index.subtree(at).is_empty() || !has_entries;
+            descended.then_some((index.as_ref(), at))
+        })
+}
+
+struct Display {
+    label: String,
+    tail: usize,
+    separator: char,
+}
+
+fn display(path: &Path, request: &Request) -> Option<Display> {
+    if let Some(relative) = request
+        .base
+        .as_deref()
+        .and_then(|base| index::strip_root(path, base))
+        .filter(|relative| !relative.as_os_str().is_empty())
+    {
+        return Some(Display {
+            label: relative.to_str()?.to_owned(),
+            tail: 0,
+            separator: MAIN_SEPARATOR,
         });
     }
-    Listing::Rows(hits.into_iter().map(|(_, row)| row).collect())
+    if let Some(shown) = request.wsl.as_deref().and_then(|wsl| wsl.display(path)) {
+        let tail = if shown.starts_with("~/") { 2 } else { 0 };
+        return Some(Display {
+            label: shown,
+            tail,
+            separator: '/',
+        });
+    }
+    if let Some(relative) = request
+        .home
+        .as_deref()
+        .and_then(|home| index::strip_root(path, home))
+        .filter(|relative| !relative.as_os_str().is_empty())
+    {
+        return Some(Display {
+            label: format!("~{MAIN_SEPARATOR}{}", relative.to_str()?),
+            tail: 1 + MAIN_SEPARATOR.len_utf8(),
+            separator: MAIN_SEPARATOR,
+        });
+    }
+    Some(Display {
+        label: path.to_str()?.to_owned(),
+        tail: 0,
+        separator: MAIN_SEPARATOR,
+    })
+}
+
+fn highlights(display: &Display, pattern: &Pattern) -> Vec<Range<usize>> {
+    fuzzy::match_path(&display.label[display.tail..], pattern)
+        .map(|found| shifted(found.highlights, display.tail))
+        .unwrap_or_default()
+}
+
+fn shifted(highlights: Vec<Range<usize>>, by: usize) -> Vec<Range<usize>> {
+    highlights
+        .into_iter()
+        .map(|range| range.start + by..range.end + by)
+        .collect()
+}
+
+fn is_inside(path: &Path, base: &Path) -> bool {
+    index::strip_root(path, base).is_some_and(|relative| !relative.as_os_str().is_empty())
+}
+
+fn is_recent(request: &Request, path: &Path) -> bool {
+    request.recents.iter().any(|recent| recent.path == path)
 }
 
 fn completion(label: &str, is_dir: bool, separator: char) -> String {
@@ -460,33 +681,13 @@ fn list_dir(dir: &Path, show_hidden: bool) -> Option<Vec<Listed>> {
     Some(listed)
 }
 
-struct RecentEntry {
-    path: PathBuf,
-    relative: String,
-    is_dir: bool,
-}
-
-fn existing_recents(base: &Path, recent: &[PathBuf]) -> Vec<RecentEntry> {
-    recent
-        .iter()
-        .filter_map(|path| {
-            let relative = path.strip_prefix(base).ok()?.to_str()?;
-            if relative.is_empty() {
-                return None;
-            }
-            let metadata = std::fs::metadata(path).ok()?;
-            Some(RecentEntry {
-                path: path.clone(),
-                relative: relative.to_owned(),
-                is_dir: metadata.is_dir(),
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+    use std::time::SystemTime;
+
     use super::*;
+    use crate::terminal::path_picker::index::{Builder, LOCAL_CAP};
 
     struct Tree {
         dir: tempfile::TempDir,
@@ -512,15 +713,33 @@ mod tests {
             self.dir.path().to_path_buf()
         }
 
+        fn index(&self) -> Arc<Index> {
+            Arc::new(
+                index::walk(&self.root(), LOCAL_CAP, &[], &AtomicBool::new(false)).expect("walk"),
+            )
+        }
+
         fn request(&self, query: &str) -> Request {
             Request {
                 query: query.to_string(),
                 base: Some(self.root()),
                 home: None,
                 wsl: None,
-                index: Some(build_index(&self.root(), &AtomicBool::new(false)).into()),
+                local: Some(self.index()),
+                globals: Vec::new(),
+                visited: Vec::new(),
+                recents: Arc::from([]),
+                pending: false,
             }
         }
+    }
+
+    fn outcome(request: &Request) -> Outcome {
+        compute(request, &Cancel::never()).expect("never cancelled")
+    }
+
+    fn listing(request: &Request) -> Listing {
+        outcome(request).listing
     }
 
     fn native(relative: &str) -> String {
@@ -539,6 +758,10 @@ mod tests {
             Listing::Rows(rows) => rows,
             Listing::Status(status) => panic!("expected rows, got {status:?}"),
         }
+    }
+
+    fn recents(paths: &[PathBuf]) -> Arc<[Recent]> {
+        existing_recents(paths.to_vec()).into()
     }
 
     #[test]
@@ -606,18 +829,21 @@ mod tests {
     #[test]
     fn browsing_lists_folders_first_and_hides_dotfiles() {
         let tree = Tree::new(&["src", "Apps"], &["README.md", "build.rs", ".env"]);
-        let listing = compute(&tree.request(""), &[]);
-        assert_eq!(labels(&listing), ["Apps", "src", "build.rs", "README.md"]);
+        assert_eq!(
+            labels(&listing(&tree.request(""))),
+            ["Apps", "src", "build.rs", "README.md"]
+        );
     }
 
     #[test]
     fn browsing_puts_recent_paths_first_without_listing_them_twice() {
         let tree = Tree::new(&["src"], &["README.md", "src/main.rs"]);
-        let recent = [
+        let mut request = tree.request("");
+        request.recents = recents(&[
             tree.root().join("src").join("main.rs"),
             tree.root().join("README.md"),
-        ];
-        let rows = rows(compute(&tree.request(""), &recent));
+        ]);
+        let rows = rows(listing(&request));
         let shown: Vec<(&str, bool)> = rows
             .iter()
             .map(|row| (row.label.as_str(), row.recent))
@@ -633,33 +859,36 @@ mod tests {
     }
 
     #[test]
-    fn recent_paths_outside_the_base_or_gone_are_skipped() {
+    fn browsing_lists_recent_paths_from_anywhere_and_drops_gone_ones() {
         let tree = Tree::new(&[], &["a.txt"]);
-        let elsewhere = Tree::new(&[], &["b.txt"]);
-        let recent = [
-            elsewhere.root().join("b.txt"),
+        let elsewhere = Tree::new(&["notes"], &["notes/b.txt"]);
+        let mut request = tree.request("");
+        request.home = Some(elsewhere.root());
+        request.recents = recents(&[
+            elsewhere.root().join("notes").join("b.txt"),
             tree.root().join("missing.txt"),
-        ];
-        let rows = rows(compute(&tree.request(""), &recent));
-        assert!(rows.iter().all(|row| !row.recent));
+        ]);
+        let rows = rows(listing(&request));
+        assert_eq!(rows[0].label, native("~/notes/b.txt"));
+        assert!(rows[0].recent);
+        assert_eq!(rows[0].path, elsewhere.root().join("notes").join("b.txt"));
+        assert_eq!(rows[1].label, "a.txt");
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]
     fn an_empty_or_missing_base_reports_a_status() {
         let tree = Tree::new(&[], &[]);
         assert_eq!(
-            compute(&tree.request(""), &[]),
+            listing(&tree.request("")),
             Listing::Status(Status::EmptyFolder)
         );
         let mut missing = tree.request("");
         missing.base = Some(tree.root().join("gone"));
-        assert_eq!(
-            compute(&missing, &[]),
-            Listing::Status(Status::FolderNotFound)
-        );
+        assert_eq!(listing(&missing), Listing::Status(Status::FolderNotFound));
         missing.base = None;
         assert_eq!(
-            compute(&missing, &[]),
+            listing(&missing),
             Listing::Status(Status::NoWorkingDirectory)
         );
     }
@@ -673,9 +902,8 @@ mod tests {
             ],
             &["LICENSE", "apps/license-lookup-app/src/types/License.ts"],
         );
-        let listing = compute(&tree.request("licens"), &[]);
         assert_eq!(
-            labels(&listing),
+            labels(&listing(&tree.request("licens"))),
             [
                 "LICENSE".to_string(),
                 native("apps/license-lookup-app"),
@@ -690,8 +918,9 @@ mod tests {
     #[test]
     fn searching_boosts_and_marks_recent_paths() {
         let tree = Tree::new(&[], &["alpha.txt", "alpine.txt"]);
-        let recent = [tree.root().join("alpine.txt")];
-        let rows = rows(compute(&tree.request("alp"), &recent));
+        let mut request = tree.request("alp");
+        request.recents = recents(&[tree.root().join("alpine.txt")]);
+        let rows = rows(listing(&request));
         assert_eq!(rows[0].label, "alpine.txt");
         assert!(rows[0].recent);
         assert!(!rows[1].recent);
@@ -701,16 +930,117 @@ mod tests {
     fn searching_waits_for_the_index() {
         let tree = Tree::new(&[], &["a.txt"]);
         let mut request = tree.request("a");
-        request.index = None;
-        assert_eq!(compute(&request, &[]), Listing::Status(Status::Indexing));
-        request.index = Some(Vec::new().into());
-        assert_eq!(compute(&request, &[]), Listing::Status(Status::NoMatch));
+        request.local = None;
+        request.pending = true;
+        assert_eq!(listing(&request), Listing::Status(Status::Indexing));
+        request.local = Some(Arc::new(
+            Builder::new(tree.root(), LOCAL_CAP).finish(SystemTime::now()),
+        ));
+        request.pending = false;
+        assert_eq!(listing(&request), Listing::Status(Status::NoMatch));
+    }
+
+    #[test]
+    fn searching_finds_hidden_files_but_not_the_inside_of_hidden_folders() {
+        let tree = Tree::new(
+            &[".github/workflows"],
+            &[".envrc", ".github/workflows/ci.yml"],
+        );
+        assert_eq!(labels(&listing(&tree.request("envrc"))), [".envrc"]);
+        assert_eq!(labels(&listing(&tree.request("github"))), [".github"]);
+        assert_eq!(
+            listing(&tree.request("ciyml")),
+            Listing::Status(Status::NoMatch)
+        );
+    }
+
+    #[test]
+    fn searching_reaches_a_global_root_outside_the_working_directory() {
+        let tree = Tree::new(&[], &["main.rs"]);
+        let home = Tree::new(&["notes"], &["notes/todo.md"]);
+        let mut request = tree.request("todo");
+        request.home = Some(home.root());
+        request.globals = vec![home.index()];
+        let rows = rows(listing(&request));
+        assert_eq!(rows[0].label, native("~/notes/todo.md"));
+        assert_eq!(rows[0].path, home.root().join("notes").join("todo.md"));
+        let tail = native("~/").len();
+        assert_eq!(rows[0].highlights, vec![tail + 6..tail + 10]);
+        assert_eq!(rows[0].completion, native("~/notes/todo.md"));
+    }
+
+    #[test]
+    fn a_working_directory_match_outranks_the_same_name_elsewhere() {
+        let tree = Tree::new(&[], &["config.toml"]);
+        let elsewhere = Tree::new(&[], &["config.toml"]);
+        let mut request = tree.request("config");
+        request.globals = vec![elsewhere.index()];
+        let rows = rows(listing(&request));
+        assert_eq!(rows[0].label, "config.toml");
+        assert_eq!(rows[1].path, elsewhere.root().join("config.toml"));
+    }
+
+    #[test]
+    fn a_working_directory_inside_a_global_root_is_listed_once() {
+        let outer = Tree::new(&["inner", "other"], &["inner/x.rs", "other/x.rs"]);
+        let inner = outer.root().join("inner");
+        let mut request = outer.request("x.rs");
+        request.base = Some(inner.clone());
+        request.local = Some(Arc::new(
+            index::walk(&inner, LOCAL_CAP, &[], &AtomicBool::new(false)).expect("walk"),
+        ));
+        request.globals = vec![outer.index()];
+        let rows = rows(listing(&request));
+        let paths: Vec<&Path> = rows.iter().map(|row| row.path.as_path()).collect();
+        assert_eq!(
+            paths,
+            [
+                inner.join("x.rs").as_path(),
+                outer.root().join("other").join("x.rs").as_path()
+            ]
+        );
+        assert_eq!(rows[0].label, "x.rs");
+    }
+
+    #[test]
+    fn a_truncated_working_directory_index_defers_to_the_global_root() {
+        let outer = Tree::new(&["inner"], &["inner/a.rs", "inner/b.rs"]);
+        let inner = outer.root().join("inner");
+        let mut request = outer.request("rs");
+        request.base = Some(inner.clone());
+        request.local = Some(Arc::new(
+            index::walk(&inner, 1, &[], &AtomicBool::new(false)).expect("walk"),
+        ));
+        request.globals = vec![outer.index()];
+        assert_eq!(labels(&listing(&request)), ["a.rs", "b.rs"]);
+    }
+
+    #[test]
+    fn a_global_root_inside_the_working_directory_is_listed_once() {
+        let outer = Tree::new(&["projects/app"], &["projects/app/lib.rs"]);
+        let projects = outer.root().join("projects");
+        let mut request = outer.request("lib");
+        request.globals = vec![Arc::new(
+            index::walk(&projects, LOCAL_CAP, &[], &AtomicBool::new(false)).expect("walk"),
+        )];
+        assert_eq!(labels(&listing(&request)), [native("projects/app/lib.rs")]);
+    }
+
+    #[test]
+    fn a_recent_path_outside_every_index_still_matches() {
+        let tree = Tree::new(&[], &["a.txt"]);
+        let elsewhere = Tree::new(&[], &["report.pdf"]);
+        let mut request = tree.request("report");
+        request.recents = recents(&[elsewhere.root().join("report.pdf")]);
+        let rows = rows(listing(&request));
+        assert_eq!(rows[0].path, elsewhere.root().join("report.pdf"));
+        assert!(rows[0].recent);
     }
 
     #[test]
     fn navigating_filters_one_folder_and_keeps_the_typed_prefix() {
         let tree = Tree::new(&["src/app"], &["src/main.rs", "src/mod.rs", "src/.hidden"]);
-        let rows = rows(compute(&tree.request("src/ma"), &[]));
+        let rows = rows(listing(&tree.request("src/ma")));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].label, "src/main.rs");
         assert_eq!(rows[0].highlights, vec![4..6]);
@@ -719,9 +1049,77 @@ mod tests {
     }
 
     #[test]
+    fn navigating_with_a_fragment_searches_the_whole_folder_below() {
+        let tree = Tree::new(
+            &["src/deep/er", "src/.cache"],
+            &[
+                "src/deep/er/target.rs",
+                "src/top.rs",
+                "src/.cache/target.bin",
+            ],
+        );
+        let rows = rows(listing(&tree.request("src/targ")));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "src/deep/er/target.rs");
+        assert_eq!(
+            rows[0].path,
+            tree.root()
+                .join("src")
+                .join("deep")
+                .join("er")
+                .join("target.rs")
+        );
+        let start = "src/deep/er/".len();
+        assert_eq!(rows[0].highlights, vec![start..start + 4]);
+    }
+
+    #[test]
+    fn navigating_lists_direct_entries_before_deeper_ties() {
+        let tree = Tree::new(&["src/a"], &["src/a/note.md", "src/note.md"]);
+        assert_eq!(
+            labels(&listing(&tree.request("src/note"))),
+            ["src/note.md", "src/a/note.md"]
+        );
+    }
+
+    #[test]
+    fn navigating_outside_every_index_asks_for_a_walk() {
+        let tree = Tree::new(&["far/nested"], &["far/nested/deep.txt", "far/deer.txt"]);
+        let mut request = tree.request("far/dee");
+        request.local = None;
+        let first = outcome(&request);
+        assert_eq!(first.walk, Some(tree.root().join("far")));
+        assert_eq!(labels(&first.listing), ["far/deer.txt"]);
+        request.visited = vec![Arc::new(
+            index::walk(
+                &tree.root().join("far"),
+                LOCAL_CAP,
+                &[],
+                &AtomicBool::new(false),
+            )
+            .expect("walk"),
+        )];
+        let second = outcome(&request);
+        assert_eq!(second.walk, None);
+        assert_eq!(
+            labels(&second.listing),
+            ["far/deer.txt", "far/nested/deep.txt"]
+        );
+    }
+
+    #[test]
+    fn navigating_into_an_unindexed_hidden_folder_asks_for_a_walk() {
+        let tree = Tree::new(&[".config/tool"], &[".config/tool/settings.json"]);
+        let request = tree.request(".config/sett");
+        let outcome = outcome(&request);
+        assert_eq!(outcome.walk, Some(tree.root().join(".config")));
+        assert_eq!(outcome.listing, Listing::Status(Status::Indexing));
+    }
+
+    #[test]
     fn navigating_completes_folders_with_the_typed_separator() {
         let tree = Tree::new(&["src/app"], &["src/main.rs"]);
-        let rows = rows(compute(&tree.request("src/"), &[]));
+        let rows = rows(listing(&tree.request("src/")));
         assert_eq!(rows[0].label, "src/app");
         assert_eq!(rows[0].completion, "src/app/");
     }
@@ -729,14 +1127,8 @@ mod tests {
     #[test]
     fn navigating_shows_dotfiles_only_for_a_dot_fragment() {
         let tree = Tree::new(&[], &["src/.hidden", "src/visible"]);
-        assert_eq!(
-            labels(&compute(&tree.request("src/"), &[])),
-            ["src/visible"]
-        );
-        assert_eq!(
-            labels(&compute(&tree.request("src/.h"), &[])),
-            ["src/.hidden"]
-        );
+        assert_eq!(labels(&listing(&tree.request("src/"))), ["src/visible"]);
+        assert_eq!(labels(&listing(&tree.request("src/.h"))), ["src/.hidden"]);
     }
 
     #[test]
@@ -744,7 +1136,7 @@ mod tests {
         let tree = Tree::new(&["Apps"], &[]);
         let mut request = tree.request("~");
         request.home = Some(tree.root());
-        let rows = rows(compute(&request, &[]));
+        let rows = rows(listing(&request));
         assert_eq!(rows[0].label, format!("~{MAIN_SEPARATOR}Apps"));
         assert_eq!(rows[0].path, tree.root().join("Apps"));
     }
@@ -753,35 +1145,22 @@ mod tests {
     fn navigating_into_a_missing_folder_reports_it() {
         let tree = Tree::new(&[], &[]);
         assert_eq!(
-            compute(&tree.request("nope/"), &[]),
+            listing(&tree.request("nope/")),
             Listing::Status(Status::FolderNotFound)
         );
         let tree = Tree::new(&["src"], &["src/a.rs"]);
         assert_eq!(
-            compute(&tree.request("src/zz"), &[]),
+            listing(&tree.request("src/zz")),
             Listing::Status(Status::NoMatch)
         );
     }
 
     #[test]
-    fn the_index_skips_hidden_and_ignored_entries() {
-        let tree = Tree::new(
-            &["src", "target/debug"],
-            &["src/main.rs", ".env", ".ignore"],
-        );
-        std::fs::write(tree.root().join(".ignore"), "target/\n").expect("ignore file");
-        let mut relatives: Vec<String> = build_index(&tree.root(), &AtomicBool::new(false))
-            .into_iter()
-            .map(|entry| entry.relative)
-            .collect();
-        relatives.sort();
-        assert_eq!(relatives, ["src".to_string(), native("src/main.rs")]);
-    }
-
-    #[test]
-    fn a_cancelled_index_stops_before_walking() {
-        let tree = Tree::new(&["src"], &["src/main.rs"]);
-        assert!(build_index(&tree.root(), &AtomicBool::new(true)).is_empty());
+    fn a_cancelled_computation_yields_nothing() {
+        let tree = Tree::new(&[], &["a.txt"]);
+        let generation = Arc::new(AtomicU64::new(1));
+        let cancel = Cancel::new(generation.clone(), 0);
+        assert_eq!(compute(&tree.request("a"), &cancel), None);
     }
 
     #[test]
