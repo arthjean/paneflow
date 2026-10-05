@@ -54,8 +54,17 @@ baselines within 1 % either way: a metric that drops by more than 1 % fails
 too, with "below the baseline, refresh it in this PR", so no improvement
 stays out of the baseline. `gate_trickle_publishes` is judged on its exact
 value. The suites' timing columns stay informative. Two runs of the same
-commit on Arthur's Fedora machine gave identical allocation columns; the
-comparison with a GitHub runner is the first CI run of the job.
+commit on Arthur's Fedora machine gave identical allocation columns. The first
+CI run of the job (run 37231988624) matched every terminal column and every
+editor column except the three shaping metrics (`shape_cold_60_rows`,
+`shape_warm_60_rows`, `prepaint_60_rows_warm`), off by up to +20 800 %. The
+editor suite asked for the embedded editor font without registering it, so
+GPUI shaped with whatever fallback the machine had installed: Fedora (with
+JetBrainsMono Nerd Font installed), Ubuntu 26.04 under WSL and the runner gave
+three different values. The suite now registers the embedded fonts, as the app
+does at startup, and the same commit under WSL, which has no JetBrains font,
+then reproduced all 44 editor allocation columns of the Fedora baseline
+exactly. No per-metric tolerance is needed.
 
 A failure prints one line per failed budget,
 `counter | measured | budget | excess | scenario`, then the local command

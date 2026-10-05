@@ -30,7 +30,7 @@ impl AssetSource for Assets {
 }
 
 impl Assets {
-    pub fn load_fonts(&self, cx: &App) -> Result<()> {
+    pub fn embedded_fonts(&self) -> Result<Vec<Cow<'static, [u8]>>> {
         let font_paths = self.list("fonts/")?;
         let mut embedded_fonts = Vec::with_capacity(font_paths.len());
         for path in &font_paths {
@@ -43,6 +43,11 @@ impl Assets {
                 .ok_or_else(|| anyhow::anyhow!("embedded font {path} listed but not loadable"))?;
             embedded_fonts.push(data);
         }
+        Ok(embedded_fonts)
+    }
+
+    pub fn load_fonts(&self, cx: &App) -> Result<()> {
+        let embedded_fonts = self.embedded_fonts()?;
         if embedded_fonts.is_empty() {
             log::warn!(
                 "Assets::load_fonts: no .ttf/.otf found under fonts/ - \

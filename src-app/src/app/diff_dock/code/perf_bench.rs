@@ -565,12 +565,19 @@ fn ascii_row(salt: usize, row: usize) -> SharedString {
 }
 
 fn platform_text_system() -> Option<(Rc<dyn Platform>, Arc<WindowTextSystem>)> {
-    std::panic::catch_unwind(|| {
+    let (platform, text_system) = std::panic::catch_unwind(|| {
         let platform = gpui_platform::current_platform(true);
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        (platform, Arc::new(WindowTextSystem::new(text_system)))
+        (platform, text_system)
     })
-    .ok()
+    .ok()?;
+    let fonts = crate::assets::Assets
+        .embedded_fonts()
+        .expect("the embedded fonts load from the binary");
+    text_system.add_fonts(fonts).expect(
+        "the platform text system registers the embedded fonts, as the app does at startup",
+    );
+    Some((platform, Arc::new(WindowTextSystem::new(text_system))))
 }
 
 fn ascii_rows(salt: usize) -> Vec<SharedString> {
