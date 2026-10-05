@@ -114,6 +114,155 @@ retries, and the `gates` profile). On `2bb833e0` the job then passed 32
 consecutive runs out of 32, with no rerun of a failure: 12 to 16 minutes with
 a warm cache, 19 to 25 minutes cold, inside the 30 minute bound.
 
+## Real-time A/B
+
+The gates above count work and never time it. Real time, CPU included, is
+compared by an A/B that builds the two commits on the same machine in the same
+run, so a shared runner's speed cancels out:
+
+```bash
+scripts/perf-ab.sh <base-commit> <head-commit>   # or scripts/perf-ab.ps1 <base> <head>
+```
+
+The script checks out each commit in a detached worktree under a scratch
+directory outside the repository, copies the untracked native archives
+(`native/*/prebuilt`, verified again by each worktree's
+`scripts/fetch-libghostty.sh`), and builds both in the `gates` profile into one
+shared `CARGO_TARGET_DIR`, so the dependencies compile once. A
+`CARGO_TARGET_DIR` already set by the caller is used and kept, which is how
+the CI job caches dependencies; otherwise the build tree lives in the scratch
+directory. The worktrees and the scratch directory are removed at the end,
+whatever the outcome. The script refuses to run when the working tree has
+uncommitted changes and either commit resolves to its `HEAD`: it measures
+commits, never a dirty tree.
+
+Each attempt runs 10 rounds ordered base, head, head, base. A slot runs the
+artifact's own terminal suite (`terminal_pipeline_benchmark`, idle scenarios
+skipped), which writes every per-iteration sample to
+`PANEFLOW_BENCH_SAMPLES_OUT`, then the active scenario of US-002 against the
+artifact's own `paneflow-host`, host only: 8 `stream 16384 60` sessions plus one
+`flood 8388608`, 4 s of settling, a 15 s window cut into 5 slices of 3 s, then
+200 echo round trips (`ab::perf_ab_active_samples`). The measuring harness and
+the fixture come from the head commit, so both hosts face the same workload
+and the same measurement code. The metrics are:
+
+| Metric | Unit | Samples per artifact and attempt |
+|---|---|---|
+| `terminal.<metric>`, every timed terminal metric | ns per iteration, as the mean of 10 consecutive iterations | 30 per slot, 600 |
+| `active.cpu.<role>`, host CPU per named thread role, and `active.cpu.total` | CPU ms per wall second | 5 per slot, 100 |
+| `active.echo_round_trip` | ms | 200 per slot, 4 000 |
+
+The terminal suite exports each iteration in measurement order, and the
+comparator averages 10 consecutive iterations into one sample, as Criterion
+does: on a first A/A run on a loaded desktop, the p50 of single iterations moved
+by at most 0.6 % between the two base passes but their p95 by up to 57 %, one
+preempted iteration being enough to set a pooled tail. The comparator
+(`ab::perf_ab_compare`) pools each cohort and applies the rule
+of pf (`pf/scripts/pgso/qualify.py:42,365-392`), nearest-rank percentiles: a
+metric regresses when the head's p50 or p95 exceeds the base's by more than
+10 %. The A/A cohort is the first base pass of every round against its last
+base pass, measured interleaved with the head, so it sees the same neighbors
+and the same thermal drift; a separate A/A pass would not fit the 60 minute
+budget. The run is rejected as uncalibrated when any metric's A/A p50 or p95
+moves by more than 5 %. Every cohort needs at least 50 samples, and a run at
+least 10 rounds; below that, or when a suite compares no metric, the verdict
+is `insufficient`, never a pass. A value under the measurement resolution of
+its unit is compared at that resolution, so an idle thread that wakes once is
+not a +300 % regression and two idle threads never divide by zero: 100 ns for
+the terminal iterations (timer overhead), 1 CPU ms per second (0.1 % of a core)
+for the thread roles, 0.01 ms for the echo. A metric measured by one side only
+(added or removed by the change) is listed as not compared.
+
+A first attempt that ends in a regression or uncalibrated is measured once
+more with the same builds before any verdict, and only two calibrated
+regressions in a row make a regression:
+
+| Attempts | Verdict | Exit | `promotion.effect` |
+|---|---|---|---|
+| pass | `pass` | 0 | `calibrated` |
+| regression, regression | `regression` | 1 | `calibrated` |
+| regression, pass | `unconfirmed_regression` | 0 | `resets` |
+| uncalibrated, pass | `pass` | 0 | `uncalibrated` |
+| uncalibrated, regression | `unconfirmed_regression` | 0 | `uncalibrated` |
+| uncalibrated, uncalibrated, or regression, uncalibrated | `uncalibrated` | 5 | `uncalibrated` |
+| a missing measurement | `insufficient` | 2 | `excluded` |
+
+Other exits: 2 for a usage error, a dirty tree or an unexpected failure, 3 when
+the base is unavailable and 4 when the head is (it does not build, its
+terminal suite writes no samples, or its host fails a slot). The first error
+lines of the build log follow the message. Both commits must carry the sample
+export and the `gates` profile, that is this change or later: an older base,
+such as a release before it, is reported unavailable rather than measured
+differently.
+
+The output lands in `target/perf-ab/` (`PANEFLOW_PERF_AB_DIR` overrides it):
+`result.json` with both distributions of every metric (all samples), the
+deltas, the A/A drift, the verdict and the identity of both commits and the
+machine; `summary.md` drawn from it; `verdict`; the build logs; and every
+slot's samples and log under `attempt-<n>/`.
+
+### Shadow mode and promotion
+
+`.github/workflows/perf-ab.yml` runs the A/B on `ubuntu-24.04` with a 60 minute
+bound: on pull requests that touch `src-app/src/terminal/**`,
+`src-app/src/app/**`, `crates/paneflow-host/**`, `crates/paneflow-serve/**` or
+`Cargo.lock` (base: the first parent of the merge commit), every night on
+`main` against the latest published release, and on `workflow_dispatch` with
+optional base and head. It triggers on `pull_request`, never
+`pull_request_target`, reads with `contents: read` only, and caches under the
+`perf-ab-` prefix, which `release.yml` never uses. The summary is appended to
+`$GITHUB_STEP_SUMMARY` and `target/perf-ab/` is uploaded as the `perf-ab`
+artifact for 14 days.
+
+The job runs in shadow mode: `PERF_AB_BLOCKING: "false"` keeps it green
+whatever the verdict, and only an execution failure (exit 2 or 4) turns it
+red. An unavailable base or a twice uncalibrated run adds a warning. The
+nightly run reports the base unavailable until a release carries the sample
+export.
+
+Promotion criterion: 30 consecutive runs over at least 3 weeks, the A/A cohort
+calibrated on at least 90 % of them, and no regression verdict that a second
+execution did not confirm. Each run states its effect in `result.json`
+(`promotion.effect`) and at the top of its summary. A `calibrated` run counts.
+An `uncalibrated` run (one of its executions was rerun because the A/A cohort
+drifted) counts among the 30 but against the 90 % only, never as a failure. An
+`unconfirmed_regression` (`resets`) restarts the count. An `excluded` run (a
+missing measurement) and a run whose base was unavailable are not runs of the
+gate and are skipped. The promotion is one pull request that sets
+`PERF_AB_BLOCKING` to `"true"` and cites the 30 runs; from then on a confirmed
+regression fails the job.
+
+### First local evidence and the open calibration question
+
+Three full runs of `scripts/perf-ab.sh` on 2026-10-05, Ubuntu 26.04 under WSL2
+on Arthur's Ryzen 7 7800X3D with the Windows desktop in use (browser, several
+agent sessions, about 23 % load), from a throwaway clone whose commits held this
+change (local evidence, not tracked):
+
+- A/A, base and head the same commit, single-iteration terminal samples: the
+  first attempt was uncalibrated; the terminal p50s moved by at most 0.6 %
+  between the two base passes but their p95s by up to 57 %. This is what led to
+  the batches of 10 iterations, and it exposed that the export used to sort the
+  samples, which batching cannot use.
+- A/A with the batches, 2 157 s end to end including both builds and both
+  attempts: uncalibrated twice (exit 5, effect `uncalibrated`). Every p50, every
+  host CPU role and the echo stayed within 2.5 % between base passes (one
+  exception, `active.cpu.host.viewport_scan` p50 +5.5 % in one attempt); the
+  terminal p95s still drifted, up to 111 % for `service_spaces_8192`. The second
+  attempt produced a parasitic regression, `terminal.layout_220x60` p95 +11.4 %
+  on identical code, which the A/A rejection kept from becoming a verdict.
+- Seeded regression, head burning 150 ns of session-thread CPU per output byte:
+  the first attempt flagged `active.cpu.host.session` p50 +147 % and p95
+  +102 %, and `active.cpu.total` p50 +92 %, with an A/A drift of 2.4 % on those
+  metrics, while the echo stayed flat (+0.8 %). The attempt as a whole was still
+  uncalibrated by terminal p95s, as above.
+
+The open question for the shadow period: on a loaded machine the terminal
+suite's p95 does not hold the 5 % A/A bound, while everything else does. A run
+on native Linux with an idle machine (`scripts/perf-ab.sh HEAD HEAD`) and the
+first CI runs will tell whether the bound holds where it matters or whether the
+A/A bound should apply to the p50 only.
+
 ## Screen rule corpus
 
 `bench/screen-corpus-baseline.json` is not a timing baseline: it records how
@@ -178,7 +327,10 @@ working graphical session and display a benchmark window.
 Anything the runner cannot measure is written as `pending` with the reason,
 never as a zero. The default run has headless followers; worker and native
 desktop numbers require their respective options. macOS attributes CPU per
-thread through `proc_pidinfo` with full thread names. Linux `comm` truncates names to 15 bytes; ambiguous
+thread through `proc_pidinfo` with full thread names. Linux reads each thread's
+on-CPU time in nanoseconds from `/proc/<pid>/task/<tid>/schedstat` rather than
+in 10 ms clock ticks from `stat`, and reports `pending` on a kernel built
+without `CONFIG_SCHED_INFO`. Linux `comm` truncates names to 15 bytes; ambiguous
 prefixes are reported as merged, never attributed to a guessed worker. Thread
 CPU deltas aggregate duplicate names before subtracting the baseline. These
 short samples establish a baseline, not the 300-second, three-repetition

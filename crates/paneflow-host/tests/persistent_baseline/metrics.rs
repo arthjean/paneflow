@@ -128,33 +128,29 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
 
 #[cfg(target_os = "linux")]
 pub(super) fn thread_cpu(pid: u32) -> Attribution {
-    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-    if ticks_per_second <= 0 {
-        return Attribution::Pending("sysconf(_SC_CLK_TCK) failed".to_string());
-    }
-    let ns_per_tick = 1_000_000_000u64 / ticks_per_second as u64;
     let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
         return Attribution::Pending(format!("/proc/{pid}/task is not readable"));
     };
+    let mut listed = 0usize;
     let mut samples = Vec::new();
     for task in tasks.flatten() {
+        listed += 1;
         let dir = task.path();
         let name = std::fs::read_to_string(dir.join("comm"))
             .map(|comm| comm.trim().to_string())
             .unwrap_or_default();
-        let Ok(stat) = std::fs::read_to_string(dir.join("stat")) else {
+        let Some(cpu_ns) = std::fs::read_to_string(dir.join("schedstat"))
+            .ok()
+            .and_then(|schedstat| schedstat.split_whitespace().next()?.parse().ok())
+        else {
             continue;
         };
-        let Some(after_name) = stat.rfind(')').map(|index| &stat[index + 1..]) else {
-            continue;
-        };
-        let fields: Vec<&str> = after_name.split_whitespace().collect();
-        let utime: u64 = fields.get(11).and_then(|v| v.parse().ok()).unwrap_or(0);
-        let stime: u64 = fields.get(12).and_then(|v| v.parse().ok()).unwrap_or(0);
-        samples.push(ThreadCpu {
-            name,
-            cpu_ns: (utime + stime) * ns_per_tick,
-        });
+        samples.push(ThreadCpu { name, cpu_ns });
+    }
+    if listed > 0 && samples.is_empty() {
+        return Attribution::Pending(format!(
+            "no /proc/{pid}/task/*/schedstat was readable; the kernel lacks CONFIG_SCHED_INFO"
+        ));
     }
     Attribution::Prefix15(samples)
 }
@@ -416,18 +412,37 @@ fn role_of(thread_name: &str) -> &'static str {
     "other"
 }
 
+fn cpu_by_name(samples: &[ThreadCpu]) -> BTreeMap<String, u64> {
+    let mut names = BTreeMap::<String, u64>::new();
+    for sample in samples {
+        *names.entry(sample.name.clone()).or_default() += sample.cpu_ns;
+    }
+    names
+}
+
+pub(super) fn role_cpu_ms_per_s(
+    before: &Attribution,
+    after: &Attribution,
+    elapsed: Duration,
+) -> Result<BTreeMap<&'static str, f64>, String> {
+    let (Some(before), Some(after)) = (before.samples(), after.samples()) else {
+        return Err(after.quality().to_string());
+    };
+    let started = cpu_by_name(before);
+    let seconds = elapsed.as_secs_f64().max(f64::EPSILON);
+    let mut by_role = BTreeMap::<&'static str, f64>::new();
+    for (name, cpu_ns) in cpu_by_name(after) {
+        let delta = cpu_ns.saturating_sub(started.get(&name).copied().unwrap_or(0));
+        *by_role.entry(role_of(&name)).or_default() += delta as f64 / 1e6 / seconds;
+    }
+    Ok(by_role)
+}
+
 fn attribute(before: &[ThreadCpu], after: &[ThreadCpu], window: Duration) -> Value {
     let mut by_role: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut raw: BTreeMap<String, u64> = BTreeMap::new();
-    let aggregate = |samples: &[ThreadCpu]| {
-        let mut names = BTreeMap::<String, u64>::new();
-        for sample in samples {
-            *names.entry(sample.name.clone()).or_default() += sample.cpu_ns;
-        }
-        names
-    };
-    let baseline = aggregate(before);
-    for (name, cpu_ns) in aggregate(after) {
+    let baseline = cpu_by_name(before);
+    for (name, cpu_ns) in cpu_by_name(after) {
         let started = baseline.get(&name).copied().unwrap_or(0);
         let delta = cpu_ns.saturating_sub(started);
         *by_role.entry(role_of(&name)).or_default() += delta;

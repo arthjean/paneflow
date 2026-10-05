@@ -162,6 +162,7 @@ pub(crate) struct Metric {
     pub(crate) iters: usize,
     pub(crate) note: &'static str,
     pub(crate) available: bool,
+    pub(crate) samples_ns: Vec<f64>,
 }
 
 impl Metric {
@@ -184,6 +185,7 @@ impl Metric {
             iters: 1,
             note,
             available: true,
+            samples_ns: Vec::new(),
         }
     }
 
@@ -201,6 +203,7 @@ impl Metric {
             iters: 0,
             note,
             available: false,
+            samples_ns: Vec::new(),
         }
     }
 
@@ -233,6 +236,10 @@ fn from_samples(
     allocated: (u64, u64),
     iters: usize,
 ) -> Metric {
+    let samples_ns = samples
+        .iter()
+        .map(|sample| sample.as_nanos() as f64)
+        .collect();
     samples.sort_unstable();
     let iters_f = iters.max(1) as f64;
     Metric {
@@ -248,6 +255,7 @@ fn from_samples(
         iters,
         note,
         available: true,
+        samples_ns,
     }
 }
 
@@ -496,6 +504,24 @@ pub(crate) fn comparison_table(current: &[Metric], baseline: &serde_json::Value)
     table
 }
 
+fn samples_document(suite: &str, metrics: &[Metric]) -> serde_json::Value {
+    let sampled: serde_json::Map<String, serde_json::Value> = metrics
+        .iter()
+        .filter(|metric| metric.available && !metric.samples_ns.is_empty())
+        .map(|metric| {
+            (
+                metric.name.to_string(),
+                serde_json::json!({"unit": metric.unit, "samples": metric.samples_ns}),
+            )
+        })
+        .collect();
+    serde_json::json!({
+        "suite": suite,
+        "git_sha": env_or("PANEFLOW_BENCH_SHA", "unknown"),
+        "metrics": sampled,
+    })
+}
+
 pub(crate) fn publish(suite: &str, corpus_seed: u64, metrics: &[Metric], cpu_share: f64) {
     for metric in metrics {
         println!("PANEFLOW_BENCH_METRIC {}", metric.to_json());
@@ -511,6 +537,11 @@ pub(crate) fn publish(suite: &str, corpus_seed: u64, metrics: &[Metric], cpu_sha
         }
         std::fs::write(&path, pretty).expect("benchmark output must be writable");
         println!("PANEFLOW_BENCH_WRITTEN {}", path.to_string_lossy());
+    }
+    if let Some(path) = std::env::var_os("PANEFLOW_BENCH_SAMPLES_OUT") {
+        std::fs::write(&path, samples_document(suite, metrics).to_string())
+            .expect("the sample file must be writable");
+        println!("PANEFLOW_BENCH_SAMPLES_WRITTEN {}", path.to_string_lossy());
     }
 
     let baseline = std::env::var_os("PANEFLOW_BENCH_BASELINE")
@@ -721,6 +752,30 @@ mod tests {
     }
 
     #[test]
+    fn only_timed_available_metrics_export_their_raw_samples_in_measurement_order() {
+        let mut iteration = 0u64;
+        let timed = measure("timed", "", 0, 60, || {
+            iteration += 1;
+            if iteration == 1 {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        let metrics = [
+            timed,
+            Metric::count("counted", "frames", 3.0, ""),
+            Metric::unavailable("missing", "ns", ""),
+        ];
+        let document = samples_document("suite", &metrics);
+        let exported = document["metrics"].as_object().unwrap();
+        assert_eq!(exported.keys().collect::<Vec<_>>(), ["timed"]);
+        assert_eq!(exported["timed"]["unit"], "ns");
+        let samples = exported["timed"]["samples"].as_array().unwrap();
+        assert_eq!(samples.len(), 60);
+        assert!(samples[0].as_f64().unwrap() >= 2_000_000.0);
+        assert!(samples[59].as_f64().unwrap() < 2_000_000.0);
+    }
+
+    #[test]
     fn comparison_table_reports_speedups_from_the_baseline() {
         let now = [Metric {
             name: "publish_scroll_220x60",
@@ -735,6 +790,7 @@ mod tests {
             iters: 1,
             note: "",
             available: true,
+            samples_ns: Vec::new(),
         }];
         let baseline = serde_json::json!({
             "git_sha": "abc",

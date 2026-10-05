@@ -230,6 +230,7 @@ fn metric_from_us(name: &'static str, note: &'static str, samples_us: &mut [u64]
         iters: samples_us.len(),
         note,
         available: true,
+        samples_ns: Vec::new(),
     }
 }
 

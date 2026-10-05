@@ -442,6 +442,7 @@ fn pipeline_scenario(metrics: &mut Vec<Metric>) {
         iters: publishes,
         note: "corpus streams fed one per batch with a publish after each: parse plus snapshot plus conversion throughput",
         available: true,
+        samples_ns: Vec::new(),
     });
 }
 

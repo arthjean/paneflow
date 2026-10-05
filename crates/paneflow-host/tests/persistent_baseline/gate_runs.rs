@@ -192,6 +192,7 @@ pub(super) fn host_worker_active(
         flood_args: None,
         settle: SETTLE,
         window: GATE_WINDOW,
+        cpu_slices: 1,
     };
     let processes = active::ActiveProcesses {
         host_pid,

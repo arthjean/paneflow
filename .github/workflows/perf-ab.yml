@@ -1,0 +1,123 @@
+name: perf-ab
+
+on:
+  pull_request:
+    paths:
+      - "src-app/src/terminal/**"
+      - "src-app/src/app/**"
+      - "crates/paneflow-host/**"
+      - "crates/paneflow-serve/**"
+      - "Cargo.lock"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base commit, tag or branch; empty means the latest published release
+        required: false
+        default: ""
+      head:
+        description: Head commit, tag or branch; empty means the dispatched ref
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  PERF_AB_BLOCKING: "false"
+
+jobs:
+  ab:
+    name: Real-time A/B (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Retry stalled apt downloads
+        run: |
+          printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-perf-ab-retries
+
+      - uses: ./.github/actions/linux-build-deps
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+
+      - name: Build outside the checkout
+        run: echo "CARGO_TARGET_DIR=$(dirname "$GITHUB_WORKSPACE")/perf-ab-target" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: "perf-ab-"
+          key: perf_ab
+          workspaces: ". -> ../perf-ab-target"
+
+      - name: Choose the base and head commits
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_BASE: ${{ inputs.base }}
+          INPUT_HEAD: ${{ inputs.head }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base=$(git rev-parse HEAD^1)
+            head=$(git rev-parse HEAD)
+          else
+            base=${INPUT_BASE:-$(gh release view --json tagName --jq .tagName)}
+            head=${INPUT_HEAD:-$(git rev-parse HEAD)}
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+
+      - name: Run the A/B
+        env:
+          AB_BASE: ${{ steps.commits.outputs.base }}
+          AB_HEAD: ${{ steps.commits.outputs.head }}
+        run: |
+          set +e
+          scripts/perf-ab.sh "$AB_BASE" "$AB_HEAD"
+          status=$?
+          set -e
+          if [ -f target/perf-ab/summary.md ]; then
+            cat target/perf-ab/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          case "$status" in
+            0) ;;
+            1)
+              echo "::warning::confirmed real-time regression of $AB_HEAD against $AB_BASE; see the job summary"
+              if [ "$PERF_AB_BLOCKING" = true ]; then
+                exit 1
+              fi
+              ;;
+            3) echo "::warning::base $AB_BASE is unavailable, so no verdict was reached; this run does not count toward the promotion" ;;
+            5) echo "::warning::the A/A cohort was not calibrated; the run counts as uncalibrated toward the promotion, never as a failure" ;;
+            *)
+              echo "::error::the A/B failed to execute (exit $status)"
+              exit "$status"
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: perf-ab
+          path: target/perf-ab/
+          retention-days: 14
+          if-no-files-found: warn

@@ -13,6 +13,8 @@ use paneflow_ipc_client::host_control::HostControl;
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::{Value, json};
 
+#[path = "persistent_baseline/ab.rs"]
+mod ab;
 #[path = "persistent_baseline/active.rs"]
 mod active;
 #[path = "persistent_baseline/endurance.rs"]
@@ -493,6 +495,7 @@ fn persistent_session_active() {
             flood_args: Some(&active::FLOOD_ARGS),
             settle: SETTLE,
             window: active::ACTIVE_WINDOW,
+            cpu_slices: 1,
         };
         let processes = active::ActiveProcesses {
             host_pid: adoption.identity.pid,
@@ -608,6 +611,7 @@ fn an_active_scenario_whose_session_dies_fails_with_its_name_and_publishes_no_av
         flood_args: None,
         settle: Duration::ZERO,
         window: Duration::ZERO,
+        cpu_slices: 1,
     };
     assert_eq!(
         active::run_active_scenario(&mut client, &ledger, &none, &processes),
@@ -619,6 +623,7 @@ fn an_active_scenario_whose_session_dies_fails_with_its_name_and_publishes_no_av
         flood_args: None,
         settle: Duration::ZERO,
         window: Duration::from_secs(2),
+        cpu_slices: 1,
     };
     let failure = active::run_active_scenario(&mut client, &ledger, &dying, &processes)
         .expect_err("a session that exits inside the window fails the scenario");

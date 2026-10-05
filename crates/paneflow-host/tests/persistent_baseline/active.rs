@@ -16,6 +16,7 @@ pub(super) struct ActivePlan<'a> {
     pub(super) flood_args: Option<&'a [&'a str]>,
     pub(super) settle: Duration,
     pub(super) window: Duration,
+    pub(super) cpu_slices: u32,
 }
 
 pub(super) struct ActiveProcesses<'a> {
@@ -153,8 +154,22 @@ pub(super) fn run_active_scenario(
     let worker_cpu_before = worker_pid.map(thread_cpu);
     let desktop_cpu_before = desktop_pid.map(thread_cpu);
     let started = Instant::now();
-    std::thread::sleep(plan.window);
-    let host_cpu_after = thread_cpu(processes.host_pid);
+    let mut slice_started = started;
+    let mut host_cpu_last = thread_cpu(processes.host_pid);
+    let mut host_cpu_slices = Vec::new();
+    for _ in 0..plan.cpu_slices {
+        std::thread::sleep(plan.window / plan.cpu_slices);
+        let reading = thread_cpu(processes.host_pid);
+        host_cpu_slices.push(
+            match role_cpu_ms_per_s(&host_cpu_last, &reading, slice_started.elapsed()) {
+                Ok(by_role) => json!(by_role),
+                Err(reason) => json!({"pending": reason}),
+            },
+        );
+        slice_started = Instant::now();
+        host_cpu_last = reading;
+    }
+    let host_cpu_after = host_cpu_last;
     let worker_cpu_after = worker_pid.map(thread_cpu);
     let desktop_cpu_after = desktop_pid.map(thread_cpu);
     let host_counters_after = host_counters(client);
@@ -235,6 +250,7 @@ pub(super) fn run_active_scenario(
             (&host_counters_before, &host_counters_after),
             window,
         ),
+        "host_cpu_ms_per_s_by_slice": host_cpu_slices,
         "echo_ms": echo,
         "worker": worker,
         "desktop": desktop,
