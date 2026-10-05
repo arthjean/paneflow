@@ -39,7 +39,7 @@ if ((git status --porcelain --untracked-files=no | Measure-Object).Count -gt 0) 
 $out = if ($env:PANEFLOW_PERF_AB_DIR) { $env:PANEFLOW_PERF_AB_DIR } else { Join-Path $root "target/perf-ab" }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Get-ChildItem -LiteralPath $out -Force |
-    Where-Object { $_.Name -like "attempt-*" -or $_.Name -like "build-*.log" -or $_.Name -in @("result.json", "summary.md", "verdict", "compare.log") } |
+    Where-Object { $_.Name -like "attempt-*" -or $_.Name -like "build-*.log" -or $_.Name -in @("result.json", "summary.md", "verdict", "compare.log", "instructions-verdict") } |
     Remove-Item -Recurse -Force
 $scratch = Join-Path ([IO.Path]::GetTempPath()) "paneflow-perf-ab-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 New-Item -ItemType Directory -Path $scratch | Out-Null
@@ -233,6 +233,15 @@ try {
         Measure-Attempt 2
         Compare-Attempts
     }
+    Set-Content -LiteralPath (Join-Path $out "instructions-verdict") -Value "not_measured"
+    Add-Content -LiteralPath (Join-Path $out "summary.md") -Value @(
+        "",
+        "## Instruction counts",
+        "",
+        "Verdict: **not_measured**",
+        "",
+        "Not measured: the Callgrind instruction counts need Valgrind, which runs on Linux only; scripts/perf-ab.sh measures them."
+    )
     $verdict = (Get-Content -LiteralPath (Join-Path $out "verdict") -Raw).Trim()
     Write-Host "A/B finished in $([int]((Get-Date) - $started).TotalSeconds) s: $verdict; report $out/result.json, summary $out/summary.md"
     $script:ExitCode = switch ($verdict) {

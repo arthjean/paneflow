@@ -201,6 +201,55 @@ deltas, the A/A drift, the verdict and the identity of both commits and the
 machine; `summary.md` drawn from it; `verdict`; the build logs; and every
 slot's samples and log under `attempt-<n>/`.
 
+### Instruction counts
+
+After both builds and before the timed rounds, `scripts/perf-ab.sh` counts the
+instructions of the pure CPU paths with Gungraun (Callgrind `Ir`): each
+commit's `instructions` benchmarks in `paneflow-agent-config` (20 screen rules
+on a 200x60 screen) and `paneflow-terminal-ghostty` (parse and conversion of a
+1 MiB corpus through the statically linked libghostty). The base saves a
+Gungraun baseline (`--save-baseline=base`) in the scratch directory, and the
+head is compared against it (`--baseline=base`) with a soft limit of +2 %.
+Instruction counts are deterministic, so one execution is a verdict: a
+benchmark above the limit turns a timed `pass` or `unconfirmed_regression` into
+exit 1, in shadow mode like the rest. The layout pass is not counted: it lives
+in the `paneflow-app` binary crate, which has no library target a benchmark
+could call.
+
+The counts need Valgrind and a `gungraun-runner` of the same version as the
+`gungraun` library in `Cargo.lock` (`cargo install gungraun-runner --version
+0.20.0 --locked`). Without them, or when the base predates the benchmarks, the
+counts are reported `not_measured` with the reason, never as zero, and the
+timed verdict stands alone. `scripts/perf-ab.ps1` always reports them
+`not_measured`: Valgrind runs on Linux only. The results land in
+`instructions.json` (base and head `Ir`, delta and verdict per benchmark) and
+in an "Instruction counts" section appended to `summary.md`. The `bench`
+profile keeps its symbols (`strip = false`), because Callgrind finds the
+benchmark function by name and a stripped binary counts zero instructions.
+
+The US-017 spike validated the counts before they joined the A/B. The
+`workflow_dispatch` workflow `.github/workflows/gungraun-spike.yml` installs
+Valgrind and the matching `gungraun-runner`, and `scripts/gungraun-spike.sh`
+runs both benchmarks twice on the same commit; it validates when every count is
+non-zero and the two runs agree within 0.1 %, and otherwise concludes "not
+validated" with the reasons and the tail of the error log, for instance when
+Valgrind cannot execute libghostty's code. Run 37369490241 on `ubuntu-24.04`,
+2026-10-05, Valgrind 3.22.0, gungraun 0.20.0, cold cache: validated in 7 min
+44 s for the whole job (limit 15 min). Its second attempt, a separate job with
+a warm cache, took 1 min 9 s and reported the same counts.
+
+| Benchmark | Run 1 (Ir) | Run 2 (Ir) | Drift |
+|---|---|---|---|
+| `screen_rules::evaluate_rules.twenty_rules_200x60` | 2 517 984 | 2 518 031 | 0.0019 % |
+| `terminal::parse_and_convert.mebibyte_220x60` | 119 529 927 | 119 529 927 | 0 % |
+
+The same runs on Fedora 44 with Valgrind 3.27.1 gave 2 440 096 and 119 009 924:
+a count depends on the machine (glibc, CPU dispatch), which is why the A/B only
+ever compares a base and a head counted in the same job. A seeded change that
+sums the screen bytes ten times per evaluation came out at +11.7 % on the rules
+benchmark and +0.000 % on the untouched parse benchmark (local evidence, not
+tracked).
+
 ### Shadow mode and promotion
 
 `.github/workflows/perf-ab.yml` runs the A/B on `ubuntu-24.04` with a 60 minute

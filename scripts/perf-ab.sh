@@ -41,7 +41,7 @@ fi
 
 out="${PANEFLOW_PERF_AB_DIR:-$root/target/perf-ab}"
 mkdir -p "$out"
-rm -rf "$out"/attempt-* "$out"/build-*.log "$out"/result.json "$out"/summary.md "$out"/verdict "$out"/attempt-verdict
+rm -rf "$out"/attempt-* "$out"/build-*.log "$out"/result.json "$out"/summary.md "$out"/verdict "$out"/attempt-verdict "$out"/instructions*
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/paneflow-perf-ab.XXXXXX")
 if [ -z "${CARGO_TARGET_DIR:-}" ]; then
   export CARGO_TARGET_DIR="$scratch/target"
@@ -200,10 +200,109 @@ compare() {
   )
 }
 
+instruction_benches=(
+  "paneflow-agent-config|"
+  "paneflow-terminal-ghostty|native"
+)
+instruction_limit_percent=2
+
+count_instructions_side() {
+  local side=$1 status=0
+  local log="$out/instructions-$side.log" json="$out/instructions-$side.jsonl"
+  local mode=(--save-baseline=base)
+  if [ "$side" = head ]; then
+    mode=(--baseline=base "--callgrind-limits=ir=${instruction_limit_percent}%")
+  fi
+  : >"$json"
+  for entry in "${instruction_benches[@]}"; do
+    local package=${entry%%|*} features=${entry#*|}
+    local args=(bench --locked -q -p "$package" --bench instructions)
+    if [ -n "$features" ]; then
+      args+=(--features "$features")
+    fi
+    set +e
+    (
+      cd "$scratch/$side"
+      "$cargo" "${args[@]}" -- --home="$scratch/gungraun" --output-format=json "${mode[@]}"
+    ) >>"$json" 2>>"$log"
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ] && { [ "$side" = base ] || [ "$status" -ne 3 ]; }; then
+      return 1
+    fi
+  done
+}
+
+count_instructions() {
+  local reason=""
+  if ! command -v valgrind >/dev/null 2>&1; then
+    reason="valgrind is not installed"
+  elif ! command -v gungraun-runner >/dev/null 2>&1; then
+    reason="gungraun-runner is not installed (cargo install gungraun-runner --version <the gungraun version in Cargo.lock>)"
+  else
+    echo "== counting instructions"
+    if ! count_instructions_side base; then
+      reason="the base has no instruction benchmarks or they failed; see instructions-base.log"
+    elif ! count_instructions_side head; then
+      reason="the head instruction benchmarks failed; see instructions-head.log"
+    fi
+  fi
+  python3 - "$out" "$instruction_limit_percent" "$reason" <<'PY'
+import json
+import pathlib
+import sys
+
+out = pathlib.Path(sys.argv[1])
+limit = float(sys.argv[2])
+reason = sys.argv[3]
+benchmarks = []
+if not reason:
+    for line in (out / "instructions-head.jsonl").read_text().splitlines():
+        if not line.startswith("{"):
+            continue
+        record = json.loads(line)
+        parts = record["profiles"][0]["data"]["parts"]
+        values = [part["metrics"]["Ir"]["values"] for part in parts]
+        base = sum(value.get("old") or 0 for value in values)
+        head = sum(value.get("new") or 0 for value in values)
+        name = f"{record['group']}::{record['function_name']}.{record['id']}"
+        delta = (head - base) / base * 100 if base else None
+        benchmarks.append({
+            "name": name,
+            "base_ir": base or None,
+            "head_ir": head,
+            "delta_percent": delta,
+            "verdict": "not_compared" if delta is None else ("regression" if delta > limit else "pass"),
+        })
+    if not benchmarks:
+        reason = "the instruction benchmarks reported nothing"
+if reason:
+    verdict = "not_measured"
+elif any(entry["verdict"] == "regression" for entry in benchmarks):
+    verdict = "regression"
+else:
+    verdict = "pass"
+report = {"verdict": verdict, "limit_percent": limit, "reason": reason or None, "benchmarks": benchmarks}
+(out / "instructions.json").write_text(json.dumps(report, indent=2) + "\n")
+(out / "instructions-verdict").write_text(verdict + "\n")
+lines = ["", "## Instruction counts", "", f"Verdict: **{verdict}** (Callgrind `Ir`, soft limit +{limit:g} % against the base built in this run)"]
+if reason:
+    lines += ["", f"Not measured: {reason}."]
+else:
+    lines += ["", "| Benchmark | Base Ir | Head Ir | Delta | Verdict |", "|---|---|---|---|---|"]
+    for entry in benchmarks:
+        delta = "n/a" if entry["delta_percent"] is None else f"{entry['delta_percent']:+.3f} %"
+        lines.append(f"| `{entry['name']}` | {entry['base_ir'] or 'n/a'} | {entry['head_ir']} | {delta} | {entry['verdict']} |")
+(out / "instructions.md").write_text("\n".join(lines) + "\n")
+PY
+}
+
 prepare base "$base_sha"
 build base "$base_sha"
 prepare head "$head_sha"
 build head "$head_sha"
+
+count_instructions
 
 measure 1
 compare
@@ -214,10 +313,17 @@ if [ "$first" = regression ] || [ "$first" = uncalibrated ]; then
   compare
 fi
 
+cat "$out/instructions.md" >>"$out/summary.md"
 verdict=$(cat "$out/verdict")
-echo "A/B finished in $(( $(date +%s) - started )) s: $verdict; report $out/result.json, summary $out/summary.md"
+instructions=$(cat "$out/instructions-verdict")
+echo "A/B finished in $(( $(date +%s) - started )) s: $verdict, instructions $instructions; report $out/result.json, summary $out/summary.md"
 case "$verdict" in
-  pass | unconfirmed_regression) finish 0 ;;
+  pass | unconfirmed_regression)
+    if [ "$instructions" = regression ]; then
+      finish 1
+    fi
+    finish 0
+    ;;
   regression) finish 1 ;;
   uncalibrated) finish 5 ;;
   *) finish 2 ;;

@@ -1078,6 +1078,8 @@ mod tests {
             "shadow mode is one workflow variable"
         );
         assert!(workflow.contains("scripts/perf-ab.sh"));
+        assert!(workflow.contains("extra-packages: valgrind"));
+        assert!(workflow.contains("cargo install gungraun-runner --version \"$version\" --locked"));
         let release = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/release.yml"),
         )
