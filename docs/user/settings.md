@@ -23,14 +23,34 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
 | General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
-| Themes | Light, Dark, System, plus dedicated Windows and macOS sidebar-material controls when available. | `theme`, `windows_chrome_material`, `macos_chrome_material` | Theme and material changes hot-reload. |
+| Appearance | Light, Dark, System, the theme preset, **Interface style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme and material changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
-| Notifications | Native OS notifications for waiting agents. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
-| Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
+| Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
+| Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
 | Agents | Which agents the launcher shows, with their installed version and hook state, an **Install hooks** button for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; **Install hooks** writes the agent's own hook config | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
+
+## Interface style
+
+On Windows, macOS, and Linux, Settings > Appearance offers **Interface
+style** under the theme preset, and the command palette carries the same
+choice under `Interface style`. It sets every window material of the
+platform at once.
+
+| Style | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Themed (default) | `windows_chrome_material` and `windows_terminal_material` set to `false`: solid theme colors. | `macos_chrome_material` set to `false`: an opaque sidebar. | `linux_chrome_material` and `linux_terminal_material` set to `false`: an opaque window. |
+| Blended | Both set to `true`: Mica shows through the sidebar and the terminal. | `macos_chrome_material` set to `true`: the native Sidebar material shows behind the sidebar. | Both set to `true`: the desktop shows through a veil behind the sidebar and a denser one behind the terminal. |
+
+On Linux, Paneflow requests no blur itself: the compositor supplies it,
+for example the Blur my Shell extension on GNOME. Without one, the
+wallpaper shows through the veil unblurred.
+
+There is no `interface_style` key: Paneflow reads the style back from
+those switches. When they disagree, for example after turning one of
+them on by hand, the row reads **Custom**.
 
 ## Terminal contrast
 

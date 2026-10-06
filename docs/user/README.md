@@ -9,26 +9,30 @@
 - [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
 - [Configuration](configuration.md): Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
 - [paneflow.json Schema Reference](configuration/schema.md): Every paneflow.json key with its type, default, apply timing, and runtime notes.
-- [Features](features.md): Persistent terminal sessions, parallel coding agents, Git worktrees, diffs, an integrated editor, CLI automation, and read-only MCP access in Paneflow.
-- [Get started](index.md): Install Paneflow, the native terminal multiplexer for coding agents, and launch your first agent.
-- [Install Paneflow](installation.md): Install Paneflow on Linux, macOS, or Windows in under two minutes.
-- [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Ubuntu, Debian, Fedora, openSUSE, Arch, or any modern Linux with AppImage, .deb, .rpm, or tarball.
-- [Install Paneflow on macOS](installation/macos.md): Install Paneflow on macOS 13 Ventura or later with Homebrew or the signed and notarized Apple Silicon DMG.
-- [Paneflow on Windows](installation/windows.md): Install the native Paneflow MSI on Windows 10 or 11, verify the PATH entry, and choose when WSL2 is still the better fit.
-- [Shortcuts and actions](keybindings.md): Default Paneflow shortcuts and the action names you can bind under shortcuts in paneflow.json.
-- [Layouts](layouts.md): Apply Paneflow's four built-in layout presets - even horizontal, even vertical, main vertical, and tiled - to reshape a workspace in one keystroke.
-- [Scripting and automation](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
+- [Features](features.md): Run coding agents in parallel, keep terminal sessions running, review diffs, edit files, and coordinate panes with Git worktrees, MCP, and the Paneflow CLI.
+- [Get started](index.md): Install Paneflow, open a terminal pane, and run your first coding agent. Review its changes and keep its session running when you close the app.
+- [Install Paneflow](installation.md): Choose the Paneflow installer for Linux, macOS, or Windows, then follow the guide to install it and verify that it works.
+- [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Linux with AppImage, .deb, .rpm, or .tar.gz. Choose a package for x86_64 or ARM64, check Vulkan requirements, and resolve FUSE or PATH errors.
+- [Install Paneflow on macOS](installation/macos.md): Install Paneflow on an Apple Silicon Mac with macOS 13 Ventura or later. Choose Homebrew or the DMG, verify the installation, and set up terminal access.
+- [Paneflow on Windows](installation/windows.md): Install Paneflow on Windows with the signed MSI. Verify the installation, fix command lookup, and choose the Linux build for WSL2.
+- [Shortcuts and actions](keybindings.md): Find Paneflow keyboard shortcuts and customize their actions in paneflow.json.
+- [Layouts](layouts.md): Arrange the active tab's panes in a row, column, or grid, keep one pane on the left, and balance pane sizes with Paneflow's layout shortcuts.
+- [CLI automation and read-only MCP in Paneflow](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
 - [Scripting reference](scripting/reference.md): CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, MCP tools, hooks, and exit codes for Paneflow automation.
 - [Settings](settings.md): Understand what Paneflow's Settings panel controls, what it writes to paneflow.json, and which advanced keys stay config-only.
-- [Themes](themes.md): Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark and PaneFlow Light ship today and hot-reload without restart.
-- [Troubleshooting](troubleshooting.md): Diagnose Paneflow launch, rendering, configuration, shortcut, theme, PATH, and signing issues with the shortest confirmed fix first.
-- [Worktrees](worktrees.md): Run several branches of one repository side by side in Paneflow with managed Git worktrees, snapshots before removal, and a Settings page to control where they live.
-- [Resume a Claude Code, Codex, or OpenCode session in one click](blog/agent-sessions.md): Paneflow finds every agent session tied to your current project and brings any of them back, history intact, without hunting for the right command.
-- [Have multiple agents review your branch diff](blog/diff-viewer.md): Open your branch diff, launch Claude Code, Codex, OpenCode, or Pi underneath it, and compare their feedback without leaving Paneflow.
-- [Browse your project files without leaving Paneflow](blog/files-sidebar.md): Navigate your project and open a README or PRD in a pane right next to the agent working from it, without switching tools or losing your layout.
-- [Paneflow: all your coding agents in one workspace](blog/introducing-paneflow.md): Run Claude Code, Codex, OpenCode, and 13 other CLI agents side by side. Keep each task's terminals, branches, diffs, servers, and sessions in one place.
-- [Paneflow 0.8.0: libghostty-vt replaces Alacritty on Linux](blog/libghostty-linux.md): Standard Linux builds now statically link a pinned libghostty-vt engine. Paneflow keeps its GPUI renderer, while Alacritty remains available for rollback and stays active on macOS and Windows.
-- [Paneflow 0.8.1: libghostty-vt replaces Alacritty on Windows](blog/libghostty-windows.md): The native Windows x64 build now uses a statically linked libghostty-vt engine by default. Paneflow keeps its GPUI renderer and ConPTY host, with Alacritty available as an immediate rollback.
-- [Let one coding agent drive the others with Paneflow Conductor](blog/paneflow-conductor.md): Paneflow 0.6.0 turns the app into a control plane for CLI coding agents: discover the fleet, read live state, dispatch prompts, and wait on events from one public CLI.
-- [Why coding agents need their own workspace](blog/philosophy-of-paneflow.md): Launching several agents is easy. Keeping their tasks, decisions, and outputs legible is much harder. Here is Paneflow's approach.
-- [Launching Paneflow on Show HN](blog/show-hn-launch.md): Launching one coding agent is easy. Paneflow keeps multiple CLI agents, branches, and diffs visible in one local workspace.
+- [Themes](themes.md): Choose from five Paneflow palettes, switch between light and dark modes, or follow your system appearance. Changes apply without restarting.
+- [Troubleshooting](troubleshooting.md): Resolve Paneflow launch, graphics, configuration, shortcut, theme, PATH, and signing problems. Check the symptom and collect the details needed for a bug report.
+- [Worktrees](worktrees.md): Create or reuse separate Git checkouts for parallel tasks, inspect changes and integrate branches. Worktree management, snapshots and shared-resource limits in Paneflow.
+- [Resume a Claude Code, Codex or OpenCode conversation in Paneflow](blog/agent-sessions.md): Select a saved conversation in Agent sessions: Paneflow runs the resume command in the project's terminal, with no session ID to copy.
+- [A terminal for Claude Code and Codex on Windows, Linux and macOS](blog/coding-agent-workspace-platforms.md): Run Claude Code and Codex side by side in Paneflow. Choose the installer for your machine and set up your agents in the shell your project uses.
+- [Review an agent’s working changes with Paneflow Changes](blog/diff-viewer.md): Read local changes beside your agent's terminal, open files for context, and restore individual blocks. See what Changes includes before reviewing a whole branch.
+- [Edit project files beside your agent in Paneflow](blog/files-sidebar.md): Open and correct a file in Files, then review the edit in Changes. If your agent edits the same file, choose which version to keep.
+- [Paneflow: a native terminal multiplexer for coding agents](blog/introducing-paneflow.md): Group Claude Code, Codex, and other agents by project. Return to live terminals and inspect their changes in Changes and Files.
+- [Keep Claude Code running when you close Paneflow](blog/keep-coding-agents-running.md): Choose Keep sessions running when quitting, then reopen Paneflow to reconnect to Claude Code or Codex. The machine must stay awake.
+- [Paneflow 0.8.0: libghostty-vt replaces Alacritty on Linux](blog/libghostty-linux.md): Historical Paneflow 0.8.0 announcement: the Linux migration to libghostty-vt, with Alacritty rollback at the time. Includes links to current installation docs.
+- [Paneflow 0.8.1: libghostty-vt replaces Alacritty on Windows](blog/libghostty-windows.md): How Paneflow 0.8.1 brought Ghostty's terminal engine to Windows x64: ConPTY integration, static linking, and the Alacritty fallback available at the time.
+- [Coordinate two Paneflow panes with the CLI and read-only MCP](blog/paneflow-conductor.md): Read one pane from another, wait for new output, and let an agent inspect it through MCP. CLI text entry requires a separate write permission.
+- [Why coding agents need visible coordination](blog/philosophy-of-paneflow.md): See which agent needs input, where it is editing, and what changed. Paneflow keeps that work visible while separating read-only access from terminal control.
+- [Run Claude Code and Codex together in parallel](blog/run-claude-code-and-codex-in-parallel.md): Run Claude Code and Codex side by side in Paneflow. Assign independent tasks, separate their files with Git worktrees, and review the combined result.
+- [Manage multiple Claude Code sessions in parallel](blog/run-multiple-claude-code-sessions.md): Follow requests for input in Paneflow, give each Claude Code session a clear task, and review changes in separate Git worktrees before merging.
+- [Launching Paneflow on Show HN](blog/show-hn-launch.md): The Show HN launch of Paneflow in June 2026: parallel CLI agents, worktree review, and the control boundaries of the CLI and read-only MCP bridge.

@@ -64,11 +64,11 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
 | `window_decorations` | string/null | `client` | Startup | `client` draws Paneflow chrome; `server` delegates to the OS compositor. |
 | `window_backdrop` | string/null | `auto` | Startup | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. On Windows, `blurred` and `acrylic` set in the config resolve to `auto`; only `PANEFLOW_WINDOW_BACKDROP` applies blur there. `PANEFLOW_WINDOW_BACKDROP` overrides for one launch. |
-| `windows_terminal_material` | boolean/null | `false` | Window/terminal render | Windows-only terminal background material toggle. Ignored on other platforms. |
-| `windows_chrome_material` | boolean/null | `false` | Window/chrome render | Windows-only native material in the primary navigation card. Ignored on other platforms. |
-| `macos_chrome_material` | boolean/null | `true` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. Ignored on other platforms. |
-| `linux_terminal_material` | boolean/null | `false` | Window/terminal render | Linux-only translucent terminal card over the window veil, so a compositor blur shows through. Ignored on other platforms. |
-| `linux_chrome_material` | boolean/null | `false` | Window/chrome render | Linux-only translucent veil behind the sidebar and the title bar, so a compositor blur shows through. Ignored on other platforms. |
+| `windows_terminal_material` | boolean/null | `false` | Window/terminal render | Windows-only terminal background material toggle. The Blended interface style sets it to `true`, Themed to `false`. Ignored on other platforms. |
+| `windows_chrome_material` | boolean/null | `false` | Window/chrome render | Windows-only native material in the primary navigation card. The Blended interface style sets it to `true`, Themed to `false`. Ignored on other platforms. |
+| `macos_chrome_material` | boolean/null | `false` | Window/chrome render | macOS-only native Sidebar material in the primary navigation card. The Blended interface style sets it to `true`, Themed to `false`. Ignored on other platforms. |
+| `linux_terminal_material` | boolean/null | `false` | Window/terminal render | Linux-only translucent terminal card over the window veil, so a compositor blur shows through. The Blended interface style sets it to `true`, Themed to `false`. Ignored on other platforms. |
+| `linux_chrome_material` | boolean/null | `false` | Window/chrome render | Linux-only translucent veil behind the sidebar and the title bar, so a compositor blur shows through. The Blended interface style sets it to `true`, Themed to `false`. Ignored on other platforms. |
 | `option_as_meta` | boolean/null | `true` on Linux and Windows, `false` on macOS | Hot reload | Sends Alt/Option as ESC-prefix Meta. On macOS, `true` makes Option plus a letter send Meta instead of composing a character; keep `false` when Option should type Unicode characters. A config reload applies it to open terminals. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
 | `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
@@ -132,9 +132,9 @@ and macOS keep every agent below.
 | `terminal.scrollbar` | boolean/null | `true` | New terminal view | Overlay scrollbar shown while scrolling or hovering the right edge of a pane. |
 | `terminal.scrollback_lines` | integer/null | `10000` | New terminal | Range `100` to `100000`. Cached terminals cap at `1000`. |
 | `terminal.cursor_shape` | string/null | `block` | New terminal | `vintage`, `block`, `beam`, `underline`, `double_underline`, or `hollow`. |
-| `terminal.osc52_clipboard` | string/null | `copy` | New terminal view | **Development builds only; unavailable in v0.17.0 and v0.17.4.** `copy` lets the focused terminal write the system clipboard through OSC 52; `off` refuses all OSC 52 writes. OSC 52 clipboard reads are always denied. Existing terminal views keep their policy until recreated. |
+| `terminal.osc52_clipboard` | string/null | `copy` | New terminal view | **Available since v0.17.5.** `copy` lets the focused terminal write the system clipboard through OSC 52; `off` refuses all OSC 52 writes. OSC 52 clipboard reads are always denied. Existing terminal views keep their policy until recreated. |
 | `terminal.cursor_blink` | string/null | `terminal_controlled` | New terminal | `on`, `off`, or `terminal_controlled`. |
-| `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. |
+| `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. Keys Paneflow sets for every terminal, such as `TERM`, `ZDOTDIR`, and the `PANEFLOW_*` variables, are ignored and logged once. `LANG` defaults to `en_US.UTF-8` only when `LANG`, `LC_ALL`, and `LC_CTYPE` are all unset. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
 | `terminal.minimum_contrast` | number/null | Auto (`60`) | Hot reload | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the colors a program chose (truecolor and palette indices 16 to 255). The theme's sixteen ANSI colors, foreground, and background are never corrected. Unset means Auto, which is `60` on every theme; `0` turns the correction off; a negative or non-numeric value means Auto. Range `0` to `90`. |
 
@@ -142,7 +142,7 @@ and macOS keep every agent below.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `agent_panel.notify_when_agent_waiting` | string/null | `PrimaryScreen` | `PrimaryScreen`, `AllScreens`, or `Never`. |
+| `agent_panel.notify_when_agent_waiting` | string/null | `Never` | `PrimaryScreen`, `AllScreens`, or `Never`. Also governs desktop notifications that terminal programs send with OSC 9 or OSC 777. |
 
 ## `agents`
 
@@ -298,7 +298,7 @@ Surface keys inside a pane:
   "line_height": 1.0,
   "cell_width": 1.0,
   "windows_chrome_material": false,
-  "macos_chrome_material": true,
+  "macos_chrome_material": false,
   "terminal": {
     "ligatures": true,
     "scrollback_lines": 10000,

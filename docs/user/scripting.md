@@ -1,4 +1,4 @@
-# Scripting and automation
+# CLI automation and read-only MCP in Paneflow
 
 > Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
 
@@ -66,7 +66,7 @@ the counter, the field is absent rather than zero.
 `status --json` describes the agent instance running now:
 
 | Field | Meaning |
-|---|---|
+| --- | --- |
 | `hooked` | `true` only when the last lifecycle hook came from the current launch of the agent and its runtime reports through hooks Paneflow installs (Claude Code, Codex). A hook left by a previous launch never counts. |
 | `state` | The reduced state the sidebar shows: `thinking`, `waiting_for_input`, `finished`, `errored`, or `idle`. It is absent when no state projection exists for the pane, never `unknown`. |
 | `state_seq` | A per-session counter that increases on every reduced-state transition. Compare two reads to tell a new turn from an unchanged one. |
@@ -110,18 +110,18 @@ PTY can drive an agent or shell. There are two relevant controls:
 
 The window and the detached host apply the same gates. A client that
 attaches a terminal engine, the Paneflow window itself, types for the
-human and is not gated. Every other control client, such as `paneflow
-send` with no window open, the MCP bridge, or a custom socket client,
-needs `PANEFLOW_IPC_SCRIPTING=1` for `session.input`. `session.create`
-needs `PANEFLOW_IPC_ORCHESTRATION=1` (or scripting, which includes it)
-when the request launches a command, a prompt, or environment
-variables, and scripting otherwise. The host logs each accepted
-`session.input` from a control client at info level with the client
-name, the target session, and the byte count, never the content. Hook
-delivery (`agent.event`) stays ungated: the host accepts an event only
-for the live launch generation of its session. These gates protect a
-pane from a confused agent, not from a hostile process running as your
-user.
+human and is not gated. Every other control client, such as
+`paneflow send` with no window open, the MCP bridge, or a custom socket
+client, needs `PANEFLOW_IPC_SCRIPTING=1` for `session.input`.
+`session.create` needs `PANEFLOW_IPC_ORCHESTRATION=1` (or scripting,
+which includes it) when the request launches a command, a prompt, or
+environment variables, and scripting otherwise. The host logs each
+accepted `session.input` from a control client at info level with the
+client name, the target session, and the byte count, never the content.
+Hook delivery (`agent.event`) stays ungated: the host accepts an event
+only for the live launch generation of its session. These gates protect
+a pane from a confused agent, not from a hostile process running as
+your user.
 
 Inside a Paneflow pane, `send`, `key`, and the `send` steps of
 `flow run` that target a pane the flow did not spawn pass the pane's
@@ -142,7 +142,7 @@ checks.
 With `--submit`, the JSON reply reports what happened:
 
 | Field | Meaning |
-|---|---|
+| --- | --- |
 | `delivered` | `true` once the text and the carriage return were written. |
 | `started` | `true` when the agent's reduced state moved (`state_seq` grew) within 5 s, `false` when it did not, `null` when the runtime has neither hooks nor screen rules to report a turn. The paste echo alone never counts. |
 | `reason` | `state_transition`, `no_state_transition`, or `no_signal`. |
@@ -248,7 +248,7 @@ or control a pane in any other way.
   workspace of the calling pane unless the bridge runs with
   `PANEFLOW_MCP_SCOPE=all` and the host has `PANEFLOW_IPC_ORCHESTRATION=1`.
 - The host prefixes each message with
-  `[Paneflow: message from <name>, surface <N>]`, strips every control
+  `[Paneflow: message from <name>, surface <number>]`, strips every control
   character except newline and tab (bracketed paste markers included),
   relays at most 16 KiB, allows one write per second per pair with a
   burst of three, refuses a pane that waits for a human decision, and
@@ -297,8 +297,9 @@ runtime that has an installer. Agents without an installer can still run in
 panes, but fleet state and lifecycle events are limited.
 
 Hook state lives in a per-home worker, `paneflow serve`, that outlives the
-window. Without a running window, `ps` and `status` cannot see it; read it
-with `paneflow sessions`, which takes `--json` and `--follow`.
+window. `status`, `send --submit`, and `wait --idle` read it whether or not a
+window is open; `paneflow sessions` reads it directly and takes `--json` and
+`--follow`.
 
 ## Related
 

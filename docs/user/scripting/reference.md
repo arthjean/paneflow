@@ -226,7 +226,7 @@ printf '%s\
 | `workspace.current` | - | Active workspace |
 | `workspace.create` | `name?`, `cwd?`, `layout?` | Create a workspace |
 | `workspace.select` | `index` | Switch workspace |
-| `workspace.close` | `index?` | Close a workspace |
+| `workspace.close` | `index` | Close a workspace |
 | `workspace.up` | `name`, `layout`, `panes[]` | Declarative spawn used by `up` and flow roots |
 | `workspace.restore_layout` | `layout` | Apply a layout tree |
 | `surface.list` | - | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace}]}` |
@@ -241,13 +241,10 @@ printf '%s\
 | `tmux.compat` | `team`, `surface_id`, `argv`, `scope_session?` | tmux command from a Claude Code team pane; `team` is the token Paneflow gave that team's panes, and the reply is `{stdout, stderr, exit}` |
 | `fleet.list` | - | Read-only fleet snapshot |
 | `events.subscribe` | `surfaces?`, `types?` | Persistent newline-delimited event stream |
-| `ai.session_start` | hook payload | Lifecycle telemetry |
-| `ai.prompt_submit` | hook payload | Lifecycle telemetry |
-| `ai.tool_use` | hook payload | Lifecycle telemetry |
-| `ai.notification` | hook payload | Lifecycle telemetry |
-| `ai.stop` | hook payload | Lifecycle telemetry |
-| `ai.exit` | hook payload | Lifecycle telemetry |
-| `ai.session_end` | hook payload | Lifecycle telemetry |
+
+The `ai.*` lifecycle methods are no longer accepted on the app socket;
+agent status comes from the `paneflow-ai-hook` reporter, and
+`events.subscribe` still delivers `ai.*` events.
 
 Structured failures use JSON-RPC `error` envelopes: `-32602` invalid
 params, `-32601` gated method, `-32001` permission, and `-32000`
@@ -279,7 +276,7 @@ After a `dropped` frame, resync with `paneflow ps --json` or
 
 ## MCP bridge
 
-`paneflow-mcp` is a read-only stdio MCP server over the same Paneflow
+`paneflow-mcp` is a stdio MCP server over the same Paneflow
 socket.
 
 | Tool | Params | Returns |
@@ -287,8 +284,11 @@ socket.
 | `list_panes` | - | Panes with `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace` |
 | `read_pane` | `target`, `lines?`, `offset?` | Scrollback text |
 | `search_pane` | `target`, `pattern`, `max_matches?` | Matching lines |
+| `write_pane` | `target`, `text`, `submit?` | `approval_pending` until a human allows the pair, then the delivery result; with `submit`, also `started` and `state` |
 
-It has no tool for typing, submitting, focusing, or splitting panes.
+`write_pane` is the only tool that writes, and only after a human allows
+that pair of agent sessions in Paneflow; the [automation guide](/docs/scripting)
+describes its controls. No tool sends keystrokes, focuses, or splits panes.
 Returned terminal output is fenced as untrusted data.
 
 ## Lifecycle hooks
