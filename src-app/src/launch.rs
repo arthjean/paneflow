@@ -166,7 +166,10 @@ pub(crate) fn run() {
         eprintln!("paneflow: cannot secure {}: {error}", home.display());
     }
     for migrated in paneflow_home::migrate_legacy_home() {
-        eprintln!("paneflow: moved user state to {}", migrated.display());
+        eprintln!(
+            "paneflow: copied legacy user state to {}",
+            migrated.display()
+        );
     }
     startup_trace::mark("home_migrated");
     #[cfg(target_os = "windows")]
