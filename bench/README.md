@@ -328,7 +328,10 @@ optional base and head. It triggers on `pull_request`, never
 `pull_request_target`, reads with `contents: read` only, and caches under the
 `perf-ab-` prefix, which `release.yml` never uses. The summary is appended to
 `$GITHUB_STEP_SUMMARY` and `target/perf-ab/` is uploaded as the `perf-ab`
-artifact for 14 days.
+artifact for 90 days, longer than the three-week promotion window, so every
+run the promotion counts can still be downloaded when it is decided. Runs
+uploaded before this change kept 14 days: the runs of 2026-10-05 and
+2026-10-06 cited below expire on 2026-10-19 and 2026-10-20.
 
 Two workflow variables decide what fails the job, and only an execution
 failure (exit 2 or 4) turns it red otherwise:
@@ -358,6 +361,28 @@ missing measurement) and a run whose base was unavailable are not runs of the
 gate and are skipped. The promotion is one pull request that sets
 `PERF_AB_BLOCKING` to `"true"` and cites the 30 runs; from then on a confirmed
 regression fails the job.
+
+`scripts/perf-ab-promotion.sh` makes the count. It lists the completed runs of
+`perf-ab.yml` with `gh`, downloads each `perf-ab` artifact once into
+`target/perf-ab-promotion/runs/<run>/` (`PANEFLOW_AB_PROMOTION_DIR` overrides
+the directory), and runs the ignored test `ab::perf_ab_promotion`, which writes
+`promotion.json` and `promotion.md`. The test orders the counted runs by the
+stamp of their `result.json`, judges the latest 30, and decides:
+
+| Decision | When |
+|---|---|
+| `pending` | fewer than 30 counted runs, or 30 clean ones spanning less than 21 days |
+| `promote` | the latest 30 hold no reset, at least 27 calibrated, over at least 21 days |
+| `keep_consultative` | 30 counted runs or more, and the latest 30 hold a reset or fewer than 27 calibrated |
+| `incomplete` | an artifact expired before it was downloaded and its run may fall within the latest 30, so no decision is possible |
+
+A run without `result.json` (its base or head was unavailable, or it stopped
+before the A/B), with `promotion.effect` `excluded`, or measured under an
+older `schema_version` is listed as skipped with its reason, and so is a run
+whose artifact expired after it finished before the latest 30 counted runs,
+since it cannot change the decision. The rates it
+reports, over all counted runs and over the latest 30, are the ones a
+`keep_consultative` decision records here.
 
 ### Instruction promotion runs
 

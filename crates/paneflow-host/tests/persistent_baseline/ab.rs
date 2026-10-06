@@ -672,6 +672,291 @@ fn perf_ab_compare() {
     println!("report: {}", dir.join("result.json").display());
 }
 
+pub(super) const PROMOTION_RUNS: usize = 30;
+pub(super) const PROMOTION_SPAN: Duration = Duration::from_secs(21 * 24 * 3600);
+pub(super) const PROMOTION_CALIBRATED_SHARE: f64 = 0.90;
+pub(super) const EXPIRED_MARKER: &str = "artifact-expired";
+pub(super) const NO_ARTIFACT_MARKER: &str = "no-artifact";
+
+#[derive(Debug, Clone, PartialEq)]
+struct GateRun {
+    run: String,
+    stamp_s: u64,
+    effect: String,
+    verdict: String,
+}
+
+#[derive(Debug, PartialEq)]
+enum RunRecord {
+    Gate(GateRun),
+    Skipped {
+        run: String,
+        reason: String,
+    },
+    Expired {
+        run: String,
+        completed_s: Option<u64>,
+    },
+    Unknown {
+        run: String,
+        reason: String,
+    },
+}
+
+fn classify_run(run: &str, dir: &Path) -> RunRecord {
+    let skipped = |reason: String| RunRecord::Skipped {
+        run: run.to_string(),
+        reason,
+    };
+    if let Ok(marker) = std::fs::read_to_string(dir.join(EXPIRED_MARKER)) {
+        return RunRecord::Expired {
+            run: run.to_string(),
+            completed_s: marker.trim().parse().ok(),
+        };
+    }
+    if dir.join(NO_ARTIFACT_MARKER).exists() {
+        return skipped("the run stopped before the A/B uploaded anything".to_string());
+    }
+    let Ok(text) = std::fs::read_to_string(dir.join("result.json")) else {
+        return skipped(
+            "no result.json: the base or the head was unavailable, so no verdict was reached"
+                .to_string(),
+        );
+    };
+    let Ok(result) = serde_json::from_str::<Value>(&text) else {
+        return RunRecord::Unknown {
+            run: run.to_string(),
+            reason: "result.json is not valid JSON".to_string(),
+        };
+    };
+    let schema = result["schema_version"].as_u64().unwrap_or(0);
+    if schema != AB_SCHEMA_VERSION {
+        return skipped(format!(
+            "measured under schema {schema}, not the current rule (schema {AB_SCHEMA_VERSION})"
+        ));
+    }
+    let effect = result["promotion"]["effect"].as_str().unwrap_or("excluded");
+    if !matches!(effect, "calibrated" | "uncalibrated" | "resets") {
+        return skipped(format!(
+            "promotion.effect is {effect}: a measurement was missing"
+        ));
+    }
+    let Some(stamp_s) = result["stamp"]
+        .as_str()
+        .and_then(|stamp| stamp.strip_prefix("unix"))
+        .and_then(|seconds| seconds.parse().ok())
+    else {
+        return RunRecord::Unknown {
+            run: run.to_string(),
+            reason: "its stamp carries no unix time".to_string(),
+        };
+    };
+    RunRecord::Gate(GateRun {
+        run: run.to_string(),
+        stamp_s,
+        effect: effect.to_string(),
+        verdict: result["verdict"].as_str().unwrap_or_default().to_string(),
+    })
+}
+
+fn rates(runs: &[&GateRun]) -> Value {
+    let share = |count: usize| {
+        if runs.is_empty() {
+            Value::Null
+        } else {
+            json!(count as f64 / runs.len() as f64)
+        }
+    };
+    let calibrated = runs.iter().filter(|run| run.effect == "calibrated").count();
+    let resets = runs.iter().filter(|run| run.effect == "resets").count();
+    let unconfirmed = runs
+        .iter()
+        .filter(|run| run.verdict == "unconfirmed_regression")
+        .count();
+    json!({
+        "runs": runs.len(),
+        "calibrated": calibrated,
+        "calibrated_share": share(calibrated),
+        "resets": resets,
+        "unconfirmed_regressions": unconfirmed,
+        "unconfirmed_regression_share": share(unconfirmed),
+        "first_stamp_s": runs.first().map(|run| run.stamp_s),
+        "last_stamp_s": runs.last().map(|run| run.stamp_s),
+        "span_days": runs.first().zip(runs.last()).map(|(first, last)| (last.stamp_s - first.stamp_s) as f64 / 86_400.0),
+    })
+}
+
+fn promotion_tally(records: &[RunRecord]) -> Value {
+    let mut gate: Vec<&GateRun> = records
+        .iter()
+        .filter_map(|record| match record {
+            RunRecord::Gate(run) => Some(run),
+            _ => None,
+        })
+        .collect();
+    gate.sort_by(|left, right| (left.stamp_s, &left.run).cmp(&(right.stamp_s, &right.run)));
+    let before_latest_window = |completed_s: u64| {
+        gate.iter().filter(|run| run.stamp_s > completed_s).count() >= PROMOTION_RUNS
+    };
+    let mut unknown = Vec::new();
+    let mut skipped = Vec::new();
+    for record in records {
+        match record {
+            RunRecord::Gate(_) => {}
+            RunRecord::Skipped { run, reason } => skipped.push(json!({"run": run, "reason": reason})),
+            RunRecord::Unknown { run, reason } => unknown.push(json!({"run": run, "reason": reason})),
+            RunRecord::Expired { run, completed_s: Some(completed_s) } if before_latest_window(*completed_s) => skipped.push(json!({
+                "run": run,
+                "reason": format!("its artifact expired, but it finished before the latest {PROMOTION_RUNS} counted runs, so it cannot change the decision"),
+            })),
+            RunRecord::Expired { run, .. } => unknown.push(json!({
+                "run": run,
+                "reason": format!("its artifact expired before it was downloaded, and it may fall within the latest {PROMOTION_RUNS} counted runs"),
+            })),
+        }
+    }
+    let streak_start = gate
+        .iter()
+        .rposition(|run| run.effect == "resets")
+        .map_or(0, |index| index + 1);
+    let latest = &gate[gate.len().saturating_sub(PROMOTION_RUNS)..];
+    let latest_rates = rates(latest);
+    let span = latest
+        .first()
+        .zip(latest.last())
+        .map_or(0, |(first, last)| last.stamp_s - first.stamp_s);
+    let needed_calibrated = (PROMOTION_CALIBRATED_SHARE * PROMOTION_RUNS as f64).ceil() as u64;
+    let calibrated = latest_rates["calibrated"].as_u64().unwrap_or(0);
+    let resets = latest_rates["resets"].as_u64().unwrap_or(0);
+    let mut quality_unmet = Vec::new();
+    if calibrated < needed_calibrated {
+        quality_unmet.push(format!(
+            "{calibrated} calibrated, {needed_calibrated} needed"
+        ));
+    }
+    if resets > 0 {
+        quality_unmet.push(format!(
+            "{resets} unconfirmed regression(s) reset the count"
+        ));
+    }
+    let mut unmet = Vec::new();
+    if latest.len() < PROMOTION_RUNS {
+        unmet.push(format!("{} of {PROMOTION_RUNS} runs", latest.len()));
+    }
+    if span < PROMOTION_SPAN.as_secs() {
+        unmet.push(format!(
+            "spanning {:.1} of {} days",
+            span as f64 / 86_400.0,
+            PROMOTION_SPAN.as_secs() / 86_400
+        ));
+    }
+    unmet.extend(quality_unmet.iter().cloned());
+    let decision = if !unknown.is_empty() {
+        "incomplete"
+    } else if latest.len() < PROMOTION_RUNS {
+        "pending"
+    } else if !quality_unmet.is_empty() {
+        "keep_consultative"
+    } else if span < PROMOTION_SPAN.as_secs() {
+        "pending"
+    } else {
+        "promote"
+    };
+    json!({
+        "suite": "paneflow-perf-ab-promotion",
+        "schema_version": AB_SCHEMA_VERSION,
+        "rule": {
+            "runs": PROMOTION_RUNS,
+            "minimum_span_days": PROMOTION_SPAN.as_secs() / 86_400,
+            "minimum_calibrated_share": PROMOTION_CALIBRATED_SHARE,
+            "counted": "runs whose promotion.effect is calibrated, uncalibrated or resets, in stamp order; resets restarts the consecutive count",
+            "skipped": "runs without result.json (base or head unavailable), with promotion.effect excluded, measured under an older schema, or expired after finishing before the latest counted runs",
+        },
+        "decision": decision,
+        "unmet": unmet,
+        "all_runs": rates(&gate),
+        "latest_runs": latest_rates,
+        "consecutive_since_last_reset": gate.len() - streak_start,
+        "runs": gate.iter().map(|run| json!({"run": run.run, "stamp_s": run.stamp_s, "effect": run.effect, "verdict": run.verdict})).collect::<Vec<_>>(),
+        "skipped": skipped,
+        "unknown": unknown,
+    })
+}
+
+fn promotion_markdown(tally: &Value) -> String {
+    let share = |value: &Value| {
+        value
+            .as_f64()
+            .map_or("n/a".to_string(), |share| format!("{:.0} %", share * 100.0))
+    };
+    let all = &tally["all_runs"];
+    let latest = &tally["latest_runs"];
+    let mut text = format!(
+        "## Real-time A/B promotion\n\nDecision: **{}**.\n\n| Window | Runs | Calibrated | Unconfirmed regressions | Resets | Span |\n|---|---|---|---|---|---|\n",
+        tally["decision"].as_str().unwrap_or_default()
+    );
+    for (name, window) in [("all counted runs", all), ("latest 30", latest)] {
+        text.push_str(&format!(
+            "| {name} | {} | {} | {} | {} | {:.1} days |\n",
+            window["runs"],
+            share(&window["calibrated_share"]),
+            share(&window["unconfirmed_regression_share"]),
+            window["resets"],
+            window["span_days"].as_f64().unwrap_or(0.0),
+        ));
+    }
+    text.push_str(&format!(
+        "\nConsecutive runs since the last reset: {}.\n",
+        tally["consecutive_since_last_reset"]
+    ));
+    let unmet: Vec<&str> = tally["unmet"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    if !unmet.is_empty() {
+        text.push_str(&format!("Unmet: {}.\n", unmet.join("; ")));
+    }
+    for (title, key) in [("Skipped", "skipped"), ("Unknown", "unknown")] {
+        let entries = tally[key].as_array().cloned().unwrap_or_default();
+        if !entries.is_empty() {
+            text.push_str(&format!("\n{title}:\n\n"));
+            for entry in entries {
+                text.push_str(&format!(
+                    "- {}: {}\n",
+                    entry["run"].as_str().unwrap_or_default(),
+                    entry["reason"].as_str().unwrap_or_default()
+                ));
+            }
+        }
+    }
+    text
+}
+
+#[test]
+#[ignore = "real-time promotion count; run through scripts/perf-ab-promotion.sh"]
+fn perf_ab_promotion() {
+    let dir = std::env::var_os("PANEFLOW_AB_PROMOTION_DIR")
+        .map(PathBuf::from)
+        .expect(
+            "PANEFLOW_AB_PROMOTION_DIR names the downloaded runs; run scripts/perf-ab-promotion.sh",
+        );
+    let runs = dir.join("runs");
+    let records: Vec<RunRecord> = std::fs::read_dir(&runs)
+        .unwrap_or_else(|error| panic!("{}: {error}", runs.display()))
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| classify_run(&entry.file_name().to_string_lossy(), &entry.path()))
+        .collect();
+    let tally = promotion_tally(&records);
+    write_document(&dir.join("promotion.json"), &tally);
+    let summary = promotion_markdown(&tally);
+    std::fs::write(dir.join("promotion.md"), &summary).unwrap();
+    print!("{summary}");
+    println!("report: {}", dir.join("promotion.json").display());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,6 +1374,165 @@ mod tests {
         );
     }
 
+    const DAY_S: u64 = 86_400;
+
+    fn gate_runs(effects: &[&str], spacing_s: u64) -> Vec<RunRecord> {
+        effects
+            .iter()
+            .enumerate()
+            .map(|(index, effect)| {
+                RunRecord::Gate(GateRun {
+                    run: format!("{}", 1000 + index),
+                    stamp_s: 1_790_000_000 + index as u64 * spacing_s,
+                    effect: effect.to_string(),
+                    verdict: if *effect == "resets" {
+                        "unconfirmed_regression"
+                    } else {
+                        "pass"
+                    }
+                    .to_string(),
+                })
+            })
+            .collect()
+    }
+
+    fn write_result(root: &Path, run: &str, schema: u64, effect: &str, stamp: &str) {
+        write_document(
+            &root.join(run).join("result.json"),
+            &json!({"schema_version": schema, "stamp": stamp, "verdict": "pass", "promotion": {"effect": effect}}),
+        );
+    }
+
+    #[test]
+    fn runs_with_an_unavailable_base_or_an_excluded_effect_never_enter_the_count() {
+        let root = tempfile::tempdir().unwrap();
+        let runs = root.path();
+        std::fs::create_dir_all(runs.join("base-unavailable")).unwrap();
+        std::fs::write(runs.join("base-unavailable/build-base.log"), "error").unwrap();
+        write_result(
+            runs,
+            "excluded",
+            AB_SCHEMA_VERSION,
+            "excluded",
+            "unix1790000000",
+        );
+        write_result(runs, "former-rule", 1, "calibrated", "unix1790000000");
+        std::fs::create_dir_all(runs.join("no-artifact")).unwrap();
+        std::fs::write(runs.join("no-artifact").join(NO_ARTIFACT_MARKER), "").unwrap();
+        write_result(
+            runs,
+            "counted-1",
+            AB_SCHEMA_VERSION,
+            "calibrated",
+            "unix1790000000",
+        );
+        write_result(
+            runs,
+            "counted-2",
+            AB_SCHEMA_VERSION,
+            "uncalibrated",
+            "unix1790086400",
+        );
+        let records: Vec<RunRecord> = [
+            "base-unavailable",
+            "excluded",
+            "former-rule",
+            "no-artifact",
+            "counted-1",
+            "counted-2",
+        ]
+        .iter()
+        .map(|run| classify_run(run, &runs.join(run)))
+        .collect();
+        let tally = promotion_tally(&records);
+        assert_eq!(tally["all_runs"]["runs"], 2);
+        assert_eq!(tally["all_runs"]["calibrated"], 1);
+        assert_eq!(tally["skipped"].as_array().unwrap().len(), 4);
+        assert!(
+            tally["skipped"][0]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("base or the head was unavailable")
+        );
+        assert_eq!(tally["decision"], "pending");
+    }
+
+    #[test]
+    fn an_expired_artifact_leaves_the_count_incomplete() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("old")).unwrap();
+        std::fs::write(root.path().join("old").join(EXPIRED_MARKER), "").unwrap();
+        let mut records = gate_runs(&["calibrated"; 30], DAY_S);
+        records.push(classify_run("old", &root.path().join("old")));
+        assert_eq!(promotion_tally(&records)["decision"], "incomplete");
+    }
+
+    #[test]
+    fn an_expired_artifact_older_than_the_latest_thirty_runs_is_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        let mut records = gate_runs(&["calibrated"; 30], DAY_S);
+        for (run, completed_s) in [("before", 1_789_999_999_u64), ("inside", 1_790_000_000)] {
+            std::fs::create_dir_all(root.path().join(run)).unwrap();
+            std::fs::write(
+                root.path().join(run).join(EXPIRED_MARKER),
+                format!("{completed_s}\n"),
+            )
+            .unwrap();
+        }
+        records.push(classify_run("before", &root.path().join("before")));
+        let tally = promotion_tally(&records);
+        assert_eq!(tally["decision"], "promote", "{tally}");
+        assert_eq!(tally["skipped"][0]["run"], "before");
+        records.push(classify_run("inside", &root.path().join("inside")));
+        let tally = promotion_tally(&records);
+        assert_eq!(tally["decision"], "incomplete", "{tally}");
+        assert_eq!(tally["unknown"][0]["run"], "inside");
+    }
+
+    #[test]
+    fn thirty_calibrated_runs_over_three_weeks_promote() {
+        let tally = promotion_tally(&gate_runs(&["calibrated"; 30], DAY_S));
+        assert_eq!(tally["decision"], "promote", "{tally}");
+        assert_eq!(tally["consecutive_since_last_reset"], 30);
+    }
+
+    #[test]
+    fn thirty_clean_runs_inside_three_weeks_keep_waiting() {
+        let tally = promotion_tally(&gate_runs(&["calibrated"; 30], DAY_S / 2));
+        assert_eq!(tally["decision"], "pending", "{tally}");
+    }
+
+    #[test]
+    fn ninety_percent_calibrated_is_the_floor() {
+        let mut effects = vec!["calibrated"; 27];
+        effects.extend(["uncalibrated"; 3]);
+        assert_eq!(
+            promotion_tally(&gate_runs(&effects, DAY_S))["decision"],
+            "promote"
+        );
+        effects[0] = "uncalibrated";
+        let tally = promotion_tally(&gate_runs(&effects, DAY_S));
+        assert_eq!(tally["decision"], "keep_consultative", "{tally}");
+        assert_eq!(tally["all_runs"]["calibrated_share"], json!(26.0 / 30.0));
+    }
+
+    #[test]
+    fn an_unconfirmed_regression_restarts_the_count_and_keeps_it_consultative_at_thirty() {
+        let mut effects = vec!["calibrated"; 30];
+        effects[20] = "resets";
+        let tally = promotion_tally(&gate_runs(&effects, DAY_S));
+        assert_eq!(tally["decision"], "keep_consultative", "{tally}");
+        assert_eq!(tally["consecutive_since_last_reset"], 9);
+        assert_eq!(tally["all_runs"]["unconfirmed_regressions"], 1);
+        let mut longer = effects.clone();
+        longer.extend(["calibrated"; 21]);
+        assert_eq!(
+            promotion_tally(&gate_runs(&longer, DAY_S))["decision"],
+            "promote",
+            "thirty consecutive clean runs after the reset"
+        );
+    }
+
     #[test]
     fn the_ab_workflow_runs_in_shadow_on_hot_paths_nightly_and_on_demand() {
         let workflow = std::fs::read_to_string(
@@ -1137,6 +1581,10 @@ mod tests {
             "the cache restores the installed runner before the install step"
         );
         assert!(workflow.contains("scripts/perf-ab.sh"));
+        assert!(
+            workflow.contains("retention-days: 90"),
+            "every result.json of the three-week promotion window outlives its count"
+        );
         assert!(workflow.contains("extra-packages: valgrind"));
         assert!(workflow.contains("cargo install gungraun-runner --version \"$version\" --locked"));
         let release = std::fs::read_to_string(
