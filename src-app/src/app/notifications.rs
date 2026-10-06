@@ -12,7 +12,7 @@ use crate::app::constants::{
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
 use crate::ui_primitives::squircle::squircle_fill;
-use crate::ui_primitives::{ROW_RADIUS, dismiss_button, squircle_skin};
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
 const TOAST_QUEUE_LIMIT: usize = 5;
@@ -29,8 +29,6 @@ pub(crate) struct Toast {
     pub(crate) message: String,
     pub(crate) actions: Vec<ToastAction>,
     pub(crate) hold_ms: u64,
-    pub(crate) click_url: Option<String>,
-    pub(crate) persistent: bool,
 }
 
 impl Toast {
@@ -40,8 +38,6 @@ impl Toast {
             message,
             actions,
             hold_ms,
-            click_url: None,
-            persistent: false,
         }
     }
 
@@ -79,7 +75,7 @@ pub(crate) enum ToastAction {
 
 impl ToastAction {
     fn reports_failure(&self) -> bool {
-        !matches!(self, Self::ReopenTab(_))
+        !matches!(self, Self::ReopenTab(_) | Self::OpenReleaseNotes(_))
     }
 }
 
@@ -103,15 +99,10 @@ impl PaneFlowApp {
 
     pub(crate) fn show_release_notes_toast(&mut self, version: &str, cx: &mut Context<Self>) {
         let url = crate::update::release_notes::changelog_url(version);
-        self.enqueue_toast(
-            Toast {
-                id: next_toast_id(),
-                message: format!("Updated to Paneflow {version}"),
-                actions: vec![ToastAction::OpenReleaseNotes(url.clone())],
-                hold_ms: 0,
-                click_url: Some(url),
-                persistent: true,
-            },
+        self.push_toast(
+            format!("Updated to Paneflow {version}"),
+            vec![ToastAction::OpenReleaseNotes(url)],
+            TOAST_HOLD_MS * 4,
             cx,
         );
     }
@@ -156,10 +147,7 @@ impl PaneFlowApp {
         hold_ms: u64,
         cx: &mut Context<Self>,
     ) {
-        self.enqueue_toast(Toast::new(message, actions, hold_ms), cx);
-    }
-
-    fn enqueue_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        let toast = Toast::new(message, actions, hold_ms);
         if self.toast.is_some() {
             if queue_toast(&mut self.toast_queue, self.toast.as_ref(), toast) {
                 cx.notify();
@@ -171,14 +159,8 @@ impl PaneFlowApp {
 
     fn show_next_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         let total = TOAST_ENTER_MS + toast.hold_ms + TOAST_EXIT_MS;
-        let persistent = toast.persistent;
         self.toast = Some(toast);
         cx.notify();
-
-        if persistent {
-            self._toast_task = None;
-            return;
-        }
 
         self._toast_task = Some(cx.spawn(
             async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -209,13 +191,6 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let has_actions = !toast.actions.is_empty();
-        if toast
-            .actions
-            .iter()
-            .any(|action| matches!(action, ToastAction::OpenReleaseNotes(_)))
-        {
-            return self.render_release_toast(toast, ui, cx);
-        }
         let is_error = toast.actions.iter().any(ToastAction::reports_failure)
             || toast_message_reads_like_error(&toast.message);
         let max_w = if is_error || has_actions {
@@ -294,8 +269,12 @@ impl PaneFlowApp {
                         ToastAction::RetryUpdate => {
                             window.dispatch_action(Box::new(StartSelfUpdate), cx);
                         }
-                        ToastAction::OpenReleasesPage(url) | ToastAction::OpenReleaseNotes(url) => {
+                        ToastAction::OpenReleasesPage(url) => {
                             this.open_external_url(url.clone(), cx);
+                        }
+                        ToastAction::OpenReleaseNotes(url) => {
+                            this.open_external_url(url.clone(), cx);
+                            this.dismiss_toast(cx);
                         }
                         ToastAction::ReopenTab(tab_id) => {
                             this.reopen_closed_tab(*tab_id, window, cx);
@@ -311,7 +290,6 @@ impl PaneFlowApp {
         };
 
         let hold_ms = toast.hold_ms;
-        let click_url = toast.click_url.clone();
         let static_motion = toast_motion_is_static(cx);
         let toast_el = div()
             .id(SharedString::from(format!("copy-toast-{}", toast.id)))
@@ -325,12 +303,6 @@ impl PaneFlowApp {
             .overflow_hidden()
             .cursor(CursorStyle::Arrow)
             .child(squircle_fill(TOAST_RADIUS, ui.subtle))
-            .when_some(click_url, |el, url| {
-                el.cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_external_url(url.clone(), cx);
-                    }))
-            })
             .child(
                 div()
                     .flex()
@@ -365,140 +337,6 @@ impl PaneFlowApp {
                 .into_any_element()
         };
         deferred(toast_el).priority(2).into_any_element()
-    }
-}
-
-impl PaneFlowApp {
-    fn render_release_toast(
-        &self,
-        toast: &Toast,
-        ui: UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let is_light = ui.base.l > 0.5;
-        let shadow = vec![
-            gpui::BoxShadow::new(
-                px(0.),
-                px(2.),
-                gpui::hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
-            )
-            .blur_radius(px(3.)),
-            gpui::BoxShadow::new(
-                px(0.),
-                px(3.),
-                gpui::hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
-            )
-            .blur_radius(px(6.)),
-            gpui::BoxShadow::new(px(0.), px(6.), gpui::hsla(0., 0., 0., 0.04)).blur_radius(px(12.)),
-            gpui::BoxShadow::new(
-                px(0.),
-                px(1.),
-                gpui::hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
-            ),
-        ];
-
-        let resting_background = with_alpha(ui.text, 0.08);
-        let hover_background = with_alpha(ui.text, 0.12);
-        let action_url = toast.actions.iter().find_map(|action| match action {
-            ToastAction::OpenReleaseNotes(url) => Some(url.clone()),
-            _ => None,
-        });
-        let action = action_url.map(|url| {
-            squircle_skin(
-                div()
-                    .id("toast-release-notes")
-                    .flex_none()
-                    .h(px(26.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .cursor(CursorStyle::PointingHand)
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.text),
-                "toast-release-notes-squircle",
-                ROW_RADIUS,
-                Some(resting_background),
-                Some(hover_background),
-            )
-            .role(gpui::accesskit::Role::Button)
-            .aria_label("View release notes")
-            .child("View release notes")
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_external_url(url.clone(), cx);
-                this.dismiss_toast(cx);
-            }))
-        });
-
-        let close = dismiss_button(
-            "toast-release-close",
-            "Dismiss",
-            px(6.),
-            ui.muted,
-            ui.text,
-            with_alpha(ui.text, 0.08),
-        )
-        .cursor(CursorStyle::PointingHand)
-        .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx)));
-
-        let click_url = toast.click_url.clone();
-        deferred(
-            div()
-                .id(SharedString::from(format!("release-toast-{}", toast.id)))
-                .absolute()
-                .right(px(12.))
-                .bottom(px(12.))
-                .w(px(448.))
-                .flex()
-                .flex_col()
-                .items_start()
-                .gap(px(8.))
-                .p(px(12.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(with_alpha(ui.text, 0.10))
-                .bg(crate::theme::active_theme().title_bar_background)
-                .shadow(shadow)
-                .when_some(click_url, |el, url| {
-                    el.cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.open_external_url(url.clone(), cx);
-                            this.dismiss_toast(cx);
-                        }))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(16.))
-                        .w_full()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(px(14.))
-                                .text_color(ui.text)
-                                .child(toast.message.clone()),
-                        )
-                        .child(close),
-                )
-                .children(action)
-                .with_animations(
-                    SharedString::from(format!("release-toast-anim-{}", toast.id)),
-                    vec![
-                        Animation::new(std::time::Duration::from_millis(TOAST_ENTER_MS))
-                            .with_easing(ease_in_out),
-                    ],
-                    |toast_el, _stage, delta| {
-                        let lift = 8.0 * (1.0 - delta);
-                        toast_el.opacity(delta).bottom(px(12.0 + lift))
-                    },
-                ),
-        )
-        .priority(2)
-        .into_any_element()
     }
 }
 

@@ -106,9 +106,8 @@ Nerd Font as the default.
 2. Depth comes from the surface ramp (`base`, `surface`, `overlay`, `subtle`)
    and from inset cards with masked corners. Drop shadows were removed in
    0.5.4 and MUST NOT return on chrome outside the contextual Zed Editor
-   Controls menu in 5.4 and the release toast in 5.8; the other shadows are the
-   client-side window, the drag ghost, and the dialog card (`modal_card`)
-   over its scrim.
+   Controls menu in 5.4; the other shadows are the client-side window, the
+   drag ghost, and the dialog card (`modal_card`) over its scrim.
 3. One highlight material. Hovered, active, and selected states are alpha
    tints of one color per theme lightness, never a per-component fill.
 4. Every rounded surface takes its radius from section 4.4. New radii are not
@@ -300,9 +299,9 @@ to the surfaces named:
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
-| Release toast, composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
+| Composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Theme mockup inner frame | 7 | round | none |
-| Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner, 6 in the release toast | squircle | none |
+| Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner | squircle | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
 | Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
 | Icon button, composer chip | 4 | round | none |
@@ -334,7 +333,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Icon buttons | small 20 outer with 12 icon, medium 24 outer with 13 icon |
 | Toolbar pill | height 24, padding 8, gap 5 |
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
-| Toast | inset 18, padding 16 by 12, minimum width 220, action buttons 26 tall; the release toast is inset 12, padding 12, width 448, close button 20, action button 26 tall |
+| Toast | inset 18, padding 16 by 12, minimum width 220, action buttons 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
 | Diff | body inset 8 on the sides and bottom, row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
@@ -874,17 +873,10 @@ Every other target clones with git.
 Toasts stack bottom right on a squircle 20 of `subtle` with 12.5 px text and
 26 px squircle 14 action buttons at 12 px Medium on `text` at 0.08 to 0.12.
 A success toast carries no icon; error messages are detected
-and get the 15 px error icon. The release toast is **Contextual** and does not
-follow that shape: it is a Zed notification frame, 448 wide, inset 12,
-padding 12, gap 8, radius 8, a 1 px `text` hairline at 0.10 on the title bar
-color, the same fill as the sidebar, and Zed's four-layer elevation shadow. No
-icon, a 14 px `text` line reading `Updated to PaneFlow x.y.z`, a
-`dismiss_button` on its right (24 px, squircle 6, 10 px `muted` glyph rising
-to `text`, a `text` wash at 0.08 on hover), and one 26 px squircle button on `text` at 0.08 to 0.12. The button and
-the whole surface open `paneflow.dev/docs/changelog/<tag>`, then dismiss it.
-It lands 1500 ms after boot, once the window is painted, and it is the one
-toast that never auto-closes: only the close button, the surface click, or
-another toast in the queue removes it. Callouts (`widgets/callout.rs`) are 16
+and get the 15 px error icon. The release toast is an ordinary toast: the line
+`Updated to Paneflow x.y.z` and a `View release notes` action that opens
+`paneflow.dev/docs/changelog/<tag>` and dismisses it. It lands 1500 ms after
+boot, once the window is painted, and holds four times the default. Callouts (`widgets/callout.rs`) are 16
 px icon, 14
 Semibold title, 13 muted description, with the fixed warning hue. Empty states (`panel_empty_state`) center an 18 px
 muted glyph, an optional 14 Semibold title, and a 12 px muted message; the
@@ -1000,8 +992,8 @@ These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
 - Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
-  Editor Controls menu in 5.4 and the release toast in 5.8. The window, the
-  drag ghost, and the dialog card (`modal_card`) retain their shadows.
+  Editor Controls menu in 5.4. The window, the drag ghost, and the dialog card
+  (`modal_card`) retain their shadows.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns

@@ -8,6 +8,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Changed
 
 - **The insert-path picker searches anywhere, not only the working directory.** A query now also fuzzy-matches your home folder, the folders that hold your recent workspaces (a workspace in `C:\dev\app` brings in all of `C:\dev`), and Paneflow's worktrees, with matches from the working directory ranked first. Typing a folder then a fragment, such as `~/Downloads/shot`, searches everything below that folder instead of its direct entries only. Recent paths come back from any folder, and hidden files such as `.env` or `~/.zshrc` are found by name. Hidden folders, `.git`, `node_modules`, `AppData` on Windows, and `Library` on macOS are not searched inside unless you type their path. The index lives in memory while you use the picker, is released 10 minutes after the last use, and is cached in `~/.paneflow/cache/path-index.bin` so it answers right after a restart; a folder indexed more than 10 minutes ago is walked again in the background, one at a time. A keystroke over a million paths takes 12 to 24 ms instead of 200 to 280 ms, and the index holds them in 31 MB instead of 208 MB.
+- **The `Updated to Paneflow` toast looks like every other toast.** It drops its framed card, shadow, and close button for the standard toast with a `View release notes` action, and closes on its own after a few seconds.
 
 ## [0.17.5] - 2026-10-01
 
