@@ -1126,10 +1126,10 @@ mod tests {
         );
         assert_eq!(
             workflow
-                .matches("PERF_AB_INSTRUCTIONS_BLOCKING: \"")
+                .matches("PERF_AB_INSTRUCTIONS_BLOCKING: \"true\"")
                 .count(),
             1,
-            "the instruction verdict has its own workflow variable"
+            "the instruction verdict blocks behind its own workflow variable"
         );
         assert!(workflow.contains("instructions=$(cat target/perf-ab/instructions-verdict"));
         assert!(

@@ -35,7 +35,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   PERF_AB_BLOCKING: "false"
-  PERF_AB_INSTRUCTIONS_BLOCKING: "false"
+  PERF_AB_INSTRUCTIONS_BLOCKING: "true"
 
 jobs:
   ab:

@@ -271,11 +271,11 @@ artifact for 14 days.
 Two workflow variables decide what fails the job, and only an execution
 failure (exit 2 or 4) turns it red otherwise:
 
-- `PERF_AB_INSTRUCTIONS_BLOCKING`: an instruction regression fails the job.
-  Promotion criterion: 10 consecutive CI runs in which the counts were
+- `PERF_AB_INSTRUCTIONS_BLOCKING: "true"`: an instruction regression fails the
+  job. Promotion criterion: 10 consecutive CI runs in which the counts were
   measured and none flagged a regression on a pair whose benchmarked code did
-  not change. The promotion is one commit that sets the variable to `"true"`
-  and cites the 10 runs.
+  not change. It was met on 2026-10-06 by the runs below, and one commit set
+  the variable to `"true"`.
 - `PERF_AB_BLOCKING: "false"`: the real-time verdict stays in shadow mode, green
   whatever it says. An unavailable base or a twice uncalibrated run adds a
   warning. Its promotion is tracked by US-020 of the PRD.
@@ -296,6 +296,38 @@ missing measurement) and a run whose base was unavailable are not runs of the
 gate and are skipped. The promotion is one pull request that sets
 `PERF_AB_BLOCKING` to `"true"` and cites the 30 runs; from then on a confirmed
 regression fails the job.
+
+### Instruction promotion runs
+
+Ten `workflow_dispatch` runs on 2026-10-06, all started at 06:29 UTC on
+`ubuntu-24.04` with the comparator of `0f4b5995` as head. None of the bases
+changes the benchmarked code, so any instruction regression would have been a
+false positive. None occurred: the largest drift is 0.0037 % on the rules
+benchmark, about 540 times under the +2 % limit, and the parse benchmark
+never moved by a single instruction (119 529 927 `Ir` in every run).
+
+| Run | Base | Real-time verdict | `promotion.effect` | Rules `Ir` delta | Parse `Ir` delta | Duration |
+|---|---|---|---|---|---|---|
+| 37423974914 | `3e582a2d` | `uncalibrated` | `uncalibrated` | 0 % | 0 % | 49 min |
+| 37423980823 | `161f19ea` | `unconfirmed_regression` | `resets` | 0 % | 0 % | 45 min |
+| 37423986771 | `53ada3a6` | `pass` | `calibrated` | 0 % | 0 % | 33 min |
+| 37423992357 | `0f4b5995` | `pass` | `calibrated` | -0.0019 % | 0 % | 33 min |
+| 37423998405 | `0f4b5995` | `pass` | `calibrated` | -0.0019 % | 0 % | 33 min |
+| 37424003492 | `0f4b5995` | `pass` | `uncalibrated` | 0 % | 0 % | 50 min |
+| 37424009047 | `0f4b5995` | `unconfirmed_regression` | `resets` | 0 % | 0 % | 50 min |
+| 37424014354 | `0f4b5995` | `pass` | `calibrated` | -0.0037 % | 0 % | 33 min |
+| 37424020097 | `0f4b5995` | `pass` | `calibrated` | 0 % | 0 % | 33 min |
+| 37424026079 | `0f4b5995` | `pass` | `calibrated` | +0.0019 % | 0 % | 33 min |
+
+The same runs are the first evidence for US-020. Six of ten were calibrated
+passes. Two first attempts flagged a parasitic p95 regression on identical
+terminal code, `terminal.publish_echo_220x60` p95 +14.1 % and
+`terminal.layout_220x60` p95 +18.6 %, both with an A/A p95 inside 5 %; the
+second execution did not confirm either, so neither became a verdict, but each
+resets the real-time count. One run was uncalibrated on its first attempt only
+(`active.echo_round_trip` A/A p50 +6.6 %), and the run against `3e582a2d` was
+uncalibrated twice by terminal p50s drifting up to 10.9 %. A run with a rerun
+took 45 to 50 minutes, inside the 60 minute bound.
 
 ### Calibration evidence
 
