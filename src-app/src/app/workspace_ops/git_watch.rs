@@ -303,6 +303,55 @@ mod tests {
         assert!(git_dirs_changed_by(&event(renamed, "index.lock")).is_empty());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_real_probe_leaves_its_git_dir_unmarked_while_commit_and_switch_mark_it() {
+        use crate::git_fixture as fixture;
+        use notify::Watcher as _;
+
+        fn marked_dirs(
+            events: &std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+        ) -> Vec<std::path::PathBuf> {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut dirs = Vec::new();
+            while Instant::now() < deadline {
+                match events.recv_timeout(Duration::from_millis(400)) {
+                    Ok(Ok(event)) => dirs.extend(git_dirs_changed_by(&event)),
+                    Ok(Err(error)) => panic!("git watcher error: {error}"),
+                    Err(_) => break,
+                }
+            }
+            dirs
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("repo");
+        fixture::committed_repo(&root, &[("a.txt", "1\n")]);
+        let git_dir = root.join(".git");
+        let (tx, events) = std::sync::mpsc::channel();
+        let mut watcher = notify::recommended_watcher(tx).expect("git watcher");
+        watcher
+            .watch(&git_dir, notify::RecursiveMode::NonRecursive)
+            .expect("watch the git dir");
+        marked_dirs(&events);
+
+        std::fs::write(root.join("a.txt"), "2\n").expect("edit the work tree");
+        let probed = PaneFlowApp::probe_git_state(vec![root.to_string_lossy().into_owned()]);
+        assert!(
+            probed.iter().all(|(_, _, is_repo, _)| *is_repo),
+            "{probed:?}"
+        );
+        assert_eq!(marked_dirs(&events), Vec::<std::path::PathBuf>::new());
+
+        fixture::run(&root, &["add", "a.txt"]);
+        marked_dirs(&events);
+        fixture::run(&root, &["commit", "-q", "--no-verify", "-m", "two"]);
+        assert!(marked_dirs(&events).contains(&git_dir));
+
+        fixture::run(&root, &["switch", "-q", "-c", "topic"]);
+        assert!(marked_dirs(&events).contains(&git_dir));
+    }
+
     #[test]
     fn an_index_rewritten_nonstop_still_refreshes_within_two_seconds() {
         let start = Instant::now();
