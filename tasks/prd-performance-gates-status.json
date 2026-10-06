@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Comparer le temps réel par un A/B calibré dans le même job",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-005",
@@ -262,7 +262,7 @@
       "id": "US-015",
       "title": "Écrire le comparateur A/B base contre head, calibré par une cohorte A/A",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
@@ -270,33 +270,33 @@
       ],
       "started_at": "2026-10-05",
       "completed_at": "2026-10-05T23:18:39+02:00",
-      "reviewed_at": "2026-10-05T23:18:39+02:00"
+      "reviewed_at": "2026-10-06T10:03:46+02:00"
     },
     {
       "id": "US-016",
       "title": "Faire tourner l'A/B en mode ombre, puis le promouvoir en gate",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-015"
       ],
       "started_at": "2026-10-05",
-      "completed_at": null,
-      "reviewed_at": "2026-10-05T23:18:39+02:00"
+      "completed_at": "2026-10-06T10:03:46+02:00",
+      "reviewed_at": "2026-10-06T10:03:46+02:00"
     },
     {
       "id": "US-017",
       "title": "Valider l'hypothèse : comptage d'instructions par Gungraun sur un runner Linux",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-10-05",
-      "completed_at": null,
-      "reviewed_at": "2026-10-05T23:18:39+02:00"
+      "completed_at": "2026-10-06T10:03:46+02:00",
+      "reviewed_at": "2026-10-06T10:03:46+02:00"
     },
     {
       "id": "US-018",

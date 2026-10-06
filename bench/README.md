@@ -319,6 +319,14 @@ never moved by a single instruction (119 529 927 `Ir` in every run).
 | 37424020097 | `0f4b5995` | `pass` | `calibrated` | 0 % | 0 % | 33 min |
 | 37424026079 | `0f4b5995` | `pass` | `calibrated` | +0.0019 % | 0 % | 33 min |
 
+A seeded failure then proved the blocking path. Run 37430358545, dispatched
+after the promotion with base `0f4b5995` and a throwaway head that summed the
+screen bytes ten times per evaluation, failed the job with exit 1: the rules
+benchmark went from 2 517 984 to 2 803 309 `Ir` (+11.3 %), the parse benchmark
+stayed at 119 529 927, and the real-time verdict was a calibrated `pass`, so
+the instruction verdict alone turned the job red. The seed branch was deleted
+afterwards.
+
 The same runs are the first evidence for US-020. Six of ten were calibrated
 passes. Two first attempts flagged a parasitic p95 regression on identical
 terminal code, `terminal.publish_echo_220x60` p95 +14.1 % and
