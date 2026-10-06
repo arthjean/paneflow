@@ -846,9 +846,11 @@ lavapipe ICD, as the headless spike does.
 ## Real hardware protocol
 
 CI runners have no reliable GPU, so frame time, GPU load and the real cost of
-a release on a desktop are measured by hand on Arthur's machines, before every
-minor version (`docs/release/runbook.md`, Step 2) and whenever a change
-targets rendering. The protocol measures one running Paneflow, whatever its
+a release on a desktop are measured by hand on Arthur's machines, before a
+minor version that changes rendering (`docs/release/runbook.md`, Step 2).
+A run compares the build against the previous minor version in the states the
+change can move, usually `idle-4-panes` and `agent-thinking`: about five
+minutes. The protocol measures one running Paneflow, whatever its
 version, through `scripts/perf-hardware.sh` (Linux, macOS) or
 `scripts/perf-hardware.ps1` (Windows), which run the ignored test
 `hardware_protocol` of `crates/paneflow-host/tests/persistent_baseline.rs`
@@ -858,23 +860,23 @@ against the instance's own processes.
 
 | Platform | Session | GPU source | Frame time source |
 |---|---|---|---|
-| Fedora | Wayland (default session) | `nvidia-smi`, `intel_gpu_top`, or the amdgpu `gpu_busy_percent` file in sysfs (what `radeontop` reads), whichever the machine has; all are sampled once per second | a MangoHud log |
+| Fedora | Wayland (default session) | `nvidia-smi` and the amdgpu `gpu_busy_percent` file in sysfs (what `radeontop` reads), both sampled once per second | a MangoHud log |
 | Fedora | X11 | same | a MangoHud log |
 | Windows 11 | dual boot | the `GPU Engine` performance counter of the desktop process's 3D engines (`typeperf`, the counter Task Manager shows) | a PresentMon log |
-| macOS | if a machine is available | `powermetrics --samplers gpu_power` (needs `sudo`) | none |
+| macOS | not measured | no source wired | none |
 
 The result records the display backend the desktop actually uses, read from
 its environment on Linux: `wayland` when it has `WAYLAND_DISPLAY`, `x11` when
 it only has `DISPLAY`. For X11, log into an Xorg session where the desktop
 still offers one; on GNOME without Xorg, launch Paneflow with
 `env -u WAYLAND_DISPLAY`, which drives GPUI's X11 backend through XWayland, and
-say so in the summary. Without a Mac, macOS is recorded as not measured in the
-summary.
+say so in the summary. The sources are the ones Arthur's hardware has; an
+Intel GPU (`intel_gpu_top`) or a Mac (`powermetrics`) gets a source when such
+a machine joins the protocol, and until then its GPU load is `not_measured`.
 
-`nvidia-smi`, `intel_gpu_top` and the sysfs file report the whole device, not
-one process, so close every other GPU client (browser, video, other terminals'
-animations) before a run. `intel_gpu_top` needs root or `CAP_PERFMON`; run the
-script with the capability or accept its `not_measured`.
+`nvidia-smi` and the sysfs file report the whole device, not one process, so
+close every other GPU client (browser, video, other terminals' animations)
+before a run.
 
 ### Preparation
 
@@ -939,17 +941,16 @@ over the window:
 | `session`, `version`, `label`, `machine` | Display backend, `paneflow --version` of the measured binary, the label, and the machine identity. |
 
 A measurement that cannot be taken is written
-`{"not_measured": "<reason>"}`, never 0: a missing tool ("intel_gpu_top is
+`{"not_measured": "<reason>"}`, never 0: a missing tool ("nvidia-smi is
 unavailable: No such file or directory"), a version without counters
 ("system.counters failed: ... Method not found", every release before the
 EP-001 counters), a process the version does not have ("no paneflow host
 process was running"), or no frame log. The non-ignored test
 `hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero`
-pins every parser and that rule. Only the Linux sources `nvidia-smi` and
-amdgpu sysfs were exercised on a real machine when the protocol was written
-(Fedora 44, RTX 4070 Ti SUPER and Radeon 610M, against v0.17.5); the Windows
-`typeperf` and PresentMon parsing and the macOS `powermetrics` parsing are
-covered by those tests on recorded output only, until their first run.
+pins every parser and that rule. The Linux sources were exercised on a real
+machine when the protocol was written (Fedora 44, RTX 4070 Ti SUPER and Radeon
+610M, against v0.17.5); the Windows `typeperf` and PresentMon parsing is
+covered by those tests on recorded output only, until its first run.
 
 ### Summary and verdicts
 
@@ -970,10 +971,19 @@ with the reason:
 | Startup sleep on a stale socket | May 2026 | not this protocol: `scripts/bench-startup.sh`, scenario `stale_socket_` |
 | Per-session broadcasts | `610e6fc6` (unreleased) | `stream-4`: host and worker CPU, `main` before and after EP-002 |
 
-The first execution compares v0.15.1, v0.17.0, v0.17.1, v0.17.5 and `main`
-after EP-002 under Linux. It has not run yet: it needs Arthur's desktop
-session with every other instance quit, which an agent working inside
-Paneflow cannot provide.
+The first execution compares v0.17.5 and `main` after EP-002 under Fedora
+Wayland, in `idle-4-panes` and `agent-thinking`, which decide the tab badge
+and worker snapshot candidates; the host candidates are already decided by the
+counters of EP-002. It has not run yet: it needs Arthur's desktop session with
+every other instance quit, which an agent working inside Paneflow cannot
+provide.
+
+```bash
+scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
+scripts/perf-hardware.sh --state agent-thinking --label v0.17.5
+scripts/perf-hardware.sh --state idle-4-panes --label main-<sha>
+scripts/perf-hardware.sh --state agent-thinking --label main-<sha>
+```
 
 ## Terminal suite
 

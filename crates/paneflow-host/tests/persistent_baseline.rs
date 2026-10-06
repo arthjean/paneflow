@@ -803,10 +803,6 @@ fn hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero
     let nvidia = hardware::parse_nvidia_smi("0, 12\n1, 0\n0, 30\n0, [N/A]\n");
     assert_eq!(nvidia["nvidia-smi gpu0"], [12.0, 30.0]);
     assert_eq!(nvidia["nvidia-smi gpu1"], [0.0]);
-    let intel = "{\n\t\"engines\": {\n\t\t\"Render/3D/0\": {\n\t\t\t\"busy\": 7.25,\n\t\t\t\"sema\": 0.0\n\t\t},\n\t\t\"Blitter/0\": {\n\t\t\t\"busy\": 99.0\n\t\t}\n\t}\n}\n";
-    assert_eq!(hardware::parse_intel_gpu_top(intel), [7.25]);
-    let powermetrics = "**** GPU usage ****\n\nGPU HW active frequency: 389 MHz\nGPU HW active residency:  12.34% (389 MHz: 12%)\nGPU idle residency:  87.66%\n";
-    assert_eq!(hardware::parse_powermetrics(powermetrics), [12.34]);
     let typeperf = "\n\"(PDH-CSV 4.0)\",\"\\\\PC\\GPU Engine(pid_42_luid_0x0_0x1_phys_0_eng_0_engtype_3D)\\Utilization Percentage\",\"\\\\PC\\GPU Engine(pid_42_luid_0x0_0x1_phys_0_eng_3_engtype_Copy)\\Utilization Percentage\",\"\\\\PC\\GPU Engine(pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_3D)\\Utilization Percentage\"\n\"10/06/2026 10:00:00.000\",\"4.5\",\"50\",\"80\"\n\"10/06/2026 10:00:01.000\",\"1.5\",\"50\",\"80\"\nExiting, please wait...\n";
     assert_eq!(hardware::parse_typeperf(typeperf, 42), [4.5, 1.5]);
     assert!(hardware::parse_typeperf(typeperf, 9).is_empty());

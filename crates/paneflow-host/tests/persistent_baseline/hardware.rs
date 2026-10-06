@@ -1,8 +1,5 @@
 use super::*;
 
-use std::io::Read;
-use std::process::Stdio;
-
 use paneflow_host::work_counters::{
     CounterSample, DESKTOP_COUNTERS, HOST_COUNTERS, WORKER_COUNTERS,
 };
@@ -51,32 +48,6 @@ pub(super) fn parse_nvidia_smi(text: &str) -> BTreeMap<String, Vec<f64>> {
         }
     }
     devices
-}
-
-pub(super) fn parse_intel_gpu_top(text: &str) -> Vec<f64> {
-    let mut samples = Vec::new();
-    let mut in_render = false;
-    for line in text.lines() {
-        if line.contains("\"Render/3D") {
-            in_render = true;
-        } else if in_render && let Some(value) = line.trim().strip_prefix("\"busy\":") {
-            if let Ok(busy) = value.trim().trim_end_matches(',').parse::<f64>() {
-                samples.push(busy);
-            }
-            in_render = false;
-        }
-    }
-    samples
-}
-
-pub(super) fn parse_powermetrics(text: &str) -> Vec<f64> {
-    text.lines()
-        .filter(|line| line.contains("GPU") && line.contains("active residency"))
-        .filter_map(|line| {
-            let value = line.split(':').nth(1)?.trim();
-            value.split('%').next()?.trim().parse::<f64>().ok()
-        })
-        .collect()
 }
 
 fn csv_fields(line: &str) -> Vec<String> {
@@ -135,7 +106,11 @@ pub(super) fn parse_frame_log(text: &str) -> Result<Vec<f64>, String> {
         .collect())
 }
 
+#[cfg(any(target_os = "linux", windows))]
 fn run_for(program: &str, args: &[String], window: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+
     let mut child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -174,6 +149,7 @@ fn run_for(program: &str, args: &[String], window: Duration) -> Result<String, S
     }
 }
 
+#[cfg(any(target_os = "linux", windows))]
 fn source(samples: Result<Vec<f64>, String>) -> Value {
     match samples {
         Ok(samples) if samples.is_empty() => not_measured("the tool produced no sample"),
@@ -194,10 +170,6 @@ fn gpu_sources(_desktop_pid: u32, window: Duration) -> BTreeMap<String, Value> {
         ]
         .map(String::from);
         run_for("nvidia-smi", &args, window).map(|text| parse_nvidia_smi(&text))
-    });
-    let intel = std::thread::spawn(move || {
-        let args = ["-J", "-s", "1000"].map(String::from);
-        run_for("intel_gpu_top", &args, window).map(|text| parse_intel_gpu_top(&text))
     });
     let amd_cards: Vec<PathBuf> = std::fs::read_dir("/sys/class/drm")
         .into_iter()
@@ -239,14 +211,6 @@ fn gpu_sources(_desktop_pid: u32, window: Duration) -> BTreeMap<String, Value> {
             sources.insert("nvidia-smi".to_string(), not_measured(reason));
         }
     }
-    sources.insert(
-        "intel_gpu_top".to_string(),
-        source(
-            intel
-                .join()
-                .unwrap_or_else(|_| Err("the intel_gpu_top reader panicked".to_string())),
-        ),
-    );
     if amd_cards.is_empty() {
         sources.insert(
             "amdgpu gpu_busy_percent".to_string(),
@@ -276,19 +240,12 @@ fn gpu_sources(desktop_pid: u32, window: Duration) -> BTreeMap<String, Value> {
     )])
 }
 
-#[cfg(target_os = "macos")]
-fn gpu_sources(_desktop_pid: u32, window: Duration) -> BTreeMap<String, Value> {
-    let args = [
-        "--samplers".to_string(),
-        "gpu_power".to_string(),
-        "-i".to_string(),
-        "1000".to_string(),
-        "-n".to_string(),
-        window.as_secs().max(1).to_string(),
-    ];
-    let samples = run_for("powermetrics", &args, window + Duration::from_secs(15))
-        .map(|text| parse_powermetrics(&text));
-    BTreeMap::from([("powermetrics gpu_power".to_string(), source(samples))])
+#[cfg(not(any(target_os = "linux", windows)))]
+fn gpu_sources(_desktop_pid: u32, _window: Duration) -> BTreeMap<String, Value> {
+    BTreeMap::from([(
+        "gpu".to_string(),
+        not_measured("no GPU utilization source is wired for this platform"),
+    )])
 }
 
 fn frame_times() -> Value {

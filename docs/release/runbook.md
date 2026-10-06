@@ -104,10 +104,11 @@ because no gate in `release.yml` catches a performance regression:
     --jq '.jobs[] | select(.name == "Performance gates (Linux x86_64)") | .conclusion'
   ```
 
-- The real hardware protocol of [bench/README.md](../../bench/README.md#real-hardware-protocol)
-  has been run on this commit at least under Linux, its four
-  `bench/results/hardware-*` results are committed, and its summary names any
-  state that moved against the previous minor version.
+- When the version changes rendering (GPUI elements, animations, the sidebar,
+  tabs, the terminal painter), the real hardware protocol of
+  [bench/README.md](../../bench/README.md#real-hardware-protocol) has been run
+  on this commit under Linux against the previous minor version, and its
+  results and summary are committed.
 
 ```bash
 git tag -a "v$VERSION" -m "Release v$VERSION"
