@@ -59,6 +59,21 @@ and their CPU field read `windows-x86_64` instead of a model. They remain in
 git history (`git show 0a74eb30:bench/baseline.json`) and their raw results
 stay in `bench/results/`.
 
+Current state, 2026-10-06. `linux-x86_64` holds `terminal`, `editor` and
+`startup`, recorded on `9ecb73a6` on Arthur's Fedora 44 machine (Ryzen 7
+7800X3D, CPU share 0.99 and 1.00; the startup suite's stale socket step is
+0.2 ms), plus the two allocation baselines recorded on `acf739ca`, whose
+allocation columns match the previous ones exactly. `persistent` is not
+recorded yet: the first run on `acf739ca`
+([result](results/persistent-20261006T103639Z-acf739ca51a9.json)) failed
+`NFR-04.runtime_release` (one W05 batch never reported zero live runtimes)
+and `NFR-12.host_shutdown` (the host did not exit after an acknowledged
+shutdown), and its `--prior` rerun on `9ecb73a6`
+([result](results/persistent-20261006T104552Z-9ecb73a66619.json)) passed
+every threshold but keeps the first failure, so the script refused to make it
+a baseline. No `windows-x86_64` or `macos-aarch64` baseline exists yet; the
+Windows ones are recorded on the dual boot machine with the `.ps1` scripts.
+
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
