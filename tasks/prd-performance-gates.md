@@ -8,6 +8,7 @@
 | 1.0 | 2026-10-03 | Arthur Jean | PRD initial : instrumenter le travail des trois processus, corriger les sept régressions candidates relevées le 2026-10-03, puis verrouiller l'état corrigé par des gates déterministes en CI Linux, un A/B calibré, des baselines propres par plateforme et un protocole manuel sur matériel réel. 5 epics, 19 stories. |
 | 1.1 | 2026-10-03 | Arthur Jean | Les références à pf portent le préfixe `pf/`, défini une fois dans Research Findings avec les deux clones locaux (`/home/arthur/dev/pf` sous Linux, `C:/dev/pf` sous Windows) et le commit `4049d49` qui fixe les numéros de ligne. |
 | 1.2 | 2026-10-04 | Arthur Jean | US-006 : la latence p95 se mesure par l'aller-retour d'écho du scénario actif, car `terminal/perf_bench.rs` ne traverse pas le host et ne peut pas observer le thread de session. |
+| 1.3 | 2026-10-06 | Arthur Jean | EP-004 après revue et premier run CI de l'A/B (37369016686) : l'A/A ne borne plus que les p50, et un p95 n'est jugé que si son propre A/A tient, car les p95 dérivent jusqu'à 55 % sur un code identique. Les compteurs d'instructions, déterministes, deviennent bloquants par leur propre variable après 10 runs CI ; le benchmark de mise en page sort du périmètre d'US-017 (crate binaire sans cible lib). La promotion du temps réel, qui exige 30 runs sur 3 semaines, passe dans US-020 (EP-006). 6 epics, 20 stories. |
 
 ## Problem Statement
 
@@ -443,7 +444,7 @@ Transformer les compteurs et les allocations en budgets écrits dans le code, v�
 
 Mesurer le temps réel, CPU compris, sans dépendre d'un runner stable : construire base et head dans le même job et alterner les rounds. Une cohorte A/A doit valider le run, et le gate ne devient bloquant qu'après une période d'ombre sans échec parasite.
 
-**Definition of Done:** `scripts/perf-ab.sh` compare deux commits localement et en CI. Le workflow `perf-ab.yml` a tourné en mode ombre sur au moins 30 runs, et la décision de promotion est consignée dans `bench/README.md`. Le spike Gungraun a conclu.
+**Definition of Done:** `scripts/perf-ab.sh` compare deux commits localement et en CI. Le workflow `perf-ab.yml` tourne en mode ombre pour le temps réel, avec son critère de promotion écrit dans `bench/README.md` ; la promotion elle-même relève d'US-020. Le spike Gungraun a conclu, et les compteurs d'instructions bloquent le workflow après 10 runs CI consécutifs sans faux positif, cités dans `bench/README.md`.
 
 #### US-015: Écrire le comparateur A/B base contre head, calibré par une cohorte A/A
 **Description:** As a mainteneur, I want comparer le temps réel et le temps CPU de deux commits sur la même machine dans le même run so that un écart de plus de 10 % sur un chemin chaud soit détecté malgré le bruit d'un runner partagé.
@@ -455,8 +456,8 @@ Mesurer le temps réel, CPU compris, sans dépendre d'un runner stable : constru
 **Acceptance Criteria:**
 - [ ] `scripts/perf-ab.sh <base> <head>` (et `.ps1`) construit chaque commit dans un worktree détaché avec un `CARGO_TARGET_DIR` de scratch hors du dépôt, puis supprime ces répertoires à la fin, même en cas d'échec.
 - [ ] Il exécute la suite terminal et le scénario actif d'US-002 (host seul) en rounds alternés A, B, B, A, avec au moins 10 rounds et au moins 50 échantillons par artefact et par métrique, plus une cohorte A/A.
-- [ ] Une métrique régresse si le p50 ou le p95 de head dépasse celui de base de plus de 10 % (règle de pf, `pf/scripts/pgso/qualify.py:42,365-392`). Le temps CPU par thread nommé suit la même règle.
-- [ ] Le run est rejeté comme « non calibré » si la cohorte A/A montre un écart supérieur à 5 % sur une métrique.
+- [ ] Une métrique régresse si le p50 de head dépasse celui de base de plus de 10 %, ou son p95 quand ce p95 est jugé (règle de pf, `pf/scripts/pgso/qualify.py:42,365-392`). Le temps CPU par thread nommé suit la même règle.
+- [ ] Le run est rejeté comme « non calibré » si la cohorte A/A montre un écart supérieur à 5 % sur le p50 d'une métrique. Le p95 d'une métrique n'est jugé que si son propre écart A/A au p95 reste sous 5 % ; sinon la ligne l'indique « p95 non jugé ».
 - [ ] La sortie JSON donne pour chaque métrique les deux distributions, l'écart et le verdict, plus l'identité des deux commits et de la machine. Un résumé Markdown en est tiré.
 - [ ] Le comparateur refuse un arbre sale pour l'un des deux commits.
 - [ ] Échec : given un commit de base qui ne compile pas, when le script s'exécute, then il rapporte « base indisponible » avec l'erreur de compilation et sort avec un code distinct de celui d'une régression (test du script).
@@ -475,7 +476,7 @@ Mesurer le temps réel, CPU compris, sans dépendre d'un runner stable : constru
   - sur `workflow_dispatch`.
 - [ ] En mode ombre, le job publie son résumé dans `$GITHUB_STEP_SUMMARY` et reste vert quel que soit le verdict, sauf erreur d'exécution.
 - [ ] Le critère de promotion est écrit dans `bench/README.md` : 30 runs consécutifs sur au moins 3 semaines, cohorte A/A calibrée sur au moins 90 % d'entre eux, et aucun verdict de régression non confirmé par une seconde exécution.
-- [ ] La promotion se fait par une PR qui bascule une seule variable du workflow et cite les 30 runs.
+- [ ] Le workflow porte deux variables, `PERF_AB_BLOCKING` pour le temps réel et `PERF_AB_INSTRUCTIONS_BLOCKING` pour les instructions (US-017). Chacune se bascule par un seul commit qui cite ses runs ; celle du temps réel relève d'US-020.
 - [ ] Le workflow n'utilise pas `pull_request_target` et son cache a une clé préfixée `perf-ab-`.
 - [ ] Échec : given un run non calibré, when le job se termine, then il le signale comme tel, le relance une fois, et ne compte aucun des deux runs contre le critère de promotion.
 
@@ -487,9 +488,9 @@ Mesurer le temps réel, CPU compris, sans dépendre d'un runner stable : constru
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Un spike `workflow_dispatch` installe Valgrind 3.20 ou plus et un `gungraun-runner` de la même version que la bibliothèque, épinglée en 0.20.x. Il exécute trois benchmarks : parse et conversion d'un corpus de 1 MiB, mise en page 220x60, 20 règles sur un écran 200x60.
-- [ ] Critère de validation : le spike passe si les trois benchmarks s'exécutent avec libghostty lié statiquement, si deux runs du même commit donnent un nombre d'instructions identique à 0,1 % près, et si le job complet dure moins de 15 min.
-- [ ] Si le spike est validé, ces benchmarks rejoignent `perf-ab.yml` avec une limite douce de +2 % d'instructions contre la base construite dans le même job (`--save-baseline` puis `--baseline`). Ils suivent aussi le mode ombre d'US-016.
+- [ ] Un spike `workflow_dispatch` installe Valgrind 3.20 ou plus et un `gungraun-runner` de la même version que la bibliothèque, épinglée en 0.20.x. Il exécute deux benchmarks : parse et conversion d'un corpus de 1 MiB, 20 règles sur un écran 200x60. La mise en page 220x60 sort du périmètre : elle vit dans le crate binaire `paneflow-app`, sans cible lib qu'un benchmark puisse appeler, et y reviendra quand ce crate en aura une.
+- [ ] Critère de validation : le spike passe si les deux benchmarks s'exécutent avec libghostty lié statiquement, si deux runs du même commit donnent un nombre d'instructions identique à 0,1 % près, et si le job complet dure moins de 15 min.
+- [ ] Si le spike est validé, ces benchmarks rejoignent `perf-ab.yml` avec une limite douce de +2 % d'instructions contre la base construite dans le même job (`--save-baseline` puis `--baseline`). Ils ont leur propre variable, `PERF_AB_INSTRUCTIONS_BLOCKING`, basculée à `"true"` par un commit qui cite 10 runs CI consécutifs où les comptes ont été mesurés sans faux positif ; un verdict d'instructions est lu quel que soit le verdict temps réel.
 - [ ] La dépendance Gungraun est une dev-dependency d'une cible `[[bench]]`, absente des binaires livrés ; `cargo deny check` passe.
 - [ ] Échec : given Valgrind incapable d'exécuter le code de libghostty, when le spike tourne, then il conclut « non validé » avec l'erreur, sans ajouter de dépendance au dépôt.
 
@@ -544,6 +545,27 @@ Rendre les baselines comparables (une par plateforme, issues d'un arbre propre, 
 
 ---
 
+### EP-006: Promouvoir le temps réel après sa période d'ombre
+
+Laisser l'A/B temps réel accumuler ses runs d'ombre, puis trancher sur preuve : le promouvoir en gate, ou le garder consultatif avec les taux observés.
+
+**Definition of Done:** US-020 est tranchée : `PERF_AB_BLOCKING` est promu, ou la décision de garder le temps réel consultatif est consignée dans `bench/README.md` avec les taux de calibration et de régressions non confirmées.
+
+#### US-020: Promouvoir l'A/B temps réel après sa période d'ombre
+**Description:** As a mainteneur, I want que le verdict temps réel ne devienne bloquant qu'une fois son taux d'échec parasite prouvé nul so that le gate de temps réel ne finisse pas désactivé comme les gates bruités des autres projets.
+
+**Priority:** P2
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-016
+
+**Acceptance Criteria:**
+- [ ] Le décompte suit `promotion.effect` de chaque `result.json` : 30 runs consécutifs sur au moins 3 semaines, p50 A/A calibrés sur au moins 90 % d'entre eux, aucune régression non confirmée par une seconde exécution.
+- [ ] La promotion est une PR qui bascule `PERF_AB_BLOCKING` à `"true"`, met à jour le test du workflow et cite les 30 runs.
+- [ ] Si le critère n'est pas atteint au bout de 30 runs, la décision de garder le temps réel consultatif est consignée dans `bench/README.md`, avec les taux observés.
+- [ ] Échec : given un run dont la base est indisponible ou exclu faute de mesure, when le décompte est fait, then il n'y entre pas.
+
+---
+
 ## Functional Requirements
 
 - FR-01: Le host, le worker et le desktop doivent exposer des compteurs de travail monotones, nommés, accompagnés de l'identité du processus, par `host.status`, `worker.status` et `system.counters`.
@@ -555,7 +577,7 @@ Rendre les baselines comparables (une par plateforme, issues d'un arbre propre, 
 - FR-07: Une sonde git ne doit pas relancer la requête des filtres tant que les fichiers de config d'origine de ce dépôt n'ont pas changé, et la neutralisation des filtres ne doit jamais être sautée.
 - FR-08: Le démarrage du desktop ne doit pas dormir sur le thread GPUI pour détecter une instance existante.
 - FR-09: Le job `perf_gates` doit échouer quand un budget est dépassé ou qu'une mesure manque, avec une ligne par budget et une commande de reproduction.
-- FR-10: Le comparateur A/B doit rejeter un run dont la cohorte A/A n'est pas calibrée, et ne jamais rendre un verdict de régression sans les deux distributions.
+- FR-10: Le comparateur A/B doit rejeter un run dont un p50 de la cohorte A/A n'est pas calibré, ne juger un p95 que si son propre A/A tient, et ne jamais rendre un verdict de régression sans les deux distributions.
 - FR-11: Une baseline ne doit jamais être écrite depuis un arbre sale ni comparée à une mesure d'une autre plateforme.
 - FR-12: Aucun workflow de performance ne doit se déclencher sur `pull_request_target`, ni partager une clé de cache avec `release.yml`.
 
@@ -657,7 +679,7 @@ Frame as questions for engineering input, not mandates:
 | Contrôles de performance qui peuvent bloquer une fusion | 2 (taille des binaires d'aide, stress PTY) | ≥ 15 budgets | Month-1 | Job `perf_gates` |
 | Échecs parasites des gates déterministes | N/A (new) | 0 sur 30 runs | Month-1 | Historique du job `perf_gates` |
 | Baselines propres de la plateforme courante | 0 sur 4 (Windows, sales ou anciennes) | 4 sur 4 sous Linux et Windows | Month-6 | Test de cohérence d'US-018 |
-| Gate A/B bloquant | N/A (new) | Promu après 30 runs calibrés | Month-6 | `bench/README.md`, historique de `perf-ab.yml` |
+| Gate A/B bloquant | N/A (new) | Instructions promues après 10 runs sans faux positif (EP-004) ; temps réel promu après 30 runs calibrés (US-020) | Month-6 | `bench/README.md`, historique de `perf-ab.yml` |
 
 ## Open Questions
 
