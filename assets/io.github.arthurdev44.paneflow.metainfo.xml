@@ -64,6 +64,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.17.6" date="2026-10-06">
+      <description>
+        <p>An agent release. A conversation that was running when its session host went away reopens in its pane on the next launch, agent status comes from declared screen rules and the hooks each agent really provides, and agents can message each other once you allow the pair.</p>
+        <ul>
+          <li>Claude Code agent teams open their teammates in Paneflow panes on Linux and macOS</li>
+          <li>OpenCode, Pi, and Hermes Agent report working, idle, and blocked from their screens</li>
+          <li>The insert-path picker searches your home folder, recent workspace folders, and worktrees</li>
+          <li>Lower CPU while an agent is thinking, and quit no longer hangs on a recycled process id</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.5" date="2026-10-01">
       <description>
         <p>A hardening release. Unsaved editor changes are no longer lost when you close a tab or quit, removing a worktree no longer deletes uncommitted files that git status hid, and background git checks no longer run a repository's hooks or filters. It also adds an insert-path picker, image paste for agents, and an Interface style setting with transparency on Linux.</p>

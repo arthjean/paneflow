@@ -5,10 +5,83 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.6] - 2026-10-06
+
+Paneflow 0.17.6 reworks how it works with coding agents. A conversation that was running when its session host went away, after a reboot or a forced stop, reopens in its pane on the next launch. Agent status comes from declared, testable screen rules and from the hooks each runtime really provides, so a pane no longer reads as idle while its agent waits on a menu. Agents can message each other through the MCP bridge once you allow the pair, and Claude Code agent teams open their teammates in Paneflow panes on Linux and macOS. The release also cuts idle and thinking costs: with an agent thinking, the desktop used 2.79% of a core instead of 25.04% in v0.17.5 on the same Linux machine.
+
+### Upgrade notes
+
+- **Conversations reopen after the host is lost.** With the new `agents.restore_conversations` key at its default `true`, a restored pane whose session did not survive types the agent's resume command into a fresh shell, for example `claude --resume <id>`. Set `"agents": {"restore_conversations": false}` to only reopen the shell. Conversations are recorded from now on, so a `session.json` written by 0.17.5 has none to reopen.
+- **Paneflow now downloads signed screen rules.** The session host fetches a minisign-signed rule catalog from the Paneflow GitHub releases one minute after it starts, then daily, and within the hour when GitHub cannot be reached. A catalog applies only when its signature verifies against the key built into Paneflow and its version is newer than the cached one; it is cached in `~/.paneflow/cache/screen-catalog/`. Set `"agents": {"remote_screen_catalog": false}` to keep the built-in rules only.
+- **Menu attention follows each agent's rules.** A menu on screen used to raise attention in any pane. It now does so only for agents with screen rules: Claude Code, Codex, Gemini, OpenCode, Pi, Hermes Agent, and fx. A plain shell running `npm init` no longer lights the pane, and neither do other agents' menus. A local `~/.paneflow/runtimes/<slug>/screen.toml` can add rules for another runtime.
+- **`paneflow send` refuses to type into a waiting agent.** When the target agent waits for a decision, or no longer runs in the foreground, `send` writes nothing and exits 3 with a message naming the reason. `--force` writes anyway and is logged.
+- **`paneflow send --submit` reports what happened.** A start is confirmed only by an agent state transition, within 5 s instead of 3 s. The reply carries `delivered`, `started` (`true`, `false`, or `null`), `reason` (`state_transition`, `no_state_transition`, or `no_signal`), and `state`. `reason` replaces `start_reason` and its values `hook_state_changed`, `output_generation_changed`, and `no_hook_state_or_output_confirmation`. An unconfirmed start prints the JSON report and exits 1, where it used to raise an error with no JSON.
+- **Writes from a pane stay in its workspace.** `paneflow send`, `paneflow key`, and the `send` steps of `paneflow flow run` started inside a pane refuse a target in another workspace. Pass `--scope all`, which needs `PANEFLOW_IPC_ORCHESTRATION=1`, to cross workspaces. Scripts started outside any pane keep the whole instance.
+- **The session host gates headless clients.** A client that is not the Paneflow window, such as the CLI with no window open, the MCP bridge, or a socket script, needs `PANEFLOW_IPC_SCRIPTING=1` for host `session.input`, and `PANEFLOW_IPC_ORCHESTRATION=1` for a `session.create` that carries a command, prompt, shell, arguments, or environment. `"ai_unrestricted": true` grants both.
+- **`paneflow mcp install --force-dev` is now `--force`.** `--force-dev` fails with exit 2. A debug build no longer needs a flag for a fresh install. When an existing hook or MCP entry belongs to another Paneflow home that is still installed, `paneflow mcp install`, `paneflow integrations install <runtime>`, and the Settings install buttons refuse and name both homes; `--force` on the CLI takes the entry over. Entries of a removed home are taken over silently.
+- **Agent status fields.** Host replies no longer contain `state: "unknown"`, `reason`, or `reduced_by`; `paneflow status` prints `no state` instead of `unknown`. `output_generation` is the real counter or absent, where it was always `0`, and `hooked` is true only for Claude Code and Codex in their current launch. A new `state_seq` counts state transitions.
+- **Hook integrations match what each runtime provides.** CodeBuddy, Cursor Agent, Grok, Hermes Agent, Muse Code, OpenCode, Qoder, and Gemini no longer count as hook-driven; their status comes from their screen or their output. A hook that names no tool now takes the pane's detected agent instead of defaulting to Claude Code, and is refused when the pane has none.
+- **Inactive windows.** A terminal in a Paneflow window that is not the active window now counts as unfocused: its cursor is hidden, programs using focus reporting receive focus-out, and OSC 52 clipboard writes from it are dropped until you return to the window.
+- **The MCP bridge can write, with your approval.** Agents that already have the bridge registered see a fourth tool, `write_pane`, without reinstalling. Nothing is written until you allow that pair of agents in Paneflow.
+
+### Added
+
+- **Conversation restore.** A pane records the agent conversation it runs from the agent's `SessionStart` hook, and forgets it when the agent ends or the pane returns to its shell prompt. When the pane's session is missing, lost, replaced, or exited with an error on the next launch, Paneflow opens a shell in the recorded folder (your home folder when it is gone), waits for 300 ms of quiet output (5 s at most), clears the line, and types the resume command. Panes resume in order, at least 250 ms apart. Claude Code resumes with `claude --resume <id>`, Codex with `codex -c check_for_update_on_startup=false resume <id>`, and fx with `fx --continue`. A banner at the top of the pane reports what could not resume:
+  - `Conversation already resumed in pane N of <workspace>` when the same conversation was restored in several panes; only the first resumes.
+  - `Input was typed before the conversation could be resumed`, with `Resume conversation`.
+  - `Folder not found: <path>`.
+  - `Resume failed: <reason>` when the agent prints its "no conversation found" message or exits with an error within 15 s, with `New session`.
+  - `Several fx panes share this folder, so none resumed on its own`, with `Resume conversation`.
+- **Fork conversation.** `Fork conversation` in the pane context menu and the command palette opens a branch of the current Claude Code or Codex conversation in a split to the right (`claude --resume <id> --fork-session`, `codex fork <id>`). New bindable actions with no default shortcut: `fork_conversation`, `accept_conversation_notice`, and `dismiss_conversation_notice`.
+- **`agents.claude_preassign_session_id`** (default `false`). When on, the Claude Code shim starts a fresh interactive `claude` with `--session-id <uuid>`, so the pane knows its conversation before the first hook.
+- **Agent-to-agent messages.** The MCP bridge's new `write_pane` tool takes `target`, `text` (16 KiB at most), and `submit`. The first write from one agent to another shows `<source> wants to write into this pane` in the target pane, in the Attention Queue (`A` allows, `D` denies), and in the command palette, with `Allow for this agent session` and `Deny`. An approval lasts until either agent exits or relaunches, an unanswered request expires after 120 s, and writes are limited to a burst of 3 then 1 per second per pair. The text is relayed as a paste, stripped of control characters, and prefixed with `[Paneflow: message from <name>, surface <N>]`. An agent cannot write into its own pane or into an agent waiting for a decision. New host methods `pane.write`, `approval.follow`, and `approval.decide`; only the Paneflow window can follow or decide approvals.
+- **Claude Code agent teams in panes (Linux and macOS).** The launcher's new `Claude Code (team)` entry runs `claude --teammate-mode tmux` with agent teams enabled. Each teammate opens in its own Paneflow pane, named by the team and closed when the team ends it, through a tmux shim at `~/.paneflow/bin/tmux-compat/tmux` that only that agent sees. A team holds at most 64 panes, closing the lead's pane releases its teammates as ordinary panes, and the team cannot close the lead. New IPC method `tmux.compat`.
+- **Screen rules.** Each agent's working, idle, and blocked states come from `runtimes/<slug>/screen.toml` rules with a priority, a screen region, and regular expressions. A local `~/.paneflow/runtimes/<slug>/screen.toml` replaces, disables, or adds rules by id and applies within a second; an invalid file keeps the previous rules. A source holds at most 256 rules and 64 patterns per condition. OpenCode, Pi, and Hermes Agent now report working, idle, and blocked from their screens, and Gemini's API key entry box reads as blocked.
+- **`paneflow agent capture <target> --state working|idle|blocked [--out DIR]`** saves the agent's screen, by default under `~/.paneflow/cache/captures/<slug>/`, and **`paneflow agent explain <target> [--json]`** shows every rule that applies to the pane, which one won, and where each came from.
+- **fx (Linux and macOS).** fx is a new agent runtime, recognized only when its pane title starts with `fx v`, with a launcher button (`fx_button_visible`), screen rules, a bell that raises attention, and an MCP entry in `~/.fx/mcp.json`.
+- **Conductor skill.** `paneflow integrations install claude-code`, and Install hooks in Settings > Agents, also install the `paneflow-conductor` skill in `~/.claude/skills/` (or under `CLAUDE_CONFIG_DIR`). A copy you edited is kept, and removing the integration deletes it only when unmodified.
+- **The terminal bell raises attention** for agents without full hooks, at most once every 2 s. Your next keystroke clears it.
+- **A failed agent turn raises attention.** A Claude Code `StopFailure` hook now marks the pane with `failed:<error>` and a needs-input notification, where the pane quietly went idle.
+- **`paneflow wait --idle` follows an agent's turn** for agents with hooks or screen rules: it returns on idle, attention, or blocked, at once when the agent already waits, and no longer needs a window.
+- **macOS microphone access.** Programs in a pane, such as voice input in a coding agent, can use the microphone after macOS asks: "Programs you run in PaneFlow, such as voice input in coding agents, may use the microphone." (#104)
+
 ### Changed
 
-- **The insert-path picker searches anywhere, not only the working directory.** A query now also fuzzy-matches your home folder, the folders that hold your recent workspaces (a workspace in `C:\dev\app` brings in all of `C:\dev`), and Paneflow's worktrees, with matches from the working directory ranked first. Typing a folder then a fragment, such as `~/Downloads/shot`, searches everything below that folder instead of its direct entries only. Recent paths come back from any folder, and hidden files such as `.env` or `~/.zshrc` are found by name. Hidden folders, `.git`, `node_modules`, `AppData` on Windows, and `Library` on macOS are not searched inside unless you type their path. The index lives in memory while you use the picker, is released 10 minutes after the last use, and is cached in `~/.paneflow/cache/path-index.bin` so it answers right after a restart; a folder indexed more than 10 minutes ago is walked again in the background, one at a time. A keystroke over a million paths takes 12 to 24 ms instead of 200 to 280 ms, and the index holds them in 31 MB instead of 208 MB.
-- **The `Updated to Paneflow` toast looks like every other toast.** It drops its framed card, shadow, and close button for the standard toast with a `View release notes` action, and closes on its own after a few seconds.
+- **The insert-path picker searches anywhere, not only the working directory.** A query also fuzzy-matches your home folder, the folders that hold your recent workspaces (a workspace in `C:\dev\app` brings in all of `C:\dev`), and Paneflow's worktrees, with matches from the working directory ranked first. Typing a folder then a fragment, such as `~/Downloads/shot`, searches everything below that folder. Recent paths come back from any folder, and hidden files such as `.env` or `~/.zshrc` are found by name. Hidden folders, `.git`, `node_modules`, `AppData` on Windows, and `Library` on macOS are not searched inside unless you type their path. The index is released from memory 10 minutes after the last use and cached in `~/.paneflow/cache/path-index.bin`; a folder indexed more than 10 minutes ago is walked again in the background. On a million paths, a keystroke takes 12 to 24 ms instead of 200 to 280 ms, and the index holds them in 31 MB instead of 208 MB.
+- **The `Updated to Paneflow` toast is a standard toast.** It drops its framed card, shadow, and close button for a `View release notes` action, and closes on its own after about 6 seconds.
+- **Agent detection comes from the session host.** The tab badge and sidebar rows follow the agent the host observes in the pane's foreground, so agents without hooks, such as Amp, show as soon as they start, and a Codex pane has one sidebar row.
+- **Settings agent lists show your platform's agents.** On Windows, Settings > Agents and the profile agent picker list Claude Code, Codex, Amp, Gemini, and GitHub Copilot.
+- **Codex resumes and forks skip its update check** (`-c check_for_update_on_startup=false`), so an available Codex update no longer stalls a restore.
+- **Codex's "Hooks need review" and "Update available" menus read as blocked**, so `paneflow send` no longer types into them.
+- **`paneflow mcp install` lists agents in launcher order**: Claude Code, Codex, OpenCode, Gemini.
+- **Symlinked agent config files are edited through the link** by the integration and MCP installers, where they were refused.
+- **Lower idle and thinking cost.** Measured on Linux against v0.17.5 with an agent thinking: desktop CPU 25.04% to 2.79% of a core, GPU 39% to 12%.
+  - Thinking spinners step on one shared clock, about 11 times a second, instead of redrawing the window at the display rate, and the cursor blink moves from 530 to 540 ms to land on the same steps.
+  - A window that is not active no longer redraws for the cursor blink.
+  - The session host lists processes once per 500 ms for all sessions instead of once per session, and reuses the foreground observation while it is unchanged.
+  - Agent snapshots are sent and applied only when they change, and IPC requests wake the app instead of a 50 ms poll.
+  - A sidebar diff-stat probe runs 3 git processes instead of 5, and the git watcher no longer reacts to its own probes.
+  - Agent hooks no longer queue behind each other's disk writes: with a 100 ms write latency, the slowest 5% of a 200-hook burst went from 20.9 s to 222 ms.
+- **On Linux and macOS, startup after a crash no longer waits about 140 ms** on the stale IPC socket.
+
+### Fixed
+
+- **Quit no longer hangs on a recycled process id.** When a process started in a pane exited and the system gave its id to another program, every stop ran to its deadline and quit reported a pending stop without closing. Fixed on Linux, macOS, and Windows; the program now holding the id is never signaled.
+- **Windows: `Ctrl+C` interrupts programs in a pane again** when the session host was started with `Ctrl+C` ignored.
+- **A pane keeps the name it was created with** when its program sets a terminal title, so it can still be targeted by that name.
+- **A shell left by an exited agent no longer runs that agent's screen rules**, so a menu in the shell no longer raises attention.
+- **Codex's memory consolidation session no longer replaces the conversation** recorded for a pane.
+- **The agent shim no longer skips a folder** that holds a stray `paneflow-ai-hook` beside the real agent CLI, which made the agent fail to start with exit 127.
+- **A prompt submitted before the agent was first detected keeps its turn.**
+- **Background integration refreshes use the home they belong to**, so an isolated `PANEFLOW_HOME` no longer refreshes integrations against another home.
+- **A pane whose shell exits while a child process still runs** reports Unverified instead of briefly showing Exited.
+- The legacy state migration says it copied its files, which it always did.
+
+### Security
+
+- Agents can write into another pane only after a human allows that pair in the Paneflow window; no CLI verb, MCP tool, or script can grant the approval.
+- The session host refuses input and command-launching session creation from clients other than the window unless scripting or orchestration is enabled, and logs each accepted control-client write without its content.
+- Remote screen rules apply only with a valid minisign signature from the key built into Paneflow.
 
 ## [0.17.5] - 2026-10-01
 
