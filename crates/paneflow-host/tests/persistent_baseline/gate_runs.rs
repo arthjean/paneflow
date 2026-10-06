@@ -235,12 +235,27 @@ pub(super) fn host_worker_active(
     scenario
 }
 
-const DESKTOP_NAMES: [&str; 4] = [
+const DESKTOP_NAMES: [&str; 5] = [
     "desktop.idle.root_renders",
     "desktop.idle.session_list_calls",
     "desktop.idle.host_agent_snapshots_applied",
+    "desktop.focused_idle.root_renders_per_s",
     "desktop.thinking.root_renders_per_s",
 ];
+
+fn focused_idle_renders(
+    focus: &Result<(), String>,
+    renders: Measurement,
+    window_s: f64,
+) -> Measurement {
+    match (focus, renders) {
+        (Err(reason), _) => Measurement::Missing(reason.clone()),
+        (Ok(()), Measurement::Value(count)) if count <= 3.0 => Measurement::Missing(format!(
+            "the focused terminal never blinked: {count} root renders in the window"
+        )),
+        (Ok(()), renders) => per(renders, window_s),
+    }
+}
 
 fn desktop_window(desktop: &DesktopProcess, window: Duration) -> (Value, f64) {
     let before = active::desktop_counters(desktop);
@@ -285,6 +300,13 @@ pub(super) fn desktop_idle_and_thinking(
             ] {
                 values.insert(format!("desktop.idle.{name}"), counter(&idle, name));
             }
+            let focus = headless::focus_window(&desktop);
+            std::thread::sleep(SETTLE);
+            let (focused, focused_s) = desktop_window(&desktop, GATE_WINDOW);
+            values.insert(
+                "desktop.focused_idle.root_renders_per_s".to_string(),
+                focused_idle_renders(&focus, counter(&focused, "root_renders"), focused_s),
+            );
             let submitted = headless::submit_prompt(endpoint, &sessions[0]);
             std::thread::sleep(SETTLE);
             let (thinking, thinking_s) = desktop_window(&desktop, GATE_WINDOW);
@@ -306,6 +328,7 @@ pub(super) fn desktop_idle_and_thinking(
                 "panes": DESKTOP_PANES,
                 "settle_s": SETTLE.as_secs_f64(),
                 "idle": {"window_s": idle_s, "work_counters": idle},
+                "focused_idle": {"window_s": focused_s, "work_counters": focused, "focus": focus.err()},
                 "thinking": {"window_s": thinking_s, "work_counters": thinking, "prompt_submit": submitted},
             })
         }
@@ -362,15 +385,17 @@ pub(super) fn desktop_diff_stat(
     values: &mut Values,
 ) -> Value {
     let name = "desktop.diff_stat.git_spawns_per_probe";
+    let probes_name = "desktop.diff_stat.probes";
+    let names = [name, probes_name];
     let repository = home.join("diff-stat-repository");
     if let Err(reason) = committed_repository(&repository) {
-        values.insert(name.to_string(), Measurement::Missing(reason.clone()));
+        record_all(values, &names, &reason);
         return json!({"failed": reason});
     }
     let sessions = match open(client, ledger, &["idle"], 1) {
         Ok(sessions) => sessions,
         Err(reason) => {
-            values.insert(name.to_string(), Measurement::Missing(reason.clone()));
+            record_all(values, &names, &reason);
             return json!({"failed": reason});
         }
     };
@@ -379,7 +404,7 @@ pub(super) fn desktop_diff_stat(
             let reason = format!(
                 "the desktop did not start under the virtual display (display server or Vulkan adapter): {error}"
             );
-            values.insert(name.to_string(), Measurement::Missing(reason.clone()));
+            record_all(values, &names, &reason);
             json!({"failed": reason})
         }
         Ok(desktop) => {
@@ -387,6 +412,7 @@ pub(super) fn desktop_diff_stat(
             let (window, window_s) = desktop_window(&desktop, DIFF_STAT_WINDOW);
             let probes = counter(&window, "git_spawns.by_subcommand.diff");
             let spawns = counter(&window, "git_spawns.total");
+            values.insert(probes_name.to_string(), probes.clone());
             let measurement = match (probes, spawns) {
                 (Measurement::Value(0.0), _) => Measurement::Missing(format!(
                     "no diff-stat probe ran during the {window_s:.0} s window"
@@ -515,6 +541,23 @@ pub(super) fn allocations(inputs: &Path) -> Vec<Verdict> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_without_focus_or_blink_never_satisfies_the_focused_budget() {
+        let unfocused = Err("no visible X11 window belongs to the desktop pid 7".to_string());
+        assert_eq!(
+            focused_idle_renders(&unfocused, Measurement::Value(0.0), 30.0),
+            Measurement::Missing("no visible X11 window belongs to the desktop pid 7".to_string())
+        );
+        assert!(matches!(
+            focused_idle_renders(&Ok(()), Measurement::Value(2.0), 30.0),
+            Measurement::Missing(reason) if reason.contains("never blinked")
+        ));
+        assert_eq!(
+            focused_idle_renders(&Ok(()), Measurement::Value(56.0), 30.0),
+            Measurement::Value(56.0 / 30.0)
+        );
+    }
 
     #[test]
     fn a_pending_counter_or_an_invalidated_window_reads_as_missing() {

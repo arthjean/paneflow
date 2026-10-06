@@ -156,6 +156,38 @@ pub(super) fn submit_prompt(endpoint: &Path, session: &SessionId) -> Value {
         .unwrap_or_else(|error| json!({"error": error.to_string()}))
 }
 
+pub(super) fn focus_window(desktop: &DesktopProcess) -> Result<(), String> {
+    let xdotool = |args: &[&str]| -> Result<String, String> {
+        let output = Command::new("xdotool")
+            .args(args)
+            .output()
+            .map_err(|error| {
+                format!(
+                    "xdotool {}: {error}; the focused budgets need xdotool on the virtual display",
+                    args[0]
+                )
+            })?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let pid = desktop.child.id().to_string();
+    let found = xdotool(&["search", "--onlyvisible", "--pid", &pid])?;
+    let window = found
+        .lines()
+        .next()
+        .ok_or_else(|| format!("no visible X11 window belongs to the desktop pid {pid}"))?;
+    xdotool(&["windowfocus", window])?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if xdotool(&["getwindowfocus"])? == window {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!(
+        "the desktop window {window} did not take the X input focus within 5 s"
+    ))
+}
+
 pub(super) fn measure_state(desktop: &DesktopProcess, runs: usize, window: Duration) -> Value {
     let windows = spike_windows(|| active::desktop_counters(desktop), runs, window);
     json!({

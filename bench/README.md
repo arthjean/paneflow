@@ -92,7 +92,7 @@ It runs on every `pull_request` and every `push` to `main`, is part of
 `tests_pass`, and reproduces locally with one command:
 
 ```bash
-scripts/perf-gates.sh                           # needs Xvfb and Mesa lavapipe; XVFB=<path> overrides the Xvfb binary
+scripts/perf-gates.sh                           # needs Xvfb, xdotool and Mesa lavapipe; XVFB=<path> overrides the Xvfb binary
 scripts/perf-gates.sh --refresh-alloc-baselines # rewrites bench/baselines/linux-x86_64/{terminal,editor}-alloc.json; refused from a dirty tree
 ```
 
@@ -104,8 +104,11 @@ lavapipe ICD forced, then runs the ignored test `perf_gates` in
 `crates/paneflow-host/tests/persistent_baseline.rs`. That test drives the real
 host, worker and desktop through four scenarios: 8 idle sessions and 8
 `stream 16384 60` sessions for the host and the worker (30 s windows), then
-the desktop idle with 4 panes, with one agent thinking, and on a workspace
-whose git repository does not change (35 s window, one 30 s git poll). It
+the desktop idle with 4 panes, idle again once `xdotool` gives its window
+the X input focus (Xvfb runs no window manager, so the window is otherwise
+never active and its terminal never blinks), with one agent thinking in that
+focused window, and on a workspace whose git repository does not change
+(35 s window, one 30 s git poll). It
 reads the other suites' results from `target/perf-gates/` and judges every
 budget.
 
@@ -156,6 +159,20 @@ stamp and `persist` announced it again. The scan now announces a session once
 per tick: it skips the signals announcement when its own commit already
 announced. The rerun measured 1.97, and every other budget passed both runs
 (local evidence in `tasks/perf-gates-ep003/`, not tracked).
+
+The first real hardware run (2026-10-06) found two costs the gates could not
+see. The desktop ran a diff-stat probe about every 680 ms in a repository that
+did not change: `notify` 7 reports `IN_OPEN` on Linux, the git watcher took
+any event on `HEAD` or `index` as a change, and each probe opened both
+files, so it triggered the next one. The gate measured 15 probes in its 35 s
+window but only judged the 3 processes per probe. The watcher now ignores
+access events, and `desktop.diff_stat.probes` bounds the probe count. The
+second cost was the cursor blink: a focused window drew 1.85 root renders per
+second at rest and 13.0 while an agent thought, because the 530 ms blink and
+the 90 ms spinner drew separate frames. The blink now toggles every 540 ms on
+the spinner's own grid (`ui_primitives::animation_clock`), so its toggles
+land in spinner frames, and the gate measures the focused window
+(`desktop.focused_idle.root_renders_per_s`, then the thinking state).
 
 Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
 snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate

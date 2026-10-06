@@ -32,9 +32,15 @@ pub(super) const DESKTOP_IDLE: Scenario = Scenario {
     reproduce: "scripts/perf-gates.sh",
 };
 
+pub(super) const DESKTOP_FOCUSED_IDLE: Scenario = Scenario {
+    id: "desktop_focused_idle",
+    description: "the same desktop once xdotool gives its window the X input focus, so the focused terminal blinks, 30 s window",
+    reproduce: "scripts/perf-gates.sh",
+};
+
 pub(super) const DESKTOP_THINKING: Scenario = Scenario {
     id: "desktop_thinking",
-    description: "the same desktop with one agent thinking (sidebar spinner running), 30 s window",
+    description: "the same focused desktop with one agent thinking (sidebar spinner running, cursor blinking), 30 s window",
     reproduce: "scripts/perf-gates.sh",
 };
 
@@ -178,11 +184,25 @@ pub(super) const BUDGETS: &[Budget] = &[
         margin: "no margin: an unchanged snapshot is neither broadcast nor applied (US-008); measured 0",
     },
     Budget {
+        counter: "desktop.focused_idle.root_renders_per_s",
+        limit: Limit::AtMost(2.0),
+        unit: "renders per second",
+        scenario: &DESKTOP_FOCUSED_IDLE,
+        margin: "the cursor blink alone, one toggle per 540 ms (1.85 per second); measured 1.85 on a real focused window",
+    },
+    Budget {
         counter: "desktop.thinking.root_renders_per_s",
         limit: Limit::AtMost(12.0),
         unit: "renders per second",
         scenario: &DESKTOP_THINKING,
-        margin: "the PRD bound (FR-04); the spinner steps every 90 ms, measured 11.10 renders per second in both runs",
+        margin: "the PRD bound (FR-04); the spinner steps every 90 ms and the blink lands on its steps, so 11.1 per second; 13.0 when they drew separate frames",
+    },
+    Budget {
+        counter: "desktop.diff_stat.probes",
+        limit: Limit::AtMost(2.0),
+        unit: "diff-stat probes per window",
+        scenario: &DESKTOP_DIFF_STAT,
+        margin: "one 30 s poll, two if the window straddles it; 15 when each probe's own reads of HEAD and index triggered the next",
     },
     Budget {
         counter: "desktop.diff_stat.git_spawns_per_probe",
@@ -651,7 +671,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 18 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 20 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -672,7 +692,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("18 budgets, 2 failed, 0 not measured."),
+            summary.contains("20 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(
