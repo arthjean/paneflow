@@ -36,7 +36,7 @@ compositor included).
 |---|---|---|
 | Tab badges rebuilt every frame, driven by the sidebar spinner (v0.17.1) | Confirmed in v0.17.5, fixed on `main` | `agent-thinking`: desktop CPU 25.04 % to 2.79 % (9x), GPU p50 39 % to 12 % |
 | Worker snapshot every 2 s (v0.17.0) | Consistent with the fix, small at this scale | `idle-4-panes`: desktop CPU 0.99 % to 0.70 %; the decisive proof stays the US-008 counters |
-| Extra git config process per probe (v0.17.5) | Fixed on `main` | 279 git processes for 93 diff-stat probes: 3 per probe, down from 5 |
+| Extra git config process per probe (v0.17.5) | Fixed on `main` | 279 git processes for 93 diff-stat probes: 3 per probe and no `git config` on `main`; v0.17.5 has no counters, so its 5 per probe comes from the code (PRD, Problem Statement), not from this run |
 | Full process listing, viewport scan, per-session broadcasts | Not decided here | No pane prints in these two states; host CPU stays at 0.01 to 0.03 % in both builds; decided by the EP-002 counters |
 | Startup sleep on a stale socket | Not this protocol | `bench/baselines/linux-x86_64/startup.json`: `stale_socket_step_ipc_server_started` 0.2 ms |
 
