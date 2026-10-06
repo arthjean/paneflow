@@ -2,7 +2,7 @@ use super::*;
 
 use std::collections::BTreeSet;
 
-pub(super) const AB_SCHEMA_VERSION: u64 = 1;
+pub(super) const AB_SCHEMA_VERSION: u64 = 2;
 pub(super) const MAXIMUM_REGRESSION: f64 = 0.10;
 pub(super) const MAXIMUM_AA_DRIFT: f64 = 0.05;
 pub(super) const MINIMUM_SAMPLES: usize = 50;
@@ -139,7 +139,7 @@ fn perf_ab_active_samples() {
     let scenario = active::run_active_scenario(&mut client, &ledger, &plan, &processes);
     echo.finish(&mut client);
     let mut decisions = Vec::new();
-    shutdown_host(
+    let shutdown = shutdown_host(
         &mut decisions,
         client,
         &host_identity,
@@ -150,7 +150,10 @@ fn perf_ab_active_samples() {
     );
     let scenario = scenario.unwrap_or_else(|reason| panic!("the active scenario failed: {reason}"));
     if let Err(failures) = verdict(&decisions, &[]) {
-        panic!("host shutdown checks failed:\n{}", failures.join("\n"));
+        panic!(
+            "host shutdown checks failed:\n{}\nshutdown record: {shutdown}",
+            failures.join("\n")
+        );
     }
     let metrics = active_metrics(&scenario)
         .unwrap_or_else(|reason| panic!("the active scenario is incomplete: {reason}"));
@@ -350,8 +353,12 @@ fn compare_metric(name: &str, cohorts: &Cohorts) -> Value {
     let p95_change = change(base_d.p95, head_d.p95, floor);
     let aa_p50 = change(first.p50, last.p50, floor);
     let aa_p95 = change(first.p95, last.p95, floor);
-    let regression = head_d.p50.max(floor) > base_d.p50.max(floor) * (1.0 + MAXIMUM_REGRESSION)
-        || head_d.p95.max(floor) > base_d.p95.max(floor) * (1.0 + MAXIMUM_REGRESSION);
+    let p95_judged = aa_p95.abs() <= MAXIMUM_AA_DRIFT;
+    let exceeds = |control: f64, candidate: f64| {
+        candidate.max(floor) > control.max(floor) * (1.0 + MAXIMUM_REGRESSION)
+    };
+    let regression =
+        exceeds(base_d.p50, head_d.p50) || (p95_judged && exceeds(base_d.p95, head_d.p95));
     row["p50_change"] = json!(p50_change);
     row["p95_change"] = json!(p95_change);
     row["aa"] = json!({
@@ -360,7 +367,8 @@ fn compare_metric(name: &str, cohorts: &Cohorts) -> Value {
         "p50_change": aa_p50,
         "p95_change": aa_p95,
     });
-    row["calibrated"] = json!(aa_p50.abs() <= MAXIMUM_AA_DRIFT && aa_p95.abs() <= MAXIMUM_AA_DRIFT);
+    row["calibrated"] = json!(aa_p50.abs() <= MAXIMUM_AA_DRIFT);
+    row["p95_judged"] = json!(p95_judged);
     row["verdict"] = json!(if regression { "regression" } else { "pass" });
     row
 }
@@ -492,7 +500,7 @@ fn outcome(attempts: &[&str]) -> (&'static str, &'static str, &'static str) {
         ["uncalibrated", "uncalibrated"] | ["regression", "uncalibrated"] | ["uncalibrated"] => (
             "uncalibrated",
             "uncalibrated",
-            "the A/A cohort drifted more than 5 %, so the run is rejected",
+            "an A/A p50 drifted more than 5 %, so the run is rejected",
         ),
         _ => (
             "insufficient",
@@ -529,6 +537,7 @@ fn result_document(attempts: Vec<Value>) -> Value {
             "maximum_regression": MAXIMUM_REGRESSION,
             "maximum_aa_drift": MAXIMUM_AA_DRIFT,
             "aa_cohort": "the first base pass of every round against its last base pass",
+            "calibration": "the run is uncalibrated when any metric's A/A p50 drifts more than maximum_aa_drift; a metric's p95 is judged only when its own A/A p95 drift is within maximum_aa_drift",
             "batch_size_by_suite": BATCHES.iter().map(|(suite, size)| (suite.to_string(), json!(size))).collect::<serde_json::Map<_, _>>(),
             "resolution_by_unit": RESOLUTIONS.iter().map(|(unit, floor)| (unit.to_string(), json!(floor))).collect::<serde_json::Map<_, _>>(),
             "rerun": "a regression or an uncalibrated first execution is measured once more; only two calibrated regressions make a regression verdict",
@@ -565,14 +574,15 @@ fn verdict_rank(row: &Value) -> u8 {
         (Some("regression"), _) => 0,
         (_, Some(false)) => 1,
         (Some("insufficient"), _) => 2,
-        (Some("not_compared"), _) => 3,
-        _ => 4,
+        _ if row["p95_judged"] == false => 3,
+        (Some("not_compared"), _) => 4,
+        _ => 5,
     }
 }
 
 fn markdown(result: &Value) -> String {
     let mut text = format!(
-        "## Real-time A/B: {}\n\nBase {} against head {}, rounds ordered {}, rule: head p50 and p95 at most +{:.0} % over base, A/A drift at most {:.0} %.\n\nPromotion: **{}** ({}).\n\n",
+        "## Real-time A/B: {}\n\nBase {} against head {}, rounds ordered {}, rule: head p50, and p95 where its own A/A holds, at most +{:.0} % over base, A/A p50 drift at most {:.0} %.\n\nPromotion: **{}** ({}).\n\n",
         result["verdict"].as_str().unwrap_or("unknown"),
         short_commit(&result["base"]),
         short_commit(&result["head"]),
@@ -602,6 +612,9 @@ fn markdown(result: &Value) -> String {
         for row in rows {
             let verdict = match (row["verdict"].as_str(), row["calibrated"].as_bool()) {
                 (Some(verdict), Some(false)) => format!("{verdict}, uncalibrated"),
+                (Some(verdict), _) if row["p95_judged"] == false => {
+                    format!("{verdict}, p95 not judged")
+                }
                 (Some(verdict), _) => verdict.to_string(),
                 (None, _) => "unknown".to_string(),
             };
@@ -757,6 +770,40 @@ mod tests {
             &cohorts("ns", 1000.0, 1040.0, 1000.0, 60),
         );
         assert_eq!(calibrated["calibrated"], true);
+    }
+
+    #[test]
+    fn a_p95_whose_own_aa_drifts_is_not_judged_and_never_rejects_the_run() {
+        let inflate_tail = |samples: &mut Vec<f64>| {
+            for sample in samples.iter_mut().skip(90) {
+                *sample *= 1.5;
+            }
+        };
+        let mut noisy_tail = cohorts("ns", 1000.0, 1000.0, 1000.0, 100);
+        inflate_tail(&mut noisy_tail.last);
+        inflate_tail(&mut noisy_tail.head);
+        let noisy_tail = compare_metric("terminal.layout", &noisy_tail);
+        assert_eq!(noisy_tail["calibrated"], true, "{noisy_tail}");
+        assert_eq!(noisy_tail["p95_judged"], false, "{noisy_tail}");
+        assert_eq!(
+            noisy_tail["verdict"], "pass",
+            "a +50 % p95 is not judged when its own A/A p95 drifts: {noisy_tail}"
+        );
+        let mut slower = cohorts("ns", 1000.0, 1000.0, 1120.0, 100);
+        inflate_tail(&mut slower.last);
+        assert_eq!(
+            compare_metric("terminal.layout", &slower)["verdict"],
+            "regression",
+            "the p50 is still judged"
+        );
+        let (verdict, reasons) = attempt_verdict(
+            10,
+            &[
+                noisy_tail,
+                compare_metric("active.cpu.total", &cohorts("ms/s", 50.0, 50.0, 50.0, 60)),
+            ],
+        );
+        assert_eq!((verdict, reasons), ("pass", Vec::new()));
     }
 
     #[test]
@@ -1075,7 +1122,19 @@ mod tests {
         assert_eq!(
             workflow.matches("PERF_AB_BLOCKING: \"false\"").count(),
             1,
-            "shadow mode is one workflow variable"
+            "the real-time verdict stays in shadow behind one workflow variable"
+        );
+        assert_eq!(
+            workflow
+                .matches("PERF_AB_INSTRUCTIONS_BLOCKING: \"")
+                .count(),
+            1,
+            "the instruction verdict has its own workflow variable"
+        );
+        assert!(workflow.contains("instructions=$(cat target/perf-ab/instructions-verdict"));
+        assert!(
+            workflow.find("Swatinem/rust-cache") < workflow.find("cargo install gungraun-runner"),
+            "the cache restores the installed runner before the install step"
         );
         assert!(workflow.contains("scripts/perf-ab.sh"));
         assert!(workflow.contains("extra-packages: valgrind"));

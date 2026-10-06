@@ -159,12 +159,15 @@ by at most 0.6 % between the two base passes but their p95 by up to 57 %, one
 preempted iteration being enough to set a pooled tail. The comparator
 (`ab::perf_ab_compare`) pools each cohort and applies the rule
 of pf (`pf/scripts/pgso/qualify.py:42,365-392`), nearest-rank percentiles: a
-metric regresses when the head's p50 or p95 exceeds the base's by more than
-10 %. The A/A cohort is the first base pass of every round against its last
-base pass, measured interleaved with the head, so it sees the same neighbors
-and the same thermal drift; a separate A/A pass would not fit the 60 minute
-budget. The run is rejected as uncalibrated when any metric's A/A p50 or p95
-moves by more than 5 %. Every cohort needs at least 50 samples, and a run at
+metric regresses when the head's p50 exceeds the base's by more than 10 %, or
+its p95 does where that p95 is judged. The A/A cohort is the first base pass of
+every round against its last base pass, measured interleaved with the head, so
+it sees the same neighbors and the same thermal drift; a separate A/A pass
+would not fit the 60 minute budget. The run is rejected as uncalibrated when
+any metric's A/A p50 moves by more than 5 %. A metric's p95 is judged only when
+its own A/A p95 moves by at most 5 %; otherwise the row reads `p95 not judged`
+and only its p50 decides, because one preempted batch on a shared runner sets a
+pooled tail (see the evidence below). Every cohort needs at least 50 samples, and a run at
 least 10 rounds; below that, or when a suite compares no metric, the verdict
 is `insufficient`, never a pass. A value under the measurement resolution of
 its unit is compared at that resolution, so an idle thread that wakes once is
@@ -211,10 +214,12 @@ on a 200x60 screen) and `paneflow-terminal-ghostty` (parse and conversion of a
 Gungraun baseline (`--save-baseline=base`) in the scratch directory, and the
 head is compared against it (`--baseline=base`) with a soft limit of +2 %.
 Instruction counts are deterministic, so one execution is a verdict: a
-benchmark above the limit turns a timed `pass` or `unconfirmed_regression` into
-exit 1, in shadow mode like the rest. The layout pass is not counted: it lives
+benchmark above the limit writes `regression` to `instructions-verdict` and
+turns a timed `pass` or `unconfirmed_regression` into exit 1. The workflow
+reads that file whatever the timed outcome, so an uncalibrated run or an
+unavailable slot never hides an instruction regression. The layout pass is not counted: it lives
 in the `paneflow-app` binary crate, which has no library target a benchmark
-could call.
+could call, and the PRD keeps it out of scope until that crate gains one.
 
 The counts need Valgrind and a `gungraun-runner` of the same version as the
 `gungraun` library in `Cargo.lock` (`cargo install gungraun-runner --version
@@ -263,17 +268,28 @@ optional base and head. It triggers on `pull_request`, never
 `$GITHUB_STEP_SUMMARY` and `target/perf-ab/` is uploaded as the `perf-ab`
 artifact for 14 days.
 
-The job runs in shadow mode: `PERF_AB_BLOCKING: "false"` keeps it green
-whatever the verdict, and only an execution failure (exit 2 or 4) turns it
-red. An unavailable base or a twice uncalibrated run adds a warning. The
-nightly run reports the base unavailable until a release carries the sample
-export.
+Two workflow variables decide what fails the job, and only an execution
+failure (exit 2 or 4) turns it red otherwise:
 
-Promotion criterion: 30 consecutive runs over at least 3 weeks, the A/A cohort
-calibrated on at least 90 % of them, and no regression verdict that a second
-execution did not confirm. Each run states its effect in `result.json`
+- `PERF_AB_INSTRUCTIONS_BLOCKING`: an instruction regression fails the job.
+  Promotion criterion: 10 consecutive CI runs in which the counts were
+  measured and none flagged a regression on a pair whose benchmarked code did
+  not change. The promotion is one commit that sets the variable to `"true"`
+  and cites the 10 runs.
+- `PERF_AB_BLOCKING: "false"`: the real-time verdict stays in shadow mode, green
+  whatever it says. An unavailable base or a twice uncalibrated run adds a
+  warning. Its promotion is tracked by US-020 of the PRD.
+
+A `workflow_dispatch` run has its own concurrency group, so manual runs with
+different commits proceed in parallel instead of replacing each other; pull
+requests still cancel their superseded runs. The nightly run reports the base
+unavailable until a release carries the sample export.
+
+Real-time promotion criterion: 30 consecutive runs over at least 3 weeks, the
+A/A p50s calibrated on at least 90 % of them, and no regression verdict that a
+second execution did not confirm. Each run states its effect in `result.json`
 (`promotion.effect`) and at the top of its summary. A `calibrated` run counts.
-An `uncalibrated` run (one of its executions was rerun because the A/A cohort
+An `uncalibrated` run (one of its executions was rerun because an A/A p50
 drifted) counts among the 30 but against the 90 % only, never as a failure. An
 `unconfirmed_regression` (`resets`) restarts the count. An `excluded` run (a
 missing measurement) and a run whose base was unavailable are not runs of the
@@ -281,7 +297,7 @@ gate and are skipped. The promotion is one pull request that sets
 `PERF_AB_BLOCKING` to `"true"` and cites the 30 runs; from then on a confirmed
 regression fails the job.
 
-### First local evidence and the open calibration question
+### Calibration evidence
 
 Three full runs of `scripts/perf-ab.sh` on 2026-10-05, Ubuntu 26.04 under WSL2
 on Arthur's Ryzen 7 7800X3D with the Windows desktop in use (browser, several
@@ -306,11 +322,15 @@ change (local evidence, not tracked):
   metrics, while the echo stayed flat (+0.8 %). The attempt as a whole was still
   uncalibrated by terminal p95s, as above.
 
-The open question for the shadow period: on a loaded machine the terminal
-suite's p95 does not hold the 5 % A/A bound, while everything else does. A run
-on native Linux with an idle machine (`scripts/perf-ab.sh HEAD HEAD`) and the
-first CI runs will tell whether the bound holds where it matters or whether the
-A/A bound should apply to the p50 only.
+The first CI run, 37369016686 on `ubuntu-24.04` (2026-10-05, A/A on
+`1d017391`, 2 713 s for the A/B step, 47 min for the job), settled the
+question. Both attempts came out uncalibrated under the former rule, which
+also bounded every A/A p95: every p50 stayed within 2.0 %, while p95s moved by
+up to 55.1 % (`terminal.layout_220x60_acc60`), 18.6 %
+(`active.cpu.merged_truncated_names`) and 11.5 % (`active.cpu.host.session`).
+With that rule no run would reach the 90 % calibration of the promotion
+criterion, so the A/A now bounds the p50s, and each p95 is judged only where
+its own A/A holds.
 
 ## Screen rule corpus
 
