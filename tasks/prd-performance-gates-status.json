@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Promouvoir le temps réel après sa période d'ombre",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     }
   ],
   "stories": [
@@ -337,15 +337,15 @@
       "id": "US-020",
       "title": "Promouvoir l'A/B temps réel après sa période d'ombre",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-06",
+      "completed_at": "2026-10-06T15:20:37+02:00",
+      "reviewed_at": "2026-10-06T15:20:37+02:00"
     }
   ]
 }
