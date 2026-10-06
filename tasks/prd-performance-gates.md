@@ -11,6 +11,7 @@
 | 1.3 | 2026-10-06 | Arthur Jean | EP-004 après revue et premier run CI de l'A/B (37369016686) : l'A/A ne borne plus que les p50, et un p95 n'est jugé que si son propre A/A tient, car les p95 dérivent jusqu'à 55 % sur un code identique. Les compteurs d'instructions, déterministes, deviennent bloquants par leur propre variable après 10 runs CI ; le benchmark de mise en page sort du périmètre d'US-017 (crate binaire sans cible lib). La promotion du temps réel, qui exige 30 runs sur 3 semaines, passe dans US-020 (EP-006). 6 epics, 20 stories. |
 | 1.4 | 2026-10-06 | Arthur Jean | EP-005 allégé après implémentation : un protocole complet à chaque version mineure, sur cinq versions et trois OS, ne tiendrait pas au rythme des versions correctives. Les baselines Windows deviennent opportunistes ; la première exécution se réduit à v0.17.5 contre `main` sous Fedora Wayland, dans deux états ; le runbook n'exige le protocole que pour un changement de rendu ; les sources GPU se limitent au matériel réel (nvidia-smi, amdgpu, GPU Engine). |
 | 1.5 | 2026-10-06 | Arthur Jean | US-020 : la décision consultative peut être consignée dès que le critère ne peut plus être atteint sur les 30 premiers runs comptés, sans attendre le trentième. Les 11 premiers runs en contiennent déjà 2 dont la régression n'a pas été confirmée, et 4 non calibrés en tout, donc au mieux 26 calibrés sur 30 : 19 runs CI de plus ne changeraient pas l'issue. |
+| 1.6 | 2026-10-06 | Arthur Jean | EP-007, deux causes trouvées par le premier run matériel (Risk 8) : les sondes diff-stat qui se relancent sur leurs propres lectures de `HEAD` et `index`, et le clignotement du curseur qui dessine ses propres frames dans une fenêtre focalisée. Le gate desktop mesure désormais la fenêtre focalisée. 7 epics, 22 stories. |
 
 ## Problem Statement
 
@@ -565,6 +566,39 @@ Laisser l'A/B temps réel accumuler ses runs d'ombre, puis trancher sur preuve :
 - [ ] La promotion est une PR qui bascule `PERF_AB_BLOCKING` à `"true"`, met à jour le test du workflow et cite les 30 runs.
 - [ ] Si le critère ne peut plus être atteint sur les 30 premiers runs comptés, ou n'est pas atteint au bout de 30 runs, la décision de garder le temps réel consultatif est consignée dans `bench/README.md`, avec les taux observés.
 - [ ] Échec : given un run dont la base est indisponible ou exclu faute de mesure, when le décompte est fait, then il n'y entre pas.
+
+---
+
+### EP-007: Supprimer le travail que la fenêtre réelle révèle
+
+Le protocole matériel du 2026-10-06 (`bench/results/hardware-summary-2026-10-06.md`) a trouvé deux coûts que les gates sous Xvfb ne voyaient pas.
+
+**Definition of Done:** Un dépôt immobile ne lance plus qu'une sonde diff-stat par poll de 30 s, et une fenêtre focalisée ne dessine au repos que le clignotement du curseur, qui partage ses frames avec le spinner. Les deux sont bornés par `perf_gates`.
+
+#### US-021: Ne plus relancer une sonde git sur ses propres lectures
+**Description:** As a utilisateur multi-agents, I want que Paneflow ne sonde un dépôt que quand son état git change so that le desktop ne lance pas git en continu dans chaque dépôt ouvert.
+
+**Priority:** P0
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] Le watcher git ignore les événements d'accès (`notify` 7 rapporte `IN_OPEN` sous Linux) et garde les créations, modifications et renommages de `HEAD` et `index`.
+- [ ] Given un workspace sur un dépôt immobile, when on mesure 35 s, then `git_spawns.by_subcommand.diff` augmente d'au plus 2. La mesure d'avant, 44 sondes en 30 s en local et 15 en 35 s en CI, est citée.
+- [ ] Un `git commit` et un `git switch` rafraîchissent toujours le dépôt sans attendre le poll.
+- [ ] `desktop.diff_stat.probes` borne le nombre de sondes dans `perf_gates`.
+
+#### US-022: Faire partager au clignotement les frames du spinner, et mesurer la fenêtre focalisée
+**Description:** As a mainteneur, I want que les gates du desktop mesurent une fenêtre focalisée so that leurs bornes décrivent l'usage réel et pas une fenêtre que Xvfb ne rend jamais active.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] Le clignotement bascule toutes les 540 ms sur la grille de 90 ms du spinner, calée sur la même époque, de sorte qu'un agent en réflexion dans une fenêtre focalisée dessine environ 11,1 frames par seconde au lieu de 13,0.
+- [ ] `perf_gates` donne le focus X à la fenêtre par `xdotool` et borne `desktop.focused_idle.root_renders_per_s` à 2 ; la mesure de réflexion se fait dans cette fenêtre focalisée.
+- [ ] Échec : given une fenêtre qui ne prend pas le focus ou un terminal qui ne clignote pas, when le gate mesure, then le budget est manquant avec sa raison, jamais satisfait.
 
 ---
 

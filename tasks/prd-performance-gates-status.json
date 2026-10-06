@@ -53,6 +53,14 @@
       "priority": "P2",
       "stories_total": 1,
       "stories_done": 1
+    },
+    {
+      "id": "EP-007",
+      "title": "Supprimer le travail que la fenêtre réelle révèle",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
     }
   ],
   "stories": [
@@ -346,6 +354,28 @@
       "started_at": "2026-10-06",
       "completed_at": "2026-10-06T15:20:37+02:00",
       "reviewed_at": "2026-10-06T15:20:37+02:00"
+    },
+    {
+      "id": "US-021",
+      "title": "Ne plus relancer une sonde git sur ses propres lectures",
+      "epic": "EP-007",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-06",
+      "completed_at": "2026-10-06T17:10:00+02:00"
+    },
+    {
+      "id": "US-022",
+      "title": "Faire partager au clignotement les frames du spinner, et mesurer la fenêtre focalisée",
+      "epic": "EP-007",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-06",
+      "completed_at": "2026-10-06T17:10:00+02:00"
     }
   ]
 }
