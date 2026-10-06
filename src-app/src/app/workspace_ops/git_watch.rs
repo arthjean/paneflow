@@ -14,6 +14,23 @@ fn git_refresh_due(
         || now.duration_since(burst_started) >= GIT_EVENT_DEBOUNCE_CAP
 }
 
+fn git_dirs_changed_by(event: &notify::Event) -> Vec<std::path::PathBuf> {
+    if matches!(event.kind, notify::EventKind::Access(_)) {
+        return Vec::new();
+    }
+    event
+        .paths
+        .iter()
+        .filter(|path| {
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("HEAD" | "index")
+            )
+        })
+        .filter_map(|path| path.parent().map(std::path::Path::to_path_buf))
+        .collect()
+}
+
 impl PaneFlowApp {
     pub(in crate::app) fn rebind_git_dir(
         &mut self,
@@ -97,15 +114,7 @@ impl PaneFlowApp {
                             let mut dirs = Vec::new();
                             while let Ok(event) = app.git_event_rx.try_recv() {
                                 if let Ok(ref ev) = event {
-                                    for p in &ev.paths {
-                                        if matches!(
-                                            p.file_name().and_then(|n| n.to_str()),
-                                            Some("HEAD" | "index")
-                                        ) && let Some(parent) = p.parent()
-                                        {
-                                            dirs.push(parent.to_path_buf());
-                                        }
-                                    }
+                                    dirs.extend(git_dirs_changed_by(ev));
                                 }
                             }
                             dirs
@@ -257,6 +266,41 @@ mod tests {
             start + Duration::from_millis(100)
         ));
         assert!(git_refresh_due(start, start, start + GIT_EVENT_DEBOUNCE));
+    }
+
+    fn event(kind: notify::EventKind, file: &str) -> notify::Event {
+        notify::Event::new(kind).add_path(std::path::PathBuf::from("/repo/.git").join(file))
+    }
+
+    #[test]
+    fn a_probe_reading_head_and_index_does_not_retrigger_itself() {
+        use notify::event::{AccessKind, AccessMode};
+        for kind in [
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Read,
+            AccessKind::Close(AccessMode::Read),
+        ] {
+            for file in ["HEAD", "index"] {
+                assert!(
+                    git_dirs_changed_by(&event(notify::EventKind::Access(kind), file)).is_empty()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rewritten_head_or_index_marks_its_git_dir() {
+        use notify::event::{CreateKind, ModifyKind, RenameMode};
+        let renamed = notify::EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        assert_eq!(
+            git_dirs_changed_by(&event(renamed, "index")),
+            vec![std::path::PathBuf::from("/repo/.git")]
+        );
+        assert_eq!(
+            git_dirs_changed_by(&event(notify::EventKind::Create(CreateKind::File), "HEAD")),
+            vec![std::path::PathBuf::from("/repo/.git")]
+        );
+        assert!(git_dirs_changed_by(&event(renamed, "index.lock")).is_empty());
     }
 
     #[test]
