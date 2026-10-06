@@ -41,6 +41,14 @@ impl ProcessIdentity {
             None => ProcessVerdict::Unverifiable,
         }
     }
+
+    #[cfg(unix)]
+    pub(crate) fn is_recycled(&self) -> bool {
+        matches!(
+            (self.started_at, process_start_time(self.pid)),
+            (Some(recorded), Some(observed)) if recorded != observed
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -407,8 +415,9 @@ impl UnixProcessTreeOwner {
     }
 
     pub(crate) fn unresolved(&mut self) -> usize {
-        self.descendants
-            .retain(|identity| identity.verify() != ProcessVerdict::Gone);
+        self.descendants.retain(|identity| {
+            identity.verify() != ProcessVerdict::Gone && !identity.is_recycled()
+        });
         self.descendants.len() + usize::from(self.snapshot_failed)
     }
 
@@ -1406,6 +1415,48 @@ mod tests {
             unresolved,
             owner.tracked(),
             "a good listing clears the failure"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_departed_descendant_whose_pid_is_recycled_is_resolved_without_signaling_the_newcomer() {
+        let mut root = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .unwrap();
+        let root_identity = ProcessIdentity::capture(root.id());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut newcomer = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let newcomer_identity = ProcessIdentity::capture(newcomer.id());
+        let departed = ProcessIdentity {
+            pid: newcomer_identity.pid,
+            started_at: newcomer_identity.started_at.map(|time| time - 1),
+        };
+        let mut owner = UnixProcessTreeOwner::new(root_identity);
+        owner.discover_from(&Ok(vec![(departed, root.id(), 0)]));
+        assert_eq!(
+            owner.tracked(),
+            1,
+            "the descendant is tracked while it lives"
+        );
+        root.kill().unwrap();
+        root.wait().unwrap();
+        owner.signal(true);
+        let unresolved = owner.unresolved();
+        let newcomer_survived = newcomer_identity.is_provably_live();
+        newcomer.kill().unwrap();
+        newcomer.wait().unwrap();
+        assert!(
+            newcomer_survived,
+            "the newcomer behind the recycled pid is never signaled"
+        );
+        assert_eq!(
+            unresolved, 0,
+            "a pid now owned by a process with another start time proves the descendant is gone"
         );
     }
 
