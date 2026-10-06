@@ -1,0 +1,210 @@
+{
+  "frame_time_ms": {
+    "not_measured": "no frame log given: set PANEFLOW_HW_FRAME_LOG to a MangoHud (Linux) or PresentMon (Windows) CSV of the window"
+  },
+  "gpu": {
+    "amdgpu /sys/class/drm/card1/device/gpu_busy_percent": {
+      "max": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "samples": 60,
+      "unit": "percent busy"
+    },
+    "nvidia-smi gpu0": {
+      "max": 40.0,
+      "p50": 39.0,
+      "p95": 39.0,
+      "samples": 60,
+      "unit": "percent busy"
+    }
+  },
+  "label": "v0.17.5",
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "hostname_hash": "1cf58166f5604e43",
+    "logical_cpus": 16,
+    "os": "linux",
+    "os_build": "Linux dune 7.2.8-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Fri Sep 25 21:05:44 UTC 2026 x86_64 GNU/Linux",
+    "total_ram_bytes": 32746319872
+  },
+  "note": "GPU percentages are device-wide except typeperf, which is the desktop process's 3D engines; a source that could not be read is recorded not_measured with its reason, never 0",
+  "platform": "linux-x86_64",
+  "processes": {
+    "desktop": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 106,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 52
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "merged_truncated_names": 0.018232023602087463,
+          "other": 25.02373333942487
+        },
+        "by_thread_cpu_ns": {
+          "Timer": 0,
+          "Worker-0": 243310,
+          "Worker-1": 221232,
+          "Worker-10": 218051,
+          "Worker-11": 260260,
+          "Worker-12": 242360,
+          "Worker-13": 211871,
+          "Worker-14": 218491,
+          "Worker-15": 230370,
+          "Worker-2": 202630,
+          "Worker-3": 123241,
+          "Worker-4": 129220,
+          "Worker-5": 236501,
+          "Worker-6": 224420,
+          "Worker-7": 208590,
+          "Worker-8": 203030,
+          "Worker-9": 229881,
+          "[vkcf] Analysis": 0,
+          "[vkps] Update": 40626022,
+          "[vkrt] Analysis": 0,
+          "async-io": 29260684,
+          "blocking-1": 41873704,
+          "blocking-2": 41640949,
+          "notify-rs inoti": 11988276,
+          "paneflo:disk$0": 0,
+          "paneflow": 14807650136,
+          "paneflow-ghostt": 10943443,
+          "paneflow-host-r": 0,
+          "paneflow-ipc": 42462760,
+          "paneflow-worker": 1138161,
+          "smol-1": 0,
+          "zbus::Connectio": 0
+        },
+        "total_cpu_percent": 25.041965363026957
+      },
+      "pid": 2615473,
+      "resident_bytes": 230072320,
+      "work_counters": {
+        "git_spawns.by_subcommand.config": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "git_spawns.by_subcommand.diff": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "git_spawns.by_subcommand.status": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "git_spawns.probe": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "git_spawns.total": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "git_spawns.user_action": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "host_agent_snapshots_applied": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "process_spawns": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "root_renders": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        },
+        "session_list_calls": {
+          "pending": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+        }
+      }
+    },
+    "host": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 35,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 30
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "host.session": 0.0,
+          "host.viewport_scan": 0.0014410645855393407,
+          "merged_truncated_names": 0.0075571869054924376,
+          "other": 0.002752392657447482
+        },
+        "by_thread_cpu_ns": {
+          "paneflow-host": 1610844,
+          "paneflow-host-c": 4536065,
+          "paneflow-host-m": 41230,
+          "paneflow-host-p": 0,
+          "paneflow-host-s": 0,
+          "paneflow-host-v": 864973
+        },
+        "total_cpu_percent": 0.01175064414847926
+      },
+      "pid": 2615524,
+      "resident_bytes": 9334784,
+      "work_counters": {
+        "agent_bus_cancellation_broadcasts": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "agent_bus_event_broadcasts": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "agent_bus_session_broadcasts": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "agent_bus_session_removed_broadcasts": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "agent_bus_snapshot_broadcasts": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "foreground_observations": {
+          "pending": "counters unavailable: host reports no counters object"
+        },
+        "process_listings": {
+          "pending": "counters unavailable: host reports no counters object"
+        }
+      }
+    },
+    "worker": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 9,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 5
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "other": 0.002858614927789813,
+          "worker.core_link": 0.04830755711963483
+        },
+        "by_thread_cpu_ns": {
+          "paneflow": 1715832,
+          "paneflow-serve-": 28995739
+        },
+        "total_cpu_percent": 0.05116617204742464
+      },
+      "pid": 2615557,
+      "resident_bytes": 15949824,
+      "work_counters": {
+        "projection_broadcasts": {
+          "pending": "counters unavailable: worker reports no counters object"
+        },
+        "snapshot_broadcasts": {
+          "pending": "counters unavailable: worker reports no counters object"
+        },
+        "sweeps": {
+          "pending": "counters unavailable: worker reports no counters object"
+        }
+      }
+    }
+  },
+  "root_renders": {
+    "not_measured": "system.counters failed: \"paneflow error -32601: Method not found: system.counters\""
+  },
+  "schema_version": 1,
+  "session": "wayland",
+  "stamp": "unix1791290678",
+  "state": "agent-thinking",
+  "suite": "paneflow-hardware-protocol",
+  "version": "paneflow 0.17.5",
+  "window_s": 60.023194566
+}

@@ -85,6 +85,8 @@ if [ ! -x "$harness" ]; then
   exit 2
 fi
 
+export PANEFLOW_BENCH_STAMP
+PANEFLOW_BENCH_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 export PANEFLOW_HW_STATE="$state"
 export PANEFLOW_HW_LABEL="$label"
 export PANEFLOW_HW_VERSION="${version:-unknown ($exe)}"

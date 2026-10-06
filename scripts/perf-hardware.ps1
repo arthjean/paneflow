@@ -69,6 +69,7 @@ if (-not $harness -or -not (Test-Path $harness)) {
     exit 2
 }
 
+$env:PANEFLOW_BENCH_STAMP = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $env:PANEFLOW_HW_STATE = $State
 $env:PANEFLOW_HW_LABEL = $Label
 $env:PANEFLOW_HW_VERSION = if ($version) { "$version" } else { "unknown ($exe)" }

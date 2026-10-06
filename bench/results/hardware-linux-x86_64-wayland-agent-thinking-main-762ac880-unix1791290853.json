@@ -1,0 +1,169 @@
+{
+  "frame_time_ms": {
+    "not_measured": "no frame log given: set PANEFLOW_HW_FRAME_LOG to a MangoHud (Linux) or PresentMon (Windows) CSV of the window"
+  },
+  "gpu": {
+    "amdgpu /sys/class/drm/card1/device/gpu_busy_percent": {
+      "max": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "samples": 60,
+      "unit": "percent busy"
+    },
+    "nvidia-smi gpu0": {
+      "max": 22.0,
+      "p50": 12.0,
+      "p95": 20.0,
+      "samples": 60,
+      "unit": "percent busy"
+    }
+  },
+  "label": "main-762ac880",
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "hostname_hash": "1cf58166f5604e43",
+    "logical_cpus": 16,
+    "os": "linux",
+    "os_build": "Linux dune 7.2.8-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Fri Sep 25 21:05:44 UTC 2026 x86_64 GNU/Linux",
+    "total_ram_bytes": 32746319872
+  },
+  "note": "GPU percentages are device-wide except typeperf, which is the desktop process's 3D engines; a source that could not be read is recorded not_measured with its reason, never 0",
+  "platform": "linux-x86_64",
+  "processes": {
+    "desktop": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 109,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 53
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "merged_truncated_names": 0.018463849616323157,
+          "other": 2.772111337080593
+        },
+        "by_thread_cpu_ns": {
+          "Timer": 11087684,
+          "Worker-0": 663930,
+          "Worker-1": 742030,
+          "Worker-10": 724632,
+          "Worker-11": 765432,
+          "Worker-12": 377543,
+          "Worker-13": 336100,
+          "Worker-14": 468971,
+          "Worker-15": 714551,
+          "Worker-2": 489970,
+          "Worker-3": 326970,
+          "Worker-4": 544641,
+          "Worker-5": 455500,
+          "Worker-6": 705063,
+          "Worker-7": 450351,
+          "Worker-8": 628941,
+          "Worker-9": 397461,
+          "[vkcf] Analysis": 3750606,
+          "[vkps] Update": 46871422,
+          "[vkrt] Analysis": 0,
+          "async-io": 8695280,
+          "blocking-1": 34361031,
+          "blocking-2": 32971788,
+          "notify-rs inoti": 8461539,
+          "paneflo:disk$0": 0,
+          "paneflow": 1469702767,
+          "paneflow-ghostt": 11082698,
+          "paneflow-host-r": 0,
+          "paneflow-ipc": 38530174,
+          "paneflow-worker": 365581,
+          "paneflow-write-": 335681,
+          "smol-1": 0,
+          "zbus::Connectio": 0
+        },
+        "total_cpu_percent": 2.790575186696916
+      },
+      "pid": 2629319,
+      "resident_bytes": 231346176,
+      "work_counters": {
+        "git_spawns.by_subcommand.config": 0,
+        "git_spawns.by_subcommand.diff": 93,
+        "git_spawns.by_subcommand.status": 0,
+        "git_spawns.probe": 279,
+        "git_spawns.total": 279,
+        "git_spawns.user_action": 0,
+        "host_agent_snapshots_applied": 0,
+        "process_spawns": 279,
+        "root_renders": 780,
+        "session_list_calls": 0
+      }
+    },
+    "host": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 37,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 33
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "host.session": 0.000011145585121348784,
+          "host.viewport_scan": 0.0030041350318222005,
+          "merged_truncated_names": 0.007649883137486253,
+          "other": 0.00017213514886517175
+        },
+        "by_thread_cpu_ns": {
+          "paneflow-host": 60671,
+          "paneflow-host-c": 4591748,
+          "paneflow-host-m": 42651,
+          "paneflow-host-p": 0,
+          "paneflow-host-s": 6690,
+          "paneflow-host-v": 1803195
+        },
+        "total_cpu_percent": 0.010837298903294976
+      },
+      "pid": 2629380,
+      "resident_bytes": 17821696,
+      "work_counters": {
+        "agent_bus_cancellation_broadcasts": 0,
+        "agent_bus_event_broadcasts": 0,
+        "agent_bus_session_broadcasts": 0,
+        "agent_bus_session_removed_broadcasts": 0,
+        "agent_bus_snapshot_broadcasts": 2,
+        "foreground_observations": 0,
+        "process_listings": 0
+      }
+    },
+    "worker": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 9,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 5
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "other": 0.0,
+          "worker.core_link": 0.042342989181693325
+        },
+        "by_thread_cpu_ns": {
+          "paneflow": 0,
+          "paneflow-serve-": 25415857
+        },
+        "total_cpu_percent": 0.042342989181693325
+      },
+      "pid": 2629431,
+      "resident_bytes": 17616896,
+      "work_counters": {
+        "projection_broadcasts": 0,
+        "snapshot_broadcasts": 0,
+        "sweeps": 30
+      }
+    }
+  },
+  "root_renders": 780,
+  "schema_version": 1,
+  "session": "wayland",
+  "stamp": "unix1791290853",
+  "state": "agent-thinking",
+  "suite": "paneflow-hardware-protocol",
+  "version": "paneflow 0.17.5",
+  "window_s": 60.023766605
+}

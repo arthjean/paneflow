@@ -62,17 +62,20 @@ stay in `bench/results/`.
 Current state, 2026-10-06. `linux-x86_64` holds `terminal`, `editor` and
 `startup`, recorded on `9ecb73a6` on Arthur's Fedora 44 machine (Ryzen 7
 7800X3D, CPU share 0.99 and 1.00; the startup suite's stale socket step is
-0.2 ms), plus the two allocation baselines recorded on `acf739ca`, whose
-allocation columns match the previous ones exactly. `persistent` is not
-recorded yet: the first run on `acf739ca`
-([result](results/persistent-20261006T103639Z-acf739ca51a9.json)) failed
-`NFR-04.runtime_release` (one W05 batch never reported zero live runtimes)
-and `NFR-12.host_shutdown` (the host did not exit after an acknowledged
-shutdown), and its `--prior` rerun on `9ecb73a6`
-([result](results/persistent-20261006T104552Z-9ecb73a66619.json)) passed
-every threshold but keeps the first failure, so the script refused to make it
-a baseline. No `windows-x86_64` or `macos-aarch64` baseline exists yet; the
-Windows ones are recorded on the dual boot machine with the `.ps1` scripts.
+0.2 ms), the two allocation baselines recorded on `acf739ca`, whose
+allocation columns match the previous ones exactly, and `persistent`, recorded
+on `762ac880` ([result](results/persistent-20261006T123356Z-762ac8804c0a.json)).
+The first persistent run, on `acf739ca`
+([result](results/persistent-20261006T103639Z-acf739ca51a9.json)), failed
+`NFR-04.runtime_release` (one W05 batch never reported zero live runtimes) and
+`NFR-12.host_shutdown` (the host did not exit after an acknowledged shutdown),
+and its `--prior` rerun on `9ecb73a6`
+([result](results/persistent-20261006T104552Z-9ecb73a66619.json)) kept that
+failure, so the script refused it. `762ac880` fixed the cause, a recycled
+descendant pid the Unix process tree owner retained forever, and the run on it
+passed both thresholds. No `windows-x86_64` or `macos-aarch64` baseline exists
+yet; the Windows ones are recorded on the dual boot machine with the `.ps1`
+scripts.
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
@@ -974,9 +977,15 @@ with the reason:
 The first execution compares v0.17.5 and `main` after EP-002 under Fedora
 Wayland, in `idle-4-panes` and `agent-thinking`, which decide the tab badge
 and worker snapshot candidates; the host candidates are already decided by the
-counters of EP-002. It has not run yet: it needs Arthur's desktop session with
-every other instance quit, which an agent working inside Paneflow cannot
-provide.
+counters of EP-002. It ran on 2026-10-06, see
+[hardware-summary-2026-10-06.md](results/hardware-summary-2026-10-06.md): the
+tab badge regression is confirmed in v0.17.5 and fixed on `main` (desktop CPU
+25.0 % to 2.8 % of a core while an agent thinks, GPU p50 39 % to 12 %), and the
+run found two new causes the gates miss. Seed the isolated home before the
+first launch (`session.json` with no workspace, `paneflow.json` as `{}`,
+`window-state.json`, `telemetry_id`), as the startup suite does: a home that
+lacks them inherits the developer's legacy session through
+`migrate_legacy_home`.
 
 ```bash
 scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
