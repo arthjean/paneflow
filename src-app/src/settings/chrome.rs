@@ -371,7 +371,7 @@ impl PaneFlowApp {
                 .focus_handle
                 .is_focused(window)
             {
-                window.blur();
+                window.blur(cx);
                 cx.notify();
             }
         }))

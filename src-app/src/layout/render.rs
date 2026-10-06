@@ -972,7 +972,7 @@ mod tests {
         cx.run_until_parked();
 
         start_render_content_timing_probe();
-        cx.update(|window, _cx| window.blur());
+        cx.update(|window, cx| window.blur(cx));
         cx.run_until_parked();
         let snapshots = take_render_content_lock_durations().len();
 
