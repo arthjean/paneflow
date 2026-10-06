@@ -42,7 +42,6 @@ impl ProcessIdentity {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn is_recycled(&self) -> bool {
         matches!(
             (self.started_at, process_start_time(self.pid)),
@@ -940,8 +939,9 @@ impl WindowsProcessTreeOwner {
     }
 
     pub(crate) fn unresolved(&mut self) -> usize {
-        self.unresolved
-            .retain(|identity| identity.verify() != ProcessVerdict::Gone);
+        self.unresolved.retain(|identity| {
+            identity.verify() != ProcessVerdict::Gone && !identity.is_recycled()
+        });
         self.handles
             .iter()
             .filter(|process| process.identity != self.root && !process.exited())
@@ -959,7 +959,7 @@ impl WindowsProcessTreeOwner {
         self.discover();
         let retry = std::mem::take(&mut self.unresolved);
         for identity in retry {
-            if identity.verify() != ProcessVerdict::Gone {
+            if identity.verify() != ProcessVerdict::Gone && !identity.is_recycled() {
                 self.retain(identity);
             }
         }
@@ -1330,7 +1330,11 @@ mod tests {
         let mut owner = WindowsProcessTreeOwner::new(stale);
         let result = owner.terminate(std::time::Instant::now() + Duration::from_millis(20));
         assert_eq!(result.terminate_requested, 0);
-        assert!(owner.unresolved() > 0);
+        assert_eq!(
+            owner.unresolved(),
+            0,
+            "a pid now owned by a process with another start time proves the recorded one is gone"
+        );
         assert!(actual.is_provably_live());
         child.kill().unwrap();
         child.wait().unwrap();
@@ -1398,6 +1402,49 @@ mod tests {
         assert_eq!(owner.unresolved(), 0);
         assert!(!descendant.is_provably_live());
         child.wait().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_departed_descendant_whose_pid_is_recycled_is_resolved_without_signaling_the_newcomer() {
+        let mut root = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut newcomer = std::process::Command::new("cmd.exe")
+            .args(["/D", "/Q", "/C", "pause"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let newcomer_identity = ProcessIdentity::capture(newcomer.id());
+        let departed = ProcessIdentity {
+            pid: newcomer_identity.pid,
+            started_at: newcomer_identity.started_at.map(|time| time - 1),
+        };
+        let mut owner = WindowsProcessTreeOwner::new(ProcessIdentity::capture(root.id()));
+        owner.retain(departed);
+        root.kill().unwrap();
+        root.wait().unwrap();
+        let result = owner.terminate(std::time::Instant::now() + Duration::from_secs(2));
+        let unresolved = owner.unresolved();
+        let newcomer_survived = newcomer_identity.is_provably_live();
+        newcomer.kill().unwrap();
+        newcomer.wait().unwrap();
+        assert!(
+            newcomer_survived,
+            "the newcomer behind the recycled pid is never signaled"
+        );
+        assert_eq!(
+            result.failures, 0,
+            "a recycled identity is not a termination failure"
+        );
+        assert_eq!(
+            unresolved, 0,
+            "a pid now owned by a process with another start time proves the descendant is gone"
+        );
     }
 
     #[cfg(unix)]
