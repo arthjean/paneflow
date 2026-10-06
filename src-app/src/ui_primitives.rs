@@ -1,3 +1,4 @@
+pub(crate) mod animation_clock;
 pub(crate) mod quick_pick;
 pub(crate) mod squircle;
 

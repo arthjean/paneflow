@@ -1,7 +1,7 @@
 use gpui::{AppContext, Context};
 
 use crate::telemetry;
-use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
+use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, until_next_blink};
 use crate::window_chrome::title_bar;
 use crate::{FocusReturn, PaneFlowApp, ipc, keybindings, update};
 
@@ -482,7 +482,8 @@ impl PaneFlowApp {
         cx.spawn(
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 loop {
-                    smol::Timer::after(CURSOR_BLINK_INTERVAL).await;
+                    let executor = cx.background_executor().clone();
+                    executor.timer(until_next_blink(executor.now())).await;
                     let result = cx.update(|cx| {
                         this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| {
                             let phase = cx.global::<BlinkPhaseGlobal>().0.clone();

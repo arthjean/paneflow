@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use crate::app::pull_request::{PrState, PullRequest};
-use crate::ui_primitives::TooltipDelayExt;
+use crate::ui_primitives::{TooltipDelayExt, animation_clock};
 
 use super::{
     SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_LANE_GLYPH_SIZE, SidebarAgentState, SidebarAgentSummary,
@@ -211,17 +211,12 @@ pub(super) fn render_lane_slot(
 const COMET_TRAIL_DOT_SIZE: f32 = 3.0;
 const COMET_TRAIL_DOT_GAP: f32 = 1.0;
 
-const SPINNER_CYCLE_MS: u64 = 720;
 const SPINNER_STEPS: u64 = 8;
-const SPINNER_STEP_MS: u64 = SPINNER_CYCLE_MS / SPINNER_STEPS;
+const SPINNER_STEP_MS: u64 = animation_clock::ANIMATION_STEP_MS;
+const SPINNER_CYCLE_MS: u64 = SPINNER_STEP_MS * SPINNER_STEPS;
 
 thread_local! {
     static SPINNER_DRAWN: Cell<bool> = const { Cell::new(false) };
-}
-
-fn spinner_epoch() -> Instant {
-    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    *EPOCH.get_or_init(Instant::now)
 }
 
 fn spinner_head(elapsed: Duration) -> usize {
@@ -230,8 +225,7 @@ fn spinner_head(elapsed: Duration) -> usize {
 }
 
 fn spinner_next_step(elapsed: Duration) -> Duration {
-    let into_step = (elapsed.as_millis() % u128::from(SPINNER_STEP_MS)) as u64;
-    Duration::from_millis(SPINNER_STEP_MS - into_step + 1)
+    animation_clock::until_next_tick(elapsed, Duration::from_millis(SPINNER_STEP_MS))
 }
 
 fn take_spinner_drawn() -> bool {
@@ -255,7 +249,9 @@ impl SpinnerClock {
         self.ticker = Some(cx.spawn(async move |view, cx| {
             loop {
                 let executor = cx.background_executor().clone();
-                let elapsed = executor.now().saturating_duration_since(spinner_epoch());
+                let elapsed = executor
+                    .now()
+                    .saturating_duration_since(animation_clock::animation_epoch());
                 executor.timer(spinner_next_step(elapsed)).await;
                 if view.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
@@ -285,7 +281,7 @@ fn comet_trail_loader(color: gpui::Hsla, animate: bool) -> AnyElement {
         .gap(px(COMET_TRAIL_DOT_GAP));
     let head = if animate {
         SPINNER_DRAWN.with(|drawn| drawn.set(true));
-        spinner_head(spinner_epoch().elapsed())
+        spinner_head(animation_clock::animation_epoch().elapsed())
     } else {
         0
     };
