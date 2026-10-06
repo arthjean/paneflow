@@ -207,7 +207,7 @@ impl PaneFlowApp {
             cx.notify();
         });
         if restored_bounds.is_none() {
-            source.blur();
+            source.blur(cx);
             if let Some(root) = self.nav_root() {
                 root.focus_first(source, cx);
             }

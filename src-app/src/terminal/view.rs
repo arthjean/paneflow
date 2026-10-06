@@ -2056,7 +2056,7 @@ mod tests {
         second.update(|window, _cx| window.activate_window());
         focus_terminal(&terminal, second);
         terminal.read_with(second, |view, _| assert!(view.was_focused));
-        second.update(|window, _cx| window.blur());
+        second.update(|window, cx| window.blur(cx));
         second.run_until_parked();
         terminal.read_with(second, |view, _| assert!(!view.was_focused));
     }

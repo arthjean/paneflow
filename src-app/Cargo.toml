@@ -42,8 +42,8 @@ path = "src/main.rs"
 # The feature is a no-op on Linux/Windows (where `gpui_macos` isn't
 # compiled in), so it's safe in the cross-platform default declaration
 # below - the Linux-only override on line ~97 adds wayland/x11 on top.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["font-kit"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "0418cb5b60e89278e95af1a7b73382343e122ba8" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "0418cb5b60e89278e95af1a7b73382343e122ba8", features = ["font-kit"] }
 
 # Kitty graphics: `image::Frame` is the only way to build a `gpui::RenderImage`
 # from raw pixels, and the `png` decoder is what the protocol's `f=100`
@@ -251,7 +251,7 @@ ropey = { version = "1.6", default-features = false, features = ["simd"] }
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["wayland", "x11"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "0418cb5b60e89278e95af1a7b73382343e122ba8", features = ["wayland", "x11"] }
 # raw-window-handle tells X11 surfaces apart so the opaque Linux window
 # appearance can request explicit alpha under client-side decorations.
 raw-window-handle = "0.6"
@@ -396,7 +396,7 @@ windows-sys = { version = "0.59", features = [
 # `layout::render` frame-pacing benchmark reads to measure dirty-to-draw
 # latency. Test-only: `cargo build` does not resolve dev-dependencies, so the
 # shipped binary never carries it (nor its `hdrhistogram` dependency).
-gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["test-support", "profiler"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "0418cb5b60e89278e95af1a7b73382343e122ba8", features = ["test-support", "profiler"] }
 # US-001: the sign-capable counterpart to `minisign-verify`. Test-only - used
 # to generate ephemeral keypairs and sign fixtures so `update/signature.rs`
 # exercises a real verify round-trip (happy path + tampered/wrong-key/no-key

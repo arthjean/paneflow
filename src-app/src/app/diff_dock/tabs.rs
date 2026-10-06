@@ -154,7 +154,7 @@ impl PaneFlowApp {
         if let Some(focus) = focus {
             window.focus(&focus, cx);
         } else {
-            window.blur();
+            window.blur(cx);
         }
     }
 

@@ -741,7 +741,7 @@ mod tests {
         second.run_until_parked();
         second.update(|_, cx| {
             first_window
-                .update(cx, |_, window, _| window.blur())
+                .update(cx, |_, window, cx| window.blur(cx))
                 .unwrap();
         });
         second.run_until_parked();
@@ -753,7 +753,7 @@ mod tests {
             );
             assert_eq!(text_of(view), "preserved\n");
         });
-        second.update(|window, _| window.blur());
+        second.update(|window, cx| window.blur(cx));
         second.run_until_parked();
         assert!(!view.read_with(second, |view, _| view.focused));
     }

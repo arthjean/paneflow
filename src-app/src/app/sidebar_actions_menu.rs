@@ -137,7 +137,7 @@ impl PaneFlowApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        window.blur();
+        window.blur(cx);
         if let Some(ws) = self.workspaces.get(self.active_idx) {
             ws.focus_first(window, cx);
         }
