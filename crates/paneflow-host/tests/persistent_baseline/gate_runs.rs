@@ -257,6 +257,26 @@ fn focused_idle_renders(
     }
 }
 
+fn focused_thinking_renders(
+    focus: &Result<(), String>,
+    submitted: &Value,
+    renders: Measurement,
+    window_s: f64,
+) -> Measurement {
+    match (focus, &renders, submitted.get("error")) {
+        (Err(reason), _, _) => Measurement::Missing(format!(
+            "the thinking window was never focused, so the cursor blink is not measured: {reason}"
+        )),
+        (Ok(()), _, Some(error)) => Measurement::Missing(format!(
+            "the simulated prompt was not accepted, so no agent thinks: {error}"
+        )),
+        (Ok(()), Measurement::Value(count), None) if *count <= 3.0 => Measurement::Missing(
+            format!("the agent never started thinking: {count} root renders in the window"),
+        ),
+        _ => per(renders, window_s),
+    }
+}
+
 fn desktop_window(desktop: &DesktopProcess, window: Duration) -> (Value, f64) {
     let before = active::desktop_counters(desktop);
     let started = Instant::now();
@@ -282,7 +302,7 @@ pub(super) fn desktop_idle_and_thinking(
             return json!({"failed": reason});
         }
     };
-    let detail = match headless::start_desktop(home, &sessions, true) {
+    let detail = match headless::start_blinking_desktop(home, &sessions) {
         Err(error) => {
             let reason = format!(
                 "the desktop did not start under the virtual display (display server or Vulkan adapter): {error}"
@@ -310,19 +330,14 @@ pub(super) fn desktop_idle_and_thinking(
             let submitted = headless::submit_prompt(endpoint, &sessions[0]);
             std::thread::sleep(SETTLE);
             let (thinking, thinking_s) = desktop_window(&desktop, GATE_WINDOW);
-            let renders = counter(&thinking, "root_renders");
-            let measurement = match (&renders, submitted.get("error")) {
-                (_, Some(error)) => Measurement::Missing(format!(
-                    "the simulated prompt was not accepted, so no agent thinks: {error}"
-                )),
-                (Measurement::Value(count), None) if *count <= 3.0 => Measurement::Missing(
-                    format!("the agent never started thinking: {count} root renders in the window"),
-                ),
-                _ => per(renders, thinking_s),
-            };
             values.insert(
                 "desktop.thinking.root_renders_per_s".to_string(),
-                measurement,
+                focused_thinking_renders(
+                    &focus,
+                    &submitted,
+                    counter(&thinking, "root_renders"),
+                    thinking_s,
+                ),
             );
             json!({
                 "panes": DESKTOP_PANES,
@@ -556,6 +571,29 @@ mod tests {
         assert_eq!(
             focused_idle_renders(&Ok(()), Measurement::Value(56.0), 30.0),
             Measurement::Value(56.0 / 30.0)
+        );
+    }
+
+    #[test]
+    fn a_thinking_window_that_was_never_focused_never_satisfies_its_budget() {
+        let unfocused =
+            Err("the desktop window 42 did not take the X input focus within 5 s".to_string());
+        let accepted = json!({"accepted": true});
+        assert!(matches!(
+            focused_thinking_renders(&unfocused, &accepted, Measurement::Value(333.0), 30.0),
+            Measurement::Missing(reason) if reason.contains("never focused") && reason.contains("window 42")
+        ));
+        assert!(matches!(
+            focused_thinking_renders(&Ok(()), &json!({"error": "refused"}), Measurement::Value(333.0), 30.0),
+            Measurement::Missing(reason) if reason.contains("refused")
+        ));
+        assert!(matches!(
+            focused_thinking_renders(&Ok(()), &accepted, Measurement::Value(3.0), 30.0),
+            Measurement::Missing(reason) if reason.contains("never started thinking")
+        ));
+        assert_eq!(
+            focused_thinking_renders(&Ok(()), &accepted, Measurement::Value(333.0), 30.0),
+            Measurement::Value(333.0 / 30.0)
         );
     }
 

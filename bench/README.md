@@ -104,11 +104,12 @@ lavapipe ICD forced, then runs the ignored test `perf_gates` in
 `crates/paneflow-host/tests/persistent_baseline.rs`. That test drives the real
 host, worker and desktop through four scenarios: 8 idle sessions and 8
 `stream 16384 60` sessions for the host and the worker (30 s windows), then
-the desktop idle with 4 panes, idle again once `xdotool` gives its window
-the X input focus (Xvfb runs no window manager, so the window is otherwise
-never active and its terminal never blinks), with one agent thinking in that
-focused window, and on a workspace whose git repository does not change
-(35 s window, one 30 s git poll). It
+the desktop idle with 4 panes and the cursor blink on, idle again once
+`xdotool` gives its window the X input focus (Xvfb runs no window manager, so
+the window is otherwise never active, and a terminal in an inactive window
+does not blink), with one agent thinking in that focused window, and on a
+workspace whose git repository does not change (35 s window, one 30 s git
+poll). It
 reads the other suites' results from `target/perf-gates/` and judges every
 budget.
 
@@ -173,6 +174,13 @@ the 90 ms spinner drew separate frames. The blink now toggles every 540 ms on
 the spinner's own grid (`ui_primitives::animation_clock`), so its toggles
 land in spinner frames, and the gate measures the focused window
 (`desktop.focused_idle.root_renders_per_s`, then the thinking state).
+Measuring it found a third cost: a terminal counted as focused whenever its
+pane held the window's focus, even in an inactive window, so every inactive
+window kept blinking. With the blink on, a window that never took the X focus
+drew 56 root renders in the 30 s idle window. A terminal now counts as
+focused only while its window is active; under Xvfb the inactive window drew
+0, the focused one 1.87 per second, and the thinking state 11.10 per second
+(local Xvfb, 2026-10-06).
 
 Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
 snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate

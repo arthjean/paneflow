@@ -188,7 +188,7 @@ pub(super) const BUDGETS: &[Budget] = &[
         limit: Limit::AtMost(2.0),
         unit: "renders per second",
         scenario: &DESKTOP_FOCUSED_IDLE,
-        margin: "the cursor blink alone, one toggle per 540 ms (1.85 per second); measured 1.85 on a real focused window",
+        margin: "the cursor blink alone, one toggle per 540 ms (1.85 per second); measured 1.85 on a real focused window and 1.87 under Xvfb",
     },
     Budget {
         counter: "desktop.thinking.root_renders_per_s",

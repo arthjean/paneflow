@@ -78,6 +78,12 @@ pub(super) struct Follower {
 
 const DESKTOP_READY_DEADLINE: Duration = Duration::from_secs(30);
 
+const QUIET_DESKTOP_CONFIG: &[u8] =
+    br#"{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"off"}}"#;
+
+const BLINKING_DESKTOP_CONFIG: &[u8] =
+    br#"{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"on"}}"#;
+
 pub(super) struct DesktopProcess {
     pub(super) child: std::process::Child,
     pub(super) endpoint: PathBuf,
@@ -115,6 +121,33 @@ impl DesktopProcess {
         ready_marker: Option<&str>,
         ready_deadline: Duration,
     ) -> Self {
+        Self::launch(
+            home,
+            &Self::one_tab_per_session(cwd, sessions),
+            QUIET_DESKTOP_CONFIG,
+            sessions.len(),
+            ready_marker,
+            ready_deadline,
+        )
+    }
+
+    pub(super) fn start_blinking(
+        home: &Path,
+        sessions: &[SessionId],
+        ready_marker: Option<&str>,
+        ready_deadline: Duration,
+    ) -> Self {
+        Self::launch(
+            home,
+            &Self::one_tab_per_session(home, sessions),
+            BLINKING_DESKTOP_CONFIG,
+            sessions.len(),
+            ready_marker,
+            ready_deadline,
+        )
+    }
+
+    fn one_tab_per_session(cwd: &Path, sessions: &[SessionId]) -> Value {
         let workspaces: Vec<_> = sessions
             .chunks(32)
             .enumerate()
@@ -130,8 +163,7 @@ impl DesktopProcess {
                 })
             })
             .collect();
-        let saved = json!({"version": 3, "active_workspace": 0, "workspaces": workspaces});
-        Self::launch(home, &saved, sessions.len(), ready_marker, ready_deadline)
+        json!({"version": 3, "active_workspace": 0, "workspaces": workspaces})
     }
 
     pub(super) fn start_in_two_panes(
@@ -162,12 +194,20 @@ impl DesktopProcess {
                 "active_tab": 0,
             }],
         });
-        Self::launch(home, &saved, sessions.len(), None, ready_deadline)
+        Self::launch(
+            home,
+            &saved,
+            QUIET_DESKTOP_CONFIG,
+            sessions.len(),
+            None,
+            ready_deadline,
+        )
     }
 
     fn launch(
         home: &Path,
         saved: &Value,
+        config: &[u8],
         expected_surfaces: usize,
         ready_marker: Option<&str>,
         ready_deadline: Duration,
@@ -181,11 +221,7 @@ impl DesktopProcess {
             serde_json::to_vec(saved).unwrap(),
         )
         .unwrap();
-        std::fs::write(
-            home.join("paneflow.json"),
-            br#"{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"off"}}"#,
-        )
-        .unwrap();
+        std::fs::write(home.join("paneflow.json"), config).unwrap();
         #[cfg(windows)]
         let endpoint = PathBuf::from(format!(
             r"\\.\pipe\paneflow-persistent-bench-{}",

@@ -128,6 +128,16 @@ pub(super) fn start_desktop(
     .map_err(desktop_failure)
 }
 
+pub(super) fn start_blinking_desktop(
+    home: &Path,
+    sessions: &[SessionId],
+) -> Result<DesktopProcess, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DesktopProcess::start_blinking(home, sessions, Some("fixture idle"), FIRST_FRAME_LIMIT)
+    }))
+    .map_err(desktop_failure)
+}
+
 pub(super) fn start_desktop_in(
     home: &Path,
     cwd: &Path,
