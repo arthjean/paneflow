@@ -1494,7 +1494,7 @@ impl Render for TerminalView {
             self.focus_subscriptions = Some((window_id, focus_in, focus_out));
         }
 
-        let focused = self.focus_handle.is_focused(window);
+        let focused = self.focus_handle.is_focused(window) && window.is_window_active();
         self.apply_terminal_focus(focused);
         let backend = self.terminal.session_backend();
         let theme_generation = crate::theme::theme_generation();
@@ -2053,6 +2053,7 @@ mod tests {
             assert!(view.ime_marked_text.is_empty());
             assert_eq!(view.scroll_remainder, 0.0);
         });
+        second.update(|window, _cx| window.activate_window());
         focus_terminal(&terminal, second);
         terminal.read_with(second, |view, _| assert!(view.was_focused));
         second.update(|window, _cx| window.blur());
@@ -2952,6 +2953,43 @@ mod tests {
         assert!(
             probe.hits() > 0,
             "caret phase: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_terminal_in_an_inactive_window_does_not_redraw_for_the_blink(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let phase = install_blink_phase(cx);
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            view.cursor_blink_mode = paneflow_config::schema::CursorBlinkConfig::On;
+        });
+        cx.deactivate_window();
+        cx.update(|window, _cx| window.refresh());
+        cx.run_until_parked();
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        for frame in 0..8 {
+            cx.update(|_window, cx| {
+                phase.update(cx, |phase, cx| {
+                    phase.visible = frame % 2 == 1;
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+        }
+
+        assert!(
+            !terminal.read_with(cx, |view, _| view.was_focused),
+            "inactive window: the terminal must not count as focused"
+        );
+        assert_eq!(
+            probe.hits(),
+            0,
+            "inactive window: the blink must not redraw the terminal"
         );
     }
 
