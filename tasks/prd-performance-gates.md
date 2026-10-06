@@ -9,6 +9,7 @@
 | 1.1 | 2026-10-03 | Arthur Jean | Les références à pf portent le préfixe `pf/`, défini une fois dans Research Findings avec les deux clones locaux (`/home/arthur/dev/pf` sous Linux, `C:/dev/pf` sous Windows) et le commit `4049d49` qui fixe les numéros de ligne. |
 | 1.2 | 2026-10-04 | Arthur Jean | US-006 : la latence p95 se mesure par l'aller-retour d'écho du scénario actif, car `terminal/perf_bench.rs` ne traverse pas le host et ne peut pas observer le thread de session. |
 | 1.3 | 2026-10-06 | Arthur Jean | EP-004 après revue et premier run CI de l'A/B (37369016686) : l'A/A ne borne plus que les p50, et un p95 n'est jugé que si son propre A/A tient, car les p95 dérivent jusqu'à 55 % sur un code identique. Les compteurs d'instructions, déterministes, deviennent bloquants par leur propre variable après 10 runs CI ; le benchmark de mise en page sort du périmètre d'US-017 (crate binaire sans cible lib). La promotion du temps réel, qui exige 30 runs sur 3 semaines, passe dans US-020 (EP-006). 6 epics, 20 stories. |
+| 1.4 | 2026-10-06 | Arthur Jean | EP-005 allégé après implémentation : un protocole complet à chaque version mineure, sur cinq versions et trois OS, ne tiendrait pas au rythme des versions correctives. Les baselines Windows deviennent opportunistes ; la première exécution se réduit à v0.17.5 contre `main` sous Fedora Wayland, dans deux états ; le runbook n'exige le protocole que pour un changement de rendu ; les sources GPU se limitent au matériel réel (nvidia-smi, amdgpu, GPU Engine). |
 
 ## Problem Statement
 
@@ -66,7 +67,7 @@ Le PRD procède en trois temps : mesurer, corriger, verrouiller.
 
 Le temps réel n'est pas gaté en absolu. Un script A/B compare base et head construits dans le même job : rounds alternés, cohorte A/A de calibration, règle p50 et p95 ≤ +10 % reprise de pf. Il tourne d'abord en mode ombre. Il ne devient bloquant qu'après 30 runs sans échec parasite, la règle de promotion qui manquait aux projets dont les gates ont fini désactivés. Le comptage d'instructions par Gungraun reste optionnel (P2), après un spike.
 
-Les baselines deviennent propres et propres à chaque plateforme. La comparaison entre OS est refusée, et un arbre sale ne peut plus devenir baseline. Le GPU et le temps de frame réels restent hors de la CI, faute de GPU fiable sur les runners partagés. Ils sont couverts par un protocole manuel sur le matériel d'Arthur (Fedora Wayland et X11, Windows 11 en dual boot, macOS si disponible), exécuté à chaque version mineure et consigné dans `bench/results/`.
+Les baselines deviennent propres et propres à chaque plateforme. La comparaison entre OS est refusée, et un arbre sale ne peut plus devenir baseline. Le GPU et le temps de frame réels restent hors de la CI, faute de GPU fiable sur les runners partagés. Ils sont couverts par un protocole manuel court sur le matériel d'Arthur (Fedora Wayland, X11 et Windows 11 en dual boot documentés), exécuté quand une version touche le rendu et consigné dans `bench/results/`.
 
 ## Goals
 
@@ -76,7 +77,7 @@ Les baselines deviennent propres et propres à chaque plateforme. La comparaison
 | Budgets de travail vérifiés par un job CI bloquant sur `main` | ≥ 15 budgets (host, worker, desktop) | ≥ 30 budgets, couvrant chaque thread nommé du host |
 | Échecs parasites des gates déterministes | 0 sur les 30 premiers runs | ≤ 1 pour 100 runs |
 | Gate A/B en temps réel | En mode ombre, A/A vert sur ≥ 90 % des runs | Bloquant sur les PR qui touchent les chemins chauds |
-| Baselines propres par plateforme | Linux à jour après EP-002 | Linux, Windows et macOS à jour à chaque version mineure |
+| Baselines propres par plateforme | Linux à jour après EP-002 | Linux à jour à chaque version mineure, Windows à chaque passage en dual boot |
 
 ## Target Users
 
@@ -500,7 +501,7 @@ Mesurer le temps réel, CPU compris, sans dépendre d'un runner stable : constru
 
 Rendre les baselines comparables (une par plateforme, issues d'un arbre propre, au schéma courant) et couvrir ce que la CI ne peut pas mesurer : temps de frame, charge GPU et coût réel sous Wayland, X11, Windows et macOS.
 
-**Definition of Done:** Les scripts refusent une baseline issue d'un arbre sale ou d'une autre plateforme. Les baselines Linux et Windows sont rafraîchies après EP-002. Le protocole manuel est documenté, a été exécuté une fois sur v0.15.1, v0.17.0, v0.17.1, v0.17.5 et `main` après EP-002, et figure dans la checklist de version.
+**Definition of Done:** Les scripts refusent une baseline issue d'un arbre sale ou d'une autre plateforme. Les baselines Linux sont rafraîchies après EP-002. Le protocole manuel est documenté, a été exécuté une fois sur v0.17.5 et `main` après EP-002, et figure dans la checklist de version.
 
 #### US-018: Rendre les baselines propres, par plateforme et vérifiées
 **Description:** As a mainteneur, I want que chaque baseline soit propre à une plateforme, issue d'un arbre propre et au schéma courant so that une comparaison ne mélange plus Windows et Linux, ni un état sale et un état publié.
@@ -515,12 +516,12 @@ Rendre les baselines comparables (une par plateforme, issues d'un arbre propre, 
 - [ ] `--set-baseline` (et `-SetBaseline`) refuse un arbre dont `git_dirty` est vrai, avec un message qui donne la commande de vérification.
 - [ ] `cpu_model()` rapporte le modèle réel sous macOS et Windows au lieu de `<os>-<arch>` (`src-app/src/bench_harness.rs:683-686`).
 - [ ] La suite startup, qui mesure un sous-processus, écrit `cpu_share` comme non mesuré au lieu de `0.0` (`src-app/src/startup_bench.rs:267`), et `--set-baseline` y exige quand même un arbre propre.
-- [ ] Les baselines Linux (machine d'Arthur) et Windows (dual boot) des quatre suites sont rafraîchies après EP-002, depuis un arbre propre. Les anciennes baselines Windows sont remplacées.
+- [ ] Les baselines Linux (machine d'Arthur) des quatre suites sont rafraîchies après EP-002, depuis un arbre propre. Les anciennes baselines Windows sont retirées ; les nouvelles sont enregistrées au prochain passage en dual boot, sans bloquer l'epic.
 - [ ] Un test non ignoré vérifie chaque fichier de baseline commité : schéma courant, `git_dirty` faux, plateforme cohérente avec son emplacement.
 - [ ] Échec : given une baseline au schéma ancien, when le test de cohérence s'exécute, then il échoue en nommant le fichier et le schéma attendu.
 
 #### US-019: Documenter et exécuter le protocole manuel GPU et temps de frame sur matériel réel
-**Description:** As a mainteneur, I want une procédure reproductible pour mesurer le temps de frame, la charge GPU et le coût réel sur mes machines so that ce que la CI ne peut pas mesurer soit quand même mesuré à chaque version mineure.
+**Description:** As a mainteneur, I want une procédure reproductible pour mesurer le temps de frame, la charge GPU et le coût réel sur mes machines so that ce que la CI ne peut pas mesurer soit quand même mesuré quand une version touche le rendu.
 
 **Priority:** P1
 **Size:** M (3 pts)
@@ -536,11 +537,11 @@ Rendre les baselines comparables (une par plateforme, issues d'un arbre propre, 
   - CPU de chaque processus ;
   - RSS ;
   - `root_renders` ;
-  - charge GPU par l'outil de la plateforme (`intel_gpu_top`, `radeontop` ou `nvidia-smi` sous Linux ; PresentMon ou le compteur « GPU Engine » sous Windows ; `powermetrics` sous macOS) ;
+  - charge GPU par une source présente sur le matériel d'Arthur (`nvidia-smi` ou le fichier sysfs `gpu_busy_percent` d'amdgpu sous Linux ; le compteur « GPU Engine » sous Windows) ;
   - temps de frame p50 et p95, quand une source est disponible.
-- [ ] Le protocole couvre Fedora sous Wayland et sous X11, et Windows 11. macOS est couvert si une machine est disponible, sinon il est noté non mesuré.
-- [ ] Une première exécution compare v0.15.1, v0.17.0, v0.17.1, v0.17.5 (binaires publiés) et `main` après EP-002 sous Linux. Le résultat est commité dans `bench/results/` avec un résumé qui confirme ou infirme chaque régression candidate.
-- [ ] `docs/release/runbook.md` exige, avant de tagger une version mineure, que `perf-gates` soit vert sur le commit à tagger et que le protocole ait été exécuté au moins sous Linux.
+- [ ] Le protocole couvre Fedora sous Wayland et sous X11, et Windows 11. macOS est noté non mesuré tant qu'aucune machine ni source GPU n'est disponible.
+- [ ] Une première exécution compare v0.17.5 (binaire publié) et `main` après EP-002 sous Fedora Wayland, dans les états « repos, 4 panes » et « 1 agent en réflexion », ceux où le spinner et les badges coûtent au GPU. Le résultat est commité dans `bench/results/` avec un résumé qui confirme ou infirme les régressions candidates que ces deux états décident.
+- [ ] `docs/release/runbook.md` exige, avant de tagger une version mineure, que `perf-gates` soit vert sur le commit à tagger, et que le protocole ait été exécuté sous Linux quand la version contient un changement de rendu.
 - [ ] Échec : given un outil GPU indisponible sur une machine, when le protocole s'exécute, then la mesure est consignée `non mesuré` avec la raison, jamais 0.
 
 ---
@@ -627,7 +628,7 @@ Laisser l'A/B temps réel accumuler ses runs d'ombre, puis trancher sur preuve :
 | 2 | Le desktop ne tourne pas sous Xvfb ou sway headless avec lavapipe dans un runner GitHub | Med | Med | Spike US-003 avant US-013 ; repli documenté (comptage dans `TestAppContext` ou runner tiers) ; budgets host et worker indépendants de l'affichage |
 | 3 | Un correctif casse une garantie existante (orphelins suivis, filtres neutralisés, transitions du worker) | Med | High | Critères d'échec dédiés ; tests existants inchangés ; test de sécurité `include.path` en US-009 |
 | 4 | Le gate A/B échoue à tort et finit désactivé, comme ailleurs | Med | Med | Cohorte A/A obligatoire, mode ombre, critère de promotion écrit, seconde exécution avant tout verdict |
-| 5 | Les régressions Windows et macOS restent invisibles à des gates Linux | High | Med | Compteurs sur les trois OS ; protocole manuel à chaque version mineure sur Windows en dual boot ; parité des correctifs vérifiée par inspection |
+| 5 | Les régressions Windows et macOS restent invisibles à des gates Linux | High | Med | Compteurs sur les trois OS ; protocole manuel sur Windows en dual boot pour les changements de rendu ; parité des correctifs vérifiée par inspection |
 | 6 | Empoisonnement de cache ou exécution de code de fork par un workflow de performance | Low | High | `pull_request` uniquement, `permissions: contents: read`, caches préfixés, test sur les fichiers de workflow |
 | 7 | Le coût CI (builds release supplémentaires) ralentit chaque PR | Med | Low | Un seul profil déclaré et mis en cache ; A/B limité aux PR des chemins chauds et à la nuit ; plafonds de 30 et 60 min |
 | 8 | Les sept candidates n'expliquent pas tout le ralentissement perçu | Med | Med | Mesure de `main` avant EP-002 (US-002) et comparaison des versions publiées (US-019) ; une cause nouvelle devient une story ajoutée au PRD |
@@ -687,5 +688,6 @@ Frame as questions for engineering input, not mandates:
 - Une machine macOS est-elle disponible pour le protocole manuel ? Arthur, avant US-019 ; sinon macOS reste « non mesuré ».
 - La diffusion d'une entrée de session toutes les 500 ms pour chaque session qui imprime (`610e6fc6`) est-elle nécessaire au worker à cette cadence, ou une diffusion sur changement d'état réduit suffit-elle ? À trancher par l'implémentation d'US-008, avec la mesure.
 - Tous les hooks doivent-ils être de classe `Critical`, avec un fsync dans le chemin de réponse, alors que le `PreToolUse` de Codex n'a pas de matcher et paie ce coût à chaque appel d'outil (`crates/paneflow-mcp-install/src/integrations.rs:18-28,949-951`) ? Hors périmètre de ce PRD ; à porter dans un suivi du PRD `prd-agent-integration-overhaul` si la mesure d'US-012 le justifie.
+- La suite persistante sous Linux a échoué une fois sur deux, le 2026-10-06, sur `NFR-04.runtime_release` (un lot W05 n'est jamais revenu à zéro runtime vivant) et `NFR-12.host_shutdown` (le host n'est pas sorti après un arrêt acquitté), ce qui bloque la baseline persistante Linux d'US-018. Défaut du host ou flake ? Arthur, avant la revue d'EP-005 ; résultats dans `bench/results/persistent-20261006T103639Z-acf739ca51a9.json`.
 - Le spinner à pas de 90 ms convient-il visuellement dans toutes les tailles de la sidebar ? Arthur, à la passe visuelle d'US-004.
 [/PRD]

@@ -41,7 +41,7 @@
     {
       "id": "EP-005",
       "title": "Tenir des baselines propres par plateforme et mesurer le GPU sur matériel réel",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 2,
       "stories_done": 0
@@ -302,7 +302,7 @@
       "id": "US-018",
       "title": "Rendre les baselines propres, par plateforme et vérifiées",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -314,24 +314,26 @@
         "US-009",
         "US-010"
       ],
-      "started_at": null,
+      "started_at": "2026-10-06",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": null,
+      "blocked_reason": "Implemented and wired (acf739ca); Linux terminal, editor, startup and allocation baselines recorded clean (9ecb73a6, 5f220822). Windows baselines are opportunistic since PRD 1.4. Open: the Linux persistent baseline, refused because the first run failed NFR-04.runtime_release and NFR-12.host_shutdown and its passing --prior rerun keeps that failure (PRD open question)."
     },
     {
       "id": "US-019",
       "title": "Documenter et exécuter le protocole manuel GPU et temps de frame sur matériel réel",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-10-06",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": null,
+      "blocked_reason": "Protocol, scripts/perf-hardware.sh and .ps1, and runbook gate implemented (acf739ca), scoped down by PRD 1.4; capture validated for 10 s against the running v0.17.5 on Fedora Wayland. Open: the first execution, v0.17.5 against main in idle-4-panes and agent-thinking under Fedora Wayland, needs Arthur's desktop session with every other instance quit."
     },
     {
       "id": "US-020",
