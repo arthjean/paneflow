@@ -476,7 +476,13 @@ fn terminal_pipeline_benchmark() {
         idle_scenarios(&mut metrics);
     }
 
-    publish("paneflow-terminal-bench", CORPUS_SEED, &metrics, cpu_share);
+    publish(
+        "paneflow-terminal-bench",
+        "terminal",
+        CORPUS_SEED,
+        &metrics,
+        Some(cpu_share),
+    );
 }
 
 #[cfg(test)]

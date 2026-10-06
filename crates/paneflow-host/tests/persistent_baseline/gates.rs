@@ -52,13 +52,13 @@ pub(super) const DESKTOP_STARTUP: Scenario = Scenario {
 
 pub(super) const TERMINAL_SUITE: Scenario = Scenario {
     id: "terminal_suite",
-    description: "terminal_pipeline_benchmark against bench/terminal-alloc-baseline-linux.json",
+    description: "terminal_pipeline_benchmark against bench/baselines/linux-x86_64/terminal-alloc.json",
     reproduce: "scripts/perf-gates.sh",
 };
 
 pub(super) const EDITOR_SUITE: Scenario = Scenario {
     id: "editor_suite",
-    description: "editor_pipeline_benchmark against bench/editor-alloc-baseline-linux.json",
+    description: "editor_pipeline_benchmark against bench/baselines/linux-x86_64/editor-alloc.json",
     reproduce: "scripts/perf-gates.sh",
 };
 

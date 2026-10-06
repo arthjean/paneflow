@@ -163,15 +163,16 @@ Performance claims need evidence: a heaptrack diff for a memory claim, a
 `cargo flamegraph` profile for a CPU claim. Do not ship a perf number you did
 not measure. For the terminal pipeline, `scripts/bench-terminal.sh` (or
 `.ps1`) runs the reproducible suite in `src-app/src/terminal/perf_bench.rs`
-and prints a comparison against `bench/baseline.json`. For the code editor,
-`scripts/bench-editor.sh` (or `.ps1`) runs the suite in
+and prints a comparison against `bench/baselines/<os>-<arch>/terminal.json`.
+For the code editor, `scripts/bench-editor.sh` (or `.ps1`) runs the suite in
 `src-app/src/app/diff_dock/code/perf_bench.rs` and compares against
-`bench/editor-baseline.json`. For the time to first frame,
+`editor.json` in the same directory. For the time to first frame,
 `scripts/bench-startup.sh` (or `.ps1`) launches the release binary with the
 startup trace in `src-app/src/startup_trace.rs` and compares against
-`bench/startup-baseline.json`. All three share the harness and the single
-`#[global_allocator]` in `src-app/src/bench_harness.rs`; see
-[bench/README.md](bench/README.md).
+`startup.json`. All three share the harness and the single
+`#[global_allocator]` in `src-app/src/bench_harness.rs`. A suite compares only
+against its own platform's baseline, and `--set-baseline` refuses a dirty
+tree; see [bench/README.md](bench/README.md).
 
 Never pass `--profile <run-name>` to isolate a build, a probe, or a benchmark
 run. Cargo materializes a complete target tree per profile name, so one profile

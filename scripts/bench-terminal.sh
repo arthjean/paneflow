@@ -13,6 +13,10 @@ dirty=false
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   dirty=true
 fi
+if [ "$mode" = "set-baseline" ] && [ "$dirty" = "true" ]; then
+  echo "the tracked worktree is dirty: commit before recording a baseline, so it records a commit that exists. Check with: git status --porcelain --untracked-files=no" >&2
+  exit 1
+fi
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p bench/results
 root=$(pwd)
@@ -22,9 +26,7 @@ export PANEFLOW_BENCH_OUT="$out"
 export PANEFLOW_BENCH_SHA="$sha"
 export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
-if [ -f bench/baseline.json ]; then
-  export PANEFLOW_BENCH_BASELINE="$root/bench/baseline.json"
-fi
+export PANEFLOW_BENCH_BASELINE_DIR="$root/bench/baselines"
 
 cargo test --release --locked -p paneflow-app --bin paneflow \
   terminal::perf_bench::terminal_pipeline_benchmark \
@@ -45,6 +47,12 @@ if [ "$mode" = "set-baseline" ]; then
     echo "cpu_share $cpu_share is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again." >&2
     exit 1
   fi
-  cp "$out" bench/baseline.json
-  echo "baseline: bench/baseline.json now points at $sha"
+  platform=$(sed -n 's/^  "platform": "\([^"]*\)",\{0,1\}$/\1/p' "$out" | head -n 1)
+  if [ -z "$platform" ]; then
+    echo "the result names no platform, refusing to record a baseline from it: $out" >&2
+    exit 1
+  fi
+  mkdir -p "bench/baselines/$platform"
+  cp "$out" "bench/baselines/$platform/terminal.json"
+  echo "baseline: bench/baselines/$platform/terminal.json now points at $sha"
 fi

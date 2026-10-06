@@ -489,8 +489,8 @@ pub(super) fn trickle(inputs: &Path, values: &mut Values) -> Value {
 
 pub(super) fn allocation_baseline(suite: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../bench")
-        .join(format!("{suite}-alloc-baseline-linux.json"))
+        .join("../../bench/baselines/linux-x86_64")
+        .join(format!("{suite}-alloc.json"))
 }
 
 pub(super) fn allocations(inputs: &Path) -> Vec<Verdict> {

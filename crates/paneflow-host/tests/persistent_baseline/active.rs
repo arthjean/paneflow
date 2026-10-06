@@ -283,7 +283,10 @@ pub(super) fn compare_active(document: &Value, baseline: Option<&Value>) -> Stri
     let mut text = String::new();
     let refusal = baseline.and_then(|baseline| schema_refusal(baseline, document));
     match (baseline, &refusal) {
-        (None, _) => text.push_str("no active baseline configured; counters are reported only\n"),
+        (None, _) => text.push_str(&format!(
+            "no active baseline for {}; counters are reported only\n",
+            platform()
+        )),
         (Some(_), Some(refusal)) => {
             text.push_str(refusal);
             text.push('\n');

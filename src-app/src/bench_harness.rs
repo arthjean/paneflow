@@ -1,5 +1,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::c_void;
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -338,13 +339,107 @@ pub(crate) fn env_or(name: &str, fallback: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| fallback.to_owned())
 }
 
+pub(crate) const SCHEMA: u64 = 2;
+
+pub(crate) fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+pub(crate) fn baselines_dir() -> PathBuf {
+    std::env::var_os("PANEFLOW_BENCH_BASELINE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../bench/baselines"))
+}
+
+pub(crate) fn baseline_path(name: &str) -> PathBuf {
+    baselines_dir()
+        .join(platform())
+        .join(format!("{name}.json"))
+}
+
+fn recorded_platform(document: &serde_json::Value) -> String {
+    format!(
+        "{}-{}",
+        document["os"].as_str().unwrap_or("unknown"),
+        document["arch"].as_str().unwrap_or("unknown")
+    )
+}
+
+fn comparable_baseline(path: &Path) -> Result<serde_json::Value, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("No baseline for {}.", platform()));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Baseline {} is unreadable ({error}); no comparison.",
+                path.display()
+            ));
+        }
+    };
+    let baseline: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "Baseline {} is not JSON ({error}); no comparison.",
+            path.display()
+        )
+    })?;
+    let recorded = recorded_platform(&baseline);
+    if recorded != platform() {
+        return Err(format!(
+            "Baseline {} was recorded on {recorded}, not {}; no comparison.",
+            path.display(),
+            platform()
+        ));
+    }
+    if baseline["schema"].as_u64() != Some(SCHEMA) {
+        return Err(format!(
+            "Baseline {} has schema {}, this run writes schema {SCHEMA}; no comparison, record a new baseline.",
+            path.display(),
+            baseline["schema"]
+        ));
+    }
+    Ok(baseline)
+}
+
+pub(crate) fn baseline_violations(
+    path: &Path,
+    directory: &str,
+    document: &serde_json::Value,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    if document["schema"].as_u64() != Some(SCHEMA) {
+        violations.push(format!(
+            "{}: schema {}, expected schema {SCHEMA}",
+            path.display(),
+            document["schema"]
+        ));
+    }
+    if document["git_dirty"].as_str() != Some("false") {
+        violations.push(format!(
+            "{}: git_dirty is {}, a baseline must come from a clean tree",
+            path.display(),
+            document["git_dirty"]
+        ));
+    }
+    let recorded = recorded_platform(document);
+    if recorded != directory || document["platform"].as_str() != Some(directory) {
+        violations.push(format!(
+            "{}: recorded on {recorded} (platform {}), but it lives under {directory}",
+            path.display(),
+            document["platform"]
+        ));
+    }
+    violations
+}
+
 fn document(suite: &str, corpus_seed: u64, metrics: &[Metric]) -> serde_json::Value {
     let generated_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     serde_json::json!({
-        "schema": 1,
+        "schema": SCHEMA,
         "suite": suite,
         "generated_unix": generated_unix,
         "stamp": env_or("PANEFLOW_BENCH_STAMP", "unknown"),
@@ -352,6 +447,7 @@ fn document(suite: &str, corpus_seed: u64, metrics: &[Metric]) -> serde_json::Va
         "git_dirty": env_or("PANEFLOW_BENCH_DIRTY", "unknown"),
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
+        "platform": platform(),
         "cpu": cpu_model(),
         "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
         "corpus_seed": format!("0x{corpus_seed:016x}"),
@@ -391,9 +487,10 @@ fn run_header() -> String {
     )
 }
 
-pub(crate) fn results_table(current: &[Metric]) -> String {
+pub(crate) fn results_table(current: &[Metric], no_comparison: &str) -> String {
     let mut table = run_header();
-    table.push_str("No baseline to compare against.\n\n");
+    table.push_str(no_comparison);
+    table.push_str("\n\n");
     table.push_str("| Metric | Now | Alloc/iter now |\n");
     table.push_str("|---|---|---|\n");
     for metric in current {
@@ -522,7 +619,13 @@ fn samples_document(suite: &str, metrics: &[Metric]) -> serde_json::Value {
     })
 }
 
-pub(crate) fn publish(suite: &str, corpus_seed: u64, metrics: &[Metric], cpu_share: f64) {
+pub(crate) fn publish(
+    suite: &str,
+    baseline: &str,
+    corpus_seed: u64,
+    metrics: &[Metric],
+    cpu_share: Option<f64>,
+) {
     for metric in metrics {
         println!("PANEFLOW_BENCH_METRIC {}", metric.to_json());
     }
@@ -544,13 +647,12 @@ pub(crate) fn publish(suite: &str, corpus_seed: u64, metrics: &[Metric], cpu_sha
         println!("PANEFLOW_BENCH_SAMPLES_WRITTEN {}", path.to_string_lossy());
     }
 
-    let baseline = std::env::var_os("PANEFLOW_BENCH_BASELINE")
-        .and_then(|path| std::fs::read_to_string(&path).ok())
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+    let baseline_path = baseline_path(baseline);
+    println!("PANEFLOW_BENCH_BASELINE {}", baseline_path.display());
     println!("PANEFLOW_BENCH_TABLE_BEGIN");
-    match baseline {
-        Some(baseline) => print!("{}", comparison_table(metrics, &baseline)),
-        None => print!("{}", results_table(metrics)),
+    match comparable_baseline(&baseline_path) {
+        Ok(baseline) => print!("{}", comparison_table(metrics, &baseline)),
+        Err(no_comparison) => print!("{}", results_table(metrics, &no_comparison)),
     }
     println!("PANEFLOW_BENCH_TABLE_END");
 }
@@ -711,9 +813,55 @@ pub(crate) fn cpu_model() -> String {
         .to_owned()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn cpu_model() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    std::process::Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|model| !model.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn cpu_model() -> String {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
+
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let key = wide("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0");
+    let value = wide("ProcessorNameString");
+    let mut buffer = [0u16; 256];
+    let mut bytes = std::mem::size_of_val(&buffer) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut bytes,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return "unknown".to_owned();
+    }
+    let units = (bytes as usize / 2).min(buffer.len());
+    let model = String::from_utf16_lossy(&buffer[..units]);
+    let model = model.trim_end_matches('\0').trim();
+    if model.is_empty() {
+        "unknown".to_owned()
+    } else {
+        model.to_owned()
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub(crate) fn cpu_model() -> String {
+    "unknown".to_owned()
 }
 
 #[allow(
@@ -808,8 +956,8 @@ mod tests {
     #[test]
     fn results_table_drops_the_comparison_columns_without_a_baseline() {
         let now = [Metric::count("open_300kb_highlighted", "ns", 1_500.0, "")];
-        let table = results_table(&now);
-        assert!(table.contains("No baseline to compare against."), "{table}");
+        let table = results_table(&now, "No baseline for macos-aarch64.");
+        assert!(table.contains("No baseline for macos-aarch64."), "{table}");
         assert!(
             table.contains("| Metric | Now | Alloc/iter now |"),
             "{table}"
@@ -827,7 +975,174 @@ mod tests {
         let json = metric.to_json();
         assert_eq!(json["available"], false);
         assert!(json["value"].is_null());
-        assert!(results_table(&[metric]).contains("| `shape_cold_60_rows` | unavailable | n/a |"));
+        assert!(
+            results_table(&[metric], "No baseline for linux-x86_64.")
+                .contains("| `shape_cold_60_rows` | unavailable | n/a |")
+        );
+    }
+
+    const HARNESS_BASELINES: [&str; 5] = [
+        "terminal",
+        "editor",
+        "startup",
+        "terminal-alloc",
+        "editor-alloc",
+    ];
+    const PERSISTENT_BASELINES: [&str; 2] = ["persistent", "persistent-active"];
+
+    fn committed_baselines() -> Vec<(String, PathBuf)> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bench/baselines");
+        let mut files = Vec::new();
+        for directory in std::fs::read_dir(&root).expect("bench/baselines exists") {
+            let directory = directory.expect("bench/baselines is listable").path();
+            let platform = directory
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("a platform directory has a UTF-8 name")
+                .to_owned();
+            for file in std::fs::read_dir(&directory).expect("a platform directory is listable") {
+                files.push((
+                    platform.clone(),
+                    file.expect("a baseline is listable").path(),
+                ));
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn every_committed_baseline_is_clean_current_and_on_its_platform() {
+        let mut checked = 0;
+        let mut violations = Vec::new();
+        for (platform, path) in committed_baselines() {
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("");
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                violations.push(format!("{}: not a JSON baseline", path.display()));
+                continue;
+            }
+            if PERSISTENT_BASELINES.contains(&stem) {
+                continue;
+            }
+            if !HARNESS_BASELINES.contains(&stem) {
+                violations.push(format!(
+                    "{}: unknown baseline, expected one of {HARNESS_BASELINES:?} or {PERSISTENT_BASELINES:?}",
+                    path.display()
+                ));
+                continue;
+            }
+            let document: serde_json::Value = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or_else(|| panic!("{} is not readable JSON", path.display()));
+            violations.extend(baseline_violations(&path, &platform, &document));
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "no harness baseline is committed under bench/baselines"
+        );
+        assert!(
+            violations.is_empty(),
+            "committed baselines must be at schema {SCHEMA}, from a clean tree, under their own platform; record them again with scripts/bench-<suite>.sh --set-baseline or scripts/perf-gates.sh --refresh-alloc-baselines:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn an_old_schema_baseline_fails_the_coherence_check_naming_the_file_and_the_schema() {
+        let path = Path::new("bench/baselines/linux-x86_64/terminal.json");
+        let old = serde_json::json!({
+            "schema": 1,
+            "git_dirty": "false",
+            "os": "linux",
+            "arch": "x86_64",
+            "platform": "linux-x86_64",
+        });
+        let violations = baseline_violations(path, "linux-x86_64", &old);
+        assert_eq!(
+            violations,
+            [format!(
+                "bench/baselines/linux-x86_64/terminal.json: schema 1, expected schema {SCHEMA}"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_dirty_or_misplaced_baseline_fails_the_coherence_check() {
+        let path = Path::new("bench/baselines/linux-x86_64/editor.json");
+        let windows = serde_json::json!({
+            "schema": SCHEMA,
+            "git_dirty": "true",
+            "os": "windows",
+            "arch": "x86_64",
+            "platform": "windows-x86_64",
+        });
+        let violations = baseline_violations(path, "linux-x86_64", &windows);
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(
+            violations[0].contains("git_dirty is \"true\""),
+            "{violations:?}"
+        );
+        assert!(
+            violations[1].contains("recorded on windows-x86_64"),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_baseline_names_the_current_platform_and_compares_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let refusal = comparable_baseline(&home.path().join("terminal.json")).unwrap_err();
+        assert_eq!(refusal, format!("No baseline for {}.", platform()));
+    }
+
+    #[test]
+    fn a_baseline_from_another_platform_or_schema_is_never_compared() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("terminal.json");
+        let foreign = serde_json::json!({
+            "schema": SCHEMA, "os": "plan9", "arch": "mips", "metrics": [],
+        });
+        std::fs::write(&path, foreign.to_string()).unwrap();
+        let refusal = comparable_baseline(&path).unwrap_err();
+        assert!(
+            refusal.contains(&format!("was recorded on plan9-mips, not {}", platform())),
+            "{refusal}"
+        );
+        let old = serde_json::json!({
+            "schema": 1,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "metrics": [],
+        });
+        std::fs::write(&path, old.to_string()).unwrap();
+        let refusal = comparable_baseline(&path).unwrap_err();
+        assert!(
+            refusal.contains(&format!("has schema 1, this run writes schema {SCHEMA}")),
+            "{refusal}"
+        );
+        let current = serde_json::json!({
+            "schema": SCHEMA,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "metrics": [],
+        });
+        std::fs::write(&path, current.to_string()).unwrap();
+        assert!(comparable_baseline(&path).is_ok());
+    }
+
+    #[test]
+    fn this_platform_reports_a_real_cpu_model() {
+        let model = cpu_model();
+        assert!(!model.is_empty());
+        assert_ne!(
+            model,
+            format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+        );
     }
 
     #[test]

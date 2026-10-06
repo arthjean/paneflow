@@ -91,6 +91,24 @@ ignored test.
 
 ## Step 2 - Tag and push
 
+Before tagging a minor version (`X.Y.0`), two performance checks must hold,
+because no gate in `release.yml` catches a performance regression:
+
+- `Performance gates (Linux x86_64)` (`perf_gates` in `run_tests.yml`) is green
+  on the exact commit you are about to tag:
+
+  ```bash
+  gh run list --workflow run_tests.yml --commit "$(git rev-parse HEAD)" \
+    --json conclusion,databaseId
+  gh run view <databaseId> --json jobs \
+    --jq '.jobs[] | select(.name == "Performance gates (Linux x86_64)") | .conclusion'
+  ```
+
+- The real hardware protocol of [bench/README.md](../../bench/README.md#real-hardware-protocol)
+  has been run on this commit at least under Linux, its four
+  `bench/results/hardware-*` results are committed, and its summary names any
+  state that moved against the previous minor version.
+
 ```bash
 git tag -a "v$VERSION" -m "Release v$VERSION"
 git push origin "v$VERSION"

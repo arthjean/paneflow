@@ -6,14 +6,58 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
-There are four suites, four baselines, and four result prefixes:
+There are four suites, one baseline per suite and per platform, and four
+result prefixes:
 
 | Suite | Test | Script | Baseline | Result files |
 |---|---|---|---|---|
-| `paneflow-terminal-bench` | `terminal::perf_bench::terminal_pipeline_benchmark` | `scripts/bench-terminal.sh` / `.ps1` | `bench/baseline.json` | `bench/results/<stamp>-<sha>.json` |
-| `paneflow-editor-bench` | `app::diff_dock::code::perf_bench::editor_pipeline_benchmark` | `scripts/bench-editor.sh` / `.ps1` | `bench/editor-baseline.json` | `bench/results/editor-<stamp>-<sha>.json` |
-| `paneflow-startup-bench` | `startup_bench::startup_first_frame_benchmark` | `scripts/bench-startup.sh` / `.ps1` | `bench/startup-baseline.json` | `bench/results/startup-<stamp>-<sha>.json` |
-| `paneflow-persistent-bench` | `tests/persistent_baseline.rs::persistent_session_baseline` (crate `paneflow-host`) | `scripts/bench-persistent.sh` / `.ps1` | `bench/persistent-baseline.json` | `bench/results/persistent-<stamp>-<sha>.json` |
+| `paneflow-terminal-bench` | `terminal::perf_bench::terminal_pipeline_benchmark` | `scripts/bench-terminal.sh` / `.ps1` | `bench/baselines/<os>-<arch>/terminal.json` | `bench/results/<stamp>-<sha>.json` |
+| `paneflow-editor-bench` | `app::diff_dock::code::perf_bench::editor_pipeline_benchmark` | `scripts/bench-editor.sh` / `.ps1` | `bench/baselines/<os>-<arch>/editor.json` | `bench/results/editor-<stamp>-<sha>.json` |
+| `paneflow-startup-bench` | `startup_bench::startup_first_frame_benchmark` | `scripts/bench-startup.sh` / `.ps1` | `bench/baselines/<os>-<arch>/startup.json` | `bench/results/startup-<stamp>-<sha>.json` |
+| `paneflow-persistent-bench` | `tests/persistent_baseline.rs::persistent_session_baseline` (crate `paneflow-host`) | `scripts/bench-persistent.sh` / `.ps1` | `bench/baselines/<os>-<arch>/persistent.json` | `bench/results/persistent-<stamp>-<sha>.json` |
+
+### Baselines per platform
+
+`<os>-<arch>` is Rust's `std::env::consts::OS` and `ARCH` of the build that
+runs the suite: `linux-x86_64`, `windows-x86_64`, `macos-aarch64`. Every
+result records it as `platform`. A suite compares only against the baseline
+of its own platform, resolved under `PANEFLOW_BENCH_BASELINE_DIR` (the
+scripts set it to `bench/baselines`; without it the suite falls back to the
+repository's `bench/baselines`). With no baseline for the platform it prints
+`No baseline for macos-aarch64.` (`no baseline for macos-aarch64; thresholds
+only` in the persistent suite) and drops the comparison columns: it never
+falls back to another platform. A baseline file whose recorded `os` and
+`arch` differ from the run, or whose schema is not the one the run writes, is
+refused with a message naming the file, never compared.
+
+`--set-baseline` (`-SetBaseline`) refuses a dirty tracked worktree before
+running, with the command that shows why (`git status --porcelain
+--untracked-files=no`): a baseline must name a commit that exists. The
+persistent suite also refuses untracked files, because its source
+fingerprint counts them and would record the baseline as dirty. Commit the
+change first, then record the baseline and commit it on top.
+
+The non-ignored tests
+`bench_harness::tests::every_committed_baseline_is_clean_current_and_on_its_platform`
+(crate `paneflow-app`) and
+`every_committed_persistent_baseline_is_clean_current_and_on_its_platform`
+(crate `paneflow-host`, `tests/persistent_baseline.rs`) read every file under
+`bench/baselines/` and fail, naming the file, on a schema other than the
+current one (`schema` 2 for the shared harness, `schema_version` 4 for the
+persistent suite), on a dirty source (`git_dirty` other than `"false"`,
+`diff.dirty` other than `false`), on a recorded platform other than the
+directory it sits in, or on an unknown file name.
+
+The allocation baselines of the performance gates,
+`bench/baselines/linux-x86_64/{terminal,editor}-alloc.json`, follow the same
+rules: the gate runs only on Linux x86_64.
+
+Every baseline committed before 2026-10-06 was retired: the four
+`bench/*baseline.json` files were Windows runs, three from dirty trees, the
+startup one recorded before its optimization, the persistent one at schema 2,
+and their CPU field read `windows-x86_64` instead of a model. They remain in
+git history (`git show 0a74eb30:bench/baseline.json`) and their raw results
+stay in `bench/results/`.
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
@@ -31,7 +75,7 @@ It runs on every `pull_request` and every `push` to `main`, is part of
 
 ```bash
 scripts/perf-gates.sh                           # needs Xvfb and Mesa lavapipe; XVFB=<path> overrides the Xvfb binary
-scripts/perf-gates.sh --refresh-alloc-baselines # rewrites bench/{terminal,editor}-alloc-baseline-linux.json
+scripts/perf-gates.sh --refresh-alloc-baselines # rewrites bench/baselines/linux-x86_64/{terminal,editor}-alloc.json; refused from a dirty tree
 ```
 
 The script builds the `gates` profile (release with 16 codegen units, which
@@ -456,8 +500,9 @@ divide by the number actually created. The historical JSON is retained as
 recorded and cannot certify the complete persistent path or native waiter
 behavior on Linux and macOS.
 
-The selected `persistent-baseline.json` is the Windows native desktop run from
-2026-09-22. Its companion runs isolate the [host](results/persistent-20260922T080613Z-d442894acbc8-host-only.json),
+Until 2026-10-06 the persistent baseline was the Windows native desktop run
+from 2026-09-22, at schema 2 with a dirty source; it was retired with the
+other pre-platform baselines (see "Baselines per platform"). Its companion runs isolate the [host](results/persistent-20260922T080613Z-d442894acbc8-host-only.json),
 [host and worker](results/persistent-20260922T080711Z-d442894acbc8-host-worker.json),
 and [host, worker, and desktop](results/persistent-20260922T080810Z-d442894acbc8-native-desktop.json).
 All three measured the same source fingerprint `ee47b728e251ffc7`, with
@@ -473,7 +518,7 @@ release executable.
 
 ```bash
 scripts/bench-persistent.sh                 # writes bench/results/persistent-<stamp>-<sha>.json and compares
-scripts/bench-persistent.sh --set-baseline  # also copies the result to bench/persistent-baseline.json
+scripts/bench-persistent.sh --set-baseline  # also copies the result to bench/baselines/<os>-<arch>/persistent.json
 scripts/bench-persistent.sh --with-worker  # existing worker plus headless attachments
 scripts/bench-persistent.sh --with-desktop # native desktop restoration and per-process CPU
 scripts/bench-persistent.sh --no-followers # W01 host-only topology
@@ -519,8 +564,8 @@ inflate. The comparison prints the p95 per scenario next to the baseline. The
 probe is idle during the counter window and does not move the counters.
 
 The document is `bench/results/persistent-active-<stamp>-<sha>.json`, schema 4.
-It compares against `bench/persistent-active-baseline.json` when that file
-exists, and `--set-baseline` writes it. A baseline of another schema is refused
+It compares against `bench/baselines/<os>-<arch>/persistent-active.json` when
+that file exists, and `--set-baseline` writes it. A baseline of another schema is refused
 with "baseline schema N differs from candidate schema 4; comparison refused,
 record a new baseline"; the regular suite prints the same refusal.
 
@@ -782,6 +827,138 @@ PANEFLOW_BENCH_OUT=/tmp/tab-badges.json \
 
 Under Xvfb, set `DISPLAY` to the virtual display and `VK_DRIVER_FILES` to the
 lavapipe ICD, as the headless spike does.
+
+## Real hardware protocol
+
+CI runners have no reliable GPU, so frame time, GPU load and the real cost of
+a release on a desktop are measured by hand on Arthur's machines, before every
+minor version (`docs/release/runbook.md`, Step 2) and whenever a change
+targets rendering. The protocol measures one running Paneflow, whatever its
+version, through `scripts/perf-hardware.sh` (Linux, macOS) or
+`scripts/perf-hardware.ps1` (Windows), which run the ignored test
+`hardware_protocol` of `crates/paneflow-host/tests/persistent_baseline.rs`
+against the instance's own processes.
+
+### Machines and sessions
+
+| Platform | Session | GPU source | Frame time source |
+|---|---|---|---|
+| Fedora | Wayland (default session) | `nvidia-smi`, `intel_gpu_top`, or the amdgpu `gpu_busy_percent` file in sysfs (what `radeontop` reads), whichever the machine has; all are sampled once per second | a MangoHud log |
+| Fedora | X11 | same | a MangoHud log |
+| Windows 11 | dual boot | the `GPU Engine` performance counter of the desktop process's 3D engines (`typeperf`, the counter Task Manager shows) | a PresentMon log |
+| macOS | if a machine is available | `powermetrics --samplers gpu_power` (needs `sudo`) | none |
+
+The result records the display backend the desktop actually uses, read from
+its environment on Linux: `wayland` when it has `WAYLAND_DISPLAY`, `x11` when
+it only has `DISPLAY`. For X11, log into an Xorg session where the desktop
+still offers one; on GNOME without Xorg, launch Paneflow with
+`env -u WAYLAND_DISPLAY`, which drives GPUI's X11 backend through XWayland, and
+say so in the summary. Without a Mac, macOS is recorded as not measured in the
+summary.
+
+`nvidia-smi`, `intel_gpu_top` and the sysfs file report the whole device, not
+one process, so close every other GPU client (browser, video, other terminals'
+animations) before a run. `intel_gpu_top` needs root or `CAP_PERFMON`; run the
+script with the capability or accept its `not_measured`.
+
+### Preparation
+
+1. Quit the daily Paneflow and every other instance; stop their host and worker
+   (`paneflow host stop`, `paneflow serve stop`). The script refuses to run
+   with more than one desktop, host or worker.
+2. Plug the laptop in, set the screen to its usual resolution and refresh rate,
+   and note both in the summary.
+3. Install the build under test into a scratch directory: a published release
+   from `gh release download v<version> -p "paneflow-<version>-x86_64.tar.gz"`
+   (`.msi` on Windows), or `cargo build --release` of the commit for `main`.
+4. In a terminal outside Paneflow, export an isolated home for that build
+   and launch it from the same terminal, so the script finds its endpoints:
+
+   ```bash
+   export PANEFLOW_HOME="$HOME/.paneflow-hw-v0.17.5"
+   ./paneflow &          # MangoHud: MANGOHUD=1 MANGOHUD_CONFIG=autostart_log=1,log_duration=60,output_folder=/tmp/hw ./paneflow &
+   ```
+
+   Every version measured here (v0.15.1 onward) honors `PANEFLOW_HOME`, so the
+   daily state is never migrated or downgraded.
+5. Maximize the window and wait until the first frame and the session restore
+   settle.
+
+### The four states
+
+Each state is held for the whole 60 s window, with nobody touching the
+machine. Run the script about 10 s after the state is reached.
+
+| State | Setup |
+|---|---|
+| `idle-4-panes` | One workspace split into 2 x 2 panes, each an idle shell in a git repository, nothing printing, no agent. |
+| `agent-thinking` | `idle-4-panes`, with one pane running Claude Code or Codex on a prompt that keeps it thinking for more than 60 s, its spinner visible in the sidebar. |
+| `stream-4` | Four panes each running `paneflow-session-fixture stream 16384 600` from a release build of `main` (`target/release/`), the same stream the active scenario uses. |
+| `panes-8` | One workspace split into 8 visible panes (2 rows of 4), idle shells. |
+
+```bash
+scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
+scripts/perf-hardware.sh --state agent-thinking --label v0.17.5 --frame-log /tmp/hw/paneflow_*.csv
+scripts/perf-hardware.ps1 -State stream-4 -Label v0.17.5 -FrameLog C:\hw\presentmon.csv
+```
+
+On Windows, capture the frame log in parallel with PresentMon 2.x:
+`PresentMon --process_id <desktop pid> --output_file C:\hw\presentmon.csv
+--timed 60 --terminate_after_timed`; the frame time is its
+`MsBetweenPresents` column ([PresentMon console
+README](https://github.com/GameTechDev/PresentMon/blob/main/README-ConsoleApplication.md)).
+MangoHud writes a `frametime` column in milliseconds. The script accepts
+either.
+
+### What a run records
+
+`bench/results/hardware-<os>-<arch>-<session>-<state>-<label>-<stamp>.json`,
+over the window:
+
+| Field | Content |
+|---|---|
+| `processes.<desktop,host,worker>` | CPU percent of one core per process and per thread role, resident memory, threads and handles, and the delta of every work counter. |
+| `root_renders` | Root renders of the desktop over the window, from `system.counters`. |
+| `gpu.<source>` | p50, p95 and max load in percent, one entry per source. |
+| `frame_time_ms` | p50 and p95 frame time from the log. |
+| `session`, `version`, `label`, `machine` | Display backend, `paneflow --version` of the measured binary, the label, and the machine identity. |
+
+A measurement that cannot be taken is written
+`{"not_measured": "<reason>"}`, never 0: a missing tool ("intel_gpu_top is
+unavailable: No such file or directory"), a version without counters
+("system.counters failed: ... Method not found", every release before the
+EP-001 counters), a process the version does not have ("no paneflow host
+process was running"), or no frame log. The non-ignored test
+`hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero`
+pins every parser and that rule. Only the Linux sources `nvidia-smi` and
+amdgpu sysfs were exercised on a real machine when the protocol was written
+(Fedora 44, RTX 4070 Ti SUPER and Radeon 610M, against v0.17.5); the Windows
+`typeperf` and PresentMon parsing and the macOS `powermetrics` parsing are
+covered by those tests on recorded output only, until their first run.
+
+### Summary and verdicts
+
+Each execution commits its JSON results and one
+`bench/results/hardware-summary-<date>.md` with a table per state (CPU per
+process, resident memory, root renders, GPU p50 and p95, frame time p50 and
+p95) and one verdict per candidate regression of
+`tasks/prd-performance-gates.md`, each confirmed, refuted, or not decidable
+with the reason:
+
+| Candidate | Introduced | Decided by |
+|---|---|---|
+| Tab badges rebuilt every frame | v0.17.1 | `agent-thinking`: desktop CPU and GPU, v0.17.0 against v0.17.1 |
+| Full process listing per session | v0.17.0 | `stream-4`: host CPU, v0.15.1 against v0.17.0, then v0.17.5 against `main` after EP-002 |
+| Viewport scan every 500 ms | v0.17.0 | `stream-4`: host CPU and its `host.viewport_scan` role |
+| Worker snapshot every 2 s | v0.17.0 | `idle-4-panes`: worker and desktop CPU, desktop GPU |
+| Extra git config process per probe | v0.17.5 | `idle-4-panes` in a git repository: desktop CPU, v0.17.1 against v0.17.5 |
+| Startup sleep on a stale socket | May 2026 | not this protocol: `scripts/bench-startup.sh`, scenario `stale_socket_` |
+| Per-session broadcasts | `610e6fc6` (unreleased) | `stream-4`: host and worker CPU, `main` before and after EP-002 |
+
+The first execution compares v0.15.1, v0.17.0, v0.17.1, v0.17.5 and `main`
+after EP-002 under Linux. It has not run yet: it needs Arthur's desktop
+session with every other instance quit, which an agent working inside
+Paneflow cannot provide.
 
 ## Terminal suite
 
@@ -1063,15 +1240,16 @@ baseline exists, and the same table without its comparison columns when it
 does not. That table is the artifact to share.
 
 `--set-baseline` (or `-SetBaseline` on Windows) copies the fresh result over
-the suite's baseline. The committed terminal baseline is the state of the
-pipeline before the September 2026 performance work.
+the suite's baseline for the run's platform, and is refused from a dirty
+tracked worktree (see "Baselines per platform").
 
 `scripts/bench-editor` and `scripts/bench-terminal` refuse `--set-baseline`
 when the run reports a `cpu_share` below 0.90: a contended run inflates every
 timing it would freeze, and every later comparison against it would read as a
 false improvement. Close the competing workload and run again.
 `scripts/bench-startup` is exempt: its work runs in a child process, so its
-`cpu_share` is always 0 until it measures that child's CPU time.
+`cpu_share` is `null` (not measured) until it measures that child's CPU time.
+It still refuses a dirty tree.
 
 **A change that moves a metric updates the baseline in the same pull request.**
 A baseline older than the code it is compared against turns every table into
@@ -1118,7 +1296,7 @@ allocated per iteration and are exact.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "suite": "paneflow-terminal-bench",
   "generated_unix": 0,
   "stamp": "20260901T120000Z",
@@ -1126,9 +1304,11 @@ allocated per iteration and are exact.
   "git_dirty": "false",
   "os": "windows",
   "arch": "x86_64",
-  "cpu": "...",
+  "platform": "windows-x86_64",
+  "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor",
   "profile": "release",
   "corpus_seed": "0x...",
+  "cpu_share": 0.98,
   "metrics": [
     {
       "metric": "publish_scroll_220x60",
@@ -1147,7 +1327,10 @@ allocated per iteration and are exact.
 ```
 
 The editor suite writes the same document with `"suite":
-"paneflow-editor-bench"` and its own `corpus_seed`.
+"paneflow-editor-bench"` and its own `corpus_seed`. Schema 2 added `platform`
+and made `cpu_share` nullable. `cpu` is the processor model: `/proc/cpuinfo`
+on Linux, `sysctl machdep.cpu.brand_string` on macOS, the registry value
+`ProcessorNameString` on Windows, and `unknown` when none answers.
 
 ## Syntax query parity measurement
 
@@ -1216,6 +1399,6 @@ The suite refuses a debug binary unless `PANEFLOW_BENCH_ALLOW_DEBUG` is set.
 | `<scenario>_step_<mark>` | ns | The time between one trace mark and the previous one, one metric per mark in launch order. `step_gpui_app_ready` is the platform and text system initialization inside GPUI, `step_fonts_loaded` the registration of the embedded fonts, `step_window_created` the GPU window, `step_ipc_server_started` the singleton guard and IPC thread, `step_workspaces_restored` the session restore, `step_first_render_built` the element tree construction, and `step_window_open_returned` the first layout and paint of that tree. |
 
 The mark names are the metric names, so adding a mark adds a metric and the
-comparison table reports it as new. The `cpu_share` field is `0.0` for this
-suite: the timed work happens in a child process, so the harness cannot
-attribute a core share to it.
+comparison table reports it as new. The `cpu_share` field is `null`, not
+measured, for this suite: the timed work happens in a child process, so the
+harness cannot attribute a core share to it.

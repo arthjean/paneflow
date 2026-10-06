@@ -18,12 +18,20 @@ Set-Location (Join-Path $PSScriptRoot "..")
 
 $sha = (git rev-parse --short=12 HEAD).Trim()
 $dirty = if ((git status --porcelain --untracked-files=no | Measure-Object).Count -gt 0) { "true" } else { "false" }
+if ($SetBaseline -and $dirty -eq "true") {
+    Write-Error "the tracked worktree is dirty: commit before recording a baseline, so it records a commit that exists. Check with: git status --porcelain --untracked-files=no"
+    exit 1
+}
+if ($SetBaseline -and (git status --porcelain | Measure-Object).Count -gt 0) {
+    Write-Error "the worktree holds untracked or modified files, which the persistent suite records as a dirty source: commit or remove them before recording a baseline. Check with: git status --porcelain"
+    exit 1
+}
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 New-Item -ItemType Directory -Force -Path "bench/results" | Out-Null
 $root = (Get-Location).Path
 $suite = if ($Endurance -gt 0) { "persistent-endurance" } elseif ($Active) { "persistent-active" } else { "persistent" }
 $test = if ($Endurance -gt 0) { "persistent_session_endurance" } elseif ($Active) { "persistent_session_active" } else { "persistent_session_baseline" }
-$baseline = if ($Active) { "bench/persistent-active-baseline.json" } else { "bench/persistent-baseline.json" }
+$baseline = if ($Active) { "persistent-active" } else { "persistent" }
 $out = Join-Path $root "bench/results/$suite-$stamp-$sha.json"
 if ($Endurance -gt 0) {
     $env:PANEFLOW_BENCH_ENDURANCE_MINUTES = "$Endurance"
@@ -40,11 +48,7 @@ $env:PANEFLOW_BENCH_OUT = $out
 $env:PANEFLOW_BENCH_SHA = $sha
 $env:PANEFLOW_BENCH_DIRTY = $dirty
 $env:PANEFLOW_BENCH_STAMP = $stamp
-if (Test-Path $baseline) {
-    $env:PANEFLOW_BENCH_BASELINE = Join-Path $root $baseline
-} else {
-    Remove-Item Env:PANEFLOW_BENCH_BASELINE -ErrorAction SilentlyContinue
-}
+$env:PANEFLOW_BENCH_BASELINE_DIR = Join-Path $root "bench/baselines"
 
 $harness = cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json |
     ForEach-Object { $_ | ConvertFrom-Json } |
@@ -114,6 +118,12 @@ if ($status -ne 0) {
     exit $status
 }
 if ($SetBaseline -and $Endurance -eq 0) {
-    Copy-Item $out $baseline -Force
-    Write-Host "baseline: $baseline now points at $sha"
+    $platform = (Get-Content $out -Raw | ConvertFrom-Json).platform
+    if (-not $platform) {
+        Write-Error "the result names no platform, refusing to record a baseline from it: $out"
+        exit 1
+    }
+    New-Item -ItemType Directory -Force -Path "bench/baselines/$platform" | Out-Null
+    Copy-Item $out "bench/baselines/$platform/$baseline.json" -Force
+    Write-Host "baseline: bench/baselines/$platform/$baseline.json now points at $sha"
 }

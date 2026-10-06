@@ -21,8 +21,7 @@ pub(super) fn output_path() -> PathBuf {
 }
 
 fn baseline_document() -> Option<Value> {
-    let path = std::env::var_os("PANEFLOW_BENCH_BASELINE")?;
-    let bytes = std::fs::read(&path).ok()?;
+    let bytes = std::fs::read(baseline_path("persistent")).ok()?;
     serde_json::from_slice::<Value>(&bytes).ok()
 }
 
@@ -47,7 +46,10 @@ pub(super) fn compare(document: &Value, decisions: &[Decision]) -> String {
         .as_ref()
         .is_some_and(|baseline| baseline_matches(baseline, document));
     match (&baseline, comparable) {
-        (None, _) => text.push_str("no comparable baseline configured; thresholds only\n"),
+        (None, _) => text.push_str(&format!(
+            "no baseline for {}; thresholds only\n",
+            platform()
+        )),
         (Some(baseline), false) if active::schema_refusal(baseline, document).is_some() => {
             text.push_str(&active::schema_refusal(baseline, document).unwrap_or_default());
             text.push('\n');

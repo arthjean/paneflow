@@ -1111,9 +1111,10 @@ fn editor_pipeline_benchmark() {
 
     publish(
         "paneflow-editor-bench",
+        "editor",
         EDITOR_CORPUS_SEED,
         &metrics,
-        cpu_share,
+        Some(cpu_share),
     );
 }
 

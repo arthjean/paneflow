@@ -321,7 +321,7 @@ fn startup_first_frame_benchmark() {
     println!(
         "PANEFLOW_BENCH_NOTE {runs} timed launches per scenario after one warm-up each; cpu share is not measured for a subprocess suite"
     );
-    publish(SUITE, 0, &metrics, 0.0);
+    publish(SUITE, "startup", 0, &metrics, None);
 }
 
 #[cfg(test)]

@@ -93,6 +93,49 @@ pub(super) fn toolchain() -> Value {
     })
 }
 
+pub(super) fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+pub(super) fn baseline_path(name: &str) -> PathBuf {
+    std::env::var_os("PANEFLOW_BENCH_BASELINE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/baselines"))
+        .join(platform())
+        .join(format!("{name}.json"))
+}
+
+pub(super) fn baseline_violations(path: &Path, directory: &str, document: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    if document["schema_version"].as_u64() != Some(SCHEMA_VERSION) {
+        violations.push(format!(
+            "{}: schema_version {}, expected schema_version {SCHEMA_VERSION}",
+            path.display(),
+            document["schema_version"]
+        ));
+    }
+    if document["diff"]["dirty"] != false {
+        violations.push(format!(
+            "{}: diff.dirty is {}, a baseline must come from a clean tree",
+            path.display(),
+            document["diff"]["dirty"]
+        ));
+    }
+    let recorded = format!(
+        "{}-{}",
+        document["machine"]["os"].as_str().unwrap_or("unknown"),
+        document["machine"]["arch"].as_str().unwrap_or("unknown")
+    );
+    if recorded != directory || document["platform"].as_str() != Some(directory) {
+        violations.push(format!(
+            "{}: recorded on {recorded} (platform {}), but it lives under {directory}",
+            path.display(),
+            document["platform"]
+        ));
+    }
+    violations
+}
+
 pub(super) fn machine() -> Value {
     json!({
         "os": std::env::consts::OS,

@@ -23,6 +23,8 @@ mod endurance;
 mod gate_runs;
 #[path = "persistent_baseline/gates.rs"]
 mod gates;
+#[path = "persistent_baseline/hardware.rs"]
+mod hardware;
 #[path = "persistent_baseline/headless.rs"]
 mod headless;
 #[path = "persistent_baseline/metrics.rs"]
@@ -406,6 +408,7 @@ fn persistent_session_baseline() {
     let document = json!({
         "suite": "paneflow-persistent-bench",
         "schema_version": SCHEMA_VERSION,
+        "platform": platform(),
         "protocol": protocol.label,
         "acceptance_grade": protocol.acceptance_grade,
         "stamp": stamp(),
@@ -448,7 +451,8 @@ fn persistent_session_baseline() {
     });
     let mut document = document;
     let comparison = compare(&document, &decisions);
-    document["comparison"] = json!({"text": comparison, "baseline": std::env::var_os("PANEFLOW_BENCH_BASELINE").map(|p| Path::new(&p).display().to_string())});
+    document["comparison"] =
+        json!({"text": comparison, "baseline": baseline_path("persistent").display().to_string()});
     let path = output_path();
     write_document(&path, &document);
     println!("result: {}", path.display());
@@ -528,6 +532,7 @@ fn persistent_session_active() {
     let mut document = json!({
         "suite": "paneflow-persistent-active",
         "schema_version": SCHEMA_VERSION,
+        "platform": platform(),
         "status": if failures.is_empty() { "complete" } else { "failed" },
         "stamp": stamp(),
         "commit": git(&["rev-parse", "HEAD"]),
@@ -562,11 +567,11 @@ fn persistent_session_active() {
         "failures": failures,
         "counters_note": "work_counters are deltas of the US-001 counters over the window; pending carries its reason and is never a measured zero",
     });
-    let baseline = std::env::var_os("PANEFLOW_BENCH_BASELINE")
-        .and_then(|baseline| std::fs::read(baseline).ok())
+    let baseline = std::fs::read(baseline_path("persistent-active"))
+        .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
     let comparison = active::compare_active(&document, baseline.as_ref());
-    document["comparison"] = json!({"text": comparison, "baseline": std::env::var_os("PANEFLOW_BENCH_BASELINE").map(|p| Path::new(&p).display().to_string())});
+    document["comparison"] = json!({"text": comparison, "baseline": baseline_path("persistent-active").display().to_string()});
     write_document(&path, &document);
     println!("result: {}", path.display());
     print!("{comparison}");
@@ -687,6 +692,151 @@ fn a_baseline_of_another_schema_is_refused_with_an_explicit_message() {
         "{text}"
     );
     assert!(active::schema_refusal(&document, &document).is_none());
+}
+
+#[test]
+fn every_committed_persistent_baseline_is_clean_current_and_on_its_platform() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/baselines");
+    let mut violations = Vec::new();
+    for directory in std::fs::read_dir(&root).unwrap() {
+        let directory = directory.unwrap().path();
+        let platform = directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        for name in ["persistent", "persistent-active"] {
+            let path = directory.join(format!("{name}.json"));
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let document: Value = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|error| panic!("{} is not JSON: {error}", path.display()));
+            violations.extend(baseline_violations(&path, &platform, &document));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "committed persistent baselines must be at schema_version {SCHEMA_VERSION}, from a clean tree, under their own platform; record them again with scripts/bench-persistent.sh --set-baseline:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn an_old_schema_persistent_baseline_fails_the_coherence_check_naming_the_file_and_the_schema() {
+    let path = Path::new("bench/baselines/windows-x86_64/persistent.json");
+    let old = json!({
+        "schema_version": 2,
+        "platform": "windows-x86_64",
+        "diff": {"dirty": false},
+        "machine": {"os": "windows", "arch": "x86_64"},
+    });
+    assert_eq!(
+        baseline_violations(path, "windows-x86_64", &old),
+        [format!(
+            "bench/baselines/windows-x86_64/persistent.json: schema_version 2, expected schema_version {SCHEMA_VERSION}"
+        )]
+    );
+    let dirty_elsewhere = json!({
+        "schema_version": SCHEMA_VERSION,
+        "platform": "linux-x86_64",
+        "diff": {"dirty": null},
+        "machine": {"os": "linux", "arch": "x86_64"},
+    });
+    let violations = baseline_violations(path, "windows-x86_64", &dirty_elsewhere);
+    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert!(
+        violations[0].contains("diff.dirty is null"),
+        "{violations:?}"
+    );
+    assert!(
+        violations[1].contains("recorded on linux-x86_64"),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn a_missing_persistent_baseline_names_the_current_platform() {
+    let document = json!({"schema_version": SCHEMA_VERSION, "scenarios": []});
+    let text = active::compare_active(&document, None);
+    assert!(
+        text.starts_with(&format!("no active baseline for {}", platform())),
+        "{text}"
+    );
+    assert!(baseline_path("persistent").ends_with(Path::new(&platform()).join("persistent.json")));
+}
+
+#[test]
+#[ignore = "real hardware protocol; run through scripts/perf-hardware.sh or .ps1 against a running Paneflow"]
+fn hardware_protocol() {
+    let state = std::env::var("PANEFLOW_HW_STATE").unwrap_or_default();
+    assert!(
+        hardware::HARDWARE_STATES.contains(&state.as_str()),
+        "PANEFLOW_HW_STATE must be one of {:?}, got {state:?}",
+        hardware::HARDWARE_STATES
+    );
+    let label = std::env::var("PANEFLOW_HW_LABEL").unwrap_or_else(|_| "unlabeled".to_string());
+    let window = std::env::var("PANEFLOW_HW_WINDOW_S")
+        .ok()
+        .and_then(|seconds| seconds.parse().ok())
+        .map_or(hardware::HARDWARE_WINDOW, Duration::from_secs);
+    let document = hardware::measure(&state, &label, window);
+    let path = std::env::var_os("PANEFLOW_BENCH_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../bench/results")
+                .join(format!(
+                    "hardware-{}-{}-{state}-{label}-{}.json",
+                    platform(),
+                    hardware::session_type(),
+                    stamp()
+                ))
+        });
+    write_document(&path, &document);
+    println!("result: {}", path.display());
+    println!("{}", serde_json::to_string_pretty(&document).unwrap());
+}
+
+#[test]
+fn hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero() {
+    let nvidia = hardware::parse_nvidia_smi("0, 12\n1, 0\n0, 30\n0, [N/A]\n");
+    assert_eq!(nvidia["nvidia-smi gpu0"], [12.0, 30.0]);
+    assert_eq!(nvidia["nvidia-smi gpu1"], [0.0]);
+    let intel = "{\n\t\"engines\": {\n\t\t\"Render/3D/0\": {\n\t\t\t\"busy\": 7.25,\n\t\t\t\"sema\": 0.0\n\t\t},\n\t\t\"Blitter/0\": {\n\t\t\t\"busy\": 99.0\n\t\t}\n\t}\n}\n";
+    assert_eq!(hardware::parse_intel_gpu_top(intel), [7.25]);
+    let powermetrics = "**** GPU usage ****\n\nGPU HW active frequency: 389 MHz\nGPU HW active residency:  12.34% (389 MHz: 12%)\nGPU idle residency:  87.66%\n";
+    assert_eq!(hardware::parse_powermetrics(powermetrics), [12.34]);
+    let typeperf = "\n\"(PDH-CSV 4.0)\",\"\\\\PC\\GPU Engine(pid_42_luid_0x0_0x1_phys_0_eng_0_engtype_3D)\\Utilization Percentage\",\"\\\\PC\\GPU Engine(pid_42_luid_0x0_0x1_phys_0_eng_3_engtype_Copy)\\Utilization Percentage\",\"\\\\PC\\GPU Engine(pid_7_luid_0x0_0x1_phys_0_eng_0_engtype_3D)\\Utilization Percentage\"\n\"10/06/2026 10:00:00.000\",\"4.5\",\"50\",\"80\"\n\"10/06/2026 10:00:01.000\",\"1.5\",\"50\",\"80\"\nExiting, please wait...\n";
+    assert_eq!(hardware::parse_typeperf(typeperf, 42), [4.5, 1.5]);
+    assert!(hardware::parse_typeperf(typeperf, 9).is_empty());
+    let mangohud = "os,cpu,gpu,ram,kernel,driver,cpuscheduler\nFedora,AMD,NVIDIA,32,6.0,580,\nfps,frametime,cpu_load,gpu_load\n144,6.94,3,5\n120,8.33,3,5\n";
+    assert_eq!(hardware::parse_frame_log(mangohud).unwrap(), [6.94, 8.33]);
+    let presentmon = "Application,ProcessID,MsBetweenPresents\npaneflow.exe,42,16.6\n";
+    assert_eq!(hardware::parse_frame_log(presentmon).unwrap(), [16.6]);
+    assert!(
+        hardware::parse_frame_log("a,b\n1,2\n")
+            .unwrap_err()
+            .contains("no header")
+    );
+    let empty = hardware::distribution(&[], "percent busy");
+    assert!(empty["not_measured"].is_string(), "{empty}");
+    let measured = hardware::distribution(&[1.0, 2.0, 3.0, 4.0], "ms");
+    assert_eq!(measured["p50"], 2.0);
+    assert_eq!(measured["p95"], 4.0);
+    assert_eq!(
+        hardware::not_measured("why"),
+        json!({"not_measured": "why"})
+    );
+    assert_eq!(
+        hardware::display_backend(b"HOME=/h\0WAYLAND_DISPLAY=wayland-0\0DISPLAY=:0\0"),
+        "wayland"
+    );
+    assert_eq!(
+        hardware::display_backend(b"WAYLAND_DISPLAY=\0DISPLAY=:0\0"),
+        "x11"
+    );
+    assert_eq!(hardware::display_backend(b"HOME=/h\0"), "unknown");
 }
 
 #[test]

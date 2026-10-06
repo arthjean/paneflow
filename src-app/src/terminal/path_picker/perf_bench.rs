@@ -149,5 +149,8 @@ fn path_picker_benchmark() {
             walked.complete()
         );
     }
-    println!("{}", results_table(&metrics));
+    println!(
+        "{}",
+        results_table(&metrics, "Path picker walk, no baseline.")
+    );
 }

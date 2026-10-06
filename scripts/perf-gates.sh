@@ -57,6 +57,11 @@ run_suite() {
     -- --ignored --exact --nocapture --test-threads=1
 }
 
+if [ "$mode" = refresh ] && [ "$PANEFLOW_BENCH_DIRTY" = true ]; then
+  echo "the tracked worktree is dirty: commit before refreshing a baseline, so it records a commit that exists. Check with: git status --porcelain --untracked-files=no" >&2
+  exit 1
+fi
+
 run_step terminal run_suite terminal terminal::perf_bench::terminal_pipeline_benchmark
 run_step editor run_suite editor app::diff_dock::code::perf_bench::editor_pipeline_benchmark
 
@@ -67,9 +72,10 @@ if [ "$mode" = refresh ]; then
       exit 1
     fi
   done
+  mkdir -p bench/baselines/linux-x86_64
   for suite in terminal editor; do
-    cp "$out/$suite.json" "bench/$suite-alloc-baseline-linux.json"
-    echo "baseline: bench/$suite-alloc-baseline-linux.json now points at $PANEFLOW_BENCH_SHA (dirty: $PANEFLOW_BENCH_DIRTY)"
+    cp "$out/$suite.json" "bench/baselines/linux-x86_64/$suite-alloc.json"
+    echo "baseline: bench/baselines/linux-x86_64/$suite-alloc.json now points at $PANEFLOW_BENCH_SHA"
   done
   exit 0
 fi

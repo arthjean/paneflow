@@ -71,16 +71,24 @@ else
   unset PANEFLOW_BENCH_HOST PANEFLOW_BENCH_FIXTURE
   controller="$(pwd)/target/release/paneflow"
 fi
+if [ "$mode" = "set-baseline" ] && [ "$dirty" = "true" ]; then
+  echo "the build is dirty: commit before recording a baseline, so it records a commit that exists. Check with: git status --porcelain --untracked-files=no" >&2
+  exit 1
+fi
+if [ "$mode" = "set-baseline" ] && [ -z "$prebuilt" ] && [ -n "$(git status --porcelain)" ]; then
+  echo "the worktree holds untracked or modified files, which the persistent suite records as a dirty source: commit or remove them before recording a baseline. Check with: git status --porcelain" >&2
+  exit 1
+fi
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p bench/results
 root=$(pwd)
 suite="persistent"
 test="persistent_session_baseline"
-baseline="bench/persistent-baseline.json"
+baseline="persistent"
 if [ "$active" = "true" ]; then
   suite="persistent-active"
   test="persistent_session_active"
-  baseline="bench/persistent-active-baseline.json"
+  baseline="persistent-active"
 fi
 if [ -n "$endurance" ]; then
   suite="persistent-endurance"
@@ -100,11 +108,7 @@ export PANEFLOW_BENCH_OUT="$out"
 export PANEFLOW_BENCH_SHA="$sha"
 export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
-if [ -f "$baseline" ]; then
-  export PANEFLOW_BENCH_BASELINE="$root/$baseline"
-else
-  unset PANEFLOW_BENCH_BASELINE
-fi
+export PANEFLOW_BENCH_BASELINE_DIR="$root/bench/baselines"
 
 if [ -z "$prebuilt" ]; then
   harness=$(cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
@@ -172,6 +176,12 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 if [ "$mode" = "set-baseline" ] && [ -z "$endurance" ]; then
-  cp "$out" "$baseline"
-  echo "baseline: $baseline now points at $sha"
+  platform=$(sed -n 's/^  "platform": "\([^"]*\)",\{0,1\}$/\1/p' "$out" | head -n 1)
+  if [ -z "$platform" ]; then
+    echo "the result names no platform, refusing to record a baseline from it: $out" >&2
+    exit 1
+  fi
+  mkdir -p "bench/baselines/$platform"
+  cp "$out" "bench/baselines/$platform/$baseline.json"
+  echo "baseline: bench/baselines/$platform/$baseline.json now points at $sha"
 fi
