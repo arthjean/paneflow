@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Tenir des baselines propres par plateforme et mesurer le GPU sur matériel réel",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-006",
@@ -302,7 +302,7 @@
       "id": "US-018",
       "title": "Rendre les baselines propres, par plateforme et vérifiées",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -315,14 +315,14 @@
         "US-010"
       ],
       "started_at": "2026-10-06",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-06T14:58:00+02:00",
+      "reviewed_at": "2026-10-06T14:58:00+02:00"
     },
     {
       "id": "US-019",
       "title": "Documenter et exécuter le protocole manuel GPU et temps de frame sur matériel réel",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -330,8 +330,8 @@
         "US-002"
       ],
       "started_at": "2026-10-06",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-06T14:58:00+02:00",
+      "reviewed_at": "2026-10-06T14:58:00+02:00"
     },
     {
       "id": "US-020",
