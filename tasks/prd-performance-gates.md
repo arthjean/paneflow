@@ -10,6 +10,7 @@
 | 1.2 | 2026-10-04 | Arthur Jean | US-006 : la latence p95 se mesure par l'aller-retour d'écho du scénario actif, car `terminal/perf_bench.rs` ne traverse pas le host et ne peut pas observer le thread de session. |
 | 1.3 | 2026-10-06 | Arthur Jean | EP-004 après revue et premier run CI de l'A/B (37369016686) : l'A/A ne borne plus que les p50, et un p95 n'est jugé que si son propre A/A tient, car les p95 dérivent jusqu'à 55 % sur un code identique. Les compteurs d'instructions, déterministes, deviennent bloquants par leur propre variable après 10 runs CI ; le benchmark de mise en page sort du périmètre d'US-017 (crate binaire sans cible lib). La promotion du temps réel, qui exige 30 runs sur 3 semaines, passe dans US-020 (EP-006). 6 epics, 20 stories. |
 | 1.4 | 2026-10-06 | Arthur Jean | EP-005 allégé après implémentation : un protocole complet à chaque version mineure, sur cinq versions et trois OS, ne tiendrait pas au rythme des versions correctives. Les baselines Windows deviennent opportunistes ; la première exécution se réduit à v0.17.5 contre `main` sous Fedora Wayland, dans deux états ; le runbook n'exige le protocole que pour un changement de rendu ; les sources GPU se limitent au matériel réel (nvidia-smi, amdgpu, GPU Engine). |
+| 1.5 | 2026-10-06 | Arthur Jean | US-020 : la décision consultative peut être consignée dès que le critère ne peut plus être atteint sur les 30 premiers runs comptés, sans attendre le trentième. Les 11 premiers runs en contiennent déjà 2 dont la régression n'a pas été confirmée, et 4 non calibrés en tout, donc au mieux 26 calibrés sur 30 : 19 runs CI de plus ne changeraient pas l'issue. |
 
 ## Problem Statement
 
@@ -562,7 +563,7 @@ Laisser l'A/B temps réel accumuler ses runs d'ombre, puis trancher sur preuve :
 **Acceptance Criteria:**
 - [ ] Le décompte suit `promotion.effect` de chaque `result.json` : 30 runs consécutifs sur au moins 3 semaines, p50 A/A calibrés sur au moins 90 % d'entre eux, aucune régression non confirmée par une seconde exécution.
 - [ ] La promotion est une PR qui bascule `PERF_AB_BLOCKING` à `"true"`, met à jour le test du workflow et cite les 30 runs.
-- [ ] Si le critère n'est pas atteint au bout de 30 runs, la décision de garder le temps réel consultatif est consignée dans `bench/README.md`, avec les taux observés.
+- [ ] Si le critère ne peut plus être atteint sur les 30 premiers runs comptés, ou n'est pas atteint au bout de 30 runs, la décision de garder le temps réel consultatif est consignée dans `bench/README.md`, avec les taux observés.
 - [ ] Échec : given un run dont la base est indisponible ou exclu faute de mesure, when le décompte est fait, then il n'y entre pas.
 
 ---

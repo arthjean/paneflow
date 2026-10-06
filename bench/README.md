@@ -343,7 +343,7 @@ failure (exit 2 or 4) turns it red otherwise:
   the variable to `"true"`.
 - `PERF_AB_BLOCKING: "false"`: the real-time verdict stays in shadow mode, green
   whatever it says. An unavailable base or a twice uncalibrated run adds a
-  warning. Its promotion is tracked by US-020 of the PRD.
+  warning. It stays consultative: see the decision below.
 
 A `workflow_dispatch` run has its own concurrency group, so manual runs with
 different commits proceed in parallel instead of replacing each other; pull
@@ -383,6 +383,23 @@ whose artifact expired after it finished before the latest 30 counted runs,
 since it cannot change the decision. The rates it
 reports, over all counted runs and over the latest 30, are the ones a
 `keep_consultative` decision records here.
+
+Decision of 2026-10-06: the real-time verdict stays consultative and
+`PERF_AB_BLOCKING` stays `"false"`. The criterion can no longer be met by the
+first 30 counted runs, so waiting for the thirtieth would not change the
+outcome. The count of that day (`scripts/perf-ab-promotion.sh`, which still
+reports `pending` because it decides only at 30 runs) holds 11 counted runs:
+7 calibrated (64 %), 2 uncalibrated, and 2 unconfirmed regressions (18 %),
+both parasitic p95 regressions on identical terminal code (see the runs
+below). Those 2 resets already rule out 30 runs without one, and 4 runs that
+are not calibrated leave at most 26 calibrated of 30 where 27 are needed. The
+nightly run 37448250584 was skipped (base `v0.17.5` unavailable), as were the
+two schema 1 runs of 2026-10-05.
+
+The question reopens only with a comparator that keeps the p95 noise from
+producing parasitic regressions. Such a change raises `AB_SCHEMA_VERSION`, so
+the count starts over on a fresh window and runs of the current rule are
+skipped.
 
 ### Instruction promotion runs
 
