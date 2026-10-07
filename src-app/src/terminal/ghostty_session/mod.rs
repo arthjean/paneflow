@@ -1210,6 +1210,7 @@ fn configure_embedder_options(
         }
     };
     crate::terminal::kitty::enable(terminal);
+    apply("render hold", terminal.enable_render_hold());
     apply(
         "color palette",
         terminal.set_palette(&current_ghostty_palette()),
@@ -1405,6 +1406,30 @@ mod tests {
                 .expect("terminal");
         configure_embedder_options(&mut terminal, 100, option_as_meta);
         terminal
+    }
+
+    #[test]
+    fn desktop_terminals_capture_render_holds_and_bare_terminals_do_not() {
+        let mut terminal = embedder_terminal(false);
+        terminal.feed(b"\x1b[?2026h").expect("hold opens");
+        assert!(terminal.render_hold().is_some());
+
+        let snapshot = terminal.encode_snapshot().expect("checkpoint");
+        let size = TerminalWindowSize::new(20, 4, 8, 16);
+        let mut restored = restore_terminal_from_checkpoint(&snapshot, size, 100, false)
+            .expect("checkpoint restores");
+        restored
+            .feed(b"\x1b[?2026l\x1b[?2026h")
+            .expect("hold reopens");
+        assert!(restored.render_hold().is_some());
+
+        let size = window_size(size).expect("window size");
+        let mut bare =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("terminal");
+        bare.feed(b"\x1b[?2026h").expect("mode parses");
+        assert!(bare.synchronized_output().expect("mode query"));
+        assert!(bare.render_hold().is_none());
     }
 
     #[test]

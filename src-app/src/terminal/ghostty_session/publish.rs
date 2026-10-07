@@ -75,7 +75,8 @@ pub(super) struct PublishGate {
     pending: bool,
     pub(super) interactive_until: Option<Instant>,
     urgent: bool,
-    sync_hold_since: Option<Instant>,
+    render_hold: Option<ghostty::RenderHold>,
+    published_hold: Option<u64>,
     mirror: CellMirror,
     pub(super) search_query: String,
     pub(super) search_error: Option<String>,
@@ -86,14 +87,21 @@ pub(super) struct PublishGate {
 
 impl PublishGate {
     pub(super) fn new() -> Self {
-        Self {
-            last_publish: Instant::now()
+        Self::at(
+            Instant::now()
                 .checked_sub(MIN_PUBLISH_INTERVAL)
                 .unwrap_or_else(Instant::now),
+        )
+    }
+
+    fn at(last_publish: Instant) -> Self {
+        Self {
+            last_publish,
             pending: false,
-            sync_hold_since: None,
             interactive_until: None,
             urgent: false,
+            render_hold: None,
+            published_hold: None,
             mirror: CellMirror::default(),
             search_query: String::new(),
             search_error: None,
@@ -108,8 +116,7 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
-        self.sync_hold_since = None;
-        self.commit(inner, terminal)
+        self.commit(inner, terminal, true)
     }
 
     pub(super) fn request(
@@ -137,20 +144,22 @@ impl PublishGate {
         if !self.pending {
             return Ok(());
         }
-        let synchronized_output = terminal
-            .synchronized_output()
-            .map_err(|error| error.to_string())?;
-        if !self.decide(synchronized_output, Instant::now()) {
+        let now = Instant::now();
+        self.render_hold = terminal.render_hold();
+        if self.render_hold_expired(now) {
+            terminal
+                .release_render_hold()
+                .map_err(|error| error.to_string())?;
+            return self.commit(inner, terminal, true);
+        }
+        if !self.decide(now) {
             return Ok(());
         }
-        self.commit(inner, terminal)
+        self.commit(inner, terminal, false)
     }
 
-    fn decide(&mut self, synchronized_output: bool, now: Instant) -> bool {
-        if !self.pending {
-            return false;
-        }
-        if self.held_by_synchronized_output(synchronized_output, now) {
+    fn decide(&self, now: Instant) -> bool {
+        if !self.pending || self.showing_held_frame() {
             return false;
         }
         self.urgent || now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
@@ -160,8 +169,8 @@ impl PublishGate {
         if !self.pending {
             return None;
         }
-        if let Some(opened_at) = self.sync_hold_since {
-            return Some(SYNC_OUTPUT_MAX_HOLD.saturating_sub(now.duration_since(opened_at)));
+        if let Some(hold) = self.render_hold.filter(|_| self.showing_held_frame()) {
+            return Some(SYNC_OUTPUT_MAX_HOLD.saturating_sub(now.duration_since(hold.started_at)));
         }
         if self.urgent {
             return Some(Duration::ZERO);
@@ -169,25 +178,32 @@ impl PublishGate {
         Some(MIN_PUBLISH_INTERVAL.saturating_sub(now.duration_since(self.last_publish)))
     }
 
-    fn held_by_synchronized_output(&mut self, synchronized_output: bool, now: Instant) -> bool {
-        if !synchronized_output {
-            self.sync_hold_since = None;
-            return false;
-        }
-        let opened_at = *self.sync_hold_since.get_or_insert(now);
-        now.duration_since(opened_at) < SYNC_OUTPUT_MAX_HOLD
+    fn showing_held_frame(&self) -> bool {
+        self.render_hold
+            .is_some_and(|hold| self.published_hold == Some(hold.generation))
+    }
+
+    fn render_hold_expired(&self, now: Instant) -> bool {
+        self.render_hold
+            .is_some_and(|hold| now.duration_since(hold.started_at) >= SYNC_OUTPUT_MAX_HOLD)
     }
 
     fn commit(
         &mut self,
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
+        live: bool,
     ) -> Result<(), String> {
         let search = self.advance_search(terminal);
         let search_pending = !search.query.is_empty() && !search.complete && search.error.is_none();
-        update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search))?;
+        update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search), live)?;
         self.last_publish = Instant::now();
-        self.pending = search_pending || self.search_rail_pending;
+        self.render_hold = terminal.render_hold();
+        self.published_hold = self
+            .render_hold
+            .filter(|_| !live)
+            .map(|hold| hold.generation);
+        self.pending = search_pending || self.search_rail_pending || self.published_hold.is_some();
         self.urgent = false;
         queue_wakeup(inner);
         Ok(())
@@ -253,32 +269,20 @@ impl PublishGate {
 #[cfg(test)]
 pub(in crate::terminal) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize {
     let origin = Instant::now();
-    let mut gate = PublishGate {
-        last_publish: origin,
-        pending: false,
-        interactive_until: None,
-        urgent: false,
-        sync_hold_since: None,
-        mirror: CellMirror::default(),
-        search_query: String::new(),
-        search_error: None,
-        navigation_generation: 0,
-        last_search_rail_refresh: None,
-        search_rail_pending: false,
-    };
+    let mut gate = PublishGate::at(origin);
     let mut published = 0usize;
     for index in 0..chunks {
         let arrived = origin + interval * (index as u32 + 1);
         if let Some(wait) = gate.next_wake(arrived - interval)
             && wait < interval
-            && gate.decide(false, arrived - interval + wait)
+            && gate.decide(arrived - interval + wait)
         {
             gate.last_publish = arrived - interval + wait;
             gate.pending = false;
             published += 1;
         }
         gate.pending = true;
-        if gate.decide(false, arrived) {
+        if gate.decide(arrived) {
             gate.last_publish = arrived;
             gate.pending = false;
             published += 1;
@@ -292,8 +296,14 @@ fn update_shared_state(
     terminal: &mut ghostty::DisplayTerminal,
     mirror: &mut CellMirror,
     search: Arc<crate::search::NativeSearchState>,
+    live: bool,
 ) -> Result<(), String> {
-    let snapshot = terminal.snapshot().map_err(|error| error.to_string())?;
+    let snapshot = if live {
+        terminal.snapshot_live()
+    } else {
+        terminal.snapshot()
+    }
+    .map_err(|error| error.to_string())?;
     let modes = terminal.modes().map_err(|error| error.to_string())?;
     let metrics = grid_metrics_from_ghostty(&snapshot);
     let content = mirror.publish(snapshot);
@@ -334,19 +344,19 @@ mod tests {
     use super::*;
 
     fn gate_at(origin: Instant) -> PublishGate {
-        PublishGate {
-            last_publish: origin,
-            pending: false,
-            interactive_until: None,
-            urgent: false,
-            sync_hold_since: None,
-            mirror: CellMirror::default(),
-            search_query: String::new(),
-            search_error: None,
-            navigation_generation: 0,
-            last_search_rail_refresh: None,
-            search_rail_pending: false,
-        }
+        PublishGate::at(origin)
+    }
+
+    fn hold_at(started_at: Instant, generation: u64) -> Option<ghostty::RenderHold> {
+        Some(ghostty::RenderHold {
+            started_at,
+            generation,
+        })
+    }
+
+    fn showing_hold(gate: &mut PublishGate, started_at: Instant, generation: u64) {
+        gate.render_hold = hold_at(started_at, generation);
+        gate.published_hold = Some(generation);
     }
 
     #[test]
@@ -354,7 +364,7 @@ mod tests {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
         gate.pending = true;
-        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(origin + MIN_PUBLISH_INTERVAL));
     }
 
     #[test]
@@ -364,13 +374,13 @@ mod tests {
         gate.pending = true;
 
         let too_soon = origin + MIN_PUBLISH_INTERVAL - Duration::from_millis(1);
-        assert!(!gate.decide(false, too_soon));
+        assert!(!gate.decide(too_soon));
         assert_eq!(
             gate.next_wake(too_soon),
             Some(Duration::from_millis(1)),
             "the loop must wake exactly when the interval expires"
         );
-        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(origin + MIN_PUBLISH_INTERVAL));
     }
 
     #[test]
@@ -380,7 +390,8 @@ mod tests {
         gate.pending = true;
 
         let opened = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, opened));
+        showing_hold(&mut gate, opened, 1);
+        assert!(!gate.decide(opened));
         assert_eq!(
             gate.next_wake(opened),
             Some(SYNC_OUTPUT_MAX_HOLD),
@@ -388,7 +399,7 @@ mod tests {
         );
 
         let midway = opened + SYNC_OUTPUT_MAX_HOLD / 2;
-        assert!(!gate.decide(true, midway));
+        assert!(!gate.decide(midway));
         assert_eq!(gate.next_wake(midway), Some(SYNC_OUTPUT_MAX_HOLD / 2));
     }
 
@@ -399,13 +410,13 @@ mod tests {
         gate.pending = true;
 
         let too_soon = origin + MIN_PUBLISH_INTERVAL / 4;
-        assert!(!gate.decide(false, too_soon), "inside the interval, held");
+        assert!(!gate.decide(too_soon), "inside the interval, held");
         assert_eq!(
             gate.next_wake(too_soon),
             Some(MIN_PUBLISH_INTERVAL - MIN_PUBLISH_INTERVAL / 4),
             "the loop wakes when the interval expires"
         );
-        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(origin + MIN_PUBLISH_INTERVAL));
     }
 
     #[test]
@@ -423,8 +434,8 @@ mod tests {
     #[test]
     fn nothing_pending_means_nothing_to_wake_for() {
         let origin = Instant::now();
-        let mut gate = gate_at(origin);
-        assert!(!gate.decide(false, origin + MIN_PUBLISH_INTERVAL * 10));
+        let gate = gate_at(origin);
+        assert!(!gate.decide(origin + MIN_PUBLISH_INTERVAL * 10));
         assert_eq!(gate.next_wake(origin), None);
     }
 
@@ -435,8 +446,10 @@ mod tests {
         gate.pending = true;
 
         let ready = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, ready));
-        assert!(gate.decide(false, ready));
+        showing_hold(&mut gate, origin, 1);
+        assert!(!gate.decide(ready));
+        gate.render_hold = None;
+        assert!(gate.decide(ready));
     }
 
     #[test]
@@ -446,16 +459,14 @@ mod tests {
         gate.pending = true;
 
         let opened = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, opened), "hold opens here");
+        showing_hold(&mut gate, opened, 1);
+        assert!(!gate.decide(opened), "hold opens here");
         assert!(
-            !gate.decide(
-                true,
-                opened + SYNC_OUTPUT_MAX_HOLD - Duration::from_millis(1)
-            ),
+            !gate.render_hold_expired(opened + SYNC_OUTPUT_MAX_HOLD - Duration::from_millis(1)),
             "still inside the budget"
         );
         assert!(
-            gate.decide(true, opened + SYNC_OUTPUT_MAX_HOLD),
+            gate.render_hold_expired(opened + SYNC_OUTPUT_MAX_HOLD),
             "the mode is still set, but the hold has spent its budget"
         );
     }
@@ -467,12 +478,213 @@ mod tests {
         gate.pending = true;
 
         let first = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, first), "first redraw opens a hold");
-        assert!(gate.decide(false, first), "and closing it publishes");
+        showing_hold(&mut gate, first, 1);
+        assert!(!gate.decide(first), "the first redraw's frame is on screen");
 
-        gate.pending = true;
         let second = first + SYNC_OUTPUT_MAX_HOLD * 2;
-        assert!(!gate.decide(true, second));
+        gate.render_hold = hold_at(second, 2);
+        assert!(
+            gate.decide(second),
+            "the next hold captured a new finished frame"
+        );
+        assert!(!gate.render_hold_expired(second));
+    }
+
+    fn held_terminal(cols: usize, rows: usize) -> ghostty::DisplayTerminal {
+        let size = ghostty::WindowSize::new(cols, rows, 8, 16).expect("valid terminal size");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("terminal must initialize");
+        configure_embedder_options(&mut terminal, 100, false);
+        terminal
+    }
+
+    fn published_row(session: &GhosttySession, row: usize) -> String {
+        let state = session.inner.state.read();
+        let cols = state.content.cols;
+        state.content.cells[row * cols..(row + 1) * cols]
+            .iter()
+            .map(|cell| cell.c)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    fn feed_output(
+        gate: &mut PublishGate,
+        session: &GhosttySession,
+        terminal: &mut ghostty::DisplayTerminal,
+        bytes: &[u8],
+    ) {
+        terminal.feed(bytes).expect("output must parse");
+        gate.last_publish = Instant::now() - MIN_PUBLISH_INTERVAL;
+        gate.request(&session.inner, terminal)
+            .expect("publication must succeed");
+    }
+
+    #[test]
+    fn a_hold_released_and_resumed_in_one_write_publishes_the_finished_frame() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        for iteration in 0..1_000 {
+            let output = format!(
+                "\x1b[?2026l\x1b[H\x1b[2Jframe A {iteration}\x1b[?2026h\x1b[H\x1b[2Jframe B {iteration}\r\nfinished\x1b[?2026l\x1b[?2026h\x1b[H\x1b[2Jframe C"
+            );
+            feed_output(&mut gate, &session, &mut terminal, output.as_bytes());
+
+            assert_eq!(published_row(&session, 0), format!("frame B {iteration}"));
+            assert_eq!(published_row(&session, 1), "finished");
+            assert!(terminal.synchronized_output().expect("mode query"));
+        }
+    }
+
+    #[test]
+    fn output_inside_a_hold_waits_for_its_end_without_republishing() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"finished\x1b[?2026h\x1b[H\x1b[2Jhalf",
+        );
+        let generation = session.inner.state.read().content.generation;
+        feed_output(&mut gate, &session, &mut terminal, b" drawn");
+        assert_eq!(session.inner.state.read().content.generation, generation);
+        assert_eq!(published_row(&session, 0), "finished");
+
+        feed_output(&mut gate, &session, &mut terminal, b"\x1b[?2026l");
+        assert_eq!(published_row(&session, 0), "half drawn");
+    }
+
+    #[test]
+    fn a_hold_that_outlives_its_budget_is_released_and_shows_live_content() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"finished\x1b[?2026h\x1b[H\x1b[2Jstalled",
+        );
+        let started_at = terminal.render_hold().expect("hold").started_at;
+        assert_eq!(published_row(&session, 0), "finished");
+
+        std::thread::sleep(SYNC_OUTPUT_MAX_HOLD / 2);
+        feed_output(&mut gate, &session, &mut terminal, b"\x1b[?2026h");
+        assert_eq!(
+            terminal.render_hold().expect("hold").started_at,
+            started_at,
+            "setting the mode again must not push the deadline back"
+        );
+        assert_eq!(published_row(&session, 0), "finished");
+
+        let wait = gate
+            .next_wake(Instant::now())
+            .expect("the deadline wakes the loop");
+        std::thread::sleep(wait);
+        gate.poll(&session.inner, &mut terminal)
+            .expect("expired hold must publish");
+
+        assert_eq!(published_row(&session, 0), "stalled");
+        assert!(terminal.render_hold().is_none());
+        assert!(!terminal.synchronized_output().expect("mode query"));
+    }
+
+    #[test]
+    fn a_resize_or_a_reset_ends_the_hold_and_publishes_live_content() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"finished\x1b[?2026h\x1b[H\x1b[2Jresized",
+        );
+        terminal
+            .resize(ghostty::WindowSize::new(30, 4, 8, 16).expect("valid size"))
+            .expect("resize");
+        assert!(terminal.render_hold().is_none());
+        gate.publish_now(&session.inner, &mut terminal)
+            .expect("resize publication");
+        assert_eq!(published_row(&session, 0), "resized");
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"\x1b[H\x1b[2Jbefore\x1b[?2026h\x1b[H\x1b[2Jpartial",
+        );
+        assert_eq!(published_row(&session, 0), "before");
+        feed_output(&mut gate, &session, &mut terminal, b"\x1bcafter reset");
+        assert!(terminal.render_hold().is_none());
+        assert_eq!(published_row(&session, 0), "after reset");
+    }
+
+    #[test]
+    fn scrolling_during_a_hold_shows_live_content() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"one\r\ntwo\r\nthree\x1b[?2026h\r\nfour\r\nfive",
+        );
+        assert_eq!(published_row(&session, 2), "three");
+
+        terminal.scroll(ghostty::Scroll::Delta(1));
+        gate.publish_now(&session.inner, &mut terminal)
+            .expect("scroll publication");
+        assert_eq!(published_row(&session, 2), "four");
+        assert_eq!(session.inner.state.read().content.display_offset, 1);
+        assert!(terminal.render_hold().is_some(), "the hold itself survives");
+    }
+
+    #[test]
+    fn a_selection_during_a_hold_shows_live_content() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+
+        feed_output(
+            &mut gate,
+            &session,
+            &mut terminal,
+            b"finished\x1b[?2026h\x1b[H\x1b[2Jlive text",
+        );
+        assert_eq!(published_row(&session, 0), "finished");
+
+        let outcome = handle_terminal_command(
+            &session.inner,
+            &mut terminal,
+            &mut gate,
+            RuntimeMessage::PressSelection {
+                point: ghostty::Point::new(0, 0),
+                behavior: gesture_behavior(SelectionKind::Simple),
+                position: (1.0, 1.0),
+            },
+        );
+        assert!(matches!(outcome, CommandOutcome::Handled));
+
+        assert_eq!(published_row(&session, 0), "live text");
+        assert!(terminal.render_hold().is_some(), "the hold itself survives");
     }
 
     fn empty_ghostty_content(cols: usize, rows: usize) -> ghostty::Content {
@@ -544,15 +756,17 @@ mod tests {
         let mut gate = gate_at(now);
         gate.interactive_until = Some(now + INTERACTIVE_OUTPUT_WINDOW);
         gate.note_output(now + Duration::from_millis(1));
-        assert!(!gate.decide(true, now + Duration::from_millis(1)));
-        assert!(gate.decide(false, now + Duration::from_millis(2)));
+        showing_hold(&mut gate, now, 1);
+        assert!(!gate.decide(now + Duration::from_millis(1)));
+        gate.render_hold = None;
+        assert!(gate.decide(now + Duration::from_millis(2)));
         assert_eq!(
             gate.next_wake(now + Duration::from_millis(2)),
             Some(Duration::ZERO)
         );
         gate.urgent = false;
         gate.note_output(now + Duration::from_millis(3));
-        assert!(!gate.decide(false, now + Duration::from_millis(3)));
+        assert!(!gate.decide(now + Duration::from_millis(3)));
     }
 
     #[test]
@@ -561,7 +775,7 @@ mod tests {
         let mut gate = gate_at(now);
         gate.interactive_until = Some(now - Duration::from_millis(1));
         gate.note_output(now);
-        assert!(!gate.decide(false, now));
+        assert!(!gate.decide(now));
         assert_eq!(gate.next_wake(now), Some(MIN_PUBLISH_INTERVAL));
     }
 

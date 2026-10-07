@@ -7,7 +7,7 @@ use paneflow_terminal_ghostty as ghostty;
 use crate::theme::ThemePalette;
 
 use crate::bench_harness::{
-    Direction, Metric, allocation_counters, measure, process_cpu_time, publish,
+    Direction, Metric, allocation_counters, measure, measure_segments, process_cpu_time, publish,
     refuse_debug_profile,
 };
 
@@ -190,6 +190,25 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
         }
     }
     sample.expect("the 220x60 scenario publishes at least once")
+}
+
+fn render_hold_scenarios(metrics: &mut Vec<Metric>) {
+    let mut term = terminal(200, 60);
+    term.enable_render_hold().expect("render hold must install");
+    fill(&mut term, 60);
+    let mut index = 0usize;
+    metrics.push(measure_segments(
+        "render_hold_capture_200x60",
+        "a hold begins on a fully dirty 200x60 screen: the callback captures the frame into the render state",
+        20,
+        300,
+        |timer| {
+            index += 1;
+            term.feed(b"\x1b[?2026l").expect("hold release must parse");
+            term.feed(&scroll_chunk(index)).expect("chunk must parse");
+            timer.time(|| term.feed(b"\x1b[?2026h").expect("hold must parse"));
+        },
+    ));
 }
 
 const ACC_OVERHEAD_BUDGET_PERCENT: f64 = 10.0;
@@ -455,6 +474,7 @@ fn terminal_pipeline_benchmark() {
     let timed_started = Instant::now();
     let cpu_before = process_cpu_time();
     let sample = publish_scenarios(&mut metrics);
+    render_hold_scenarios(&mut metrics);
     let acc_delta = layout_scenario(&mut metrics, &sample);
     incremental_layout_scenarios(&mut metrics);
     service_tail_scenarios(&mut metrics);

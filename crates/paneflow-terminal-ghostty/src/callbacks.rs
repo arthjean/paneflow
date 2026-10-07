@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use paneflow_libghostty_sys as sys;
 
-use crate::handles::check;
-use crate::{BackendEvent, ColorScheme, Result, WindowSize};
+use crate::handles::{OwnedHandle, check, create};
+use crate::{BackendEvent, ColorScheme, RenderHold, Result, WindowSize};
 
 const MAX_PENDING_WRITE_PTY_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
@@ -44,6 +44,7 @@ type SemanticPromptFn = unsafe extern "C" fn(
 type ResetFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void);
 
 const _: fn(sys::GhosttyTerminalRenderHoldFn) -> Option<RenderHoldFn> = std::convert::identity;
+const _: RenderHoldFn = crate::callback_ffi::render_hold;
 const _: fn(sys::GhosttyTerminalProgramStatusFn) -> Option<ProgramStatusFn> =
     std::convert::identity;
 const _: fn(sys::GhosttyTerminalSemanticPromptFn) -> Option<SemanticPromptFn> =
@@ -60,13 +61,29 @@ pub(crate) struct CallbackState {
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
+    render_state: OwnedHandle<sys::GhosttyRenderState>,
+    rendered_scrollbar: Cell<Option<sys::GhosttyTerminalScrollbar>>,
+    render_hold: Cell<Option<RenderHold>>,
+    render_holds_started: Cell<u64>,
     #[cfg(test)]
     pub(crate) panic_next: Cell<bool>,
 }
 
 impl CallbackState {
-    pub(crate) fn new(size: WindowSize, color_scheme: ColorScheme) -> Self {
-        Self {
+    pub(crate) unsafe fn new(
+        size: WindowSize,
+        color_scheme: ColorScheme,
+        allocator: *const sys::GhosttyAllocator,
+    ) -> Result<Self> {
+        let render_state = unsafe {
+            create(
+                "render_state_new",
+                allocator,
+                sys::ghostty_render_state_new,
+                sys::ghostty_render_state_free,
+            )?
+        };
+        Ok(Self {
             events: RefCell::new(VecDeque::new()),
             pending_write_pty_bytes: Cell::new(0),
             pending_clipboard_events: Cell::new(0),
@@ -76,9 +93,50 @@ impl CallbackState {
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
+            render_state,
+            rendered_scrollbar: Cell::new(None),
+            render_hold: Cell::new(None),
+            render_holds_started: Cell::new(0),
             #[cfg(test)]
             panic_next: Cell::new(false),
+        })
+    }
+
+    pub(crate) fn render_state(&self) -> sys::GhosttyRenderState {
+        self.render_state.raw()
+    }
+
+    pub(crate) fn render_hold(&self) -> Option<RenderHold> {
+        self.render_hold.get()
+    }
+
+    pub(crate) fn rendered_scrollbar(&self) -> Option<sys::GhosttyTerminalScrollbar> {
+        self.rendered_scrollbar.get()
+    }
+
+    pub(crate) fn record_rendered_scrollbar(&self, scrollbar: sys::GhosttyTerminalScrollbar) {
+        self.rendered_scrollbar.set(Some(scrollbar));
+    }
+
+    pub(crate) fn begin_render_hold(&self, terminal: sys::GhosttyTerminal) {
+        let captured =
+            unsafe { sys::ghostty_render_state_update(self.render_state.raw(), terminal) };
+        if captured != sys::GhosttyResult_GHOSTTY_SUCCESS {
+            self.render_hold.set(None);
+            return;
         }
+        self.rendered_scrollbar
+            .set(crate::snapshot_ffi::terminal_scrollbar(terminal).ok());
+        let generation = self.render_holds_started.get().wrapping_add(1);
+        self.render_holds_started.set(generation);
+        self.render_hold.set(Some(RenderHold {
+            started_at: Instant::now(),
+            generation,
+        }));
+    }
+
+    pub(crate) fn end_render_hold(&self) {
+        self.render_hold.set(None);
     }
 
     pub(crate) fn set_size(&self, size: WindowSize) {
@@ -315,6 +373,14 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
     Ok(())
 }
 
+pub(crate) fn install_render_hold(terminal: sys::GhosttyTerminal) -> Result<()> {
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RENDER_HOLD,
+        crate::callback_ffi::render_hold as *const (),
+    )
+}
+
 fn set(
     terminal: sys::GhosttyTerminal,
     option: sys::GhosttyTerminalOption,
@@ -353,9 +419,20 @@ pub(crate) unsafe fn with_state(userdata: *mut c_void, f: impl FnOnce(&CallbackS
 mod tests {
     use super::*;
 
+    fn state() -> CallbackState {
+        unsafe {
+            CallbackState::new(
+                WindowSize::new(80, 24, 8, 16).unwrap(),
+                ColorScheme::Dark,
+                std::ptr::null(),
+            )
+        }
+        .unwrap()
+    }
+
     #[test]
     fn callback_panic_is_contained_and_reported() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = state();
         state.panic_next.set(true);
         unsafe {
             crate::callback_ffi::bell(
@@ -368,7 +445,7 @@ mod tests {
 
     #[test]
     fn callback_p99_stays_below_one_millisecond() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = state();
         let data = b"response";
         let mut samples = Vec::with_capacity(2_000);
         for _ in 0..2_000 {
@@ -389,7 +466,7 @@ mod tests {
 
     #[test]
     fn protocol_replies_are_coalesced_without_an_event_count_limit() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = state();
         for _ in 0..1_000 {
             state.push(BackendEvent::WritePty(vec![b'x']));
         }
@@ -399,7 +476,7 @@ mod tests {
 
     #[test]
     fn a_bell_flood_yields_one_bell_per_interval_and_never_overflows() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = state();
         for _ in 0..10_000 {
             state.push(BackendEvent::Bell);
         }
@@ -417,7 +494,7 @@ mod tests {
 
     #[test]
     fn protocol_overflow_is_explicit() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = state();
         state.push(BackendEvent::WritePty(vec![0; MAX_PENDING_WRITE_PTY_BYTES]));
         state.push(BackendEvent::WritePty(vec![0; 1]));
 

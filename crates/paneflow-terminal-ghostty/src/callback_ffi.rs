@@ -37,6 +37,22 @@ pub(crate) unsafe extern "C" fn bell(_: sys::GhosttyTerminal, userdata: *mut c_v
     unsafe { with_state(userdata, |state| state.push(BackendEvent::Bell)) };
 }
 
+pub(crate) unsafe extern "C" fn render_hold(
+    terminal: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    held: bool,
+) {
+    unsafe {
+        with_state(userdata, |state| {
+            if held {
+                state.begin_render_hold(terminal);
+            } else {
+                state.end_render_hold();
+            }
+        });
+    }
+}
+
 pub(crate) unsafe extern "C" fn title_changed(
     terminal: sys::GhosttyTerminal,
     userdata: *mut c_void,
@@ -435,7 +451,14 @@ mod tests {
         let enquiry = unsafe { enquiry(std::ptr::null_mut(), std::ptr::null_mut()) };
         assert_eq!(enquiry.len, 0);
 
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        let state = unsafe {
+            CallbackState::new(
+                WindowSize::new(80, 24, 8, 16).unwrap(),
+                ColorScheme::Dark,
+                std::ptr::null(),
+            )
+        }
+        .unwrap();
         let mut attributes = unsafe { std::mem::zeroed::<sys::GhosttyDeviceAttributes>() };
         assert!(unsafe {
             device_attributes(
@@ -475,7 +498,10 @@ mod tests {
                 sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK,
             ),
         ] {
-            let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), scheme);
+            let state = unsafe {
+                CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), scheme, std::ptr::null())
+            }
+            .unwrap();
             let mut actual = sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK;
             assert!(unsafe {
                 color_scheme(

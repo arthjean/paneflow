@@ -17,7 +17,7 @@ impl DisplayTerminal {
         unsafe {
             get_multi(
                 "render_state_get_multi",
-                self.render_state.raw(),
+                self.callbacks.render_state(),
                 sys::ghostty_render_state_get_multi,
                 [
                     Slot::new(
@@ -42,15 +42,15 @@ impl DisplayTerminal {
     pub(crate) fn cursor(&self, display_offset: usize) -> Result<Cursor> {
         let display_offset = i32::try_from(display_offset)
             .map_err(|_| GhosttyError::AbiMismatch("cursor display offset overflow".into()))?;
-        let visible = render_get::<RenderCursorVisible>(self.render_state.raw())?;
-        let blinking = render_get::<RenderCursorBlinking>(self.render_state.raw())?;
-        let in_viewport = render_get::<RenderCursorViewportHasValue>(self.render_state.raw())?;
-        let shape = render_get::<RenderCursorVisualStyle>(self.render_state.raw())?;
+        let visible = render_get::<RenderCursorVisible>(self.callbacks.render_state())?;
+        let blinking = render_get::<RenderCursorBlinking>(self.callbacks.render_state())?;
+        let in_viewport = render_get::<RenderCursorViewportHasValue>(self.callbacks.render_state())?;
+        let shape = render_get::<RenderCursorVisualStyle>(self.callbacks.render_state())?;
         let (x, y, wide_tail) = if in_viewport {
             (
-                render_get::<RenderCursorViewportX>(self.render_state.raw())?,
-                render_get::<RenderCursorViewportY>(self.render_state.raw())?,
-                render_get::<RenderCursorViewportWideTail>(self.render_state.raw())?,
+                render_get::<RenderCursorViewportX>(self.callbacks.render_state())?,
+                render_get::<RenderCursorViewportY>(self.callbacks.render_state())?,
+                render_get::<RenderCursorViewportWideTail>(self.callbacks.render_state())?,
             )
         } else {
             (

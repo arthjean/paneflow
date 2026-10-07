@@ -32,13 +32,30 @@ impl SnapshotCache {
 
 impl DisplayTerminal {
     pub fn snapshot(&mut self) -> Result<Content> {
-        let result = unsafe {
-            sys::ghostty_render_state_begin_update(self.render_state.raw(), self.terminal.raw())
+        self.snapshot_frame(self.callbacks.render_hold().is_none())
+    }
+
+    pub fn snapshot_live(&mut self) -> Result<Content> {
+        self.snapshot_frame(true)
+    }
+
+    fn snapshot_frame(&mut self, update: bool) -> Result<Content> {
+        let render_state = self.callbacks.render_state();
+        let scrollbar = match self.callbacks.rendered_scrollbar() {
+            Some(scrollbar) if !update => scrollbar,
+            _ => {
+                let result = unsafe {
+                    sys::ghostty_render_state_begin_update(render_state, self.terminal.raw())
+                };
+                check("render_state_begin_update", result)?;
+                let scrollbar = self.scrollbar()?;
+                let result = unsafe { sys::ghostty_render_state_end_update(render_state) };
+                check("render_state_end_update", result)?;
+                self.callbacks.record_rendered_scrollbar(scrollbar);
+                scrollbar
+            }
         };
-        check("render_state_begin_update", result)?;
-        let result = unsafe { sys::ghostty_render_state_end_update(self.render_state.raw()) };
-        check("render_state_end_update", result)?;
-        let (history_size, display_offset) = self.scrollbar_position()?;
+        let (history_size, display_offset) = scrollbar_position(scrollbar)?;
         let display_offset_i32 = i32::try_from(display_offset)
             .map_err(|_| crate::GhosttyError::AbiMismatch("display offset overflow".into()))?;
         let (cols, rows) = self.render_dimensions()?;
@@ -52,7 +69,7 @@ impl DisplayTerminal {
             });
         }
 
-        let dirty = render_get::<RenderDirty>(self.render_state.raw())?;
+        let dirty = render_get::<RenderDirty>(self.callbacks.render_state())?;
         let full_refresh = match dirty {
             sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE
             | sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL => {
@@ -77,7 +94,7 @@ impl DisplayTerminal {
             ));
         }
         if full_refresh {
-            let result = unsafe { sys::ghostty_render_state_clean(self.render_state.raw()) };
+            let result = unsafe { sys::ghostty_render_state_clean(self.callbacks.render_state()) };
             check("render_state_clean", result)?;
         } else {
             self.clear_render_dirty()?;
@@ -152,7 +169,7 @@ impl DisplayTerminal {
         self.snapshot_cache.dirty_rows.clear();
         self.snapshot_cache.dirty_rows.resize(rows, false);
 
-        let iterator = render_row_iterator(self.render_state.raw(), self.row_iterator.raw())?;
+        let iterator = render_row_iterator(self.callbacks.render_state(), self.row_iterator.raw())?;
 
         let mut row_index = 0usize;
         let mut selection_start = None;
@@ -271,7 +288,7 @@ impl DisplayTerminal {
         let clean = sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         let result = unsafe {
             sys::ghostty_render_state_set(
-                self.render_state.raw(),
+                self.callbacks.render_state(),
                 sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_DIRTY,
                 (&clean as *const sys::GhosttyRenderStateDirty).cast(),
             )
@@ -284,19 +301,22 @@ impl DisplayTerminal {
     }
 
     pub(crate) fn scrollbar_position(&self) -> Result<(usize, usize)> {
-        let scrollbar = self.scrollbar()?;
-        let history_size = scrollbar
-            .total
-            .checked_sub(scrollbar.len)
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or_else(|| GhosttyError::AbiMismatch("invalid scrollbar length".into()))?;
-        let scrollbar_offset = usize::try_from(scrollbar.offset)
-            .map_err(|_| GhosttyError::AbiMismatch("scrollbar offset overflow".into()))?;
-        let display_offset = history_size
-            .checked_sub(scrollbar_offset)
-            .ok_or_else(|| GhosttyError::AbiMismatch("scrollbar offset exceeds history".into()))?;
-        Ok((history_size, display_offset))
+        scrollbar_position(self.scrollbar()?)
     }
+}
+
+fn scrollbar_position(scrollbar: sys::GhosttyTerminalScrollbar) -> Result<(usize, usize)> {
+    let history_size = scrollbar
+        .total
+        .checked_sub(scrollbar.len)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| GhosttyError::AbiMismatch("invalid scrollbar length".into()))?;
+    let scrollbar_offset = usize::try_from(scrollbar.offset)
+        .map_err(|_| GhosttyError::AbiMismatch("scrollbar offset overflow".into()))?;
+    let display_offset = history_size
+        .checked_sub(scrollbar_offset)
+        .ok_or_else(|| GhosttyError::AbiMismatch("scrollbar offset exceeds history".into()))?;
+    Ok((history_size, display_offset))
 }
 
 #[cfg(test)]

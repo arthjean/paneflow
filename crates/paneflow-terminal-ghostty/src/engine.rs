@@ -7,11 +7,12 @@ use crate::callbacks::CallbackState;
 use crate::handles::{OwnedHandle, check};
 use crate::snapshot::SnapshotCache;
 use crate::snapshot_ffi::{TerminalKittyKeyboardFlags, terminal_get};
-use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
+use crate::{BackendEvent, Modes, RenderHold, Result, Scroll, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 const CLEAR_SCROLLBACK: &[u8] = b"\x1b[3J";
 const RESET_DYNAMIC_COLORS: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
+const SYNCHRONIZED_OUTPUT_MODE: u16 = 2026;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MouseEncoderSize {
@@ -44,7 +45,6 @@ pub struct DisplayTerminal {
     pub(crate) key_encoder: OwnedHandle<sys::GhosttyKeyEncoder>,
     pub(crate) row_cells: OwnedHandle<sys::GhosttyRenderStateRowCells>,
     pub(crate) row_iterator: OwnedHandle<sys::GhosttyRenderStateRowIterator>,
-    pub(crate) render_state: OwnedHandle<sys::GhosttyRenderState>,
     pub(crate) gesture: Option<crate::selection_gesture::GestureHandle>,
     pub(crate) search: Option<crate::native_search::NativeSearch>,
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
@@ -206,7 +206,32 @@ impl DisplayTerminal {
     }
 
     pub fn synchronized_output(&self) -> Result<bool> {
-        self.mode(2026)
+        self.mode(SYNCHRONIZED_OUTPUT_MODE)
+    }
+
+    pub fn enable_render_hold(&mut self) -> Result<()> {
+        crate::callbacks::install_render_hold(self.terminal.raw())
+    }
+
+    pub fn render_hold(&self) -> Option<RenderHold> {
+        self.callbacks.render_hold()
+    }
+
+    pub fn release_render_hold(&mut self) -> Result<()> {
+        let config = sys::GhosttyTerminalModeConfig {
+            mode: SYNCHRONIZED_OUTPUT_MODE,
+            value: false,
+        };
+        let result = unsafe {
+            sys::ghostty_terminal_set(
+                self.terminal.raw(),
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE,
+                (&raw const config).cast(),
+            )
+        };
+        check("terminal_set_mode", result)?;
+        self.callbacks.end_render_hold();
+        Ok(())
     }
 
     pub(crate) fn mode(&self, dec_mode: u16) -> Result<bool> {
@@ -263,6 +288,20 @@ mod tests {
 
     const OVERSIZED_OSC_BODY_BYTES: usize =
         crate::callback_ffi::MAX_CLIPBOARD_BYTES.div_ceil(3) * 4;
+
+    #[test]
+    fn a_panicking_render_hold_callback_reports_callback_panicked() {
+        let size = WindowSize::new(10, 2, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+        terminal.enable_render_hold().expect("render hold installs");
+        terminal.callbacks.panic_next.set(true);
+
+        terminal.feed(b"\x1b[?2026h").expect("hold sequence parses");
+
+        assert_eq!(terminal.drain_events(), [BackendEvent::CallbackPanicked]);
+        assert!(terminal.render_hold().is_none());
+    }
 
     #[test]
     fn clear_screen_and_scrollback_preserves_terminal_modes() {
