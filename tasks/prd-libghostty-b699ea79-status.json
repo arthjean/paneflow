@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Rendu : sortie synchronisée, forme du pointeur, overscan",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -106,57 +106,57 @@
       "id": "US-005",
       "title": "Remplacer le sondage du mode 2026 par l'effet render hold",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
     },
     {
       "id": "US-006",
       "title": "Honorer la forme de pointeur demandée par OSC 22",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
     },
     {
       "id": "US-007",
       "title": "Exposer l'overscan et l'identité de ligne dans le snapshot du wrapper",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
     },
     {
       "id": "US-008",
       "title": "Défiler au pixel par l'overscan",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
     },
     {
       "id": "US-009",
