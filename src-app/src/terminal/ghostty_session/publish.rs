@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(published_row(&session, 0), "finished");
 
         std::thread::sleep(SYNC_OUTPUT_MAX_HOLD / 2);
-        feed_output(&mut gate, &session, &mut terminal, b"\x1b[?2026h");
+        terminal.feed(b"\x1b[?2026h").expect("output must parse");
         assert_eq!(
             terminal.render_hold().expect("hold").started_at,
             started_at,
