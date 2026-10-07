@@ -648,4 +648,37 @@ mod tests {
             None
         );
     }
+
+    fn first_row_has_a_placeholder(terminal: &DisplayTerminal) -> bool {
+        let reference = terminal
+            .grid_ref(crate::Point::new(0, 0))
+            .expect("first cell reference");
+        let mut row: sys::GhosttyRow = 0;
+        check("grid_ref_row", unsafe {
+            sys::ghostty_grid_ref_row(&reference, &mut row)
+        })
+        .expect("row of the first cell");
+        let mut placeholder = false;
+        check("row_get_kitty_virtual_placeholder", unsafe {
+            sys::ghostty_row_get(
+                row,
+                sys::GhosttyRowData_GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER,
+                (&raw mut placeholder).cast(),
+            )
+        })
+        .expect("placeholder flag");
+        placeholder
+    }
+
+    #[test]
+    fn upstream_a573781c6_erasing_the_whole_line_clears_the_placeholder_flag() {
+        let mut terminal = terminal(5, 5);
+        terminal
+            .feed("\u{10EEEE}".as_bytes())
+            .expect("placeholder must print");
+        assert!(first_row_has_a_placeholder(&terminal));
+
+        terminal.feed(b"\x1b[2K").expect("EL 2 must parse");
+        assert!(!first_row_has_a_placeholder(&terminal));
+    }
 }
