@@ -216,6 +216,46 @@ pub struct Content {
     pub rows: usize,
     pub display_offset: usize,
     pub history_size: usize,
+    pub mouse_shape: MouseShape,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MouseShape {
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    #[default]
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    AllScroll,
+    ColResize,
+    RowResize,
+    NResize,
+    EResize,
+    SResize,
+    WResize,
+    NeResize,
+    NwResize,
+    SeResize,
+    SwResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ZoomIn,
+    ZoomOut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

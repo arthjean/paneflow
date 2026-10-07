@@ -136,6 +136,7 @@ pub(in crate::terminal) fn content_from_ghostty(content: ghostty::Content) -> Co
         selection: content.selection.map(selection_range_from_ghostty),
         display_offset: content.display_offset,
         history_size: content.history_size,
+        mouse_shape: mouse_shape_from_ghostty(content.mouse_shape),
     }
 }
 
@@ -253,6 +254,7 @@ impl CellMirror {
             selection: snapshot.selection.map(selection_range_from_ghostty),
             display_offset: snapshot.display_offset,
             history_size: snapshot.history_size,
+            mouse_shape: mouse_shape_from_ghostty(snapshot.mouse_shape),
         }
     }
 
@@ -263,6 +265,45 @@ impl CellMirror {
         self.back_valid = own;
         std::mem::swap(&mut self.back_stale, &mut self.last_dirty);
         self.front_address = self.published_address;
+    }
+}
+
+fn mouse_shape_from_ghostty(shape: ghostty::MouseShape) -> MouseShape {
+    match shape {
+        ghostty::MouseShape::Default => MouseShape::Default,
+        ghostty::MouseShape::ContextMenu => MouseShape::ContextMenu,
+        ghostty::MouseShape::Help => MouseShape::Help,
+        ghostty::MouseShape::Pointer => MouseShape::Pointer,
+        ghostty::MouseShape::Progress => MouseShape::Progress,
+        ghostty::MouseShape::Wait => MouseShape::Wait,
+        ghostty::MouseShape::Cell => MouseShape::Cell,
+        ghostty::MouseShape::Crosshair => MouseShape::Crosshair,
+        ghostty::MouseShape::Text => MouseShape::Text,
+        ghostty::MouseShape::VerticalText => MouseShape::VerticalText,
+        ghostty::MouseShape::Alias => MouseShape::Alias,
+        ghostty::MouseShape::Copy => MouseShape::Copy,
+        ghostty::MouseShape::Move => MouseShape::Move,
+        ghostty::MouseShape::NoDrop => MouseShape::NoDrop,
+        ghostty::MouseShape::NotAllowed => MouseShape::NotAllowed,
+        ghostty::MouseShape::Grab => MouseShape::Grab,
+        ghostty::MouseShape::Grabbing => MouseShape::Grabbing,
+        ghostty::MouseShape::AllScroll => MouseShape::AllScroll,
+        ghostty::MouseShape::ColResize => MouseShape::ColResize,
+        ghostty::MouseShape::RowResize => MouseShape::RowResize,
+        ghostty::MouseShape::NResize => MouseShape::NResize,
+        ghostty::MouseShape::EResize => MouseShape::EResize,
+        ghostty::MouseShape::SResize => MouseShape::SResize,
+        ghostty::MouseShape::WResize => MouseShape::WResize,
+        ghostty::MouseShape::NeResize => MouseShape::NeResize,
+        ghostty::MouseShape::NwResize => MouseShape::NwResize,
+        ghostty::MouseShape::SeResize => MouseShape::SeResize,
+        ghostty::MouseShape::SwResize => MouseShape::SwResize,
+        ghostty::MouseShape::EwResize => MouseShape::EwResize,
+        ghostty::MouseShape::NsResize => MouseShape::NsResize,
+        ghostty::MouseShape::NeswResize => MouseShape::NeswResize,
+        ghostty::MouseShape::NwseResize => MouseShape::NwseResize,
+        ghostty::MouseShape::ZoomIn => MouseShape::ZoomIn,
+        ghostty::MouseShape::ZoomOut => MouseShape::ZoomOut,
     }
 }
 
@@ -366,6 +407,7 @@ pub(in crate::terminal) fn blank_content(cols: usize, rows: usize) -> Content {
         selection: None,
         display_offset: 0,
         history_size: 0,
+        mouse_shape: MouseShape::Text,
     }
 }
 
@@ -425,6 +467,7 @@ mod tests {
             rows: 24,
             display_offset: 0,
             history_size: 0,
+            mouse_shape: ghostty::MouseShape::Text,
         });
 
         assert_eq!((content.cols, content.rows), (80, 24));

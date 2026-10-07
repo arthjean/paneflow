@@ -19,8 +19,8 @@ use super::pty_session::{
 };
 use super::service_detector::ServiceInfo;
 use super::types::{
-    CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, Point, SearchHighlight,
-    TerminalWindowSize,
+    CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, MouseShape, Point,
+    SearchHighlight, TerminalWindowSize,
 };
 
 use super::ghostty_session::GhosttyStartError;
@@ -78,6 +78,44 @@ fn copy_mode_badge() -> gpui::Stateful<gpui::Div> {
 pub(crate) fn probe_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("PANEFLOW_LATENCY_PROBE").as_deref() == Ok("1"))
+}
+
+fn pointer_cursor_style(shape: MouseShape) -> gpui::CursorStyle {
+    use gpui::CursorStyle as Style;
+    match shape {
+        MouseShape::Text => Style::IBeam,
+        MouseShape::VerticalText => Style::IBeamCursorForVerticalLayout,
+        MouseShape::Default => Style::Arrow,
+        MouseShape::Pointer => Style::PointingHand,
+        MouseShape::ContextMenu => Style::ContextualMenu,
+        MouseShape::Crosshair | MouseShape::Cell => Style::Crosshair,
+        MouseShape::Alias => Style::DragLink,
+        MouseShape::Copy => Style::DragCopy,
+        MouseShape::NoDrop | MouseShape::NotAllowed => Style::OperationNotAllowed,
+        MouseShape::Grab => Style::OpenHand,
+        MouseShape::Grabbing => Style::ClosedHand,
+        MouseShape::ColResize => Style::ResizeColumn,
+        MouseShape::RowResize => Style::ResizeRow,
+        MouseShape::NResize => Style::ResizeUp,
+        MouseShape::SResize => Style::ResizeDown,
+        MouseShape::EResize => Style::ResizeRight,
+        MouseShape::WResize => Style::ResizeLeft,
+        MouseShape::NsResize => Style::ResizeUpDown,
+        MouseShape::EwResize => Style::ResizeLeftRight,
+        MouseShape::NeResize | MouseShape::SwResize | MouseShape::NeswResize => {
+            Style::ResizeUpRightDownLeft
+        }
+        MouseShape::NwResize | MouseShape::SeResize | MouseShape::NwseResize => {
+            Style::ResizeUpLeftDownRight
+        }
+        MouseShape::Help
+        | MouseShape::Progress
+        | MouseShape::Wait
+        | MouseShape::Move
+        | MouseShape::AllScroll
+        | MouseShape::ZoomIn
+        | MouseShape::ZoomOut => Style::Arrow,
+    }
 }
 
 fn engine_cursor_shape(shape: CursorShape) -> paneflow_terminal_ghostty::CursorShape {
@@ -864,6 +902,18 @@ impl TerminalView {
     }
 }
 
+impl TerminalView {
+    fn pointer_style(&self, mouse_position: gpui::Point<gpui::Pixels>) -> gpui::CursorStyle {
+        if self.scrollbar_drag.is_some() || self.scrollbar_gutter_contains(mouse_position) {
+            gpui::CursorStyle::Arrow
+        } else if self.ctrl_hovered_link.is_some() {
+            gpui::CursorStyle::PointingHand
+        } else {
+            pointer_cursor_style(self.terminal.session_backend().mouse_shape())
+        }
+    }
+}
+
 fn link_under(zones: &[HyperlinkZone], point: Point) -> Option<HyperlinkZone> {
     zones
         .iter()
@@ -1629,17 +1679,7 @@ impl Render for TerminalView {
             .id("terminal-view")
             .key_context(self.dispatch_context())
             .track_focus(&self.focus_handle)
-            .cursor(
-                if self.scrollbar_drag.is_some()
-                    || self.scrollbar_gutter_contains(window.mouse_position())
-                {
-                    gpui::CursorStyle::Arrow
-                } else if self.ctrl_hovered_link.is_some() {
-                    gpui::CursorStyle::PointingHand
-                } else {
-                    gpui::CursorStyle::IBeam
-                },
-            )
+            .cursor(self.pointer_style(window.mouse_position()))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_key_up(cx.listener(Self::handle_key_up))
@@ -2141,6 +2181,99 @@ mod tests {
                 assert_eq!(view.option_as_meta, option_as_meta);
             });
         }
+    }
+
+    #[gpui::test]
+    fn osc_22_drives_the_pane_pointer_below_the_scrollbar_and_link_priorities(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let inside = gpui::point(gpui::px(40.0), gpui::px(40.0));
+        let pointer = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| view.pointer_style(inside))
+        };
+        assert_eq!(pointer(cx), gpui::CursorStyle::IBeam);
+
+        terminal.update(cx, |view, _| {
+            view.terminal.write_output(b"\x1b]22;pointer\x1b\\");
+        });
+        assert_eq!(pointer(cx), gpui::CursorStyle::PointingHand);
+
+        terminal.update(cx, |view, _| {
+            view.terminal.write_output(b"\x1b]22;col-resize\x1b\\");
+        });
+        assert_eq!(pointer(cx), gpui::CursorStyle::ResizeColumn);
+        terminal.update(cx, |view, _| {
+            view.ctrl_hovered_link = Some(HyperlinkZone {
+                uri: "https://paneflow.dev".to_owned(),
+                start: Point::new(0, 0),
+                end: Point::new(0, 4),
+                is_openable: true,
+                source: super::super::types::HyperlinkSource::Osc8,
+                line: None,
+                col: None,
+            });
+        });
+        assert_eq!(pointer(cx), gpui::CursorStyle::PointingHand);
+        terminal.update(cx, |view, _| view.ctrl_hovered_link = None);
+
+        terminal.update(cx, |view, _| {
+            view.terminal.write_output(b"\x1b]22;\x1b\\");
+        });
+        assert_eq!(pointer(cx), gpui::CursorStyle::IBeam);
+    }
+
+    #[test]
+    fn every_osc_22_shape_maps_to_its_gpui_cursor() {
+        use gpui::CursorStyle as Style;
+        let table = [
+            (MouseShape::Text, Style::IBeam),
+            (
+                MouseShape::VerticalText,
+                Style::IBeamCursorForVerticalLayout,
+            ),
+            (MouseShape::Default, Style::Arrow),
+            (MouseShape::Pointer, Style::PointingHand),
+            (MouseShape::ContextMenu, Style::ContextualMenu),
+            (MouseShape::Crosshair, Style::Crosshair),
+            (MouseShape::Cell, Style::Crosshair),
+            (MouseShape::Alias, Style::DragLink),
+            (MouseShape::Copy, Style::DragCopy),
+            (MouseShape::NoDrop, Style::OperationNotAllowed),
+            (MouseShape::NotAllowed, Style::OperationNotAllowed),
+            (MouseShape::Grab, Style::OpenHand),
+            (MouseShape::Grabbing, Style::ClosedHand),
+            (MouseShape::ColResize, Style::ResizeColumn),
+            (MouseShape::RowResize, Style::ResizeRow),
+            (MouseShape::NResize, Style::ResizeUp),
+            (MouseShape::SResize, Style::ResizeDown),
+            (MouseShape::EResize, Style::ResizeRight),
+            (MouseShape::WResize, Style::ResizeLeft),
+            (MouseShape::NsResize, Style::ResizeUpDown),
+            (MouseShape::EwResize, Style::ResizeLeftRight),
+            (MouseShape::NeResize, Style::ResizeUpRightDownLeft),
+            (MouseShape::SwResize, Style::ResizeUpRightDownLeft),
+            (MouseShape::NeswResize, Style::ResizeUpRightDownLeft),
+            (MouseShape::NwResize, Style::ResizeUpLeftDownRight),
+            (MouseShape::SeResize, Style::ResizeUpLeftDownRight),
+            (MouseShape::NwseResize, Style::ResizeUpLeftDownRight),
+            (MouseShape::Help, Style::Arrow),
+            (MouseShape::Progress, Style::Arrow),
+            (MouseShape::Wait, Style::Arrow),
+            (MouseShape::Move, Style::Arrow),
+            (MouseShape::AllScroll, Style::Arrow),
+            (MouseShape::ZoomIn, Style::Arrow),
+            (MouseShape::ZoomOut, Style::Arrow),
+        ];
+        assert_eq!(table.len(), 34);
+        for (shape, expected) in table {
+            assert_eq!(pointer_cursor_style(shape), expected, "{shape:?}");
+        }
+        assert_eq!(
+            pointer_cursor_style(MouseShape::default()),
+            Style::IBeam,
+            "an unknown upstream shape arrives as the default and must stay an I-beam"
+        );
     }
 
     #[gpui::test]

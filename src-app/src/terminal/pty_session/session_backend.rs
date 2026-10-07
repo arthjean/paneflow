@@ -108,6 +108,10 @@ impl TerminalSessionBackend {
         self.ghostty.modes()
     }
 
+    pub(crate) fn mouse_shape(&self) -> MouseShape {
+        self.ghostty.mouse_shape()
+    }
+
     pub(crate) fn grid_metrics(&self) -> GridMetrics {
         self.ghostty.grid_metrics()
     }

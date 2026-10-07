@@ -27,9 +27,9 @@ use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
 use super::types::{
     Cell, CellFlags, Color, Content, CursorShape, GridLineText, GridMetrics, HyperlinkSource,
-    HyperlinkZone, Line, Modes, NamedColor, Point, RenderableCursor, Rgb, ScrollbackMatches,
-    ScrollbackWindow, SelectionGeometry, SelectionKind, SelectionRange, TerminalQueryError,
-    TerminalWindowSize,
+    HyperlinkZone, Line, Modes, MouseShape, NamedColor, Point, RenderableCursor, Rgb,
+    ScrollbackMatches, ScrollbackWindow, SelectionGeometry, SelectionKind, SelectionRange,
+    TerminalQueryError, TerminalWindowSize,
 };
 
 mod attached_runtime;
@@ -698,6 +698,10 @@ impl GhosttySession {
 
     pub(super) fn modes(&self) -> Modes {
         self.inner.state.read().modes
+    }
+
+    pub(super) fn mouse_shape(&self) -> MouseShape {
+        self.inner.state.read().content.mouse_shape
     }
 
     pub(super) fn recent_output_lines(&self) -> Arc<[String]> {

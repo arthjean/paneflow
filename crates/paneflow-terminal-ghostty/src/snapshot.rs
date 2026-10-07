@@ -6,7 +6,8 @@ use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::limits::MAX_SNAPSHOT_CELLS;
 use crate::snapshot_ffi::{
-    RenderDirty, render_get, render_row_data, render_row_iterator, terminal_scrollbar,
+    RenderDirty, TerminalMouseShape, mouse_shape, render_get, render_row_data,
+    render_row_iterator, terminal_get, terminal_scrollbar,
 };
 use crate::{Cell, Content, GhosttyError, Point, Result, Scroll, SelectionRange};
 
@@ -133,6 +134,7 @@ impl DisplayTerminal {
             rows,
             display_offset,
             history_size,
+            mouse_shape: mouse_shape(terminal_get::<TerminalMouseShape>(self.terminal.raw())?),
         })
     }
 

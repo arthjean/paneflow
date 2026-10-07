@@ -2,7 +2,7 @@ use paneflow_libghostty_sys as sys;
 
 use crate::batch::{Slot, get_multi};
 use crate::handles::check;
-use crate::{GhosttyError, Result, Rgb, UnderlineStyle, WideCell};
+use crate::{GhosttyError, MouseShape, Result, Rgb, UnderlineStyle, WideCell};
 
 const MAX_GRAPHEME_CODEPOINTS: usize = 1024;
 const INLINE_GRAPHEME_CODEPOINTS: usize = 16;
@@ -52,6 +52,47 @@ terminal_fields! {
     TerminalCursorX: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_X,
     TerminalCursorY: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_Y,
     TerminalScrollbackRows: usize = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+    TerminalMouseShape: sys::GhosttyMouseShape = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE,
+}
+
+pub(crate) fn mouse_shape(raw: sys::GhosttyMouseShape) -> MouseShape {
+    use sys as s;
+    match raw {
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_DEFAULT => MouseShape::Default,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_CONTEXT_MENU => MouseShape::ContextMenu,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_HELP => MouseShape::Help,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_POINTER => MouseShape::Pointer,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_PROGRESS => MouseShape::Progress,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_WAIT => MouseShape::Wait,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_CELL => MouseShape::Cell,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_CROSSHAIR => MouseShape::Crosshair,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT => MouseShape::VerticalText,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ALIAS => MouseShape::Alias,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_COPY => MouseShape::Copy,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_MOVE => MouseShape::Move,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NO_DROP => MouseShape::NoDrop,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED => MouseShape::NotAllowed,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_GRAB => MouseShape::Grab,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_GRABBING => MouseShape::Grabbing,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ALL_SCROLL => MouseShape::AllScroll,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_COL_RESIZE => MouseShape::ColResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ROW_RESIZE => MouseShape::RowResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_N_RESIZE => MouseShape::NResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_E_RESIZE => MouseShape::EResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_S_RESIZE => MouseShape::SResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_W_RESIZE => MouseShape::WResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NE_RESIZE => MouseShape::NeResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NW_RESIZE => MouseShape::NwResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_SE_RESIZE => MouseShape::SeResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_SW_RESIZE => MouseShape::SwResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_EW_RESIZE => MouseShape::EwResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NS_RESIZE => MouseShape::NsResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NESW_RESIZE => MouseShape::NeswResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_NWSE_RESIZE => MouseShape::NwseResize,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ZOOM_IN => MouseShape::ZoomIn,
+        s::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ZOOM_OUT => MouseShape::ZoomOut,
+        _ => MouseShape::Text,
+    }
 }
 
 render_fields! {
@@ -465,5 +506,38 @@ mod discriminant_tests {
         assert!(wide_cell(i32::MAX).is_err());
         assert!(underline(i32::MAX).is_err());
         assert!(cursor_shape(i32::MAX).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mouse_shape_from_a_future_library_falls_back_to_text() {
+        assert_eq!(
+            mouse_shape(sys::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ZOOM_OUT + 1),
+            MouseShape::Text
+        );
+        assert_eq!(mouse_shape(-1), MouseShape::Text);
+        assert_eq!(
+            mouse_shape(sys::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_MAX_VALUE),
+            MouseShape::Text
+        );
+    }
+
+    #[test]
+    fn every_upstream_mouse_shape_has_its_own_variant() {
+        let shapes = (sys::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_DEFAULT
+            ..=sys::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ZOOM_OUT)
+            .map(mouse_shape)
+            .collect::<Vec<_>>();
+        assert_eq!(shapes.len(), 34);
+        for (index, shape) in shapes.iter().enumerate() {
+            assert!(
+                !shapes[..index].contains(shape),
+                "{shape:?} is mapped twice"
+            );
+        }
     }
 }

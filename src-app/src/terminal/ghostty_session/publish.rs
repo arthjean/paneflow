@@ -703,6 +703,7 @@ mod tests {
             rows,
             display_offset: 0,
             history_size: 0,
+            mouse_shape: ghostty::MouseShape::Text,
         }
     }
 

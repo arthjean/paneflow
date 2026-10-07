@@ -72,7 +72,7 @@ pub use kitty::{
 };
 pub use model::{
     BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
-    Modes, Point, ProgressReport, ProgressState, RenderHold, Rgb, Scroll, SearchMatch,
+    Modes, MouseShape, Point, ProgressReport, ProgressState, RenderHold, Rgb, Scroll, SearchMatch,
     SearchResult, SelectionRange, TerminalAppearance, UnderlineStyle, WideCell, WindowSize,
 };
 pub use search::{
