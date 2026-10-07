@@ -241,6 +241,10 @@ pub(super) fn handle_terminal_command(
                 );
             }
         }
+        RuntimeMessage::EnableSmoothScrollOverscan => {
+            apply_smooth_scroll_overscan(inner, terminal);
+            let _ = gate.publish_now(inner, terminal);
+        }
         RuntimeMessage::SetOptionAsAlt(enabled) => {
             terminal.set_option_as_alt(option_as_alt(enabled));
         }

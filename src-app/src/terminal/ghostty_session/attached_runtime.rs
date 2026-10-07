@@ -645,6 +645,7 @@ pub(super) fn run_attached_runtime(
                 match restored {
                     Ok(restored) => {
                         terminal = restored;
+                        apply_smooth_scroll_overscan(&inner, &mut terminal);
                         marks_scanner = Osc133Scanner::default();
                         paste_trace = BracketedPasteTrace::default();
                         if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {

@@ -225,6 +225,7 @@ pub struct TerminalView {
     pub(super) scrollbar_visible: bool,
     pub(super) scrollbar_enabled: bool,
     pub(super) scroll_remainder: f32,
+    pub(super) smooth_scroll: bool,
     pub(super) search_active: bool,
     pub(super) search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     pub(super) search_query: String,
@@ -651,6 +652,7 @@ impl TerminalView {
             scrollbar_visible: false,
             scrollbar_enabled,
             scroll_remainder: 0.0,
+            smooth_scroll: false,
             search_active: false,
             search_input,
             search_query: String::new(),
@@ -1667,6 +1669,7 @@ impl Render for TerminalView {
             frame_metrics,
             alt_screen,
             self.layout_cache.clone(),
+            self.smooth_scroll_offset(),
             #[cfg(debug_assertions)]
             keystroke_at,
         );
@@ -2273,6 +2276,125 @@ mod tests {
             pointer_cursor_style(MouseShape::default()),
             Style::IBeam,
             "an unknown upstream shape arrives as the default and must stay an I-beam"
+        );
+    }
+
+    fn precise_scroll(view: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext, lines: f32) {
+        let line_height = view.read_with(cx, |view, _| view.line_height);
+        let event = gpui::ScrollWheelEvent {
+            position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), line_height * lines)),
+            modifiers: gpui::Modifiers::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        };
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.handle_scroll_wheel(&event, window, cx));
+        });
+        cx.run_until_parked();
+    }
+
+    fn eventually<T: PartialEq + std::fmt::Debug>(
+        cx: &mut gpui::VisualTestContext,
+        expected: T,
+        mut read: impl FnMut(&mut gpui::VisualTestContext) -> T,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let value = read(cx);
+            if value == expected || std::time::Instant::now() >= deadline {
+                assert_eq!(value, expected);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn a_trackpad_gesture_shifts_the_grid_by_the_pixel_over_the_overscan_row(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, _| {
+            let lines = (0..200)
+                .map(|line| format!("line {line:03}\r\n"))
+                .collect::<String>();
+            view.terminal.write_output(lines.as_bytes());
+            view.scroll_multiplier = 1.0;
+        });
+        cx.run_until_parked();
+        let line_height = terminal.read_with(cx, |view, _| view.line_height);
+        let display_offset = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .display_offset
+            })
+        };
+        let offset = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| view.smooth_scroll_offset())
+        };
+        let overscan_rows = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| {
+                let (content, _) = view.terminal.session_backend().render_content(
+                    TerminalWindowSize::new(1, 1, 1, 1),
+                    0,
+                    0,
+                    false,
+                );
+                content
+                    .overscan_rows
+                    .iter()
+                    .map(|row| row.viewport_y)
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert!(overscan_rows(cx).is_empty(), "no overscan before a gesture");
+
+        precise_scroll(&terminal, cx, 0.5);
+        assert_eq!(offset(cx), line_height * 0.5);
+        eventually(cx, vec![-1], overscan_rows);
+        assert_eq!(display_offset(cx), 0);
+
+        precise_scroll(&terminal, cx, 0.75);
+        eventually(cx, 1, display_offset);
+        assert_eq!(
+            offset(cx),
+            line_height * 0.25,
+            "a full cell height crosses one line"
+        );
+
+        terminal.update(cx, |view, _| view.terminal.write_output(b"more output\r\n"));
+        cx.run_until_parked();
+        assert_eq!(
+            offset(cx),
+            line_height * 0.25,
+            "output during a gesture keeps the offset"
+        );
+        let rows = terminal.read_with(cx, |view, _| {
+            view.terminal.session_backend().grid_metrics().screen_lines as i32
+        });
+        eventually(cx, vec![-1, rows], overscan_rows);
+
+        precise_scroll(&terminal, cx, -10.0);
+        eventually(cx, 0, display_offset);
+        assert_eq!(offset(cx), gpui::px(0.0), "no bounce below the last line");
+
+        let event = gpui::ScrollWheelEvent {
+            position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
+            delta: gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0)),
+            modifiers: gpui::Modifiers::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        };
+        cx.update(|window, cx| {
+            terminal.update(cx, |view, cx| view.handle_scroll_wheel(&event, window, cx));
+        });
+        eventually(cx, 3, display_offset);
+        assert_eq!(
+            offset(cx),
+            gpui::px(0.0),
+            "wheel lines never shift by pixels"
         );
     }
 

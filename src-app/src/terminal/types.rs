@@ -357,6 +357,13 @@ pub struct Content {
     pub display_offset: usize,
     pub history_size: usize,
     pub mouse_shape: MouseShape,
+    pub overscan_rows: Arc<[OverscanRow]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OverscanRow {
+    pub viewport_y: i32,
+    pub cells: Arc<[Cell]>,
 }
 
 #[derive(Clone, PartialEq, Eq)]

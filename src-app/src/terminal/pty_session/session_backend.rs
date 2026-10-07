@@ -309,6 +309,10 @@ impl TerminalSessionBackend {
         self.ghostty.set_default_cursor(shape, blink)
     }
 
+    pub(crate) fn enable_smooth_scroll_overscan(&self) -> bool {
+        self.ghostty.enable_smooth_scroll_overscan()
+    }
+
     pub(crate) fn set_option_as_alt(&self, enabled: bool) -> bool {
         self.ghostty.set_option_as_alt(enabled)
     }

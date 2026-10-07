@@ -27,7 +27,7 @@ use super::pty_session::SpawnParams;
 use super::service_detector::ServiceOutputTail;
 use super::types::{
     Cell, CellFlags, Color, Content, CursorShape, GridLineText, GridMetrics, HyperlinkSource,
-    HyperlinkZone, Line, Modes, MouseShape, NamedColor, Point, RenderableCursor, Rgb,
+    HyperlinkZone, Line, Modes, MouseShape, NamedColor, OverscanRow, Point, RenderableCursor, Rgb,
     ScrollbackMatches, ScrollbackWindow, SelectionGeometry, SelectionKind, SelectionRange,
     TerminalQueryError, TerminalWindowSize,
 };
@@ -77,6 +77,7 @@ const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
 const INTERACTIVE_OUTPUT_WINDOW: Duration = Duration::from_millis(100);
 const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
+const SMOOTH_SCROLL_OVERSCAN: (u16, u16) = (1, 1);
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
 const RUNTIME_QUIET_TICK: Duration = Duration::from_millis(100);
 const RUNTIME_QUIET_AFTER: Duration = Duration::from_secs(1);
@@ -224,6 +225,7 @@ struct SessionInner {
     shutdown_sent: AtomicBool,
     exit_published: AtomicBool,
     option_as_alt: AtomicBool,
+    smooth_scroll_overscan: AtomicBool,
     #[cfg(test)]
     processed_output_bytes: AtomicUsize,
     #[cfg(test)]
@@ -296,6 +298,7 @@ impl GhosttySession {
                 shutdown_sent: AtomicBool::new(false),
                 exit_published: AtomicBool::new(false),
                 option_as_alt: AtomicBool::new(false),
+                smooth_scroll_overscan: AtomicBool::new(false),
                 #[cfg(test)]
                 processed_output_bytes: AtomicUsize::new(0),
                 #[cfg(test)]
@@ -886,6 +889,27 @@ impl GhosttySession {
             .is_ok()
     }
 
+    pub(super) fn enable_smooth_scroll_overscan(&self) -> bool {
+        if self
+            .inner
+            .smooth_scroll_overscan
+            .swap(true, Ordering::AcqRel)
+        {
+            return true;
+        }
+        let sent = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::EnableSmoothScrollOverscan)
+            .is_ok();
+        if !sent {
+            self.inner
+                .smooth_scroll_overscan
+                .store(false, Ordering::Release);
+        }
+        sent
+    }
+
     pub(super) fn refresh_appearance(&self) -> bool {
         self.inner
             .mailbox
@@ -1197,6 +1221,19 @@ fn option_as_alt(enabled: bool) -> ghostty::OptionAsAlt {
         ghostty::OptionAsAlt::Always
     } else {
         ghostty::OptionAsAlt::Never
+    }
+}
+
+fn apply_smooth_scroll_overscan(inner: &SessionInner, terminal: &mut ghostty::DisplayTerminal) {
+    if !inner.smooth_scroll_overscan.load(Ordering::Acquire) {
+        return;
+    }
+    let (above, below) = SMOOTH_SCROLL_OVERSCAN;
+    if let Err(error) = terminal.set_overscan(above, below) {
+        log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty smooth-scroll overscan could not be requested: {error}"
+        );
     }
 }
 

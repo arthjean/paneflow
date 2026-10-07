@@ -537,6 +537,7 @@ pub struct LayoutState {
     ime_background: Hsla,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     color_emoji_enabled: bool,
+    overscan_above: Option<Box<LayoutState>>,
 }
 
 impl LayoutState {
@@ -629,6 +630,7 @@ pub struct TerminalElement {
     #[cfg(debug_assertions)]
     last_keystroke_at: Option<std::time::Instant>,
     layout_cache: SharedLayoutCache,
+    smooth_scroll_offset: Pixels,
 }
 
 impl TerminalElement {
@@ -659,6 +661,7 @@ impl TerminalElement {
         frame_metrics: TerminalFrameMetrics,
         alt_screen: bool,
         layout_cache: SharedLayoutCache,
+        smooth_scroll_offset: Pixels,
         #[cfg(debug_assertions)] last_keystroke_at: Option<std::time::Instant>,
     ) -> Self {
         Self {
@@ -687,6 +690,7 @@ impl TerminalElement {
             frame_metrics,
             alt_screen,
             layout_cache,
+            smooth_scroll_offset,
             #[cfg(debug_assertions)]
             last_keystroke_at,
         }
@@ -815,13 +819,33 @@ impl TerminalElement {
         }
 
         let cells = content.cells;
+        let overscan_above = content
+            .overscan_rows
+            .iter()
+            .find(|row| row.viewport_y == -1)
+            .map(|row| {
+                Box::new(overscan_row_layout(
+                    &row.cells,
+                    render_cols,
+                    dims,
+                    self.frame_metrics.base_font.clone(),
+                    &theme,
+                    &palette,
+                    (
+                        self.integrated_glyphs_enabled,
+                        self.color_emoji_enabled,
+                        self.minimum_contrast,
+                    ),
+                    key.theme_generation,
+                ))
+            });
 
         let mut cache = self
             .layout_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.layout = None;
-        let layout = Arc::new(layout_from_snapshot_cached(
+        let mut layout = layout_from_snapshot_cached(
             LayoutInputs {
                 cells,
                 cursor: cursor_snapshot,
@@ -847,10 +871,59 @@ impl TerminalElement {
             &content.row_versions,
             key.theme_generation,
             &mut cache.rows,
-        ));
+        );
+        layout.overscan_above = overscan_above;
+        let layout = Arc::new(layout);
         cache.layout = Some((key, layout.clone()));
         layout
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn overscan_row_layout(
+    cells: &[Cell],
+    cols: usize,
+    dims: CellDimensions,
+    base_font: Font,
+    theme: &crate::theme::TerminalTheme,
+    palette: &ThemePalette,
+    (integrated_glyphs_enabled, color_emoji_enabled, minimum_contrast): (bool, bool, f32),
+    theme_generation: u64,
+) -> LayoutState {
+    let cells: Arc<[Cell]> = cells
+        .iter()
+        .map(|cell| Cell {
+            point: GridPoint::new(0, cell.point.column.0),
+            ..cell.clone()
+        })
+        .collect();
+    layout_from_snapshot_cached(
+        LayoutInputs {
+            cells,
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: cols,
+            desired_rows: 1,
+            first_visible_row: 0,
+            last_visible_row: 1,
+            dims,
+            base_font,
+            theme,
+            palette,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled,
+            color_emoji_enabled,
+            minimum_contrast,
+        },
+        &[],
+        theme_generation,
+        &mut RowLayoutCache::default(),
+    )
 }
 
 #[cfg(test)]
@@ -1397,6 +1470,7 @@ pub(crate) fn layout_from_snapshot_cached(
         },
         ime_cursor_bounds,
         color_emoji_enabled,
+        overscan_above: None,
     }
 }
 
@@ -1604,8 +1678,10 @@ impl Element for TerminalElement {
         };
         let scale_factor = window.scale_factor().max(1.0);
         let snap_px = |v: Pixels| px((f32::from(v) * scale_factor).floor() / scale_factor);
+        let smooth_scroll_offset =
+            effective_smooth_scroll_offset(self.smooth_scroll_offset, &layout);
         origin.x = snap_px(origin.x);
-        origin.y = snap_px(origin.y);
+        origin.y = snap_px(origin.y + smooth_scroll_offset);
         *self
             .element_origin
             .lock()
@@ -1637,6 +1713,19 @@ impl Element for TerminalElement {
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             paint::background::paint_base_fill(&layout, bounds, window);
+
+            if let Some(above) = layout.overscan_above.as_deref()
+                && smooth_scroll_offset > px(0.0)
+            {
+                let above_geom = CellGeometry::new(
+                    Point {
+                        x: origin.x,
+                        y: origin.y - line_height,
+                    },
+                    self.frame_metrics.metrics,
+                );
+                paint_overscan_row(above, &above_geom, bounds, base_font, font_size, window, cx);
+            }
 
             paint::background::paint_cell_backgrounds(
                 &layout,
@@ -1750,6 +1839,39 @@ impl Element for TerminalElement {
             }
         }
     }
+}
+
+fn effective_smooth_scroll_offset(requested: Pixels, layout: &LayoutState) -> Pixels {
+    if layout.overscan_above.is_some() {
+        requested.max(px(0.0))
+    } else {
+        px(0.0)
+    }
+}
+
+fn paint_overscan_row(
+    layout: &LayoutState,
+    geom: &CellGeometry,
+    bounds: Bounds<Pixels>,
+    base_font: &Font,
+    font_size: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let cell_x_bounds = geom.x_boundaries(layout.desired_cols);
+    let cell_y_bounds = geom.y_boundaries(layout.desired_rows);
+    paint::background::paint_cell_backgrounds(
+        layout,
+        bounds,
+        &cell_x_bounds,
+        &cell_y_bounds,
+        window,
+    );
+    paint::background::paint_block_quads(layout, &cell_x_bounds, &cell_y_bounds, window);
+    paint::sprites::paint_sprites(layout, geom, window);
+    paint::decorations::paint_decorations(layout, geom, window);
+    paint::text::paint_text_runs(layout, geom, base_font, font_size, window, cx);
+    paint::text::paint_symbols(layout, geom, font_size, window, cx);
 }
 
 impl IntoElement for TerminalElement {
@@ -2272,6 +2394,40 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast: TEST_MINIMUM_CONTRAST,
         })
+    }
+
+    #[test]
+    fn the_overscan_row_is_laid_out_alone_and_gates_the_pixel_offset() {
+        let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
+        let foreground = Color::Named(NamedColor::Foreground);
+        let row = text_row(-1, "above the viewport", foreground, CellFlags::empty());
+        let above = overscan_row_layout(
+            &row,
+            COLS,
+            test_dims(),
+            test_font(),
+            &theme,
+            &palette,
+            (true, true, 0.0),
+            0,
+        );
+        assert_eq!(above.desired_rows, 1);
+        assert!(above.cursor.is_none());
+        assert!(above.batched_runs().next().is_some());
+
+        let mut viewport = run(
+            text_row(0, "viewport", foreground, CellFlags::empty()),
+            None,
+            None,
+        );
+        assert_eq!(
+            effective_smooth_scroll_offset(px(6.0), &viewport),
+            px(0.0),
+            "never shift toward a side where nothing was captured"
+        );
+        viewport.overscan_above = Some(Box::new(above));
+        assert_eq!(effective_smooth_scroll_offset(px(6.0), &viewport), px(6.0));
     }
 
     fn cached_inputs<'a>(
