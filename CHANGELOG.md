@@ -9,8 +9,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 - **Sessions started before the update end as `Incompatible`.** The session host embeds the terminal engine, and a host started by the previous version cannot serve a desktop built on the new engine. Each such session ends with `Retry` and `Stop host and restart`; choose `Stop host and restart` to start the new host, or let the sessions finish first.
 
+### Added
+
+- The mouse pointer takes the shape a program requests with OSC 22, such as a hand over a link or a resize arrow over a splitter. The scrollbar and a Ctrl-hovered link keep their own pointer, and a shape Paneflow cannot draw shows the default arrow.
+- Trackpad scrolling through the scrollback follows the gesture by the pixel instead of jumping a line at a time. Mouse wheels keep line-by-line scrolling, and so does `reduce_motion`.
+
 ### Fixed
 
+- A full-screen program that redraws with synchronized output (DEC mode 2026) shows exactly the frame it finished, never a half-drawn one, even when it ends one redraw and starts the next in the same write. A program that never ends its redraw still releases the screen after 150 ms.
 - Narrowing a pane whose last column holds the left half of an emoji or a CJK character no longer leaves that half behind, which could write past the row and crash the terminal.
 - After a resize, the cursor and the cursor a program saved keep their position and their pending line wrap, so the next character lands where the program expects, even after several widenings in a row.
 - Moving the cursor left with reverse wrap no longer jumps it to another row when the scroll region starts below the cursor.
