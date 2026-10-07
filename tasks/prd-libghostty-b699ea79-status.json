@@ -1,0 +1,274 @@
+{
+  "prd": {
+    "file": "tasks/prd-libghostty-b699ea79.md",
+    "title": "Re-pin libghostty-vt sur Ghostty b699ea79 et intégration de toute la nouvelle surface C",
+    "created_at": "2026-10-07",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Re-pin libghostty-vt sur b699ea79",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-002",
+      "title": "Rendu : sortie synchronisée, forme du pointeur, overscan",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Statut de programme OSC 7501, invites OSC 133 et RIS",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Protocoles et options de plateforme",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Mémoire et restauration",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 2,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Publier les archives b699ea79 par le workflow de bump",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-07",
+      "completed_at": null,
+      "reviewed_at": "2026-10-07"
+    },
+    {
+      "id": "US-002",
+      "title": "Intégrer le re-pin et ses métadonnées dans une branche de feature",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-07",
+      "completed_at": null,
+      "reviewed_at": "2026-10-07"
+    },
+    {
+      "id": "US-003",
+      "title": "Étendre la validation ABI aux nouveaux discriminants et structs",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
+    },
+    {
+      "id": "US-004",
+      "title": "Prouver côté Paneflow les correctifs upstream traversés",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": "2026-10-07",
+      "completed_at": "2026-10-07",
+      "reviewed_at": "2026-10-07"
+    },
+    {
+      "id": "US-005",
+      "title": "Remplacer le sondage du mode 2026 par l'effet render hold",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Honorer la forme de pointeur demandée par OSC 22",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Exposer l'overscan et l'identité de ligne dans le snapshot du wrapper",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Défiler au pixel par l'overscan",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Brancher PROGRAM_STATUS, SEMANTIC_PROMPT et RESET dans le wrapper",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Tenir les enregistrements de statut dans le host selon la spécification",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Faire de l'état OSC 7501 une source d'état d'agent",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Rendre DECRQCRA et XTCHECKSUM activables, désactivés par défaut",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Faire passer les OSC inconnus par le chemin des séquences non gérées",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Ne plus rappeler le scrollback au redimensionnement sous ConPTY",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Rapporter la mémoire de chaque terminal dans le statut du host",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Compresser l'historique restauré à l'attache d'une session",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
