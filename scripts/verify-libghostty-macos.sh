@@ -86,7 +86,7 @@ NOTICE_SHA="$(sed -n 's/^notice_sha256 = "\(.*\)"$/\1/p' "$ROOT/native/libghostt
 }
 ACTUAL_NOTICE_SHA="$(sha256_of "$NOTICE")"
 [[ "$ACTUAL_NOTICE_SHA" == "$NOTICE_SHA" ]] || {
-  echo "packaged native notice does not match the reviewed manifest hash" >&2
+  echo "packaged native notice $NOTICE does not match the reviewed manifest hash $NOTICE_SHA from $NOTICE_PATH" >&2
   exit 1
 }
 

@@ -5,6 +5,26 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Sessions started before the update end as `Incompatible`.** The session host embeds the terminal engine, and a host started by the previous version cannot serve a desktop built on the new engine. Each such session ends with `Retry` and `Stop host and restart`; choose `Stop host and restart` to start the new host, or let the sessions finish first.
+
+### Fixed
+
+- Narrowing a pane whose last column holds the left half of an emoji or a CJK character no longer leaves that half behind, which could write past the row and crash the terminal.
+- After a resize, the cursor and the cursor a program saved keep their position and their pending line wrap, so the next character lands where the program expects, even after several widenings in a row.
+- Moving the cursor left with reverse wrap no longer jumps it to another row when the scroll region starts below the cursor.
+- Double-clicking either half of a wide character selects the whole word, a word selection no longer runs past a hard line break, and a triple-click on blank cells between two prompt marks no longer pulls in the neighboring prompt.
+- A character above U+00FF prints as itself in the DEC Special Graphics and British character sets, and a single shift (`SS2`, `SS3`) maps exactly one printed character.
+- CAN and SUB cancel an OSC in progress, so `ESC ] 2 ; title` followed by CAN no longer changes the title, and OSC indexes such as `OSC 4 ; 1_0` are rejected instead of being read as `10`.
+- `ESC c` (RIS) restores your theme's 256-color palette after a program changed it with OSC 4.
+- The ANSI form of DECRQM (`CSI 4 $ p`) is answered, and a query for a mode above 32767 is answered for that mode instead of aliasing a lower one.
+- Erasing a whole line clears the kitty graphics placeholder mark of that row.
+
+### Changed
+
+- The pinned `libghostty-vt` archive moves from Ghostty `0c2a290d` to `b699ea79`. Character widths follow Unicode 18.0.0 (uucode `9d555245`), up from Unicode 17.0.0.
+
 ## [0.17.6] - 2026-10-06
 
 Paneflow 0.17.6 reworks how it works with coding agents. A conversation that was running when its session host went away, after a reboot or a forced stop, reopens in its pane on the next launch. Agent status comes from declared, testable screen rules and from the hooks each runtime really provides, so a pane no longer reads as idle while its agent waits on a menu. Agents can message each other through the MCP bridge once you allow the pair, and Claude Code agent teams open their teammates in Paneflow panes on Linux and macOS. The release also cuts idle and thinking costs: with an agent thinking, the desktop used 2.79% of a core instead of 25.04% in v0.17.5 on the same Linux machine.

@@ -152,11 +152,11 @@ CPUs gave two across two. The recipe therefore runs `zig build` under
 `taskset` on one CPU, recorded as `zig-build-seed0-j1-cpu1`. Single-threaded
 analysis numbers Zig's anonymous local symbols (`__anon_N`) differently from
 the threaded build while emitting the same machine code, so the switch
-re-pins `archive_sha256` once and republishes the release asset; the digest
-below predates it.
+re-pins `archive_sha256` once and republishes the release asset. The digest
+of the current pin is:
 
 ```
-archive_sha256  65a2cbdec275aa68cefd6a843aa9447a2a037b20a913163a1c90ec217d258639
+archive_sha256  7861b063981ed1070964e99ebc7dd54992ba76141d074776b3471deb1dcb623a
 ```
 
 That value is pinned as `archive_sha256` on the
@@ -225,7 +225,7 @@ table is stale.
 
 | Input | Manifest key | Value |
 |---|---|---|
-| Ghostty source revision | `source_sha` | `0c2a290d3a3e2a599be3a43435d778a5896667ee` |
+| Ghostty source revision | `source_sha` | `b699ea79f4b881421b4b3055abc16a0957d76beb` |
 | Zig | `zig_version` | `0.16.0` |
 | LLVM binutils | `macos_llvm_version` | `22.1.2-rust-1.96.1-stable` |
 | Rust target | `[targets."aarch64-apple-darwin"]` | `aarch64-apple-darwin` |
@@ -234,12 +234,12 @@ table is stale.
 | Build seed | `macos_build_seed` | `0` |
 | Build jobs | `macos_build_jobs` | `1` |
 | Compiler CPUs | build flag (`taskset -c <first allowed CPU>`) | `1` |
-| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-0c2a290d` |
+| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-b699ea79` |
 | Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.16.0` |
 | Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
-| Archive digest | `archive_sha256` | `65a2cbdec275aa68cefd6a843aa9447a2a037b20a913163a1c90ec217d258639` |
-| Header digest | `header_sha256` | `df3997ea5f3df0902df8a80a3db176bda7a0e6c4d389be21b90da8c9fb52be44` |
-| Bindings digest | `bindings_sha256` | `95ecb9889cd5408f88a117f8bbca2cde89b911c3fc06849e99307dd9c172f95f` |
+| Archive digest | `archive_sha256` | `7861b063981ed1070964e99ebc7dd54992ba76141d074776b3471deb1dcb623a` |
+| Header digest | `header_sha256` | `014813d7dba136ae6faecb515d23e7d7dc675672094174f91e2d84ab2bb55732` |
+| Bindings digest | `bindings_sha256` | `93a2e6832c794d15b0bc34f55336c9c56266d7834bc4472cf80c53277a56e7ea` |
 | Link name | `link_name` | `ghostty-vt` |
 | System libraries | `system_libraries` | none |
 | Build-info symbol | `build_info_symbol` | `ghostty_build_info` |
