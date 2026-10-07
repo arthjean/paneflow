@@ -217,6 +217,37 @@ pub struct Content {
     pub display_offset: usize,
     pub history_size: usize,
     pub mouse_shape: MouseShape,
+    pub row_identities: Arc<[RowIdentity]>,
+    pub overscan: Overscan,
+    pub overscan_rows: Arc<[OverscanRow]>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct RowId([u64; 2]);
+
+impl RowId {
+    #[cfg(ghostty_native)]
+    pub(crate) fn from_bits(bits: [u64; 2]) -> Self {
+        Self(bits)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowIdentity {
+    pub viewport_y: i32,
+    pub id: RowId,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Overscan {
+    pub above: u16,
+    pub below: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OverscanRow {
+    pub identity: RowIdentity,
+    pub cells: Arc<[Cell]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

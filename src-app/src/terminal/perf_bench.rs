@@ -192,7 +192,7 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
     sample.expect("the 220x60 scenario publishes at least once")
 }
 
-fn render_hold_scenarios(metrics: &mut Vec<Metric>) {
+fn render_hold_and_overscan_scenarios(metrics: &mut Vec<Metric>) {
     let mut term = terminal(200, 60);
     term.enable_render_hold().expect("render hold must install");
     fill(&mut term, 60);
@@ -207,6 +207,24 @@ fn render_hold_scenarios(metrics: &mut Vec<Metric>) {
             term.feed(b"\x1b[?2026l").expect("hold release must parse");
             term.feed(&scroll_chunk(index)).expect("chunk must parse");
             timer.time(|| term.feed(b"\x1b[?2026h").expect("hold must parse"));
+        },
+    ));
+
+    let mut term = terminal(220, 60);
+    fill(&mut term, 60);
+    term.set_overscan(1, 1)
+        .expect("overscan request must apply");
+    let mut publisher = Publisher::default();
+    let mut index = 0usize;
+    metrics.push(measure(
+        "publish_scroll_overscan_220x60",
+        "publish_scroll_220x60 with a {1, 1} overscan request (the bottom-pinned viewport captures the row above)",
+        20,
+        300,
+        || {
+            index += 1;
+            term.feed(&scroll_chunk(index)).expect("chunk must parse");
+            std::hint::black_box(publisher.publish(&mut term));
         },
     ));
 }
@@ -474,7 +492,7 @@ fn terminal_pipeline_benchmark() {
     let timed_started = Instant::now();
     let cpu_before = process_cpu_time();
     let sample = publish_scenarios(&mut metrics);
-    render_hold_scenarios(&mut metrics);
+    render_hold_and_overscan_scenarios(&mut metrics);
     let acc_delta = layout_scenario(&mut metrics, &sample);
     incremental_layout_scenarios(&mut metrics);
     service_tail_scenarios(&mut metrics);

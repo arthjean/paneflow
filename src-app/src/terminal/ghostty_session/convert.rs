@@ -468,6 +468,9 @@ mod tests {
             display_offset: 0,
             history_size: 0,
             mouse_shape: ghostty::MouseShape::Text,
+            row_identities: Vec::new().into(),
+            overscan: ghostty::Overscan::default(),
+            overscan_rows: Vec::new().into(),
         });
 
         assert_eq!((content.cols, content.rows), (80, 24));

@@ -8,9 +8,9 @@
 
 use paneflow_terminal_ghostty::{
     BackendEvent, ClipboardLocation, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput,
-    Modifiers, MouseAction, MouseButton, MouseInput, MouseShape, PasteRepresentation, Point, Rgb,
-    SEARCH_CHUNK_CELLS, Scroll, SearchEngine, SearchResult, SelectionRange, TerminalAppearance,
-    WideCell, WindowSize,
+    Modifiers, MouseAction, MouseButton, MouseInput, MouseShape, Overscan, OverscanRow,
+    PasteRepresentation, Point, Rgb, SEARCH_CHUNK_CELLS, Scroll, SearchEngine, SearchResult,
+    SelectionRange, TerminalAppearance, WideCell, WindowSize,
 };
 
 #[allow(
@@ -157,6 +157,115 @@ fn a_render_hold_freezes_the_snapshot_on_the_frame_captured_when_it_began() {
     terminal.release_render_hold().unwrap();
     assert!(terminal.render_hold().is_none());
     assert!(!terminal.synchronized_output().unwrap());
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+fn numbered_lines(cols: usize, rows: usize, lines: usize) -> DisplayTerminal {
+    let mut terminal = terminal(cols, rows);
+    for line in 0..lines {
+        terminal
+            .feed(format!("line {line:02}\r\n").as_bytes())
+            .unwrap();
+    }
+    terminal
+}
+
+fn overscan_text(row: &OverscanRow) -> String {
+    row.cells
+        .iter()
+        .map(|cell| cell.character)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn overscan_captures_one_row_on_each_side_of_a_scrolled_viewport() {
+    let mut terminal = numbered_lines(10, 5, 50);
+    terminal.scroll(Scroll::Delta(10));
+    terminal.set_overscan(1, 1).unwrap();
+    assert_eq!(
+        terminal.overscan_request().unwrap(),
+        Overscan { above: 1, below: 1 }
+    );
+
+    let before = terminal.snapshot().unwrap();
+    assert_eq!(before.overscan, Overscan { above: 1, below: 1 });
+    assert_eq!(before.cells.len(), 10 * 5, "the viewport stays 0..rows");
+    assert_eq!(
+        before
+            .row_identities
+            .iter()
+            .map(|row| row.viewport_y)
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 3, 4]
+    );
+    let top = row_text(&before, 0);
+    let top_line: usize = top.trim_start_matches("line ").parse().unwrap();
+    assert_eq!(before.overscan_rows.len(), 2, "{:?}", before.overscan_rows);
+    let (above, below) = (&before.overscan_rows[0], &before.overscan_rows[1]);
+    assert_eq!(above.identity.viewport_y, -1);
+    assert_eq!(below.identity.viewport_y, 5);
+    assert_eq!(overscan_text(above), format!("line {:02}", top_line - 1));
+    assert_eq!(overscan_text(below), format!("line {:02}", top_line + 5));
+    assert!(above.cells.iter().all(|cell| cell.point.line == -1));
+
+    terminal.scroll(Scroll::Delta(1));
+    let after = terminal.snapshot().unwrap();
+    let captured = |content: &paneflow_terminal_ghostty::Content| {
+        content
+            .overscan_rows
+            .iter()
+            .map(|row| row.identity)
+            .chain(content.row_identities.iter().copied())
+            .collect::<Vec<_>>()
+    };
+    let after_rows = captured(&after);
+    for old in captured(&before) {
+        if old.viewport_y == 5 {
+            continue;
+        }
+        let moved = after_rows
+            .iter()
+            .find(|row| row.id == old.id)
+            .map(|row| row.viewport_y);
+        assert_eq!(moved, Some(old.viewport_y + 1), "{old:?}");
+    }
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn a_viewport_at_the_bottom_captures_no_overscan_below() {
+    let mut terminal = numbered_lines(10, 5, 50);
+    terminal.set_overscan(1, 1).unwrap();
+
+    let content = terminal.snapshot().unwrap();
+
+    assert_eq!(content.overscan, Overscan { above: 1, below: 0 });
+    assert_eq!(content.overscan_rows.len(), 1);
+    assert_eq!(content.overscan_rows[0].identity.viewport_y, -1);
+    assert_eq!(content.row_identities.len(), 5);
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn an_unbounded_overscan_request_is_refused() {
+    let mut terminal = terminal(10, 5);
+    assert!(terminal.set_overscan(u16::MAX, 0).is_err());
+    assert_eq!(terminal.overscan_request().unwrap(), Overscan::default());
 }
 
 #[allow(
