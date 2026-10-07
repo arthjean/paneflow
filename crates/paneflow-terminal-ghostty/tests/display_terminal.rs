@@ -87,25 +87,104 @@ fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
 #[test]
 fn synchronized_output_tracks_the_dec_2026_bracket() {
     let mut terminal = terminal(16, 4);
+    terminal.enable_render_hold().unwrap();
     assert!(
         !terminal.synchronized_output().unwrap(),
         "a fresh terminal is not mid-redraw"
     );
+    assert!(terminal.render_hold().is_none());
 
-    terminal.feed(b"[?2026h").unwrap();
+    terminal.feed(b"\x1b[?2026h").unwrap();
     assert!(
         terminal.synchronized_output().unwrap(),
         "BSU must be observable, or the publish gate cannot suppress torn frames"
     );
+    let hold = terminal.render_hold().unwrap();
 
     terminal.feed(b"redraw in progress").unwrap();
     assert!(terminal.synchronized_output().unwrap());
+    terminal.feed(b"\x1b[?2026h").unwrap();
+    assert_eq!(
+        terminal.render_hold(),
+        Some(hold),
+        "a repeated BSU must not restart the hold"
+    );
 
-    terminal.feed(b"[?2026l").unwrap();
+    terminal.feed(b"\x1b[?2026l").unwrap();
     assert!(
         !terminal.synchronized_output().unwrap(),
         "ESU must clear it"
     );
+    assert!(terminal.render_hold().is_none(), "ESU must end the hold");
+}
+
+fn row_text(content: &paneflow_terminal_ghostty::Content, row: usize) -> String {
+    content.cells[row * content.cols..(row + 1) * content.cols]
+        .iter()
+        .map(|cell| cell.character)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn a_render_hold_freezes_the_snapshot_on_the_frame_captured_when_it_began() {
+    let mut terminal = terminal(20, 3);
+    terminal.enable_render_hold().unwrap();
+    terminal.snapshot().unwrap();
+
+    terminal
+        .feed(b"frame A\x1b[?2026h\x1b[H\x1b[2Jframe B\x1b[?2026l\x1b[?2026h\x1b[H\x1b[2Jframe C")
+        .unwrap();
+    let held = terminal.snapshot().unwrap();
+    assert_eq!(row_text(&held, 0), "frame B");
+    assert!(
+        held.dirty_rows[0],
+        "the captured frame must reach the mirror"
+    );
+    let again = terminal.snapshot().unwrap();
+    assert_eq!(row_text(&again, 0), "frame B");
+    assert!(again.dirty_rows.iter().all(|dirty| !dirty));
+
+    let live = terminal.snapshot_live().unwrap();
+    assert_eq!(row_text(&live, 0), "frame C");
+    assert!(terminal.render_hold().is_some());
+
+    terminal.release_render_hold().unwrap();
+    assert!(terminal.render_hold().is_none());
+    assert!(!terminal.synchronized_output().unwrap());
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn a_resize_a_program_reset_or_an_embedder_reset_ends_the_hold() {
+    let mut terminal = terminal(20, 3);
+    terminal.enable_render_hold().unwrap();
+
+    terminal.feed(b"\x1b[?2026hpartial").unwrap();
+    assert!(terminal.render_hold().is_some());
+    terminal
+        .resize(WindowSize::new(22, 4, 8, 16).unwrap())
+        .unwrap();
+    assert!(terminal.render_hold().is_none());
+    assert_eq!(row_text(&terminal.snapshot().unwrap(), 0), "partial");
+
+    terminal.feed(b"\x1b[?2026h").unwrap();
+    assert!(terminal.render_hold().is_some());
+    terminal.feed(b"\x1bcfresh").unwrap();
+    assert!(terminal.render_hold().is_none());
+    assert_eq!(row_text(&terminal.snapshot().unwrap(), 0), "fresh");
+
+    terminal.feed(b"\x1b[?2026h").unwrap();
+    terminal.reset();
+    assert!(terminal.render_hold().is_none());
 }
 
 #[test]

@@ -184,7 +184,9 @@ unsafe fn adopt(raw: sys::GhosttyTerminal, restore: SnapshotRestore) -> Result<D
         cell_height: restore.cell_height,
     }
     .validate()?;
-    let mut callbacks = Box::new(CallbackState::new(size, restore.appearance.color_scheme));
+    let mut callbacks = Box::new(unsafe {
+        CallbackState::new(size, restore.appearance.color_scheme, std::ptr::null())?
+    });
     callbacks::install(terminal.raw(), (&mut *callbacks) as *mut CallbackState)?;
     configure_scrollback(terminal.raw(), restore.max_scrollback)?;
     configure_safety_limits(terminal.raw())?;

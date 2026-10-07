@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::{GhosttyError, Result};
 
@@ -215,6 +216,12 @@ pub struct Content {
     pub rows: usize,
     pub display_offset: usize,
     pub history_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderHold {
+    pub started_at: Instant,
+    pub generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

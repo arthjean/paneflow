@@ -131,7 +131,10 @@ pub(super) fn handle_terminal_command(
                 ..ghostty::PressOptions::default()
             };
             match terminal.gesture_press(point, &options) {
-                Ok(range) => publish_gesture_selection(inner, range),
+                Ok(range) => {
+                    publish_gesture_selection(inner, range);
+                    show_live_content_under_selection(inner, terminal, gate);
+                }
                 Err(error) => log::warn!(
                     target: "paneflow::terminal::ghostty",
                     "Ghostty selection press failed: {error}"
@@ -175,6 +178,7 @@ pub(super) fn handle_terminal_command(
                     Ok(range) => {
                         if publish {
                             publish_gesture_selection(inner, range);
+                            show_live_content_under_selection(inner, terminal, gate);
                         }
                     }
                     Err(error) => log::warn!(
@@ -470,6 +474,22 @@ pub(super) fn lock_gesture(inner: &SessionInner) -> std::sync::MutexGuard<'_, Ge
 
 fn publish_gesture_selection(inner: &SessionInner, range: Option<ghostty::SelectionRange>) {
     update_shared_selection(inner, range.map(selection_range_from_ghostty));
+}
+
+fn show_live_content_under_selection(
+    inner: &SessionInner,
+    terminal: &mut ghostty::DisplayTerminal,
+    gate: &mut PublishGate,
+) {
+    if terminal.render_hold().is_none() {
+        return;
+    }
+    if let Err(error) = gate.publish_now(inner, terminal) {
+        log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty live refresh under a selection failed: {error}"
+        );
+    }
 }
 
 fn select_all_text(

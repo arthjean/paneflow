@@ -48,7 +48,9 @@ impl DisplayTerminal {
             });
         }
         crate::abi::validate()?;
-        let mut callbacks = Box::new(CallbackState::new(size, appearance.color_scheme));
+        let mut callbacks = Box::new(unsafe {
+            CallbackState::new(size, appearance.color_scheme, allocator)?
+        });
         let mut raw_terminal = std::ptr::null_mut();
         let result =
             unsafe { sys::ghostty_terminal_new(allocator, &mut raw_terminal, size.cols, size.rows) };
@@ -72,14 +74,6 @@ impl DisplayTerminal {
         callbacks: Box<CallbackState>,
         allocator: *const sys::GhosttyAllocator,
     ) -> Result<Self> {
-        let render_state = unsafe {
-            create(
-                "render_state_new",
-                allocator,
-                sys::ghostty_render_state_new,
-                sys::ghostty_render_state_free,
-            )?
-        };
         let row_iterator = unsafe {
             create(
                 "row_iterator_new",
@@ -136,7 +130,6 @@ impl DisplayTerminal {
             key_encoder,
             row_cells,
             row_iterator,
-            render_state,
             key_encoder_overrides: crate::input_options::KeyEncoderOverrides::default(),
             mouse_encoder_modes: None,
             mouse_encoder_size: None,

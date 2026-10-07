@@ -72,8 +72,8 @@ pub use kitty::{
 };
 pub use model::{
     BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
-    Modes, Point, ProgressReport, ProgressState, Rgb, Scroll, SearchMatch, SearchResult,
-    SelectionRange, TerminalAppearance, UnderlineStyle, WideCell, WindowSize,
+    Modes, Point, ProgressReport, ProgressState, RenderHold, Rgb, Scroll, SearchMatch,
+    SearchResult, SelectionRange, TerminalAppearance, UnderlineStyle, WideCell, WindowSize,
 };
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, NativeSearchSnapshot, SEARCH_CHUNK_CELLS, SearchChunk,
