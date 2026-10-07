@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Re-pin libghostty-vt sur b699ea79",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 2
+      "stories_done": 4
     },
     {
       "id": "EP-002",
@@ -52,26 +52,26 @@
       "id": "US-001",
       "title": "Publier les archives b699ea79 par le workflow de bump",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-10-07",
-      "completed_at": null,
+      "completed_at": "2026-10-07",
       "reviewed_at": "2026-10-07"
     },
     {
       "id": "US-002",
       "title": "Intégrer le re-pin et ses métadonnées dans une branche de feature",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-10-07",
-      "completed_at": null,
+      "completed_at": "2026-10-07",
       "reviewed_at": "2026-10-07"
     },
     {
