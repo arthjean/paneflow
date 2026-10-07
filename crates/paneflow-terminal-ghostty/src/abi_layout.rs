@@ -98,6 +98,56 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         secondary: sys::GhosttyDeviceAttributesSecondary,
         tertiary: sys::GhosttyDeviceAttributesTertiary
     });
+    check!(layouts, sys::GhosttyTerminalProgramStatus, "GhosttyTerminalProgramStatus", {
+        size: usize,
+        state: sys::GhosttyProgramStatusState,
+        kind: sys::GhosttyProgramStatusKind,
+        progress: i8,
+        id: sys::GhosttyString,
+        app: sys::GhosttyString,
+        title: sys::GhosttyString,
+        message: sys::GhosttyString
+    });
+    check!(layouts, sys::GhosttyTerminalSemanticPrompt, "GhosttyTerminalSemanticPrompt", {
+        size: usize,
+        kind: sys::GhosttySemanticPromptKind,
+        prompt_kind: sys::GhosttySemanticPromptPromptKind,
+        has_exit_code: bool,
+        exit_code: i32,
+        command: sys::GhosttyString,
+        error: sys::GhosttyString
+    });
+    check!(layouts, sys::GhosttyTerminalMemoryUsage, "GhosttyTerminalMemoryUsage", {
+        size: usize,
+        compression_supported: bool,
+        primary_pages: u64,
+        primary_virtual_bytes: u64,
+        primary_resident_bytes: u64,
+        primary_compressed_pages: u64,
+        primary_compressed_bytes: u64,
+        primary_image_bytes: u64,
+        alternate_pages: u64,
+        alternate_virtual_bytes: u64,
+        alternate_resident_bytes: u64,
+        alternate_compressed_pages: u64,
+        alternate_compressed_bytes: u64,
+        alternate_image_bytes: u64
+    });
+    check!(layouts, sys::GhosttyTerminalUnknownOscSequence, "GhosttyTerminalUnknownOscSequence", {
+        truncated: bool,
+        content: sys::GhosttyString,
+        terminator: sys::GhosttyOscTerminator
+    });
+    check!(layouts, sys::GhosttyTerminalUnknownSequence, "GhosttyTerminalUnknownSequence", {
+        tag: sys::GhosttyTerminalUnknownSequenceTag,
+        value: sys::GhosttyTerminalUnknownSequenceValue
+    });
+    check!(layouts, sys::GhosttyRenderStateOverscan, "GhosttyRenderStateOverscan", {
+        above: u16, below: u16
+    });
+    check!(layouts, sys::GhosttyRenderStateRowId, "GhosttyRenderStateRowId", {
+        bits: [u64; 2]
+    });
     Ok(())
 }
 
@@ -136,4 +186,53 @@ fn number(value: Option<&serde_json::Value>, key: &str) -> Option<u64> {
     value
         .and_then(|value| value.get(key))
         .and_then(serde_json::Value::as_u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CStr;
+
+    use super::*;
+
+    const UNKNOWN_SEQUENCE_SIZE_AT_0C2A290D: usize = 136;
+
+    fn pinned_layouts() -> serde_json::Value {
+        let json = unsafe { CStr::from_ptr(sys::ghostty_type_json()) }
+            .to_str()
+            .expect("layout JSON is UTF-8");
+        let document: serde_json::Value =
+            serde_json::from_str(json).expect("layout JSON must parse");
+        document["types"].clone()
+    }
+
+    #[test]
+    fn the_pinned_layouts_validate() {
+        validate(&pinned_layouts()).expect("pinned layouts must match the bindings");
+    }
+
+    #[test]
+    fn the_unknown_sequence_keeps_its_size_across_the_re_pin() {
+        assert_eq!(
+            std::mem::size_of::<sys::GhosttyTerminalUnknownSequence>(),
+            UNKNOWN_SEQUENCE_SIZE_AT_0C2A290D
+        );
+    }
+
+    #[test]
+    fn a_shifted_program_status_field_is_named_in_the_mismatch() {
+        let mut layouts = pinned_layouts();
+        let offset = &mut layouts["GhosttyTerminalProgramStatus"]["fields"]["state"]["offset"];
+        let shifted = offset.as_u64().expect("state offset") + 4;
+        *offset = serde_json::Value::from(shifted);
+
+        let error = validate(&layouts).expect_err("a shifted field must not validate");
+        assert!(
+            matches!(
+                &error,
+                GhosttyError::AbiMismatch(message)
+                    if message.starts_with("GhosttyTerminalProgramStatus.state offset/size")
+            ),
+            "{error:?}"
+        );
+    }
 }
