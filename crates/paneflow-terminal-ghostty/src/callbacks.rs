@@ -30,6 +30,26 @@ const _: sys::GhosttyTerminalDesktopNotificationFn = Some(crate::callback_ffi::d
 const _: sys::GhosttyTerminalUnknownSequenceFn = Some(crate::callback_ffi::unknown_sequence);
 const _: sys::GhosttyTerminalClipboardReadFn = Some(crate::callback_ffi::clipboard_read);
 
+type RenderHoldFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void, bool);
+type ProgramStatusFn = unsafe extern "C" fn(
+    sys::GhosttyTerminal,
+    *mut c_void,
+    *const sys::GhosttyTerminalProgramStatus,
+);
+type SemanticPromptFn = unsafe extern "C" fn(
+    sys::GhosttyTerminal,
+    *mut c_void,
+    *const sys::GhosttyTerminalSemanticPrompt,
+);
+type ResetFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void);
+
+const _: fn(sys::GhosttyTerminalRenderHoldFn) -> Option<RenderHoldFn> = std::convert::identity;
+const _: fn(sys::GhosttyTerminalProgramStatusFn) -> Option<ProgramStatusFn> =
+    std::convert::identity;
+const _: fn(sys::GhosttyTerminalSemanticPromptFn) -> Option<SemanticPromptFn> =
+    std::convert::identity;
+const _: fn(sys::GhosttyTerminalResetFn) -> Option<ResetFn> = std::convert::identity;
+
 pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
     pending_write_pty_bytes: Cell<usize>,

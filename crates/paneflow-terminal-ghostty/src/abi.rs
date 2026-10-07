@@ -118,6 +118,91 @@ fn validate_discriminants() -> Result<()> {
             sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL as i64,
             2,
         ),
+        (
+            "GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK as i64,
+            40,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_RENDER_HOLD",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RENDER_HOLD as i64,
+            41,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT as i64,
+            42,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_RESET",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RESET as i64,
+            43,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_REPORT",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_REPORT as i64,
+            44,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_EXTENSION",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_EXTENSION as i64,
+            45,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS as i64,
+            46,
+        ),
+        (
+            "GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE",
+            sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE as i64,
+            41,
+        ),
+        (
+            "GHOSTTY_TERMINAL_DATA_MEMORY_USAGE",
+            sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MEMORY_USAGE as i64,
+            42,
+        ),
+        (
+            "GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_OSC",
+            sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_OSC as i64,
+            1,
+        ),
+        (
+            "GHOSTTY_PROGRAM_STATUS_STATE_CLEAR",
+            sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_CLEAR as i64,
+            5,
+        ),
+        (
+            "GHOSTTY_SEMANTIC_PROMPT_COMMAND_END",
+            sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_COMMAND_END as i64,
+            4,
+        ),
+        (
+            "GHOSTTY_MOUSE_SHAPE_ZOOM_OUT",
+            sys::GhosttyMouseShape_GHOSTTY_MOUSE_SHAPE_ZOOM_OUT as i64,
+            33,
+        ),
+        (
+            "GHOSTTY_RENDER_STATE_OPTION_OVERSCAN",
+            sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_OVERSCAN as i64,
+            1,
+        ),
+        (
+            "GHOSTTY_RENDER_STATE_DATA_OVERSCAN",
+            sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_OVERSCAN as i64,
+            20,
+        ),
+        (
+            "GHOSTTY_RENDER_STATE_ROW_DATA_ID",
+            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_ID as i64,
+            7,
+        ),
+        (
+            "GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY",
+            sys::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY as i64,
+            2,
+        ),
     ] {
         if actual != expected {
             return Err(GhosttyError::AbiMismatch(format!(
