@@ -11,7 +11,8 @@ use crate::{BackendEvent, Modes, RenderHold, Result, Scroll, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 const CLEAR_SCROLLBACK: &[u8] = b"\x1b[3J";
-const RESET_DYNAMIC_COLORS: &[u8] = b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\";
+const RESET_PROGRAM_OVERRIDES: &[u8] =
+    b"\x1b]104\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\\x1b]22;\x1b\\";
 const SYNCHRONIZED_OUTPUT_MODE: u16 = 2026;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,8 +100,8 @@ impl DisplayTerminal {
             sys::ghostty_terminal_reset(self.terminal.raw());
             sys::ghostty_terminal_vt_write(
                 self.terminal.raw(),
-                RESET_DYNAMIC_COLORS.as_ptr(),
-                RESET_DYNAMIC_COLORS.len(),
+                RESET_PROGRAM_OVERRIDES.as_ptr(),
+                RESET_PROGRAM_OVERRIDES.len(),
             );
         }
         self.history_clear_pending = false;

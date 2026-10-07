@@ -8,7 +8,7 @@
 
 use paneflow_terminal_ghostty::{
     BackendEvent, ClipboardLocation, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput,
-    Modifiers, MouseAction, MouseButton, MouseInput, PasteRepresentation, Point, Rgb,
+    Modifiers, MouseAction, MouseButton, MouseInput, MouseShape, PasteRepresentation, Point, Rgb,
     SEARCH_CHUNK_CELLS, Scroll, SearchEngine, SearchResult, SelectionRange, TerminalAppearance,
     WideCell, WindowSize,
 };
@@ -157,6 +157,44 @@ fn a_render_hold_freezes_the_snapshot_on_the_frame_captured_when_it_began() {
     terminal.release_render_hold().unwrap();
     assert!(terminal.render_hold().is_none());
     assert!(!terminal.synchronized_output().unwrap());
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn osc_22_sets_the_mouse_shape_until_the_next_request_or_a_reset() {
+    let mut terminal = terminal(20, 3);
+    assert_eq!(terminal.snapshot().unwrap().mouse_shape, MouseShape::Text);
+
+    terminal.feed(b"\x1b]22;pointer\x1b\\").unwrap();
+    assert_eq!(
+        terminal.snapshot().unwrap().mouse_shape,
+        MouseShape::Pointer
+    );
+
+    terminal.feed(b"\x1b]22;\x1b\\").unwrap();
+    assert_eq!(terminal.snapshot().unwrap().mouse_shape, MouseShape::Text);
+
+    terminal
+        .feed(b"\x1b[?1049h\x1b]22;col-resize\x1b\\\x1b[?1049l\r\n$ ")
+        .unwrap();
+    assert_eq!(
+        terminal.snapshot().unwrap().mouse_shape,
+        MouseShape::ColResize,
+        "the shape outlives the program until the next OSC 22"
+    );
+
+    terminal.feed(b"\x1bc").unwrap();
+    assert_eq!(
+        terminal.snapshot().unwrap().mouse_shape,
+        MouseShape::ColResize,
+        "upstream RIS keeps the mouse shape"
+    );
+
+    terminal.reset();
+    assert_eq!(terminal.snapshot().unwrap().mouse_shape, MouseShape::Text);
 }
 
 #[allow(
