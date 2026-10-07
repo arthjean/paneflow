@@ -137,6 +137,7 @@ pub(in crate::terminal) fn content_from_ghostty(content: ghostty::Content) -> Co
         display_offset: content.display_offset,
         history_size: content.history_size,
         mouse_shape: mouse_shape_from_ghostty(content.mouse_shape),
+        overscan_rows: overscan_rows_from_ghostty(&content.overscan_rows),
     }
 }
 
@@ -201,6 +202,8 @@ pub(in crate::terminal) struct CellMirror {
     published_address: usize,
     row_versions: Vec<u64>,
     cols: usize,
+    overscan_source: Arc<[ghostty::OverscanRow]>,
+    overscan_rows: Arc<[OverscanRow]>,
 }
 
 impl CellMirror {
@@ -255,7 +258,20 @@ impl CellMirror {
             display_offset: snapshot.display_offset,
             history_size: snapshot.history_size,
             mouse_shape: mouse_shape_from_ghostty(snapshot.mouse_shape),
+            overscan_rows: self.overscan_rows(snapshot.overscan_rows),
         }
+    }
+
+    fn overscan_rows(&mut self, source: Arc<[ghostty::OverscanRow]>) -> Arc<[OverscanRow]> {
+        if !Arc::ptr_eq(&self.overscan_source, &source) {
+            self.overscan_rows = if source.is_empty() && self.overscan_rows.is_empty() {
+                self.overscan_rows.clone()
+            } else {
+                overscan_rows_from_ghostty(&source)
+            };
+            self.overscan_source = source;
+        }
+        self.overscan_rows.clone()
     }
 
     pub(in crate::terminal) fn recycle(&mut self, previous: Content) {
@@ -266,6 +282,15 @@ impl CellMirror {
         std::mem::swap(&mut self.back_stale, &mut self.last_dirty);
         self.front_address = self.published_address;
     }
+}
+
+fn overscan_rows_from_ghostty(rows: &[ghostty::OverscanRow]) -> Arc<[OverscanRow]> {
+    rows.iter()
+        .map(|row| OverscanRow {
+            viewport_y: row.identity.viewport_y,
+            cells: cells_from_ghostty(&row.cells),
+        })
+        .collect()
 }
 
 fn mouse_shape_from_ghostty(shape: ghostty::MouseShape) -> MouseShape {
@@ -408,6 +433,7 @@ pub(in crate::terminal) fn blank_content(cols: usize, rows: usize) -> Content {
         display_offset: 0,
         history_size: 0,
         mouse_shape: MouseShape::Text,
+        overscan_rows: Arc::default(),
     }
 }
 
@@ -474,6 +500,62 @@ mod tests {
         });
 
         assert_eq!((content.cols, content.rows), (80, 24));
+    }
+
+    #[test]
+    fn overscan_rows_are_published_apart_from_the_viewport_grid() {
+        let size = ghostty::WindowSize::new(12, 4, 8, 16).expect("valid grid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("libghostty initializes");
+        for line in 0..30 {
+            terminal
+                .feed(format!("row {line:02}\r\n").as_bytes())
+                .expect("output parses");
+        }
+        let mut mirror = CellMirror::default();
+        let plain = mirror.publish(terminal.snapshot().expect("snapshot"));
+        assert!(plain.overscan_rows.is_empty());
+        let empty = plain.overscan_rows.clone();
+        mirror.recycle(plain);
+        let again = mirror.publish(terminal.snapshot().expect("snapshot"));
+        assert!(
+            Arc::ptr_eq(&empty, &again.overscan_rows),
+            "no overscan must not allocate a new row list per frame"
+        );
+        mirror.recycle(again);
+
+        terminal.scroll(ghostty::Scroll::Delta(6));
+        terminal.set_overscan(1, 1).expect("overscan request");
+        let content = mirror.publish(terminal.snapshot().expect("snapshot"));
+
+        assert_eq!(content.cells.len(), 12 * 4);
+        assert!(
+            content
+                .cells
+                .iter()
+                .all(|cell| (0..4).contains(&cell.point.line.0))
+        );
+        let rows = content
+            .overscan_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.viewport_y,
+                    row.cells.iter().map(|cell| cell.c).collect::<String>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let top = content.cells[..12]
+            .iter()
+            .map(|cell| cell.c)
+            .collect::<String>();
+        let top_line: i32 = top.trim()["row ".len()..].parse().expect("numbered row");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, -1);
+        assert_eq!(rows[0].1.trim(), format!("row {:02}", top_line - 1));
+        assert_eq!(rows[1].0, 4);
+        assert_eq!(rows[1].1.trim(), format!("row {:02}", top_line + 4));
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub(super) enum RuntimeMessage {
         blink: bool,
     },
     SetOptionAsAlt(bool),
+    EnableSmoothScrollOverscan,
     SearchChunk {
         start_row: usize,
         max_cells: usize,

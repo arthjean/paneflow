@@ -24,6 +24,24 @@ use super::pty_session::{BackendInputResult, SelectionCopy};
 use super::{TerminalEvent, TerminalView};
 
 const SCROLLBAR_HIT_SLOP: gpui::Pixels = gpui::px(2.0);
+const SMOOTH_SCROLL_MAX_FRACTION: f32 = 1.0 - f32::EPSILON;
+
+fn smooth_scroll_applies(delta: &gpui::ScrollDelta, reduce_motion: bool) -> bool {
+    matches!(delta, gpui::ScrollDelta::Pixels(_)) && !reduce_motion
+}
+
+fn smooth_scroll_step(remainder: f32, display_offset: usize, history: usize) -> (i32, f32) {
+    let room_up = history.saturating_sub(display_offset) as f32;
+    let room_down = display_offset as f32;
+    let lines = remainder.floor().clamp(-room_down, room_up);
+    let at_top = lines >= room_up;
+    let fraction = if at_top {
+        0.0
+    } else {
+        (remainder - lines).clamp(0.0, SMOOTH_SCROLL_MAX_FRACTION)
+    };
+    (lines as i32, fraction)
+}
 
 #[inline]
 fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
@@ -417,8 +435,8 @@ impl TerminalView {
                 if backend.grid_metrics().display_offset > 0 {
                     backend.scroll_to_bottom();
                     self.terminal.dirty = true;
-                    self.scroll_remainder = 0.0;
                 }
+                self.scroll_remainder = 0.0;
             }
             let backend_key = if encode_with_backend {
                 ghostty_key_input(
@@ -1303,9 +1321,12 @@ impl TerminalView {
             return;
         }
 
+        let precise = smooth_scroll_applies(&event.delta, crate::ui_primitives::reduce_motion());
         match event.touch_phase {
             TouchPhase::Started => {
-                self.scroll_remainder = 0.0;
+                if !precise {
+                    self.scroll_remainder = 0.0;
+                }
                 return;
             }
             TouchPhase::Ended | TouchPhase::Cancelled => return,
@@ -1316,6 +1337,14 @@ impl TerminalView {
         self.scroll_remainder += (delta_y / self.line_height) * self.scroll_multiplier;
 
         self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
+
+        if precise {
+            self.scroll_smoothly(cx);
+            return;
+        }
+        if std::mem::take(&mut self.smooth_scroll) {
+            cx.notify();
+        }
 
         let lines = self.scroll_remainder as i32;
         if lines == 0 {
@@ -1330,6 +1359,33 @@ impl TerminalView {
         self.scrollbar_reveal.touch(std::time::Instant::now());
 
         cx.notify();
+    }
+
+    fn scroll_smoothly(&mut self, cx: &mut Context<Self>) {
+        let backend = self.terminal.session_backend();
+        backend.enable_smooth_scroll_overscan();
+        let metrics = backend.grid_metrics();
+        let history = usize::try_from(-i64::from(metrics.topmost_line.0)).unwrap_or(0);
+        let (lines, fraction) =
+            smooth_scroll_step(self.scroll_remainder, metrics.display_offset, history);
+        let moved = lines != 0 || fraction != self.scroll_remainder || !self.smooth_scroll;
+        self.smooth_scroll = true;
+        self.scroll_remainder = fraction;
+        if lines != 0 && backend.scroll_delta(lines) {
+            self.terminal.dirty = true;
+            self.scrollbar_reveal.touch(std::time::Instant::now());
+        }
+        if moved {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn smooth_scroll_offset(&self) -> gpui::Pixels {
+        if self.smooth_scroll {
+            self.line_height * self.scroll_remainder.clamp(0.0, SMOOTH_SCROLL_MAX_FRACTION)
+        } else {
+            gpui::px(0.0)
+        }
     }
 
     pub(super) fn handle_scroll_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1396,9 +1452,49 @@ impl TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{engine_pointer, normalize_paste_text, paths_to_pty_text};
+    use super::{
+        engine_pointer, normalize_paste_text, paths_to_pty_text, smooth_scroll_applies,
+        smooth_scroll_step,
+    };
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
+
+    #[test]
+    fn only_precise_deltas_without_reduce_motion_scroll_by_the_pixel() {
+        let pixels = gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(3.0)));
+        let lines = gpui::ScrollDelta::Lines(gpui::point(0.0, 1.0));
+        assert!(smooth_scroll_applies(&pixels, false));
+        assert!(!smooth_scroll_applies(&pixels, true));
+        assert!(!smooth_scroll_applies(&lines, false));
+        assert!(!smooth_scroll_applies(&lines, true));
+    }
+
+    #[test]
+    fn a_smooth_scroll_keeps_a_sub_line_fraction_and_crosses_whole_lines() {
+        assert_eq!(smooth_scroll_step(0.25, 10, 100), (0, 0.25));
+        assert_eq!(smooth_scroll_step(1.5, 10, 100), (1, 0.5));
+        assert_eq!(smooth_scroll_step(-0.25, 10, 100), (-1, 0.75));
+        assert_eq!(smooth_scroll_step(-2.0, 10, 100), (-2, 0.0));
+        let (_, fraction) = smooth_scroll_step(0.999_999_9, 10, 100);
+        assert!(fraction < 1.0);
+    }
+
+    #[test]
+    fn a_smooth_scroll_never_shifts_past_either_end_of_the_scrollback() {
+        assert_eq!(
+            smooth_scroll_step(-0.25, 0, 100),
+            (0, 0.0),
+            "at the bottom, scrolling down must not bounce into the void"
+        );
+        assert_eq!(smooth_scroll_step(-3.5, 2, 100), (-2, 0.0));
+        assert_eq!(
+            smooth_scroll_step(0.5, 100, 100),
+            (0, 0.0),
+            "nothing exists above the first line of scrollback"
+        );
+        assert_eq!(smooth_scroll_step(5.5, 98, 100), (2, 0.0));
+        assert_eq!(smooth_scroll_step(0.5, 0, 0), (0, 0.0));
+    }
 
     #[test]
     fn a_click_centered_on_column_80_with_fractional_cells_reports_column_80() {
