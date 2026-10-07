@@ -279,4 +279,188 @@ mod tests {
         terminal.feed(b"\x1b[1").expect("partial sequence");
         assert!(terminal.continuation().expect("alloc path").is_none());
     }
+
+    unsafe extern "C" fn refusing_write(userdata: *mut c_void, _: *const u8, _: usize) -> bool {
+        unsafe { *userdata.cast::<usize>() += 1 };
+        false
+    }
+
+    #[test]
+    fn upstream_2b0ceff7d_the_paste_reader_stops_at_a_refused_write() {
+        let representations = [PasteRepresentation {
+            mime: "text/plain",
+            data: b"hello",
+        }];
+        let mut state = PasteState {
+            representations: &representations,
+        };
+        let mut refusals = 0usize;
+        let writer = sys::GhosttyWriter {
+            write: Some(refusing_write),
+            userdata: (&raw mut refusals).cast(),
+        };
+        let mime = sys::GhosttyString {
+            ptr: b"text/plain".as_ptr(),
+            len: "text/plain".len(),
+        };
+
+        let accepted =
+            unsafe { mime_read_trampoline((&raw mut state).cast(), mime, writer) };
+
+        assert!(!accepted, "a refused write must fail the read");
+        assert_eq!(refusals, 1, "the reader must stop at the first refusal");
+    }
+
+    struct RefusableAllocator {
+        refusing: std::cell::Cell<bool>,
+    }
+
+    fn allocation_layout(len: usize, alignment: u8) -> std::alloc::Layout {
+        std::alloc::Layout::from_size_align(len, 1usize << alignment)
+            .expect("libghostty requests a valid layout")
+    }
+
+    unsafe extern "C" fn refusable_alloc(
+        ctx: *mut c_void,
+        len: usize,
+        alignment: u8,
+        _: usize,
+    ) -> *mut c_void {
+        let allocator = unsafe { &*ctx.cast::<RefusableAllocator>() };
+        if allocator.refusing.get() {
+            return std::ptr::null_mut();
+        }
+        unsafe { std::alloc::alloc(allocation_layout(len, alignment)).cast() }
+    }
+
+    unsafe extern "C" fn in_place_resize_refused(
+        _: *mut c_void,
+        _: *mut c_void,
+        _: usize,
+        _: u8,
+        _: usize,
+        _: usize,
+    ) -> bool {
+        false
+    }
+
+    unsafe extern "C" fn remap_refused(
+        _: *mut c_void,
+        _: *mut c_void,
+        _: usize,
+        _: u8,
+        _: usize,
+        _: usize,
+    ) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+
+    unsafe extern "C" fn refusable_free(
+        _: *mut c_void,
+        memory: *mut c_void,
+        len: usize,
+        alignment: u8,
+        _: usize,
+    ) {
+        unsafe { std::alloc::dealloc(memory.cast(), allocation_layout(len, alignment)) };
+    }
+
+    static REFUSABLE_VTABLE: sys::GhosttyAllocatorVtable = sys::GhosttyAllocatorVtable {
+        alloc: Some(refusable_alloc),
+        resize: Some(in_place_resize_refused),
+        remap: Some(remap_refused),
+        free: Some(refusable_free),
+    };
+
+    unsafe extern "C" fn record_pty_write(
+        _: sys::GhosttyTerminal,
+        userdata: *mut c_void,
+        data: *const u8,
+        len: usize,
+    ) {
+        let written = unsafe { &mut *userdata.cast::<Vec<u8>>() };
+        written.extend_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
+    }
+
+    fn paste_through_terminal(terminal: sys::GhosttyTerminal, data: &[u8]) -> sys::GhosttyResult {
+        let representations = [PasteRepresentation {
+            mime: "text/plain",
+            data,
+        }];
+        let mime = sys::GhosttyString {
+            ptr: b"text/plain".as_ptr(),
+            len: "text/plain".len(),
+        };
+        let mut state = PasteState {
+            representations: &representations,
+        };
+        let paste = sys::GhosttyPaste {
+            size: std::mem::size_of::<sys::GhosttyPaste>(),
+            location: ClipboardLocation::Standard.raw(),
+            source: sys::GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+            mimes: &mime,
+            mimes_len: 1,
+            reader: sys::GhosttyMimeReader {
+                read: Some(mime_read_trampoline),
+                userdata: (&raw mut state).cast(),
+            },
+            allow_unsafe: false,
+        };
+        let mut written = false;
+        unsafe { sys::ghostty_terminal_paste(terminal, &paste, &mut written) }
+    }
+
+    #[test]
+    fn upstream_2b0ceff7d_a_refused_paste_write_fails_the_paste_before_the_pty() {
+        let allocator_state = RefusableAllocator {
+            refusing: std::cell::Cell::new(false),
+        };
+        let allocator = sys::GhosttyAllocator {
+            ctx: (&raw const allocator_state).cast_mut().cast(),
+            vtable: &REFUSABLE_VTABLE,
+        };
+        let mut terminal: sys::GhosttyTerminal = std::ptr::null_mut();
+        check("terminal_new", unsafe {
+            sys::ghostty_terminal_new(&allocator, &mut terminal, 20, 3)
+        })
+        .expect("terminal must initialize");
+        let mut pty = Vec::<u8>::new();
+        check("set_userdata", unsafe {
+            sys::ghostty_terminal_set(
+                terminal,
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA,
+                (&raw mut pty).cast_const().cast(),
+            )
+        })
+        .expect("userdata must install");
+        check("set_write_pty", unsafe {
+            sys::ghostty_terminal_set(
+                terminal,
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                record_pty_write as *const c_void,
+            )
+        })
+        .expect("write_pty must install");
+
+        let accepted = paste_through_terminal(terminal, b"hello");
+        let accepted_pty = std::mem::take(&mut pty);
+
+        allocator_state.refusing.set(true);
+        let refused = paste_through_terminal(terminal, b"hello");
+        allocator_state.refusing.set(false);
+        let refused_pty = std::mem::take(&mut pty);
+        unsafe { sys::ghostty_terminal_free(terminal) };
+
+        assert_eq!(accepted, sys::GhosttyResult_GHOSTTY_SUCCESS);
+        assert_eq!(accepted_pty, b"hello");
+        assert_ne!(
+            refused,
+            sys::GhosttyResult_GHOSTTY_SUCCESS,
+            "a refused write must fail the paste"
+        );
+        assert!(
+            refused_pty.is_empty(),
+            "nothing from a refused paste may reach the PTY, got {refused_pty:?}"
+        );
+    }
 }

@@ -348,4 +348,42 @@ mod tests {
             sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_PREV
         );
     }
+
+    #[test]
+    fn upstream_b1c264163_a_tick_after_the_terminal_is_freed_is_an_error() {
+        let mut terminal: sys::GhosttyTerminal = std::ptr::null_mut();
+        check("terminal_new", unsafe {
+            sys::ghostty_terminal_new(std::ptr::null(), &mut terminal, 10, 3)
+        })
+        .expect("terminal must initialize");
+        let history = b"Fizz\r\nFizz\r\nFizz\r\nFizz\r\n";
+        unsafe { sys::ghostty_terminal_vt_write(terminal, history.as_ptr(), history.len()) };
+
+        let mut search = NativeSearch::new(terminal, "Fizz").expect("search must start");
+        check("search_feed", unsafe {
+            sys::ghostty_search_feed(search.handle.raw())
+        })
+        .expect("history must feed");
+        assert_eq!(
+            search.status().expect("status"),
+            sys::GhosttySearchStatus_GHOSTTY_SEARCH_STATUS_RUNNING
+        );
+        search.feed_dirty = false;
+        search.viewport = Some((0, 3));
+
+        unsafe { sys::ghostty_terminal_free(terminal) };
+        let error = search
+            .step((0, 3))
+            .expect_err("a tick on a freed terminal must fail");
+        assert!(
+            matches!(
+                error,
+                GhosttyError::Ffi {
+                    operation: "search_tick",
+                    code: sys::GhosttyResult_GHOSTTY_INVALID_VALUE,
+                }
+            ),
+            "got {error:?}"
+        );
+    }
 }
