@@ -4,18 +4,25 @@ use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
-use crate::limits::MAX_SNAPSHOT_CELLS;
+use crate::limits::{MAX_OVERSCAN_ROWS, MAX_SNAPSHOT_CELLS};
 use crate::snapshot_ffi::{
-    RenderDirty, TerminalMouseShape, mouse_shape, render_get, render_row_data,
+    RenderDirty, TerminalMouseShape, mouse_shape, render_get, render_overscan, render_row_data,
     render_row_iterator, terminal_get, terminal_scrollbar,
 };
-use crate::{Cell, Content, GhosttyError, Point, Result, Scroll, SelectionRange};
+use crate::{
+    Cell, Content, GhosttyError, Overscan, OverscanRow, Point, Result, RowIdentity, Scroll,
+    SelectionRange,
+};
 
 #[derive(Default)]
 pub(crate) struct SnapshotCache {
     cells: Arc<[Cell]>,
     dirty_rows: Vec<bool>,
     selection: Option<SelectionRange>,
+    row_identities: Arc<[RowIdentity]>,
+    row_identity_scratch: Vec<RowIdentity>,
+    overscan: Overscan,
+    overscan_rows: Arc<[OverscanRow]>,
     cols: usize,
     rows: usize,
     valid: bool,
@@ -38,6 +45,33 @@ impl DisplayTerminal {
 
     pub fn snapshot_live(&mut self) -> Result<Content> {
         self.snapshot_frame(true)
+    }
+
+    pub fn set_overscan(&mut self, above: u16, below: u16) -> Result<()> {
+        if above > MAX_OVERSCAN_ROWS || below > MAX_OVERSCAN_ROWS {
+            return Err(GhosttyError::LimitExceeded {
+                resource: "overscan rows",
+                limit: usize::from(MAX_OVERSCAN_ROWS),
+            });
+        }
+        let request = sys::GhosttyRenderStateOverscan { above, below };
+        let result = unsafe {
+            sys::ghostty_render_state_set(
+                self.callbacks.render_state(),
+                sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_OVERSCAN,
+                (&raw const request).cast(),
+            )
+        };
+        check("render_state_set_overscan", result)?;
+        self.snapshot_cache.invalidate();
+        Ok(())
+    }
+
+    pub fn overscan_request(&self) -> Result<Overscan> {
+        render_overscan(
+            self.callbacks.render_state(),
+            sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_OVERSCAN_REQUEST,
+        )
     }
 
     fn snapshot_frame(&mut self, update: bool) -> Result<Content> {
@@ -70,7 +104,7 @@ impl DisplayTerminal {
             });
         }
 
-        let dirty = render_get::<RenderDirty>(self.callbacks.render_state())?;
+        let dirty = render_get::<RenderDirty>(render_state)?;
         let full_refresh = match dirty {
             sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE
             | sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL => {
@@ -95,7 +129,7 @@ impl DisplayTerminal {
             ));
         }
         if full_refresh {
-            let result = unsafe { sys::ghostty_render_state_clean(self.callbacks.render_state()) };
+            let result = unsafe { sys::ghostty_render_state_clean(render_state) };
             check("render_state_clean", result)?;
         } else {
             self.clear_render_dirty()?;
@@ -135,6 +169,9 @@ impl DisplayTerminal {
             display_offset,
             history_size,
             mouse_shape: mouse_shape(terminal_get::<TerminalMouseShape>(self.terminal.raw())?),
+            row_identities: self.snapshot_cache.row_identities.clone(),
+            overscan: self.snapshot_cache.overscan,
+            overscan_rows: self.snapshot_cache.overscan_rows.clone(),
         })
     }
 
@@ -170,20 +207,29 @@ impl DisplayTerminal {
         });
         self.snapshot_cache.dirty_rows.clear();
         self.snapshot_cache.dirty_rows.resize(rows, false);
+        let overscan = render_overscan(
+            self.callbacks.render_state(),
+            sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_OVERSCAN,
+        )?;
+        let mut row_identities = std::mem::take(&mut self.snapshot_cache.row_identity_scratch);
+        row_identities.clear();
+        let mut overscan_rows = Vec::with_capacity(usize::from(overscan.above + overscan.below));
 
         let iterator = render_row_iterator(self.callbacks.render_state(), self.row_iterator.raw())?;
 
         let mut row_index = 0usize;
+        let mut previous_y = None;
         let mut selection_start = None;
         let mut selection_end = None;
         while unsafe { sys::ghostty_render_state_row_iterator_next(iterator) } {
-            if row_index >= rows {
-                return Err(GhosttyError::AbiMismatch(
-                    "render iterator returned too many rows".into(),
-                ));
-            }
-
             let row = render_row_data(iterator, self.row_cells.raw())?;
+            let viewport_y = row.identity.viewport_y;
+            if previous_y.is_some_and(|previous: i32| previous.checked_add(1) != Some(viewport_y)) {
+                return Err(GhosttyError::AbiMismatch(format!(
+                    "render iterator jumped from row {previous_y:?} to {viewport_y}"
+                )));
+            }
+            previous_y = Some(viewport_y);
             let row_selection = if let Some(selection) = row.selection {
                 let start = usize::from(selection.start_x.min(selection.end_x));
                 let end = usize::from(selection.start_x.max(selection.end_x));
@@ -196,14 +242,28 @@ impl DisplayTerminal {
             } else {
                 None
             };
-            if let Some((start, end)) = row_selection {
-                let line = i32::try_from(row_index)
-                    .map_err(|_| GhosttyError::AbiMismatch("selection row overflow".into()))?;
-                selection_start.get_or_insert(Point::new(line, start));
-                selection_end = Some(Point::new(line, end));
+            let overscan_row = usize::try_from(viewport_y)
+                .ok()
+                .filter(|y| *y < rows)
+                .is_none();
+            if !overscan_row {
+                if usize::try_from(viewport_y).ok() != Some(row_index) {
+                    return Err(GhosttyError::AbiMismatch(format!(
+                        "render iterator returned viewport row {viewport_y}, expected {row_index}"
+                    )));
+                }
+                row_identities.push(row.identity);
+                if let Some((start, end)) = row_selection {
+                    selection_start.get_or_insert(Point::new(viewport_y, start));
+                    selection_end = Some(Point::new(viewport_y, end));
+                }
             }
-            if full_refresh || row.dirty {
-                self.snapshot_cache.dirty_rows[row_index] = true;
+            if overscan_row || full_refresh || row.dirty {
+                let mut overscan_cells = overscan_row.then(|| Vec::with_capacity(cols));
+                let cell_row = if overscan_row { 0 } else { row_index };
+                if !overscan_row {
+                    self.snapshot_cache.dirty_rows[row_index] = true;
+                }
                 let mut column = 0usize;
                 while unsafe { sys::ghostty_render_state_row_cells_next(row.cells) } {
                     if column >= cols {
@@ -213,8 +273,11 @@ impl DisplayTerminal {
                     }
                     let selected =
                         row_selection.is_some_and(|(start, end)| (start..=end).contains(&column));
-                    let cell = self.copy_cell(row.cells, row_index, column, selected)?;
-                    if let Some(cells) = rebuilt_cells.as_mut() {
+                    let mut cell = self.copy_cell(row.cells, cell_row, column, selected)?;
+                    if let Some(cells) = overscan_cells.as_mut() {
+                        cell.point.line = viewport_y;
+                        cells.push(cell);
+                    } else if let Some(cells) = rebuilt_cells.as_mut() {
                         cells.push(cell);
                     } else {
                         let cell_index = row_index * cols + column;
@@ -234,26 +297,41 @@ impl DisplayTerminal {
                         "render row returned {column} columns, expected {cols}"
                     )));
                 }
+                if let Some(cells) = overscan_cells {
+                    overscan_rows.push(OverscanRow {
+                        identity: row.identity,
+                        cells: cells.into(),
+                    });
+                }
             }
 
             if !full_refresh && row.dirty {
-                let clean = false;
-                let result = unsafe {
-                    sys::ghostty_render_state_row_set(
-                        iterator,
-                        sys::GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
-                        (&raw const clean).cast(),
-                    )
-                };
-                check("render_state_row_set", result)?;
+                self.clear_row_dirty(iterator)?;
             }
-            row_index += 1;
+            if !overscan_row {
+                row_index += 1;
+            }
         }
         if row_index != rows {
             return Err(GhosttyError::AbiMismatch(format!(
                 "render iterator returned {row_index} rows, expected {rows}"
             )));
         }
+        if overscan_rows.len() != usize::from(overscan.above + overscan.below) {
+            return Err(GhosttyError::AbiMismatch(format!(
+                "render iterator returned {} overscan rows, the update reported {overscan:?}",
+                overscan_rows.len()
+            )));
+        }
+        let row_identity_scratch = row_identities;
+        let row_identities =
+            share_row_identities(&mut self.snapshot_cache.row_identities, &row_identity_scratch);
+        let overscan_rows = if overscan_rows.is_empty() && self.snapshot_cache.overscan_rows.is_empty()
+        {
+            self.snapshot_cache.overscan_rows.clone()
+        } else {
+            overscan_rows.into()
+        };
 
         let selection = match selection_start.zip(selection_end) {
             Some((start, end)) => Some(SelectionRange {
@@ -275,15 +353,35 @@ impl DisplayTerminal {
                 cells: cells.into(),
                 dirty_rows: std::mem::take(&mut self.snapshot_cache.dirty_rows),
                 selection,
+                row_identities,
+                row_identity_scratch,
+                overscan,
+                overscan_rows,
                 cols,
                 rows,
                 valid: true,
             };
         } else {
             self.snapshot_cache.selection = selection;
+            self.snapshot_cache.row_identities = row_identities;
+            self.snapshot_cache.row_identity_scratch = row_identity_scratch;
+            self.snapshot_cache.overscan = overscan;
+            self.snapshot_cache.overscan_rows = overscan_rows;
             self.snapshot_cache.valid = true;
         }
         Ok(())
+    }
+
+    fn clear_row_dirty(&self, iterator: sys::GhosttyRenderStateRowIterator) -> Result<()> {
+        let clean = false;
+        let result = unsafe {
+            sys::ghostty_render_state_row_set(
+                iterator,
+                sys::GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
+                (&raw const clean).cast(),
+            )
+        };
+        check("render_state_row_set", result)
     }
 
     fn clear_render_dirty(&self) -> Result<()> {
@@ -305,6 +403,20 @@ impl DisplayTerminal {
     pub(crate) fn scrollbar_position(&self) -> Result<(usize, usize)> {
         scrollbar_position(self.scrollbar()?)
     }
+}
+
+fn share_row_identities(
+    cached: &mut Arc<[RowIdentity]>,
+    fresh: &[RowIdentity],
+) -> Arc<[RowIdentity]> {
+    if let Some(slot) = Arc::get_mut(cached).filter(|slot| slot.len() == fresh.len()) {
+        slot.copy_from_slice(fresh);
+        return cached.clone();
+    }
+    if **cached == *fresh {
+        return cached.clone();
+    }
+    fresh.into()
 }
 
 fn scrollbar_position(scrollbar: sys::GhosttyTerminalScrollbar) -> Result<(usize, usize)> {

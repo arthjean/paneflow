@@ -2,7 +2,9 @@ use paneflow_libghostty_sys as sys;
 
 use crate::batch::{Slot, get_multi};
 use crate::handles::check;
-use crate::{GhosttyError, MouseShape, Result, Rgb, UnderlineStyle, WideCell};
+use crate::{
+    GhosttyError, MouseShape, Overscan, Result, Rgb, RowId, RowIdentity, UnderlineStyle, WideCell,
+};
 
 const MAX_GRAPHEME_CODEPOINTS: usize = 1024;
 const INLINE_GRAPHEME_CODEPOINTS: usize = 16;
@@ -108,6 +110,7 @@ render_fields! {
 
 pub(crate) struct RenderRowData {
     pub(crate) dirty: bool,
+    pub(crate) identity: RowIdentity,
     pub(crate) cells: sys::GhosttyRenderStateRowCells,
     pub(crate) selection: Option<sys::GhosttyRenderStateRowSelection>,
 }
@@ -303,6 +306,8 @@ pub(crate) fn render_row_data(
 ) -> Result<RenderRowData> {
     let mut dirty = false;
     let mut cells = cells;
+    let mut viewport_y = 0i32;
+    let mut id = sys::GhosttyRenderStateRowId { bits: [0; 2] };
     unsafe {
         get_multi(
             "render_state_row_get_multi",
@@ -316,6 +321,14 @@ pub(crate) fn render_row_data(
                 Slot::new(
                     sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                     &mut cells,
+                ),
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y,
+                    &mut viewport_y,
+                ),
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_ID,
+                    &mut id,
                 ),
             ],
         )?;
@@ -338,8 +351,31 @@ pub(crate) fn render_row_data(
     };
     Ok(RenderRowData {
         dirty,
+        identity: RowIdentity {
+            viewport_y,
+            id: RowId::from_bits(id.bits),
+        },
         cells,
         selection,
+    })
+}
+
+pub(crate) fn render_overscan(
+    render_state: sys::GhosttyRenderState,
+    data: sys::GhosttyRenderStateData,
+) -> Result<Overscan> {
+    let mut value = sys::GhosttyRenderStateOverscan { above: 0, below: 0 };
+    let result = unsafe {
+        sys::ghostty_render_state_get(
+            render_state,
+            data,
+            (&mut value as *mut sys::GhosttyRenderStateOverscan).cast(),
+        )
+    };
+    check("render_state_get_overscan", result)?;
+    Ok(Overscan {
+        above: value.above,
+        below: value.below,
     })
 }
 
