@@ -7,14 +7,14 @@ dataset, and generated template distributed through that archive. It is
 included in the tar, AppImage, deb, rpm, and MSI packages.
 
 Pinned Ghostty source:
-`0c2a290d3a3e2a599be3a43435d778a5896667ee`.
+`b699ea79f4b881421b4b3055abc16a0957d76beb`.
 
 Reviewed archive fingerprints:
 
-- `x86_64-unknown-linux-gnu`: `80e641c4fb81609dfa4e4fe82030e0567e7bb9ee41978c1351834753107435a1`
-- `aarch64-unknown-linux-gnu`: `2ce53d8c26a0e8341db71680ef5f9c48d6e37534638ba810b58e1615d24d7828`
-- `aarch64-apple-darwin`: `d81dafad9975987fc582977f24af06c9255b901196c07b00be42b85ffe8dba03`
-- `x86_64-pc-windows-msvc`: `69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3`
+- `x86_64-unknown-linux-gnu`: `4ddf1fd32d26073fd5ea478c2255abfa699fad96b4d3a21228cc9b62627cfa8e`
+- `aarch64-unknown-linux-gnu`: `6eac80d043ef191ea5bfae60afe0e13b07df51734f5c97ae4dc1ee041c94efa9`
+- `aarch64-apple-darwin`: `7861b063981ed1070964e99ebc7dd54992ba76141d074776b3471deb1dcb623a`
+- `x86_64-pc-windows-msvc`: `6e77fdf4a4cb525735c0e1fc2acd611a0d66c2babb47c16efb990ce4a405e001`
 
 ## Artifact member inventory
 
@@ -44,10 +44,10 @@ license in addition to the upstream components identified below.
 
 | Component | Pinned version or provenance | Upstream license expression |
 |---|---|---|
-| Ghostty / libghostty-vt | `0c2a290d3a3e2a599be3a43435d778a5896667ee` | MIT |
+| Ghostty / libghostty-vt | `b699ea79f4b881421b4b3055abc16a0957d76beb` | MIT |
 | Zig compiler runtime and generated Zig code | `0.16.0` | MIT |
-| uucode | `0.2.0@2826a37a4562284fdacd8fa029d49509cc9bffcd` | MIT |
-| Unicode Character Database | `17.0.0`, bundled through uucode | Unicode-3.0 |
+| uucode | `0.2.0@9d55524551411b493cca41ca06363625d90aff1e` | MIT |
+| Unicode Character Database | `18.0.0`, bundled through uucode | Unicode-3.0 |
 | Bjoern Hoehrmann UTF-8 DFA | bundled through uucode `0.2.0` | MIT |
 | X.Org rgb data | `rgb-1.1.1@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e` | MIT |
 | foot kitty keymap | `c13495e26ef7c239b330dccf1afef44430b15543` | MIT |
@@ -66,7 +66,7 @@ ISA detection code. Both upstream Highway alternatives are reproduced.
 
 ### Ghostty / libghostty-vt
 
-Source: <https://github.com/ghostty-org/ghostty/tree/0c2a290d3a3e2a599be3a43435d778a5896667ee>
+Source: <https://github.com/ghostty-org/ghostty/tree/b699ea79f4b881421b4b3055abc16a0957d76beb>
 
 ```text
 MIT License
@@ -125,7 +125,7 @@ THE SOFTWARE.
 
 ### uucode
 
-Source: <https://github.com/jacobsandlund/uucode/tree/v0.2.0>
+Source: <https://github.com/jacobsandlund/uucode/tree/9d55524551411b493cca41ca06363625d90aff1e>
 
 ```text
 # uucode license
@@ -162,7 +162,7 @@ See [./licenses](./licenses) for licenses of code being used in the repo:
 
 ### Unicode Character Database
 
-Source: Unicode Character Database 17.0.0, bundled through uucode 0.2.0.
+Source: Unicode Character Database 18.0.0, bundled through uucode 0.2.0 at `9d555245`.
 
 ```text
 https://www.unicode.org/license.txt
@@ -210,7 +210,7 @@ authorization of the copyright holder.
 
 ### Bjoern Hoehrmann UTF-8 DFA
 
-Source: <https://github.com/jacobsandlund/uucode/blob/v0.2.0/licenses/LICENSE_Bjoern_Hoehrmann>
+Source: <https://github.com/jacobsandlund/uucode/blob/9d55524551411b493cca41ca06363625d90aff1e/licenses/LICENSE_Bjoern_Hoehrmann>
 
 ```text
 From https://bjoern.hoehrmann.de/utf-8/decoder/dfa/

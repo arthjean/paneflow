@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:4d5095de-df50-4d58-bda5-7102569eca0a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-14T00:00:00Z",
+    "timestamp": "2026-10-07T00:00:00Z",
     "authors": [
       {
         "name": "Strivex"
@@ -14,7 +14,7 @@
       "type": "application",
       "bom-ref": "paneflow-libghostty-windows",
       "name": "Paneflow libghostty Windows integration",
-      "version": "0.1.0-dev+0c2a290d3",
+      "version": "0.1.0-dev+b699ea79f",
       "properties": [
         {
           "name": "paneflow:rust-target",
@@ -34,14 +34,14 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "libghostty-vt@0c2a290d3a3e2a599be3a43435d778a5896667ee",
+      "bom-ref": "libghostty-vt@b699ea79f4b881421b4b3055abc16a0957d76beb",
       "name": "libghostty-vt",
-      "version": "0.1.0-dev+0c2a290d3",
-      "purl": "pkg:github/ghostty-org/ghostty@0c2a290d3a3e2a599be3a43435d778a5896667ee",
+      "version": "0.1.0-dev+b699ea79f",
+      "purl": "pkg:github/ghostty-org/ghostty@b699ea79f4b881421b4b3055abc16a0957d76beb",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "7439dca76f35bb2ec005cd4bfa90c6926c65146bf027210925770ac9a9b2ed8d"
+          "content": "6e77fdf4a4cb525735c0e1fc2acd611a0d66c2babb47c16efb990ce4a405e001"
         }
       ],
       "licenses": [
@@ -77,9 +77,9 @@
     },
     {
       "type": "library",
-      "bom-ref": "uucode@2826a37a4562284fdacd8fa029d49509cc9bffcd",
+      "bom-ref": "uucode@9d55524551411b493cca41ca06363625d90aff1e",
       "name": "uucode",
-      "version": "0.2.0+2826a37a",
+      "version": "0.2.0+9d555245",
       "licenses": [
         {
           "expression": "MIT"
@@ -88,9 +88,9 @@
     },
     {
       "type": "data",
-      "bom-ref": "unicode-character-database@17.0.0",
+      "bom-ref": "unicode-character-database@18.0.0",
       "name": "Unicode Character Database",
-      "version": "17.0.0",
+      "version": "18.0.0",
       "licenses": [
         {
           "expression": "Unicode-3.0"
@@ -180,10 +180,10 @@
     {
       "ref": "paneflow-libghostty-windows",
       "dependsOn": [
-        "libghostty-vt@0c2a290d3a3e2a599be3a43435d778a5896667ee",
+        "libghostty-vt@b699ea79f4b881421b4b3055abc16a0957d76beb",
         "zig-runtime@0.16.0",
-        "uucode@2826a37a4562284fdacd8fa029d49509cc9bffcd",
-        "unicode-character-database@17.0.0",
+        "uucode@9d55524551411b493cca41ca06363625d90aff1e",
+        "unicode-character-database@18.0.0",
         "bjoern-hoehmann-utf8-dfa@uucode-0.2.0",
         "xorg-rgb@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e",
         "foot-kitty-keymap@c13495e26ef7c239b330dccf1afef44430b15543",
