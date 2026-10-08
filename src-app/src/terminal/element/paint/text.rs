@@ -3,7 +3,7 @@ use gpui::{App, Font, Pixels, Point, ShapedLine, SharedString, TextRun, Window, 
 use super::super::face_tables::{self, GlyphInk};
 use super::super::font::CellMetrics;
 use super::super::geometry::CellGeometry;
-use super::super::{LayoutState, SymbolGlyph};
+use super::super::{LayoutState, RunCell, SymbolGlyph};
 
 pub fn paint_text_runs(
     layout: &LayoutState,
@@ -11,7 +11,7 @@ pub fn paint_text_runs(
     base_font: &Font,
     font_size: Pixels,
     window: &mut Window,
-    cx: &mut App,
+    _cx: &mut App,
 ) {
     for run in layout.batched_runs() {
         let origin = geom.cell_origin(run.line, run.col_start);
@@ -27,21 +27,65 @@ pub fn paint_text_runs(
             underline: None,
             strikethrough: None,
         };
-        let shaped = window.text_system().shape_line(
-            run.text.clone(),
-            font_size,
-            &[text_run],
-            Some(geom.cell_width),
-        );
-        paint_shaped_line(
+        let shaped =
+            window
+                .text_system()
+                .shape_line(run.text.clone(), font_size, &[text_run], None);
+        paint_placed_glyphs(
             &shaped,
             origin,
             run.color,
             geom,
+            GlyphPlacement::Cells(CellAligner::new(&run.cells, geom.cell_width)),
             layout.color_emoji_enabled,
             window,
-            cx,
         );
+    }
+}
+
+enum GlyphPlacement<'a> {
+    Shaped,
+    Cells(CellAligner<'a>),
+}
+
+#[derive(Clone, Copy)]
+struct AlignedBase {
+    slot: usize,
+    shaped_x: Pixels,
+    x: Pixels,
+}
+
+pub(super) struct CellAligner<'a> {
+    cells: &'a [RunCell],
+    cell_width: Pixels,
+    base: Option<AlignedBase>,
+}
+
+impl<'a> CellAligner<'a> {
+    pub(super) fn new(cells: &'a [RunCell], cell_width: Pixels) -> Self {
+        Self {
+            cells,
+            cell_width,
+            base: None,
+        }
+    }
+
+    pub(super) fn glyph_x(&mut self, byte_index: usize, shaped_x: Pixels) -> Pixels {
+        if self.cells.is_empty() {
+            return shaped_x;
+        }
+        let slot = self
+            .cells
+            .partition_point(|cell| cell.byte <= byte_index)
+            .saturating_sub(1);
+        match self.base {
+            Some(base) if base.slot == slot => base.x + (shaped_x - base.shaped_x),
+            _ => {
+                let x = self.cell_width * self.cells[slot].col as f32;
+                self.base = Some(AlignedBase { slot, shaped_x, x });
+                x
+            }
+        }
     }
 }
 
@@ -54,6 +98,26 @@ pub(super) fn paint_shaped_line(
     window: &mut Window,
     _cx: &mut App,
 ) {
+    paint_placed_glyphs(
+        shaped,
+        cell_origin,
+        color,
+        geom,
+        GlyphPlacement::Shaped,
+        color_emoji_enabled,
+        window,
+    );
+}
+
+fn paint_placed_glyphs(
+    shaped: &ShapedLine,
+    cell_origin: Point<Pixels>,
+    color: gpui::Hsla,
+    geom: &CellGeometry,
+    mut placement: GlyphPlacement<'_>,
+    color_emoji_enabled: bool,
+    window: &mut Window,
+) {
     let layout = &**shaped;
     let baseline = point(
         cell_origin.x + geom.logical(geom.metrics.face_center_dx()),
@@ -61,7 +125,11 @@ pub(super) fn paint_shaped_line(
     );
     for run in &layout.runs {
         for glyph in &run.glyphs {
-            let origin = point(baseline.x + glyph.position.x, baseline.y + glyph.position.y);
+            let x = match &mut placement {
+                GlyphPlacement::Shaped => glyph.position.x,
+                GlyphPlacement::Cells(aligner) => aligner.glyph_x(glyph.index, glyph.position.x),
+            };
+            let origin = point(baseline.x + x, baseline.y + glyph.position.y);
             let painted = if glyph.is_emoji && color_emoji_enabled {
                 window.paint_emoji(origin, run.font_id, glyph.id, layout.font_size)
             } else {
@@ -301,5 +369,64 @@ mod tests {
         let ink_bottom = p.baseline_from_bottom + (-76.0) * 0.016 * p.factor;
         let expected = m.face_y + (m.face_height - height) / 2.0;
         assert!((ink_bottom - expected).abs() < 1e-3);
+    }
+
+    fn cells_of(text: &str, widths: &[usize]) -> Vec<RunCell> {
+        let mut col = 0;
+        text.char_indices()
+            .zip(widths)
+            .map(|((byte, _), &width)| {
+                let cell = RunCell { byte, col };
+                col += width;
+                cell
+            })
+            .collect()
+    }
+
+    fn aligned(cells: &[RunCell], glyphs: &[(usize, f32)]) -> Vec<f32> {
+        let mut aligner = CellAligner::new(cells, px(8.0));
+        glyphs
+            .iter()
+            .map(|&(index, x)| f32::from(aligner.glyph_x(index, px(x))))
+            .collect()
+    }
+
+    #[test]
+    fn a_glyph_after_a_narrow_fallback_space_keeps_its_own_column() {
+        let text = "83\u{202F}008";
+        let cells = cells_of(text, &[1; 6]);
+        let glyphs = [
+            (0, 0.0),
+            (1, 8.0),
+            (2, 16.0),
+            (5, 18.0),
+            (6, 26.0),
+            (7, 34.0),
+        ];
+        assert_eq!(aligned(&cells, &glyphs), [0.0, 8.0, 16.0, 24.0, 32.0, 40.0]);
+    }
+
+    #[test]
+    fn a_narrow_glyph_after_a_wide_one_starts_after_both_cells() {
+        let cells = cells_of("中a", &[2, 1]);
+        assert_eq!(aligned(&cells, &[(0, 0.0), (3, 14.0)]), [0.0, 16.0]);
+    }
+
+    #[test]
+    fn a_combining_mark_keeps_its_offset_from_its_base() {
+        let cells = vec![RunCell { byte: 0, col: 0 }, RunCell { byte: 3, col: 1 }];
+        assert_eq!(
+            aligned(&cells, &[(0, 0.0), (1, -3.0), (3, 7.0)]),
+            [0.0, -3.0, 8.0]
+        );
+    }
+
+    #[test]
+    fn the_glyphs_of_one_cluster_move_together() {
+        let cells = cells_of("ab", &[1, 1]);
+        assert_eq!(
+            aligned(&cells, &[(0, 0.5), (0, 3.5), (1, 9.0)]),
+            [0.0, 3.0, 8.0]
+        );
     }
 }

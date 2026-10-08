@@ -231,6 +231,13 @@ struct BatchedTextRun {
     color: Hsla,
     line: i32,
     col_start: usize,
+    cells: Vec<RunCell>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RunCell {
+    pub byte: usize,
+    pub col: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1478,6 +1485,7 @@ struct BatchAccumulator {
     runs: Vec<BatchedTextRun>,
     decorations: Vec<Decoration>,
     text: String,
+    cells: Vec<RunCell>,
     style: Option<CellStyle>,
     base_font: Font,
     font: Font,
@@ -1495,6 +1503,7 @@ impl BatchAccumulator {
             runs: Vec::new(),
             decorations: Vec::new(),
             text: String::new(),
+            cells: Vec::new(),
             style: None,
             font: base_font.clone(),
             base_font,
@@ -1515,6 +1524,10 @@ impl BatchAccumulator {
     }
 
     fn append(&mut self, c: char, cell_cols: usize) {
+        self.cells.push(RunCell {
+            byte: self.text.len(),
+            col: self.col_end - self.col_start,
+        });
         self.text.push(c);
         self.col_end += cell_cols;
     }
@@ -1529,6 +1542,7 @@ impl BatchAccumulator {
     }
 
     fn start(&mut self, c: char, cell_cols: usize, style: CellStyle, line: i32, col_start: usize) {
+        self.cells.push(RunCell { byte: 0, col: 0 });
         self.text.push(c);
         let mut font = self.base_font.clone();
         if style.bold {
@@ -1557,6 +1571,7 @@ impl BatchAccumulator {
             color: self.fg,
             line: self.line,
             col_start: self.col_start,
+            cells: std::mem::take(&mut self.cells),
         });
         let num_cols = self.col_end.saturating_sub(self.col_start);
         if self.underline != UnderlineKind::None {
@@ -3429,6 +3444,44 @@ mod golden_frame_tests {
             "only the wide glyph produces a run"
         );
         assert_eq!(state.batched_runs().next().unwrap().text, "中");
+    }
+
+    #[test]
+    fn a_run_records_the_column_of_every_character() {
+        let row = vec![
+            cell(0, 0, '中', default_fg(), default_bg(), CellFlags::WIDE_CHAR),
+            cell(
+                0,
+                1,
+                ' ',
+                default_fg(),
+                default_bg(),
+                CellFlags::WIDE_CHAR_SPACER,
+            ),
+            cell(0, 2, 'a', default_fg(), default_bg(), CellFlags::empty()),
+            cell(
+                0,
+                3,
+                '\u{202F}',
+                default_fg(),
+                default_bg(),
+                CellFlags::empty(),
+            ),
+            cell(0, 4, '0', default_fg(), default_bg(), CellFlags::empty()),
+        ];
+        let state = run(row, None, None);
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "中a\u{202F}0");
+        assert_eq!(
+            runs[0].cells,
+            [
+                RunCell { byte: 0, col: 0 },
+                RunCell { byte: 3, col: 2 },
+                RunCell { byte: 4, col: 3 },
+                RunCell { byte: 7, col: 4 },
+            ]
+        );
     }
 
     #[test]
