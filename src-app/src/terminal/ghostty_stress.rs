@@ -432,10 +432,29 @@ fn process_entries() -> Vec<(u32, u32)> {
     entries
 }
 
+#[cfg(target_os = "windows")]
+fn spawned_after(root_pid: u32) -> impl Fn(u32) -> bool {
+    use paneflow_host::process::process_start_time;
+
+    let root_started = process_start_time(root_pid);
+    move |pid| {
+        matches!(
+            (root_started, process_start_time(pid)),
+            (Some(root), Some(started)) if started >= root
+        )
+    }
+}
+
+#[cfg(unix)]
+fn spawned_after(_root_pid: u32) -> impl Fn(u32) -> bool {
+    |_| true
+}
+
 fn descendant_pids(root_pid: u32) -> Vec<u32> {
     fn visit(
         pid: u32,
         entries: &[(u32, u32)],
+        keep: &dyn Fn(u32) -> bool,
         seen: &mut std::collections::HashSet<u32>,
         output: &mut Vec<u32>,
     ) {
@@ -443,17 +462,18 @@ fn descendant_pids(root_pid: u32) -> Vec<u32> {
             .iter()
             .filter_map(|(child, parent)| (*parent == pid).then_some(*child))
         {
-            if seen.insert(child) {
-                visit(child, entries, seen, output);
+            if keep(child) && seen.insert(child) {
+                visit(child, entries, keep, seen, output);
                 output.push(child);
             }
         }
     }
 
     let entries = process_entries();
+    let keep = spawned_after(root_pid);
     let mut seen = std::collections::HashSet::new();
     let mut output = Vec::new();
-    visit(root_pid, &entries, &mut seen, &mut output);
+    visit(root_pid, &entries, &keep, &mut seen, &mut output);
     output
 }
 
