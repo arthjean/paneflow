@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Vérification et correctifs Windows",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     }
   ],
   "stories": [
@@ -282,16 +282,16 @@
       "id": "US-017",
       "title": "Vérifier le PRD sur le matériel Windows réel et corriger les écarts",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-014",
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     }
   ]
 }
