@@ -240,6 +240,7 @@ pub struct SessionHost {
     permissions: crate::control::ControlPermissions,
     submit_paste_delay: std::time::Duration,
     screen_rules: Arc<crate::screen_rule_registry::ScreenRuleRegistry>,
+    xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
     shutting_down: AtomicBool,
     #[cfg(test)]
@@ -364,6 +365,7 @@ impl SessionHost {
             permissions,
             submit_paste_delay,
             screen_rules: Arc::new(crate::screen_rule_registry::ScreenRuleRegistry::with_builtin()),
+            xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
             #[cfg(test)]
@@ -384,6 +386,17 @@ impl SessionHost {
         crate::cancellation_scan::spawn(&host);
         crate::maintenance::spawn(&host);
         Ok(host)
+    }
+
+    fn current_xt_checksum(&self) -> crate::runtime::XtChecksum {
+        let mut applied = self
+            .xt_checksum
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(configured) = read_xt_checksum(&self.home) {
+            *applied = configured;
+        }
+        *applied
     }
 
     pub fn run_maintenance(&self) {
@@ -1313,6 +1326,7 @@ impl SessionHost {
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
             appearance: request.appearance,
             cell: request.cell,
+            xt_checksum: self.current_xt_checksum(),
         };
         let created = self.launch(session, manifest, spec, SessionGeneration::FIRST, operation);
         if created.is_ok() {
@@ -1398,6 +1412,7 @@ impl SessionHost {
                 session_dir.display()
             ))
         })?;
+        let xt_checksum = self.current_xt_checksum();
         let (manifest, spec, durability) = {
             let mut sessions = self.lock_sessions();
             let record = sessions
@@ -1457,6 +1472,7 @@ impl SessionHost {
                 scrollback_lines: DEFAULT_SCROLLBACK_LINES,
                 appearance: record.appearance.clone(),
                 cell: record.cell,
+                xt_checksum,
             };
             drop(guard);
             record.launch = Some(PendingLaunch {
@@ -2900,6 +2916,34 @@ fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, st
     );
     let delay = std::time::Duration::from_millis(config.resolved_submit_paste_delay_ms());
     (permissions, delay)
+}
+
+fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {
+    let path = home.join("paneflow.json");
+    let contents = match paneflow_config::loader::read_config_string(&path) {
+        Ok(Some(contents)) => contents,
+        Ok(None) => return Some(crate::runtime::XtChecksum::default()),
+        Err(error) => {
+            log::warn!("paneflow-host: {error}; keeping the previous checksum settings");
+            return None;
+        }
+    };
+    match paneflow_config::loader::try_parse_and_validate(&contents) {
+        Ok(config) => {
+            let terminal = config.terminal.unwrap_or_default();
+            Some(crate::runtime::XtChecksum {
+                report: terminal.resolved_xt_checksum_report(),
+                extension: terminal.resolved_xt_checksum_extension(),
+            })
+        }
+        Err(error) => {
+            log::warn!(
+                "paneflow-host: invalid config {}: {error}; keeping the previous checksum settings",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]

@@ -65,6 +65,13 @@ pub struct SpawnSpec {
     pub scrollback_lines: usize,
     pub appearance: Option<SessionAppearance>,
     pub cell: Option<CellSize>,
+    pub xt_checksum: XtChecksum,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct XtChecksum {
+    pub report: bool,
+    pub extension: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -929,6 +936,12 @@ fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
     }
     if let Err(error) = terminal.enable_program_status() {
         log::warn!("paneflow-host: program status reports could not be enabled: {error}");
+    }
+    if let Err(error) = terminal
+        .set_xt_checksum_extension(spec.xt_checksum.extension)
+        .and_then(|()| terminal.set_xt_checksum_report(spec.xt_checksum.report))
+    {
+        log::warn!("paneflow-host: checksum reports could not be configured: {error}");
     }
     if let Err(error) = terminal.set_resize_pull_scrollback(crate::pty::RESIZE_PULLS_SCROLLBACK) {
         log::warn!("paneflow-host: the resize scrollback policy could not be configured: {error}");
@@ -2044,6 +2057,7 @@ mod tests {
             scrollback_lines: 500,
             appearance: None,
             cell: None,
+            xt_checksum: XtChecksum::default(),
         }
     }
 
@@ -2563,6 +2577,49 @@ mod tests {
                 .into_iter()
                 .any(|event| matches!(event, ghostty::BackendEvent::WritePty(_)))
         );
+    }
+
+    fn pty_replies(terminal: &mut ghostty::DisplayTerminal) -> Vec<u8> {
+        terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                ghostty::BackendEvent::WritePty(bytes) => Some(bytes),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    const FULL_SCREEN_CHECKSUM: &[u8] = b"\x1b[1;1;1;1;24;80*y";
+
+    #[test]
+    fn a_default_terminal_never_answers_a_checksum_request() {
+        let mut terminal = new_terminal(&echo_shell_spec(80, 24)).expect("terminal");
+        terminal.feed(b"hello").expect("text");
+        let _ = pty_replies(&mut terminal);
+        terminal.feed(FULL_SCREEN_CHECKSUM).expect("DECRQCRA");
+        assert!(pty_replies(&mut terminal).is_empty());
+    }
+
+    #[test]
+    fn an_opted_in_terminal_answers_a_checksum_request_like_upstream() {
+        let checksum = |extension: u8| {
+            let spec = SpawnSpec {
+                xt_checksum: XtChecksum {
+                    report: true,
+                    extension,
+                },
+                ..echo_shell_spec(80, 24)
+            };
+            let mut terminal = new_terminal(&spec).expect("terminal");
+            terminal.feed(b"hello").expect("text");
+            let _ = pty_replies(&mut terminal);
+            terminal.feed(FULL_SCREEN_CHECKSUM).expect("DECRQCRA");
+            pty_replies(&mut terminal)
+        };
+        assert_eq!(checksum(0), b"\x1bP1!~FDEC\x1b\\");
+        assert_eq!(checksum(1), b"\x1bP1!~0214\x1b\\");
     }
 
     #[test]

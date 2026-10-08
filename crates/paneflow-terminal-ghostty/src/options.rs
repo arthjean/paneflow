@@ -127,6 +127,26 @@ impl DisplayTerminal {
         }
     }
 
+    pub fn set_xt_checksum_report(&mut self, enabled: bool) -> Result<()> {
+        unsafe {
+            self.set_terminal_option(
+                "terminal_set_xt_checksum_report",
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_REPORT,
+                (&raw const enabled).cast::<c_void>(),
+            )
+        }
+    }
+
+    pub fn set_xt_checksum_extension(&mut self, flags: u8) -> Result<()> {
+        unsafe {
+            self.set_terminal_option(
+                "terminal_set_xt_checksum_extension",
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_XT_CHECKSUM_EXTENSION,
+                (&raw const flags).cast::<c_void>(),
+            )
+        }
+    }
+
     unsafe fn set_terminal_option(
         &mut self,
         operation: &'static str,
@@ -520,6 +540,50 @@ mod tests {
             grow_after_one_line_scrolled_out(&mut terminal),
             ["two", "three", "four", ""]
         );
+    }
+
+    const CHECKSUM_QUERY: &[u8] = b"\x1b[1;1;1;1;1;5*y";
+
+    #[test]
+    fn checksum_reports_need_an_explicit_opt_in() {
+        let mut terminal = terminal(80, 24);
+        terminal.feed(b"hello").expect("text");
+        terminal.feed(CHECKSUM_QUERY).expect("DECRQCRA");
+        assert!(replies(&mut terminal).is_empty());
+
+        terminal
+            .set_xt_checksum_report(true)
+            .expect("checksum report must enable");
+        terminal.feed(CHECKSUM_QUERY).expect("DECRQCRA");
+        assert_eq!(replies(&mut terminal), b"\x1bP1!~FDEC\x1b\\");
+
+        terminal
+            .set_xt_checksum_report(false)
+            .expect("checksum report must disable");
+        terminal.feed(CHECKSUM_QUERY).expect("DECRQCRA");
+        assert!(replies(&mut terminal).is_empty());
+    }
+
+    #[test]
+    fn the_checksum_extension_survives_a_reset_and_is_range_checked() {
+        let mut terminal = terminal(80, 24);
+        terminal
+            .set_xt_checksum_report(true)
+            .expect("checksum report must enable");
+        terminal
+            .set_xt_checksum_extension(1)
+            .expect("extension must apply");
+        terminal.feed(b"hello").expect("text");
+        terminal.feed(CHECKSUM_QUERY).expect("DECRQCRA");
+        assert_eq!(replies(&mut terminal), b"\x1bP1!~0214\x1b\\");
+
+        terminal
+            .feed(b"\x1b[0#y\x1bchello")
+            .expect("XTCHECKSUM then RIS");
+        terminal.feed(CHECKSUM_QUERY).expect("DECRQCRA");
+        assert_eq!(replies(&mut terminal), b"\x1bP1!~0214\x1b\\");
+
+        assert!(terminal.set_xt_checksum_extension(32).is_err());
     }
 
     #[test]

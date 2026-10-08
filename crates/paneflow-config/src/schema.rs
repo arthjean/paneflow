@@ -137,6 +137,8 @@ mod tests {
                 minimum_contrast: Some(0.0),
                 scrollbar: Some(true),
                 osc52_clipboard: Some(Osc52ClipboardConfig::Copy),
+                xt_checksum_report: Some(false),
+                xt_checksum_extension: Some(0),
             }),
             agent_panel: Some(AgentPanelConfig {
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),

@@ -72,6 +72,8 @@ fn test_terminal_ligatures_default_when_block_empty() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
     assert_eq!(
@@ -89,6 +91,8 @@ fn test_terminal_ligatures_default_when_block_empty() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
 }
@@ -111,6 +115,8 @@ fn test_terminal_ligatures_true() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
 
@@ -137,6 +143,8 @@ fn test_terminal_ligatures_false() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
 }
@@ -169,6 +177,8 @@ fn test_terminal_integrated_glyphs_default_on_and_false_opt_out() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
     assert!(
@@ -209,6 +219,8 @@ fn test_terminal_color_emoji_default_on_and_false_opt_out() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            xt_checksum_report: None,
+            xt_checksum_extension: None,
         })
     );
     assert!(
@@ -246,6 +258,8 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         minimum_contrast: None,
         scrollbar: None,
         osc52_clipboard: None,
+        xt_checksum_report: None,
+        xt_checksum_extension: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -264,6 +278,8 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         minimum_contrast: None,
         scrollbar: None,
         osc52_clipboard: None,
+        xt_checksum_report: None,
+        xt_checksum_extension: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -444,4 +460,33 @@ fn test_terminal_ligatures_wrong_type_falls_back_to_defaults() {
     let terminal = config.terminal.expect("terminal block survives");
     assert_eq!(terminal.ligatures, None);
     assert_eq!(terminal.color_emoji, Some(false));
+}
+
+#[test]
+fn checksum_reports_are_off_by_default_and_opt_in() {
+    let defaults = TerminalConfig::default();
+    assert!(!defaults.resolved_xt_checksum_report());
+    assert_eq!(defaults.resolved_xt_checksum_extension(), 0);
+
+    let config = parse_and_validate(
+        r#"{"terminal": {"xt_checksum_report": true, "xt_checksum_extension": 31}}"#,
+    );
+    let terminal = config.terminal.unwrap();
+    assert!(terminal.resolved_xt_checksum_report());
+    assert_eq!(terminal.resolved_xt_checksum_extension(), 31);
+}
+
+#[test]
+fn an_out_of_range_checksum_extension_is_rejected_by_name_and_range() {
+    for invalid in ["32", "-1", "1.5", "\"1\""] {
+        let error = try_parse_and_validate(&format!(
+            r#"{{"terminal": {{"xt_checksum_extension": {invalid}}}}}"#
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("terminal.xt_checksum_extension") && error.contains("0 to 31"),
+            "{invalid}: {error}"
+        );
+    }
 }

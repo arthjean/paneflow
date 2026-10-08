@@ -1,4 +1,4 @@
-use crate::schema::{validate_layout, PaneFlowConfig};
+use crate::schema::{validate_layout, PaneFlowConfig, TerminalConfig};
 use serde_json::{Map, Value};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -25,6 +25,8 @@ pub enum ConfigError {
     },
     #[error("invalid config document: {0}")]
     ParseError(#[from] serde_json::Error),
+    #[error("invalid config value: {0}")]
+    InvalidValue(String),
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -123,6 +125,8 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, ConfigError>
         Some(_) => warn!("config schema version is not a string; ignoring it"),
     }
 
+    validate_xt_checksum_extension(&root)?;
+
     let mut config: PaneFlowConfig = serde_json::from_value(Value::Object(root))?;
 
     for cmd in &mut config.commands {
@@ -135,6 +139,26 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, ConfigError>
 
     Ok(config)
 }
+fn validate_xt_checksum_extension(root: &Map<String, Value>) -> Result<(), ConfigError> {
+    let Some(raw) = root
+        .get("terminal")
+        .and_then(|terminal| terminal.get("xt_checksum_extension"))
+    else {
+        return Ok(());
+    };
+    let maximum = TerminalConfig::MAX_XT_CHECKSUM_EXTENSION;
+    if raw.is_null()
+        || raw
+            .as_u64()
+            .is_some_and(|flags| flags <= u64::from(maximum))
+    {
+        return Ok(());
+    }
+    Err(ConfigError::InvalidValue(format!(
+        "terminal.xt_checksum_extension must be an integer from 0 to {maximum}, got {raw}"
+    )))
+}
+
 #[cfg(test)]
 #[path = "loader_tests/core.rs"]
 mod core_tests;

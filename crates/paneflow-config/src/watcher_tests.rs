@@ -445,3 +445,33 @@ fn test_watcher_follows_a_retargeted_symlink() {
         "an edit of the new target must reload"
     );
 }
+
+#[test]
+fn test_attempt_reload_out_of_range_checksum_extension_keeps_old_value() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("paneflow.json");
+    fs::write(&path, r#"{"terminal": {"xt_checksum_extension": 32}}"#).unwrap();
+
+    let mut current = PaneFlowConfig {
+        terminal: Some(crate::schema::TerminalConfig {
+            xt_checksum_extension: Some(4),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let called = Arc::new(Mutex::new(false));
+    let called_clone = Arc::clone(&called);
+    let cb: Arc<dyn Fn(PaneFlowConfig) + Send + Sync> =
+        Arc::new(move |_| *called_clone.lock().unwrap() = true);
+
+    attempt_reload(&path, &mut current, &cb);
+
+    assert!(!*called.lock().unwrap());
+    assert_eq!(
+        current
+            .terminal
+            .as_ref()
+            .map(crate::schema::TerminalConfig::resolved_xt_checksum_extension),
+        Some(4)
+    );
+}

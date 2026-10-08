@@ -1671,6 +1671,7 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         scrollback_lines: 500,
         appearance: None,
         cell: None,
+        xt_checksum: crate::runtime::XtChecksum::default(),
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
@@ -2704,4 +2705,39 @@ fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control
     );
 
     host.stop(&session, None).unwrap();
+}
+
+#[test]
+fn new_sessions_follow_the_configured_checksum_reports_and_keep_them_on_an_invalid_edit() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("xt-checksum")).unwrap();
+    let config = home.path().join("paneflow.json");
+    assert_eq!(
+        host.current_xt_checksum(),
+        crate::runtime::XtChecksum::default()
+    );
+
+    std::fs::write(
+        &config,
+        r#"{"terminal": {"xt_checksum_report": true, "xt_checksum_extension": 4}}"#,
+    )
+    .unwrap();
+    let opted_in = crate::runtime::XtChecksum {
+        report: true,
+        extension: 4,
+    };
+    assert_eq!(host.current_xt_checksum(), opted_in);
+
+    std::fs::write(
+        &config,
+        r#"{"terminal": {"xt_checksum_report": true, "xt_checksum_extension": 32}}"#,
+    )
+    .unwrap();
+    assert_eq!(host.current_xt_checksum(), opted_in);
+
+    std::fs::write(&config, r#"{"terminal": {}}"#).unwrap();
+    assert_eq!(
+        host.current_xt_checksum(),
+        crate::runtime::XtChecksum::default()
+    );
 }

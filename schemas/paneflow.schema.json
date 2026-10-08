@@ -304,6 +304,18 @@
           "enum": ["copy", "off", null],
           "default": "copy"
         },
+        "xt_checksum_report": {
+          "type": ["boolean", "null"],
+          "description": "Answer DECRQCRA checksum requests. Off by default because a running program can checksum the screen one cell at a time and so read back everything on it, including output from other programs.",
+          "default": false
+        },
+        "xt_checksum_extension": {
+          "type": ["integer", "null"],
+          "description": "XTCHECKSUM bits for the DECRQCRA checksum: 1 keeps the result positive, 2 skips video attributes, 4 counts blanks, 8 counts unwritten cells as spaces, 16 uses full codepoints. 0 is the DEC calculation.",
+          "minimum": 0,
+          "maximum": 31,
+          "default": 0
+        },
         "cursor_blink": {
           "type": ["string", "null"],
           "description": "Cursor blink override.",

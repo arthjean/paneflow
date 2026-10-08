@@ -1,6 +1,7 @@
 use super::config::{
     lenient_opt_bool, lenient_opt_cursor_blink, lenient_opt_cursor_shape, lenient_opt_f32,
-    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_usize,
+    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_u8,
+    lenient_opt_usize,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -192,6 +193,10 @@ pub struct TerminalConfig {
     pub scrollbar: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_osc52_clipboard")]
     pub osc52_clipboard: Option<Osc52ClipboardConfig>,
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
+    pub xt_checksum_report: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_opt_u8")]
+    pub xt_checksum_extension: Option<u8>,
 }
 
 impl TerminalConfig {
@@ -207,6 +212,16 @@ impl TerminalConfig {
 
     pub const MAX_MINIMUM_CONTRAST: f32 = 90.0;
     pub const DEFAULT_MINIMUM_CONTRAST: f32 = 60.0;
+
+    pub const MAX_XT_CHECKSUM_EXTENSION: u8 = 31;
+
+    pub fn resolved_xt_checksum_report(&self) -> bool {
+        self.xt_checksum_report.unwrap_or(false)
+    }
+
+    pub fn resolved_xt_checksum_extension(&self) -> u8 {
+        self.xt_checksum_extension.unwrap_or(0)
+    }
 
     pub fn resolved_integrated_glyphs(&self) -> bool {
         self.integrated_glyphs.unwrap_or(true)
