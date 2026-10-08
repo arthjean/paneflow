@@ -1557,6 +1557,41 @@ mod tests {
     }
 
     #[test]
+    fn an_attached_checkpoint_restores_its_history_compressed() {
+        let size = TerminalWindowSize::new(80, 24, 8, 16);
+        let mut source = ghostty::DisplayTerminal::new(
+            window_size(size).expect("window size"),
+            10_000,
+            ghostty::TerminalAppearance::default(),
+        )
+        .expect("terminal");
+        source.set_scrollback_max_bytes(None).expect("unbounded");
+        let mut output = Vec::new();
+        for line in 0..5_000 {
+            output.extend_from_slice(format!("attached {line:04}\r\n").as_bytes());
+        }
+        source.feed(&output).expect("history");
+        let snapshot = source.encode_snapshot().expect("checkpoint");
+
+        let mut restored =
+            restore_terminal_from_checkpoint(&snapshot, size, 10_000, false).expect("restores");
+        let usage = restored.memory_usage().expect("memory usage");
+        if usage.compression_supported {
+            assert!(usage.primary_compressed_pages > 0, "{usage:?}");
+        } else {
+            assert_eq!(usage.primary_compressed_pages, 0, "{usage:?}");
+        }
+        let history = restored.snapshot().expect("snapshot").history_size;
+        let oldest = -i32::try_from(history).expect("history fits i32");
+        assert_eq!(
+            restored.line_texts(&[oldest]).expect("oldest row")[0]
+                .1
+                .trim_end(),
+            "attached 0000"
+        );
+    }
+
+    #[test]
     fn the_embedder_options_keep_glyph_protocol_queries_unanswered() {
         let mut terminal = embedder_terminal(false);
         terminal

@@ -10,7 +10,7 @@ use paneflow_terminal_ghostty::{
     BackendEvent, ClipboardLocation, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput,
     Modifiers, MouseAction, MouseButton, MouseInput, MouseShape, Overscan, OverscanRow,
     PasteRepresentation, Point, Rgb, SEARCH_CHUNK_CELLS, Scroll, SearchEngine, SearchResult,
-    SelectionRange, TerminalAppearance, WideCell, WindowSize,
+    SelectionRange, SnapshotDecoder, SnapshotRestore, TerminalAppearance, WideCell, WindowSize,
 };
 
 #[allow(
@@ -855,4 +855,130 @@ fn memory_usage_grows_with_ten_thousand_lines_of_output() {
         assert!(usage.primary_virtual_bytes >= usage.primary_resident_bytes);
         assert!(usage.alternate_virtual_bytes >= usage.alternate_resident_bytes);
     }
+}
+
+const RESTORED_HISTORY_LINES: usize = 50_000;
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+fn long_history_snapshot() -> Vec<u8> {
+    let mut source = DisplayTerminal::new(
+        WindowSize::new(80, 24, 8, 16).unwrap(),
+        RESTORED_HISTORY_LINES + 1_000,
+        TerminalAppearance::default(),
+    )
+    .unwrap();
+    source.set_scrollback_max_bytes(None).unwrap();
+    let mut output = Vec::new();
+    for line in 0..RESTORED_HISTORY_LINES {
+        output.extend_from_slice(
+            format!(
+                "history {line:05} \x1b[3{}mrestored\x1b[0m output\r\n",
+                line % 8
+            )
+            .as_bytes(),
+        );
+    }
+    source.feed(&output).unwrap();
+    source.encode_snapshot().unwrap()
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+fn restore_history(snapshot: &[u8], compress: bool) -> DisplayTerminal {
+    let mut decoder = SnapshotDecoder::from_bytes(snapshot).unwrap();
+    decoder.set_compress_history(compress).unwrap();
+    decoder
+        .decode(SnapshotRestore {
+            cell_width: 8,
+            cell_height: 16,
+            max_scrollback: RESTORED_HISTORY_LINES + 1_000,
+            appearance: TerminalAppearance::default(),
+        })
+        .unwrap();
+    decoder.into_terminal().unwrap()
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture reads must fail immediately"
+)]
+fn every_line(terminal: &DisplayTerminal) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut next_row = 0;
+    loop {
+        let chunk = terminal.search_chunk(next_row, SEARCH_CHUNK_CELLS).unwrap();
+        lines.extend(chunk.lines.into_iter().map(|line| line.text));
+        if chunk.next_row >= chunk.total_rows {
+            return lines;
+        }
+        next_row = chunk.next_row;
+    }
+}
+
+#[test]
+fn a_compressed_restore_of_fifty_thousand_lines_holds_less_resident_memory() {
+    let snapshot = long_history_snapshot();
+    let plain = restore_history(&snapshot, false).memory_usage().unwrap();
+    let compressed = restore_history(&snapshot, true).memory_usage().unwrap();
+    println!(
+        "history compression: lines={RESTORED_HISTORY_LINES} snapshot_bytes={} supported={} \
+         plain_resident={} compressed_resident={} plain_virtual={} compressed_virtual={} \
+         compressed_pages={}/{} compressed_bytes={}",
+        snapshot.len(),
+        compressed.compression_supported,
+        plain.primary_resident_bytes,
+        compressed.primary_resident_bytes,
+        plain.primary_virtual_bytes,
+        compressed.primary_virtual_bytes,
+        compressed.primary_compressed_pages,
+        compressed.primary_pages,
+        compressed.primary_compressed_bytes,
+    );
+    assert_eq!(
+        plain.compression_supported,
+        compressed.compression_supported
+    );
+    assert_eq!(plain.primary_compressed_pages, 0);
+    if compressed.compression_supported {
+        assert!(compressed.primary_compressed_pages > 0);
+        assert!(compressed.primary_resident_bytes < plain.primary_resident_bytes);
+    } else {
+        assert_eq!(compressed, plain);
+    }
+}
+
+#[test]
+fn compressed_history_reads_back_identical_when_scrolled_and_searched() {
+    let snapshot = long_history_snapshot();
+    let mut plain = restore_history(&snapshot, false);
+    let mut compressed = restore_history(&snapshot, true);
+
+    for terminal in [&mut plain, &mut compressed] {
+        terminal.scroll(Scroll::Delta(i32::MAX));
+    }
+    let plain_top = plain.snapshot().unwrap();
+    let compressed_top = compressed.snapshot().unwrap();
+    assert!(plain_top.history_size >= RESTORED_HISTORY_LINES - 24);
+    assert!(plain_top.display_offset > 0);
+    assert!(
+        plain_top
+            .cells
+            .iter()
+            .map(|cell| cell.character)
+            .collect::<String>()
+            .contains("history 00000")
+    );
+    assert_eq!(compressed_top, plain_top);
+
+    assert_eq!(
+        search(&compressed, "history 0123"),
+        search(&plain, "history 0123")
+    );
+    assert_eq!(search(&plain, "history 0123").matches.len(), 10);
+    assert_eq!(every_line(&compressed), every_line(&plain));
 }

@@ -206,6 +206,9 @@ pub(super) fn restore_terminal_from_checkpoint(
         .set_retain_continuation(true)
         .map_err(|error| format!("continuation retention could not be applied: {error}"))?;
     decoder
+        .set_compress_history(true)
+        .map_err(|error| format!("history compression could not be applied: {error}"))?;
+    decoder
         .decode(ghostty::SnapshotRestore {
             cell_width: u32::from(size.cell_width.max(1)),
             cell_height: u32::from(size.cell_height.max(1)),

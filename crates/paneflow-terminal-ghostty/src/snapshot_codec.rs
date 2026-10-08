@@ -130,6 +130,17 @@ impl<'src> SnapshotDecoder<'src> {
         check("snapshot_decoder_set_retain_continuation", result)
     }
 
+    pub fn set_compress_history(&mut self, compress: bool) -> Result<()> {
+        let result = unsafe {
+            sys::ghostty_snapshot_decoder_set(
+                self.raw,
+                sys::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY,
+                (&raw const compress).cast::<c_void>(),
+            )
+        };
+        check("snapshot_decoder_set_compress_history", result)
+    }
+
     pub fn decode(&mut self, restore: SnapshotRestore) -> Result<&mut DisplayTerminal> {
         if self.terminal.is_some() {
             return Err(GhosttyError::AbiMismatch(
@@ -332,6 +343,7 @@ mod tests {
         let mut decoder = SnapshotDecoder::from_bytes(&encoded).expect("decoder must open");
         decoder.decode(restore()).expect("snapshot must decode");
         assert!(decoder.set_retain_continuation(true).is_err());
+        assert!(decoder.set_compress_history(true).is_err());
         assert!(decoder.decode(restore()).is_err());
     }
 
