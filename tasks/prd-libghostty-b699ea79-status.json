@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Statut de programme OSC 7501, invites OSC 133 et RIS",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -162,43 +162,43 @@
       "id": "US-009",
       "title": "Brancher PROGRAM_STATUS, SEMANTIC_PROMPT et RESET dans le wrapper",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-010",
       "title": "Tenir les enregistrements de statut dans le host selon la spécification",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-011",
       "title": "Faire de l'état OSC 7501 une source d'état d'agent",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-012",
