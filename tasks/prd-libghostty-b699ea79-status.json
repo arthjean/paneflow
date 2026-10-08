@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Protocoles et options de plateforme",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-005",
@@ -212,43 +212,43 @@
       "id": "US-012",
       "title": "Rendre DECRQCRA et XTCHECKSUM activables, désactivés par défaut",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-013",
       "title": "Faire passer les OSC inconnus par le chemin des séquences non gérées",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-014",
       "title": "Ne plus rappeler le scrollback au redimensionnement sous ConPTY",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-015",
