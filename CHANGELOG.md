@@ -15,6 +15,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - Trackpad scrolling through the scrollback follows the gesture by the pixel instead of jumping a line at a time. Mouse wheels keep line-by-line scrolling, and so does `reduce_motion`.
 - An agent that reports its own status with OSC 7501 shows that status in the sidebar instead of the one Paneflow reads off the screen. For example, `printf '\e]7501;state=blocked:kind=permission:msg=QXBwbHk/\e\\'` marks the agent as waiting for input, and the needs-input notification shows "Apply?" with the pane named in its title. `working` shows as working, `blocked` as waiting, and `idle`, `done`, and `error` as idle. Hook events still take precedence, and the state applies to agents that have screen rules: Claude Code, Codex, Gemini, OpenCode, Pi, Hermes Agent, and fx. `paneflow agent explain --json` reports the record under `program_status`.
 - Conformance suites such as vttest and esctest can get DECRQCRA checksum replies by setting `terminal.xt_checksum_report` to `true`, with the calculation tuned by `terminal.xt_checksum_extension` (`0` to `31`). Checksums stay off by default, because a program could otherwise read back the whole screen one cell at a time.
+- `host.status` reports how much memory each live session's terminal holds, under `resources.sessions[].memory`: `resident_bytes`, `virtual_bytes`, `compressed_bytes`, `image_bytes`, and `compression_supported`. A session whose terminal is gone reports `memory: null` with the reason in `memory_unavailable`, never 0. See the work counters section of `bench/README.md`.
 
 ### Fixed
 
@@ -32,6 +33,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- Reattaching to a session with a long scrollback stores the restored history compressed, so the desktop no longer holds a second uncompressed copy of the host's scrollback. In a 50,000-line test, the restored terminal's resident memory drops from about 35 MB to 1.3 MB. Scrolling into the history or searching it shows the same content as before.
 - The pinned `libghostty-vt` archive moves from Ghostty `0c2a290d` to `b699ea79`. Character widths follow Unicode 18.0.0 (uucode `9d555245`), up from Unicode 17.0.0.
 
 ## [0.17.6] - 2026-10-06
