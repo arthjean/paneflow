@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Mémoire et restauration",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-006",
@@ -254,29 +254,29 @@
       "id": "US-015",
       "title": "Rapporter la mémoire de chaque terminal dans le statut du host",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-016",
       "title": "Compresser l'historique restauré à l'attache d'une session",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-08",
+      "completed_at": "2026-10-08",
+      "reviewed_at": "2026-10-08"
     },
     {
       "id": "US-017",
