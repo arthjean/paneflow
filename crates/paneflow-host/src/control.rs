@@ -687,6 +687,7 @@ fn answer(
                 "rows": capture.scan.rows,
                 "title": capture.scan.title,
                 "progress": capture.scan.progress,
+                "program_status": crate::program_status::to_json(capture.scan.program_status.as_ref()),
                 "runtime_id": capture.runtime.map(|runtime| runtime.id),
             }))
         }

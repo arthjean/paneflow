@@ -110,6 +110,7 @@ pub struct ViewportScan {
     pub rows: u16,
     pub title: Option<String>,
     pub progress: Option<&'static str>,
+    pub program_status: Option<ghostty::ProgramStatusReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -709,6 +710,7 @@ struct Session {
     cell: CellSize,
     title: Option<String>,
     progress: Option<&'static str>,
+    program_status: crate::program_status::ProgramStatusRecords,
     pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
@@ -985,6 +987,7 @@ fn start(
         cell,
         title: None,
         progress: None,
+        program_status: crate::program_status::ProgramStatusRecords::default(),
         pty_wired: false,
         reader_eof: false,
         exit: None,
@@ -1225,18 +1228,30 @@ impl Session {
                 ghostty::BackendEvent::Progress(report) => {
                     self.progress = progress_wire(report.state);
                 }
+                ghostty::BackendEvent::ProgramStatus(report) => {
+                    self.program_status.apply(report);
+                }
+                ghostty::BackendEvent::SemanticPrompt { kind, .. } => {
+                    if kind == ghostty::SemanticPromptKind::PromptStart {
+                        self.program_status.clear();
+                    }
+                }
+                ghostty::BackendEvent::Reset => {
+                    self.program_status.clear();
+                    self.progress = None;
+                }
                 ghostty::BackendEvent::ClipboardStore(_)
                 | ghostty::BackendEvent::DesktopNotification { .. } => {}
                 ghostty::BackendEvent::UnknownSequence { .. }
-                | ghostty::BackendEvent::ProgramStatus(_)
-                | ghostty::BackendEvent::SemanticPrompt { .. }
-                | ghostty::BackendEvent::Reset
                 | ghostty::BackendEvent::CallbackPanicked
                 | ghostty::BackendEvent::InputDropped { .. }
                 | ghostty::BackendEvent::EffectsOverflow { .. } => {
                     log::debug!("paneflow-host: terminal engine event ignored: {event:?}");
                 }
             }
+        }
+        if self.exit.is_some() {
+            self.program_status.release_waiting();
         }
     }
 
@@ -1344,6 +1359,7 @@ impl Session {
             rows: self.rows,
             title: self.title.clone(),
             progress: self.progress,
+            program_status: self.program_status.current().cloned(),
         })
     }
 
@@ -1513,6 +1529,7 @@ impl Session {
         #[cfg(target_os = "macos")]
         self.process_tree.root_reaped();
         self.exit = Some(outcome.clone());
+        self.program_status.release_waiting();
         if self.descendants_unresolved == 0 {
             self.shared.set_unverified(None);
         } else {
@@ -2424,6 +2441,14 @@ mod tests {
         (session, messages, replies)
     }
 
+    fn scanned_status(session: &mut Session) -> Option<(ghostty::ProgramStatusState, String)> {
+        session
+            .viewport_scan()
+            .expect("scan")
+            .program_status
+            .map(|report| (report.state, report.id))
+    }
+
     #[test]
     fn a_program_status_query_reaches_the_pty_exactly_once() {
         let (mut session, _messages, replies) = status_session();
@@ -2433,6 +2458,93 @@ mod tests {
         assert_eq!(
             replies.try_iter().collect::<Vec<_>>(),
             [b"\x1b]7501;?\x1b\\".to_vec()]
+        );
+    }
+
+    #[test]
+    fn the_viewport_scan_carries_the_root_program_status_record() {
+        let (mut session, _messages, _replies) = status_session();
+
+        session.feed(b"\x1b]7501;state=working:id=job\x1b\\");
+        assert_eq!(
+            scanned_status(&mut session),
+            Some((ghostty::ProgramStatusState::Working, "job".into()))
+        );
+
+        session.feed(b"\x1b]7501;state=blocked:kind=question:msg=T2s/\x1b\\");
+        let scan = session.viewport_scan().expect("scan");
+        let status = scan.program_status.expect("root record");
+        assert_eq!(status.state, ghostty::ProgramStatusState::Blocked);
+        assert_eq!(status.id, "");
+        assert_eq!(status.message, "Ok?");
+        assert_eq!(status.kind, Some(ghostty::ProgramStatusKind::Question));
+    }
+
+    #[test]
+    fn a_program_exit_releases_working_and_blocked_but_keeps_done_until_the_next_prompt() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(
+            b"\x1b]7501;state=working:id=a\x1b\\\x1b]7501;state=blocked:id=b\x1b\\\x1b]7501;state=done:id=c\x1b\\",
+        );
+        assert_eq!(session.program_status.len(), 3);
+
+        session.record_exit(ExitOutcome {
+            code: 0,
+            signal: None,
+        });
+
+        assert_eq!(
+            scanned_status(&mut session),
+            Some((ghostty::ProgramStatusState::Done, "c".into()))
+        );
+        assert_eq!(session.program_status.len(), 1);
+
+        session.feed(b"\x1b]133;A\x1b\\");
+        assert_eq!(scanned_status(&mut session), None);
+    }
+
+    #[test]
+    fn a_prompt_start_removes_every_record_of_the_finished_program() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(
+            b"\x1b]7501;state=working:id=a\x1b\\\x1b]7501;state=error:id=b\x1b\\\x1b]133;A\x1b\\",
+        );
+
+        assert!(session.program_status.is_empty());
+    }
+
+    #[test]
+    fn a_program_reset_empties_records_and_progress() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(b"\x1b]9;4;3\x07\x1b]7501;state=working\x1b\\");
+        let scan = session.viewport_scan().expect("scan");
+        assert_eq!(scan.progress, Some("indeterminate"));
+        assert!(scan.program_status.is_some());
+
+        session.feed(b"\x1bc");
+
+        let scan = session.viewport_scan().expect("scan");
+        assert_eq!(scan.progress, None);
+        assert_eq!(scan.program_status, None);
+        assert!(session.program_status.is_empty());
+    }
+
+    #[test]
+    fn ten_thousand_distinct_status_ids_keep_the_host_bounded() {
+        let (mut session, _messages, _replies) = status_session();
+        let started = Instant::now();
+        for index in 0..10_000 {
+            session.feed(format!("\x1b]7501;state=working:id=job{index}\x1b\\").as_bytes());
+        }
+
+        assert_eq!(
+            session.program_status.len(),
+            crate::program_status::MAX_PROGRAM_STATUS_RECORDS
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(
+            scanned_status(&mut session),
+            Some((ghostty::ProgramStatusState::Working, "job9999".into()))
         );
     }
 

@@ -300,6 +300,7 @@ pub fn explain(
         "runtime_label": capture.runtime.map(|runtime| runtime.label),
         "title": capture.scan.title,
         "progress": capture.scan.progress,
+        "program_status": crate::program_status::to_json(capture.scan.program_status.as_ref()),
         "tracked_screen_activity": manifest.screen_activity,
         "tracked_visible_blocker": manifest.menu_prompt_active,
         "last_hook": last_hook,
