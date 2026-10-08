@@ -14,6 +14,7 @@ const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
 const BELL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_PENDING_NOTIFICATION_EVENTS: usize = 16;
 const MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS: usize = 32;
+const MAX_PENDING_PROGRAM_STATUS_EVENTS: usize = 64;
 
 const _: sys::GhosttyTerminalWritePtyFn = Some(crate::callback_ffi::write_pty);
 const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
@@ -29,27 +30,14 @@ const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::devi
 const _: sys::GhosttyTerminalDesktopNotificationFn = Some(crate::callback_ffi::desktop_notification);
 const _: sys::GhosttyTerminalUnknownSequenceFn = Some(crate::callback_ffi::unknown_sequence);
 const _: sys::GhosttyTerminalClipboardReadFn = Some(crate::callback_ffi::clipboard_read);
+const _: sys::GhosttyTerminalProgramStatusFn = Some(crate::callback_ffi::program_status);
+const _: sys::GhosttyTerminalSemanticPromptFn = Some(crate::callback_ffi::semantic_prompt);
+const _: sys::GhosttyTerminalResetFn = Some(crate::callback_ffi::reset);
 
 type RenderHoldFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void, bool);
-type ProgramStatusFn = unsafe extern "C" fn(
-    sys::GhosttyTerminal,
-    *mut c_void,
-    *const sys::GhosttyTerminalProgramStatus,
-);
-type SemanticPromptFn = unsafe extern "C" fn(
-    sys::GhosttyTerminal,
-    *mut c_void,
-    *const sys::GhosttyTerminalSemanticPrompt,
-);
-type ResetFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void);
 
 const _: fn(sys::GhosttyTerminalRenderHoldFn) -> Option<RenderHoldFn> = std::convert::identity;
 const _: RenderHoldFn = crate::callback_ffi::render_hold;
-const _: fn(sys::GhosttyTerminalProgramStatusFn) -> Option<ProgramStatusFn> =
-    std::convert::identity;
-const _: fn(sys::GhosttyTerminalSemanticPromptFn) -> Option<SemanticPromptFn> =
-    std::convert::identity;
-const _: fn(sys::GhosttyTerminalResetFn) -> Option<ResetFn> = std::convert::identity;
 
 pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
@@ -58,6 +46,7 @@ pub(crate) struct CallbackState {
     last_bell_at: Cell<Option<Instant>>,
     pending_notification_events: Cell<usize>,
     pending_unknown_sequence_events: Cell<usize>,
+    pending_program_status_events: Cell<usize>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
@@ -90,6 +79,7 @@ impl CallbackState {
             last_bell_at: Cell::new(None),
             pending_notification_events: Cell::new(0),
             pending_unknown_sequence_events: Cell::new(0),
+            pending_program_status_events: Cell::new(0),
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
@@ -236,6 +226,29 @@ impl CallbackState {
                     events.push_back(BackendEvent::UnknownSequence { content, truncated });
                 }
             }
+            BackendEvent::ProgramStatus(report) => {
+                let pending = self.pending_program_status_events.get();
+                if pending >= MAX_PENDING_PROGRAM_STATUS_EVENTS {
+                    push_overflow(&mut events, 1, report_bytes(&report));
+                } else {
+                    self.pending_program_status_events.set(pending + 1);
+                    events.push_back(BackendEvent::ProgramStatus(report));
+                }
+            }
+            event @ BackendEvent::SemanticPrompt { .. } => {
+                let pending = self.pending_program_status_events.get();
+                if pending >= MAX_PENDING_PROGRAM_STATUS_EVENTS {
+                    push_overflow(&mut events, 1, 0);
+                } else {
+                    self.pending_program_status_events.set(pending + 1);
+                    events.push_back(event);
+                }
+            }
+            BackendEvent::Reset => {
+                events.retain(|event| !is_superseded_by_reset(event));
+                self.pending_program_status_events.set(0);
+                events.push_back(BackendEvent::Reset);
+            }
             BackendEvent::CallbackPanicked => {
                 if !events
                     .iter()
@@ -266,8 +279,20 @@ impl CallbackState {
         self.pending_clipboard_events.set(0);
         self.pending_notification_events.set(0);
         self.pending_unknown_sequence_events.set(0);
+        self.pending_program_status_events.set(0);
         self.events.borrow_mut().drain(..).collect()
     }
+}
+
+fn is_superseded_by_reset(event: &BackendEvent) -> bool {
+    matches!(
+        event,
+        BackendEvent::ProgramStatus(_) | BackendEvent::SemanticPrompt { .. } | BackendEvent::Reset
+    )
+}
+
+fn report_bytes(report: &crate::ProgramStatusReport) -> usize {
+    report.id.len() + report.app.len() + report.title.len() + report.message.len()
 }
 
 fn push_overflow(events: &mut VecDeque<BackendEvent>, dropped_events: usize, dropped_bytes: usize) {
@@ -370,7 +395,25 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
         sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
         crate::callback_ffi::device_attributes as *const (),
     )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RESET,
+        crate::callback_ffi::reset as *const (),
+    )?;
     Ok(())
+}
+
+pub(crate) fn install_program_status(terminal: sys::GhosttyTerminal) -> Result<()> {
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,
+        crate::callback_ffi::program_status as *const (),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT,
+        crate::callback_ffi::semantic_prompt as *const (),
+    )
 }
 
 pub(crate) fn install_render_hold(terminal: sys::GhosttyTerminal) -> Result<()> {

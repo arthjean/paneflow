@@ -1450,6 +1450,56 @@ mod tests {
     }
 
     #[test]
+    fn desktop_terminals_neither_answer_nor_report_program_status() {
+        let mut terminal = embedder_terminal(false);
+        terminal
+            .feed(b"\x1b]7501;?\x1b\\\x1b]7501;state=working\x1b\\\x1b]133;A\x1b\\")
+            .expect("status sequences parse");
+
+        let events = terminal.drain_events();
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                ghostty::BackendEvent::WritePty(_)
+                    | ghostty::BackendEvent::ProgramStatus(_)
+                    | ghostty::BackendEvent::SemanticPrompt { .. }
+            )),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn a_program_reset_in_an_output_batch_publishes_at_once() {
+        let size = TerminalWindowSize::new(20, 4, 8, 16);
+        let (session, _pending, _events_rx) = GhosttySession::pending(size);
+        let mut terminal = embedder_terminal(false);
+        let mailbox = RuntimeMailbox::new();
+        let mut gate = PublishGate::new();
+        gate.publish_now(&session.inner, &mut terminal)
+            .expect("first frame");
+
+        process_output_batch(
+            &session.inner,
+            &mailbox,
+            &mut terminal,
+            &mut None,
+            &mut crate::terminal::marks::Osc133Scanner::default(),
+            &mut crate::terminal::service_detector::ServiceOutputTail::default(),
+            &mut None,
+            &mut false,
+            &mut gate,
+            b"\x1bc".to_vec(),
+        )
+        .expect("reset batch");
+
+        assert_eq!(
+            gate.next_wake(Instant::now()),
+            None,
+            "the reset frame is already published"
+        );
+    }
+
+    #[test]
     fn desktop_terminals_capture_render_holds_and_bare_terminals_do_not() {
         let mut terminal = embedder_terminal(false);
         terminal.feed(b"\x1b[?2026h").expect("hold opens");

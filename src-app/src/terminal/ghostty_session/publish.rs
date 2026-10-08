@@ -128,6 +128,10 @@ impl PublishGate {
         self.poll(inner, terminal)
     }
 
+    pub(super) fn note_program_reset(&mut self) {
+        self.urgent = true;
+    }
+
     fn note_output(&mut self, now: Instant) {
         self.pending = true;
         self.urgent |= self
@@ -381,6 +385,18 @@ mod tests {
             "the loop must wake exactly when the interval expires"
         );
         assert!(gate.decide(origin + MIN_PUBLISH_INTERVAL));
+    }
+
+    #[test]
+    fn a_program_reset_publishes_without_waiting_out_the_interval() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.note_program_reset();
+        let too_soon = origin + MIN_PUBLISH_INTERVAL / 4;
+        gate.note_output(too_soon);
+
+        assert!(gate.decide(too_soon));
+        assert_eq!(gate.next_wake(too_soon), Some(Duration::ZERO));
     }
 
     #[test]

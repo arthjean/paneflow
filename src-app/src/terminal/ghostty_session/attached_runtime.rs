@@ -728,7 +728,7 @@ pub(super) fn run_attached_runtime(
                                 Ok(())
                             });
                         match drained {
-                            Ok(()) => control.send_input(&inner, &pasted),
+                            Ok(_) => control.send_input(&inner, &pasted),
                             Err(error) => {
                                 if !runtime_failed {
                                     let _ = inner

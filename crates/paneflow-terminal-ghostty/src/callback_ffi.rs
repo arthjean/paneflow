@@ -4,7 +4,10 @@ use paneflow_libghostty_sys as sys;
 
 use crate::callbacks::with_state;
 use crate::osc7::working_directory_from_ghostty;
-use crate::{BackendEvent, ColorScheme, ProgressReport, ProgressState};
+use crate::{
+    BackendEvent, ColorScheme, ProgramStatusKind, ProgramStatusReport, ProgramStatusState,
+    ProgressReport, ProgressState, PromptKind, SemanticPromptKind,
+};
 
 const MAX_CALLBACK_BYTES: usize = 64 * 1024;
 const MAX_METADATA_BYTES: usize = 4096;
@@ -436,6 +439,139 @@ fn progress_state(state: sys::GhosttyTerminalProgressState) -> Option<ProgressSt
     }
 }
 
+pub(crate) unsafe extern "C" fn program_status(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    report: *const sys::GhosttyTerminalProgramStatus,
+) {
+    unsafe {
+        with_state(userdata, |state| {
+            if let Some(report) = program_status_report(report) {
+                state.push(BackendEvent::ProgramStatus(report));
+            }
+        });
+    }
+}
+
+unsafe fn program_status_report(
+    report: *const sys::GhosttyTerminalProgramStatus,
+) -> Option<ProgramStatusReport> {
+    let size = unsafe { report.cast::<usize>().as_ref() }.copied()?;
+    if size < size_of::<sys::GhosttyTerminalProgramStatus>() {
+        return None;
+    }
+    let report = unsafe { &*report };
+    let state = program_status_state(report.state)?;
+    Some(ProgramStatusReport {
+        state,
+        kind: program_status_kind(report.kind),
+        progress: u8::try_from(report.progress).ok().filter(|&p| p <= 100),
+        id: unsafe { borrowed_text(report.id, MAX_CALLBACK_BYTES) }?,
+        app: unsafe { borrowed_text(report.app, MAX_CALLBACK_BYTES) }?,
+        title: unsafe { borrowed_text(report.title, MAX_CALLBACK_BYTES) }?,
+        message: unsafe { borrowed_text(report.message, MAX_CALLBACK_BYTES) }?,
+    })
+}
+
+fn program_status_state(state: sys::GhosttyProgramStatusState) -> Option<ProgramStatusState> {
+    match state {
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_IDLE => {
+            Some(ProgramStatusState::Idle)
+        }
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_WORKING => {
+            Some(ProgramStatusState::Working)
+        }
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_DONE => {
+            Some(ProgramStatusState::Done)
+        }
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED => {
+            Some(ProgramStatusState::Blocked)
+        }
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_ERROR => {
+            Some(ProgramStatusState::Error)
+        }
+        sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_CLEAR => {
+            Some(ProgramStatusState::Clear)
+        }
+        _ => None,
+    }
+}
+
+fn program_status_kind(kind: sys::GhosttyProgramStatusKind) -> Option<ProgramStatusKind> {
+    match kind {
+        sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION => {
+            Some(ProgramStatusKind::Permission)
+        }
+        sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_QUESTION => {
+            Some(ProgramStatusKind::Question)
+        }
+        sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_AUTH => {
+            Some(ProgramStatusKind::Auth)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) unsafe extern "C" fn semantic_prompt(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    event: *const sys::GhosttyTerminalSemanticPrompt,
+) {
+    unsafe {
+        with_state(userdata, |state| {
+            if let Some(event) = semantic_prompt_event(event) {
+                state.push(event);
+            }
+        });
+    }
+}
+
+unsafe fn semantic_prompt_event(
+    event: *const sys::GhosttyTerminalSemanticPrompt,
+) -> Option<BackendEvent> {
+    let size = unsafe { event.cast::<usize>().as_ref() }.copied()?;
+    if size < size_of::<sys::GhosttyTerminalSemanticPrompt>() {
+        return None;
+    }
+    let event = unsafe { &*event };
+    let kind = match event.kind {
+        sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_START => {
+            SemanticPromptKind::PromptStart
+        }
+        sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_INPUT_START => {
+            SemanticPromptKind::InputStart
+        }
+        sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_OUTPUT_START => {
+            SemanticPromptKind::OutputStart
+        }
+        sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_COMMAND_END => {
+            SemanticPromptKind::CommandEnd
+        }
+        _ => return None,
+    };
+    let prompt_kind = match event.prompt_kind {
+        sys::GhosttySemanticPromptPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_RIGHT => {
+            PromptKind::Right
+        }
+        sys::GhosttySemanticPromptPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_CONTINUATION => {
+            PromptKind::Continuation
+        }
+        sys::GhosttySemanticPromptPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_SECONDARY => {
+            PromptKind::Secondary
+        }
+        _ => PromptKind::Primary,
+    };
+    Some(BackendEvent::SemanticPrompt {
+        kind,
+        prompt_kind,
+        exit_code: event.has_exit_code.then_some(event.exit_code),
+    })
+}
+
+pub(crate) unsafe extern "C" fn reset(_: sys::GhosttyTerminal, userdata: *mut c_void) {
+    unsafe { with_state(userdata, |state| state.push(BackendEvent::Reset)) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +620,103 @@ mod tests {
         );
         assert_eq!(attributes.secondary.firmware_version, 10);
         assert_eq!(attributes.secondary.rom_cartridge, 0);
+    }
+
+    fn status_report(state: sys::GhosttyProgramStatusState) -> sys::GhosttyTerminalProgramStatus {
+        let empty = sys::GhosttyString {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        sys::GhosttyTerminalProgramStatus {
+            size: size_of::<sys::GhosttyTerminalProgramStatus>(),
+            state,
+            kind: sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_NONE,
+            progress: -1,
+            id: empty,
+            app: empty,
+            title: empty,
+            message: empty,
+        }
+    }
+
+    #[test]
+    fn program_status_ignores_unknown_states_and_short_structs() {
+        let idle = sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_IDLE;
+        let unknown = sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_CLEAR + 1;
+        assert!(unsafe { program_status_report(&status_report(unknown)) }.is_none());
+
+        let mut short = status_report(idle);
+        short.size -= 1;
+        assert!(unsafe { program_status_report(&short) }.is_none());
+
+        assert!(unsafe { program_status_report(std::ptr::null()) }.is_none());
+
+        let report = unsafe { program_status_report(&status_report(idle)) }.unwrap();
+        assert_eq!(report.state, ProgramStatusState::Idle);
+        assert_eq!(report.progress, None);
+        assert_eq!(report.kind, None);
+    }
+
+    #[test]
+    fn program_status_maps_out_of_range_progress_and_unknown_kind_to_none() {
+        let mut report =
+            status_report(sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED);
+        report.kind = sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_AUTH + 1;
+        report.progress = 101;
+        let copied = unsafe { program_status_report(&report) }.unwrap();
+        assert_eq!(copied.kind, None);
+        assert_eq!(copied.progress, None);
+
+        report.kind = sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_QUESTION;
+        report.progress = 0;
+        let copied = unsafe { program_status_report(&report) }.unwrap();
+        assert_eq!(copied.kind, Some(ProgramStatusKind::Question));
+        assert_eq!(copied.progress, Some(0));
+    }
+
+    #[test]
+    fn program_status_drops_a_report_with_a_string_over_the_callback_limit() {
+        let oversized = vec![b'a'; MAX_CALLBACK_BYTES + 1];
+        let mut report =
+            status_report(sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_DONE);
+        report.message = sys::GhosttyString {
+            ptr: oversized.as_ptr(),
+            len: oversized.len(),
+        };
+        assert!(unsafe { program_status_report(&report) }.is_none());
+    }
+
+    #[test]
+    fn semantic_prompt_ignores_unknown_kinds_and_short_structs() {
+        let empty = sys::GhosttyString {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        let mut event = sys::GhosttyTerminalSemanticPrompt {
+            size: size_of::<sys::GhosttyTerminalSemanticPrompt>(),
+            kind: sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_INVALID,
+            prompt_kind: sys::GhosttySemanticPromptPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_PRIMARY,
+            has_exit_code: false,
+            exit_code: 0,
+            command: empty,
+            error: empty,
+        };
+        assert!(unsafe { semantic_prompt_event(&event) }.is_none());
+
+        event.kind = sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_COMMAND_END;
+        event.has_exit_code = true;
+        event.exit_code = -1;
+        assert_eq!(
+            unsafe { semantic_prompt_event(&event) },
+            Some(BackendEvent::SemanticPrompt {
+                kind: SemanticPromptKind::CommandEnd,
+                prompt_kind: PromptKind::Primary,
+                exit_code: Some(-1),
+            })
+        );
+
+        event.size -= 1;
+        assert!(unsafe { semantic_prompt_event(&event) }.is_none());
     }
 
     #[test]

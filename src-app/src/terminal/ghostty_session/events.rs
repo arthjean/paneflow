@@ -275,11 +275,16 @@ fn warn_effects_overflow(inner: &SessionInner, dropped_events: usize, dropped_by
     );
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct EngineDrain {
+    pub(super) program_reset: bool,
+}
+
 pub(super) fn handle_engine_events(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
     writer: &mut Option<Box<dyn Write + Send>>,
-) -> Result<(), String> {
+) -> Result<EngineDrain, String> {
     handle_engine_events_to(inner, terminal, &mut |bytes| match writer.as_mut() {
         Some(active_writer) => active_writer
             .write_all(bytes)
@@ -293,9 +298,13 @@ pub(super) fn handle_engine_events_to(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
     reply_sink: &mut dyn FnMut(&[u8]) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<EngineDrain, String> {
+    let mut drain = EngineDrain::default();
     for event in terminal.drain_events() {
         match event {
+            ghostty::BackendEvent::Reset => drain.program_reset = true,
+            ghostty::BackendEvent::ProgramStatus(_)
+            | ghostty::BackendEvent::SemanticPrompt { .. } => {}
             ghostty::BackendEvent::WritePty(bytes) => reply_sink(&bytes)?,
             ghostty::BackendEvent::ClipboardStore(text) => queue_clipboard(inner, text),
             ghostty::BackendEvent::Title(title) => queue_title(inner, title),
@@ -329,7 +338,7 @@ pub(super) fn handle_engine_events_to(
             } => warn_effects_overflow(inner, dropped_events, dropped_bytes),
         }
     }
-    Ok(())
+    Ok(drain)
 }
 
 #[cfg(test)]
@@ -358,12 +367,29 @@ mod tests {
 
         let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
 
-        assert_eq!(drained, Ok(()));
+        assert_eq!(drained, Ok(EngineDrain::default()));
         let notifications = session.inner.ui_events.take_notifications();
         assert_eq!(
             notifications.len(),
             1,
             "identical program notifications are merged: {notifications:?}"
+        );
+    }
+
+    #[test]
+    fn a_program_reset_is_signaled_to_the_publisher() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let mut terminal = effects_terminal();
+        terminal.feed(b"\x1bc").expect("reset parses");
+
+        let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
+
+        assert_eq!(
+            drained,
+            Ok(EngineDrain {
+                program_reset: true
+            })
         );
     }
 

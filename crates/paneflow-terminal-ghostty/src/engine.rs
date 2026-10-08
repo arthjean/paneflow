@@ -214,6 +214,10 @@ impl DisplayTerminal {
         crate::callbacks::install_render_hold(self.terminal.raw())
     }
 
+    pub fn enable_program_status(&mut self) -> Result<()> {
+        crate::callbacks::install_program_status(self.terminal.raw())
+    }
+
     pub fn render_hold(&self) -> Option<RenderHold> {
         self.callbacks.render_hold()
     }

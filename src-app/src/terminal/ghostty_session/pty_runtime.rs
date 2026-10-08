@@ -1046,7 +1046,9 @@ pub(super) fn process_output_batch(
                 .map_err(|error| format!("Ghostty VT feed failed: {error}"))?;
             service_output_tail.advance(bytes);
             let emitted_mark = scan_chunk_for_marks(marks_scanner, bytes, &mut raw_marks);
-            handle_engine_events(inner, terminal, writer)?;
+            if handle_engine_events(inner, terminal, writer)?.program_reset {
+                gate.note_program_reset();
+            }
             #[cfg(test)]
             inner
                 .processed_output_bytes

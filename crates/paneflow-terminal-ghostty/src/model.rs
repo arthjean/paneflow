@@ -351,6 +351,50 @@ pub struct ProgressReport {
     pub percent: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramStatusState {
+    Idle,
+    Working,
+    Done,
+    Blocked,
+    Error,
+    Clear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramStatusKind {
+    Permission,
+    Question,
+    Auth,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramStatusReport {
+    pub state: ProgramStatusState,
+    pub kind: Option<ProgramStatusKind>,
+    pub progress: Option<u8>,
+    pub id: String,
+    pub app: String,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SemanticPromptKind {
+    PromptStart,
+    InputStart,
+    OutputStart,
+    CommandEnd,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptKind {
+    Primary,
+    Right,
+    Continuation,
+    Secondary,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendEvent {
     WritePty(Vec<u8>),
@@ -359,6 +403,13 @@ pub enum BackendEvent {
     Title(String),
     WorkingDirectory(String),
     Progress(ProgressReport),
+    ProgramStatus(ProgramStatusReport),
+    SemanticPrompt {
+        kind: SemanticPromptKind,
+        prompt_kind: PromptKind,
+        exit_code: Option<i32>,
+    },
+    Reset,
     DesktopNotification {
         title: String,
         body: String,

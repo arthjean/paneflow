@@ -925,6 +925,9 @@ fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
     if let Err(error) = terminal.set_glyph_protocol(false) {
         log::warn!("paneflow-host: the glyph protocol could not be disabled: {error}");
     }
+    if let Err(error) = terminal.enable_program_status() {
+        log::warn!("paneflow-host: program status reports could not be enabled: {error}");
+    }
     let scrollback_bytes = spec
         .scrollback_lines
         .saturating_mul(SCROLLBACK_BYTES_PER_LINE)
@@ -1225,6 +1228,9 @@ impl Session {
                 ghostty::BackendEvent::ClipboardStore(_)
                 | ghostty::BackendEvent::DesktopNotification { .. } => {}
                 ghostty::BackendEvent::UnknownSequence { .. }
+                | ghostty::BackendEvent::ProgramStatus(_)
+                | ghostty::BackendEvent::SemanticPrompt { .. }
+                | ghostty::BackendEvent::Reset
                 | ghostty::BackendEvent::CallbackPanicked
                 | ghostty::BackendEvent::InputDropped { .. }
                 | ghostty::BackendEvent::EffectsOverflow { .. } => {
@@ -2390,6 +2396,44 @@ mod tests {
         let identity = runtime.process();
         assert!(stop_is_confirmed(&runtime.stop().unwrap()));
         assert!(!identity.is_provably_live());
+    }
+
+    fn status_session() -> (Session, Receiver<Message>, Receiver<Vec<u8>>) {
+        let mut spec = echo_shell_spec(80, 24);
+        #[cfg(unix)]
+        {
+            spec.args = vec!["-c".into(), "exit 0".into()];
+        }
+        #[cfg(windows)]
+        {
+            spec.args.extend(["/C".into(), "exit 0".into()]);
+        }
+        let (tx, messages) = sync_channel(64);
+        let shared = Shared::new();
+        let mut session = start(
+            spec,
+            SessionGeneration::FIRST,
+            tx,
+            Weak::new(),
+            &shared,
+            Arc::new(|_| {}),
+        )
+        .expect("session starts");
+        let (writer, replies) = sync_channel(64);
+        session.writer = Some(writer);
+        (session, messages, replies)
+    }
+
+    #[test]
+    fn a_program_status_query_reaches_the_pty_exactly_once() {
+        let (mut session, _messages, replies) = status_session();
+
+        session.feed(b"\x1b]7501;?\x1b\\");
+
+        assert_eq!(
+            replies.try_iter().collect::<Vec<_>>(),
+            [b"\x1b]7501;?\x1b\\".to_vec()]
+        );
     }
 
     #[test]
