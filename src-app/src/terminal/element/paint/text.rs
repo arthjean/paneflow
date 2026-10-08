@@ -36,7 +36,7 @@ pub fn paint_text_runs(
             origin,
             run.color,
             geom,
-            GlyphPlacement::Cells(CellAligner::new(&run.cells, geom.cell_width)),
+            GlyphPlacement::Cells(CellAligner::new(&run.text, &run.cells, geom.cell_width)),
             layout.color_emoji_enabled,
             window,
         );
@@ -56,36 +56,57 @@ struct AlignedBase {
 }
 
 pub(super) struct CellAligner<'a> {
+    text: &'a str,
     cells: &'a [RunCell],
     cell_width: Pixels,
     base: Option<AlignedBase>,
+    scanned_bytes: usize,
+    scanned_chars: usize,
 }
 
 impl<'a> CellAligner<'a> {
-    pub(super) fn new(cells: &'a [RunCell], cell_width: Pixels) -> Self {
+    pub(super) fn new(text: &'a str, cells: &'a [RunCell], cell_width: Pixels) -> Self {
         Self {
+            text,
             cells,
             cell_width,
             base: None,
+            scanned_bytes: 0,
+            scanned_chars: 0,
         }
     }
 
     pub(super) fn glyph_x(&mut self, byte_index: usize, shaped_x: Pixels) -> Pixels {
-        if self.cells.is_empty() {
-            return shaped_x;
-        }
-        let slot = self
-            .cells
-            .partition_point(|cell| cell.byte <= byte_index)
-            .saturating_sub(1);
+        let (slot, col) = if self.cells.is_empty() {
+            let index = self.char_index(byte_index);
+            (index, index)
+        } else {
+            let slot = self
+                .cells
+                .partition_point(|cell| cell.byte <= byte_index)
+                .saturating_sub(1);
+            (slot, self.cells[slot].col)
+        };
         match self.base {
             Some(base) if base.slot == slot => base.x + (shaped_x - base.shaped_x),
             _ => {
-                let x = self.cell_width * self.cells[slot].col as f32;
+                let x = self.cell_width * col as f32;
                 self.base = Some(AlignedBase { slot, shaped_x, x });
                 x
             }
         }
+    }
+
+    fn char_index(&mut self, byte_index: usize) -> usize {
+        if byte_index < self.scanned_bytes {
+            self.scanned_bytes = 0;
+            self.scanned_chars = 0;
+        }
+        if let Some(skipped) = self.text.get(self.scanned_bytes..byte_index) {
+            self.scanned_chars += skipped.chars().count();
+            self.scanned_bytes = byte_index;
+        }
+        self.scanned_chars
     }
 }
 
@@ -371,20 +392,8 @@ mod tests {
         assert!((ink_bottom - expected).abs() < 1e-3);
     }
 
-    fn cells_of(text: &str, widths: &[usize]) -> Vec<RunCell> {
-        let mut col = 0;
-        text.char_indices()
-            .zip(widths)
-            .map(|((byte, _), &width)| {
-                let cell = RunCell { byte, col };
-                col += width;
-                cell
-            })
-            .collect()
-    }
-
-    fn aligned(cells: &[RunCell], glyphs: &[(usize, f32)]) -> Vec<f32> {
-        let mut aligner = CellAligner::new(cells, px(8.0));
+    fn aligned(text: &str, cells: &[RunCell], glyphs: &[(usize, f32)]) -> Vec<f32> {
+        let mut aligner = CellAligner::new(text, cells, px(8.0));
         glyphs
             .iter()
             .map(|&(index, x)| f32::from(aligner.glyph_x(index, px(x))))
@@ -393,8 +402,6 @@ mod tests {
 
     #[test]
     fn a_glyph_after_a_narrow_fallback_space_keeps_its_own_column() {
-        let text = "83\u{202F}008";
-        let cells = cells_of(text, &[1; 6]);
         let glyphs = [
             (0, 0.0),
             (1, 8.0),
@@ -403,29 +410,42 @@ mod tests {
             (6, 26.0),
             (7, 34.0),
         ];
-        assert_eq!(aligned(&cells, &glyphs), [0.0, 8.0, 16.0, 24.0, 32.0, 40.0]);
+        assert_eq!(
+            aligned("83\u{202F}008", &[], &glyphs),
+            [0.0, 8.0, 16.0, 24.0, 32.0, 40.0]
+        );
+    }
+
+    #[test]
+    fn a_glyph_shaped_out_of_order_still_lands_on_its_own_column() {
+        assert_eq!(
+            aligned("\u{e9}ab", &[], &[(3, 16.0), (0, 0.0), (2, 8.0)]),
+            [16.0, 0.0, 8.0]
+        );
     }
 
     #[test]
     fn a_narrow_glyph_after_a_wide_one_starts_after_both_cells() {
-        let cells = cells_of("中a", &[2, 1]);
-        assert_eq!(aligned(&cells, &[(0, 0.0), (3, 14.0)]), [0.0, 16.0]);
+        let cells = [RunCell { byte: 0, col: 0 }, RunCell { byte: 3, col: 2 }];
+        assert_eq!(
+            aligned("\u{4e2d}a", &cells, &[(0, 0.0), (3, 14.0)]),
+            [0.0, 16.0]
+        );
     }
 
     #[test]
     fn a_combining_mark_keeps_its_offset_from_its_base() {
-        let cells = vec![RunCell { byte: 0, col: 0 }, RunCell { byte: 3, col: 1 }];
+        let cells = [RunCell { byte: 0, col: 0 }, RunCell { byte: 3, col: 1 }];
         assert_eq!(
-            aligned(&cells, &[(0, 0.0), (1, -3.0), (3, 7.0)]),
+            aligned("e\u{301}a", &cells, &[(0, 0.0), (1, -3.0), (3, 7.0)]),
             [0.0, -3.0, 8.0]
         );
     }
 
     #[test]
     fn the_glyphs_of_one_cluster_move_together() {
-        let cells = cells_of("ab", &[1, 1]);
         assert_eq!(
-            aligned(&cells, &[(0, 0.5), (0, 3.5), (1, 9.0)]),
+            aligned("ab", &[], &[(0, 0.5), (0, 3.5), (1, 9.0)]),
             [0.0, 3.0, 8.0]
         );
     }

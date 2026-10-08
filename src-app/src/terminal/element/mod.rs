@@ -231,7 +231,7 @@ struct BatchedTextRun {
     color: Hsla,
     line: i32,
     col_start: usize,
-    cells: Vec<RunCell>,
+    cells: Box<[RunCell]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1486,6 +1486,7 @@ struct BatchAccumulator {
     decorations: Vec<Decoration>,
     text: String,
     cells: Vec<RunCell>,
+    uniform: bool,
     style: Option<CellStyle>,
     base_font: Font,
     font: Font,
@@ -1504,6 +1505,7 @@ impl BatchAccumulator {
             decorations: Vec::new(),
             text: String::new(),
             cells: Vec::new(),
+            uniform: true,
             style: None,
             font: base_font.clone(),
             base_font,
@@ -1524,10 +1526,15 @@ impl BatchAccumulator {
     }
 
     fn append(&mut self, c: char, cell_cols: usize) {
-        self.cells.push(RunCell {
-            byte: self.text.len(),
-            col: self.col_end - self.col_start,
-        });
+        if cell_cols != 1 {
+            self.record_cells();
+        }
+        if !self.uniform {
+            self.cells.push(RunCell {
+                byte: self.text.len(),
+                col: self.col_end - self.col_start,
+            });
+        }
         self.text.push(c);
         self.col_end += cell_cols;
     }
@@ -1536,13 +1543,32 @@ impl BatchAccumulator {
         if self.text.is_empty() {
             return;
         }
+        self.record_cells();
         for &c in chars {
             self.text.push(c);
         }
     }
 
+    fn record_cells(&mut self) {
+        if !self.uniform {
+            return;
+        }
+        self.uniform = false;
+        self.cells.clear();
+        self.cells.extend(
+            self.text
+                .char_indices()
+                .enumerate()
+                .map(|(col, (byte, _))| RunCell { byte, col }),
+        );
+    }
+
     fn start(&mut self, c: char, cell_cols: usize, style: CellStyle, line: i32, col_start: usize) {
-        self.cells.push(RunCell { byte: 0, col: 0 });
+        self.uniform = cell_cols == 1;
+        self.cells.clear();
+        if !self.uniform {
+            self.cells.push(RunCell { byte: 0, col: 0 });
+        }
         self.text.push(c);
         let mut font = self.base_font.clone();
         if style.bold {
@@ -1571,7 +1597,11 @@ impl BatchAccumulator {
             color: self.fg,
             line: self.line,
             col_start: self.col_start,
-            cells: std::mem::take(&mut self.cells),
+            cells: if self.uniform {
+                Box::default()
+            } else {
+                Box::from(self.cells.as_slice())
+            },
         });
         let num_cols = self.col_end.saturating_sub(self.col_start);
         if self.underline != UnderlineKind::None {
@@ -3474,7 +3504,7 @@ mod golden_frame_tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].text, "中a\u{202F}0");
         assert_eq!(
-            runs[0].cells,
+            *runs[0].cells,
             [
                 RunCell { byte: 0, col: 0 },
                 RunCell { byte: 3, col: 2 },
@@ -3482,6 +3512,57 @@ mod golden_frame_tests {
                 RunCell { byte: 7, col: 4 },
             ]
         );
+    }
+
+    #[test]
+    fn a_wide_character_late_in_a_run_records_the_columns_before_it() {
+        let row = vec![
+            cell(0, 0, 'a', default_fg(), default_bg(), CellFlags::empty()),
+            cell(
+                0,
+                1,
+                '\u{e9}',
+                default_fg(),
+                default_bg(),
+                CellFlags::empty(),
+            ),
+            cell(0, 2, '中', default_fg(), default_bg(), CellFlags::WIDE_CHAR),
+            cell(
+                0,
+                3,
+                ' ',
+                default_fg(),
+                default_bg(),
+                CellFlags::WIDE_CHAR_SPACER,
+            ),
+            cell(0, 4, 'b', default_fg(), default_bg(), CellFlags::empty()),
+        ];
+        let state = run(row, None, None);
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            *runs[0].cells,
+            [
+                RunCell { byte: 0, col: 0 },
+                RunCell { byte: 1, col: 1 },
+                RunCell { byte: 3, col: 2 },
+                RunCell { byte: 6, col: 4 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_of_single_cell_characters_stores_no_columns() {
+        let row = ['8', '\u{202F}', '0', '\u{e9}']
+            .into_iter()
+            .enumerate()
+            .map(|(col, c)| cell(0, col, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        let state = run(row, None, None);
+        let runs: Vec<_> = state.batched_runs().collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "8\u{202F}0\u{e9}");
+        assert!(runs[0].cells.is_empty());
     }
 
     #[test]
