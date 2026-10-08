@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-07 | Arthur Jean | PRD initial : re-pin de libghostty-vt de `0c2a290d` (2026-09-14) vers `b699ea79` (2026-10-06), 322 commits dont 57 touchent libghostty-vt. Intègre tous les correctifs et toutes les nouvelles API C (render hold du mode 2026, forme de pointeur OSC 22, overscan et identité de ligne, statut de programme OSC 7501, invites OSC 133, RIS, DECRQCRA/XTCHECKSUM, OSC inconnus, rappel du scrollback au redimensionnement, mémoire, compression de l'historique restauré). 5 epics, 16 stories. |
+| 1.1 | 2026-10-08 | Arthur Jean | La vérification sur le matériel Windows réel quitte US-014 pour un epic final, EP-006, qui regroupe les tests et correctifs Windows. Le développement des epics se fait sous Linux, sans aller-retour par epic. 6 epics, 17 stories. |
 
 ## Problem Statement
 
@@ -133,7 +134,7 @@ These commands must pass for every user story:
 - `cargo test -p paneflow-libghostty-sys --locked` - intégrité du manifeste, des bindings et de l'ABI
 
 Gates additionnels :
-- Stories qui touchent du code `#[cfg(windows)]` ou un chemin ConPTY (US-002, US-014) : le job « Windows x86_64 libghostty check » passe, et la PR dit si Windows a été vérifié par inspection ou sur le matériel réel.
+- Stories qui touchent du code `#[cfg(windows)]` ou un chemin ConPTY (US-002, US-014) : le job « Windows x86_64 libghostty check » passe dès que la branche est poussée, et la PR dit que Windows a été vérifié par inspection. La vérification sur le matériel réel est regroupée en EP-006.
 - Stories qui modifient un workflow (US-002) : `scripts/check-workflow-action-pins.sh` passe.
 - Stories du chemin de rendu (US-005, US-007, US-008) : `scripts/bench-terminal.sh` comparé à `bench/baselines/linux-x86_64/terminal.json`, résultat joint à la PR. Le job CI `perf-gates` passe.
 - Stories UI (US-005, US-006, US-008, US-011) : passe visuelle d'Arthur sous Linux sur un build debug, avec une capture ou un enregistrement court joint à la PR. L'agent livre le changement sans lancer l'app pour la vérifier.
@@ -434,7 +435,7 @@ Le détecteur d'écran reçoit `ScreenView { screen, title, progress }` (`crates
 
 Consommer les options qui changent le comportement protocolaire : DECRQCRA/XTCHECKSUM en opt-in, OSC inconnus, rappel du scrollback sous ConPTY.
 
-**Definition of Done:** DECRQCRA est désactivé par défaut et activable par la config. Les OSC inconnus suivent le même chemin que les APC. Les terminaux alimentés par ConPTY ne rappellent plus le scrollback au redimensionnement, vérifié sur le matériel Windows réel.
+**Definition of Done:** DECRQCRA est désactivé par défaut et activable par la config. Les OSC inconnus suivent le même chemin que les APC. Les terminaux alimentés par ConPTY ne rappellent plus le scrollback au redimensionnement. La vérification sur le matériel Windows réel est en EP-006.
 
 #### US-012: Rendre DECRQCRA et XTCHECKSUM activables, désactivés par défaut
 **Description:** As a développeur qui teste une application de terminal avec vttest ou esctest, I want activer les réponses de checksum DECRQCRA par la config so that ces suites de conformité passent, sans exposer par défaut le contenu de l'écran aux programmes.
@@ -495,7 +496,7 @@ ConPTY vit dans `crates/paneflow-host/src/pty/windows.rs`, et son comportement d
 - [ ] Sous Linux et macOS, l'option garde sa valeur par défaut (test qui lit la valeur appliquée).
 - [ ] Given l'option à faux et un écran dont la première ligne est passée en scrollback, when les lignes augmentent, then des lignes vides s'ajoutent en bas et la ligne passée en scrollback y reste (test sous Linux avec l'option forcée).
 - [ ] Échec : given un RIS du programme, when l'option était à faux, then elle reste à faux (test).
-- [ ] Vérifié sur le matériel Windows réel (dual boot d'Arthur) : agrandir puis réduire un pane qui exécute `dir /s` ne décale plus la sortie suivante. La PR le dit.
+- [ ] La vérification sur le matériel Windows réel est portée par US-017 (EP-006).
 
 ---
 
@@ -543,6 +544,26 @@ Le desktop décode le snapshot du host dans `src-app/src/terminal/ghostty_sessio
 - [ ] Given un historique restauré compressé, when l'utilisateur défile jusqu'en haut ou lance une recherche, then le contenu est identique à celui d'une restauration sans compression (test).
 - [ ] Échec : given une plateforme où `compression_supported` vaut faux, when l'option est activée, then la restauration réussit sans erreur et sans changement de comportement (test qui force le cas, ou inspection consignée si non forçable).
 
+---
+
+### EP-006: Vérification et correctifs Windows
+
+Regrouper en fin de PRD toute la vérification sur le matériel Windows réel, pour que les epics précédents se développent et se valident sous Linux sans aller-retour par epic.
+
+**Definition of Done:** le job « Windows x86_64 libghostty check » est vert sur le dernier commit de la branche. Chaque vérification matérielle listée ici est faite sur le dual boot d'Arthur, et chaque défaut trouvé est corrigé avec un test de non-régression quand il est testable sous Linux.
+
+#### US-017: Vérifier le PRD sur le matériel Windows réel et corriger les écarts
+**Description:** As a développeur sous Windows, I want que le re-pin et ses nouvelles options se comportent sous Windows comme sous Linux so that la release Windows n'embarque pas de régression vue seulement après publication.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-014, US-016
+
+**Acceptance Criteria:**
+- [ ] Le job « Windows x86_64 libghostty check » passe sur le dernier commit de la branche qui porte EP-001 à EP-005.
+- [ ] Vérifié sur le matériel Windows réel (dual boot d'Arthur), sur un build debug lancé par `scripts/dev.ps1` : agrandir puis réduire un pane qui exécute `dir /s` ne décale plus la sortie suivante (US-014). La PR le dit.
+- [ ] Échec : given un défaut constaté sous Windows, when il est corrigé, then le correctif reste dans cet epic, un test de non-régression l'accompagne s'il est reproductible sous Linux, sinon la PR décrit la vérification manuelle refaite.
+
 ## Functional Requirements
 
 - FR-01: Le manifeste, les bindings, les en-têtes, les quatre archives et `GHOSTTY_SHA` désignent tous `b699ea79f4b881421b4b3055abc16a0957d76beb`.
@@ -573,7 +594,7 @@ Le desktop décode le snapshot du host dans `src-app/src/terminal/ghostty_sessio
   - une hold jamais relâchée ne gèle pas un pane plus de 150 ms ;
   - un callback qui panique termine la session avec `CallbackPanicked`, sans abort du processus.
 - **Scalability :** 256 enregistrements OSC 7501 au plus par session ; 64 événements de statut en attente au plus par terminal avant `EffectsOverflow`.
-- **Compatibility :** les quatre cibles livrées (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`) construisent et passent leur lane libghostty. Windows est vérifié sur le matériel réel pour US-014.
+- **Compatibility :** les quatre cibles livrées (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`) construisent et passent leur lane libghostty. Windows est vérifié sur le matériel réel en EP-006 (US-017).
 - **Accessibility :** `reduce_motion: true` désactive 100 % du décalage en pixels d'US-008.
 
 ## Edge Cases & Error States
