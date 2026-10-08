@@ -132,7 +132,8 @@ impl DisplayTerminal {
 mod tests {
     use super::*;
     use crate::{
-        BackendEvent, ColorScheme, PaletteMask, TerminalAppearance, WindowSize, generate_palette,
+        BackendEvent, ColorScheme, OscTerminator, PaletteMask, TerminalAppearance,
+        UnknownSequenceKind, WindowSize, generate_palette,
     };
 
     fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
@@ -285,14 +286,103 @@ mod tests {
             .drain_events()
             .into_iter()
             .find_map(|event| match event {
-                BackendEvent::UnknownSequence { content, truncated } => Some((content, truncated)),
+                BackendEvent::UnknownSequence {
+                    kind,
+                    content,
+                    truncated,
+                } => Some((kind, content, truncated)),
                 _ => None,
             })
             .expect("the unsupported sequence must be reported");
-        assert!(captured.0.contains("unsupported"));
-        assert!(!captured.0.contains('\x07'), "got {:?}", captured.0);
-        assert!(captured.0.contains("\\x07"));
-        assert!(!captured.1);
+        assert_eq!(captured.0, UnknownSequenceKind::Apc);
+        assert!(captured.1.contains("unsupported"));
+        assert!(!captured.1.contains('\x07'), "got {:?}", captured.1);
+        assert!(captured.1.contains("\\x07"));
+        assert!(!captured.2);
+    }
+
+    fn unknown_sequences(terminal: &mut DisplayTerminal) -> Vec<(UnknownSequenceKind, String, bool)> {
+        terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::UnknownSequence {
+                    kind,
+                    content,
+                    truncated,
+                } => Some((kind, content, truncated)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_unknown_osc_is_reported_with_its_content_and_terminator() {
+        let mut terminal = terminal(20, 4);
+        terminal
+            .capture_unknown_sequences(true)
+            .expect("capture must enable");
+
+        terminal
+            .feed(b"\x1b]7400;status=busy\x07")
+            .expect("unknown OSC ended by BEL");
+        assert_eq!(
+            unknown_sequences(&mut terminal),
+            vec![(
+                UnknownSequenceKind::Osc(OscTerminator::Bel),
+                "7400;status=busy".to_owned(),
+                false
+            )]
+        );
+
+        terminal
+            .feed(b"\x1b]7400;status=idle\x1b\\")
+            .expect("unknown OSC ended by ST");
+        assert_eq!(
+            unknown_sequences(&mut terminal),
+            vec![(
+                UnknownSequenceKind::Osc(OscTerminator::St),
+                "7400;status=idle".to_owned(),
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn an_unknown_osc_cancelled_by_can_or_sub_is_not_reported() {
+        let mut terminal = terminal(20, 4);
+        terminal
+            .capture_unknown_sequences(true)
+            .expect("capture must enable");
+
+        terminal
+            .feed(b"\x1b]7400;abc\x18")
+            .expect("OSC cancelled by CAN");
+        terminal
+            .feed(b"\x1b]7400;abc\x1a")
+            .expect("OSC cancelled by SUB");
+        assert!(unknown_sequences(&mut terminal).is_empty());
+    }
+
+    #[test]
+    fn an_oversized_unknown_osc_is_truncated_at_the_capture_limit() {
+        let mut terminal = terminal(20, 4);
+        terminal
+            .capture_unknown_sequences(true)
+            .expect("capture must enable");
+
+        let mut sequence = b"\x1b]7400;".to_vec();
+        sequence.resize(10_000, b'a');
+        sequence.push(b'\x07');
+        terminal.feed(&sequence).expect("oversized unknown OSC");
+
+        let reported = unknown_sequences(&mut terminal);
+        assert_eq!(reported.len(), 1);
+        let (kind, content, truncated) = &reported[0];
+        assert_eq!(*kind, UnknownSequenceKind::Osc(OscTerminator::Bel));
+        assert_eq!(content.len(), MAX_UNKNOWN_SEQUENCE_BYTES);
+        assert!(content.starts_with("7400;aaa"));
+        assert!(*truncated);
     }
 
     #[test]

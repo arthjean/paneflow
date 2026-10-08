@@ -275,6 +275,16 @@ fn warn_effects_overflow(inner: &SessionInner, dropped_events: usize, dropped_by
     );
 }
 
+fn unknown_sequence_label(kind: ghostty::UnknownSequenceKind) -> &'static str {
+    match kind {
+        ghostty::UnknownSequenceKind::Apc => "APC sequence",
+        ghostty::UnknownSequenceKind::Osc(ghostty::OscTerminator::St) => "OSC sequence ended by ST",
+        ghostty::UnknownSequenceKind::Osc(ghostty::OscTerminator::Bel) => {
+            "OSC sequence ended by BEL"
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct EngineDrain {
     pub(super) program_reset: bool,
@@ -315,10 +325,15 @@ pub(super) fn handle_engine_events_to(
             ghostty::BackendEvent::DesktopNotification { title, body } => {
                 queue_notification(inner, sanitized_notification(title, body));
             }
-            ghostty::BackendEvent::UnknownSequence { content, truncated } => {
+            ghostty::BackendEvent::UnknownSequence {
+                kind,
+                content,
+                truncated,
+            } => {
                 log::debug!(
                     target: "paneflow::terminal::ghostty",
-                    "Ghostty ignored an unsupported sequence{}: {content}",
+                    "Ghostty ignored an unsupported {}{}: {content}",
+                    unknown_sequence_label(kind),
                     if truncated { " (truncated)" } else { "" }
                 );
             }
@@ -373,6 +388,33 @@ mod tests {
             notifications.len(),
             1,
             "identical program notifications are merged: {notifications:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_osc_is_logged_with_its_kind_and_never_fails_the_runtime() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let mut terminal = effects_terminal();
+        terminal
+            .capture_unknown_sequences(true)
+            .expect("capture must enable");
+        terminal
+            .feed(b"\x1b]7400;status=busy\x07")
+            .expect("unknown OSC parses");
+
+        let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
+
+        assert_eq!(drained, Ok(EngineDrain::default()));
+        assert_eq!(
+            unknown_sequence_label(ghostty::UnknownSequenceKind::Osc(
+                ghostty::OscTerminator::Bel
+            )),
+            "OSC sequence ended by BEL"
+        );
+        assert_eq!(
+            unknown_sequence_label(ghostty::UnknownSequenceKind::Apc),
+            "APC sequence"
         );
     }
 

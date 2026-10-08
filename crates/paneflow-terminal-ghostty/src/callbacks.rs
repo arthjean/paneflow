@@ -217,13 +217,21 @@ impl CallbackState {
                     events.push_back(BackendEvent::DesktopNotification { title, body });
                 }
             }
-            BackendEvent::UnknownSequence { content, truncated } => {
+            BackendEvent::UnknownSequence {
+                kind,
+                content,
+                truncated,
+            } => {
                 let pending = self.pending_unknown_sequence_events.get();
                 if pending >= MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS {
                     push_overflow(&mut events, 1, content.len());
                 } else {
                     self.pending_unknown_sequence_events.set(pending + 1);
-                    events.push_back(BackendEvent::UnknownSequence { content, truncated });
+                    events.push_back(BackendEvent::UnknownSequence {
+                        kind,
+                        content,
+                        truncated,
+                    });
                 }
             }
             BackendEvent::ProgramStatus(report) => {

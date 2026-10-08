@@ -395,6 +395,18 @@ pub enum PromptKind {
     Secondary,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OscTerminator {
+    St,
+    Bel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnknownSequenceKind {
+    Apc,
+    Osc(OscTerminator),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendEvent {
     WritePty(Vec<u8>),
@@ -415,6 +427,7 @@ pub enum BackendEvent {
         body: String,
     },
     UnknownSequence {
+        kind: UnknownSequenceKind,
         content: String,
         truncated: bool,
     },

@@ -5,8 +5,9 @@ use paneflow_libghostty_sys as sys;
 use crate::callbacks::with_state;
 use crate::osc7::working_directory_from_ghostty;
 use crate::{
-    BackendEvent, ColorScheme, ProgramStatusKind, ProgramStatusReport, ProgramStatusState,
-    ProgressReport, ProgressState, PromptKind, SemanticPromptKind,
+    BackendEvent, ColorScheme, OscTerminator, ProgramStatusKind, ProgramStatusReport,
+    ProgramStatusState, ProgressReport, ProgressState, PromptKind, SemanticPromptKind,
+    UnknownSequenceKind,
 };
 
 const MAX_CALLBACK_BYTES: usize = 64 * 1024;
@@ -229,17 +230,31 @@ pub(crate) unsafe extern "C" fn unknown_sequence(
             let Some(report) = sequence.as_ref() else {
                 return;
             };
-            if report.tag != sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC
-            {
-                return;
-            }
-            let apc = report.value.apc;
-            let Some(raw) = borrowed_bytes(apc.content, MAX_CALLBACK_BYTES) else {
+            let (kind, content, truncated) = match report.tag {
+                sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC => {
+                    let apc = report.value.apc;
+                    (UnknownSequenceKind::Apc, apc.content, apc.truncated)
+                }
+                sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_OSC => {
+                    let osc = report.value.osc;
+                    let Some(terminator) = osc_terminator(osc.terminator) else {
+                        return;
+                    };
+                    (
+                        UnknownSequenceKind::Osc(terminator),
+                        osc.content,
+                        osc.truncated,
+                    )
+                }
+                _ => return,
+            };
+            let Some(raw) = borrowed_bytes(content, MAX_CALLBACK_BYTES) else {
                 return;
             };
             state.push(BackendEvent::UnknownSequence {
+                kind,
                 content: escape_content(raw),
-                truncated: apc.truncated,
+                truncated,
             });
         });
     }
@@ -275,6 +290,14 @@ fn denied_read() -> sys::GhosttyClipboardReadReply {
         available: std::ptr::null(),
         available_len: 0,
         remember: false,
+    }
+}
+
+fn osc_terminator(raw: sys::GhosttyOscTerminator) -> Option<OscTerminator> {
+    match raw {
+        sys::GhosttyOscTerminator_GHOSTTY_OSC_TERMINATOR_ST => Some(OscTerminator::St),
+        sys::GhosttyOscTerminator_GHOSTTY_OSC_TERMINATOR_BEL => Some(OscTerminator::Bel),
+        _ => None,
     }
 }
 
