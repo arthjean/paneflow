@@ -14,9 +14,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The mouse pointer takes the shape a program requests with OSC 22, such as a hand over a link or a resize arrow over a splitter. The scrollbar and a Ctrl-hovered link keep their own pointer, and a shape Paneflow cannot draw shows the default arrow.
 - Trackpad scrolling through the scrollback follows the gesture by the pixel instead of jumping a line at a time. Mouse wheels keep line-by-line scrolling, and so does `reduce_motion`.
 - An agent that reports its own status with OSC 7501 shows that status in the sidebar instead of the one Paneflow reads off the screen. For example, `printf '\e]7501;state=blocked:kind=permission:msg=QXBwbHk/\e\\'` marks the agent as waiting for input, and the needs-input notification shows "Apply?" with the pane named in its title. `working` shows as working, `blocked` as waiting, and `idle`, `done`, and `error` as idle. Hook events still take precedence, and the state applies to agents that have screen rules: Claude Code, Codex, Gemini, OpenCode, Pi, Hermes Agent, and fx. `paneflow agent explain --json` reports the record under `program_status`.
+- Conformance suites such as vttest and esctest can get DECRQCRA checksum replies by setting `terminal.xt_checksum_report` to `true`, with the calculation tuned by `terminal.xt_checksum_extension` (`0` to `31`). Checksums stay off by default, because a program could otherwise read back the whole screen one cell at a time.
 
 ### Fixed
 
+- On Windows, enlarging a pane no longer pulls lines back out of the scrollback, so the next output from ConPTY lands on the row it was meant for instead of being shifted.
 - A full-screen program that redraws with synchronized output (DEC mode 2026) shows exactly the frame it finished, never a half-drawn one, even when it ends one redraw and starts the next in the same write. A program that never ends its redraw still releases the screen after 150 ms.
 - Narrowing a pane whose last column holds the left half of an emoji or a CJK character no longer leaves that half behind, which could write past the row and crash the terminal.
 - After a resize, the cursor and the cursor a program saved keep their position and their pending line wrap, so the next character lands where the program expects, even after several widenings in a row.
