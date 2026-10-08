@@ -119,6 +119,7 @@ not = ['json']
             screen,
             title: Some("fx · fix the build · kimi"),
             progress: None,
+            program_status: None,
         },
     );
     assert_eq!(evaluation.matched, vec![true, true, true]);
@@ -129,6 +130,7 @@ not = ['json']
             screen: deep,
             title: Some("fx data.json"),
             progress: None,
+            program_status: None,
         },
     );
     assert_eq!(evaluation.matched, vec![false, false, false]);
@@ -154,6 +156,7 @@ progress = ["indeterminate", "set"]
                 screen: "",
                 title: None,
                 progress,
+                program_status: None,
             },
         )
         .state(&rules)
@@ -496,6 +499,7 @@ fn corpus_report() -> Value {
                     screen: &capture.screen,
                     title: capture.title.as_deref(),
                     progress: capture.progress.as_deref(),
+                    program_status: None,
                 },
             )
             .state(&rules)
@@ -680,4 +684,47 @@ fn twenty_rules_on_a_200_by_60_viewport_evaluate_within_a_millisecond_p95() {
     let p95 = samples[samples.len() * 95 / 100];
     println!("screen rule evaluation: 20 rules, 200x60, p95 = {p95:?}");
     assert!(p95 <= std::time::Duration::from_millis(1), "p95 = {p95:?}");
+}
+
+#[test]
+fn a_declared_program_status_decides_before_any_text_rule() {
+    let rules = rules(
+        r#"
+engine = 2
+
+[[rules]]
+id = "blocked-on-busy"
+state = "blocked"
+priority = 20
+any = ['busy']
+visible_blocker = true
+"#,
+    );
+    for declared in [
+        ScreenState::Idle,
+        ScreenState::Working,
+        ScreenState::Blocked,
+    ] {
+        let evaluation = evaluate(
+            &rules,
+            &ScreenInput {
+                screen: "busy",
+                program_status: Some(declared),
+                ..ScreenInput::default()
+            },
+        );
+        assert_eq!(evaluation.state(&rules), Some(declared));
+        assert_eq!(evaluation.winner, None);
+        assert_eq!(evaluation.visible_blocker, None);
+    }
+
+    let fallback = evaluate(
+        &rules,
+        &ScreenInput {
+            screen: "busy",
+            ..ScreenInput::default()
+        },
+    );
+    assert_eq!(fallback.state(&rules), Some(ScreenState::Blocked));
+    assert_eq!(fallback.visible_blocker, Some(0));
 }

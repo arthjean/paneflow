@@ -351,6 +351,7 @@ pub struct ScreenInput<'a> {
     pub screen: &'a str,
     pub title: Option<&'a str>,
     pub progress: Option<&'a str>,
+    pub program_status: Option<ScreenState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,17 +359,28 @@ pub struct Evaluation {
     pub matched: Vec<bool>,
     pub winner: Option<usize>,
     pub visible_blocker: Option<usize>,
+    pub program_status: Option<ScreenState>,
 }
 
 impl Evaluation {
     pub fn state(&self, rules: &[ScreenRule]) -> Option<ScreenState> {
-        self.winner
-            .and_then(|index| rules.get(index))
-            .map(|rule| rule.state)
+        self.program_status.or_else(|| {
+            self.winner
+                .and_then(|index| rules.get(index))
+                .map(|rule| rule.state)
+        })
     }
 }
 
 pub fn evaluate(rules: &[ScreenRule], input: &ScreenInput<'_>) -> Evaluation {
+    if let Some(declared) = input.program_status {
+        return Evaluation {
+            matched: vec![false; rules.len()],
+            winner: None,
+            visible_blocker: None,
+            program_status: Some(declared),
+        };
+    }
     let lines: Vec<&str> = input
         .screen
         .lines()
@@ -411,6 +423,7 @@ pub fn evaluate(rules: &[ScreenRule], input: &ScreenInput<'_>) -> Evaluation {
         matched,
         winner,
         visible_blocker,
+        program_status: None,
     }
 }
 

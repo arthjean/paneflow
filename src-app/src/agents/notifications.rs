@@ -88,8 +88,14 @@ impl DesktopNotification {
         workspace_title: &str,
         message: Option<&str>,
     ) -> Self {
+        let origin = message
+            .and_then(notification_detail)
+            .and_then(|_| notification_detail(workspace_title));
         Self {
-            summary: format!("{runtime_label} needs input"),
+            summary: match origin {
+                Some(pane) => format!("{runtime_label} needs input in {pane}"),
+                None => format!("{runtime_label} needs input"),
+            },
             body: attention_notification_body(workspace_title, message),
             urgency: DesktopNotificationUrgency::Critical,
         }
@@ -388,8 +394,31 @@ mod tests {
             "backend",
             Some("Approve edit?"),
         );
-        assert_eq!(attention.summary, "Claude Code needs input");
+        assert_eq!(attention.summary, "Claude Code needs input in backend");
         assert_eq!(attention.body, "Approve edit?");
         assert_eq!(attention.urgency, DesktopNotificationUrgency::Critical);
+
+        let attention_without_message = DesktopNotification::needs_input_for(
+            TerminalAgent::ClaudeCode.display_name(),
+            "backend",
+            None,
+        );
+        assert_eq!(attention_without_message.summary, "Claude Code needs input");
+        assert_eq!(attention_without_message.body, "backend");
+    }
+
+    #[test]
+    fn a_program_declared_blocker_is_stripped_of_bidi_controls_and_names_its_pane() {
+        let attention = DesktopNotification::needs_input_for(
+            "Codex",
+            "back\u{2066}end",
+            Some("Apply \u{202E}nalp\u{2069} the plan?"),
+        );
+
+        assert_eq!(attention.summary, "Codex needs input in backend");
+        assert_eq!(attention.body, "Apply nalp the plan?");
+        for text in [&attention.summary, &attention.body] {
+            assert!(!text.contains('\u{202E}') && !text.contains('\u{2066}'));
+        }
     }
 }

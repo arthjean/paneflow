@@ -817,6 +817,7 @@ mod tests {
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
                 screen_activity: None,
+                declared_blocker: None,
                 menu_prompt_active: false,
                 runtime: None,
                 final_output: None,

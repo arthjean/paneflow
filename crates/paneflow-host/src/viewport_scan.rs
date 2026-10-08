@@ -6,6 +6,7 @@ use std::time::Duration;
 use paneflow_agent_config::runtime_catalog;
 use paneflow_agent_config::screen_rules::{ScreenInput, ScreenState, evaluate};
 use paneflow_config::schema::{SessionGeneration, SessionId};
+use paneflow_terminal_ghostty::{ProgramStatusReport, ProgramStatusState};
 
 use crate::host::{HostError, ScanTarget, SessionHost};
 use crate::manifest::{HostedSessionRuntime, now_ms};
@@ -64,6 +65,7 @@ pub struct ViewportTracker {
     steady_state: Option<ScreenState>,
     screen_state: Option<ScreenState>,
     screen_activity: Option<String>,
+    declared_blocker: Option<String>,
     menu_prompt_active: bool,
     blocker_misses: u8,
     observation: Option<RuntimeObservation>,
@@ -78,6 +80,7 @@ pub struct ScreenView<'a> {
     pub screen: &'a str,
     pub title: Option<&'a str>,
     pub progress: Option<&'a str>,
+    pub program_status: Option<&'a ProgramStatusReport>,
 }
 
 impl<'a> ScreenView<'a> {
@@ -86,6 +89,7 @@ impl<'a> ScreenView<'a> {
             screen: &scan.screen,
             title: scan.title.as_deref(),
             progress: scan.progress,
+            program_status: scan.program_status.as_ref(),
         }
     }
 
@@ -94,7 +98,19 @@ impl<'a> ScreenView<'a> {
             screen: self.screen,
             title: self.title,
             progress: self.progress,
+            program_status: self.declared_state(),
         }
+    }
+
+    fn declared_state(&self) -> Option<ScreenState> {
+        self.program_status
+            .map(|report| declared_screen_state(report.state))
+    }
+
+    fn declared_blocker(&self) -> Option<String> {
+        self.program_status
+            .filter(|report| report.state == ProgramStatusState::Blocked)
+            .map(|report| report.message.clone())
     }
 
     fn classification_hash(&self) -> u64 {
@@ -102,7 +118,19 @@ impl<'a> ScreenView<'a> {
         self.screen.hash(&mut hasher);
         self.title.hash(&mut hasher);
         self.progress.hash(&mut hasher);
+        self.declared_state().hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+fn declared_screen_state(state: ProgramStatusState) -> ScreenState {
+    match state {
+        ProgramStatusState::Working => ScreenState::Working,
+        ProgramStatusState::Blocked => ScreenState::Blocked,
+        ProgramStatusState::Idle
+        | ProgramStatusState::Done
+        | ProgramStatusState::Error
+        | ProgramStatusState::Clear => ScreenState::Idle,
     }
 }
 
@@ -110,6 +138,7 @@ impl<'a> ScreenView<'a> {
 pub struct ViewportEdges {
     pub screen_changed_at_ms: Option<u64>,
     pub screen_activity: Option<String>,
+    pub declared_blocker: Option<String>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub write_due: bool,
@@ -215,19 +244,27 @@ impl ViewportTracker {
             }
         }
         let screen_activity = self.screen_state.map(|state| state.as_str().to_string());
+        let declared_blocker = self
+            .classified_key
+            .is_some()
+            .then(|| view.declared_blocker())
+            .flatten();
         let menu_prompt_active = self.menu_prompt_active;
 
         let write_due = screen_changed_at_ms.is_some()
             || menu_prompt_active != previous_blocker
             || screen_activity != self.screen_activity
+            || declared_blocker != self.declared_blocker
             || observation != self.observation;
 
         self.screen_activity.clone_from(&screen_activity);
+        self.declared_blocker.clone_from(&declared_blocker);
         self.observation.clone_from(&observation);
 
         ViewportEdges {
             screen_changed_at_ms,
             screen_activity,
+            declared_blocker,
             menu_prompt_active,
             observed_runtime: observation,
             write_due,
@@ -444,6 +481,7 @@ fn scan_target(
             record.screen_changed_at_ms = Some(stamp);
         }
         record.screen_activity = edges.screen_activity;
+        record.declared_blocker = edges.declared_blocker;
         record.menu_prompt_active = edges.menu_prompt_active;
         let launch_binding = record
             .runtime
@@ -487,6 +525,100 @@ mod tests {
     }
 
     const CLAUDE: &str = "com.anthropic.claude-code";
+
+    fn declared(state: ProgramStatusState, message: &str) -> ProgramStatusReport {
+        ProgramStatusReport {
+            state,
+            kind: None,
+            progress: None,
+            id: String::new(),
+            app: String::new(),
+            title: String::new(),
+            message: message.to_string(),
+        }
+    }
+
+    fn observe_declared(
+        tracker: &mut ViewportTracker,
+        screen: &str,
+        report: Option<&ProgramStatusReport>,
+        declared_tool: Option<&str>,
+        now_ms: u64,
+    ) -> ViewportEdges {
+        tracker.observe(
+            ScreenView {
+                screen,
+                program_status: report,
+                ..ScreenView::default()
+            },
+            None,
+            declared_tool,
+            &REGISTRY,
+            now_ms,
+        )
+    }
+
+    #[test]
+    fn a_declared_program_status_decides_the_screen_state_before_text_rules() {
+        let working_screen = "✽ Levitating… (1m 52s)\nesc to interrupt\n❯";
+        let mut tracker = ViewportTracker::default();
+        assert_eq!(
+            observe_declared(&mut tracker, working_screen, None, Some("claude"), 1_000)
+                .screen_activity,
+            Some("working".to_string())
+        );
+
+        for (state, expected) in [
+            (ProgramStatusState::Idle, "idle"),
+            (ProgramStatusState::Done, "idle"),
+            (ProgramStatusState::Error, "idle"),
+            (ProgramStatusState::Blocked, "blocked"),
+            (ProgramStatusState::Working, "working"),
+        ] {
+            let report = declared(state, "");
+            let edges = observe_declared(
+                &mut tracker,
+                working_screen,
+                Some(&report),
+                Some("claude"),
+                2_000,
+            );
+            assert_eq!(
+                edges.screen_activity.as_deref(),
+                Some(expected),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_declared_blocker_carries_its_message_and_clears_with_the_record() {
+        let mut tracker = ViewportTracker::default();
+        let blocked = declared(ProgramStatusState::Blocked, "Apply?");
+
+        let edges = observe_declared(&mut tracker, "plain", Some(&blocked), Some("claude"), 1_000);
+        assert_eq!(edges.screen_activity.as_deref(), Some("blocked"));
+        assert_eq!(edges.declared_blocker.as_deref(), Some("Apply?"));
+        assert!(!edges.menu_prompt_active);
+        assert!(edges.write_due);
+
+        let working = declared(ProgramStatusState::Working, "");
+        let edges = observe_declared(&mut tracker, "plain", Some(&working), Some("claude"), 1_500);
+        assert_eq!(edges.screen_activity.as_deref(), Some("working"));
+        assert_eq!(edges.declared_blocker, None);
+        assert!(edges.write_due, "a status change alone is written");
+    }
+
+    #[test]
+    fn a_declared_program_status_needs_a_recognized_runtime() {
+        let mut tracker = ViewportTracker::default();
+        let blocked = declared(ProgramStatusState::Blocked, "Apply?");
+
+        let edges = observe_declared(&mut tracker, "plain", Some(&blocked), None, 1_000);
+
+        assert_eq!(edges.screen_activity, None);
+        assert_eq!(edges.declared_blocker, None);
+    }
 
     fn claude_observation() -> RuntimeObservation {
         RuntimeObservation {
@@ -651,6 +783,7 @@ mod tests {
                     screen: viewer,
                     title,
                     progress: None,
+                    program_status: None,
                 },
                 Some(fx_observation()),
                 None,
@@ -667,6 +800,7 @@ mod tests {
                 screen: "𝒇x v0.0.12 · Run /help for commands\n\n┃ hello\n\n• Thinking\n\n┃\n\nauto · grok-4.7",
                 title: Some("fx v0.0.12 | paneflow"),
                 progress: None,
+                program_status: None,
             },
             Some(fx_observation()),
             None,
@@ -844,6 +978,7 @@ mod tests {
             screen: "❯",
             title,
             progress,
+            program_status: None,
         };
         let observe_view = |tracker: &mut ViewportTracker, title, progress, now| {
             tracker

@@ -944,6 +944,7 @@ impl SessionHost {
                     generation_started_at_ms: summary.manifest.generation_started_at_ms,
                     screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                     screen_activity: summary.manifest.screen_activity,
+                    declared_blocker: summary.manifest.declared_blocker,
                     menu_prompt_active: summary.manifest.menu_prompt_active,
                     observed_runtime: summary
                         .manifest
@@ -1243,6 +1244,7 @@ impl SessionHost {
             generation_started_at_ms: Some(created),
             screen_changed_at_ms: None,
             screen_activity: None,
+            declared_blocker: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -1431,6 +1433,7 @@ impl SessionHost {
             guard.generation_started_at_ms = Some(now_ms());
             guard.screen_changed_at_ms = None;
             guard.screen_activity = None;
+            guard.declared_blocker = None;
             guard.menu_prompt_active = false;
             guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;

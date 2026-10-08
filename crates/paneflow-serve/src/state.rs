@@ -116,6 +116,7 @@ pub struct SessionEntry {
     pub activity_signal: u64,
     pub output_changed_at_ms: Option<u64>,
     pub screen_activity: Option<String>,
+    pub declared_blocker: Option<String>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
@@ -163,6 +164,7 @@ impl SessionEntry {
             activity_signal: manifest.screen_changed_at_ms.unwrap_or_default(),
             output_changed_at_ms: None,
             screen_activity: manifest.screen_activity,
+            declared_blocker: manifest.declared_blocker,
             menu_prompt_active: manifest.menu_prompt_active,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
@@ -734,6 +736,7 @@ impl WorkerState {
         let generation_started_at_ms = entry.generation_started_at_ms;
         let activity_signal = entry.activity_signal;
         let menu_prompt_active = entry.menu_prompt_active;
+        let declared_blocker = entry.declared_blocker.is_some();
         let foreground_identity = entry.foreground_identity();
         let running = entry.lifecycle.is_running();
         let errored = entry
@@ -768,8 +771,12 @@ impl WorkerState {
                 generation_started_at_ms,
             );
         }
-        self.engine
-            .observe_menu_prompt(session, menu_prompt_active, now);
+        let hooks_latched = self.engine.is_latched(session);
+        self.engine.observe_menu_prompt(
+            session,
+            menu_prompt_active || (declared_blocker && !hooks_latched),
+            now,
+        );
 
         let mut source = ActivitySource::None;
         let mut status = if self.engine.is_latched(session) && !screen_authority {
@@ -907,11 +914,22 @@ impl WorkerState {
             entry.updated_at_ms = now_ms;
         }
         let runtime_label = entry.runtime_label();
-        let body = entry.activity.as_ref().and_then(|summary| match notice {
-            Some(Notice::Finished) => summary.last_result.clone(),
-            Some(Notice::NeedsInput) => summary.message.clone(),
+        let body = match notice {
+            Some(Notice::Finished) => entry
+                .activity
+                .as_ref()
+                .and_then(|summary| summary.last_result.clone()),
+            Some(Notice::NeedsInput) => entry
+                .activity
+                .as_ref()
+                .and_then(|summary| summary.message.clone())
+                .or_else(|| {
+                    (!source.is_hooks())
+                        .then(|| entry.declared_blocker.clone())
+                        .flatten()
+                }),
             None => None,
-        });
+        };
         let notification = notice.and_then(|notice| {
             notification_for(notice, source.is_hooks(), &runtime_label, body.as_deref())
         });
@@ -1079,6 +1097,7 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         activity_signal: raw["screen_changed_at_ms"].as_u64().unwrap_or_default(),
         output_changed_at_ms: raw["output_changed_at_ms"].as_u64(),
         screen_activity: raw["screen_activity"].as_str().map(str::to_owned),
+        declared_blocker: raw["declared_blocker"].as_str().map(str::to_owned),
         menu_prompt_active: raw["menu_prompt_active"].as_bool().unwrap_or_default(),
         foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
         observed_runtime: current_observation.or_else(|| {
@@ -1154,6 +1173,7 @@ mod tests {
             generation_started_at_ms: Some(LAUNCHED_AT),
             screen_changed_at_ms: None,
             screen_activity: None,
+            declared_blocker: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -2458,6 +2478,62 @@ mod tests {
         assert!(
             entry.activity.is_some(),
             "a hook-owned activity is never cleared by the screen tier"
+        );
+    }
+
+    fn declared_blocker_row(session: &SessionId, message: &str) -> Value {
+        let mut raw = hookless_row(session, Some(SCREEN_BLOCKED));
+        raw["declared_blocker"] = json!(message);
+        raw
+    }
+
+    #[test]
+    fn a_declared_blocker_without_hooks_asks_for_attention_with_its_message() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+
+        let projections =
+            state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
+
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "attention");
+        assert_eq!(entry.activity_source, ActivitySource::Screen);
+        let notification = projections
+            .iter()
+            .find_map(|projection| projection.notification.as_ref())
+            .expect("a declared blocker raises the needs-input notification");
+        assert_eq!(notification.kind, crate::notifications::KIND_NEEDS_INPUT);
+        assert_eq!(notification.body.as_deref(), Some("Apply the plan?"));
+    }
+
+    #[test]
+    fn a_declared_blocker_never_overrides_the_hook_state() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        let busy = state.get(&session).unwrap().status();
+        assert_eq!(busy, "busy");
+
+        let projections =
+            state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
+
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.activity_source, ActivitySource::Hooks);
+        assert_eq!(entry.status(), busy);
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none()),
+            "{projections:?}"
         );
     }
 
