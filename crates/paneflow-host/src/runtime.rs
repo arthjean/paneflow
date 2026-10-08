@@ -47,6 +47,7 @@ const TERMINFO_NAME: &str = "xterm-256color";
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 pub const CONTINUATION_MAX_BYTES: usize = 64 * 1024;
+const MEMORY_USAGE_BUDGET: Duration = Duration::from_millis(500);
 const NEWLINE: &str = "\n";
 const NEWLINE_CHAR: char = '\n';
 const RUNTIME_PANIC_REASON: &str =
@@ -169,6 +170,7 @@ enum Command {
     Text(SyncSender<Result<String, RuntimeError>>),
     Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
+    MemoryUsage(SyncSender<Result<SessionMemory, RuntimeError>>),
     Input(Vec<u8>, SyncSender<Result<usize, RuntimeError>>),
     Resize {
         cols: u16,
@@ -291,6 +293,35 @@ pub struct RuntimeResources {
     pub inbox_budget_bytes: usize,
     pub input_queued_bytes: usize,
     pub input_budget_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SessionMemory {
+    pub resident_bytes: u64,
+    pub virtual_bytes: u64,
+    pub compressed_bytes: u64,
+    pub image_bytes: u64,
+    pub compression_supported: bool,
+}
+
+impl From<ghostty::TerminalMemoryUsage> for SessionMemory {
+    fn from(usage: ghostty::TerminalMemoryUsage) -> Self {
+        Self {
+            resident_bytes: usage
+                .primary_resident_bytes
+                .saturating_add(usage.alternate_resident_bytes),
+            virtual_bytes: usage
+                .primary_virtual_bytes
+                .saturating_add(usage.alternate_virtual_bytes),
+            compressed_bytes: usage
+                .primary_compressed_bytes
+                .saturating_add(usage.alternate_compressed_bytes),
+            image_bytes: usage
+                .primary_image_bytes
+                .saturating_add(usage.alternate_image_bytes),
+            compression_supported: usage.compression_supported,
+        }
+    }
 }
 
 struct Shared {
@@ -613,6 +644,10 @@ impl SessionRuntime {
 
     pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
         self.ask(Command::BracketedPaste)
+    }
+
+    pub fn memory_usage(&self) -> Result<SessionMemory, RuntimeError> {
+        self.ask_within(MEMORY_USAGE_BUDGET, Command::MemoryUsage)
     }
 
     #[cfg(test)]
@@ -1317,6 +1352,13 @@ impl Session {
                     .map_err(|e| RuntimeError::Engine(e.to_string()));
                 let _ = reply.send(modes.map(|modes| modes.bracketed_paste));
             }
+            Command::MemoryUsage(reply) => {
+                let usage = terminal
+                    .memory_usage()
+                    .map(SessionMemory::from)
+                    .map_err(|e| RuntimeError::Engine(e.to_string()));
+                let _ = reply.send(usage);
+            }
             Command::Input(bytes, reply) => {
                 let typed = is_user_input(&bytes);
                 let result = if self.exit.is_some() || self.writer.is_none() {
@@ -1750,6 +1792,9 @@ fn refuse(command: Command, error: RuntimeError) {
             let _ = reply.send(Err(error));
         }
         Command::BracketedPaste(reply) => {
+            let _ = reply.send(Err(error));
+        }
+        Command::MemoryUsage(reply) => {
             let _ = reply.send(Err(error));
         }
         Command::Input(_, reply) => {

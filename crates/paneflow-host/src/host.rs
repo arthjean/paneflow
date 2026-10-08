@@ -508,18 +508,27 @@ impl SessionHost {
             .values()
             .filter(|record| record.launch.is_some())
             .count();
-        let per_session = sessions
+        let runtimes: Vec<(SessionId, Arc<SessionRuntime>)> = sessions
             .iter()
-            .filter_map(|(session, record)| {
-                let runtime = record.runtime.as_deref()?;
-                Some(SessionResources {
-                    session: session.clone(),
-                    generation: runtime.generation(),
-                    runtime: runtime.resources(),
-                })
-            })
+            .filter_map(|(session, record)| Some((session.clone(), record.runtime.clone()?)))
             .collect();
         drop(sessions);
+        let per_session = runtimes
+            .into_iter()
+            .map(|(session, runtime)| {
+                let (memory, memory_unavailable) = match runtime.memory_usage() {
+                    Ok(memory) => (Some(memory), None),
+                    Err(error) => (None, Some(error.to_string())),
+                };
+                SessionResources {
+                    session,
+                    generation: runtime.generation(),
+                    runtime: runtime.resources(),
+                    memory,
+                    memory_unavailable,
+                }
+            })
+            .collect();
         ResourceReport {
             persistence: self.persistence.report(),
             checkpoints: self.staging.report(),

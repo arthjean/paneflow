@@ -75,7 +75,8 @@ pub use model::{
     Modes, MouseShape, OscTerminator, Overscan, OverscanRow, Point, ProgramStatusKind,
     ProgramStatusReport, ProgramStatusState, ProgressReport, ProgressState, PromptKind, RenderHold,
     Rgb, RowId, RowIdentity, Scroll, SearchMatch, SearchResult, SelectionRange, SemanticPromptKind,
-    TerminalAppearance, UnderlineStyle, UnknownSequenceKind, WideCell, WindowSize,
+    TerminalAppearance, TerminalMemoryUsage, UnderlineStyle, UnknownSequenceKind, WideCell,
+    WindowSize,
 };
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, NativeSearchSnapshot, SEARCH_CHUNK_CELLS, SearchChunk,

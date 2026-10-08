@@ -2741,3 +2741,40 @@ fn new_sessions_follow_the_configured_checksum_reports_and_keep_them_on_an_inval
         crate::runtime::XtChecksum::default()
     );
 }
+
+#[test]
+fn a_session_whose_terminal_is_gone_reports_no_memory_and_why() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("memory")).unwrap();
+    let created = host.create(shell_request(80, 24)).unwrap();
+    let session = created.manifest.session.clone();
+    let entry = |host: &SessionHost| {
+        host.resource_report()
+            .sessions
+            .into_iter()
+            .find(|entry| entry.session == session)
+            .unwrap()
+    };
+    let live = entry(&host);
+    assert!(live.memory.unwrap().resident_bytes > 0, "{live:?}");
+    assert!(live.memory_unavailable.is_none());
+
+    host.lock_sessions()[&session]
+        .runtime
+        .clone()
+        .unwrap()
+        .inject_panic();
+    assert!(
+        wait_until(Duration::from_secs(5), || entry(&host).memory.is_none()),
+        "a panicked runtime stops reporting memory"
+    );
+    let gone = entry(&host);
+    let reason = gone.memory_unavailable.clone().unwrap();
+    assert!(!reason.is_empty());
+    let encoded = serde_json::to_value(&gone).unwrap();
+    assert!(encoded["memory"].is_null(), "{encoded}");
+    assert_eq!(encoded["memory_unavailable"], json!(reason));
+
+    host.stop(&session, None).unwrap();
+    host.remove(&session).unwrap();
+}

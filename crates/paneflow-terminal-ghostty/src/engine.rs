@@ -7,7 +7,7 @@ use crate::callbacks::CallbackState;
 use crate::handles::{OwnedHandle, check};
 use crate::snapshot::SnapshotCache;
 use crate::snapshot_ffi::{TerminalKittyKeyboardFlags, terminal_get};
-use crate::{BackendEvent, Modes, RenderHold, Result, Scroll, WindowSize};
+use crate::{BackendEvent, Modes, RenderHold, Result, Scroll, TerminalMemoryUsage, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 const CLEAR_SCROLLBACK: &[u8] = b"\x1b[3J";
@@ -271,6 +271,52 @@ impl DisplayTerminal {
     fn kitty_keyboard_flags(&self) -> Result<u8> {
         terminal_get::<TerminalKittyKeyboardFlags>(self.terminal.raw())
     }
+
+    pub fn memory_usage(&self) -> Result<TerminalMemoryUsage> {
+        self.memory_usage_sized(std::mem::size_of::<sys::GhosttyTerminalMemoryUsage>())
+    }
+
+    fn memory_usage_sized(&self, size: usize) -> Result<TerminalMemoryUsage> {
+        let mut raw = sys::GhosttyTerminalMemoryUsage {
+            size,
+            compression_supported: false,
+            primary_pages: 0,
+            primary_virtual_bytes: 0,
+            primary_resident_bytes: 0,
+            primary_compressed_pages: 0,
+            primary_compressed_bytes: 0,
+            primary_image_bytes: 0,
+            alternate_pages: 0,
+            alternate_virtual_bytes: 0,
+            alternate_resident_bytes: 0,
+            alternate_compressed_pages: 0,
+            alternate_compressed_bytes: 0,
+            alternate_image_bytes: 0,
+        };
+        let result = unsafe {
+            sys::ghostty_terminal_get(
+                self.terminal.raw(),
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MEMORY_USAGE,
+                (&raw mut raw).cast(),
+            )
+        };
+        check("terminal_get_memory_usage", result)?;
+        Ok(TerminalMemoryUsage {
+            compression_supported: raw.compression_supported,
+            primary_pages: raw.primary_pages,
+            primary_virtual_bytes: raw.primary_virtual_bytes,
+            primary_resident_bytes: raw.primary_resident_bytes,
+            primary_compressed_pages: raw.primary_compressed_pages,
+            primary_compressed_bytes: raw.primary_compressed_bytes,
+            primary_image_bytes: raw.primary_image_bytes,
+            alternate_pages: raw.alternate_pages,
+            alternate_virtual_bytes: raw.alternate_virtual_bytes,
+            alternate_resident_bytes: raw.alternate_resident_bytes,
+            alternate_compressed_pages: raw.alternate_compressed_pages,
+            alternate_compressed_bytes: raw.alternate_compressed_bytes,
+            alternate_image_bytes: raw.alternate_image_bytes,
+        })
+    }
 }
 
 pub(crate) fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) -> Result<()> {
@@ -290,6 +336,18 @@ pub(crate) fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_memory_usage_struct_too_small_for_the_engine_is_an_error() {
+        let size = WindowSize::new(10, 2, 8, 16).expect("valid terminal size");
+        let terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+        assert!(matches!(
+            terminal.memory_usage_sized(std::mem::size_of::<usize>()),
+            Err(crate::GhosttyError::Ffi { .. })
+        ));
+        assert!(terminal.memory_usage().is_ok());
+    }
 
     const OVERSIZED_OSC_BODY_BYTES: usize =
         crate::callback_ffi::MAX_CLIPBOARD_BYTES.div_ceil(3) * 4;

@@ -1406,6 +1406,15 @@ mod tests {
         assert!(entry["runtime"]["tail_allocated_bytes"].is_u64());
         assert!(entry["runtime"]["tail_retained_bytes"].is_u64());
         assert_eq!(entry["runtime"]["inbox_budget_bytes"], 2 * 1024 * 1024);
+        let memory = &entry["memory"];
+        assert!(memory["resident_bytes"].as_u64().unwrap() > 0, "{entry}");
+        assert!(
+            memory["virtual_bytes"].as_u64().unwrap() >= memory["resident_bytes"].as_u64().unwrap()
+        );
+        assert!(memory["compressed_bytes"].is_u64());
+        assert!(memory["image_bytes"].is_u64());
+        assert!(memory["compression_supported"].is_boolean());
+        assert!(entry["memory_unavailable"].is_null(), "{entry}");
         host.stop(&session, None).unwrap();
         server.stop().unwrap();
     }

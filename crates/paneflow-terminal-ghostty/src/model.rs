@@ -244,6 +244,23 @@ pub struct Overscan {
     pub below: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerminalMemoryUsage {
+    pub compression_supported: bool,
+    pub primary_pages: u64,
+    pub primary_virtual_bytes: u64,
+    pub primary_resident_bytes: u64,
+    pub primary_compressed_pages: u64,
+    pub primary_compressed_bytes: u64,
+    pub primary_image_bytes: u64,
+    pub alternate_pages: u64,
+    pub alternate_virtual_bytes: u64,
+    pub alternate_resident_bytes: u64,
+    pub alternate_compressed_pages: u64,
+    pub alternate_compressed_bytes: u64,
+    pub alternate_image_bytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OverscanRow {
     pub identity: RowIdentity,

@@ -5,6 +5,8 @@ pub struct SessionResources {
     pub session: SessionId,
     pub generation: SessionGeneration,
     pub runtime: crate::runtime::RuntimeResources,
+    pub memory: Option<crate::runtime::SessionMemory>,
+    pub memory_unavailable: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

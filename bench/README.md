@@ -841,6 +841,24 @@ bound is the ignored test
 cargo test --release --locked -p paneflow-host --lib work_counters -- --ignored
 ```
 
+### Terminal memory per session
+
+`host.status` also reports, under `resources.sessions[]`, the memory held by
+each live session's libghostty terminal. The figures come from
+`DisplayTerminal::memory_usage()` (`GHOSTTY_TERMINAL_DATA_MEMORY_USAGE`),
+summed over the primary and alternate screens. They are read on demand when
+`host.status` is called, never after a `feed`, because the read walks every
+page. Each session thread gets 500 ms to answer.
+
+| Field | Unit | Meaning |
+|---|---|---|
+| `memory.resident_bytes` | bytes | physical memory used by the terminal's pages; a compressed page counts only its compressed size. Use this figure for budgets |
+| `memory.virtual_bytes` | bytes | address space reserved for the pages, compressed and spare pages included; always at least `resident_bytes` |
+| `memory.compressed_bytes` | bytes | compressed history data, already included in `resident_bytes` |
+| `memory.image_bytes` | bytes | Kitty graphics image data, not included in `resident_bytes` |
+| `memory.compression_supported` | boolean | whether compressing scrollback can free memory on this platform; when false the compressed figures stay 0 |
+| `memory_unavailable` | text | why `memory` is `null`: the terminal is retired, unverified, or did not answer in time. A missing figure is never reported as 0 |
+
 ## Desktop sans écran (headless desktop)
 
 The US-003 spike asks whether the real release desktop runs and measures under

@@ -830,3 +830,29 @@ fn repeated_headless_contract_survives_malformed_input_and_releases_every_termin
         assert_eq!(encoded, b"\r");
     }
 }
+
+#[test]
+fn memory_usage_grows_with_ten_thousand_lines_of_output() {
+    let fresh = terminal(80, 24);
+    let fresh_usage = fresh.memory_usage().unwrap();
+
+    let mut written = terminal(80, 24);
+    let mut output = Vec::new();
+    for line in 0..10_000 {
+        output.extend_from_slice(
+            format!("line {line:05} of the memory usage fixture\r\n").as_bytes(),
+        );
+    }
+    written.feed(&output).unwrap();
+    let written_usage = written.memory_usage().unwrap();
+
+    assert!(
+        written_usage.primary_resident_bytes > fresh_usage.primary_resident_bytes,
+        "{fresh_usage:?} -> {written_usage:?}"
+    );
+    assert!(written_usage.primary_pages > fresh_usage.primary_pages);
+    for usage in [fresh_usage, written_usage] {
+        assert!(usage.primary_virtual_bytes >= usage.primary_resident_bytes);
+        assert!(usage.alternate_virtual_bytes >= usage.alternate_resident_bytes);
+    }
+}
