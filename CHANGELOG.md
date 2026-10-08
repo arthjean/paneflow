@@ -13,6 +13,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 - The mouse pointer takes the shape a program requests with OSC 22, such as a hand over a link or a resize arrow over a splitter. The scrollbar and a Ctrl-hovered link keep their own pointer, and a shape Paneflow cannot draw shows the default arrow.
 - Trackpad scrolling through the scrollback follows the gesture by the pixel instead of jumping a line at a time. Mouse wheels keep line-by-line scrolling, and so does `reduce_motion`.
+- An agent that reports its own status with OSC 7501 shows that status in the sidebar instead of the one Paneflow reads off the screen. For example, `printf '\e]7501;state=blocked:kind=permission:msg=QXBwbHk/\e\\'` marks the agent as waiting for input, and the needs-input notification shows "Apply?" with the pane named in its title. `working` shows as working, `blocked` as waiting, and `idle`, `done`, and `error` as idle. Hook events still take precedence, and the state applies to agents that have screen rules: Claude Code, Codex, Gemini, OpenCode, Pi, Hermes Agent, and fx. `paneflow agent explain --json` reports the record under `program_status`.
 
 ### Fixed
 
