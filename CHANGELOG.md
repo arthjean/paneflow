@@ -20,6 +20,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Fixed
 
 - On Windows, enlarging a pane no longer pulls lines back out of the scrollback, so the next output from ConPTY lands on the row it was meant for instead of being shifted.
+- Each character is drawn on its own cell. A narrow no-break space drawn from a fallback font, such as the thousands separator in a French `dir` listing, no longer pulls the following digits onto it, and text after an emoji or a CJK character no longer overlaps it.
 - A full-screen program that redraws with synchronized output (DEC mode 2026) shows exactly the frame it finished, never a half-drawn one, even when it ends one redraw and starts the next in the same write. A program that never ends its redraw still releases the screen after 150 ms.
 - Narrowing a pane whose last column holds the left half of an emoji or a CJK character no longer leaves that half behind, which could write past the row and crash the terminal.
 - After a resize, the cursor and the cursor a program saved keep their position and their pending line wrap, so the next character lands where the program expects, even after several widenings in a row.
