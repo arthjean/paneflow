@@ -1,6 +1,8 @@
 #[cfg(windows)]
 mod windows;
 
+pub const RESIZE_PULLS_SCROLLBACK: bool = !cfg!(windows);
+
 pub fn open(size: portable_pty::PtySize) -> Result<portable_pty::PtyPair, String> {
     #[cfg(windows)]
     windows::initialize()?;

@@ -1275,6 +1275,17 @@ fn configure_embedder_options(
     }
 }
 
+fn follow_pty_scrollback_policy(terminal: &mut ghostty::DisplayTerminal) {
+    if let Err(error) =
+        terminal.set_resize_pull_scrollback(paneflow_host::pty::RESIZE_PULLS_SCROLLBACK)
+    {
+        log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty resize scrollback policy could not be configured: {error}"
+        );
+    }
+}
+
 fn current_ghostty_palette() -> [ghostty::Rgb; ghostty::PALETTE_LEN] {
     crate::theme::generated_terminal_palette(&crate::theme::active_theme())
 }
@@ -1521,6 +1532,28 @@ mod tests {
         bare.feed(b"\x1b[?2026h").expect("mode parses");
         assert!(bare.synchronized_output().expect("mode query"));
         assert!(bare.render_hold().is_none());
+    }
+
+    #[test]
+    fn a_host_mirror_pulls_scrollback_on_resize_except_behind_conpty() {
+        let size = TerminalWindowSize::new(10, 3, 8, 16);
+        let bare = ghostty::DisplayTerminal::new(
+            window_size(size).expect("window size"),
+            100,
+            ghostty::TerminalAppearance::default(),
+        )
+        .expect("terminal");
+        let snapshot = bare.encode_snapshot().expect("checkpoint");
+        let mut mirror =
+            restore_terminal_from_checkpoint(&snapshot, size, 100, false).expect("restores");
+        mirror.feed(b"one\r\ntwo\r\nthree\r\nfour").expect("lines");
+        mirror
+            .resize(window_size(TerminalWindowSize::new(10, 4, 8, 16)).expect("window size"))
+            .expect("rows grow");
+        let top = mirror.line_texts(&[0]).expect("top row");
+        let pulled = top[0].1.trim_end() == "one";
+        assert_eq!(pulled, paneflow_host::pty::RESIZE_PULLS_SCROLLBACK);
+        assert_eq!(pulled, !cfg!(windows));
     }
 
     #[test]

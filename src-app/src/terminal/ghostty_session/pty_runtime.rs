@@ -373,6 +373,7 @@ pub(super) fn run_runtime(
         max_scrollback,
         inner.option_as_alt.load(Ordering::Acquire),
     );
+    follow_pty_scrollback_policy(&mut terminal);
     let mut publish_gate = PublishGate::new();
     if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
         let _ = startup_tx.send(StartupReport::Failed(anyhow::anyhow!(error)));

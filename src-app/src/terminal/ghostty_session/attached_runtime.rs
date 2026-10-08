@@ -217,6 +217,7 @@ pub(super) fn restore_terminal_from_checkpoint(
         .into_terminal()
         .ok_or_else(|| "checkpoint decoder produced no terminal".to_string())?;
     configure_embedder_options(&mut terminal, max_scrollback, option_as_alt);
+    follow_pty_scrollback_policy(&mut terminal);
     Ok(terminal)
 }
 

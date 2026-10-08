@@ -930,6 +930,9 @@ fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
     if let Err(error) = terminal.enable_program_status() {
         log::warn!("paneflow-host: program status reports could not be enabled: {error}");
     }
+    if let Err(error) = terminal.set_resize_pull_scrollback(crate::pty::RESIZE_PULLS_SCROLLBACK) {
+        log::warn!("paneflow-host: the resize scrollback policy could not be configured: {error}");
+    }
     let scrollback_bytes = spec
         .scrollback_lines
         .saturating_mul(SCROLLBACK_BYTES_PER_LINE)
@@ -2560,6 +2563,21 @@ mod tests {
                 .into_iter()
                 .any(|event| matches!(event, ghostty::BackendEvent::WritePty(_)))
         );
+    }
+
+    #[test]
+    fn a_new_terminal_pulls_scrollback_on_resize_except_behind_conpty() {
+        let mut terminal = new_terminal(&echo_shell_spec(10, 3)).expect("terminal");
+        terminal
+            .feed(b"one\r\ntwo\r\nthree\r\nfour")
+            .expect("lines");
+        terminal
+            .resize(window_size(10, 4, DEFAULT_CELL).expect("size"))
+            .expect("rows grow");
+        let top = terminal.line_texts(&[0]).expect("top row");
+        let pulled = top[0].1.trim_end() == "one";
+        assert_eq!(pulled, crate::pty::RESIZE_PULLS_SCROLLBACK);
+        assert_eq!(pulled, !cfg!(windows));
     }
 
     #[test]

@@ -117,6 +117,16 @@ impl DisplayTerminal {
         }
     }
 
+    pub fn set_resize_pull_scrollback(&mut self, enabled: bool) -> Result<()> {
+        unsafe {
+            self.set_terminal_option(
+                "terminal_set_resize_pull_scrollback",
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK,
+                (&raw const enabled).cast::<c_void>(),
+            )
+        }
+    }
+
     unsafe fn set_terminal_option(
         &mut self,
         operation: &'static str,
@@ -454,6 +464,62 @@ mod tests {
             .expect("glyph protocol must disable");
         terminal.feed(support_query).expect("glyph support query");
         assert!(replies(&mut terminal).is_empty());
+    }
+
+    fn visible_lines(terminal: &mut DisplayTerminal) -> Vec<String> {
+        let rows = terminal.snapshot().expect("snapshot").rows;
+        let lines: Vec<i32> = (0..rows as i32).collect();
+        terminal
+            .line_texts(&lines)
+            .expect("line texts")
+            .into_iter()
+            .map(|(_, text)| text.trim_end().to_owned())
+            .collect()
+    }
+
+    fn grow_after_one_line_scrolled_out(terminal: &mut DisplayTerminal) -> Vec<String> {
+        terminal
+            .feed(b"one\r\ntwo\r\nthree\r\nfour")
+            .expect("lines");
+        terminal
+            .resize(WindowSize::new(10, 4, 8, 16).expect("valid terminal size"))
+            .expect("rows grow");
+        visible_lines(terminal)
+    }
+
+    #[test]
+    fn growing_rows_pulls_scrollback_back_by_default() {
+        let mut terminal = terminal(10, 3);
+        assert_eq!(
+            grow_after_one_line_scrolled_out(&mut terminal),
+            ["one", "two", "three", "four"]
+        );
+    }
+
+    #[test]
+    fn without_scrollback_pull_growing_rows_appends_blank_rows() {
+        let mut terminal = terminal(10, 3);
+        terminal
+            .set_resize_pull_scrollback(false)
+            .expect("scrollback pull must disable");
+        assert_eq!(
+            grow_after_one_line_scrolled_out(&mut terminal),
+            ["two", "three", "four", ""]
+        );
+        assert!(terminal.snapshot().expect("snapshot").history_size >= 1);
+    }
+
+    #[test]
+    fn a_full_reset_keeps_scrollback_pull_disabled() {
+        let mut terminal = terminal(10, 3);
+        terminal
+            .set_resize_pull_scrollback(false)
+            .expect("scrollback pull must disable");
+        terminal.feed(b"\x1bc").expect("RIS");
+        assert_eq!(
+            grow_after_one_line_scrolled_out(&mut terminal),
+            ["two", "three", "four", ""]
+        );
     }
 
     #[test]
