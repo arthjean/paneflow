@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Statut OSC 7501 pour tout programme",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-004",
@@ -157,58 +157,58 @@
       "id": "US-008",
       "title": "Porter l'état déclaré de chaque session jusqu'à l'app",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-001",
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-009",
       "title": "Afficher l'état déclaré dans la puce de l'en-tête du pane",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-010",
       "title": "Mettre les programmes non-agent bloqués ou en échec dans l'Attention Queue",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-011",
       "title": "Faire de l'erreur déclarée d'un agent un état Errored et nommer le pane",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-012",
