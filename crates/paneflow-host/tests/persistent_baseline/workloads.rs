@@ -815,7 +815,10 @@ pub fn workload_churn(
                 .map(|entries| {
                     entries
                         .iter()
-                        .filter(|entry| sessions.iter().any(|s| entry["session"] == json!(s)))
+                        .filter(|entry| {
+                            !entry["runtime"].is_null()
+                                && sessions.iter().any(|s| entry["session"] == json!(s))
+                        })
                         .cloned()
                         .collect()
                 })

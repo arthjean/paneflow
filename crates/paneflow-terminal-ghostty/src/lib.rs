@@ -93,7 +93,7 @@ pub use snapshot_codec::{SnapshotDecoder, SnapshotRestore};
 #[cfg(ghostty_native)]
 pub use sys::{DecodedImage, PngDecoder, set_png_decoder};
 #[cfg(ghostty_native)]
-pub use terminal_ops::{ClipboardLocation, PasteRepresentation};
+pub use terminal_ops::{ClipboardLocation, CompressionProgress, PasteRepresentation};
 #[cfg(ghostty_native)]
 pub use text_query::{RowMatches, RowSearch, RowWindow};
 

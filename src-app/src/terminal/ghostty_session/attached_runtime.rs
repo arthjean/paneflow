@@ -531,6 +531,7 @@ pub(super) fn run_attached_runtime(
     let mut last_autoscroll = Instant::now();
     let mut last_output_at = Instant::now();
     let mut paste_trace = BracketedPasteTrace::default();
+    let mut recompression = super::recompression::HistoryRecompression::new(Instant::now());
 
     loop {
         count_runtime_loop_iteration();
@@ -555,6 +556,9 @@ pub(super) fn run_attached_runtime(
                 }
             }
         };
+        let wait = recompression
+            .next_wake(Instant::now())
+            .map_or(wait, |idle| wait.min(idle.max(Duration::from_millis(1))));
         let received = match mailbox.recv_timeout(wait) {
             Ok(message) => {
                 if matches!(
@@ -609,6 +613,9 @@ pub(super) fn run_attached_runtime(
             Err(error) => Err(error),
         };
         count_runtime_loop_wait(wait, received.is_ok());
+        if received.is_ok() {
+            recompression.touch(Instant::now());
+        }
         match received {
             Ok(Some(RuntimeMessage::Output(bytes))) => {
                 last_output_at = Instant::now();
@@ -670,6 +677,8 @@ pub(super) fn run_attached_runtime(
                 match restored {
                     Ok(restored) => {
                         terminal = restored;
+                        recompression =
+                            super::recompression::HistoryRecompression::new(Instant::now());
                         apply_smooth_scroll_overscan(&inner, &mut terminal);
                         marks_scanner = Osc133Scanner::default();
                         paste_trace = BracketedPasteTrace::default();
@@ -836,6 +845,7 @@ pub(super) fn run_attached_runtime(
             }
             runtime_failed = true;
         }
+        recompression.advance(&mut terminal, Instant::now());
 
         if refresh_recent_output_lines(
             &inner,

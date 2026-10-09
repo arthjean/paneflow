@@ -220,7 +220,8 @@ fn a_staged_checkpoint_releases_its_admission_when_dropped() {
         .iter()
         .find(|entry| entry.session == session)
         .unwrap()
-        .runtime;
+        .runtime
+        .expect("a live session reports its runtime");
     assert_eq!(
         runtime.tail_budget_bytes,
         crate::protocol::MAX_OUTPUT_TAIL_BYTES
@@ -2780,14 +2781,86 @@ fn a_session_whose_terminal_is_gone_reports_no_memory_and_why() {
         "a panicked runtime stops reporting memory"
     );
     let gone = entry(&host);
-    let reason = gone.memory_unavailable.clone().unwrap();
-    assert!(!reason.is_empty());
+    assert_eq!(gone.memory_unavailable, Some(MemoryUnavailable::Exited));
     let encoded = serde_json::to_value(&gone).unwrap();
     assert!(encoded["memory"].is_null(), "{encoded}");
-    assert_eq!(encoded["memory_unavailable"], json!(reason));
+    assert_eq!(encoded["memory_unavailable"], json!("exited"));
 
     host.stop(&session, None).unwrap();
     host.remove(&session).unwrap();
+}
+
+#[test]
+fn host_status_lists_sessions_without_a_runtime_and_says_why() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("memory-absent")).unwrap();
+    let not_started = unverified_record(&host, "restored without a process");
+    let stopped = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    host.stop(&stopped, None).unwrap();
+    let entry = |host: &SessionHost, session: &SessionId| {
+        host.resource_report()
+            .sessions
+            .into_iter()
+            .find(|entry| &entry.session == session)
+    };
+
+    let waiting = entry(&host, &not_started).expect("a session without a runtime is listed");
+    assert_eq!(waiting.memory, None);
+    assert_eq!(waiting.runtime, None);
+    assert_eq!(
+        waiting.memory_unavailable,
+        Some(MemoryUnavailable::NotStarted)
+    );
+    assert_eq!(
+        serde_json::to_value(&waiting).unwrap()["memory_unavailable"],
+        json!("not_started")
+    );
+
+    assert!(
+        wait_until(Duration::from_secs(5), || entry(&host, &stopped)
+            .is_some_and(|entry| entry.runtime.is_none())),
+        "a stopped session releases its runtime"
+    );
+    let exited = entry(&host, &stopped).expect("an exited session stays listed");
+    assert_eq!(exited.memory, None);
+    assert_eq!(exited.memory_unavailable, Some(MemoryUnavailable::Exited));
+}
+
+#[test]
+fn host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("memory-fanout")).unwrap();
+    let sessions: Vec<SessionId> = (0..64)
+        .map(|_| host.create(shell_request(80, 24)).unwrap().manifest.session)
+        .collect();
+    for session in &sessions {
+        host.lock_sessions()[session]
+            .runtime
+            .clone()
+            .unwrap()
+            .inject_stall(Duration::from_secs(3));
+    }
+
+    let started = Instant::now();
+    let report = host.resource_report();
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_millis(600),
+        "host.status took {elapsed:?} for 64 silent sessions"
+    );
+    for session in &sessions {
+        let entry = report
+            .sessions
+            .iter()
+            .find(|entry| &entry.session == session)
+            .expect("every session is listed");
+        assert_eq!(entry.memory, None);
+        assert_eq!(entry.memory_unavailable, Some(MemoryUnavailable::Timeout));
+    }
+    for session in &sessions {
+        host.stop(session, None).unwrap();
+    }
 }
 
 #[test]

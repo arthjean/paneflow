@@ -47,7 +47,7 @@ const TERMINFO_NAME: &str = "xterm-256color";
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 pub const CONTINUATION_MAX_BYTES: usize = 64 * 1024;
-const MEMORY_USAGE_BUDGET: Duration = Duration::from_millis(500);
+pub(crate) const MEMORY_USAGE_BUDGET: Duration = Duration::from_millis(500);
 const NEWLINE: &str = "\n";
 const NEWLINE_CHAR: char = '\n';
 const RUNTIME_PANIC_REASON: &str =
@@ -191,6 +191,8 @@ enum Command {
     },
     #[cfg(test)]
     InjectPanic,
+    #[cfg(test)]
+    InjectStall(Duration),
 }
 
 enum Message {
@@ -606,6 +608,17 @@ impl SessionRuntime {
         budget: Duration,
         build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
     ) -> Result<T, RuntimeError> {
+        let deadline = Instant::now() + budget;
+        let reply = self.send_within(deadline, budget, build)?;
+        reply.wait()
+    }
+
+    fn send_within<T>(
+        &self,
+        deadline: Instant,
+        budget: Duration,
+        build: impl FnOnce(SyncSender<Result<T, RuntimeError>>) -> Command,
+    ) -> Result<PendingReply<T>, RuntimeError> {
         if self.retired() {
             return Err(match self.unverified() {
                 Some(reason) => RuntimeError::Unverified(reason),
@@ -613,12 +626,19 @@ impl SessionRuntime {
             });
         }
         let (reply_tx, reply_rx) = sync_channel(1);
-        self.send_bounded(Message::Command(build(reply_tx)), budget)?;
-        match reply_rx.recv_timeout(budget) {
-            Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(budget)),
-            Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Gone),
-        }
+        self.send_bounded(
+            Message::Command(build(reply_tx)),
+            deadline.saturating_duration_since(Instant::now()),
+        )
+        .map_err(|error| match error {
+            RuntimeError::Deadline(_) => RuntimeError::Deadline(budget),
+            other => other,
+        })?;
+        Ok(PendingReply {
+            reply: reply_rx,
+            deadline,
+            budget,
+        })
     }
 
     pub fn checkpoint(&self) -> Result<Checkpoint, RuntimeError> {
@@ -656,8 +676,11 @@ impl SessionRuntime {
         self.ask(Command::BracketedPaste)
     }
 
-    pub fn memory_usage(&self) -> Result<SessionMemory, RuntimeError> {
-        self.ask_within(MEMORY_USAGE_BUDGET, Command::MemoryUsage)
+    pub fn request_memory_usage(
+        &self,
+        deadline: Instant,
+    ) -> Result<PendingReply<SessionMemory>, RuntimeError> {
+        self.send_within(deadline, MEMORY_USAGE_BUDGET, Command::MemoryUsage)
     }
 
     #[cfg(test)]
@@ -740,6 +763,33 @@ impl SessionRuntime {
     #[cfg(test)]
     pub(crate) fn inject_panic(&self) {
         let _ = self.send_bounded(Message::Command(Command::InjectPanic), REQUEST_DEADLINE);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_stall(&self, stall: Duration) {
+        let _ = self.send_bounded(
+            Message::Command(Command::InjectStall(stall)),
+            REQUEST_DEADLINE,
+        );
+    }
+}
+
+pub struct PendingReply<T> {
+    reply: Receiver<Result<T, RuntimeError>>,
+    deadline: Instant,
+    budget: Duration,
+}
+
+impl<T> PendingReply<T> {
+    pub fn wait(self) -> Result<T, RuntimeError> {
+        match self
+            .reply
+            .recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
+        {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => Err(RuntimeError::Deadline(self.budget)),
+            Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Gone),
+        }
     }
 }
 
@@ -1341,6 +1391,11 @@ impl Session {
         if let Command::InjectPanic = command {
             panic!("injected runtime panic");
         }
+        #[cfg(test)]
+        if let Command::InjectStall(stall) = command {
+            std::thread::sleep(stall);
+            return;
+        }
         if let Some(reason) = self.shared.unverified() {
             refuse(command, RuntimeError::Unverified(reason));
             return;
@@ -1430,7 +1485,7 @@ impl Session {
             }
             Command::Stop { .. } => {}
             #[cfg(test)]
-            Command::InjectPanic => {}
+            Command::InjectPanic | Command::InjectStall(_) => {}
         }
     }
 
@@ -1841,7 +1896,7 @@ fn refuse(command: Command, error: RuntimeError) {
         }
         Command::Stop { .. } => {}
         #[cfg(test)]
-        Command::InjectPanic => {}
+        Command::InjectPanic | Command::InjectStall(_) => {}
     }
 }
 

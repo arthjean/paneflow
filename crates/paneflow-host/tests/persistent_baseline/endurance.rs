@@ -131,7 +131,10 @@ pub(super) fn endurance_burst(
             .map(|entries| {
                 entries
                     .iter()
-                    .filter(|entry| sessions.iter().any(|s| entry["session"] == json!(s)))
+                    .filter(|entry| {
+                        !entry["runtime"].is_null()
+                            && sessions.iter().any(|s| entry["session"] == json!(s))
+                    })
                     .count()
             })
             .unwrap_or(usize::MAX);

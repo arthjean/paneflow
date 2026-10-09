@@ -508,25 +508,65 @@ impl SessionHost {
             .values()
             .filter(|record| record.launch.is_some())
             .count();
-        let runtimes: Vec<(SessionId, Arc<SessionRuntime>)> = sessions
+        let rows: Vec<(SessionId, ResourceSource)> = sessions
             .iter()
-            .filter_map(|(session, record)| Some((session.clone(), record.runtime.clone()?)))
+            .map(|(session, record)| {
+                let source = match (&record.runtime, &record.completed) {
+                    (Some(runtime), _) => ResourceSource::Runtime(runtime.clone()),
+                    (None, Some(completed)) => {
+                        ResourceSource::Absent(completed.generation, MemoryUnavailable::Exited)
+                    }
+                    (None, None) => ResourceSource::Absent(
+                        record
+                            .manifest
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .generation,
+                        MemoryUnavailable::NotStarted,
+                    ),
+                };
+                (session.clone(), source)
+            })
             .collect();
         drop(sessions);
-        let per_session = runtimes
+        let deadline = Instant::now() + crate::runtime::MEMORY_USAGE_BUDGET;
+        let requested: Vec<_> = rows
             .into_iter()
-            .map(|(session, runtime)| {
-                let (memory, memory_unavailable) = match runtime.memory_usage() {
-                    Ok(memory) => (Some(memory), None),
-                    Err(error) => (None, Some(error.to_string())),
-                };
-                SessionResources {
-                    session,
-                    generation: runtime.generation(),
-                    runtime: runtime.resources(),
-                    memory,
-                    memory_unavailable,
+            .map(|(session, source)| match source {
+                ResourceSource::Runtime(runtime) => {
+                    let pending = runtime.request_memory_usage(deadline);
+                    (session, Ok((runtime, pending)))
                 }
+                ResourceSource::Absent(generation, reason) => (session, Err((generation, reason))),
+            })
+            .collect();
+        let per_session = requested
+            .into_iter()
+            .map(|(session, row)| match row {
+                Ok((runtime, pending)) => {
+                    let (memory, memory_unavailable) =
+                        match pending.and_then(crate::runtime::PendingReply::wait) {
+                            Ok(memory) => (Some(memory), None),
+                            Err(crate::runtime::RuntimeError::Deadline(_)) => {
+                                (None, Some(MemoryUnavailable::Timeout))
+                            }
+                            Err(_) => (None, Some(MemoryUnavailable::Exited)),
+                        };
+                    SessionResources {
+                        session,
+                        generation: runtime.generation(),
+                        runtime: Some(runtime.resources()),
+                        memory,
+                        memory_unavailable,
+                    }
+                }
+                Err((generation, reason)) => SessionResources {
+                    session,
+                    generation,
+                    runtime: None,
+                    memory: None,
+                    memory_unavailable: Some(reason),
+                },
             })
             .collect();
         ResourceReport {

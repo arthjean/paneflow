@@ -9,6 +9,13 @@ use crate::{GhosttyError, Result};
 
 const MAX_CONTINUATION_BYTES: usize = 64 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompressionProgress {
+    Unsupported,
+    Pending,
+    Complete,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardLocation {
     Standard,
@@ -111,6 +118,37 @@ impl DisplayTerminal {
         }
         check("terminal_paste", result)?;
         Ok(written)
+    }
+
+    pub fn compression_activity(&self) -> Result<u64> {
+        let mut activity = 0u64;
+        let result = unsafe {
+            sys::ghostty_terminal_compression_activity(self.terminal.raw(), &mut activity)
+        };
+        check("terminal_compression_activity", result)?;
+        Ok(activity)
+    }
+
+    pub fn compress_step(&mut self) -> Result<CompressionProgress> {
+        let mut progress =
+            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED;
+        let result = unsafe {
+            sys::ghostty_terminal_compress(
+                self.terminal.raw(),
+                sys::GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
+                &mut progress,
+            )
+        };
+        check("terminal_compress", result)?;
+        Ok(match progress {
+            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING => {
+                CompressionProgress::Pending
+            }
+            sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE => {
+                CompressionProgress::Complete
+            }
+            _ => CompressionProgress::Unsupported,
+        })
     }
 
     pub(crate) fn geometry_batch(&self) -> Result<(u16, usize, usize)> {

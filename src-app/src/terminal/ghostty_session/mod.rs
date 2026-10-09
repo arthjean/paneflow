@@ -40,6 +40,7 @@ mod events;
 mod mailbox;
 mod pty_runtime;
 mod publish;
+mod recompression;
 
 use attached_runtime::*;
 use commands::*;

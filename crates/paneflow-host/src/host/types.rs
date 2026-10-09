@@ -1,12 +1,25 @@
 use super::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryUnavailable {
+    NotStarted,
+    Exited,
+    Timeout,
+}
+
+pub(super) enum ResourceSource {
+    Runtime(Arc<SessionRuntime>),
+    Absent(SessionGeneration, MemoryUnavailable),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionResources {
     pub session: SessionId,
     pub generation: SessionGeneration,
-    pub runtime: crate::runtime::RuntimeResources,
+    pub runtime: Option<crate::runtime::RuntimeResources>,
     pub memory: Option<crate::runtime::SessionMemory>,
-    pub memory_unavailable: Option<String>,
+    pub memory_unavailable: Option<MemoryUnavailable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
