@@ -8,7 +8,7 @@ use gpui::{
 
 use crate::terminal::TerminalSessionBackend;
 use crate::terminal::types::{
-    Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, NamedColor,
+    Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, NamedColor, OverscanRow,
     Point as GridPoint, RenderableCursor, SearchHighlight, SelectionRange, TerminalWindowSize,
     terminal_metric_to_u16,
 };
@@ -598,6 +598,7 @@ pub(crate) struct LayoutCacheKey {
     integrated_glyphs_enabled: bool,
     color_emoji_enabled: bool,
     minimum_contrast: f32,
+    lays_out_the_overscan_row: bool,
 }
 
 #[derive(Default)]
@@ -605,6 +606,23 @@ pub(crate) struct TerminalRenderCache {
     layout: Option<(LayoutCacheKey, Arc<LayoutState>)>,
     match_ticks: paint::scrollbar::MatchTickCache,
     rows: RowLayoutCache,
+}
+
+impl TerminalRenderCache {
+    #[cfg(test)]
+    pub(crate) fn cached_overscan_row(&self) -> Option<bool> {
+        self.layout
+            .as_ref()
+            .map(|(_, layout)| layout.overscan_above.is_some())
+    }
+}
+
+fn overscan_row_above(rows: &[OverscanRow], smooth_scroll_offset: Pixels) -> Option<&OverscanRow> {
+    if smooth_scroll_offset > px(0.0) {
+        rows.iter().find(|row| row.viewport_y == -1)
+    } else {
+        None
+    }
 }
 
 pub(crate) type SharedLayoutCache = Arc<Mutex<TerminalRenderCache>>;
@@ -812,6 +830,7 @@ impl TerminalElement {
             integrated_glyphs_enabled: self.integrated_glyphs_enabled,
             color_emoji_enabled: self.color_emoji_enabled,
             minimum_contrast: self.minimum_contrast,
+            lays_out_the_overscan_row: self.smooth_scroll_offset > px(0.0),
         };
         {
             let cache = self
@@ -826,10 +845,7 @@ impl TerminalElement {
         }
 
         let cells = content.cells;
-        let overscan_above = content
-            .overscan_rows
-            .iter()
-            .find(|row| row.viewport_y == -1)
+        let overscan_above = overscan_row_above(&content.overscan_rows, self.smooth_scroll_offset)
             .map(|row| {
                 Box::new(overscan_row_layout(
                     &row.cells,
@@ -886,8 +902,11 @@ impl TerminalElement {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn overscan_row_layout(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the overscan row reuses the viewport's layout inputs one by one, without the cursor, selection and search state a struct would carry"
+)]
+pub(crate) fn overscan_row_layout(
     cells: &[Cell],
     cols: usize,
     dims: CellDimensions,
@@ -2473,6 +2492,28 @@ mod golden_frame_tests {
         );
         viewport.overscan_above = Some(Box::new(above));
         assert_eq!(effective_smooth_scroll_offset(px(6.0), &viewport), px(6.0));
+    }
+
+    #[test]
+    fn only_a_shifted_frame_picks_the_overscan_row_to_lay_out() {
+        let foreground = Color::Named(NamedColor::Foreground);
+        let rows = [
+            OverscanRow {
+                viewport_y: -1,
+                cells: text_row(-1, "above", foreground, CellFlags::empty()).into(),
+            },
+            OverscanRow {
+                viewport_y: ROWS as i32,
+                cells: text_row(ROWS as i32, "below", foreground, CellFlags::empty()).into(),
+            },
+        ];
+        assert!(overscan_row_above(&rows, px(0.0)).is_none());
+        assert!(overscan_row_above(&rows, px(-3.0)).is_none());
+        assert_eq!(
+            overscan_row_above(&rows, px(6.0)).map(|row| row.viewport_y),
+            Some(-1)
+        );
+        assert!(overscan_row_above(&rows[1..], px(6.0)).is_none());
     }
 
     fn cached_inputs<'a>(

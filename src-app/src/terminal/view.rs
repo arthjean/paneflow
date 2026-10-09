@@ -2526,6 +2526,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_frame_lays_out_the_overscan_row_only_while_shifted(cx: &mut gpui::TestAppContext) {
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        let cached_overscan_row = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, _cx| window.refresh());
+            cx.run_until_parked();
+            terminal.read_with(cx, |view, _| {
+                view.layout_cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .cached_overscan_row()
+            })
+        };
+        assert_eq!(cached_overscan_row(cx), Some(false));
+
+        precise_scroll(&terminal, cx, 0.5);
+        eventually(cx, Some(true), cached_overscan_row);
+
+        precise_scroll(&terminal, cx, 0.5);
+        assert_eq!(pixel_offset(&terminal, cx), gpui::px(0.0));
+        eventually(cx, Some(false), cached_overscan_row);
+    }
+
+    #[gpui::test]
     fn pty_output_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
         let (terminal, _host, cx) = hosted_terminal(cx);
         let probe = watch_notifications(&terminal, cx);

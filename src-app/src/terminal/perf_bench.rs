@@ -14,7 +14,7 @@ use crate::bench_harness::{
 use super::bench_corpus::{CORPUS_SEED, deterministic_streams};
 use super::element::{
     CellDimensions, LayoutInputs, RowLayoutCache, base_font, layout_from_snapshot,
-    layout_from_snapshot_cached,
+    layout_from_snapshot_cached, overscan_row_layout,
 };
 use super::ghostty_session::{
     CellMirror, RUNTIME_LOOP_ATTENTIVE_REASONS, RUNTIME_LOOP_GATE_WAITS, RUNTIME_LOOP_IDLE_WAITS,
@@ -301,6 +301,95 @@ fn incremental_layout_scenarios(metrics: &mut Vec<Metric>) {
     }
 }
 
+const SHIFTED_LAYOUT_BUDGET_RATIO: f64 = 1.10;
+
+fn shifted_layout_line(unshifted_p95: Option<f64>, shifted_p95: Option<f64>) -> String {
+    match unshifted_p95.zip(shifted_p95).filter(|(unshifted, _)| *unshifted > 0.0) {
+        None => "PANEFLOW_BENCH_NOTE layout_echo_unshifted_uncached_220x60 or its shifted twin reported no p95, so the shifted layout ratio is unavailable".to_owned(),
+        Some((unshifted, shifted)) if shifted / unshifted > SHIFTED_LAYOUT_BUDGET_RATIO => format!(
+            "PANEFLOW_BENCH_WARNING layout_echo_shifted_uncached_220x60 p95 is {:.3}x layout_echo_unshifted_uncached_220x60, above the {SHIFTED_LAYOUT_BUDGET_RATIO:.2}x budget",
+            shifted / unshifted
+        ),
+        Some((unshifted, shifted)) => format!(
+            "PANEFLOW_BENCH_NOTE layout_echo_shifted_uncached_220x60 p95 is {:.3}x layout_echo_unshifted_uncached_220x60, within the {SHIFTED_LAYOUT_BUDGET_RATIO:.2}x budget",
+            shifted / unshifted
+        ),
+    }
+}
+
+fn shifted_layout_scenario(metrics: &mut Vec<Metric>) -> String {
+    let theme = crate::theme::paneflow_dark();
+    let palette = ThemePalette::from_theme(&theme);
+    let dims = CellDimensions {
+        cell_width: px(8.0),
+        line_height: px(16.0),
+    };
+    let mut p95 = [None, None];
+    for (slot, (name, shifted)) in [
+        ("layout_echo_unshifted_uncached_220x60", false),
+        ("layout_echo_shifted_uncached_220x60", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut terminal = terminal(220, 60);
+        fill(&mut terminal, 60);
+        for line in 0..=60 {
+            terminal
+                .feed(&scroll_chunk(line))
+                .expect("chunk must parse");
+        }
+        terminal
+            .set_overscan(1, 1)
+            .expect("overscan request must apply");
+        let mut publisher = Publisher::default();
+        assert!(
+            publisher
+                .publish(&mut terminal)
+                .overscan_rows
+                .iter()
+                .any(|row| row.viewport_y == -1),
+            "both frames must carry a captured row above the viewport"
+        );
+        let mut index = 0;
+        let metric = measure(
+            name,
+            "the same 220x60 echo frame with a {1, 1} overscan request, laid out uncached with and without a sub-line pixel offset (the shifted frame also lays out the row above)",
+            20,
+            300,
+            || {
+                index += 1;
+                terminal
+                    .feed(&echo_chunk(index, 60))
+                    .expect("benchmark output parses");
+                let content = publisher.publish(&mut terminal);
+                let state =
+                    layout_from_snapshot(layout_inputs(content, 220, 60, &theme, &palette, 0.0));
+                let above = content
+                    .overscan_rows
+                    .iter()
+                    .find(|row| shifted && row.viewport_y == -1)
+                    .map(|row| {
+                        overscan_row_layout(
+                            &row.cells,
+                            220,
+                            dims,
+                            bench_font(),
+                            &theme,
+                            &palette,
+                            (true, true, 0.0),
+                            0,
+                        )
+                    });
+                std::hint::black_box((state, above));
+            },
+        );
+        p95[slot] = metric.p95;
+        metrics.push(metric);
+    }
+    shifted_layout_line(p95[0], p95[1])
+}
+
 fn service_tail_scenarios(metrics: &mut Vec<Metric>) {
     for (name, bytes) in [
         (
@@ -495,6 +584,7 @@ fn terminal_pipeline_benchmark() {
     render_hold_and_overscan_scenarios(&mut metrics);
     let acc_delta = layout_scenario(&mut metrics, &sample);
     incremental_layout_scenarios(&mut metrics);
+    let shifted_layout = shifted_layout_scenario(&mut metrics);
     service_tail_scenarios(&mut metrics);
     line_text_scenario(&mut metrics);
     render_thread_lookups(&mut metrics);
@@ -503,6 +593,7 @@ fn terminal_pipeline_benchmark() {
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("{acc_delta}");
+    println!("{shifted_layout}");
     println!("PANEFLOW_BENCH_NOTE cpu share over the timed scenarios: {cpu_share:.2}");
     if cpu_share < 0.9 {
         println!(
@@ -530,6 +621,16 @@ mod tests {
     #[test]
     fn the_gate_simulation_never_publishes_more_than_once_per_chunk() {
         assert!(simulate_gate_trickle(Duration::from_millis(2), 100) <= 100);
+    }
+
+    #[test]
+    fn the_shifted_layout_ratio_is_flagged_past_its_budget() {
+        assert!(shifted_layout_line(Some(100.0), Some(110.0)).starts_with("PANEFLOW_BENCH_NOTE"));
+        assert!(
+            shifted_layout_line(Some(100.0), Some(111.0)).starts_with("PANEFLOW_BENCH_WARNING")
+        );
+        assert!(shifted_layout_line(None, Some(111.0)).contains("unavailable"));
+        assert!(shifted_layout_line(Some(0.0), Some(111.0)).contains("unavailable"));
     }
 
     #[test]
