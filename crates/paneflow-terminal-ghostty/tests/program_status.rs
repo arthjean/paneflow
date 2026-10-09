@@ -208,20 +208,47 @@ fn semantic_prompts_are_not_reported_without_program_status() {
 }
 
 #[test]
-fn a_status_flood_beyond_sixty_four_pending_events_overflows() {
+fn a_read_chunk_of_minimal_reports_loses_no_status_event() {
     let mut terminal = terminal(true);
+    let mut chunk = Vec::new();
+    let mut sent = 0;
+    while chunk.len() < 32 * 1024 - 32 {
+        chunk.extend_from_slice(format!("\x1b]7501;state=done:id={sent}\x07").as_bytes());
+        sent += 1;
+    }
+    let events = feed(&mut terminal, &chunk);
+
+    assert_eq!(reports(&events).len(), sent);
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            BackendEvent::ProgramStatusOverflow { .. } | BackendEvent::EffectsOverflow { .. }
+        )),
+        "{sent} minimal reports fit the pending budget"
+    );
+}
+
+#[test]
+fn a_status_flood_beyond_the_byte_budget_overflows_with_its_own_signal() {
+    let mut terminal = terminal(true);
+    let message = "eHh4".repeat(500);
     let mut flood = Vec::new();
-    for index in 0..65 {
-        flood.extend_from_slice(format!("\x1b]7501;state=working:id=job{index}\x1b\\").as_bytes());
+    for index in 0..400 {
+        flood.extend_from_slice(
+            format!("\x1b]7501;state=working:id=job{index}:msg={message}\x1b\\").as_bytes(),
+        );
     }
     let events = feed(&mut terminal, &flood);
 
-    assert_eq!(reports(&events).len(), 64);
+    let admitted = reports(&events).len();
+    assert!(admitted > 0 && admitted < 400, "{admitted}");
     assert!(events.iter().any(|event| matches!(
         event,
-        BackendEvent::EffectsOverflow {
-            dropped_events: 1,
-            ..
-        }
+        BackendEvent::ProgramStatusOverflow { dropped_events, .. } if *dropped_events == 400 - admitted
     )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, BackendEvent::EffectsOverflow { .. }))
+    );
 }

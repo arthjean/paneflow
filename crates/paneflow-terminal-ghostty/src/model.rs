@@ -456,4 +456,8 @@ pub enum BackendEvent {
         dropped_events: usize,
         dropped_bytes: usize,
     },
+    ProgramStatusOverflow {
+        dropped_events: usize,
+        dropped_bytes: usize,
+    },
 }

@@ -324,7 +324,8 @@ pub(super) fn handle_engine_events_to(
                 );
             }
             ghostty::BackendEvent::ProgramStatus(_)
-            | ghostty::BackendEvent::SemanticPrompt { .. } => {}
+            | ghostty::BackendEvent::SemanticPrompt { .. }
+            | ghostty::BackendEvent::ProgramStatusOverflow { .. } => {}
             ghostty::BackendEvent::WritePty(bytes) => reply_sink(&bytes)?,
             ghostty::BackendEvent::ClipboardStore(text) => queue_clipboard(inner, text),
             ghostty::BackendEvent::Title(title) => queue_title(inner, title),

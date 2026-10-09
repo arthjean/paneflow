@@ -1301,6 +1301,16 @@ impl Session {
                     self.title = None;
                     (self.observer)(RuntimeNotice::Title(String::new()));
                 }
+                ghostty::BackendEvent::ProgramStatusOverflow {
+                    dropped_events,
+                    dropped_bytes,
+                } => {
+                    log::warn!(
+                        "paneflow-host: {dropped_events} program status event(s) ({dropped_bytes} bytes) exceeded the pending budget; every declared status and the progress were cleared"
+                    );
+                    self.program_status.clear();
+                    self.progress = None;
+                }
                 ghostty::BackendEvent::ClipboardStore(_)
                 | ghostty::BackendEvent::DesktopNotification { .. } => {}
                 ghostty::BackendEvent::UnknownSequence { .. }
@@ -2736,6 +2746,85 @@ mod tests {
 
         assert_eq!(reset.recv().expect("reply"), Ok(()));
         assert_eq!(*directories.lock().unwrap(), known);
+    }
+
+    fn interleaved_status_reports() -> Vec<Vec<u8>> {
+        let mut reports = Vec::new();
+        let mut bytes = 0;
+        let mut index = 0;
+        while bytes < READ_CHUNK_BYTES - 64 {
+            let report = match index % 6 {
+                0 | 1 => format!("\x1b]7501;state=working:id=job{index}\x07"),
+                2 => format!("\x1b]7501;state=done:id=job{}\x07", index - 2),
+                3 => format!("\x1b]7501;state=clear:id=job{}\x07", index - 2),
+                4 => format!("\x1b]7501;state=error:id=err{index}\x07"),
+                _ => "\x1b]133;A\x07".to_string(),
+            };
+            bytes += report.len();
+            reports.push(report.into_bytes());
+            index += 1;
+        }
+        reports
+    }
+
+    #[test]
+    fn one_read_chunk_of_reports_ends_in_the_state_of_one_report_at_a_time() {
+        let reports = interleaved_status_reports();
+        let chunk = reports.concat();
+        assert!(chunk.len() <= READ_CHUNK_BYTES);
+        let (mut burst, _messages, _replies) = status_session();
+        let (mut paced, _paced_messages, _paced_replies) = status_session();
+
+        burst.feed(&chunk);
+        for report in &reports {
+            paced.feed(report);
+        }
+
+        assert!(!burst.program_status.is_empty());
+        assert_eq!(record_states(&burst), record_states(&paced));
+        assert_eq!(
+            burst.program_status.current(),
+            paced.program_status.current()
+        );
+    }
+
+    #[test]
+    fn a_status_overflow_clears_every_record_and_the_progress() {
+        let (mut session, _messages, _replies) = status_session();
+        let message = "eHh4".repeat(500);
+        let mut flood = b"\x1b]9;4;3\x07\x1b]7501;state=done:id=kept\x07".to_vec();
+        for index in 0..400 {
+            flood.extend_from_slice(
+                format!("\x1b]7501;state=working:id=job{index}:msg={message}\x07").as_bytes(),
+            );
+        }
+
+        session.feed(&flood);
+
+        assert!(session.program_status.is_empty());
+        let scan = session.viewport_scan().expect("scan");
+        assert_eq!(scan.progress, None);
+        assert_eq!(scan.program_status, None);
+    }
+
+    #[test]
+    fn a_report_that_follows_an_overflow_never_outlives_the_report_it_lost() {
+        let (mut session, _messages, _replies) = status_session();
+        let message = "eHh4".repeat(500);
+        let mut flood = Vec::new();
+        for index in 0..400 {
+            flood.extend_from_slice(
+                format!("\x1b]7501;state=working:id=job{index}:msg={message}\x07").as_bytes(),
+            );
+        }
+        flood.extend_from_slice(b"\x1b]7501;state=working:id=late\x07");
+        flood.extend_from_slice(
+            format!("\x1b]7501;state=done:id=late:msg={message}\x07").as_bytes(),
+        );
+
+        session.feed(&flood);
+
+        assert_eq!(record_states(&session), Vec::new());
     }
 
     #[test]

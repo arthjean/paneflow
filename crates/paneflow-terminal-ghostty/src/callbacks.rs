@@ -14,7 +14,8 @@ const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
 const BELL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_PENDING_NOTIFICATION_EVENTS: usize = 16;
 const MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS: usize = 32;
-const MAX_PENDING_PROGRAM_STATUS_EVENTS: usize = 64;
+const MAX_PENDING_PROGRAM_STATUS_BYTES: usize = 256 * 1024;
+const PROGRAM_STATUS_EVENT_OVERHEAD_BYTES: usize = std::mem::size_of::<BackendEvent>();
 
 const _: sys::GhosttyTerminalWritePtyFn = Some(crate::callback_ffi::write_pty);
 const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
@@ -46,7 +47,7 @@ pub(crate) struct CallbackState {
     last_bell_at: Cell<Option<Instant>>,
     pending_notification_events: Cell<usize>,
     pending_unknown_sequence_events: Cell<usize>,
-    pending_program_status_events: Cell<usize>,
+    pending_program_status_bytes: Cell<usize>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
@@ -79,7 +80,7 @@ impl CallbackState {
             last_bell_at: Cell::new(None),
             pending_notification_events: Cell::new(0),
             pending_unknown_sequence_events: Cell::new(0),
-            pending_program_status_events: Cell::new(0),
+            pending_program_status_bytes: Cell::new(0),
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
@@ -235,26 +236,15 @@ impl CallbackState {
                 }
             }
             BackendEvent::ProgramStatus(report) => {
-                let pending = self.pending_program_status_events.get();
-                if pending >= MAX_PENDING_PROGRAM_STATUS_EVENTS {
-                    push_overflow(&mut events, 1, report_bytes(&report));
-                } else {
-                    self.pending_program_status_events.set(pending + 1);
-                    events.push_back(BackendEvent::ProgramStatus(report));
-                }
+                let payload = report_bytes(&report);
+                self.admit_program_status(&mut events, BackendEvent::ProgramStatus(report), payload);
             }
             event @ BackendEvent::SemanticPrompt { .. } => {
-                let pending = self.pending_program_status_events.get();
-                if pending >= MAX_PENDING_PROGRAM_STATUS_EVENTS {
-                    push_overflow(&mut events, 1, 0);
-                } else {
-                    self.pending_program_status_events.set(pending + 1);
-                    events.push_back(event);
-                }
+                self.admit_program_status(&mut events, event, 0);
             }
             BackendEvent::Reset => {
                 events.retain(|event| !is_superseded_by_reset(event));
-                self.pending_program_status_events.set(0);
+                self.pending_program_status_bytes.set(0);
                 events.push_back(BackendEvent::Reset);
             }
             BackendEvent::CallbackPanicked => {
@@ -279,7 +269,31 @@ impl CallbackState {
                 dropped_events,
                 dropped_bytes,
             } => push_overflow(&mut events, dropped_events, dropped_bytes),
+            BackendEvent::ProgramStatusOverflow {
+                dropped_events,
+                dropped_bytes,
+            } => push_program_status_overflow(&mut events, dropped_events, dropped_bytes),
         }
+    }
+
+    fn admit_program_status(
+        &self,
+        events: &mut VecDeque<BackendEvent>,
+        event: BackendEvent,
+        payload_bytes: usize,
+    ) {
+        if events.back() == Some(&event) {
+            return;
+        }
+        let cost = payload_bytes.saturating_add(PROGRAM_STATUS_EVENT_OVERHEAD_BYTES);
+        let total = self.pending_program_status_bytes.get().saturating_add(cost);
+        if total > MAX_PENDING_PROGRAM_STATUS_BYTES {
+            self.pending_program_status_bytes.set(usize::MAX);
+            push_program_status_overflow(events, 1, payload_bytes);
+            return;
+        }
+        self.pending_program_status_bytes.set(total);
+        events.push_back(event);
     }
 
     pub(crate) fn drain(&self) -> Vec<BackendEvent> {
@@ -287,7 +301,7 @@ impl CallbackState {
         self.pending_clipboard_events.set(0);
         self.pending_notification_events.set(0);
         self.pending_unknown_sequence_events.set(0);
-        self.pending_program_status_events.set(0);
+        self.pending_program_status_bytes.set(0);
         self.events.borrow_mut().drain(..).collect()
     }
 }
@@ -301,6 +315,28 @@ fn is_superseded_by_reset(event: &BackendEvent) -> bool {
 
 fn report_bytes(report: &crate::ProgramStatusReport) -> usize {
     report.id.len() + report.app.len() + report.title.len() + report.message.len()
+}
+
+fn push_program_status_overflow(
+    events: &mut VecDeque<BackendEvent>,
+    dropped_events: usize,
+    dropped_bytes: usize,
+) {
+    if let Some(BackendEvent::ProgramStatusOverflow {
+        dropped_events: pending_events,
+        dropped_bytes: pending_bytes,
+    }) = events
+        .iter_mut()
+        .find(|event| matches!(event, BackendEvent::ProgramStatusOverflow { .. }))
+    {
+        *pending_events = pending_events.saturating_add(dropped_events);
+        *pending_bytes = pending_bytes.saturating_add(dropped_bytes);
+    } else {
+        events.push_back(BackendEvent::ProgramStatusOverflow {
+            dropped_events,
+            dropped_bytes,
+        });
+    }
 }
 
 fn push_overflow(events: &mut VecDeque<BackendEvent>, dropped_events: usize, dropped_bytes: usize) {
@@ -541,6 +577,72 @@ mod tests {
         std::thread::sleep(BELL_INTERVAL);
         state.push(BackendEvent::Bell);
         assert_eq!(state.drain(), [BackendEvent::Bell]);
+    }
+
+    fn minimal_report(id: usize) -> BackendEvent {
+        BackendEvent::ProgramStatus(crate::ProgramStatusReport {
+            state: crate::ProgramStatusState::Done,
+            kind: None,
+            progress: None,
+            id: id.to_string(),
+            app: String::new(),
+            title: String::new(),
+            message: String::new(),
+        })
+    }
+
+    #[test]
+    fn a_status_overflow_is_told_apart_from_other_effect_overflows() {
+        let state = state();
+        for _ in 0..=MAX_PENDING_CLIPBOARD_EVENTS {
+            state.push(BackendEvent::ClipboardStore("x".into()));
+        }
+        let events = state.drain();
+        assert!(events.contains(&BackendEvent::EffectsOverflow {
+            dropped_events: 1,
+            dropped_bytes: 1,
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, BackendEvent::ProgramStatusOverflow { .. }))
+        );
+
+        let admitted = MAX_PENDING_PROGRAM_STATUS_BYTES / (PROGRAM_STATUS_EVENT_OVERHEAD_BYTES + 4);
+        for id in 0..admitted + 3 {
+            state.push(minimal_report(1_000 + id));
+        }
+        let events = state.drain();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, BackendEvent::EffectsOverflow { .. }))
+        );
+        assert_eq!(
+            events.last(),
+            Some(&BackendEvent::ProgramStatusOverflow {
+                dropped_events: 3,
+                dropped_bytes: 12,
+            })
+        );
+        assert_eq!(events.len(), admitted + 1);
+    }
+
+    #[test]
+    fn a_repeated_status_event_is_queued_once() {
+        let state = state();
+        let prompt = BackendEvent::SemanticPrompt {
+            kind: crate::SemanticPromptKind::PromptStart,
+            prompt_kind: crate::PromptKind::Primary,
+            exit_code: None,
+        };
+        for _ in 0..100_000 {
+            state.push(prompt.clone());
+        }
+        state.push(minimal_report(7));
+        state.push(prompt.clone());
+
+        assert_eq!(state.drain(), [prompt.clone(), minimal_report(7), prompt]);
     }
 
     #[test]
