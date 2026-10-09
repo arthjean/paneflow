@@ -819,7 +819,7 @@ impl Pane {
         surface.kind_icon()
     }
 
-    fn terminal_surface_title(terminal: &Entity<TerminalView>, cx: &App) -> String {
+    pub(crate) fn terminal_surface_title(terminal: &Entity<TerminalView>, cx: &App) -> String {
         let view = terminal.read(cx);
         if let Some(custom) = view.terminal.custom_name.as_ref().filter(|c| !c.is_empty()) {
             return custom.clone();

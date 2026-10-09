@@ -82,6 +82,7 @@ pub(crate) struct HostAgentView {
     bootstrapped: bool,
     disconnect_reason: Option<String>,
     applied_snapshot: Option<(Vec<Value>, Vec<String>)>,
+    pub(crate) declared_watch: crate::app::declared_status::DeclaredWatch,
 }
 
 impl HostAgentView {
@@ -1157,6 +1158,11 @@ mod tests {
                 label: "blocked: permission · Apply the plan?".into(),
                 error: false,
             }
+        );
+        assert_eq!(
+            crate::app::declared_status::queue_entry(row.declared_status.as_ref(), "infra")
+                .map(|entry| entry.label),
+            Some("terraform".to_string())
         );
     }
 

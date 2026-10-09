@@ -1,12 +1,23 @@
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
 use gpui::{Context, Entity, SharedString};
 use paneflow_host::program_status::DeclaredStatus;
 
 use crate::PaneFlowApp;
+use crate::app::host_agents::{HostAgentRow, host_observed_agent};
 use crate::terminal::TerminalView;
+use crate::workspace::Workspace;
+
+pub(crate) const BLOCKED_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(10);
 
 const CHIP_MAX_CHARS: usize = 48;
 
 const LINE_MAX_CHARS: usize = 512;
+
+const UNNAMED_PROGRAM: &str = "A program";
+
+const BLOCKED_WITHOUT_MESSAGE: &str = "Needs input";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeclaredState {
@@ -27,6 +38,10 @@ impl DeclaredState {
             "error" => Some(Self::Error),
             _ => None,
         }
+    }
+
+    fn queues(self) -> bool {
+        matches!(self, Self::Blocked | Self::Error)
     }
 }
 
@@ -116,16 +131,133 @@ fn truncate_chars(text: &str, max: usize) -> String {
     kept
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredQueueEntry {
+    pub(crate) label: String,
+    pub(crate) message: Option<String>,
+    pub(crate) errored: bool,
+}
+
+pub(crate) fn queue_entry(
+    status: Option<&DeclaredStatus>,
+    pane_title: &str,
+) -> Option<DeclaredQueueEntry> {
+    let status = status?;
+    let state = DeclaredState::of(status).filter(|state| state.queues())?;
+    Some(DeclaredQueueEntry {
+        label: one_line(&status.app)
+            .or_else(|| one_line(pane_title))
+            .unwrap_or_else(|| UNNAMED_PROGRAM.to_string()),
+        message: one_line(&status.message),
+        errored: state == DeclaredState::Error,
+    })
+}
+
+pub(crate) fn blocked_notification_text(
+    status: &DeclaredStatus,
+    pane_title: &str,
+) -> (String, String) {
+    let program = one_line(&status.app).unwrap_or_else(|| UNNAMED_PROGRAM.to_string());
+    let summary = match one_line(pane_title) {
+        Some(pane) => format!("{program} needs input in {pane}"),
+        None => format!("{program} needs input"),
+    };
+    let body = one_line(&status.message).unwrap_or_else(|| BLOCKED_WITHOUT_MESSAGE.to_string());
+    (summary, body)
+}
+
+pub(crate) fn surface_has_agent(
+    workspace: &Workspace,
+    surface_id: u64,
+    row: Option<&HostAgentRow>,
+) -> bool {
+    host_observed_agent(row).is_some()
+        || workspace
+            .agent_sessions
+            .values()
+            .any(|session| session.surface_id == Some(surface_id))
+}
+
+#[derive(Debug)]
+struct Watched {
+    state: Option<DeclaredState>,
+    since: Instant,
+    notified_at: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct DeclaredWatch {
+    surfaces: HashMap<u64, Watched>,
+}
+
+impl DeclaredWatch {
+    pub(crate) fn observe(
+        &mut self,
+        surface_id: u64,
+        state: Option<DeclaredState>,
+        notifiable: bool,
+        now: Instant,
+    ) -> bool {
+        let watched = self.surfaces.entry(surface_id).or_insert(Watched {
+            state: None,
+            since: now,
+            notified_at: None,
+        });
+        let entered = watched.state != state;
+        if entered {
+            watched.state = state;
+            watched.since = now;
+        }
+        if !(entered && notifiable && state == Some(DeclaredState::Blocked)) {
+            return false;
+        }
+        if watched
+            .notified_at
+            .is_some_and(|at| now.saturating_duration_since(at) < BLOCKED_NOTIFICATION_INTERVAL)
+        {
+            return false;
+        }
+        watched.notified_at = Some(now);
+        true
+    }
+
+    pub(crate) fn since(&self, surface_id: u64) -> Option<Instant> {
+        self.surfaces
+            .get(&surface_id)
+            .filter(|watched| watched.state.is_some())
+            .map(|watched| watched.since)
+    }
+
+    fn retain(&mut self, live: &HashSet<u64>) {
+        self.surfaces
+            .retain(|surface_id, _| live.contains(surface_id));
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn refresh_declared_status(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let mut live = HashSet::new();
+        let mut blocked = Vec::new();
         for ws_idx in 0..self.workspaces.len() {
             for pane in self.workspaces[ws_idx].collect_panes() {
                 let terminals: Vec<Entity<TerminalView>> =
                     pane.read(cx).terminals().cloned().collect();
                 let mut pane_changed = false;
                 for terminal in terminals {
+                    let surface_id = terminal.entity_id().as_u64();
+                    live.insert(surface_id);
                     let row = self.host_agents.row(&terminal.read(cx).terminal.session_id);
                     let declared = row.and_then(|row| row.declared_status.clone());
+                    let state = declared.as_ref().and_then(DeclaredState::of);
+                    let agentless = !surface_has_agent(&self.workspaces[ws_idx], surface_id, row);
+                    if self
+                        .host_agents
+                        .declared_watch
+                        .observe(surface_id, state, agentless, now)
+                    {
+                        blocked.push((ws_idx, surface_id, terminal.clone()));
+                    }
                     if terminal.read(cx).terminal.declared_status != declared {
                         terminal.update(cx, |view, _| view.terminal.declared_status = declared);
                         pane_changed = true;
@@ -136,6 +268,42 @@ impl PaneFlowApp {
                 }
             }
         }
+        self.host_agents.declared_watch.retain(&live);
+        for (ws_idx, surface_id, terminal) in blocked {
+            self.notify_declared_block(ws_idx, surface_id, &terminal, cx);
+        }
+    }
+
+    fn notify_declared_block(
+        &self,
+        ws_idx: usize,
+        surface_id: u64,
+        terminal: &Entity<TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(status) = terminal.read(cx).terminal.declared_status.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let pane_title = crate::pane::Pane::terminal_surface_title(terminal, cx);
+        let seen = crate::app::agent_status::completion_was_seen(
+            self.surfaces_under_user_eye(workspace.id, cx).as_ref(),
+            Some(surface_id),
+        ) || workspace.muted;
+        let (summary, body) = blocked_notification_text(&status, &pane_title);
+        crate::agents::notifications::fire_desktop_notification_for_session(
+            crate::agents::notifications::program_notification(summary, body, &pane_title),
+            &self.cached_config,
+            seen,
+            Some(surface_id),
+            cx.background_executor().clone(),
+        );
+    }
+
+    pub(crate) fn declared_since(&self, surface_id: u64) -> Option<Instant> {
+        self.host_agents.declared_watch.since(surface_id)
     }
 }
 
@@ -312,5 +480,178 @@ mod tests {
             one_line(&"é".repeat(LINE_MAX_CHARS + 10)).map(|line| line.chars().count()),
             Some(LINE_MAX_CHARS)
         );
+    }
+
+    #[test]
+    fn only_blocked_and_error_enter_the_attention_queue() {
+        for (wire, queued) in [
+            ("working", false),
+            ("idle", false),
+            ("done", false),
+            ("blocked", true),
+            ("error", true),
+            ("bogus", false),
+        ] {
+            assert_eq!(
+                queue_entry(Some(&status(wire)), "build").is_some(),
+                queued,
+                "{wire}"
+            );
+        }
+        assert_eq!(queue_entry(None, "build"), None);
+    }
+
+    #[test]
+    fn a_queue_entry_is_labelled_by_the_app_then_the_pane_with_a_clean_message() {
+        let mut blocked = status("blocked");
+        blocked.app = "terra\u{202E}form".to_string();
+        blocked.message = "Apply\u{2066} the plan?\nyes/no".to_string();
+        assert_eq!(
+            queue_entry(Some(&blocked), "infra"),
+            Some(DeclaredQueueEntry {
+                label: "terraform".to_string(),
+                message: Some("Apply the plan?".to_string()),
+                errored: false,
+            })
+        );
+
+        let failed = status("error");
+        assert_eq!(
+            queue_entry(Some(&failed), "backend"),
+            Some(DeclaredQueueEntry {
+                label: "backend".to_string(),
+                message: None,
+                errored: true,
+            })
+        );
+        assert_eq!(
+            queue_entry(Some(&failed), "").map(|entry| entry.label),
+            Some(UNNAMED_PROGRAM.to_string())
+        );
+    }
+
+    #[test]
+    fn the_blocked_notification_names_the_pane_and_carries_the_clean_message() {
+        let mut blocked = status("blocked");
+        blocked.app = "terraform".to_string();
+        blocked.message = "Apply \u{202E}the plan?".to_string();
+
+        assert_eq!(
+            blocked_notification_text(&blocked, "infra\u{2066}"),
+            (
+                "terraform needs input in infra".to_string(),
+                "Apply the plan?".to_string()
+            )
+        );
+        assert_eq!(
+            blocked_notification_text(&status("blocked"), ""),
+            (
+                "A program needs input".to_string(),
+                BLOCKED_WITHOUT_MESSAGE.to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_blocked_entry_notifies_once_and_the_watch_forgets_a_removed_record() {
+        let mut watch = DeclaredWatch::default();
+        let start = Instant::now();
+        assert!(!watch.observe(7, Some(DeclaredState::Working), true, start));
+        assert!(watch.observe(7, Some(DeclaredState::Blocked), true, start));
+        assert!(
+            !watch.observe(7, Some(DeclaredState::Blocked), true, start),
+            "a status that does not change never notifies again"
+        );
+        assert_eq!(watch.since(7), Some(start));
+
+        let later = start + Duration::from_secs(1);
+        assert!(!watch.observe(7, None, true, later));
+        assert_eq!(watch.since(7), None, "a removed record leaves the queue");
+    }
+
+    #[test]
+    fn at_most_one_notification_per_pane_every_ten_seconds() {
+        let mut watch = DeclaredWatch::default();
+        let start = Instant::now();
+        let mut sent = 0;
+        for step in 0..10_u64 {
+            let now = start + Duration::from_secs(step);
+            sent += usize::from(watch.observe(1, Some(DeclaredState::Working), true, now));
+            sent += usize::from(watch.observe(1, Some(DeclaredState::Blocked), true, now));
+        }
+        assert_eq!(sent, 1);
+        let after = start + BLOCKED_NOTIFICATION_INTERVAL;
+        watch.observe(1, Some(DeclaredState::Working), true, after);
+        assert!(watch.observe(1, Some(DeclaredState::Blocked), true, after));
+        assert!(
+            watch.observe(2, Some(DeclaredState::Blocked), true, start),
+            "another pane keeps its own budget"
+        );
+    }
+
+    #[test]
+    fn a_hundred_alternations_in_one_second_send_one_notification_and_keep_the_final_state() {
+        let mut watch = DeclaredWatch::default();
+        let start = Instant::now();
+        let mut sent = 0;
+        let mut last = None;
+        for flip in 0..200_u64 {
+            let state = if flip % 2 == 0 {
+                DeclaredState::Blocked
+            } else {
+                DeclaredState::Working
+            };
+            last = Some(state);
+            let now = start + Duration::from_millis(flip * 5);
+            sent += usize::from(watch.observe(3, Some(state), true, now));
+        }
+        assert_eq!(sent, 1);
+        assert_eq!(last, Some(DeclaredState::Working));
+        assert_eq!(
+            watch.surfaces.get(&3).and_then(|watched| watched.state),
+            last,
+            "the queue reads the final state"
+        );
+        let mut working = status("working");
+        working.app = "terraform".to_string();
+        assert_eq!(queue_entry(Some(&working), "infra"), None);
+    }
+
+    #[test]
+    fn an_agent_pane_is_tracked_but_never_notified_by_the_program_path() {
+        let mut watch = DeclaredWatch::default();
+        let now = Instant::now();
+        assert!(!watch.observe(4, Some(DeclaredState::Blocked), false, now));
+        assert_eq!(watch.since(4), Some(now));
+    }
+
+    #[test]
+    fn the_declared_status_path_never_writes_to_a_pty() {
+        let source = include_str!("declared_status.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has a production part");
+        for writer in [
+            "inject_text",
+            "write_injected_text",
+            "write_program_injected_text",
+            "send_text",
+            "write_text",
+            "write_program_text",
+            "send_command",
+            "send_keystroke",
+            "write_to_pty",
+            "write_program_input",
+            "write_conversation_resume",
+            "submit",
+            "paste",
+            "input(",
+        ] {
+            assert!(
+                !production.contains(writer),
+                "the declared status path must never write to a PTY: found {writer}"
+            );
+        }
     }
 }

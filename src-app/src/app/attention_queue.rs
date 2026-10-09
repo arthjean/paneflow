@@ -7,6 +7,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
+use crate::app::declared_status::{queue_entry, surface_has_agent};
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::terminal::view::conversation::{ALLOW_WRITE_LABEL, DENY_WRITE_LABEL};
@@ -15,10 +16,11 @@ use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 pub(crate) struct QueueRow {
     pub(crate) surface_id: Option<u64>,
     pub(crate) ws_title: String,
-    pub(crate) tool_label: &'static str,
+    pub(crate) tool_label: SharedString,
     pub(crate) message: Option<String>,
     pub(crate) waiting_secs: u64,
     pub(crate) write_request: Option<u64>,
+    pub(crate) errored: bool,
 }
 
 pub(crate) const WRITE_REQUEST_LABEL: &str = "Write request";
@@ -64,10 +66,11 @@ impl PaneFlowApp {
             rows.push(QueueRow {
                 surface_id: place.map(|(surface_id, _)| *surface_id),
                 ws_title: place.map(|(_, title)| title.clone()).unwrap_or_default(),
-                tool_label: WRITE_REQUEST_LABEL,
+                tool_label: SharedString::new_static(WRITE_REQUEST_LABEL),
                 message: Some(pending.request().message()),
                 waiting_secs: pending.asked_at.elapsed().as_secs(),
                 write_request: Some(pending.id),
+                errored: false,
             });
         }
         for ws in &self.workspaces {
@@ -83,14 +86,45 @@ impl PaneFlowApp {
                 rows.push(QueueRow {
                     surface_id,
                     ws_title: ws.title.clone(),
-                    tool_label: session.tool.display_name(),
+                    tool_label: SharedString::new_static(session.tool.display_name()),
                     message: session.message.clone(),
                     waiting_secs: session
                         .waiting_since
                         .map(|t| t.elapsed().as_secs())
                         .unwrap_or(0),
                     write_request: None,
+                    errored: false,
                 });
+            }
+        }
+        for ws in &self.workspaces {
+            for pane in ws.collect_panes() {
+                for terminal in pane.read(cx).terminals() {
+                    let surface_id = terminal.entity_id().as_u64();
+                    let view = terminal.read(cx);
+                    let row = self.host_agent_row(&view.terminal.session_id);
+                    if surface_has_agent(ws, surface_id, row) {
+                        continue;
+                    }
+                    let Some(entry) = queue_entry(
+                        view.terminal.declared_status.as_ref(),
+                        &crate::pane::Pane::terminal_surface_title(terminal, cx),
+                    ) else {
+                        continue;
+                    };
+                    rows.push(QueueRow {
+                        surface_id: Some(surface_id),
+                        ws_title: ws.title.clone(),
+                        tool_label: entry.label.into(),
+                        message: entry.message,
+                        waiting_secs: self
+                            .declared_since(surface_id)
+                            .map(|since| since.elapsed().as_secs())
+                            .unwrap_or(0),
+                        write_request: None,
+                        errored: entry.errored,
+                    });
+                }
             }
         }
         sort_rows(&mut rows);
@@ -246,7 +280,9 @@ impl PaneFlowApp {
                 let question: SharedString = row
                     .message
                     .clone()
-                    .unwrap_or_else(|| "Needs input".to_string())
+                    .unwrap_or_else(|| {
+                        if row.errored { "Failed" } else { "Needs input" }.to_string()
+                    })
                     .into();
                 let mut r = div()
                     .id(row_id)
@@ -258,20 +294,19 @@ impl PaneFlowApp {
                     .py(px(7.))
                     .text_size(px(12.))
                     .bg(resting_background)
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(6.))
-                            .h(px(6.))
-                            .rounded_full()
-                            .bg(ui.vc_conflict),
-                    )
+                    .child(div().flex_none().w(px(6.)).h(px(6.)).rounded_full().bg(
+                        if row.errored {
+                            ui.agent_error
+                        } else {
+                            ui.vc_conflict
+                        },
+                    ))
                     .child(
                         div()
                             .flex_none()
                             .text_color(ui.text)
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(row.tool_label),
+                            .child(row.tool_label.clone()),
                     )
                     .child(
                         div()
@@ -387,10 +422,11 @@ mod tests {
         QueueRow {
             surface_id,
             ws_title: String::new(),
-            tool_label: "Claude",
+            tool_label: SharedString::new_static("Claude"),
             message: None,
             waiting_secs,
             write_request: None,
+            errored: false,
         }
     }
 
