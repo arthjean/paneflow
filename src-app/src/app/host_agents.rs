@@ -70,6 +70,7 @@ pub(crate) struct HostAgentRow {
     pub(crate) state_seq: u64,
     pub(crate) attention_reason: Option<String>,
     pub(crate) provider_session_id: Option<String>,
+    pub(crate) declared_status: Option<paneflow_host::program_status::DeclaredStatus>,
 }
 
 #[derive(Default)]
@@ -174,6 +175,12 @@ impl WorkerNotification {
     }
 }
 
+fn event_keeps_row(frame: &Value) -> bool {
+    [frame.get("agent"), frame.get("declared_status")]
+        .into_iter()
+        .any(|field| field.is_some_and(|value| !value.is_null()))
+}
+
 pub(crate) fn host_observed_agent(row: Option<&HostAgentRow>) -> Option<TerminalAgent> {
     row.filter(|row| row.live)
         .and_then(|row| row.runtime.or(row.tool))
@@ -257,6 +264,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .and_then(|agent| agent.get("provider_session_id"))
             .and_then(Value::as_str)
             .map(str::to_owned),
+        declared_status: entry
+            .get("declared_status")
+            .cloned()
+            .and_then(|declared| serde_json::from_value(declared).ok()),
     })
 }
 
@@ -580,6 +591,7 @@ impl PaneFlowApp {
         self.host_agents.bootstrapped = true;
         self.apply_host_observed_agents(cx);
         self.seed_attached_sessions_from_host(cx);
+        self.refresh_declared_status(cx);
         self.refresh_owned_sessions(cx);
         cx.notify();
     }
@@ -688,6 +700,7 @@ impl PaneFlowApp {
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
         }
+        self.refresh_declared_status(cx);
     }
 
     pub(crate) fn surface_for_session(
@@ -719,15 +732,13 @@ impl PaneFlowApp {
             "activity": frame.get("agent").cloned().unwrap_or(Value::Null),
             "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
             "unread": frame.get("unread").cloned().unwrap_or(Value::Null),
+            "declared_status": frame.get("declared_status").cloned().unwrap_or(Value::Null),
         }));
         if let Some(row) = row.as_ref() {
-            match frame.get("agent") {
-                Some(Value::Null) | None => {
-                    self.host_agents.rows.remove(&session);
-                }
-                Some(_) => {
-                    self.host_agents.rows.insert(session.clone(), row.clone());
-                }
+            if event_keeps_row(frame) {
+                self.host_agents.rows.insert(session.clone(), row.clone());
+            } else {
+                self.host_agents.rows.remove(&session);
             }
         }
         self.host_agents.connected = true;
@@ -750,6 +761,7 @@ impl PaneFlowApp {
         if let Some(row) = row.as_ref() {
             self.seed_session_surface(row, workspace_id, surface_id);
         }
+        self.refresh_declared_status(cx);
         let Some(kind) = frame.get("kind").and_then(Value::as_str).map(str::to_owned) else {
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
@@ -1102,6 +1114,70 @@ mod tests {
         assert_eq!(session.attention_reason.as_deref(), Some("bell"));
         assert!(session.state_seq > 0);
         assert!(session.waiting_since.is_some());
+    }
+
+    #[test]
+    fn a_program_without_an_agent_reaches_the_desktop_with_its_declared_status() {
+        let home = tempfile::tempdir().expect("home");
+        let session = SessionId::new();
+        let mut worker = paneflow_serve::state::WorkerState::new(home.path());
+        let host_row = json!({
+            "session": session.to_string(),
+            "generation": 1,
+            "live": true,
+            "lifecycle": paneflow_host::manifest::SessionLifecycle::Running,
+            "declared_status": paneflow_host::program_status::DeclaredStatus {
+                state: "blocked".to_string(),
+                kind: Some("permission".to_string()),
+                progress: None,
+                app: "terraform".to_string(),
+                title: String::new(),
+                message: "Apply the plan?".to_string(),
+            },
+        });
+        worker.apply_core_snapshot(&[host_row]);
+
+        let follow_header = worker.snapshot();
+        let row = row_from_snapshot(&follow_header[0]).expect("row");
+
+        assert_eq!(
+            row.declared_status
+                .as_ref()
+                .map(|status| status.state.as_str()),
+            Some("blocked")
+        );
+        assert_eq!(host_observed_agent(Some(&row)), None);
+        assert!(
+            projected_session(&row, 5, None).is_none(),
+            "the surface never becomes an agent session"
+        );
+    }
+
+    #[test]
+    fn a_malformed_declared_status_is_dropped_without_losing_the_row() {
+        let session = SessionId::new();
+        let row = row_from_snapshot(&json!({
+            "session": session.to_string(),
+            "live": true,
+            "declared_status": "blocked",
+        }))
+        .expect("row");
+        assert_eq!(row.declared_status, None);
+    }
+
+    #[test]
+    fn an_event_keeps_the_row_of_a_program_that_still_declares_a_status() {
+        let declared = json!({"state": "error", "app": "cargo"});
+        assert!(event_keeps_row(
+            &json!({"agent": null, "declared_status": declared})
+        ));
+        assert!(event_keeps_row(
+            &json!({"agent": {"tool": "claude"}, "declared_status": null})
+        ));
+        assert!(!event_keeps_row(
+            &json!({"agent": null, "declared_status": null})
+        ));
+        assert!(!event_keeps_row(&json!({})));
     }
 
     #[test]

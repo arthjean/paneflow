@@ -11,6 +11,7 @@ use paneflow_terminal_ghostty::{ProgramStatusReport, ProgramStatusState};
 use crate::host::{HostError, ScanTarget, SessionHost};
 use crate::manifest::{HostedSessionRuntime, now_ms};
 use crate::process::ProcessIdentity;
+use crate::program_status::DeclaredStatus;
 use crate::runtime::ViewportScan;
 use crate::runtime_observer::{
     ForegroundCache, ForegroundRuntime, RuntimeObservation, observe_foreground_runtime,
@@ -66,6 +67,9 @@ pub struct ViewportTracker {
     screen_state: Option<ScreenState>,
     screen_activity: Option<String>,
     declared_blocker: Option<String>,
+    declared_status: Option<DeclaredStatus>,
+    scanned_input_at_ms: Option<u64>,
+    scanned_resets: u64,
     menu_prompt_active: bool,
     blocker_misses: u8,
     observation: Option<RuntimeObservation>,
@@ -107,10 +111,8 @@ impl<'a> ScreenView<'a> {
             .map(|report| declared_screen_state(report.state))
     }
 
-    fn declared_blocker(&self) -> Option<String> {
-        self.program_status
-            .filter(|report| report.state == ProgramStatusState::Blocked)
-            .map(|report| report.message.clone())
+    fn declared_status(&self) -> Option<DeclaredStatus> {
+        self.program_status.map(DeclaredStatus::of)
     }
 
     fn classification_hash(&self) -> u64 {
@@ -139,6 +141,7 @@ pub struct ViewportEdges {
     pub screen_changed_at_ms: Option<u64>,
     pub screen_activity: Option<String>,
     pub declared_blocker: Option<String>,
+    pub declared_status: Option<DeclaredStatus>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub write_due: bool,
@@ -172,6 +175,20 @@ impl ViewportTracker {
     pub fn record_scanned_output(&mut self, output_end: u64, rules_generation: u64) {
         self.scanned_output_end = Some(output_end);
         self.scanned_rules_generation = Some(rules_generation);
+    }
+
+    pub fn declared_rescan_due(&self, input_at_ms: Option<u64>, resets: u64) -> bool {
+        let awaits_acknowledgement = self
+            .declared_status
+            .as_ref()
+            .is_some_and(DeclaredStatus::awaits_acknowledgement);
+        self.scanned_resets != resets
+            || (awaits_acknowledgement && self.scanned_input_at_ms != input_at_ms)
+    }
+
+    pub fn record_scanned_terminal(&mut self, input_at_ms: Option<u64>, resets: u64) {
+        self.scanned_input_at_ms = input_at_ms;
+        self.scanned_resets = resets;
     }
 
     fn blocker_releasing(&self) -> bool {
@@ -246,10 +263,11 @@ impl ViewportTracker {
             }
         }
         let screen_activity = self.screen_state.map(|state| state.as_str().to_string());
+        let declared_status = view.declared_status();
         let declared_blocker = self
             .classified_key
             .is_some()
-            .then(|| view.declared_blocker())
+            .then(|| declared_status.as_ref().and_then(DeclaredStatus::blocker))
             .flatten();
         let menu_prompt_active = self.menu_prompt_active;
 
@@ -257,16 +275,19 @@ impl ViewportTracker {
             || menu_prompt_active != previous_blocker
             || screen_activity != self.screen_activity
             || declared_blocker != self.declared_blocker
+            || declared_status != self.declared_status
             || observation != self.observation;
 
         self.screen_activity.clone_from(&screen_activity);
         self.declared_blocker.clone_from(&declared_blocker);
+        self.declared_status.clone_from(&declared_status);
         self.observation.clone_from(&observation);
 
         ViewportEdges {
             screen_changed_at_ms,
             screen_activity,
             declared_blocker,
+            declared_status,
             menu_prompt_active,
             observed_runtime: observation,
             write_due,
@@ -452,11 +473,13 @@ fn scan_target(
     key: TrackerKey,
 ) -> bool {
     let output_end = target.runtime.stream().end_offset();
+    let input_at_ms = target.runtime.input_at_ms();
+    let resets = target.runtime.resets();
     let rules_generation = host.screen_rules().generation();
-    if trackers
-        .get(&key)
-        .is_some_and(|tracker| !tracker.scan_due(output_end, rules_generation))
-    {
+    if trackers.get(&key).is_some_and(|tracker| {
+        !tracker.scan_due(output_end, rules_generation)
+            && !tracker.declared_rescan_due(input_at_ms, resets)
+    }) {
         return false;
     }
     let Ok(scan) = target.runtime.viewport_scan(VIEWPORT_SCAN_BUDGET) else {
@@ -475,6 +498,7 @@ fn scan_target(
         now_ms(),
     );
     tracker.record_scanned_output(output_end, rules_generation);
+    tracker.record_scanned_terminal(input_at_ms, resets);
     if !edges.write_due {
         return false;
     }
@@ -484,6 +508,7 @@ fn scan_target(
         }
         record.screen_activity = edges.screen_activity;
         record.declared_blocker = edges.declared_blocker;
+        record.declared_status = edges.declared_status;
         record.menu_prompt_active = edges.menu_prompt_active;
         let launch_binding = record
             .runtime
@@ -642,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_program_status_needs_a_recognized_runtime() {
+    fn a_declared_program_status_classifies_only_a_recognized_runtime() {
         let mut tracker = ViewportTracker::default();
         let blocked = declared(ProgramStatusState::Blocked, "Apply?");
 
@@ -650,6 +675,102 @@ mod tests {
 
         assert_eq!(edges.screen_activity, None);
         assert_eq!(edges.declared_blocker, None);
+    }
+
+    #[test]
+    fn a_session_without_an_agent_still_publishes_its_declared_status() {
+        let mut tracker = ViewportTracker::default();
+        let mut blocked = declared(ProgramStatusState::Blocked, "Apply the plan?");
+        blocked.kind = Some(paneflow_terminal_ghostty::ProgramStatusKind::Permission);
+        blocked.app = "terraform".to_string();
+
+        let edges = observe_declared(
+            &mut tracker,
+            "$ terraform apply",
+            Some(&blocked),
+            None,
+            1_000,
+        );
+
+        assert_eq!(
+            edges.declared_status,
+            Some(DeclaredStatus {
+                state: "blocked".to_string(),
+                kind: Some("permission".to_string()),
+                progress: None,
+                app: "terraform".to_string(),
+                title: String::new(),
+                message: "Apply the plan?".to_string(),
+            })
+        );
+        assert!(edges.write_due);
+        assert_eq!(edges.screen_activity, None, "no agent classification");
+
+        let edges = observe_declared(
+            &mut tracker,
+            "$ terraform apply",
+            Some(&blocked),
+            None,
+            1_200,
+        );
+        assert!(!edges.write_due, "an unchanged status is not written again");
+
+        let edges = observe_declared(&mut tracker, "$ terraform apply", None, None, 1_400);
+        assert_eq!(edges.declared_status, None);
+        assert!(edges.write_due, "a removed record is written");
+    }
+
+    #[test]
+    fn an_agent_keeps_its_classification_and_also_publishes_its_declared_status() {
+        let mut tracker = ViewportTracker::default();
+        let working = declared(ProgramStatusState::Working, "");
+
+        let edges = observe_declared(&mut tracker, "plain", Some(&working), Some("claude"), 1_000);
+
+        assert_eq!(edges.screen_activity.as_deref(), Some("working"));
+        assert_eq!(
+            edges.declared_status.map(|status| status.state),
+            Some("working".to_string())
+        );
+    }
+
+    #[test]
+    fn a_held_done_or_error_is_rescanned_after_a_keystroke_without_output() {
+        let mut tracker = ViewportTracker::default();
+        tracker.record_scanned_terminal(Some(10), 0);
+        assert!(
+            !tracker.declared_rescan_due(Some(20), 0),
+            "nothing to acknowledge"
+        );
+
+        let working = declared(ProgramStatusState::Working, "");
+        observe_declared(&mut tracker, "$ ", Some(&working), None, 1_000);
+        assert!(
+            !tracker.declared_rescan_due(Some(20), 0),
+            "a keystroke never releases working"
+        );
+
+        for state in [ProgramStatusState::Done, ProgramStatusState::Error] {
+            let finished = declared(state, "");
+            observe_declared(&mut tracker, "$ ", Some(&finished), None, 2_000);
+            tracker.record_scanned_terminal(Some(10), 0);
+            assert!(!tracker.declared_rescan_due(Some(10), 0), "{state:?}");
+            assert!(tracker.declared_rescan_due(Some(20), 0), "{state:?}");
+            tracker.record_scanned_terminal(Some(20), 0);
+            assert!(!tracker.declared_rescan_due(Some(20), 0), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn a_manual_reset_rescans_whatever_the_declared_state() {
+        let mut tracker = ViewportTracker::default();
+        let blocked = declared(ProgramStatusState::Blocked, "Apply?");
+        observe_declared(&mut tracker, "$ ", Some(&blocked), None, 1_000);
+        tracker.record_scanned_terminal(None, 0);
+        assert!(!tracker.declared_rescan_due(None, 0));
+        assert!(tracker.declared_rescan_due(None, 1));
+        tracker.record_scanned_terminal(None, 1);
+        assert!(!tracker.declared_rescan_due(None, 1));
     }
 
     fn claude_observation() -> RuntimeObservation {

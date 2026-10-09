@@ -179,6 +179,8 @@ pub struct AgentSnapshotEntry {
     pub screen_activity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_blocker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_status: Option<crate::program_status::DeclaredStatus>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

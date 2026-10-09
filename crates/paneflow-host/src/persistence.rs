@@ -693,6 +693,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             declared_blocker: None,
+            declared_status: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,

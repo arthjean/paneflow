@@ -141,6 +141,7 @@ impl Worker {
             "outcome": session["outcome"],
             "runtime_id": session["runtime_id"],
             "unread": session["unread"],
+            "declared_status": session["declared_status"],
             "updated_at_ms": session["updated_at_ms"],
             "notify": projection
                 .notification

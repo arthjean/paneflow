@@ -314,6 +314,7 @@ fn finished_manifest(
         screen_changed_at_ms: None,
         screen_activity: None,
         declared_blocker: None,
+        declared_status: None,
         menu_prompt_active: false,
         runtime: None,
         final_output: None,
@@ -360,6 +361,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
             screen_changed_at_ms: None,
             screen_activity: None,
             declared_blocker: None,
+            declared_status: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -1411,6 +1413,7 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
         screen_changed_at_ms: None,
         screen_activity: None,
         declared_blocker: None,
+        declared_status: None,
         menu_prompt_active: false,
         runtime: None,
         final_output: None,
@@ -1742,6 +1745,7 @@ fn admission_stops_at_eight_unresolved_launches() {
                 screen_changed_at_ms: None,
                 screen_activity: None,
                 declared_blocker: None,
+                declared_status: None,
                 menu_prompt_active: false,
                 runtime: None,
                 final_output: None,
@@ -2841,4 +2845,74 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
         "a later attach never sees the blocker again"
     );
     assert_eq!(restored.screen_activity, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_program_without_an_agent_reaches_the_agent_snapshot_with_its_declared_status() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = Path::new("declared-status-without-agent");
+    let host = SessionHost::open(home.path(), endpoint).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let declared_of = |host: &SessionHost| {
+        host.agent_snapshot()
+            .into_iter()
+            .find(|entry| entry.session == session)
+            .and_then(|entry| entry.declared_status)
+    };
+
+    host.input(
+        &session,
+        None,
+        b"printf '\\033]7501;state=working:id=build:app=cargo\\033\\\\\\033]7501;state=error:id=build/test:msg=MiBmYWlsZWQ=\\033\\\\'\r\n"
+            .to_vec(),
+    )
+    .unwrap();
+
+    assert!(
+        wait_until(Duration::from_secs(15), || declared_of(&host)
+            .is_some_and(|declared| declared.state == "error")),
+        "the scan publishes the status of a session no agent runs in"
+    );
+    let declared = declared_of(&host).unwrap();
+    assert_eq!(declared.app, "cargo", "inherited from build");
+    assert_eq!(declared.message, "2 failed");
+    let manifest = host.inspect(&session).unwrap().manifest;
+    assert_eq!(manifest.declared_status, Some(declared));
+    assert_eq!(manifest.runtime, None, "no agent was observed");
+    assert_eq!(manifest.screen_activity, None, "no agent classification");
+    host.stop(&session, None).unwrap();
+    host.remove(&session).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_manual_reset_retires_the_published_declared_status_without_new_output() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = Path::new("declared-status-reset");
+    let host = SessionHost::open(home.path(), endpoint).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let declared_of = |host: &SessionHost| host.inspect(&session).unwrap().manifest.declared_status;
+
+    host.input(
+        &session,
+        None,
+        b"printf '\\033]7501;state=blocked:kind=question:app=terraform\\033\\\\'; sleep 30\r\n"
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(15), || declared_of(&host)
+            .is_some_and(|declared| declared.state == "blocked")),
+        "the blocked status is published first"
+    );
+
+    host.reset_terminal(&session, None).unwrap();
+
+    assert!(
+        wait_until(Duration::from_secs(5), || declared_of(&host).is_none()),
+        "a reset clears the published status although the program prints nothing"
+    );
+    host.stop(&session, None).unwrap();
+    host.remove(&session).unwrap();
 }

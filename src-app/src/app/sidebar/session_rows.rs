@@ -355,6 +355,7 @@ mod tests {
             state_seq: 0,
             attention_reason: None,
             provider_session_id: None,
+            declared_status: None,
         }
     }
 

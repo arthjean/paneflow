@@ -137,6 +137,8 @@ pub struct SessionManifest {
     pub screen_activity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_blocker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_status: Option<crate::program_status::DeclaredStatus>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,6 +429,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             declared_blocker: None,
+            declared_status: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -435,6 +438,28 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
         }
+    }
+
+    #[test]
+    fn a_manifest_with_a_full_declared_message_stays_under_its_cap() {
+        let home = tempfile::tempdir().unwrap();
+        let mut manifest = sample(SessionId::new());
+        let message = "\u{1}".repeat(crate::program_status::MAX_DECLARED_MESSAGE_BYTES);
+        let label = "\u{1}".repeat(crate::program_status::MAX_DECLARED_LABEL_BYTES);
+        manifest.declared_blocker = Some(message.clone());
+        manifest.declared_status = Some(crate::program_status::DeclaredStatus {
+            state: "blocked".to_string(),
+            kind: Some("permission".to_string()),
+            progress: Some(100),
+            app: label.clone(),
+            title: label,
+            message,
+        });
+
+        let path = write_manifest(home.path(), &manifest).unwrap();
+
+        assert!(std::fs::metadata(&path).unwrap().len() < MAX_MANIFEST_BYTES);
+        assert_eq!(read_manifest(&path).unwrap(), manifest);
     }
 
     #[test]

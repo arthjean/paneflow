@@ -338,6 +338,7 @@ struct Shared {
     output_changed_at_ms: AtomicU64,
     bell_at_ms: AtomicU64,
     input_at_ms: AtomicU64,
+    resets: AtomicU64,
     stream: Arc<OutputStream>,
     inbox: PtyInbox,
     #[cfg(test)]
@@ -356,6 +357,7 @@ impl Shared {
             output_changed_at_ms: AtomicU64::new(0),
             bell_at_ms: AtomicU64::new(0),
             input_at_ms: AtomicU64::new(0),
+            resets: AtomicU64::new(0),
             stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
             inbox: PtyInbox::default(),
             #[cfg(test)]
@@ -551,6 +553,10 @@ impl SessionRuntime {
     pub fn input_at_ms(&self) -> Option<u64> {
         let typed_at = self.shared.input_at_ms.load(Ordering::Acquire);
         (typed_at != 0).then_some(typed_at)
+    }
+
+    pub fn resets(&self) -> u64 {
+        self.shared.resets.load(Ordering::Acquire)
     }
 
     pub fn is_live(&self) -> bool {
@@ -1419,6 +1425,7 @@ impl Session {
             Command::Reset(reply) => {
                 terminal.reset();
                 self.drain_engine_events();
+                self.shared.resets.fetch_add(1, Ordering::AcqRel);
                 let _ = reply.send(Ok(()));
             }
             Command::Stop { .. } => {}
@@ -1440,7 +1447,7 @@ impl Session {
             rows: self.rows,
             title: self.title.clone(),
             progress: self.progress,
-            program_status: self.program_status.current().cloned(),
+            program_status: self.program_status.published(),
         })
     }
 

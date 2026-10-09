@@ -8,6 +8,7 @@ use paneflow_agent_config::runtime_catalog::{
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
 use paneflow_host::manifest::{SessionLifecycle, SessionManifest};
+use paneflow_host::program_status::DeclaredStatus;
 use paneflow_host::runtime_observer::RuntimeObservation;
 use paneflow_host::{ProcessIdentity, ProcessVerdict};
 use paneflow_ipc_client::agent::{AgentState, next_waiting_since};
@@ -117,6 +118,7 @@ pub struct SessionEntry {
     pub output_changed_at_ms: Option<u64>,
     pub screen_activity: Option<String>,
     pub declared_blocker: Option<String>,
+    pub declared_status: Option<DeclaredStatus>,
     pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
@@ -165,6 +167,7 @@ impl SessionEntry {
             output_changed_at_ms: None,
             screen_activity: manifest.screen_activity,
             declared_blocker: manifest.declared_blocker,
+            declared_status: manifest.declared_status,
             menu_prompt_active: manifest.menu_prompt_active,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
@@ -310,6 +313,7 @@ impl SessionEntry {
             "runtime_id": self.runtime().map(|runtime| runtime.id),
             "foreground_runtime_id": self.foreground_runtime,
             "menu_prompt_active": self.menu_prompt_active,
+            "declared_status": self.declared_status,
             "attention_reason": (self.status == Status::Attention && self.bell_attention_since.is_some())
                 .then_some(ATTENTION_REASON_BELL),
             "unread": self.unread,
@@ -492,6 +496,7 @@ impl WorkerState {
         let mut discovered = BTreeSet::new();
         let mut recovered = BTreeMap::new();
         let mut foreground_moved = BTreeSet::new();
+        let mut declared_moved = BTreeSet::new();
         for raw in entries {
             let Some(session) = raw["session"]
                 .as_str()
@@ -512,7 +517,13 @@ impl WorkerState {
                 discovered.insert(session.clone());
             }
             let foreground_before = held.as_ref().and_then(|entry| entry.foreground_runtime);
+            let declared_before = held
+                .as_ref()
+                .and_then(|entry| entry.declared_status.clone());
             let mut entry = merge_core_row(session.clone(), raw, held);
+            if entry.declared_status != declared_before {
+                declared_moved.insert(session.clone());
+            }
             entry.refresh_health();
             self.sessions.insert(entry.session.clone(), entry);
             for field in ["activity_event", "event"] {
@@ -547,7 +558,8 @@ impl WorkerState {
                 let announce = (projection.changed
                     && (recovered_event || !discovered.contains(&session)))
                     || projection.notification.is_some()
-                    || foreground_moved.contains(&session);
+                    || foreground_moved.contains(&session)
+                    || declared_moved.contains(&session);
                 announce.then_some(projection)
             })
             .collect()
@@ -1101,6 +1113,9 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         output_changed_at_ms: raw["output_changed_at_ms"].as_u64(),
         screen_activity: raw["screen_activity"].as_str().map(str::to_owned),
         declared_blocker: raw["declared_blocker"].as_str().map(str::to_owned),
+        declared_status: serde_json::from_value(raw["declared_status"].clone())
+            .ok()
+            .flatten(),
         menu_prompt_active: raw["menu_prompt_active"].as_bool().unwrap_or_default(),
         foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
         observed_runtime: current_observation.or_else(|| {
@@ -1177,6 +1192,7 @@ mod tests {
             screen_changed_at_ms: None,
             screen_activity: None,
             declared_blocker: None,
+            declared_status: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -2509,6 +2525,80 @@ mod tests {
             .expect("a declared blocker raises the needs-input notification");
         assert_eq!(notification.kind, crate::notifications::KIND_NEEDS_INPUT);
         assert_eq!(notification.body.as_deref(), Some("Apply the plan?"));
+    }
+
+    fn declared(state: &str, message: &str) -> Value {
+        json!({"state": state, "kind": "permission", "app": "terraform", "message": message})
+    }
+
+    fn with_declared(mut raw: Value, state: &str) -> Value {
+        raw["declared_status"] = declared(state, "Apply the plan?");
+        raw
+    }
+
+    #[test]
+    fn a_session_without_a_runtime_keeps_and_serializes_its_declared_status() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[core_row(&session)]);
+
+        let projections = state.apply_core_session(&with_declared(core_row(&session), "blocked"));
+
+        let entry = state.get(&session).unwrap();
+        assert!(entry.runtime().is_none());
+        assert_eq!(entry.status(), "idle", "a program is not an agent");
+        let row = entry.to_value();
+        assert_eq!(
+            row["declared_status"],
+            declared("blocked", "Apply the plan?")
+        );
+        assert_eq!(row["activity"], Value::Null);
+        assert!(
+            projections
+                .iter()
+                .any(|projection| projection.session["declared_status"]["state"] == "blocked"),
+            "a declared change is announced even when the status does not move: {projections:?}"
+        );
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none()),
+            "serve never notifies for a program, the desktop does"
+        );
+
+        let projections = state.apply_core_session(&core_row(&session));
+        assert_eq!(
+            state.get(&session).unwrap().to_value()["declared_status"],
+            Value::Null
+        );
+        assert!(!projections.is_empty(), "a removed record is announced too");
+    }
+
+    #[test]
+    fn a_reattaching_desktop_gets_a_held_blocked_status_without_a_new_report() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut held = manifest(session.clone(), None);
+        held.declared_status = serde_json::from_value(declared("blocked", "Apply the plan?")).ok();
+        write_manifest(home.path(), &held).unwrap();
+
+        let mut restarted = WorkerState::new(home.path());
+        restarted.rebuild_from_home(home.path());
+        let follow_header = restarted.snapshot();
+        assert_eq!(
+            follow_header[0]["declared_status"],
+            declared("blocked", "Apply the plan?"),
+            "a worker rebuilt from the manifests serves the held status"
+        );
+
+        let mut running = WorkerState::new(home.path());
+        running.apply_core_snapshot(&[with_declared(core_row(&session), "blocked")]);
+        let reattached = running.snapshot();
+        assert_eq!(
+            reattached[0]["declared_status"]["state"], "blocked",
+            "a desktop that follows again receives the status the worker holds"
+        );
     }
 
     fn exited(mut row: Value) -> Value {

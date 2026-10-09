@@ -967,6 +967,7 @@ impl SessionHost {
                     screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                     screen_activity: summary.manifest.screen_activity,
                     declared_blocker: summary.manifest.declared_blocker,
+                    declared_status: summary.manifest.declared_status,
                     menu_prompt_active: summary.manifest.menu_prompt_active,
                     observed_runtime: summary
                         .manifest
@@ -1267,6 +1268,7 @@ impl SessionHost {
             screen_changed_at_ms: None,
             screen_activity: None,
             declared_blocker: None,
+            declared_status: None,
             menu_prompt_active: false,
             runtime: None,
             final_output: None,
@@ -1458,6 +1460,7 @@ impl SessionHost {
             guard.screen_changed_at_ms = None;
             guard.screen_activity = None;
             guard.declared_blocker = None;
+            guard.declared_status = None;
             guard.menu_prompt_active = false;
             guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
@@ -2727,6 +2730,7 @@ impl SessionHost {
                     record.screen_activity = None;
                     record.declared_blocker = None;
                     record.menu_prompt_active = false;
+                    retain_declared_outcome(&mut record.declared_status);
                 }
             },
         )
@@ -2774,6 +2778,7 @@ impl SessionHost {
                         guard.screen_activity = None;
                         guard.declared_blocker = None;
                         guard.menu_prompt_active = false;
+                        retain_declared_outcome(&mut guard.declared_status);
                     }
                     RuntimeNotice::Unverified(reason) => {
                         guard.lifecycle = SessionLifecycle::Unverified { reason };
@@ -2896,6 +2901,15 @@ impl SessionHost {
         if releasable {
             record.runtime = None;
         }
+    }
+}
+
+fn retain_declared_outcome(status: &mut Option<crate::program_status::DeclaredStatus>) {
+    if !status
+        .as_ref()
+        .is_some_and(crate::program_status::DeclaredStatus::awaits_acknowledgement)
+    {
+        *status = None;
     }
 }
 

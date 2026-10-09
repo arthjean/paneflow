@@ -14,6 +14,7 @@ pub mod composer;
 pub mod constants;
 pub(crate) mod conversation_restore;
 pub mod custom_buttons_modal;
+pub(crate) mod declared_status;
 pub(crate) mod detached_panes;
 pub mod diff_dock;
 pub mod drag;
