@@ -412,13 +412,22 @@ to `icons/languages/`.
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip` |
 
-`reduce_motion` (Settings, Appearance) is honored in five places today:
-`animated_hover` settles instantly, the primary sidebar toggles without
-the slide, the Workspaces rows fold and filter without motion, `menu_reveal`
-mounts menus at rest, and the sidebar thinking matrix holds its first frame. The dim fade, toasts, spinners, and the
-shimmers keep animating. The config description promises a static frame for
-decorative animations; that promise is **Proposed** until the remaining
-animations read the flag. Feedback is never removed, only its interpolation.
+`reduce_motion` (Settings, Appearance) sets both
+`ui_primitives::reduce_motion()` and GPUI's `cx.reduce_motion()`
+(`ui_primitives::set_reduce_motion`), and every animation that reads either
+one rests: among them `animated_hover` settles instantly, the primary sidebar
+toggles without the slide, the Workspaces rows fold and filter without
+motion, `menu_reveal` mounts menus at rest, toasts and the empty-state and
+comet spinners hold still, and the sidebar thinking matrix holds its first
+frame. The terminal drops its sub-line pixel offset so a trackpad scrolls the
+scrollback by whole lines. The pixel offset only ever exists while Paneflow
+scrolls its own scrollback: it is 0 whenever the program reads the mouse, the
+alternate screen scrolls alternately, or `reduce_motion` is on, and turning
+`reduce_motion` on drops an offset already shown on the next frame, without
+waiting for a scroll event. The unfocused pane dim does not read the flag and
+keeps fading. The config description promises a static frame for decorative
+animations; that promise is **Proposed** until every remaining animation reads
+the flag. Feedback is never removed, only its interpolation.
 
 ## 5. Component Contracts
 

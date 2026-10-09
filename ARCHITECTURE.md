@@ -194,10 +194,23 @@ show.
 **`PublishGate` (`terminal/ghostty_session/publish.rs`), on the runtime thread.**
 Snapshotting the grid and converting it into the neutral `Content` is the
 expensive half of an output batch, and `OUTPUT_BATCH_MAX_TIME` closes a batch
-every millisecond. The gate holds a publication back for two reasons: DEC mode
-2026 is set, meaning the program is mid-redraw and the frame would tear (the
-same check Ghostty's renderer makes in `src/renderer/generic.zig`), or the last
-frame is newer than `MIN_PUBLISH_INTERVAL`. A held change is deferred, never
+every millisecond. The gate holds a publication back for two reasons: a render
+hold is open, meaning the program is mid-redraw under DEC mode 2026 and the
+frame would tear, or the last frame is newer than `MIN_PUBLISH_INTERVAL`. The
+gate never polls the mode. The terminal installs libghostty's render hold
+effect (`DisplayTerminal::enable_render_hold`), and when a program opens a
+synchronized update the effect captures the finished frame into the main
+render state before any of the new redraw lands
+(`crates/paneflow-terminal-ghostty/src/callbacks.rs`, `begin_render_hold`).
+Every ordinary publication during the hold shows that captured frame. A
+publication that must show live content during the hold (a scroll, a
+selection, a resize) is built from a second render state of its own
+(`snapshot_live`, `RenderSlot::LiveDuringHold`), so the captured frame and its
+scrollbar survive it and the next held publication shows the finished frame
+again, never a half-drawn one. That second state is released once the hold
+ends. A checkpoint restored with mode 2026 set has no captured frame, so
+attaching resets the mode and the program's next synchronized update opens a
+hold of its own. A held change is deferred, never
 dropped: `PublishGate::next_wake` shortens the runtime loop's block to the
 interval's end, and the loop's `poll` publishes it then. The rate limit applies
 whether or not more output is queued behind the change, because a program that
@@ -208,9 +221,10 @@ gap always publishes at once. Input arms a one-shot interactive publication
 for the next output arriving within 100 ms: it bypasses the ordinary rate
 limit, including while another output stream is active, but still respects
 DEC 2026. This is an input hint, not identification of the echoed character.
-A DEC 2026 hold
-expires after `SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies
-cannot freeze the pane. Resizes, scrolls, other state the user waits on, and
+A render hold
+expires after `SYNC_OUTPUT_MAX_HOLD` (150 ms, measured from the capture): the
+gate releases the hold and publishes live content, so a program that opens a
+frame and dies cannot freeze the pane. Resizes, scrolls, other state the user waits on, and
 the last frame before `ChildExited` bypass both, which is also what keeps a
 deferred change from being lost when the loop exits.
 The conversion behind a publish is incremental: the binding reports which rows
@@ -302,7 +316,7 @@ agent CLI (claude, codex, opencode, …)
        ├─ agent hooks fire paneflow-ai-hook on lifecycle events ─┐
        ├─ the shim fires session_start / exit / session_end ─────┤
        │                                                         └─ agent.event
-       ├─ the agent's own OSC 9;4 + OSC 9/777 in the pane's grid     to the
+       ├─ its own OSC 9;4, OSC 9/777 + OSC 7501 in the pane's grid   to the
        └─ the agent's own session registry on disk                   host
                                                                       │
             ┌─────────────────────────────────────────────────────────┘
@@ -341,8 +355,25 @@ agent CLI (claude, codex, opencode, …)
   `activity_source` of `hooks`, `screen` or `none`. The GPUI app subscribes and
   renders; it computes no lifecycle of its own.
 - **States**: thinking, waiting for input (with the actual prompt text),
-  finished, errored (non-zero exit). Each state routes to the UI - and to your own tooling, since
+  finished, errored (non-zero exit, or an OSC 7501 `error` the agent declared
+  while no hook decides the state). Each state routes to the UI - and to your own tooling, since
   the same events are observable over IPC.
+- **Declared program status (OSC 7501).** Any program, agent or not, can
+  declare its own state with `ESC ] 7501 ; state=<working|blocked|idle|done|error|clear> ...`
+  following the program status spec
+  (https://www.superlogical.com/rex/docs/build/program-status, as read on
+  2026-10-09). The host's terminal engine answers `OSC 7501 ; ?` and keeps up
+  to 256 records per session (`crates/paneflow-host/src/program_status.rs`);
+  the desktop installs no OSC 7501 callback, so the PTY never gets a second
+  reply (`desktop_terminals_neither_answer_nor_report_program_status`). A
+  record follows the spec's lifetime: a prompt start (OSC 133 A) or the
+  program's exit releases `working`, `blocked` and `idle` and keeps `done` and
+  `error`, which leave on the first keystroke typed in an attached window
+  (never on input a control client sends, such as `paneflow send` or
+  `write_pane`), on `clear`, on RIS, or on a manual reset. A manual reset is a
+  RIS: records, OSC 9;4 progress and title are emptied. Pending status events
+  are budgeted at 256 KiB per terminal; a burst past it clears every record
+  and the progress instead of keeping a partial state, and logs a warning.
 
 The default loop is human-in-the-loop: Paneflow pre-fills prompts into real PTY
 sessions and the user submits them. Auto-submit exists only as an explicit,
@@ -497,21 +528,41 @@ stale code.
   `cancelled`.
 - **The host viewport scan.** Every 500 ms the host thread named
   `paneflow-host-viewport` asks each live session for its rendered screen and
-  its foreground process group, then edge-writes four manifest fields:
+  its foreground process group, then edge-writes six manifest fields:
   `screen_changed_at_ms` when the screen text hash changes (coalesced to one
   stamp per second, so an idle TUI repainting identical content costs zero
   writes), `screen_activity` (`working`, `idle` or `blocked`) from the
   foreground runtime's layered screen rules (local override, signed remote
   catalog, built-in `screen.toml`; see `runtimes/README.md`), where the tool the
   hooks declared stands in only when the foreground job cannot be observed,
-  `menu_prompt_active` while a `visible_blocker` rule matches, and
-  `observed_runtime` with the foreground runtime identity, dropped when the
-  runtime declares a `title_prefix` the pane title does not carry. Nothing is
-  written when nothing changed. The worker consumes the three signals below
+  `menu_prompt_active` while a `visible_blocker` rule matches,
+  `declared_status` with the session's current OSC 7501 record (state, kind,
+  progress, app, title, and a message bounded to 2,048 bytes),
+  `declared_blocker` with the message of a declared `blocked` when the
+  foreground runtime has screen rules, and `observed_runtime` with the
+  foreground runtime identity, dropped when the
+  runtime declares a `title_prefix` the pane title does not carry. For a
+  recognized runtime a declared state decides `screen_activity` over the text
+  rules (`error` maps to `idle` there). `declared_status` is written for every
+  session, agent or not, and a typed key or a reset triggers a rescan even
+  without new output, so a purged record leaves the manifest promptly. The
+  program's exit clears `screen_activity`, `declared_blocker` and
+  `menu_prompt_active`. Nothing is
+  written when nothing changed. The worker consumes the screen signals below
   the hooks: a hook latch ignores `screen_activity`, an unlatched session maps
   it to busy, idle or attention with `activity_source = screen`, and a visible
   blocker overrides busy/idle with attention while `menu_attention_detection`
-  is enabled.
+  is enabled. A declared blocker on a running session no hook has latched is
+  fed to the reducer as a menu prompt (`observe_menu_prompt`). A declared
+  `error` marks an agent `Errored` unless the state comes from the hooks,
+  which keep precedence. The worker carries
+  `declared_status` on each snapshot entry, so a program without an agent
+  reaches the app too: its state shows in the pane header's progress chip,
+  `blocked` and `error` enter the Attention Queue labeled by the declared app
+  or the pane, and only `blocked` notifies, at most once per pane every 10 s,
+  naming the pane (`src-app/src/app/declared_status.rs`). Text shown outside
+  the grid is stripped of bidi, zero-width and line-separator controls and
+  kept to one line. No declared state ever triggers an action on a program.
 - **Foreground runtime observation.** The scan matches the foreground job
   against the catalog: the process-group leader first, then the best of
   `Direct` over `Wrapper` strength, smallest ancestry depth, lowest pid. A
@@ -745,7 +796,15 @@ streaming follower is refused with `ERR_BUSY` while `session.inspect` and
 `resources` (queued and peak persistence bytes, pending final revisions,
 rejected metadata, staged checkpoints, live runtimes, pending launches,
 connection counts, and per-session tail and input usage), and
-`paneflow host status` prints them. Bounded final text (up to 512 KiB) is
+`paneflow host status` prints them. `resources.sessions` lists every session,
+with or without a runtime, and carries each one's terminal memory (resident,
+virtual, compressed and image bytes, and whether compression is supported).
+A session without a runtime reports `runtime` and `memory` as null with
+`memory_unavailable` set to `not_started` or `exited`; a runtime that does
+not answer reports `timeout`. The memory reads go out to every runtime
+before any reply is awaited, under one shared 500 ms deadline
+(`MEMORY_USAGE_BUDGET`), so the reply stays bounded however many sessions
+stall. Bounded final text (up to 512 KiB) is
 larger than one 64 KiB control frame, so `session.text` answers in frames of
 at most 48 KiB of text with `next_offset` and `total_bytes`;
 `HostClient::text` reads them back in order, and any other reply that would

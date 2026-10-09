@@ -75,7 +75,8 @@ verified archives, without requiring a local Ghostty checkout.
 ## Updating the pinned native input
 
 Update both `source_sha` in `native/libghostty/manifest.toml` and `GHOSTTY_SHA`
-in the Linux and release workflows. Regenerate bindings and both native target
+in the three workflows that carry it: `libghostty-linux.yml`,
+`libghostty-macos.yml` and `release.yml` under `.github/workflows/`. Regenerate bindings and both native target
 directories, review ABI and behavioral differences, then replace the matching
 files under `native/libghostty/prebuilt/<target>`.
 

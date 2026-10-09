@@ -3,7 +3,7 @@
     "file": "tasks/prd-libghostty-b699ea79.md",
     "title": "Re-pin libghostty-vt sur Ghostty b699ea79 et intégration de toute la nouvelle surface C",
     "created_at": "2026-10-07",
-    "status": "IN_PROGRESS"
+    "status": "DONE"
   },
   "epics": [
     {

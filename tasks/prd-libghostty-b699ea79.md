@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-07 | Arthur Jean | PRD initial : re-pin de libghostty-vt de `0c2a290d` (2026-09-14) vers `b699ea79` (2026-10-06), 322 commits dont 57 touchent libghostty-vt. Intègre tous les correctifs et toutes les nouvelles API C (render hold du mode 2026, forme de pointeur OSC 22, overscan et identité de ligne, statut de programme OSC 7501, invites OSC 133, RIS, DECRQCRA/XTCHECKSUM, OSC inconnus, rappel du scrollback au redimensionnement, mémoire, compression de l'historique restauré). 5 epics, 16 stories. |
 | 1.1 | 2026-10-08 | Arthur Jean | La vérification sur le matériel Windows réel quitte US-014 pour un epic final, EP-006, qui regroupe les tests et correctifs Windows. Le développement des epics se fait sous Linux, sans aller-retour par epic. 6 epics, 17 stories. |
+| 1.2 | 2026-10-09 | Arthur Jean | Clôture. L'audit du 2026-10-09 a ouvert `tasks/prd-libghostty-b699ea79-remediation.md`, qui corrige les écarts trouvés après la livraison. Cette version consigne les réponses aux Open Questions, les amendements aux critères (`stub.rs`, OSC 22 et RIS, config d'`xt_checksum_extension`), la liste des terminaux alimentés par ConPTY, la commande de mesure d'US-016 et l'inspection du cas « compression non supportée ». Le PRD passe `DONE`. |
 
 ## Problem Statement
 
@@ -158,12 +159,12 @@ Le workflow fait déjà : contrôle de Zig (`.github/workflows/libghostty-bump.y
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Avant tout lancement, l'agent obtient l'accord explicite d'Arthur : le run publie une pré-release et ouvre une PR.
-- [ ] Un premier run `workflow_dispatch` avec `source_sha=b699ea79f4b881421b4b3055abc16a0957d76beb` et `dry_run=true` passe sur les quatre cibles. Son identifiant est consigné dans la PR d'US-002.
-- [ ] Un second run sans `dry_run` publie la pré-release `libghostty-vt-b699ea79f4b881421b4b3055abc16a0957d76beb` avec quatre assets attestés, et ouvre la PR bot `bot/libghostty-b699ea79`.
-- [ ] `gh attestation verify` passe sur chacune des quatre archives téléchargées par `scripts/fetch-libghostty.sh`.
-- [ ] Échec : given un build de cible qui échoue (par exemple, uucode ne se télécharge pas depuis `github.com`, ou la transition translate-c de `fe9cf6a26` casse la recette Windows), when le run se termine, then aucune pré-release n'est publiée. La story passe `BLOCKED` avec l'étape et l'extrait de log en cause, sans contournement local de la recette.
-- [ ] Échec : given un `minimum_zig_version` différent de `0.16.0` à la cible, when le job `resolve` démarre, then le workflow refuse avant tout build (`libghostty-bump.yml:150-160`) et la story passe `BLOCKED` avec le renvoi vers un re-pin de Zig manuel.
+- [x] Avant tout lancement, l'agent obtient l'accord explicite d'Arthur : le run publie une pré-release et ouvre une PR.
+- [x] Un premier run `workflow_dispatch` avec `source_sha=b699ea79f4b881421b4b3055abc16a0957d76beb` et `dry_run=true` passe sur les quatre cibles. Son identifiant est consigné dans la PR d'US-002.
+- [x] Un second run sans `dry_run` publie la pré-release `libghostty-vt-b699ea79f4b881421b4b3055abc16a0957d76beb` avec quatre assets attestés, et ouvre la PR bot `bot/libghostty-b699ea79`.
+- [x] `gh attestation verify` passe sur chacune des quatre archives téléchargées par `scripts/fetch-libghostty.sh`.
+- [x] Échec : given un build de cible qui échoue (par exemple, uucode ne se télécharge pas depuis `github.com`, ou la transition translate-c de `fe9cf6a26` casse la recette Windows), when le run se termine, then aucune pré-release n'est publiée. La story passe `BLOCKED` avec l'étape et l'extrait de log en cause, sans contournement local de la recette.
+- [x] Échec : given un `minimum_zig_version` différent de `0.16.0` à la cible, when le job `resolve` démarre, then le workflow refuse avant tout build (`libghostty-bump.yml:150-160`) et la story passe `BLOCKED` avec le renvoi vers un re-pin de Zig manuel.
 
 #### US-002: Intégrer le re-pin et ses métadonnées dans une branche de feature
 **Description:** As a mainteneur, I want reprendre le contenu de la PR bot dans `feat/libghostty-b699ea79` et compléter ce que le workflow ne réécrit pas so that le build, les lanes de release et l'inventaire de licences désignent tous le même commit.
@@ -182,14 +183,14 @@ Le workflow ne réécrit que les clés du manifeste listées en `libghostty-bump
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] `git grep 0c2a290d` ne renvoie plus que l'historique : `CHANGELOG.md` antérieur, `bench/results/`, `bench/baselines/` et `docs/release/qualification/`.
-- [ ] La version de l'UCD écrite dans le manifeste, les notices et le SBOM est celle lue dans le paquet uucode réellement téléchargé par le build. La valeur et le fichier lu sont cités dans la PR.
-- [ ] `notice_sha256` et `sbom_sha256` sont réécrits par `scripts/repin-libghostty-manifest.sh`, et `paneflow-libghostty-sys/build.rs` accepte le résultat.
-- [ ] `native/libghostty/windows-smoke.c` envoie une séquence UTF-8 multi-octets (par exemple `é` et `漢`) et vérifie qu'elle s'imprime. C'est le chemin simdutf que `a141f9bdb` protège pour les DLL ; Paneflow lie l'archive statique.
-- [ ] `CHANGELOG.md`, section `[Unreleased]`, annonce le re-pin et ses effets visibles, chacun en une phrase.
-- [ ] Échec : given une notice ou un SBOM modifié sans hash à jour, when `cargo build` s'exécute, then `build.rs` refuse avec le nom du fichier (test existant gardé vert).
-- [ ] Échec : given un host lancé par une version à `0c2a290d` et un desktop à `b699ea79`, when le desktop s'attache, then la session finit `Incompatible` avec « Retry » et « Stop host and restart » (`src-app/src/terminal/host_link.rs:252-254,365`). C'est le comportement existant de chaque re-pin. Les Upgrade notes du CHANGELOG le disent.
-- [ ] Si le gate d'allocations de `perf-gates` bouge à cause du moteur, la nouvelle baseline est un commit séparé produit par `scripts/perf-gates.sh --refresh-alloc-baselines` depuis un arbre propre. Le message nomme les commits upstream en cause, par exemple `a4f0d9f4a` ou `88e66cbc6`.
+- [x] `git grep 0c2a290d` ne renvoie plus que l'historique : `CHANGELOG.md` antérieur, `bench/results/`, `bench/baselines/` et `docs/release/qualification/`.
+- [x] La version de l'UCD écrite dans le manifeste, les notices et le SBOM est celle lue dans le paquet uucode réellement téléchargé par le build. La valeur et le fichier lu sont cités dans la PR.
+- [x] `notice_sha256` et `sbom_sha256` sont réécrits par `scripts/repin-libghostty-manifest.sh`, et `paneflow-libghostty-sys/build.rs` accepte le résultat.
+- [x] `native/libghostty/windows-smoke.c` envoie une séquence UTF-8 multi-octets (par exemple `é` et `漢`) et vérifie qu'elle s'imprime. C'est le chemin simdutf que `a141f9bdb` protège pour les DLL ; Paneflow lie l'archive statique.
+- [x] `CHANGELOG.md`, section `[Unreleased]`, annonce le re-pin et ses effets visibles, chacun en une phrase.
+- [x] Échec : given une notice ou un SBOM modifié sans hash à jour, when `cargo build` s'exécute, then `build.rs` refuse avec le nom du fichier (test existant gardé vert).
+- [x] Échec : given un host lancé par une version à `0c2a290d` et un desktop à `b699ea79`, when le desktop s'attache, then la session finit `Incompatible` avec « Retry » et « Stop host and restart » (`src-app/src/terminal/host_link.rs:252-254,365`). C'est le comportement existant de chaque re-pin. Les Upgrade notes du CHANGELOG le disent.
+- [x] Si le gate d'allocations de `perf-gates` bouge à cause du moteur, la nouvelle baseline est un commit séparé produit par `scripts/perf-gates.sh --refresh-alloc-baselines` depuis un arbre propre. Le message nomme les commits upstream en cause, par exemple `a4f0d9f4a` ou `88e66cbc6`.
 
 #### US-003: Étendre la validation ABI aux nouveaux discriminants et structs
 **Description:** As a mainteneur, I want que la validation ABI à la construction d'un terminal couvre toute la nouvelle surface so that une dérive de layout au prochain re-pin échoue à la construction plutôt que de corrompre la mémoire.
@@ -199,7 +200,7 @@ Le workflow ne réécrit que les clés du manifeste listées en `libghostty-bump
 **Dependencies:** Blocked by US-002
 
 **Acceptance Criteria:**
-- [ ] `validate_discriminants` (`crates/paneflow-terminal-ghostty/src/abi.rs:79-129`) ajoute les ancres suivantes :
+- [x] `validate_discriminants` (`crates/paneflow-terminal-ghostty/src/abi.rs:79-129`) ajoute les ancres suivantes :
   - options du terminal (`ghostty/include/ghostty/vt/terminal.h:2337-2417`) : `GHOSTTY_TERMINAL_OPT_RESIZE_PULL_SCROLLBACK = 40`, `OPT_RENDER_HOLD = 41`, `OPT_SEMANTIC_PROMPT = 42`, `OPT_RESET = 43`, `OPT_XT_CHECKSUM_REPORT = 44`, `OPT_XT_CHECKSUM_EXTENSION = 45`, `OPT_PROGRAM_STATUS = 46` ;
   - données : `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE = 41` et `DATA_MEMORY_USAGE = 42` (`:2832,2847`) ;
   - `GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_OSC = 1` (`:538`) ;
@@ -208,8 +209,8 @@ Le workflow ne réécrit que les clés du manifeste listées en `libghostty-bump
   - `GHOSTTY_MOUSE_SHAPE_ZOOM_OUT = 33` (`ghostty/include/ghostty/vt/mouse.h:76-112`) ;
   - render state : `GHOSTTY_RENDER_STATE_OPTION_OVERSCAN = 1`, `GHOSTTY_RENDER_STATE_DATA_OVERSCAN = 20` et `GHOSTTY_RENDER_STATE_ROW_DATA_ID = 7` (`ghostty/include/ghostty/vt/render.h:392,418,472`) ;
   - `GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY = 2` (`ghostty/include/ghostty/vt/snapshot.h:194`).
-- [ ] Les huit ancres existantes, dont `OPT_DEVICE_ATTRIBUTES = 8`, tiennent toujours.
-- [ ] `abi_layout.rs` (`crates/paneflow-terminal-ghostty/src/abi_layout.rs:21-101`) valide taille, alignement, offsets et tailles de champs, contre `ghostty_type_json()`, pour :
+- [x] Les huit ancres existantes, dont `OPT_DEVICE_ATTRIBUTES = 8`, tiennent toujours.
+- [x] `abi_layout.rs` (`crates/paneflow-terminal-ghostty/src/abi_layout.rs:21-101`) valide taille, alignement, offsets et tailles de champs, contre `ghostty_type_json()`, pour :
   - `GhosttyTerminalProgramStatus` ;
   - `GhosttyTerminalSemanticPrompt` ;
   - `GhosttyTerminalMemoryUsage` ;
@@ -217,9 +218,9 @@ Le workflow ne réécrit que les clés du manifeste listées en `libghostty-bump
   - `GhosttyTerminalUnknownSequence` ;
   - `GhosttyRenderStateOverscan` ;
   - `GhosttyRenderStateRowId`.
-- [ ] Un test affirme que `GhosttyTerminalUnknownSequence` garde au pin `b699ea79` la taille qu'il avait au pin `0c2a290d`. La valeur est relevée dans les bindings des deux pins et écrite en dur dans le test.
-- [ ] Les signatures des quatre nouveaux callbacks (`GhosttyTerminalRenderHoldFn`, `ProgramStatusFn`, `SemanticPromptFn`, `ResetFn`, `terminal.h:1366,1513,1544,1754`) sont figées par des assignations `const _:` typées, à côté des quatorze existantes (`callbacks.rs:18-31`).
-- [ ] Échec : given un JSON de layout altéré qui décale un champ de `GhosttyTerminalProgramStatus`, when la validation tourne, then elle renvoie `AbiMismatch` nommant la struct et le champ (test sur une copie altérée).
+- [x] Un test affirme que `GhosttyTerminalUnknownSequence` garde au pin `b699ea79` la taille qu'il avait au pin `0c2a290d`. La valeur est relevée dans les bindings des deux pins et écrite en dur dans le test.
+- [x] Les signatures des quatre nouveaux callbacks (`GhosttyTerminalRenderHoldFn`, `ProgramStatusFn`, `SemanticPromptFn`, `ResetFn`, `terminal.h:1366,1513,1544,1754`) sont figées par des assignations `const _:` typées, à côté des quatorze existantes (`callbacks.rs:18-31`).
+- [x] Échec : given un JSON de layout altéré qui décale un champ de `GhosttyTerminalProgramStatus`, when la validation tourne, then elle renvoie `AbiMismatch` nommant la struct et le champ (test sur une copie altérée).
 
 #### US-004: Prouver côté Paneflow les correctifs upstream traversés
 **Description:** As a mainteneur, I want un test Paneflow par correctif upstream qui passe par une API que Paneflow appelle so that un re-pin futur qui casserait l'un d'eux échoue dans notre CI et pas chez un utilisateur.
@@ -231,27 +232,27 @@ Chaque test vit dans `crates/paneflow-terminal-ghostty/tests/`. Il pilote le ter
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Caractère large coupé (`e6db5b633`, oracle `ghostty/src/terminal/Terminal.zig:16072`) : given une ligne qui finit par un caractère large en dernière colonne, when `DisplayTerminal::resize` réduit les colonnes d'une unité, puis le test envoie `CSI @` et `CSI 1 K`, then rien ne panique et la dernière colonne est vide.
-- [ ] Wrap en attente (`f9ab34f10`, `Terminal.zig:16313`) et curseur sauvegardé (`afded91df`, `Terminal.zig:16296`) : après un redimensionnement, le curseur vivant et le curseur sauvegardé gardent leur wrap en attente et leur position, y compris après des élargissements répétés.
-- [ ] Reverse wrap (`d4f45bee3`, `Terminal.zig:11134`) : un `CUB` avec reverse wrap et un wrap en attente au-dessus de la marge haute ne fait pas sauter le curseur.
-- [ ] Jeux de caractères :
+- [x] Caractère large coupé (`e6db5b633`, oracle `ghostty/src/terminal/Terminal.zig:16072`) : given une ligne qui finit par un caractère large en dernière colonne, when `DisplayTerminal::resize` réduit les colonnes d'une unité, puis le test envoie `CSI @` et `CSI 1 K`, then rien ne panique et la dernière colonne est vide.
+- [x] Wrap en attente (`f9ab34f10`, `Terminal.zig:16313`) et curseur sauvegardé (`afded91df`, `Terminal.zig:16296`) : après un redimensionnement, le curseur vivant et le curseur sauvegardé gardent leur wrap en attente et leur position, y compris après des élargissements répétés.
+- [x] Reverse wrap (`d4f45bee3`, `Terminal.zig:11134`) : un `CUB` avec reverse wrap et un wrap en attente au-dessus de la marge haute ne fait pas sauter le curseur.
+- [x] Jeux de caractères :
   - un point de code au-delà de 0xFF s'imprime non converti dans un jeu de caractères (`6220a3617`, `Terminal.zig:7002`) ;
   - un single shift ne s'applique qu'à un seul caractère imprimé (`c706451fe`, `Terminal.zig:7023`) ;
   - l'impression groupée du jeu graphique spécial donne le même résultat que l'impression caractère par caractère (`a4f0d9f4a`).
-- [ ] Sélection par les gestes que Paneflow utilise :
+- [x] Sélection par les gestes que Paneflow utilise :
   - le mot s'arrête correctement sur les caractères larges (`a3e80a685`, `ghostty/src/terminal/Screen.zig:10345`) ;
   - le mot s'arrête aux sauts de ligne durs (`c4f15c884`, `Screen.zig:10273`) ;
   - la ligne s'arrête aux frontières d'invite à travers des cellules vides (`13b5ab204`, `Screen.zig:9737`).
-- [ ] Parseur :
+- [x] Parseur :
   - CAN puis SUB au milieu d'un `OSC 0` laissent le titre inchangé (`520d8f55a`, `ghostty/src/terminal/stream_terminal.zig:5566`) ;
   - un entier OSC avec séparateur de chiffres est rejeté (`73768913b`) ;
   - `OSC 105` passe par le parseur de couleurs (`36953bca8`) ;
   - DECRQM répond aux modes ANSI et ne tronque pas un mode sur 16 bits (`9dc0d974e`, `3beb6d717`, `ghostty/src/terminal/c/terminal.zig:4306`).
-- [ ] RIS (`bb20f8e45`) : given le thème Paneflow appliqué et un `OSC 4` qui change la couleur 1, when le programme envoie `ESC c`, then la couleur 1 revient à celle du thème Paneflow, pas à la palette par défaut de Ghostty.
-- [ ] Kitty : un `EL 2` efface le drapeau de placeholder Unicode de la ligne (`a573781c6`, `Terminal.zig:14280`). Le PNG d'une image kitty se décode avec la sortie remise à zéro avant le callback (`aca9bf031`) : le trampoline de `crates/paneflow-terminal-ghostty/src/sys.rs:54-59` (`decode_png_trampoline`) remplit les quatre champs, ou renvoie faux.
-- [ ] Échec : given un handle de recherche dont le terminal a été libéré, when `ghostty_search_tick` est appelé, then l'appel renvoie `GHOSTTY_INVALID_VALUE` et le wrapper le traduit en erreur sans plantage (`b1c264163`, `ghostty/src/terminal/c/search.zig:949-1013`).
-- [ ] Échec : given un lecteur de collage qui voit une écriture refusée, when `ghostty_terminal_paste` continue, then le collage échoue et rien après l'écriture refusée n'atteint le PTY (`2b0ceff7d`).
-- [ ] Les corpus et golden existants (`src-app/src/terminal/bench_corpus.rs` et les tests golden du wrapper) passent sans changement. Si les largeurs Unicode 18 de `12542b392` en font bouger un, le diff est relu, puis consigné dans la PR avec le point de code en cause.
+- [x] RIS (`bb20f8e45`) : given le thème Paneflow appliqué et un `OSC 4` qui change la couleur 1, when le programme envoie `ESC c`, then la couleur 1 revient à celle du thème Paneflow, pas à la palette par défaut de Ghostty.
+- [x] Kitty : un `EL 2` efface le drapeau de placeholder Unicode de la ligne (`a573781c6`, `Terminal.zig:14280`). Le PNG d'une image kitty se décode avec la sortie remise à zéro avant le callback (`aca9bf031`) : le trampoline de `crates/paneflow-terminal-ghostty/src/sys.rs:54-59` (`decode_png_trampoline`) remplit les quatre champs, ou renvoie faux.
+- [x] Échec : given un handle de recherche dont le terminal a été libéré, when `ghostty_search_tick` est appelé, then l'appel renvoie `GHOSTTY_INVALID_VALUE` et le wrapper le traduit en erreur sans plantage (`b1c264163`, `ghostty/src/terminal/c/search.zig:949-1013`).
+- [x] Échec : given un lecteur de collage qui voit une écriture refusée, when `ghostty_terminal_paste` continue, then le collage échoue et rien après l'écriture refusée n'atteint le PTY (`2b0ceff7d`).
+- [x] Les corpus et golden existants (`src-app/src/terminal/bench_corpus.rs` et les tests golden du wrapper) passent sans changement. Si les largeurs Unicode 18 de `12542b392` en font bouger un, le diff est relu, puis consigné dans la PR avec le point de code en cause.
 
 ---
 
@@ -276,16 +277,16 @@ La hold se termine à la remise à zéro du mode 2026, à un RIS ou à un `ghost
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] `DisplayTerminal` installe `GHOSTTY_TERMINAL_OPT_RENDER_HOLD` sur les terminaux du desktop qui publient des frames (`src-app/src/terminal/ghostty_session/`). Les terminaux du host, qui ne rendent pas (`crates/paneflow-host/src/runtime.rs:906-935`), ne l'installent pas.
-- [ ] Au début d'une hold, le trampoline met à jour un render state dédié, détenu par `CallbackState`. Il ne passe jamais par `&mut DisplayTerminal`. Tant que la hold dure, `snapshot()` publie ce render state capturé.
-- [ ] `publish.rs` ne lit plus le mode 2026 (`publish.rs:140-178`). La décision de publication vient de l'état de hold tenu par les événements.
-- [ ] Given un seul `feed` qui contient la frame A, puis `CSI ? 2026 h`, la frame B complète, `CSI ? 2026 l`, `CSI ? 2026 h` et une frame C partielle, when la publication suivante a lieu, then le contenu publié est la frame B, ni A ni C partielle. Ce test échoue avec le sondage actuel ; il passe sur 1 000 itérations.
-- [ ] Given une hold jamais relâchée, when 150 ms s'écoulent (`SYNC_OUTPUT_MAX_HOLD`, `mod.rs:79`), then le desktop remet le mode 2026 à zéro par `OPT_MODE` et republie le contenu vivant. Un programme qui renvoie `CSI ? 2026 h` pendant la hold ne repousse pas l'échéance.
-- [ ] Un redimensionnement ou un RIS pendant une hold la termine et republie le contenu vivant (test).
-- [ ] Pendant une hold, un défilement ou une sélection de l'utilisateur affiche le contenu vivant (`terminal.h:1740-1741`).
-- [ ] Échec : given un callback render hold qui panique, when l'événement est traité, then la session remonte `CallbackPanicked` (`callbacks.rs:315-330`) comme les autres callbacks.
-- [ ] Échec : given que la capture dans le callback ne peut pas se faire sans aliasing, when la conception est revue, then la solution de repli est retenue et documentée dans la PR. Elle consiste à couper `feed` à chaque transition de hold par `ghostty_terminal_vt_write_until_ground`, déjà appelé par le wrapper, et à capturer entre deux appels. Le test « relâche et reprend » ci-dessus reste exigé.
-- [ ] Les tests existants de `publish.rs:377-443` et de `crates/paneflow-terminal-ghostty/tests/display_terminal.rs:88-104` sont adaptés, pas supprimés.
+- [x] `DisplayTerminal` installe `GHOSTTY_TERMINAL_OPT_RENDER_HOLD` sur les terminaux du desktop qui publient des frames (`src-app/src/terminal/ghostty_session/`). Les terminaux du host, qui ne rendent pas (`crates/paneflow-host/src/runtime.rs:906-935`), ne l'installent pas.
+- [x] Au début d'une hold, le trampoline met à jour un render state dédié, détenu par `CallbackState`. Il ne passe jamais par `&mut DisplayTerminal`. Tant que la hold dure, `snapshot()` publie ce render state capturé.
+- [x] `publish.rs` ne lit plus le mode 2026 (`publish.rs:140-178`). La décision de publication vient de l'état de hold tenu par les événements.
+- [x] Given un seul `feed` qui contient la frame A, puis `CSI ? 2026 h`, la frame B complète, `CSI ? 2026 l`, `CSI ? 2026 h` et une frame C partielle, when la publication suivante a lieu, then le contenu publié est la frame B, ni A ni C partielle. Ce test échoue avec le sondage actuel ; il passe sur 1 000 itérations.
+- [x] Given une hold jamais relâchée, when 150 ms s'écoulent (`SYNC_OUTPUT_MAX_HOLD`, `mod.rs:79`), then le desktop remet le mode 2026 à zéro par `OPT_MODE` et republie le contenu vivant. Un programme qui renvoie `CSI ? 2026 h` pendant la hold ne repousse pas l'échéance.
+- [x] Un redimensionnement ou un RIS pendant une hold la termine et republie le contenu vivant (test).
+- [x] Pendant une hold, un défilement ou une sélection de l'utilisateur affiche le contenu vivant (`terminal.h:1740-1741`).
+- [x] Échec : given un callback render hold qui panique, when l'événement est traité, then la session remonte `CallbackPanicked` (`callbacks.rs:315-330`) comme les autres callbacks.
+- [x] Échec : given que la capture dans le callback ne peut pas se faire sans aliasing, when la conception est revue, then la solution de repli est retenue et documentée dans la PR. Elle consiste à couper `feed` à chaque transition de hold par `ghostty_terminal_vt_write_until_ground`, déjà appelé par le wrapper, et à capturer entre deux appels. Le test « relâche et reprend » ci-dessus reste exigé.
+- [x] Les tests existants de `publish.rs:377-443` et de `crates/paneflow-terminal-ghostty/tests/display_terminal.rs:88-104` sont adaptés, pas supprimés.
 
 #### US-006: Honorer la forme de pointeur demandée par OSC 22
 **Description:** As a développeur qui utilise un TUI qui change le pointeur, I want que le curseur de la souris prenne la forme demandée par le programme so that les zones cliquables, redimensionnables ou de texte se reconnaissent comme dans Ghostty.
@@ -297,9 +298,9 @@ Upstream expose la forme par `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE` (`ghostty/inclu
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Le snapshot du wrapper lit `DATA_MOUSE_SHAPE` à chaque publication et la porte dans un miroir neutre `MouseShape` (`src-app/src/terminal/types.rs`). L'app ne voit aucun type moteur.
-- [ ] `view.rs:1632-1642` garde ses priorités : `Arrow` sur la barre de défilement ou pendant son déplacement, puis `PointingHand` sur un lien survolé avec Ctrl. Sinon, la forme demandée par le programme s'applique.
-- [ ] La correspondance est une table exhaustive, testée valeur par valeur :
+- [x] Le snapshot du wrapper lit `DATA_MOUSE_SHAPE` à chaque publication et la porte dans un miroir neutre `MouseShape` (`src-app/src/terminal/types.rs`). L'app ne voit aucun type moteur.
+- [x] `view.rs:1632-1642` garde ses priorités : `Arrow` sur la barre de défilement ou pendant son déplacement, puis `PointingHand` sur un lien survolé avec Ctrl. Sinon, la forme demandée par le programme s'applique.
+- [x] La correspondance est une table exhaustive, testée valeur par valeur :
   - `TEXT` vers `IBeam`, `VERTICAL_TEXT` vers `IBeamCursorForVerticalLayout` ;
   - `DEFAULT` vers `Arrow`, `POINTER` vers `PointingHand`, `CONTEXT_MENU` vers `ContextualMenu` ;
   - `CROSSHAIR` et `CELL` vers `Crosshair`, `ALIAS` vers `DragLink`, `COPY` vers `DragCopy` ;
@@ -309,9 +310,9 @@ Upstream expose la forme par `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE` (`ghostty/inclu
   - `NS` vers `ResizeUpDown`, `EW` vers `ResizeLeftRight` ;
   - `NE`, `SW`, `NESW` vers `ResizeUpRightDownLeft`, et `NW`, `SE`, `NWSE` vers `ResizeUpLeftDownRight` ;
   - `HELP`, `PROGRESS`, `WAIT`, `MOVE`, `ALL_SCROLL`, `ZOOM_IN` et `ZOOM_OUT` vers `Arrow`.
-- [ ] Given un programme qui envoie `OSC 22 ; pointer ST` puis `OSC 22 ; ST`, when la souris survole le pane, then le curseur passe à `PointingHand`, puis revient à `IBeam`.
-- [ ] Échec : given un discriminant inconnu renvoyé par une version future de la bibliothèque, when la table le reçoit, then le curseur vaut `IBeam` et rien ne panique (test sur une valeur hors plage).
-- [ ] Échec : given un pane non focalisé ou un programme sorti, when le shell reprend la main, then la forme reste celle du dernier `OSC 22` reçu jusqu'au prochain `OSC 22` ou RIS, comme upstream. Le test le fixe.
+- [x] Given un programme qui envoie `OSC 22 ; pointer ST` puis `OSC 22 ; ST`, when la souris survole le pane, then le curseur passe à `PointingHand`, puis revient à `IBeam`.
+- [x] Échec : given un discriminant inconnu renvoyé par une version future de la bibliothèque, when la table le reçoit, then le curseur vaut `IBeam` et rien ne panique (test sur une valeur hors plage).
+- [x] Échec : given un pane non focalisé ou un programme sorti, when le shell reprend la main, then la forme reste celle du dernier `OSC 22` reçu jusqu'au prochain `OSC 22` ou RIS, comme upstream. Le test le fixe. *(Amendé en 1.2, voir « Amendements de clôture ».)*
 
 #### US-007: Exposer l'overscan et l'identité de ligne dans le snapshot du wrapper
 **Description:** As a mainteneur, I want que le snapshot du wrapper puisse capturer des lignes au-dessus et au-dessous du viewport, et que chaque ligne porte sa position et son identité so that le défilement fluide (US-008) et un futur cache par ligne disposent des données upstream sans nouveau passage FFI.
@@ -328,13 +329,13 @@ Référence upstream :
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] `DisplayTerminal::set_overscan(above, below)` règle `GHOSTTY_RENDER_STATE_OPTION_OVERSCAN`. Le snapshot rapporte l'overscan réellement capturé (`DATA_OVERSCAN`), jamais la demande.
-- [ ] Chaque ligne du snapshot porte `viewport_y` (`i32`) et `row_id` (deux `u64`), lus dans le même `ghostty_render_state_row_get_multi` que la dirtiness et les cellules (`crates/paneflow-terminal-ghostty/src/snapshot_ffi.rs:263-300`).
-- [ ] Les lignes d'overscan sont séparées des lignes du viewport dans le contenu publié. `CellMirror` (`src-app/src/terminal/ghostty_session/convert.rs:194-250`) continue d'indexer `0..rows` sur le seul viewport.
-- [ ] Given un overscan à zéro, la valeur par défaut, when un corpus du bench est publié, then le contenu publié est identique à celui d'avant la story (test golden).
-- [ ] Given `{above: 1, below: 1}` et un viewport défilé au milieu du scrollback, when la publication a lieu, then une ligne est capturée de chaque côté, avec les `viewport_y` -1 et `rows`. Les identifiants restent stables après un défilement d'une ligne (miroir de `render.zig:2940`).
-- [ ] Échec : given un viewport collé en bas, when la publication a lieu, then l'overscan bas capturé vaut 0 et aucune ligne fictive n'est inventée (miroir de `render.zig:2918`).
-- [ ] Le surcoût de publication avec `{1, 1}` reste sous 5 % sur `scripts/bench-terminal.sh`, chiffre joint à la PR.
+- [x] `DisplayTerminal::set_overscan(above, below)` règle `GHOSTTY_RENDER_STATE_OPTION_OVERSCAN`. Le snapshot rapporte l'overscan réellement capturé (`DATA_OVERSCAN`), jamais la demande.
+- [x] Chaque ligne du snapshot porte `viewport_y` (`i32`) et `row_id` (deux `u64`), lus dans le même `ghostty_render_state_row_get_multi` que la dirtiness et les cellules (`crates/paneflow-terminal-ghostty/src/snapshot_ffi.rs:263-300`).
+- [x] Les lignes d'overscan sont séparées des lignes du viewport dans le contenu publié. `CellMirror` (`src-app/src/terminal/ghostty_session/convert.rs:194-250`) continue d'indexer `0..rows` sur le seul viewport.
+- [x] Given un overscan à zéro, la valeur par défaut, when un corpus du bench est publié, then le contenu publié est identique à celui d'avant la story (test golden).
+- [x] Given `{above: 1, below: 1}` et un viewport défilé au milieu du scrollback, when la publication a lieu, then une ligne est capturée de chaque côté, avec les `viewport_y` -1 et `rows`. Les identifiants restent stables après un défilement d'une ligne (miroir de `render.zig:2940`).
+- [x] Échec : given un viewport collé en bas, when la publication a lieu, then l'overscan bas capturé vaut 0 et aucune ligne fictive n'est inventée (miroir de `render.zig:2918`).
+- [x] Le surcoût de publication avec `{1, 1}` reste sous 5 % sur `scripts/bench-terminal.sh`, chiffre joint à la PR.
 
 #### US-008: Défiler au pixel par l'overscan
 **Description:** As a développeur sur trackpad, I want que le contenu du terminal suive le geste au pixel près so that le défilement du scrollback ne saute plus ligne par ligne.
@@ -346,13 +347,13 @@ Modèle upstream : `ghostty/include/ghostty/vt/render.h:134-163`. Un overscan ba
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Les deltas de défilement précis du trackpad déplacent la grille d'un décalage en pixels, strictement inférieur à une hauteur de cellule, et franchissent une ligne quand le décalage atteint une hauteur de cellule.
-- [ ] Les deltas en lignes de la molette gardent le comportement actuel, ligne par ligne, avec `scroll_multiplier` (`src-app/src/terminal/view.rs:217,578`).
-- [ ] La demande d'overscan `{1, 1}` se pose une fois par session, pas à chaque geste.
-- [ ] `reduce_motion: true` désactive le décalage en pixels ; le défilement reste ligne par ligne.
-- [ ] Given un viewport en bas du scrollback, when l'utilisateur continue de défiler vers le bas, then le décalage reste à 0 (pas de rebond dans le vide).
-- [ ] Échec : given une sortie qui arrive pendant un geste, when une frame est publiée, then le décalage en cours est conservé et le contenu ne saute pas d'une ligne (passe visuelle d'Arthur, enregistrement joint).
-- [ ] Le rendu à 60 Hz pendant un geste ne dépasse pas le budget de `perf-gates` du scénario de défilement, chiffre joint à la PR.
+- [x] Les deltas de défilement précis du trackpad déplacent la grille d'un décalage en pixels, strictement inférieur à une hauteur de cellule, et franchissent une ligne quand le décalage atteint une hauteur de cellule.
+- [x] Les deltas en lignes de la molette gardent le comportement actuel, ligne par ligne, avec `scroll_multiplier` (`src-app/src/terminal/view.rs:217,578`).
+- [x] La demande d'overscan `{1, 1}` se pose une fois par session, pas à chaque geste.
+- [x] `reduce_motion: true` désactive le décalage en pixels ; le défilement reste ligne par ligne.
+- [x] Given un viewport en bas du scrollback, when l'utilisateur continue de défiler vers le bas, then le décalage reste à 0 (pas de rebond dans le vide).
+- [x] Échec : given une sortie qui arrive pendant un geste, when une frame est publiée, then le décalage en cours est conservé et le contenu ne saute pas d'une ligne (passe visuelle d'Arthur, enregistrement joint).
+- [x] Le rendu à 60 Hz pendant un geste ne dépasse pas le budget de `perf-gates` du scénario de défilement, chiffre joint à la PR.
 
 ---
 
@@ -378,17 +379,17 @@ Références upstream :
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] `BackendEvent` (`crates/paneflow-terminal-ghostty/src/model.rs:277-300`) gagne trois variantes :
+- [x] `BackendEvent` (`crates/paneflow-terminal-ghostty/src/model.rs:277-300`) gagne trois variantes :
   - `ProgramStatus`, avec `state`, `kind`, `progress: Option<u8>`, et `id`, `app`, `title`, `message` copiés ;
   - `SemanticPrompt`, avec `kind`, `prompt_kind` et `exit_code: Option<i32>` ;
   - `Reset`.
-- [ ] Chaque trampoline lit `size` avant tout champ et ignore un rapport dont `size` est inférieur à la taille de la struct au pin. Il passe par `with_state` (garde de panique), copie les chaînes empruntées avant de rendre la main, et respecte `MAX_CALLBACK_BYTES` (`callback_ffi.rs:9`).
-- [ ] Les événements suivent la file plafonnée existante (`callbacks.rs:90-184`). Un plafond `MAX_PENDING_PROGRAM_STATUS_EVENTS` est fixé à 64, le minimum de la spécification ; un dépassement produit `EffectsOverflow`.
-- [ ] Une valeur d'état inconnue est ignorée. Un `kind` inconnu devient `None`. Un `progress` à -1 devient `None`. Chaque cas a son test.
-- [ ] `PROGRAM_STATUS` ne s'installe que sur les terminaux du host, qui répondent au PTY. Given `OSC 7501 ; ? ST` reçu par une session, when la réponse est écrite, then exactement une réponse atteint le PTY (test au niveau du host). Le terminal du desktop n'installe pas le callback et ne répond pas.
-- [ ] Le desktop consomme `Reset` en publiant immédiatement (`urgent`) au lieu d'attendre `MIN_PUBLISH_INTERVAL` (`mod.rs:76`).
-- [ ] Les méthodes d'installation ont leur pendant dans `stub.rs`.
-- [ ] Échec : given un message OSC 7501 dont le base64 se décode en UTF-8 invalide, when le programme l'émet, then aucun événement n'est produit, puisque upstream le rejette (`program_status.zig:624`). Le test le vérifie au niveau du wrapper.
+- [x] Chaque trampoline lit `size` avant tout champ et ignore un rapport dont `size` est inférieur à la taille de la struct au pin. Il passe par `with_state` (garde de panique), copie les chaînes empruntées avant de rendre la main, et respecte `MAX_CALLBACK_BYTES` (`callback_ffi.rs:9`).
+- [x] Les événements suivent la file plafonnée existante (`callbacks.rs:90-184`). Un plafond `MAX_PENDING_PROGRAM_STATUS_EVENTS` est fixé à 64, le minimum de la spécification ; un dépassement produit `EffectsOverflow`.
+- [x] Une valeur d'état inconnue est ignorée. Un `kind` inconnu devient `None`. Un `progress` à -1 devient `None`. Chaque cas a son test.
+- [x] `PROGRAM_STATUS` ne s'installe que sur les terminaux du host, qui répondent au PTY. Given `OSC 7501 ; ? ST` reçu par une session, when la réponse est écrite, then exactement une réponse atteint le PTY (test au niveau du host). Le terminal du desktop n'installe pas le callback et ne répond pas.
+- [x] Le desktop consomme `Reset` en publiant immédiatement (`urgent`) au lieu d'attendre `MIN_PUBLISH_INTERVAL` (`mod.rs:76`).
+- [x] Les méthodes d'installation ont leur pendant dans `stub.rs`. *(Amendé en 1.2, voir « Amendements de clôture ».)*
+- [x] Échec : given un message OSC 7501 dont le base64 se décode en UTF-8 invalide, when le programme l'émet, then aucun événement n'est produit, puisque upstream le rejette (`program_status.zig:624`). Le test le vérifie au niveau du wrapper.
 
 #### US-010: Tenir les enregistrements de statut dans le host selon la spécification
 **Description:** As a mainteneur, I want que le host tienne pour chaque session les enregistrements OSC 7501 selon les règles de la spécification so that l'état exposé soit celui que le programme a déclaré, sans fuite d'enregistrements périmés.
@@ -400,12 +401,12 @@ Règles : `ghostty/include/ghostty/vt/terminal.h:1299-1327`. Un rapport remplace
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Le runtime du host (`crates/paneflow-host/src/runtime.rs:1201-1233`) consomme `ProgramStatus`, `SemanticPrompt` et `Reset` dans `drain_engine_events`, à côté de `Progress` (`:1222-1224`).
-- [ ] Un type `ProgramStatusRecords` applique les règles ci-dessus. Il a un test par règle, dont l'effacement de `build` qui retire `build/test` et l'éviction au 257e enregistrement.
-- [ ] `ViewportScan` (`runtime.rs:106-113`) gagne `program_status` : l'enregistrement racine (id vide), ou à défaut le plus récemment mis à jour. La capture JSON de `crates/paneflow-host/src/control.rs:689` et de `viewport_scan.rs:302` l'expose à côté de `progress`.
-- [ ] Given une session dont le programme sort, when le host constate la sortie, then les enregistrements `working` et `blocked` disparaissent, et `done` et `error` restent jusqu'au prochain `PROMPT_START` ou `CLEAR`.
-- [ ] Given un RIS du programme, when le host le traite, then les enregistrements et la progression (`self.progress`) sont vides (test).
-- [ ] Échec : given un programme qui émet 10 000 rapports avec des ids distincts, when le host les traite, then la mémoire des enregistrements reste bornée à 256 entrées et le host reste réactif (test qui mesure la taille).
+- [x] Le runtime du host (`crates/paneflow-host/src/runtime.rs:1201-1233`) consomme `ProgramStatus`, `SemanticPrompt` et `Reset` dans `drain_engine_events`, à côté de `Progress` (`:1222-1224`).
+- [x] Un type `ProgramStatusRecords` applique les règles ci-dessus. Il a un test par règle, dont l'effacement de `build` qui retire `build/test` et l'éviction au 257e enregistrement.
+- [x] `ViewportScan` (`runtime.rs:106-113`) gagne `program_status` : l'enregistrement racine (id vide), ou à défaut le plus récemment mis à jour. La capture JSON de `crates/paneflow-host/src/control.rs:689` et de `viewport_scan.rs:302` l'expose à côté de `progress`.
+- [x] Given une session dont le programme sort, when le host constate la sortie, then les enregistrements `working` et `blocked` disparaissent, et `done` et `error` restent jusqu'au prochain `PROMPT_START` ou `CLEAR`.
+- [x] Given un RIS du programme, when le host le traite, then les enregistrements et la progression (`self.progress`) sont vides (test).
+- [x] Échec : given un programme qui émet 10 000 rapports avec des ids distincts, when le host les traite, then la mémoire des enregistrements reste bornée à 256 entrées et le host reste réactif (test qui mesure la taille).
 
 #### US-011: Faire de l'état OSC 7501 une source d'état d'agent
 **Description:** As a développeur qui suit ses agents et ses builds dans la sidebar, I want que l'état déclaré par OSC 7501 l'emporte sur les règles textuelles d'écran so that la sidebar affiche « working », « waiting » ou « finished » quand le programme le dit, au lieu de le deviner.
@@ -417,17 +418,17 @@ Le détecteur d'écran reçoit `ScreenView { screen, title, progress }` (`crates
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] `ScreenView` et `ScreenInput` gagnent `program_status`. Quand un enregistrement est présent, il décide l'état d'écran avant toute règle textuelle :
+- [x] `ScreenView` et `ScreenInput` gagnent `program_status`. Quand un enregistrement est présent, il décide l'état d'écran avant toute règle textuelle :
   - `working` vers occupé ;
   - `blocked` vers `blocked`, quel que soit le `kind` ;
   - `idle` et `done` vers `idle` ;
   - `error` vers l'état d'erreur si la couche d'écran le porte, sinon `idle`, avec la raison consignée dans la PR.
-- [ ] `classification_hash` (`viewport_scan.rs:97-103`) inclut `program_status`, si bien qu'un changement d'état seul déclenche une reclassification.
-- [ ] Given une session avec hooks actifs, when le programme émet aussi OSC 7501, then l'état affiché reste celui des hooks, car la précédence `Hook > Terminal` est inchangée (test).
-- [ ] Le `message` d'un enregistrement `blocked` alimente le corps de la notification existante, derrière la même porte `NotifyWhenAgentWaiting` (`src-app/src/agents/notifications.rs:181-186`). Il passe par `sanitize_notification_message` (`src-app/src/agents/notifications.rs:188`, qui appelle `strip_bidi_zero_width`, `src-app/src/markdown/parser.rs:462-477`), comme les notifications de programme aujourd'hui (`events.rs:210-215`), et le titre nomme le pane d'origine.
-- [ ] Aucun état OSC 7501 ne déclenche d'action sur un agent : envoi, soumission ou relance.
-- [ ] `CHANGELOG.md` annonce qu'un programme qui émet OSC 7501 voit son état dans la sidebar, avec un exemple de séquence.
-- [ ] Échec : given un `title` ou un `message` qui contient U+202E ou U+2066, when il est affiché dans la sidebar ou une notification, then ces caractères sont retirés (test).
+- [x] `classification_hash` (`viewport_scan.rs:97-103`) inclut `program_status`, si bien qu'un changement d'état seul déclenche une reclassification.
+- [x] Given une session avec hooks actifs, when le programme émet aussi OSC 7501, then l'état affiché reste celui des hooks, car la précédence `Hook > Terminal` est inchangée (test).
+- [x] Le `message` d'un enregistrement `blocked` alimente le corps de la notification existante, derrière la même porte `NotifyWhenAgentWaiting` (`src-app/src/agents/notifications.rs:181-186`). Il passe par `sanitize_notification_message` (`src-app/src/agents/notifications.rs:188`, qui appelle `strip_bidi_zero_width`, `src-app/src/markdown/parser.rs:462-477`), comme les notifications de programme aujourd'hui (`events.rs:210-215`), et le titre nomme le pane d'origine.
+- [x] Aucun état OSC 7501 ne déclenche d'action sur un agent : envoi, soumission ou relance.
+- [x] `CHANGELOG.md` annonce qu'un programme qui émet OSC 7501 voit son état dans la sidebar, avec un exemple de séquence.
+- [x] Échec : given un `title` ou un `message` qui contient U+202E ou U+2066, when il est affiché dans la sidebar ou une notification, then ces caractères sont retirés (test).
 
 ---
 
@@ -450,12 +451,12 @@ Références upstream :
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] `TerminalConfig` (`crates/paneflow-config/src/schema/terminal.rs:166-192`) gagne `xt_checksum_report: Option<bool>`, faux par défaut, et `xt_checksum_extension: Option<u8>`, 0 par défaut, sur le modèle de l'opt-in OSC 52 (`Osc52ClipboardConfig`, `:69`).
-- [ ] La config est appliquée aux terminaux du host, qui répondent au PTY, à la création de session (`runtime.rs:906-935`), et prise en compte par le watcher de config pour les nouvelles sessions.
-- [ ] Given la config par défaut, when un programme envoie `CSI 1 ; 1 ; 1 ; 1 ; 24 ; 80 * y`, then aucune réponse n'atteint le PTY (test au niveau du host).
-- [ ] Given `xt_checksum_report: true`, when le même DECRQCRA arrive sur un écran connu, then la réponse est `DCS 1 ! ~ <hex> ST`, avec la valeur de l'oracle upstream pour le même contenu.
-- [ ] Échec : given `xt_checksum_extension: 32`, when la config se charge, then le loader la rejette avec un message qui nomme la clé et la plage 0-31. La valeur précédente reste en vigueur.
-- [ ] `docs/user/` documente les deux clés, avec la phrase de risque reprise de l'en-tête upstream.
+- [x] `TerminalConfig` (`crates/paneflow-config/src/schema/terminal.rs:166-192`) gagne `xt_checksum_report: Option<bool>`, faux par défaut, et `xt_checksum_extension: Option<u8>`, 0 par défaut, sur le modèle de l'opt-in OSC 52 (`Osc52ClipboardConfig`, `:69`).
+- [x] La config est appliquée aux terminaux du host, qui répondent au PTY, à la création de session (`runtime.rs:906-935`), et prise en compte par le watcher de config pour les nouvelles sessions.
+- [x] Given la config par défaut, when un programme envoie `CSI 1 ; 1 ; 1 ; 1 ; 24 ; 80 * y`, then aucune réponse n'atteint le PTY (test au niveau du host).
+- [x] Given `xt_checksum_report: true`, when le même DECRQCRA arrive sur un écran connu, then la réponse est `DCS 1 ! ~ <hex> ST`, avec la valeur de l'oracle upstream pour le même contenu.
+- [x] Échec : given `xt_checksum_extension: 32`, when la config se charge, then le loader la rejette avec un message qui nomme la clé et la plage 0-31. La valeur précédente reste en vigueur. *(Amendé en 1.2, voir « Amendements de clôture ».)*
+- [x] `docs/user/` documente les deux clés, avec la phrase de risque reprise de l'en-tête upstream.
 
 #### US-013: Faire passer les OSC inconnus par le chemin des séquences non gérées
 **Description:** As a mainteneur, I want que les OSC que libghostty-vt n'implémente pas soient rapportés comme les APC so that un protocole OSC non supporté se diagnostique dans les logs au lieu de disparaître.
@@ -470,11 +471,11 @@ Références upstream :
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Le trampoline `unknown_sequence` (`crates/paneflow-terminal-ghostty/src/callback_ffi.rs:203-226`) accepte l'étiquette OSC. `BackendEvent::UnknownSequence` porte le type (APC ou OSC) et, pour un OSC, le terminateur.
-- [ ] Le desktop journalise un OSC inconnu au niveau `debug`, échappé, dans la limite de `MAX_UNKNOWN_SEQUENCE_BYTES` (`crates/paneflow-terminal-ghostty/src/options.rs:11`), comme un APC aujourd'hui (`events.rs:309-315`). Le host continue de l'ignorer (`runtime.rs:1227-1232`).
-- [ ] Given `ESC ] 7400 ; status=busy BEL`, when le terminal le traite, then un événement OSC est produit avec le contenu `7400;status=busy` et le terminateur BEL.
-- [ ] Échec : given `ESC ] 7400 ; abc CAN`, when le terminal le traite, then aucun événement n'est produit (`520d8f55a`).
-- [ ] Échec : given un OSC de 10 000 octets, when il est rapporté, then le contenu est tronqué à la limite et `truncated` vaut vrai.
+- [x] Le trampoline `unknown_sequence` (`crates/paneflow-terminal-ghostty/src/callback_ffi.rs:203-226`) accepte l'étiquette OSC. `BackendEvent::UnknownSequence` porte le type (APC ou OSC) et, pour un OSC, le terminateur.
+- [x] Le desktop journalise un OSC inconnu au niveau `debug`, échappé, dans la limite de `MAX_UNKNOWN_SEQUENCE_BYTES` (`crates/paneflow-terminal-ghostty/src/options.rs:11`), comme un APC aujourd'hui (`events.rs:309-315`). Le host continue de l'ignorer (`runtime.rs:1227-1232`).
+- [x] Given `ESC ] 7400 ; status=busy BEL`, when le terminal le traite, then un événement OSC est produit avec le contenu `7400;status=busy` et le terminateur BEL.
+- [x] Échec : given `ESC ] 7400 ; abc CAN`, when le terminal le traite, then aucun événement n'est produit (`520d8f55a`).
+- [x] Échec : given un OSC de 10 000 octets, when il est rapporté, then le contenu est tronqué à la limite et `truncated` vaut vrai.
 
 #### US-014: Ne plus rappeler le scrollback au redimensionnement sous ConPTY
 **Description:** As a développeur sous Windows, I want qu'agrandir un pane n'aspire plus de lignes du scrollback dans la zone active so that la sortie suivante de ConPTY atterrisse au bon endroit.
@@ -491,12 +492,12 @@ ConPTY vit dans `crates/paneflow-host/src/pty/windows.rs`, et son comportement d
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Le wrapper expose `set_resize_pull_scrollback(bool)`, avec son pendant dans `stub.rs`.
-- [ ] Tout terminal alimenté par un flux ConPTY règle l'option à faux : celui du host, créé par `new_terminal` (`runtime.rs:906-935`), et tout terminal du desktop qui rejoue ce flux. La liste est établie par l'agent et consignée dans la PR. Le choix passe par `cfg!(windows)` en expression, pas par un item `#[cfg(windows)]`.
-- [ ] Sous Linux et macOS, l'option garde sa valeur par défaut (test qui lit la valeur appliquée).
-- [ ] Given l'option à faux et un écran dont la première ligne est passée en scrollback, when les lignes augmentent, then des lignes vides s'ajoutent en bas et la ligne passée en scrollback y reste (test sous Linux avec l'option forcée).
-- [ ] Échec : given un RIS du programme, when l'option était à faux, then elle reste à faux (test).
-- [ ] La vérification sur le matériel Windows réel est portée par US-017 (EP-006).
+- [x] Le wrapper expose `set_resize_pull_scrollback(bool)`, avec son pendant dans `stub.rs`. *(Amendé en 1.2, voir « Amendements de clôture ».)*
+- [x] Tout terminal alimenté par un flux ConPTY règle l'option à faux : celui du host, créé par `new_terminal` (`runtime.rs:906-935`), et tout terminal du desktop qui rejoue ce flux. La liste est établie par l'agent et consignée dans la PR. Le choix passe par `cfg!(windows)` en expression, pas par un item `#[cfg(windows)]`.
+- [x] Sous Linux et macOS, l'option garde sa valeur par défaut (test qui lit la valeur appliquée).
+- [x] Given l'option à faux et un écran dont la première ligne est passée en scrollback, when les lignes augmentent, then des lignes vides s'ajoutent en bas et la ligne passée en scrollback y reste (test sous Linux avec l'option forcée).
+- [x] Échec : given un RIS du programme, when l'option était à faux, then elle reste à faux (test).
+- [x] La vérification sur le matériel Windows réel est portée par US-017 (EP-006).
 
 ---
 
@@ -519,11 +520,11 @@ Références upstream :
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] `DisplayTerminal::memory_usage()` renvoie un miroir de la struct, ou une erreur si `size` est refusé.
-- [ ] Le statut du host (`host.status`) expose par session `resident_bytes`, `virtual_bytes`, `compressed_bytes` et `image_bytes` (écrans principal et alternatif sommés), plus `compression_supported`. La lecture se fait à la demande, jamais à chaque `feed`.
-- [ ] Un test vérifie qu'après l'écriture de 10 000 lignes, `primary_resident_bytes` dépasse celui d'un terminal neuf, et que `primary_virtual_bytes` est au moins égal à `primary_resident_bytes`.
-- [ ] Échec : given une session dont le terminal n'est pas vivant, when le statut est demandé, then la session rapporte `memory: null` avec une raison, jamais 0.
-- [ ] `bench/README.md`, section « Compteurs de travail », documente les champs et leur unité.
+- [x] `DisplayTerminal::memory_usage()` renvoie un miroir de la struct, ou une erreur si `size` est refusé.
+- [x] Le statut du host (`host.status`) expose par session `resident_bytes`, `virtual_bytes`, `compressed_bytes` et `image_bytes` (écrans principal et alternatif sommés), plus `compression_supported`. La lecture se fait à la demande, jamais à chaque `feed`.
+- [x] Un test vérifie qu'après l'écriture de 10 000 lignes, `primary_resident_bytes` dépasse celui d'un terminal neuf, et que `primary_virtual_bytes` est au moins égal à `primary_resident_bytes`.
+- [x] Échec : given une session dont le terminal n'est pas vivant, when le statut est demandé, then la session rapporte `memory: null` avec une raison, jamais 0.
+- [x] `bench/README.md`, section « Compteurs de travail », documente les champs et leur unité.
 
 #### US-016: Compresser l'historique restauré à l'attache d'une session
 **Description:** As a développeur qui rattache une session à long scrollback, I want que l'historique restauré dans le desktop soit stocké compressé so that le desktop ne double pas la mémoire du scrollback du host.
@@ -539,10 +540,10 @@ Le desktop décode le snapshot du host dans `src-app/src/terminal/ghostty_sessio
 **Dependencies:** Blocked by US-015
 
 **Acceptance Criteria:**
-- [ ] `SnapshotDecoder` expose l'option, et `attached_runtime.rs` l'active à l'attache.
-- [ ] Mesure jointe à la PR, prise avec `memory_usage()` d'US-015 : un snapshot de 50 000 lignes restauré avec l'option donne un `primary_resident_bytes` inférieur à celui obtenu sans l'option. Le rapport et la commande qui le reproduit sont cités.
-- [ ] Given un historique restauré compressé, when l'utilisateur défile jusqu'en haut ou lance une recherche, then le contenu est identique à celui d'une restauration sans compression (test).
-- [ ] Échec : given une plateforme où `compression_supported` vaut faux, when l'option est activée, then la restauration réussit sans erreur et sans changement de comportement (test qui force le cas, ou inspection consignée si non forçable).
+- [x] `SnapshotDecoder` expose l'option, et `attached_runtime.rs` l'active à l'attache.
+- [x] Mesure jointe à la PR, prise avec `memory_usage()` d'US-015 : un snapshot de 50 000 lignes restauré avec l'option donne un `primary_resident_bytes` inférieur à celui obtenu sans l'option. Le rapport et la commande qui le reproduit sont cités.
+- [x] Given un historique restauré compressé, when l'utilisateur défile jusqu'en haut ou lance une recherche, then le contenu est identique à celui d'une restauration sans compression (test).
+- [x] Échec : given une plateforme où `compression_supported` vaut faux, when l'option est activée, then la restauration réussit sans erreur et sans changement de comportement (test qui force le cas, ou inspection consignée si non forçable).
 
 ---
 
@@ -560,9 +561,9 @@ Regrouper en fin de PRD toute la vérification sur le matériel Windows réel, p
 **Dependencies:** Blocked by US-014, US-016
 
 **Acceptance Criteria:**
-- [ ] Le job « Windows x86_64 libghostty check » passe sur le dernier commit de la branche qui porte EP-001 à EP-005.
-- [ ] Vérifié sur le matériel Windows réel (dual boot d'Arthur), sur un build debug lancé par `scripts/dev.ps1` : agrandir puis réduire un pane qui exécute `dir /s` ne décale plus la sortie suivante (US-014). La PR le dit.
-- [ ] Échec : given un défaut constaté sous Windows, when il est corrigé, then le correctif reste dans cet epic, un test de non-régression l'accompagne s'il est reproductible sous Linux, sinon la PR décrit la vérification manuelle refaite.
+- [x] Le job « Windows x86_64 libghostty check » passe sur le dernier commit de la branche qui porte EP-001 à EP-005.
+- [x] Vérifié sur le matériel Windows réel (dual boot d'Arthur), sur un build debug lancé par `scripts/dev.ps1` : agrandir puis réduire un pane qui exécute `dir /s` ne décale plus la sortie suivante (US-014). La PR le dit.
+- [x] Échec : given un défaut constaté sous Windows, when il est corrigé, then le correctif reste dans cet epic, un test de non-régression l'accompagne s'il est reproductible sous Linux, sinon la PR décrit la vérification manuelle refaite.
 
 ## Functional Requirements
 
@@ -682,8 +683,33 @@ Catégories écartées :
 
 ## Open Questions
 
+Toutes les questions sont tranchées (version 1.2).
+
 - La mise à jour de l'app arrête-t-elle le host avant de relancer le desktop, ou l'utilisateur voit-il « Stop host and restart » sur chaque session après la mise à jour ? Réponse attendue d'Arthur avant la release qui embarque le re-pin ; la note d'Upgrade d'US-002 en dépend.
+  - **Réponse :** la mise à jour depuis l'app arrête le host. `update_restart_plan` (`src-app/src/app/quit_dialog.rs:63-85`) choisit `StopEverything` quand aucune session ne tourne ou que la politique de sortie est `Stop`, et sinon pose la question de sortie habituelle. Seuls une mise à jour hors de l'app (paquet, Homebrew, MSI lancé à la main) ou le choix « Keep sessions running » laissent un host de l'ancien pin, dont les sessions finissent `Incompatible`. La note d'Upgrade du CHANGELOG le dit (US-017 de la remédiation).
 - Garde-t-on le plafond de hold à 150 ms, ou passe-t-on à la seconde recommandée par upstream (`terminal.h:1717-1725`) ? Décision d'Arthur pendant la revue d'US-005. Le PRD garde 150 ms par défaut.
+  - **Réponse :** 150 ms est gardé (`SYNC_OUTPUT_MAX_HOLD`, `src-app/src/terminal/ghostty_session/mod.rs:80`), mesuré depuis la capture du début de la hold.
 - Les états `idle` et `done` d'OSC 7501 doivent-ils déclencher la notification de fin de tour existante, ou seulement `blocked` ? À trancher par Arthur à la passe visuelle d'US-011. Le PRD ne notifie que sur `blocked`, derrière la porte existante.
+  - **Réponse :** seul `blocked` notifie. `idle` et `done` ne notifient jamais ; `error` ne notifie pas non plus, il entre seulement dans l'Attention Queue pour un programme sans agent et donne `Errored` pour un agent (US-010 et US-011 de la remédiation).
 - Le défilement fluide (US-008) est-il voulu dans cette release, ou reporté après mesure ? Décision d'Arthur après US-007.
+  - **Réponse :** le défilement fluide est livré, et `reduce_motion` le désactive : le décalage au pixel vaut 0 dès la frame suivante, et il vaut aussi 0 tant que le programme lit la souris ou que l'écran alternatif défile en alterné (US-005 de la remédiation).
+
+## Amendements de clôture (1.2)
+
+- **`stub.rs` caduc.** Les critères qui demandent un pendant de chaque méthode du wrapper dans `crates/paneflow-terminal-ghostty/src/stub.rs` (Quality Gates, US-009, US-014) ne s'appliquent plus : le fichier a été supprimé en `4752a664` (2026-09-25), avant ce PRD, et libghostty est l'unique moteur, lié statiquement sur chaque cible livrée.
+- **OSC 22 à travers un RIS.** La forme de pointeur demandée par OSC 22 survit à un RIS (`ESC c`), comme upstream : `fullReset` (`ghostty/src/terminal/Terminal.zig:4983-5026`) ne touche pas `mouse_shape` (`:94`). Seul un reset manuel par `DisplayTerminal::reset` la ramène à `text`. Le test `osc_22_sets_the_mouse_shape_until_the_next_request_or_a_reset` (`crates/paneflow-terminal-ghostty/tests/display_terminal.rs:338`) fixe les deux cas.
+- **Config d'`xt_checksum_extension` (amende US-012).** Le critère d'échec d'US-012 (« le loader la rejette … La valeur précédente reste en vigueur ») est remplacé par la règle d'US-014 de la remédiation : une valeur hors de 0 à 31 (par exemple `32`, `-1`, `1.5` ou `"4"`) ne retire que cette clé, qui retombe à 0, avec un avertissement qui nomme la clé et la plage 0-31. Le reste de `paneflow.json`, `xt_checksum_report` compris, s'applique, au démarrage comme au rechargement par le watcher. Le host suit la même règle pour les nouvelles sessions.
+- **Terminaux alimentés par ConPTY (US-014).** `RESIZE_PULLS_SCROLLBACK` vaut `!cfg!(windows)` (`crates/paneflow-host/src/pty.rs:4`) et s'applique à exactement deux terminaux :
+  - celui du host, créé par `new_terminal` (`crates/paneflow-host/src/runtime.rs:1045`) ;
+  - ceux du desktop qui rejouent un flux PTY, par `follow_pty_scrollback_policy` (`src-app/src/terminal/ghostty_session/mod.rs:1289`) : le runtime PTY local (`pty_runtime.rs:376`) et le runtime attaché à une session du host (`attached_runtime.rs:232`).
+
+  Le runtime d'affichage seul (`display_runtime.rs`, pane d'échec de lancement et surfaces sans PTY) n'est alimenté par aucun PTY et garde la valeur par défaut.
+- **Mesure d'US-016.** Commande qui la reproduit :
+
+  ```bash
+  cargo test -p paneflow-terminal-ghostty --features native --locked --test display_terminal a_compressed_restore_of_fifty_thousand_lines_holds_less_resident_memory -- --nocapture
+  ```
+
+  Sur Linux x86_64 le 2026-10-09, pour 50 000 lignes restaurées, `primary_resident_bytes` passe de 34 922 496 octets sans l'option à 1 339 578 avec, 86 pages sur 87 compressées. Le fichier de test ne compile que sous Linux et Windows x86_64 MSVC, donc la mesure n'existe pas pour macOS.
+- **Compression non supportée (inspection).** Le cas n'est pas forçable par le wrapper à la restauration : `SnapshotDecoder::set_compress_history` (`crates/paneflow-terminal-ghostty/src/snapshot_codec.rs:133-142`) transmet l'option à upstream, dont l'en-tête (`ghostty/include/ghostty/vt/snapshot.h:186-188`) dit qu'elle est acceptée sans effet sur une plateforme sans compression. La restauration (`src-app/src/terminal/ghostty_session/attached_runtime.rs:217-219`) ne change donc pas de comportement. Le test de mémoire ci-dessus exige alors une restauration identique à celle sans l'option (`assert_eq!(compressed, plain)`). La recompression au repos, ajoutée par la remédiation, s'arrête sans erreur sur `CompressionProgress::Unsupported` (`src-app/src/terminal/ghostty_session/recompression.rs:68`), cas forcé par `an_unsupported_compression_stops_the_idle_step_without_an_error`.
 [/PRD]
