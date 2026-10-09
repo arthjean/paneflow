@@ -598,8 +598,20 @@ pub(super) fn run_runtime(
                     publish_gate.interactive_until =
                         Some(Instant::now() + INTERACTIVE_OUTPUT_WINDOW);
                 }
+                let resets = matches!(message, RuntimeMessage::ResetTerminal);
                 match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
-                    CommandOutcome::Handled => Ok(None),
+                    CommandOutcome::Handled => {
+                        if resets
+                            && let Err(error) =
+                                handle_engine_events(&inner, &mut terminal, &mut writer)
+                        {
+                            log::warn!(
+                                target: "paneflow::terminal::ghostty",
+                                "the terminal could not settle its reset: {error}"
+                            );
+                        }
+                        Ok(None)
+                    }
                     CommandOutcome::Unhandled(message) => Ok(Some(message)),
                 }
             }
@@ -1983,5 +1995,62 @@ mod tests {
             Some(libc::ESRCH),
             "the whole process group must be gone after the SIGKILL escalation"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_manual_reset_clears_the_pane_title_and_progress_without_further_output() {
+        let params = SpawnParams {
+            shell: "/bin/sh".into(),
+            shell_quoting: super::super::types::ShellQuoting::Posix,
+            extra_args: Vec::new(),
+            env: std::collections::HashMap::from([("TERM".into(), "xterm-256color".into())]),
+            cwd: std::env::current_dir().unwrap(),
+            cols: 80,
+            rows: 24,
+            profile: TerminalSurfaceProfile::Normal,
+        };
+        let (session, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        session
+            .start(pending, params, 1_000)
+            .expect("Ghostty runtime must spawn a portable PTY shell");
+        session.promote();
+        assert!(
+            session
+                .write(b"printf '\\033]2;htop\\007\\033]9;4;3\\007'\r".to_vec())
+                .is_sent()
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut titled = false;
+        while Instant::now() < deadline && !titled {
+            titled = session.inner.ui_events.take_title().as_deref() == Some("htop");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(titled, "the program title reached the pane");
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = session.inner.ui_events.take_title();
+        let _ = session.inner.ui_events.take_progress();
+
+        session.reset_terminal();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut reset = (None, None);
+        while Instant::now() < deadline && (reset.0.is_none() || reset.1.is_none()) {
+            reset.0 = reset.0.or_else(|| session.inner.ui_events.take_title());
+            reset.1 = reset.1.or_else(|| {
+                session
+                    .inner
+                    .ui_events
+                    .take_progress()
+                    .map(|report| report.state)
+            });
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            reset,
+            (Some(String::new()), Some(ghostty::ProgressState::Remove))
+        );
+        session.shutdown();
     }
 }

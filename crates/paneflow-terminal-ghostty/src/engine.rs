@@ -104,6 +104,7 @@ impl DisplayTerminal {
                 RESET_PROGRAM_OVERRIDES.len(),
             );
         }
+        self.callbacks.push(BackendEvent::Reset);
         self.history_clear_pending = false;
         self.invalidate_search_rail();
         self.snapshot_cache.invalidate();

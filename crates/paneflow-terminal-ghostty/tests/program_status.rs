@@ -165,6 +165,19 @@ fn a_full_reset_is_reported_without_program_status() {
 }
 
 #[test]
+fn an_embedder_reset_is_reported_like_a_program_reset() {
+    let mut terminal = terminal(true);
+    let _ = feed(&mut terminal, b"\x1b]7501;state=working\x1b\\");
+
+    assert!(terminal.feed(b"\x1b]7501;state=blocked\x1b\\").is_ok());
+    terminal.reset();
+    let events = terminal.drain_events();
+
+    assert!(reports(&events).is_empty(), "{events:?}");
+    assert_eq!(events, [BackendEvent::Reset]);
+}
+
+#[test]
 fn semantic_prompts_carry_their_kind_and_exit_code() {
     let mut terminal = terminal(true);
     let events = feed(&mut terminal, b"\x1b]133;A\x1b\\\x1b]133;D;2\x1b\\");

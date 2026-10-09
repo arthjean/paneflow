@@ -1298,6 +1298,8 @@ impl Session {
                 ghostty::BackendEvent::Reset => {
                     self.program_status.clear();
                     self.progress = None;
+                    self.title = None;
+                    (self.observer)(RuntimeNotice::Title(String::new()));
                 }
                 ghostty::BackendEvent::ClipboardStore(_)
                 | ghostty::BackendEvent::DesktopNotification { .. } => {}
@@ -2489,6 +2491,12 @@ mod tests {
     }
 
     fn status_session() -> (Session, Receiver<Message>, Receiver<Vec<u8>>) {
+        status_session_observed(Arc::new(|_| {}))
+    }
+
+    fn status_session_observed(
+        observer: RuntimeObserver,
+    ) -> (Session, Receiver<Message>, Receiver<Vec<u8>>) {
         let mut spec = echo_shell_spec(80, 24);
         #[cfg(unix)]
         {
@@ -2506,7 +2514,7 @@ mod tests {
             tx,
             Weak::new(),
             &shared,
-            Arc::new(|_| {}),
+            observer,
         )
         .expect("session starts");
         let (writer, replies) = sync_channel(64);
@@ -2652,20 +2660,82 @@ mod tests {
         assert_eq!(scanned_status(&mut session), None);
     }
 
+    const TITLED_WORKING_PROGRAM: &[u8] =
+        b"\x1b]2;vim notes.md\x07\x1b]9;4;3\x07\x1b]7501;state=working\x1b\\";
+
+    fn observed_titles() -> (RuntimeObserver, Arc<Mutex<Vec<String>>>) {
+        let titles = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&titles);
+        let observer: RuntimeObserver = Arc::new(move |notice| {
+            if let RuntimeNotice::Title(title) = notice {
+                sink.lock().unwrap().push(title);
+            }
+        });
+        (observer, titles)
+    }
+
+    fn assert_reset_to_defaults(session: &mut Session, titles: &Mutex<Vec<String>>) {
+        let scan = session.viewport_scan().expect("scan");
+        assert_eq!(scan.progress, None);
+        assert_eq!(scan.program_status, None);
+        assert_eq!(scan.title, None);
+        assert!(session.program_status.is_empty());
+        assert_eq!(
+            titles.lock().unwrap().as_slice(),
+            ["vim notes.md".to_string(), String::new()],
+            "the reset publishes one empty title so the pane falls back to its default name"
+        );
+    }
+
     #[test]
-    fn a_program_reset_empties_records_and_progress() {
-        let (mut session, _messages, _replies) = status_session();
-        session.feed(b"\x1b]9;4;3\x07\x1b]7501;state=working\x1b\\");
+    fn a_program_reset_empties_records_progress_and_title() {
+        let (observer, titles) = observed_titles();
+        let (mut session, _messages, _replies) = status_session_observed(observer);
+        session.feed(TITLED_WORKING_PROGRAM);
         let scan = session.viewport_scan().expect("scan");
         assert_eq!(scan.progress, Some("indeterminate"));
+        assert_eq!(scan.title.as_deref(), Some("vim notes.md"));
         assert!(scan.program_status.is_some());
 
         session.feed(b"\x1bc");
 
-        let scan = session.viewport_scan().expect("scan");
-        assert_eq!(scan.progress, None);
-        assert_eq!(scan.program_status, None);
-        assert!(session.program_status.is_empty());
+        assert_reset_to_defaults(&mut session, &titles);
+    }
+
+    #[test]
+    fn a_manual_reset_empties_records_progress_and_title_like_a_program_reset() {
+        let (observer, titles) = observed_titles();
+        let (mut session, _messages, _replies) = status_session_observed(observer);
+        session.feed(TITLED_WORKING_PROGRAM);
+        assert!(session.program_status.current().is_some());
+
+        let (reply, reset) = sync_channel(1);
+        session.handle(Command::Reset(reply));
+
+        assert_eq!(reset.recv().expect("reply"), Ok(()));
+        assert_reset_to_defaults(&mut session, &titles);
+    }
+
+    #[test]
+    fn a_reset_keeps_the_known_working_directory() {
+        let directories = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&directories);
+        let observer: RuntimeObserver = Arc::new(move |notice| {
+            if let RuntimeNotice::WorkingDirectory(cwd) = notice {
+                sink.lock().unwrap().push(cwd);
+            }
+        });
+        let (mut session, _messages, _replies) = status_session_observed(observer);
+        session.feed(b"\x1b]7;file://localhost/srv/build\x07");
+        let known = directories.lock().unwrap().clone();
+        assert_eq!(known.len(), 1);
+
+        session.feed(b"\x1bc");
+        let (reply, reset) = sync_channel(1);
+        session.handle(Command::Reset(reply));
+
+        assert_eq!(reset.recv().expect("reply"), Ok(()));
+        assert_eq!(*directories.lock().unwrap(), known);
     }
 
     #[test]

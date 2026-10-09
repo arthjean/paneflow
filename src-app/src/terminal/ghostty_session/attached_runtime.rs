@@ -563,7 +563,7 @@ pub(super) fn run_attached_runtime(
                     publish_gate.interactive_until =
                         Some(Instant::now() + INTERACTIVE_OUTPUT_WINDOW);
                 }
-                let appearance_update = match &message {
+                let settles_engine_events = match &message {
                     RuntimeMessage::UpdateAppearance(appearance) => {
                         control.set_appearance(host_appearance(
                             *appearance,
@@ -581,19 +581,19 @@ pub(super) fn run_attached_runtime(
                     }
                     RuntimeMessage::ResetTerminal => {
                         control.forward(&inner, ControlRequest::Reset, HOST_STATE_NOT_RESET);
-                        false
+                        true
                     }
                     _ => false,
                 };
                 match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
                     CommandOutcome::Handled => {
-                        if appearance_update
+                        if settles_engine_events
                             && let Err(error) =
                                 handle_engine_events_to(&inner, &mut terminal, &mut |_| Ok(()))
                         {
                             log::warn!(
                                 target: "paneflow::terminal::ghostty",
-                                "the mirror could not settle its theme update: {error}"
+                                "the mirror could not settle its theme update or reset: {error}"
                             );
                         }
                         Ok(None)
@@ -1595,6 +1595,86 @@ mod tests {
                 "the mirror keeps running: {event:?}"
             );
         }
+
+        host.stop(&session, None).expect("stop");
+        mirror.shutdown();
+        server.stop().expect("server stop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_manual_reset_clears_the_attached_pane_title_and_progress_without_further_output() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some("/bin/sh".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+                appearance: None,
+                cell: None,
+            })
+            .expect("session");
+        let session = created.manifest.session.clone();
+        let attachment = client
+            .attach(&session, Some(created.manifest.generation))
+            .expect("checkpoint");
+        let (mirror, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let (host_attachment, payload) = test_attachment(&endpoint, &hello, &session, attachment);
+        mirror
+            .start_attached(pending, host_attachment, payload, 1_000)
+            .expect("attached mirror");
+        mirror.promote();
+        assert!(
+            mirror
+                .write(b"printf '\\033]2;htop\\007\\033]9;4;3\\007'\r".to_vec())
+                .is_sent()
+        );
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut titled = false;
+        while Instant::now() < deadline && !titled {
+            titled = mirror.inner.ui_events.take_title().as_deref() == Some("htop");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(titled, "the program title reached the attached pane");
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = mirror.inner.ui_events.take_title();
+        let _ = mirror.inner.ui_events.take_progress();
+
+        mirror.reset_terminal();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut reset = (None, None);
+        while Instant::now() < deadline && (reset.0.is_none() || reset.1.is_none()) {
+            reset.0 = reset.0.or_else(|| mirror.inner.ui_events.take_title());
+            reset.1 = reset.1.or_else(|| {
+                mirror
+                    .inner
+                    .ui_events
+                    .take_progress()
+                    .map(|report| report.state)
+            });
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            reset,
+            (Some(String::new()), Some(ghostty::ProgressState::Remove))
+        );
 
         host.stop(&session, None).expect("stop");
         mirror.shutdown();

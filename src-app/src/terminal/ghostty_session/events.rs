@@ -312,7 +312,17 @@ pub(super) fn handle_engine_events_to(
     let mut drain = EngineDrain::default();
     for event in terminal.drain_events() {
         match event {
-            ghostty::BackendEvent::Reset => drain.program_reset = true,
+            ghostty::BackendEvent::Reset => {
+                drain.program_reset = true;
+                queue_title(inner, String::new());
+                queue_progress(
+                    inner,
+                    ghostty::ProgressReport {
+                        state: ghostty::ProgressState::Remove,
+                        percent: None,
+                    },
+                );
+            }
             ghostty::BackendEvent::ProgramStatus(_)
             | ghostty::BackendEvent::SemanticPrompt { .. } => {}
             ghostty::BackendEvent::WritePty(bytes) => reply_sink(&bytes)?,
@@ -418,21 +428,55 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_program_reset_is_signaled_to_the_publisher() {
-        let (session, _pending, _events_rx) =
-            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
-        let mut terminal = effects_terminal();
-        terminal.feed(b"\x1bc").expect("reset parses");
-
-        let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
-
+    fn assert_reset_reaches_the_pane(
+        session: &GhosttySession,
+        drained: Result<EngineDrain, String>,
+    ) {
         assert_eq!(
             drained,
             Ok(EngineDrain {
                 program_reset: true
             })
         );
+        assert_eq!(session.inner.ui_events.take_title().as_deref(), Some(""));
+        assert_eq!(
+            session
+                .inner
+                .ui_events
+                .take_progress()
+                .map(|report| report.state),
+            Some(ghostty::ProgressState::Remove)
+        );
+    }
+
+    #[test]
+    fn a_program_reset_is_signaled_to_the_publisher_and_clears_title_and_progress() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let mut terminal = effects_terminal();
+        terminal
+            .feed(b"\x1b]2;htop\x07\x1b]9;4;3\x07\x1bc")
+            .expect("reset parses");
+
+        let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
+
+        assert_reset_reaches_the_pane(&session, drained);
+    }
+
+    #[test]
+    fn a_manual_reset_clears_title_and_progress_like_a_program_reset() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let mut terminal = effects_terminal();
+        terminal
+            .feed(b"\x1b]2;htop\x07\x1b]9;4;3\x07")
+            .expect("title parses");
+        let _ = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
+
+        terminal.reset();
+        let drained = handle_engine_events_to(&session.inner, &mut terminal, &mut |_| Ok(()));
+
+        assert_reset_reaches_the_pane(&session, drained);
     }
 
     #[test]
