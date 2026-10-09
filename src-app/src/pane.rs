@@ -1205,23 +1205,16 @@ impl Pane {
         let progress = self
             .surface()
             .as_terminal()
-            .and_then(|terminal| terminal.read(cx).terminal.progress)
             .filter(|_| leading_slots < 2)
-            .and_then(|report| progress_chip_label(report).map(|label| (report.state, label)));
-        let progress_chip = progress.as_ref().map(|(state, label)| {
+            .and_then(|terminal| header_chip(&terminal.read(cx).terminal));
+        let progress_chip = progress.as_ref().map(|(error, label)| {
             div()
                 .flex_none()
                 .px(px(4.))
                 .rounded(px(3.))
                 .bg(ui.subtle)
                 .text_size(px(9.))
-                .text_color(
-                    if matches!(state, paneflow_terminal_ghostty::ProgressState::Error) {
-                        ui.agent_error
-                    } else {
-                        ui.muted
-                    },
-                )
+                .text_color(if *error { ui.agent_error } else { ui.muted })
                 .child(label.clone())
                 .into_any_element()
         });
@@ -2146,6 +2139,26 @@ fn pane_status_label(errored: bool, attention: bool) -> Option<&'static str> {
         Some("Agent needs attention")
     } else {
         None
+    }
+}
+
+fn header_chip(terminal: &crate::terminal::TerminalState) -> Option<(bool, SharedString)> {
+    use crate::app::declared_status::{DeclaredChip, declared_chip};
+
+    match declared_chip(terminal.declared_status.as_ref()) {
+        DeclaredChip::Show { label, error } => Some((error, label)),
+        DeclaredChip::Hidden => None,
+        DeclaredChip::Fallback => terminal.progress.and_then(|report| {
+            progress_chip_label(report).map(|label| {
+                (
+                    matches!(
+                        report.state,
+                        paneflow_terminal_ghostty::ProgressState::Error
+                    ),
+                    label,
+                )
+            })
+        }),
     }
 }
 

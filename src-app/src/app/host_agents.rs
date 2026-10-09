@@ -1151,6 +1151,13 @@ mod tests {
             projected_session(&row, 5, None).is_none(),
             "the surface never becomes an agent session"
         );
+        assert_eq!(
+            crate::app::declared_status::declared_chip(row.declared_status.as_ref()),
+            crate::app::declared_status::DeclaredChip::Show {
+                label: "blocked: permission · Apply the plan?".into(),
+                error: false,
+            }
+        );
     }
 
     #[test]
