@@ -379,6 +379,24 @@ pub(crate) fn render_overscan(
     })
 }
 
+pub(crate) fn set_render_overscan(
+    render_state: sys::GhosttyRenderState,
+    overscan: Overscan,
+) -> Result<()> {
+    let request = sys::GhosttyRenderStateOverscan {
+        above: overscan.above,
+        below: overscan.below,
+    };
+    let result = unsafe {
+        sys::ghostty_render_state_set(
+            render_state,
+            sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_OVERSCAN,
+            (&raw const request).cast(),
+        )
+    };
+    check("render_state_set_overscan", result)
+}
+
 pub(crate) fn render_cell_data(cells: sys::GhosttyRenderStateRowCells) -> Result<RenderCellData> {
     let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
     style.size = std::mem::size_of::<sys::GhosttyStyle>();

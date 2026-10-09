@@ -230,6 +230,11 @@ pub(super) fn restore_terminal_from_checkpoint(
         .ok_or_else(|| "checkpoint decoder produced no terminal".to_string())?;
     configure_embedder_options(&mut terminal, max_scrollback, option_as_alt);
     follow_pty_scrollback_policy(&mut terminal);
+    if terminal.synchronized_output().unwrap_or(false) {
+        terminal
+            .release_render_hold()
+            .map_err(|error| format!("synchronized output could not be reset: {error}"))?;
+    }
     Ok(terminal)
 }
 

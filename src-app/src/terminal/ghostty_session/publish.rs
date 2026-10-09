@@ -124,8 +124,17 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
-        self.note_output(Instant::now());
-        self.poll(inner, terminal)
+        self.request_at(inner, terminal, Instant::now())
+    }
+
+    fn request_at(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+        now: Instant,
+    ) -> Result<(), String> {
+        self.note_output(now);
+        self.poll_at(inner, terminal, now)
     }
 
     pub(super) fn note_program_reset(&mut self) {
@@ -145,10 +154,18 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
+        self.poll_at(inner, terminal, Instant::now())
+    }
+
+    fn poll_at(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+        now: Instant,
+    ) -> Result<(), String> {
         if !self.pending {
             return Ok(());
         }
-        let now = Instant::now();
         self.render_hold = terminal.render_hold();
         if self.render_hold_expired(now) {
             terminal
@@ -543,13 +560,17 @@ mod tests {
         let (session, _pending, _events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
         let mut terminal = held_terminal(24, 3);
-        let mut gate = PublishGate::new();
+        let frozen_clock = Instant::now();
+        let mut gate = gate_at(frozen_clock - MIN_PUBLISH_INTERVAL);
 
         for iteration in 0..1_000 {
             let output = format!(
                 "\x1b[?2026l\x1b[H\x1b[2Jframe A {iteration}\x1b[?2026h\x1b[H\x1b[2Jframe B {iteration}\r\nfinished\x1b[?2026l\x1b[?2026h\x1b[H\x1b[2Jframe C"
             );
-            feed_output(&mut gate, &session, &mut terminal, output.as_bytes());
+            terminal.feed(output.as_bytes()).expect("output must parse");
+            gate.last_publish = frozen_clock - MIN_PUBLISH_INTERVAL;
+            gate.request_at(&session.inner, &mut terminal, frozen_clock)
+                .expect("publication must succeed");
 
             assert_eq!(published_row(&session, 0), format!("frame B {iteration}"));
             assert_eq!(published_row(&session, 1), "finished");

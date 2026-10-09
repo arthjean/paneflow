@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use paneflow_libghostty_sys as sys;
 
 use crate::handles::{OwnedHandle, check, create};
-use crate::{BackendEvent, ColorScheme, RenderHold, Result, WindowSize};
+use crate::{BackendEvent, ColorScheme, Overscan, RenderHold, Result, WindowSize};
 
 const MAX_PENDING_WRITE_PTY_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
@@ -35,6 +35,32 @@ const _: sys::GhosttyTerminalProgramStatusFn = Some(crate::callback_ffi::program
 const _: sys::GhosttyTerminalSemanticPromptFn = Some(crate::callback_ffi::semantic_prompt);
 const _: sys::GhosttyTerminalResetFn = Some(crate::callback_ffi::reset);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RenderSlot {
+    #[default]
+    Main,
+    LiveDuringHold,
+}
+
+unsafe fn new_render_state(
+    operation: &'static str,
+    allocator: *const sys::GhosttyAllocator,
+    overscan: Overscan,
+) -> Result<OwnedHandle<sys::GhosttyRenderState>> {
+    let handle = unsafe {
+        create(
+            operation,
+            allocator,
+            sys::ghostty_render_state_new,
+            sys::ghostty_render_state_free,
+        )?
+    };
+    if overscan != Overscan::default() {
+        crate::snapshot_ffi::set_render_overscan(handle.raw(), overscan)?;
+    }
+    Ok(handle)
+}
+
 type RenderHoldFn = unsafe extern "C" fn(sys::GhosttyTerminal, *mut c_void, bool);
 
 const _: fn(sys::GhosttyTerminalRenderHoldFn) -> Option<RenderHoldFn> = std::convert::identity;
@@ -51,7 +77,11 @@ pub(crate) struct CallbackState {
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
-    render_state: OwnedHandle<sys::GhosttyRenderState>,
+    allocator: *const sys::GhosttyAllocator,
+    overscan_request: Cell<Overscan>,
+    main_render_state: RefCell<OwnedHandle<sys::GhosttyRenderState>>,
+    main_missed_terminal_dirt: Cell<bool>,
+    live_during_hold_render_state: RefCell<Option<OwnedHandle<sys::GhosttyRenderState>>>,
     rendered_scrollbar: Cell<Option<sys::GhosttyTerminalScrollbar>>,
     render_hold: Cell<Option<RenderHold>>,
     render_holds_started: Cell<u64>,
@@ -65,12 +95,13 @@ impl CallbackState {
         color_scheme: ColorScheme,
         allocator: *const sys::GhosttyAllocator,
     ) -> Result<Self> {
-        let render_state = unsafe {
-            create(
-                "render_state_new",
+        let main_render_state =
+            unsafe { new_render_state("render_state_new", allocator, Overscan::default())? };
+        let live_during_hold_render_state = unsafe {
+            new_render_state(
+                "render_state_new_live_during_hold",
                 allocator,
-                sys::ghostty_render_state_new,
-                sys::ghostty_render_state_free,
+                Overscan::default(),
             )?
         };
         Ok(Self {
@@ -84,7 +115,11 @@ impl CallbackState {
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
-            render_state,
+            allocator,
+            overscan_request: Cell::new(Overscan::default()),
+            main_render_state: RefCell::new(main_render_state),
+            main_missed_terminal_dirt: Cell::new(false),
+            live_during_hold_render_state: RefCell::new(Some(live_during_hold_render_state)),
             rendered_scrollbar: Cell::new(None),
             render_hold: Cell::new(None),
             render_holds_started: Cell::new(0),
@@ -94,7 +129,60 @@ impl CallbackState {
     }
 
     pub(crate) fn render_state(&self) -> sys::GhosttyRenderState {
-        self.render_state.raw()
+        self.main_render_state.borrow().raw()
+    }
+
+    pub(crate) fn set_overscan_request(&self, overscan: Overscan) -> Result<()> {
+        crate::snapshot_ffi::set_render_overscan(self.render_state(), overscan)?;
+        if let Some(live) = self.live_during_hold_render_state.borrow().as_ref() {
+            crate::snapshot_ffi::set_render_overscan(live.raw(), overscan)?;
+        }
+        self.overscan_request.set(overscan);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn holds_live_during_hold_render_state(&self) -> bool {
+        self.live_during_hold_render_state.borrow().is_some()
+    }
+
+    pub(crate) fn claim_terminal_dirt(&self, slot: RenderSlot) -> Result<sys::GhosttyRenderState> {
+        match slot {
+            RenderSlot::Main => {
+                if self.main_missed_terminal_dirt.get() {
+                    *self.main_render_state.borrow_mut() = unsafe {
+                        new_render_state(
+                            "render_state_new_after_missed_dirt",
+                            self.allocator,
+                            self.overscan_request.get(),
+                        )?
+                    };
+                    self.main_missed_terminal_dirt.set(false);
+                    self.live_during_hold_render_state.borrow_mut().take();
+                }
+                Ok(self.render_state())
+            }
+            RenderSlot::LiveDuringHold => {
+                let mut live = self.live_during_hold_render_state.borrow_mut();
+                let raw = match live.as_ref() {
+                    Some(handle) => handle.raw(),
+                    None => {
+                        let handle = unsafe {
+                            new_render_state(
+                                "render_state_new_live_during_hold",
+                                self.allocator,
+                                self.overscan_request.get(),
+                            )?
+                        };
+                        let raw = handle.raw();
+                        *live = Some(handle);
+                        raw
+                    }
+                };
+                self.main_missed_terminal_dirt.set(true);
+                Ok(raw)
+            }
+        }
     }
 
     pub(crate) fn render_hold(&self) -> Option<RenderHold> {
@@ -110,8 +198,11 @@ impl CallbackState {
     }
 
     pub(crate) fn begin_render_hold(&self, terminal: sys::GhosttyTerminal) {
-        let captured =
-            unsafe { sys::ghostty_render_state_update(self.render_state.raw(), terminal) };
+        let Ok(render_state) = self.claim_terminal_dirt(RenderSlot::Main) else {
+            self.render_hold.set(None);
+            return;
+        };
+        let captured = unsafe { sys::ghostty_render_state_update(render_state, terminal) };
         if captured != sys::GhosttyResult_GHOSTTY_SUCCESS {
             self.render_hold.set(None);
             return;

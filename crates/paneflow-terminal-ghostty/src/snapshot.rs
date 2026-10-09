@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use paneflow_libghostty_sys as sys;
 
+use crate::callbacks::RenderSlot;
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::limits::{MAX_OVERSCAN_ROWS, MAX_SNAPSHOT_CELLS};
@@ -25,6 +26,7 @@ pub(crate) struct SnapshotCache {
     overscan_rows: Arc<[OverscanRow]>,
     cols: usize,
     rows: usize,
+    source: RenderSlot,
     valid: bool,
 }
 
@@ -33,18 +35,26 @@ impl SnapshotCache {
         self.valid = false;
     }
 
-    fn matches(&self, cols: usize, rows: usize, cell_count: usize) -> bool {
-        self.valid && self.cols == cols && self.rows == rows && self.cells.len() == cell_count
+    fn matches(&self, source: RenderSlot, cols: usize, rows: usize, cell_count: usize) -> bool {
+        self.valid
+            && self.source == source
+            && self.cols == cols
+            && self.rows == rows
+            && self.cells.len() == cell_count
     }
 }
 
 impl DisplayTerminal {
     pub fn snapshot(&mut self) -> Result<Content> {
-        self.snapshot_frame(self.callbacks.render_hold().is_none())
+        self.snapshot_frame(RenderSlot::Main, self.callbacks.render_hold().is_none())
     }
 
     pub fn snapshot_live(&mut self) -> Result<Content> {
-        self.snapshot_frame(true)
+        if self.callbacks.render_hold().is_some() {
+            self.snapshot_frame(RenderSlot::LiveDuringHold, true)
+        } else {
+            self.snapshot_frame(RenderSlot::Main, true)
+        }
     }
 
     pub fn set_overscan(&mut self, above: u16, below: u16) -> Result<()> {
@@ -54,15 +64,8 @@ impl DisplayTerminal {
                 limit: usize::from(MAX_OVERSCAN_ROWS),
             });
         }
-        let request = sys::GhosttyRenderStateOverscan { above, below };
-        let result = unsafe {
-            sys::ghostty_render_state_set(
-                self.callbacks.render_state(),
-                sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_OVERSCAN,
-                (&raw const request).cast(),
-            )
-        };
-        check("render_state_set_overscan", result)?;
+        self.callbacks
+            .set_overscan_request(Overscan { above, below })?;
         self.snapshot_cache.invalidate();
         Ok(())
     }
@@ -74,11 +77,11 @@ impl DisplayTerminal {
         )
     }
 
-    fn snapshot_frame(&mut self, update: bool) -> Result<Content> {
-        let render_state = self.callbacks.render_state();
-        let scrollbar = match self.callbacks.rendered_scrollbar() {
-            Some(scrollbar) if !update => scrollbar,
+    fn snapshot_frame(&mut self, source: RenderSlot, update: bool) -> Result<Content> {
+        let (render_state, scrollbar) = match self.callbacks.rendered_scrollbar() {
+            Some(scrollbar) if !update => (self.callbacks.render_state(), scrollbar),
             _ => {
+                let render_state = self.callbacks.claim_terminal_dirt(source)?;
                 let result = unsafe {
                     sys::ghostty_render_state_begin_update(render_state, self.terminal.raw())
                 };
@@ -86,14 +89,16 @@ impl DisplayTerminal {
                 let scrollbar = self.scrollbar()?;
                 let result = unsafe { sys::ghostty_render_state_end_update(render_state) };
                 check("render_state_end_update", result)?;
-                self.callbacks.record_rendered_scrollbar(scrollbar);
-                scrollbar
+                if source == RenderSlot::Main {
+                    self.callbacks.record_rendered_scrollbar(scrollbar);
+                }
+                (render_state, scrollbar)
             }
         };
         let (history_size, display_offset) = scrollbar_position(scrollbar)?;
         let display_offset_i32 = i32::try_from(display_offset)
             .map_err(|_| crate::GhosttyError::AbiMismatch("display offset overflow".into()))?;
-        let (cols, rows) = self.render_dimensions()?;
+        let (cols, rows) = self.render_dimensions(render_state)?;
         let cell_count = cols.checked_mul(rows).ok_or_else(|| {
             crate::GhosttyError::AbiMismatch("snapshot cell count overflow".into())
         })?;
@@ -108,7 +113,7 @@ impl DisplayTerminal {
         let full_refresh = match dirty {
             sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE
             | sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL => {
-                !self.snapshot_cache.matches(cols, rows, cell_count)
+                !self.snapshot_cache.matches(source, cols, rows, cell_count)
             }
             sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FULL => true,
             value => {
@@ -119,11 +124,11 @@ impl DisplayTerminal {
         };
         if full_refresh || dirty == sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL
         {
-            self.refresh_snapshot_cache(cols, rows, cell_count, full_refresh)?;
+            self.refresh_snapshot_cache(render_state, source, cols, rows, cell_count, full_refresh)?;
         } else {
             self.snapshot_cache.dirty_rows.fill(false);
         }
-        if !self.snapshot_cache.matches(cols, rows, cell_count) {
+        if !self.snapshot_cache.matches(source, cols, rows, cell_count) {
             return Err(GhosttyError::AbiMismatch(
                 "render state was clean before the snapshot cache was initialized".into(),
             ));
@@ -132,7 +137,7 @@ impl DisplayTerminal {
             let result = unsafe { sys::ghostty_render_state_clean(render_state) };
             check("render_state_clean", result)?;
         } else {
-            self.clear_render_dirty()?;
+            self.clear_render_dirty(render_state)?;
         }
 
         let cells = self.snapshot_cache.cells.clone();
@@ -162,7 +167,7 @@ impl DisplayTerminal {
         Ok(Content {
             cells,
             dirty_rows,
-            cursor: self.cursor(display_offset)?,
+            cursor: self.cursor(render_state, display_offset)?,
             selection,
             cols,
             rows,
@@ -191,6 +196,8 @@ impl DisplayTerminal {
 
     fn refresh_snapshot_cache(
         &mut self,
+        render_state: sys::GhosttyRenderState,
+        source: RenderSlot,
         cols: usize,
         rows: usize,
         cell_count: usize,
@@ -208,14 +215,14 @@ impl DisplayTerminal {
         self.snapshot_cache.dirty_rows.clear();
         self.snapshot_cache.dirty_rows.resize(rows, false);
         let overscan = render_overscan(
-            self.callbacks.render_state(),
+            render_state,
             sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_OVERSCAN,
         )?;
         let mut row_identities = std::mem::take(&mut self.snapshot_cache.row_identity_scratch);
         row_identities.clear();
         let mut overscan_rows = Vec::with_capacity(usize::from(overscan.above + overscan.below));
 
-        let iterator = render_row_iterator(self.callbacks.render_state(), self.row_iterator.raw())?;
+        let iterator = render_row_iterator(render_state, self.row_iterator.raw())?;
 
         let mut row_index = 0usize;
         let mut previous_y = None;
@@ -359,6 +366,7 @@ impl DisplayTerminal {
                 overscan_rows,
                 cols,
                 rows,
+                source,
                 valid: true,
             };
         } else {
@@ -367,6 +375,7 @@ impl DisplayTerminal {
             self.snapshot_cache.row_identity_scratch = row_identity_scratch;
             self.snapshot_cache.overscan = overscan;
             self.snapshot_cache.overscan_rows = overscan_rows;
+            self.snapshot_cache.source = source;
             self.snapshot_cache.valid = true;
         }
         Ok(())
@@ -384,11 +393,11 @@ impl DisplayTerminal {
         check("render_state_row_set", result)
     }
 
-    fn clear_render_dirty(&self) -> Result<()> {
+    fn clear_render_dirty(&self, render_state: sys::GhosttyRenderState) -> Result<()> {
         let clean = sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         let result = unsafe {
             sys::ghostty_render_state_set(
-                self.callbacks.render_state(),
+                render_state,
                 sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_DIRTY,
                 (&clean as *const sys::GhosttyRenderStateDirty).cast(),
             )

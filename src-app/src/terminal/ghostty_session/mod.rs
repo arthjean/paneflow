@@ -1569,6 +1569,32 @@ mod tests {
     }
 
     #[test]
+    fn a_checkpoint_taken_mid_hold_attaches_with_synchronized_output_reset() {
+        let mut terminal = embedder_terminal(false);
+        terminal
+            .feed(b"finished\x1b[?2026h\x1b[H\x1b[2Jhalf")
+            .expect("hold opens");
+        assert!(terminal.synchronized_output().expect("mode query"));
+        let snapshot = terminal.encode_snapshot().expect("checkpoint");
+
+        let mut restored = restore_terminal_from_checkpoint(
+            &snapshot,
+            TerminalWindowSize::new(20, 4, 8, 16),
+            100,
+            false,
+        )
+        .expect("checkpoint restores");
+
+        assert!(!restored.synchronized_output().expect("mode query"));
+        assert!(restored.render_hold().is_none());
+        restored.feed(b"\x1b[?2026h").expect("next redraw");
+        assert!(
+            restored.render_hold().is_some(),
+            "the program's next BSU opens a hold with its own deadline"
+        );
+    }
+
+    #[test]
     fn a_host_mirror_pulls_scrollback_on_resize_except_behind_conpty() {
         let size = TerminalWindowSize::new(10, 3, 8, 16);
         let bare = ghostty::DisplayTerminal::new(

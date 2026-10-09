@@ -244,7 +244,9 @@ mod tests {
     #[derive(Default)]
     struct AllocationState {
         live: AtomicUsize,
+        live_bytes: AtomicUsize,
         total: AtomicUsize,
+        refuse_from: AtomicUsize,
         invalid_callback: AtomicBool,
     }
 
@@ -263,6 +265,10 @@ mod tests {
             return std::ptr::null_mut();
         }
         let state = unsafe { &*context.cast::<AllocationState>() };
+        let refuse_from = state.refuse_from.load(Ordering::SeqCst);
+        if refuse_from != 0 && state.total.load(Ordering::SeqCst) >= refuse_from {
+            return std::ptr::null_mut();
+        }
         let Some(layout) = tracked_layout(len, alignment) else {
             state.invalid_callback.store(true, Ordering::SeqCst);
             return std::ptr::null_mut();
@@ -270,6 +276,7 @@ mod tests {
         let memory = unsafe { alloc(layout) }.cast::<c_void>();
         if !memory.is_null() {
             state.live.fetch_add(1, Ordering::SeqCst);
+            state.live_bytes.fetch_add(len, Ordering::SeqCst);
             state.total.fetch_add(1, Ordering::SeqCst);
         }
         memory
@@ -302,7 +309,12 @@ mod tests {
             state.invalid_callback.store(true, Ordering::SeqCst);
             return std::ptr::null_mut();
         };
-        unsafe { realloc(memory.cast::<u8>(), layout, new_len) }.cast()
+        let remapped = unsafe { realloc(memory.cast::<u8>(), layout, new_len) };
+        if !remapped.is_null() {
+            state.live_bytes.fetch_add(new_len, Ordering::SeqCst);
+            state.live_bytes.fetch_sub(memory_len, Ordering::SeqCst);
+        }
+        remapped.cast()
     }
 
     unsafe extern "C" fn tracked_free(
@@ -321,6 +333,7 @@ mod tests {
             return;
         };
         unsafe { dealloc(memory.cast::<u8>(), layout) };
+        state.live_bytes.fetch_sub(memory_len, Ordering::SeqCst);
         if state
             .live
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
@@ -473,5 +486,132 @@ mod tests {
             );
             assert!(!state.invalid_callback.load(Ordering::SeqCst));
         }
+    }
+
+    fn tracked_allocator(state: &AllocationState) -> sys::GhosttyAllocator {
+        sys::GhosttyAllocator {
+            ctx: (state as *const AllocationState).cast_mut().cast(),
+            vtable: &TRACKED_ALLOCATOR_VTABLE,
+        }
+    }
+
+    fn render_state_allocations(state: &AllocationState) -> usize {
+        let allocator = tracked_allocator(state);
+        let before = state.total.load(Ordering::SeqCst);
+        let render_state = unsafe {
+            create(
+                "render_state_new",
+                &allocator,
+                sys::ghostty_render_state_new,
+                sys::ghostty_render_state_free,
+            )
+        }
+        .expect("a render state must initialize with the tracked allocator");
+        drop(render_state);
+        state.total.load(Ordering::SeqCst) - before
+    }
+
+    #[test]
+    fn a_live_during_hold_render_state_that_cannot_be_created_fails_construction() {
+        let state = AllocationState::default();
+        let per_render_state = render_state_allocations(&state);
+        assert!(
+            per_render_state > 0,
+            "the refusal below only reaches the second render state when creating one allocates"
+        );
+        let allocator = tracked_allocator(&state);
+        state.refuse_from.store(
+            state.total.load(Ordering::SeqCst) + per_render_state,
+            Ordering::SeqCst,
+        );
+
+        let refused = unsafe {
+            DisplayTerminal::new_with_allocator(
+                WindowSize::new(40, 6, 8, 16).unwrap(),
+                2_000,
+                TerminalAppearance::default(),
+                &allocator,
+            )
+        };
+
+        assert!(
+            matches!(
+                refused,
+                Err(GhosttyError::Ffi {
+                    operation: "render_state_new_live_during_hold",
+                    ..
+                })
+            ),
+            "construction must fail with the wrapper error of the second render state"
+        );
+        assert_eq!(state.live.load(Ordering::SeqCst), 0);
+        assert!(!state.invalid_callback.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_live_during_hold_render_state_costs_under_a_tenth_of_a_200x60_terminal() {
+        let state = AllocationState::default();
+        let empty_render_state_bytes = {
+            let allocator = tracked_allocator(&state);
+            let before = state.live_bytes.load(Ordering::SeqCst);
+            let render_state = unsafe {
+                create(
+                    "render_state_new",
+                    &allocator,
+                    sys::ghostty_render_state_new,
+                    sys::ghostty_render_state_free,
+                )
+            }
+            .expect("a render state must initialize with the tracked allocator");
+            let bytes = state.live_bytes.load(Ordering::SeqCst) - before;
+            drop(render_state);
+            bytes
+        };
+        let allocator = tracked_allocator(&state);
+        let mut terminal = unsafe {
+            DisplayTerminal::new_with_allocator(
+                WindowSize::new(200, 60, 8, 16).unwrap(),
+                10_000,
+                TerminalAppearance::default(),
+                &allocator,
+            )
+        }
+        .expect("terminal must initialize with the tracked allocator");
+        terminal.enable_render_hold().expect("render hold installs");
+        for line in 0..120 {
+            let row = format!("\x1b[38;5;{}m{}\x1b[0m\r\n", line % 256, "x".repeat(199));
+            terminal.feed(row.as_bytes()).expect("fill the screen");
+        }
+        terminal.snapshot().expect("main render state snapshot");
+        let usage = terminal.memory_usage().expect("memory usage");
+        let terminal_bytes = state.live_bytes.load(Ordering::SeqCst)
+            + usize::try_from(usage.primary_resident_bytes + usage.alternate_resident_bytes)
+                .expect("resident bytes fit in usize");
+
+        terminal
+            .feed(b"\x1b[?2026h\x1b[Hlive redraw")
+            .expect("begin a hold");
+        terminal.snapshot().expect("held snapshot");
+        let held_bytes = state.live_bytes.load(Ordering::SeqCst);
+        terminal.snapshot_live().expect("live snapshot during the hold");
+        let populated_bytes = state.live_bytes.load(Ordering::SeqCst) - held_bytes;
+
+        terminal.feed(b"\x1b[?2026l").expect("end the hold");
+        terminal.snapshot().expect("snapshot after the hold");
+        let released = !terminal.callbacks.holds_live_during_hold_render_state();
+
+        eprintln!(
+            "200x60 terminal: {terminal_bytes} bytes; empty live-during-hold render state: {empty_render_state_bytes} bytes ({:.3}%); populated during a hold: {populated_bytes} bytes ({:.1}%), released after the hold: {released}",
+            empty_render_state_bytes as f64 * 100.0 / terminal_bytes as f64,
+            populated_bytes as f64 * 100.0 / terminal_bytes as f64,
+        );
+        assert!(
+            empty_render_state_bytes * 10 <= terminal_bytes,
+            "{empty_render_state_bytes} bytes exceed a tenth of {terminal_bytes}"
+        );
+        assert!(
+            released,
+            "a populated live-during-hold render state must not outlive its hold"
+        );
     }
 }

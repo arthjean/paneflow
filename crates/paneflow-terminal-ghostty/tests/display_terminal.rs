@@ -154,9 +154,71 @@ fn a_render_hold_freezes_the_snapshot_on_the_frame_captured_when_it_began() {
     assert_eq!(row_text(&live, 0), "frame C");
     assert!(terminal.render_hold().is_some());
 
+    let held_after_live = terminal.snapshot().unwrap();
+    assert_eq!(
+        row_text(&held_after_live, 0),
+        "frame B",
+        "a live publication must never overwrite the captured frame"
+    );
+    assert!(
+        held_after_live.dirty_rows[0],
+        "returning to the captured frame repaints the rows the live frame changed"
+    );
+    assert_eq!(row_text(&terminal.snapshot_live().unwrap(), 0), "frame C");
+    assert_eq!(row_text(&terminal.snapshot().unwrap(), 0), "frame B");
+
     terminal.release_render_hold().unwrap();
     assert!(terminal.render_hold().is_none());
     assert!(!terminal.synchronized_output().unwrap());
+    assert_eq!(row_text(&terminal.snapshot().unwrap(), 0), "frame C");
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn the_next_hold_captures_rows_a_live_publication_already_consumed() {
+    let mut terminal = terminal(20, 3);
+    terminal.enable_render_hold().unwrap();
+    terminal.snapshot().unwrap();
+
+    terminal
+        .feed(b"frame A\x1b[?2026h\x1b[H\x1b[2Jframe B\x1b[?2026l\x1b[?2026h\x1b[H\x1b[2Jframe C")
+        .unwrap();
+    assert_eq!(row_text(&terminal.snapshot().unwrap(), 0), "frame B");
+    assert_eq!(row_text(&terminal.snapshot_live().unwrap(), 0), "frame C");
+
+    terminal.feed(b"\x1b[?2026l\x1b[?2026h").unwrap();
+    let recaptured = terminal.snapshot().unwrap();
+    assert!(terminal.render_hold().is_some());
+    assert_eq!(
+        row_text(&recaptured, 0),
+        "frame C",
+        "a capture after a live publication must not miss the rows that publication consumed"
+    );
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn a_live_scroll_during_a_hold_keeps_the_captured_scrollbar() {
+    let mut terminal = numbered_lines(10, 5, 50);
+    terminal.enable_render_hold().unwrap();
+    let before = terminal.snapshot().unwrap();
+    assert_eq!(before.display_offset, 0);
+
+    terminal.feed(b"\x1b[?2026h\x1b[Hhalf").unwrap();
+    terminal.scroll(Scroll::Delta(10));
+    let live = terminal.snapshot_live().unwrap();
+    assert_eq!(live.display_offset, 10);
+
+    let held = terminal.snapshot().unwrap();
+    assert_eq!(held.display_offset, before.display_offset);
+    assert_eq!(held.history_size, before.history_size);
+    assert_eq!(row_text(&held, 0), row_text(&before, 0));
 }
 
 #[allow(
