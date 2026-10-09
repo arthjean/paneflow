@@ -2778,3 +2778,67 @@ fn a_session_whose_terminal_is_gone_reports_no_memory_and_why() {
     host.stop(&session, None).unwrap();
     host.remove(&session).unwrap();
 }
+
+#[test]
+fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
+    let home = tempfile::tempdir().unwrap();
+    let endpoint = Path::new("exit-retires-blocker");
+    let host = SessionHost::open(home.path(), endpoint).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let target = host
+        .live_scan_targets()
+        .into_iter()
+        .find(|target| target.session == session)
+        .unwrap();
+    host.commit_scan(&target, |record| {
+        record.screen_activity = Some("blocked".to_string());
+        record.declared_blocker = Some("Apply?".to_string());
+        record.menu_prompt_active = true;
+    });
+    assert_eq!(
+        host.inspect(&session).unwrap().manifest.declared_blocker,
+        Some("Apply?".to_string())
+    );
+
+    host.input(&session, None, b"exit\r\n".to_vec()).unwrap();
+    assert!(wait_until(Duration::from_secs(15), || {
+        matches!(
+            host.inspect(&session).unwrap().manifest.lifecycle,
+            SessionLifecycle::Exited { .. }
+        )
+    }));
+    let late_scan = host.commit_scan(&target, |record| {
+        record.declared_blocker = Some("late".to_string());
+    });
+
+    assert_eq!(
+        late_scan,
+        Some(false),
+        "a scan taken before the exit lands nowhere"
+    );
+    let manifest = host.inspect(&session).unwrap().manifest;
+    assert_eq!(manifest.declared_blocker, None);
+    assert_eq!(manifest.screen_activity, None);
+    assert!(!manifest.menu_prompt_active);
+    let entry = host
+        .agent_snapshot()
+        .into_iter()
+        .find(|entry| entry.session == session)
+        .unwrap();
+    assert_eq!(entry.declared_blocker, None);
+    assert_eq!(entry.screen_activity, None);
+    let manifest_path = crate::manifest::manifest_path(home.path(), &session);
+    assert!(wait_until(Duration::from_secs(5), || {
+        read_manifest(&manifest_path)
+            .is_ok_and(|on_disk| matches!(on_disk.lifecycle, SessionLifecycle::Exited { .. }))
+    }));
+
+    drop(host);
+    let reopened = SessionHost::open(home.path(), endpoint).unwrap();
+    let restored = reopened.inspect(&session).unwrap().manifest;
+    assert_eq!(
+        restored.declared_blocker, None,
+        "a later attach never sees the blocker again"
+    );
+    assert_eq!(restored.screen_activity, None);
+}

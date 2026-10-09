@@ -329,6 +329,9 @@ impl SessionEntry {
 pub use paneflow_agent_config::runtime_catalog::runtime_for_tool;
 
 fn screen_fallback(entry: &SessionEntry) -> Option<Status> {
+    if !entry.lifecycle.is_running() {
+        return None;
+    }
     let runtime = entry.runtime()?;
     if runtime.lifecycle.fallback != RuntimeLifecycleFallback::Screen {
         return None;
@@ -736,9 +739,9 @@ impl WorkerState {
         let generation_started_at_ms = entry.generation_started_at_ms;
         let activity_signal = entry.activity_signal;
         let menu_prompt_active = entry.menu_prompt_active;
-        let declared_blocker = entry.declared_blocker.is_some();
-        let foreground_identity = entry.foreground_identity();
         let running = entry.lifecycle.is_running();
+        let declared_blocker = running && entry.declared_blocker.is_some();
+        let foreground_identity = entry.foreground_identity();
         let errored = entry
             .activity
             .as_ref()
@@ -2506,6 +2509,42 @@ mod tests {
             .expect("a declared blocker raises the needs-input notification");
         assert_eq!(notification.kind, crate::notifications::KIND_NEEDS_INPUT);
         assert_eq!(notification.body.as_deref(), Some("Apply the plan?"));
+    }
+
+    fn exited(mut row: Value) -> Value {
+        row["live"] = json!(false);
+        row["lifecycle"] = json!(SessionLifecycle::Exited {
+            code: 0,
+            signal: None,
+        });
+        row
+    }
+
+    #[test]
+    fn an_exited_program_is_never_held_in_attention_by_its_declared_blocker() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+
+        let host_after_exit = exited(hookless_row(&session, None));
+        state.apply_core_snapshot(&[host_after_exit]);
+        assert_ne!(state.get(&session).unwrap().status(), "attention");
+
+        let stale = exited(declared_blocker_row(&session, "Apply the plan?"));
+        let projections = state.apply_core_snapshot(&[stale]);
+        assert_ne!(
+            state.get(&session).unwrap().status(),
+            "attention",
+            "a stale row from a host that kept the blocker past the exit"
+        );
+        assert!(
+            projections
+                .iter()
+                .all(|projection| projection.notification.is_none()),
+            "{projections:?}"
+        );
     }
 
     #[test]

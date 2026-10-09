@@ -178,8 +178,9 @@ impl ViewportTracker {
         self.menu_prompt_active && self.blocker_misses > 0
     }
 
-    fn classify(&mut self, state: Option<ScreenState>, visible_blocker: bool) {
+    fn classify(&mut self, state: Option<ScreenState>, declared: bool, visible_blocker: bool) {
         match state {
+            Some(declared_state) if declared => self.screen_state = Some(declared_state),
             Some(ScreenState::Blocked) => self.screen_state = Some(ScreenState::Blocked),
             Some(steady) => {
                 self.steady_state = Some(steady);
@@ -238,6 +239,7 @@ impl ViewportTracker {
                     let evaluation = evaluate(&rules, &view.input());
                     self.classify(
                         evaluation.state(&rules),
+                        evaluation.program_status.is_some(),
                         evaluation.visible_blocker.is_some(),
                     );
                 }
@@ -607,6 +609,36 @@ mod tests {
         assert_eq!(edges.screen_activity.as_deref(), Some("working"));
         assert_eq!(edges.declared_blocker, None);
         assert!(edges.write_due, "a status change alone is written");
+    }
+
+    #[test]
+    fn a_purged_declaration_hands_the_steady_state_back_to_the_text_rules() {
+        let mut tracker = ViewportTracker::default();
+        let working = declared(ProgramStatusState::Working, "");
+        let edges = observe_declared(&mut tracker, "plain", Some(&working), Some("claude"), 1_000);
+        assert_eq!(edges.screen_activity.as_deref(), Some("working"));
+
+        let edges = observe_declared(&mut tracker, "plain again", None, Some("claude"), 2_000);
+
+        assert_eq!(
+            edges.screen_activity, None,
+            "a purged working declaration does not outlive itself on an unrecognized screen"
+        );
+        assert!(edges.write_due);
+    }
+
+    #[test]
+    fn a_purged_declaration_restores_the_state_the_text_rules_held_before_it() {
+        let working_screen = "✽ Levitating… (1m 52s)\nesc to interrupt\n❯";
+        let mut tracker = ViewportTracker::default();
+        observe_declared(&mut tracker, working_screen, None, Some("claude"), 1_000);
+        let idle = declared(ProgramStatusState::Idle, "");
+        let edges = observe_declared(&mut tracker, "plain", Some(&idle), Some("claude"), 2_000);
+        assert_eq!(edges.screen_activity.as_deref(), Some("idle"));
+
+        let edges = observe_declared(&mut tracker, "plain again", None, Some("claude"), 3_000);
+
+        assert_eq!(edges.screen_activity.as_deref(), Some("working"));
     }
 
     #[test]

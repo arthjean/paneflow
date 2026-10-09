@@ -2721,7 +2721,14 @@ impl SessionHost {
             &durability?,
             Some(target.generation),
             WriteClass::Metadata,
-            apply,
+            |record| {
+                apply(record);
+                if !record.lifecycle.is_running() {
+                    record.screen_activity = None;
+                    record.declared_blocker = None;
+                    record.menu_prompt_active = false;
+                }
+            },
         )
     }
 
@@ -2764,6 +2771,9 @@ impl SessionHost {
                             code: exit.code,
                             signal: exit.signal,
                         };
+                        guard.screen_activity = None;
+                        guard.declared_blocker = None;
+                        guard.menu_prompt_active = false;
                     }
                     RuntimeNotice::Unverified(reason) => {
                         guard.lifecycle = SessionLifecycle::Unverified { reason };
