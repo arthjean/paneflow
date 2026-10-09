@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Documentation alignée et clôture du PRD source",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-006",
@@ -262,7 +262,7 @@
       "id": "US-016",
       "title": "Réaligner la documentation interne et clore le PRD source",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -271,24 +271,24 @@
         "US-011",
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-017",
       "title": "Mettre à jour la documentation publique et le CHANGELOG",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-011",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-018",
