@@ -44,11 +44,20 @@ impl ProgramStatusRecords {
         self.records.push(Record { report, updated });
     }
 
-    pub fn release_waiting(&mut self) {
+    pub fn release_finished_program(&mut self) {
+        self.records.retain(|record| {
+            matches!(
+                record.report.state,
+                ProgramStatusState::Done | ProgramStatusState::Error
+            )
+        });
+    }
+
+    pub fn acknowledge_seen(&mut self) {
         self.records.retain(|record| {
             !matches!(
                 record.report.state,
-                ProgramStatusState::Working | ProgramStatusState::Blocked
+                ProgramStatusState::Done | ProgramStatusState::Error
             )
         });
     }
@@ -63,6 +72,11 @@ impl ProgramStatusRecords {
             .find(|record| record.report.id.is_empty())
             .or_else(|| self.records.iter().max_by_key(|record| record.updated))
             .map(|record| &record.report)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reports(&self) -> impl Iterator<Item = &ProgramStatusReport> {
+        self.records.iter().map(|record| &record.report)
     }
 
     pub fn len(&self) -> usize {
@@ -196,18 +210,32 @@ mod tests {
         assert_eq!(records.current(), None);
     }
 
-    #[test]
-    fn releasing_waiting_records_keeps_done_error_and_idle() {
-        let mut records = ProgramStatusRecords::default();
+    fn every_state(records: &mut ProgramStatusRecords) {
         records.apply(report("a", ProgramStatusState::Working));
         records.apply(report("b", ProgramStatusState::Blocked));
         records.apply(report("c", ProgramStatusState::Done));
         records.apply(report("d", ProgramStatusState::Error));
         records.apply(report("e", ProgramStatusState::Idle));
+    }
 
-        records.release_waiting();
+    #[test]
+    fn a_finished_program_releases_working_blocked_and_idle_but_keeps_done_and_error() {
+        let mut records = ProgramStatusRecords::default();
+        every_state(&mut records);
 
-        assert_eq!(ids(&records), ["c", "d", "e"]);
+        records.release_finished_program();
+
+        assert_eq!(ids(&records), ["c", "d"]);
+    }
+
+    #[test]
+    fn a_seen_acknowledgement_removes_done_and_error_only() {
+        let mut records = ProgramStatusRecords::default();
+        every_state(&mut records);
+
+        records.acknowledge_seen();
+
+        assert_eq!(ids(&records), ["a", "b", "e"]);
     }
 
     #[test]

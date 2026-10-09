@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::host::{HostError, SessionHost, SessionSummary};
 use crate::manifest::HookRecord;
+use crate::protocol::InputOrigin;
 
 pub const DEFAULT_READ_LINES: usize = 200;
 pub const MAX_READ_LINES: usize = 4000;
@@ -379,7 +380,7 @@ fn submit_after_echo(
         std::thread::sleep(SUBMIT_ECHO_POLL);
         waited += SUBMIT_ECHO_POLL;
     }
-    host.input(session, generation, b"\r".to_vec())?;
+    host.input_from(session, generation, b"\r".to_vec(), InputOrigin::Program)?;
     Ok(())
 }
 
@@ -409,7 +410,7 @@ pub(crate) fn deliver_text(
         } else {
             text.to_string()
         };
-        host.input(session, generation, body.into_bytes())?;
+        host.input_from(session, generation, body.into_bytes(), InputOrigin::Program)?;
     }
     let submit_mode = match (submit, paste && !text.is_empty()) {
         (false, _) => Value::Null,
@@ -418,7 +419,7 @@ pub(crate) fn deliver_text(
             json!("deferred_paste_cr")
         }
         (true, false) => {
-            host.input(session, generation, b"\r".to_vec())?;
+            host.input_from(session, generation, b"\r".to_vec(), InputOrigin::Program)?;
             json!("inline_cr")
         }
     };

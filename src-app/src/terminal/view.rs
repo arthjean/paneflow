@@ -828,11 +828,15 @@ impl TerminalView {
     }
 
     pub fn send_text(&self, text: &str) {
-        let _ = self.write_text(text);
+        let _ = self.write_program_text(text);
     }
 
     pub(crate) fn write_text(&self, text: &str) -> Result<(), &'static str> {
         input_outcome(self.terminal.write_to_pty(text.as_bytes().to_vec()))
+    }
+
+    pub(crate) fn write_program_text(&self, text: &str) -> Result<(), &'static str> {
+        input_outcome(self.terminal.write_program_input(text.as_bytes().to_vec()))
     }
 
     pub fn bracketed_paste_enabled(&self) -> bool {
@@ -878,7 +882,7 @@ impl TerminalView {
                      surface.send_text with submit=true (`paneflow send --submit`) instead"
                 ));
             }
-            input_outcome(self.terminal.write_to_pty(seq.as_bytes().to_vec()))
+            input_outcome(self.terminal.write_program_input(seq.as_bytes().to_vec()))
                 .map_err(str::to_owned)
         } else if let Some(ref key_char) = keystroke.key_char {
             if sequence_would_submit(key_char) {
@@ -887,8 +891,11 @@ impl TerminalView {
                      surface.send_text with submit=true (`paneflow send --submit`) instead"
                 ));
             }
-            input_outcome(self.terminal.write_to_pty(key_char.as_bytes().to_vec()))
-                .map_err(str::to_owned)
+            input_outcome(
+                self.terminal
+                    .write_program_input(key_char.as_bytes().to_vec()),
+            )
+            .map_err(str::to_owned)
         } else {
             Err(format!("keystroke '{keystroke_str}' produces no input"))
         }

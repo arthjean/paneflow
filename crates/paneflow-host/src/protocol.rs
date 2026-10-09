@@ -219,9 +219,51 @@ pub fn error_envelope(
     json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
+pub const INPUT_ORIGIN_PROGRAM: &str = "program";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputOrigin {
+    Typed,
+    Program,
+}
+
+impl InputOrigin {
+    pub fn of_session_input(attaches: bool, params: &Value) -> Self {
+        let declared_program =
+            params.get("origin").and_then(Value::as_str) == Some(INPUT_ORIGIN_PROGRAM);
+        if attaches && !declared_program {
+            Self::Typed
+        } else {
+            Self::Program
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_attached_window_types_and_it_can_declare_a_program_send() {
+        let plain = json!({"data": ""});
+        let declared = json!({"data": "", "origin": INPUT_ORIGIN_PROGRAM});
+        assert_eq!(
+            InputOrigin::of_session_input(true, &plain),
+            InputOrigin::Typed
+        );
+        assert_eq!(
+            InputOrigin::of_session_input(true, &declared),
+            InputOrigin::Program
+        );
+        assert_eq!(
+            InputOrigin::of_session_input(false, &plain),
+            InputOrigin::Program
+        );
+        assert_eq!(
+            InputOrigin::of_session_input(false, &json!({"origin": "typed"})),
+            InputOrigin::Program
+        );
+    }
 
     #[test]
     fn compatibility_requires_protocol_and_engine_identity_to_match() {

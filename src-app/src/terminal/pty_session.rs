@@ -24,6 +24,7 @@ use crate::limits::MAX_OSC52_BYTES;
 #[cfg(test)]
 use paneflow_config::schema::TerminalConfig;
 use paneflow_config::schema::{SessionGeneration, SessionId, TerminalSurfaceProfile};
+use paneflow_host::InputOrigin;
 pub(crate) use paneflow_host::env::INHERITED_AGENT_SESSION_ENV;
 #[cfg(test)]
 pub(super) use paneflow_host::env::inherited_env_keys_to_strip;
@@ -62,7 +63,7 @@ fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
 
 #[derive(Clone)]
 enum PendingTerminalInput {
-    Raw(Cow<'static, [u8]>),
+    Raw(Cow<'static, [u8]>, InputOrigin),
     Key(paneflow_terminal_ghostty::KeyInput),
     Mouse {
         input: paneflow_terminal_ghostty::MouseInput,
@@ -73,13 +74,14 @@ enum PendingTerminalInput {
         text: String,
         allow_unsafe: bool,
         location: paneflow_terminal_ghostty::ClipboardLocation,
+        origin: InputOrigin,
     },
 }
 
 impl PendingTerminalInput {
     fn queued_bytes(&self) -> usize {
         match self {
-            Self::Raw(bytes) => bytes.len(),
+            Self::Raw(bytes, _) => bytes.len(),
             Self::Key(input) => std::mem::size_of::<paneflow_terminal_ghostty::KeyInput>()
                 .saturating_add(input.text.len()),
             Self::Mouse { repeat, .. } => {
@@ -92,7 +94,7 @@ impl PendingTerminalInput {
 
     fn queue_limit(&self) -> usize {
         match self {
-            Self::Raw(_) | Self::Paste { .. } => {
+            Self::Raw(..) | Self::Paste { .. } => {
                 MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES
             }
             Self::Key(input) if input.action == paneflow_terminal_ghostty::KeyAction::Release => {
@@ -116,7 +118,7 @@ impl PendingTerminalInput {
 
     fn try_send(&self, ghostty: &GhosttySession) -> GhosttyInputSendResult {
         match self {
-            Self::Raw(bytes) => ghostty.write(bytes.clone().into_owned()),
+            Self::Raw(bytes, origin) => ghostty.write_from(bytes.clone().into_owned(), *origin),
             Self::Key(input) => ghostty.write_key(input.clone()),
             Self::Mouse { input, repeat } => ghostty.write_mouse(*input, *repeat),
             Self::Focus(event) => ghostty.write_focus(*event),
@@ -124,7 +126,8 @@ impl PendingTerminalInput {
                 text,
                 allow_unsafe,
                 location,
-            } => ghostty.write_paste(text.clone(), *allow_unsafe, *location),
+                origin,
+            } => ghostty.write_paste(text.clone(), *allow_unsafe, *location, *origin),
         }
     }
 }
@@ -780,6 +783,23 @@ impl TerminalState {
     }
 
     #[cfg(test)]
+    pub(crate) fn queued_input_origins_for_test(&self) -> Vec<InputOrigin> {
+        self.pending_input
+            .lock()
+            .map(|queued| {
+                queued
+                    .iter()
+                    .filter_map(|input| match input {
+                        PendingTerminalInput::Raw(_, origin)
+                        | PendingTerminalInput::Paste { origin, .. } => Some(*origin),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub(crate) fn queued_raw_input_for_test(&self) -> Vec<Vec<u8>> {
         self.pending_input
             .lock()
@@ -787,7 +807,7 @@ impl TerminalState {
                 queued
                     .iter()
                     .filter_map(|input| match input {
-                        PendingTerminalInput::Raw(bytes) => Some(bytes.to_vec()),
+                        PendingTerminalInput::Raw(bytes, _) => Some(bytes.to_vec()),
                         _ => None,
                     })
                     .collect()
@@ -799,6 +819,12 @@ impl TerminalState {
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.notify_or_buffer(input.into())
+    }
+
+    pub fn write_program_input(&self, input: impl Into<Cow<'static, [u8]>>) -> BackendInputResult {
+        self.keyboard_input_sent
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.buffer_input(input.into(), InputOrigin::Program)
     }
 
     pub(super) fn set_terminal_focused(&mut self, focused: bool) {
@@ -886,21 +912,36 @@ impl TerminalState {
         allow_unsafe: bool,
         location: paneflow_terminal_ghostty::ClipboardLocation,
     ) -> BackendInputResult {
+        self.write_ghostty_paste_from(text, allow_unsafe, location, InputOrigin::Typed)
+    }
+
+    pub(super) fn write_ghostty_paste_from(
+        &self,
+        text: String,
+        allow_unsafe: bool,
+        location: paneflow_terminal_ghostty::ClipboardLocation,
+        origin: InputOrigin,
+    ) -> BackendInputResult {
         self.dispatch_ghostty_input(
             PendingTerminalInput::Paste {
                 text,
                 allow_unsafe,
                 location,
+                origin,
             },
             true,
         )
     }
 
     fn notify_or_buffer(&self, input: Cow<'static, [u8]>) -> BackendInputResult {
+        self.buffer_input(input, InputOrigin::Typed)
+    }
+
+    fn buffer_input(&self, input: Cow<'static, [u8]>, origin: InputOrigin) -> BackendInputResult {
         if input.is_empty() {
             return BackendInputResult::Rejected;
         }
-        self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false)
+        self.dispatch_ghostty_input(PendingTerminalInput::Raw(input, origin), false)
     }
 
     pub fn bind_runtime(&self, runtime_id: Option<&'static str>) {
@@ -1013,7 +1054,7 @@ mod tests {
         let queued = state.pending_input.lock().expect("pending_input lock");
         assert_eq!(queued.len(), 1);
         assert!(
-            matches!(&queued[0], PendingTerminalInput::Raw(bytes) if bytes.as_ref() == b"claude\r")
+            matches!(&queued[0], PendingTerminalInput::Raw(bytes, InputOrigin::Typed) if bytes.as_ref() == b"claude\r")
         );
     }
 

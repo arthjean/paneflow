@@ -19,7 +19,7 @@ use crate::persistence::{
     CRITICAL_DEADLINE, ManifestRevision, PersistError, Persistence, QueueReport,
     SessionPersistence, WriteClass,
 };
-use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, local_engine_identity};
+use crate::protocol::{HOST_PROTOCOL_VERSION, HostIdentity, InputOrigin, local_engine_identity};
 use crate::runtime::{
     Checkpoint, CompletedRecord, LaunchCancel, LaunchWait, OutputSlice, RuntimeError,
     RuntimeNotice, RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
@@ -2191,6 +2191,16 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
         bytes: Vec<u8>,
     ) -> Result<usize, HostError> {
+        self.input_from(session, generation, bytes, InputOrigin::Typed)
+    }
+
+    pub fn input_from(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        bytes: Vec<u8>,
+        origin: InputOrigin,
+    ) -> Result<usize, HostError> {
         let fenced = {
             let sessions = self.lock_sessions();
             sessions
@@ -2199,8 +2209,9 @@ impl SessionHost {
                 .map(|record| (Arc::clone(&record.input), record.generation()))
         };
         let observed = fenced.as_ref().map(|_| bytes.clone());
-        let accepted =
-            self.with_live_runtime(session, generation, |runtime| runtime.input(bytes))?;
+        let accepted = self.with_live_runtime(session, generation, |runtime| {
+            runtime.input_from(bytes, origin)
+        })?;
         if let (Some((input, captured)), Some(observed)) = (fenced, observed) {
             input
                 .lock()

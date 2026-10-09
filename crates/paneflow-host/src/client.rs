@@ -6,8 +6,9 @@ use serde_json::{Value, json};
 
 use crate::host::{CellSize, CreateSession, SessionAppearance, SessionSummary};
 use crate::protocol::{
-    self, ClientHello, DATA_CHUNK_RAW_BYTES, HostIdentity, Incompatibility, MAX_CHECKPOINT_BYTES,
-    MAX_CONTROL_FRAME_BYTES, REQUEST_DEADLINE, decode_data, encode_data, request,
+    self, ClientHello, DATA_CHUNK_RAW_BYTES, HostIdentity, INPUT_ORIGIN_PROGRAM, Incompatibility,
+    InputOrigin, MAX_CHECKPOINT_BYTES, MAX_CONTROL_FRAME_BYTES, REQUEST_DEADLINE, decode_data,
+    encode_data, request,
 };
 use crate::runtime::Checkpoint;
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
@@ -254,12 +255,24 @@ impl HostClient {
         generation: SessionGeneration,
         bytes: &[u8],
     ) -> Result<usize, HostClientError> {
+        self.input_from(session, generation, bytes, InputOrigin::Typed)
+    }
+
+    pub fn input_from(
+        &mut self,
+        session: &SessionId,
+        generation: SessionGeneration,
+        bytes: &[u8],
+        origin: InputOrigin,
+    ) -> Result<usize, HostClientError> {
         let mut accepted = 0usize;
         for chunk in bytes.chunks(DATA_CHUNK_RAW_BYTES) {
-            let reply = self.call(
-                "session.input",
-                json!({"session": session, "generation": generation, "data": encode_data(chunk)}),
-            )?;
+            let mut params =
+                json!({"session": session, "generation": generation, "data": encode_data(chunk)});
+            if origin == InputOrigin::Program {
+                params["origin"] = json!(INPUT_ORIGIN_PROGRAM);
+            }
+            let reply = self.call("session.input", params)?;
             accepted =
                 accepted.saturating_add(reply["accepted_bytes"].as_u64().unwrap_or(0) as usize);
         }

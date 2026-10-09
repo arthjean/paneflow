@@ -590,6 +590,7 @@ pub(super) fn run_runtime(
                 if matches!(
                     &message,
                     RuntimeMessage::Input(_)
+                        | RuntimeMessage::ProgramInput(_)
                         | RuntimeMessage::KeyInput(_)
                         | RuntimeMessage::MouseInput { .. }
                         | RuntimeMessage::PasteInput { .. }
@@ -639,7 +640,7 @@ pub(super) fn run_runtime(
                     lifecycle.record_eof();
                 }
             }
-            Ok(Some(RuntimeMessage::Input(bytes))) => {
+            Ok(Some(RuntimeMessage::Input(bytes) | RuntimeMessage::ProgramInput(bytes))) => {
                 release_queued_input_bytes(&inner, bytes.len());
                 write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed);
                 notify_command_capacity(&inner);
@@ -689,6 +690,7 @@ pub(super) fn run_runtime(
                 text,
                 allow_unsafe,
                 location,
+                ..
             })) => {
                 release_queued_input_bytes(&inner, text.len());
                 paste_trace.note_paste(text.len());

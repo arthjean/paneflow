@@ -49,6 +49,6 @@ pub use host::{
 };
 pub use manifest::{SessionLifecycle, SessionManifest};
 pub use process::{ProcessIdentity, ProcessVerdict};
-pub use protocol::{ClientHello, HOST_PROTOCOL_VERSION};
+pub use protocol::{ClientHello, HOST_PROTOCOL_VERSION, InputOrigin};
 pub use runtime::Checkpoint;
 pub use server::{ServerHandle, serve};

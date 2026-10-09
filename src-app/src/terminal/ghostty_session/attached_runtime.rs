@@ -35,7 +35,7 @@ impl ReconnectBackoff {
 }
 
 enum ControlRequest {
-    Input(Vec<u8>),
+    Input(Vec<u8>, InputOrigin),
     BindRuntime(Option<&'static str>),
     Resize {
         cols: u16,
@@ -70,7 +70,9 @@ impl ControlLink {
             .spawn(move || {
                 while let Ok(request) = rx.recv() {
                     match request {
-                        ControlRequest::Input(bytes) => control.send_input(&inner, &link, &bytes),
+                        ControlRequest::Input(bytes, origin) => {
+                            control.send_input(&inner, &link, &bytes, origin);
+                        }
                         ControlRequest::BindRuntime(runtime_id) => {
                             control.bind_runtime(&link, runtime_id);
                         }
@@ -115,10 +117,17 @@ impl ControlLink {
     }
 
     fn send_input(&self, inner: &SessionInner, bytes: &[u8]) {
+        self.send_input_from(inner, bytes, InputOrigin::Typed);
+    }
+
+    fn send_input_from(&self, inner: &SessionInner, bytes: &[u8], origin: InputOrigin) {
         if bytes.is_empty() {
             return;
         }
-        match self.tx.try_send(ControlRequest::Input(bytes.to_vec())) {
+        match self
+            .tx
+            .try_send(ControlRequest::Input(bytes.to_vec(), origin))
+        {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => reject_input(
                 inner,
@@ -306,7 +315,13 @@ impl HostControl {
         self.client = None;
     }
 
-    fn send_input(&mut self, inner: &SessionInner, link: &HostLinkShared, bytes: &[u8]) {
+    fn send_input(
+        &mut self,
+        inner: &SessionInner,
+        link: &HostLinkShared,
+        bytes: &[u8],
+        origin: InputOrigin,
+    ) {
         if bytes.is_empty() {
             return;
         }
@@ -319,7 +334,7 @@ impl HostControl {
             );
             return;
         };
-        if let Err(error) = client.input(&session, generation, bytes) {
+        if let Err(error) = client.input_from(&session, generation, bytes, origin) {
             if error.is_connection_loss() {
                 reject_input(
                     inner,
@@ -540,6 +555,7 @@ pub(super) fn run_attached_runtime(
                 if matches!(
                     &message,
                     RuntimeMessage::Input(_)
+                        | RuntimeMessage::ProgramInput(_)
                         | RuntimeMessage::KeyInput(_)
                         | RuntimeMessage::MouseInput { .. }
                         | RuntimeMessage::PasteInput { .. }
@@ -677,6 +693,11 @@ pub(super) fn run_attached_runtime(
                 control.send_input(&inner, &bytes);
                 notify_command_capacity(&inner);
             }
+            Ok(Some(RuntimeMessage::ProgramInput(bytes))) => {
+                release_queued_input_bytes(&inner, bytes.len());
+                control.send_input_from(&inner, &bytes, InputOrigin::Program);
+                notify_command_capacity(&inner);
+            }
             Ok(Some(RuntimeMessage::KeyInput(input))) => {
                 release_queued_input_bytes(
                     &inner,
@@ -716,6 +737,7 @@ pub(super) fn run_attached_runtime(
                 text,
                 allow_unsafe,
                 location,
+                origin,
             })) => {
                 release_queued_input_bytes(&inner, text.len());
                 paste_trace.note_paste(text.len());
@@ -732,7 +754,7 @@ pub(super) fn run_attached_runtime(
                                 Ok(())
                             });
                         match drained {
-                            Ok(_) => control.send_input(&inner, &pasted),
+                            Ok(_) => control.send_input_from(&inner, &pasted, origin),
                             Err(error) => {
                                 if !runtime_failed {
                                     let _ = inner

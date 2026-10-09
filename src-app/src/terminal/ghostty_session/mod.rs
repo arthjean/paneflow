@@ -16,7 +16,7 @@ use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize};
 
 use paneflow_host::protocol::ERR_OUTPUT_EVICTED;
-use paneflow_host::{HostClient, HostClientError};
+use paneflow_host::{HostClient, HostClientError, InputOrigin};
 
 use super::clipboard_gate::ClipboardGate;
 use super::host_link::{CheckpointPayload, HostAttachment, HostLinkEnd, HostLinkState};
@@ -468,11 +468,19 @@ impl GhosttySession {
         self.inner.marks.clone()
     }
 
+    #[cfg(test)]
     pub(super) fn write(&self, bytes: Vec<u8>) -> GhosttyInputSendResult {
+        self.write_from(bytes, InputOrigin::Typed)
+    }
+
+    pub(super) fn write_from(&self, bytes: Vec<u8>, origin: InputOrigin) -> GhosttyInputSendResult {
         if bytes.is_empty() {
             return GhosttyInputSendResult::Sent;
         }
-        self.enqueue_input(RuntimeMessage::Input(bytes))
+        self.enqueue_input(match origin {
+            InputOrigin::Typed => RuntimeMessage::Input(bytes),
+            InputOrigin::Program => RuntimeMessage::ProgramInput(bytes),
+        })
     }
 
     pub(super) fn write_key(&self, input: ghostty::KeyInput) -> GhosttyInputSendResult {
@@ -499,6 +507,7 @@ impl GhosttySession {
         text: String,
         allow_unsafe: bool,
         location: ghostty::ClipboardLocation,
+        origin: InputOrigin,
     ) -> GhosttyInputSendResult {
         if text.is_empty() {
             return GhosttyInputSendResult::Sent;
@@ -507,6 +516,7 @@ impl GhosttySession {
             text,
             allow_unsafe,
             location,
+            origin,
         })
     }
 
@@ -1358,6 +1368,30 @@ mod tests {
                 .iter()
                 .any(|message| message.queued_input_bytes().is_some())
         );
+    }
+
+    #[test]
+    fn a_program_write_replays_as_program_input_after_promotion() {
+        let (mut state, pending) = TerminalState::new_pending(80, 24);
+        let runtime_pending = pending.ghostty;
+
+        state.write_to_pty(b"typed".to_vec());
+        state.write_program_input(b"sent".to_vec());
+        state.promote_ghostty(SpawnedGhostty {
+            child_pid: 0,
+            cwd: std::env::current_dir().unwrap(),
+        });
+
+        let typed = runtime_pending
+            .mailbox
+            .recv_timeout(Duration::from_millis(50))
+            .unwrap();
+        let sent = runtime_pending
+            .mailbox
+            .recv_timeout(Duration::from_millis(50))
+            .unwrap();
+        assert!(matches!(typed, RuntimeMessage::Input(bytes) if bytes == b"typed"));
+        assert!(matches!(sent, RuntimeMessage::ProgramInput(bytes) if bytes == b"sent"));
     }
 
     #[test]

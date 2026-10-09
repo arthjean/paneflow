@@ -551,7 +551,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         match answered {
                             Some(Ok(result)) => result_envelope(&id, result),
                             Some(Err(error)) => control_error_to_envelope(&id, error),
-                            None => match dispatch(&host, method, &params) {
+                            None => match dispatch(&host, method, &params, attaches) {
                                 Ok(result) => {
                                     if method == "session.input" && !attaches {
                                         audit_control_input(&client, &params, &result);
@@ -769,7 +769,12 @@ fn fit_control_frame(id: &Value, envelope: Value) -> Value {
     )
 }
 
-fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, DispatchError> {
+fn dispatch(
+    host: &SessionHost,
+    method: &str,
+    params: &Value,
+    attaches: bool,
+) -> Result<Value, DispatchError> {
     match method {
         "host.hello" => Ok(to_value(host.identity())),
         "host.status" => {
@@ -839,7 +844,8 @@ fn dispatch(host: &SessionHost, method: &str, params: &Value) -> Result<Value, D
                 .and_then(Value::as_str)
                 .ok_or_else(|| DispatchError::Params("missing data".to_string()))?;
             let bytes = protocol::decode_data(data).map_err(DispatchError::Params)?;
-            let accepted = host.input(&session, generation, bytes)?;
+            let origin = protocol::InputOrigin::of_session_input(attaches, params);
+            let accepted = host.input_from(&session, generation, bytes, origin)?;
             Ok(json!({"accepted_bytes": accepted}))
         }
         "session.runtime.bind" => {
@@ -2185,6 +2191,57 @@ mod tests {
             }
         }
         visible
+    }
+
+    #[cfg(unix)]
+    const DECLARE_DONE_COMMAND: &[u8] =
+        b"printf '\\033]7501;state=done:id=build\\007'; echo DECLARED_\"\"DONE\r\n";
+
+    #[cfg(windows)]
+    const DECLARE_DONE_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state=done:id=build' + [char]7); 'DECLARED_' + 'DONE'\"\r\n";
+
+    #[test]
+    fn only_a_keystroke_from_the_attached_window_marks_a_declared_done_as_seen() {
+        let (_home, host, server) = start();
+        let hello = ClientHello::local("paneflow-host-test");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        let created = client
+            .call("session.create", shell_create_params())
+            .unwrap();
+        let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
+        let generation = SessionGeneration::FIRST;
+        let declared = || {
+            crate::viewport_scan::capture(&host, &session)
+                .ok()
+                .and_then(|capture| capture.scan.program_status)
+                .map(|report| report.state)
+        };
+        let done = Some(paneflow_terminal_ghostty::ProgramStatusState::Done);
+
+        client
+            .input(&session, generation, DECLARE_DONE_COMMAND)
+            .unwrap();
+        assert!(
+            wait_until(Duration::from_secs(15), || declared() == done),
+            "the shell's OSC 7501 report reached the host"
+        );
+
+        client
+            .input_from(&session, generation, b" ", protocol::InputOrigin::Program)
+            .unwrap();
+        crate::control::deliver_text(&host, &session, Some(generation), " ", None, false, false)
+            .unwrap();
+        assert_eq!(
+            declared(),
+            done,
+            "a programmatic send from the window or the control plane is not a keystroke"
+        );
+
+        client.input(&session, generation, b" ").unwrap();
+        assert_eq!(declared(), None, "a keystroke marks the record as seen");
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
     }
 
     fn wait_until(budget: Duration, mut check: impl FnMut() -> bool) -> bool {

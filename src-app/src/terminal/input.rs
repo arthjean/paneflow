@@ -7,6 +7,7 @@ use gpui::{
     Window,
 };
 
+use paneflow_host::InputOrigin;
 use paneflow_terminal_ghostty as ghostty;
 
 use crate::app::diff_dock::code::spawn_blocking_then;
@@ -1249,15 +1250,31 @@ impl TerminalView {
     }
 
     pub(crate) fn write_injected_text(&self, text: &str) -> Result<(), &'static str> {
+        self.write_injected_text_from(text, InputOrigin::Typed)
+    }
+
+    pub(crate) fn write_program_injected_text(&self, text: &str) -> Result<(), &'static str> {
+        self.write_injected_text_from(text, InputOrigin::Program)
+    }
+
+    fn write_injected_text_from(
+        &self,
+        text: &str,
+        origin: InputOrigin,
+    ) -> Result<(), &'static str> {
         let mode = self.terminal.session_backend().modes();
         if mode.contains(Modes::BRACKETED_PASTE) {
-            super::view::input_outcome(self.terminal.write_ghostty_paste(
+            super::view::input_outcome(self.terminal.write_ghostty_paste_from(
                 normalize_paste_text(text),
                 false,
                 ghostty::ClipboardLocation::Standard,
+                origin,
             ))
         } else {
-            self.write_text(text)
+            match origin {
+                InputOrigin::Typed => self.write_text(text),
+                InputOrigin::Program => self.write_program_text(text),
+            }
         }
     }
 

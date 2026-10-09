@@ -14,7 +14,7 @@ use portable_pty::{CommandBuilder, PtySize};
 use crate::host::{CellSize, SessionAppearance};
 use crate::process::ProcessIdentity;
 use crate::process_listing::{LISTING_INTERVAL, ListingSlot};
-use crate::protocol::{MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
+use crate::protocol::{InputOrigin, MAX_CHECKPOINT_BYTES, MAX_OUTPUT_TAIL_BYTES, REQUEST_DEADLINE};
 use crate::stream::OutputStream;
 
 const READ_CHUNK_BYTES: usize = 32 * 1024;
@@ -171,7 +171,11 @@ enum Command {
     Viewport(SyncSender<Result<ViewportScan, RuntimeError>>),
     BracketedPaste(SyncSender<Result<bool, RuntimeError>>),
     MemoryUsage(SyncSender<Result<SessionMemory, RuntimeError>>),
-    Input(Vec<u8>, SyncSender<Result<usize, RuntimeError>>),
+    Input(
+        Vec<u8>,
+        InputOrigin,
+        SyncSender<Result<usize, RuntimeError>>,
+    ),
     Resize {
         cols: u16,
         rows: u16,
@@ -663,10 +667,14 @@ impl SessionRuntime {
     }
 
     pub fn input(&self, bytes: Vec<u8>) -> Result<usize, RuntimeError> {
+        self.input_from(bytes, InputOrigin::Typed)
+    }
+
+    pub fn input_from(&self, bytes: Vec<u8>, origin: InputOrigin) -> Result<usize, RuntimeError> {
         if !self.is_live() {
             return Err(RuntimeError::NotLive);
         }
-        self.ask(|reply| Command::Input(bytes, reply))
+        self.ask(|reply| Command::Input(bytes, origin, reply))
     }
 
     pub fn resize(&self, cols: u16, rows: u16, cell: Option<CellSize>) -> Result<(), RuntimeError> {
@@ -1284,7 +1292,7 @@ impl Session {
                 }
                 ghostty::BackendEvent::SemanticPrompt { kind, .. } => {
                     if kind == ghostty::SemanticPromptKind::PromptStart {
-                        self.program_status.clear();
+                        self.program_status.release_finished_program();
                     }
                 }
                 ghostty::BackendEvent::Reset => {
@@ -1302,7 +1310,7 @@ impl Session {
             }
         }
         if self.exit.is_some() {
-            self.program_status.release_waiting();
+            self.program_status.release_finished_program();
         }
     }
 
@@ -1359,7 +1367,7 @@ impl Session {
                     .map_err(|e| RuntimeError::Engine(e.to_string()));
                 let _ = reply.send(usage);
             }
-            Command::Input(bytes, reply) => {
+            Command::Input(bytes, origin, reply) => {
                 let typed = is_user_input(&bytes);
                 let result = if self.exit.is_some() || self.writer.is_none() {
                     Err(RuntimeError::NotLive)
@@ -1371,6 +1379,9 @@ impl Session {
                     self.shared
                         .input_at_ms
                         .store(crate::manifest::now_ms(), Ordering::Release);
+                    if origin == InputOrigin::Typed {
+                        self.program_status.acknowledge_seen();
+                    }
                 }
                 let _ = reply.send(result);
             }
@@ -1587,7 +1598,7 @@ impl Session {
         #[cfg(target_os = "macos")]
         self.process_tree.root_reaped();
         self.exit = Some(outcome.clone());
-        self.program_status.release_waiting();
+        self.program_status.release_finished_program();
         if self.descendants_unresolved == 0 {
             self.shared.set_unverified(None);
         } else {
@@ -1797,7 +1808,7 @@ fn refuse(command: Command, error: RuntimeError) {
         Command::MemoryUsage(reply) => {
             let _ = reply.send(Err(error));
         }
-        Command::Input(_, reply) => {
+        Command::Input(_, _, reply) => {
             let _ = reply.send(Err(error));
         }
         Command::CheckpointSize(reply) => {
@@ -2542,37 +2553,103 @@ mod tests {
         assert_eq!(status.kind, Some(ghostty::ProgramStatusKind::Question));
     }
 
+    const EVERY_DECLARED_STATE: &[u8] = b"\x1b]7501;state=working:id=a\x1b\\\x1b]7501;state=blocked:id=b\x1b\\\x1b]7501;state=idle:id=c\x1b\\\x1b]7501;state=done:id=d\x1b\\\x1b]7501;state=error:id=e\x1b\\";
+
+    fn record_states(session: &Session) -> Vec<(String, ghostty::ProgramStatusState)> {
+        let mut states: Vec<_> = session
+            .program_status
+            .reports()
+            .map(|report| (report.id.clone(), report.state))
+            .collect();
+        states.sort_by(|left, right| left.0.cmp(&right.0));
+        states
+    }
+
+    fn deliver(session: &mut Session, bytes: &[u8], origin: InputOrigin) {
+        let (reply, accepted) = sync_channel(1);
+        session.handle(Command::Input(bytes.to_vec(), origin, reply));
+        assert_eq!(accepted.recv().expect("reply"), Ok(bytes.len()));
+    }
+
+    fn finished_states() -> Vec<(String, ghostty::ProgramStatusState)> {
+        vec![
+            ("d".into(), ghostty::ProgramStatusState::Done),
+            ("e".into(), ghostty::ProgramStatusState::Error),
+        ]
+    }
+
     #[test]
-    fn a_program_exit_releases_working_and_blocked_but_keeps_done_until_the_next_prompt() {
+    fn a_program_exit_releases_working_blocked_and_idle_but_keeps_done_and_error() {
         let (mut session, _messages, _replies) = status_session();
-        session.feed(
-            b"\x1b]7501;state=working:id=a\x1b\\\x1b]7501;state=blocked:id=b\x1b\\\x1b]7501;state=done:id=c\x1b\\",
-        );
-        assert_eq!(session.program_status.len(), 3);
+        session.feed(EVERY_DECLARED_STATE);
+        assert_eq!(session.program_status.len(), 5);
 
         session.record_exit(ExitOutcome {
             code: 0,
             signal: None,
         });
 
-        assert_eq!(
-            scanned_status(&mut session),
-            Some((ghostty::ProgramStatusState::Done, "c".into()))
-        );
-        assert_eq!(session.program_status.len(), 1);
-
-        session.feed(b"\x1b]133;A\x1b\\");
-        assert_eq!(scanned_status(&mut session), None);
+        assert_eq!(record_states(&session), finished_states());
     }
 
     #[test]
-    fn a_prompt_start_removes_every_record_of_the_finished_program() {
+    fn a_prompt_start_releases_working_blocked_and_idle_but_keeps_done_and_error() {
         let (mut session, _messages, _replies) = status_session();
-        session.feed(
-            b"\x1b]7501;state=working:id=a\x1b\\\x1b]7501;state=error:id=b\x1b\\\x1b]133;A\x1b\\",
+        session.feed(EVERY_DECLARED_STATE);
+
+        session.feed(b"\x1b]133;A\x1b\\");
+
+        assert_eq!(record_states(&session), finished_states());
+        session.feed(b"\x1b]133;A\x1b\\");
+        assert_eq!(
+            record_states(&session),
+            finished_states(),
+            "done and error outlive every later prompt until they are seen"
         );
+    }
+
+    #[test]
+    fn a_typed_keystroke_marks_done_and_error_as_seen() {
+        let (mut session, _messages, replies) = status_session();
+        session.feed(EVERY_DECLARED_STATE);
+
+        deliver(&mut session, b"l", InputOrigin::Typed);
+
+        assert_eq!(
+            record_states(&session),
+            vec![
+                ("a".into(), ghostty::ProgramStatusState::Working),
+                ("b".into(), ghostty::ProgramStatusState::Blocked),
+                ("c".into(), ghostty::ProgramStatusState::Idle),
+            ]
+        );
+        assert_eq!(replies.try_iter().collect::<Vec<_>>(), [b"l".to_vec()]);
+    }
+
+    #[test]
+    fn program_input_and_focus_reports_never_mark_a_record_as_seen() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(b"\x1b]7501;state=done\x1b\\\x1b]7501;state=error:id=e\x1b\\");
+
+        deliver(&mut session, b"send\r", InputOrigin::Program);
+        deliver(&mut session, b"\x1b[I", InputOrigin::Typed);
+
+        assert_eq!(
+            record_states(&session),
+            vec![
+                ("".into(), ghostty::ProgramStatusState::Done),
+                ("e".into(), ghostty::ProgramStatusState::Error),
+            ]
+        );
+    }
+
+    #[test]
+    fn clearing_the_empty_id_removes_a_done_record_without_any_keystroke() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(b"\x1b]7501;state=done:id=build\x1b\\\x1b]7501;state=clear\x1b\\");
 
         assert!(session.program_status.is_empty());
+        assert_eq!(scanned_status(&mut session), None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub(super) enum RuntimeMessage {
     Output(Vec<u8>),
     Eof,
     Input(Vec<u8>),
+    ProgramInput(Vec<u8>),
     KeyInput(ghostty::KeyInput),
     MouseInput {
         input: ghostty::MouseInput,
@@ -14,6 +15,7 @@ pub(super) enum RuntimeMessage {
         text: String,
         allow_unsafe: bool,
         location: ghostty::ClipboardLocation,
+        origin: InputOrigin,
     },
     WriteOutput {
         bytes: Vec<u8>,
@@ -87,7 +89,7 @@ pub(super) enum RuntimeMessage {
 impl RuntimeMessage {
     pub(super) fn queued_input_bytes(&self) -> Option<usize> {
         match self {
-            Self::Input(bytes) => Some(bytes.len()),
+            Self::Input(bytes) | Self::ProgramInput(bytes) => Some(bytes.len()),
             Self::KeyInput(input) => {
                 Some(std::mem::size_of::<ghostty::KeyInput>().saturating_add(input.text.len()))
             }
