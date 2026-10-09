@@ -67,6 +67,28 @@ as ordinary panes. The entry does not exist on Windows: Claude Code's
 terminal team mode needs tmux and a POSIX shell there, so on Windows
 teammates run inside the lead's pane.
 
+Any program can also declare its own status with an OSC 7501 sequence,
+agent or not: a build, a deploy script, a long test run. The pane header shows
+the declared state. A program without an agent that reports `blocked` or
+`error` enters the **Attention queue**, and `blocked` also sends a desktop
+notification that names the pane, at most once every 10 seconds per pane, when
+`agent_panel.notify_when_agent_waiting` allows it. For an agent, hooks keep
+precedence, and a declared `error` marks it as errored.
+
+```sh
+printf '\033]7501;state=working:app=deploy\033\\'
+if ./deploy.sh; then
+  printf '\033]7501;state=done:app=deploy\033\\'
+else
+  printf '\033]7501;state=error:app=deploy\033\\'
+fi
+```
+
+`working`, `blocked`, and `idle` clear when the shell prompt returns, `done`
+and `error` stay until you type in the pane, and `state=clear` removes the
+status. A message goes in the base64-encoded `msg` field: `msg=QXBwbHk/` reads
+"Apply?". Paneflow never acts on a declared status.
+
 ## Keep terminal sessions running
 
 When quitting Paneflow, choose **Keep sessions running** to leave shells
