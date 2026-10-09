@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-09 | Arthur Jean | PRD initial issu de l'audit du 2026-10-09 du PRD `tasks/prd-libghostty-b699ea79.md` (17 stories DONE, CI verte sur `958c574e`). Corrige les défauts confirmés (durée de vie OSC 7501, reset, rafales, défilement au pixel, capture du mode 2026, config, `host.status`), étend OSC 7501 aux programmes non-agent, rend falsifiables les tests qui ne l'étaient pas, réaligne la documentation, clôt le PRD source et prépare la release 0.17.7. 6 epics, 20 stories. |
 | 1.1 | 2026-10-09 | Arthur Jean | Ajoute EP-007 (US-021) : démo publique d'OSC 7501 par un programme sans agent et réponse à l'annonce de la spec par Mitchell Hashimoto, après la publication de 0.17.7. 7 epics, 21 stories. |
+| 1.2 | 2026-10-09 | Arthur Jean | Limite la vérification matérielle d'EP-006 à Linux et Windows : macOS repose sur `macos_check` et `macos_render_smoke`, sans vérification sur matériel, par décision. 0.17.7 se publie sans pré-release. 7 epics, 21 stories. |
 
 ## Problem Statement
 
@@ -60,7 +61,7 @@ Le PRD corrige d'abord ce qui est faux, puis étend ce qui manque, puis prouve, 
 
 **EP-005 (P1)** réaligne la documentation interne, publique (`paneflow-web`, puis resynchronisation) et le PRD source, qu'il clôt.
 
-**EP-006 (P1)** regroupe la passe visuelle Linux, la vérification sur le matériel macOS et Windows, puis la préparation de la release 0.17.7.
+**EP-006 (P1)** regroupe la passe visuelle Linux, la vérification sur le matériel Windows, puis la préparation de la release 0.17.7. macOS est couvert par la CI, sans vérification sur matériel.
 
 **EP-007 (P2, epic final)** prépare, une fois 0.17.7 publiée, une courte démo d'un script sans agent qui déclare son état, et la réponse à l'annonce de la spec par Mitchell Hashimoto. La publication reste l'action d'Arthur.
 
@@ -138,7 +139,7 @@ Key findings that informed this PRD:
 - **`is_user_input` distingue une frappe réelle d'un envoi programmatique** (`crates/paneflow-host/src/runtime.rs:1370-1374`), ce qui permet de l'utiliser comme signal « vu ». La raison : serve s'en sert déjà pour la même distinction (`state.rs:237`). US-001 le vérifie par un test.
 - **Un bloc lu de 32 Kio** (`READ_CHUNK_BYTES`, `runtime.rs:20`) **rempli de rapports minimaux tient dans un budget de 256 Kio d'octets en attente.** Raison : environ 1 700 rapports de 19 octets, avec un surcoût par événement compté de moins de 100 octets. US-003 le prouve.
 - **Un second render state par terminal du desktop coûte moins de 10 % de la mémoire résidente du terminal sur un écran de 200 × 60.** Raison : un render state contient une copie du viewport, pas du scrollback. US-006 mesure.
-- **GPUI livre des deltas `ScrollDelta::Pixels` pour le trackpad sous macOS et pour le pavé tactile de précision sous Windows**, et `ScrollDelta::Lines` pour une molette. US-019 le vérifie.
+- **GPUI livre des deltas `ScrollDelta::Pixels` pour le trackpad sous macOS et pour le pavé tactile de précision sous Windows**, et `ScrollDelta::Lines` pour une molette. US-019 le vérifie sous Windows. Sous macOS, l'hypothèse n'est pas vérifiée sur matériel : elle repose sur GPUI macOS, la plateforme la plus éprouvée de Zed, et sur les jobs CI `macos_check` et `macos_render_smoke`.
 - **ConPTY transmet OSC 7501 sans le perdre sous Windows 10 et 11.** Raison : le billet de Warp ; aucun test public de la réponse à `OSC 7501 ; ?`. US-019 le vérifie.
 - **L'API de compression pilotée par l'appelant** (`ghostty_terminal_compression_activity`, `ghostty_terminal_compress`, `ghostty/include/ghostty/vt/terminal.h:3142,3173`) **recompresse un historique restauré compressé puis décompressé par une recherche.** US-015 le vérifie.
 - **Un statut déclaré tient dans le plafond de 64 Kio du manifeste** (`crates/paneflow-host/src/manifest.rs:13-15`). Raison : un `msg` fait au plus 2 048 octets décodés, un `title` 192 et un `app` 32.
@@ -485,9 +486,9 @@ Faire dire à la documentation interne, publique et au PRD source ce que fait r�
 
 ### EP-006: Vérification réelle et préparation de la release
 
-Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel macOS et Windows, et la préparation de la version 0.17.7.
+Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel Windows, et la préparation de la version 0.17.7.
 
-**Definition of Done:** la passe visuelle Linux et la vérification matérielle sont faites et consignées, et chaque défaut trouvé est corrigé avec un test s'il est reproductible sous Linux. Le commit de version 0.17.7 est prêt, avec les contrôles du runbook verts. Le tag reste l'action d'Arthur.
+**Definition of Done:** la passe visuelle Linux et la vérification sur le matériel Windows sont faites et consignées, et chaque défaut trouvé est corrigé avec un test s'il est reproductible sous Linux. Le commit de version 0.17.7 est prêt, avec les contrôles du runbook verts. Le tag reste l'action d'Arthur.
 
 #### US-018: Passe visuelle Linux des changements d'interface
 **Description:** As a Arthur, I want voir chaque changement d'interface du PRD source et de celui-ci dans un build debug so that aucun défaut visuel ne parte en release.
@@ -507,8 +508,8 @@ Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel mac
 - [ ] Les captures ou enregistrements sont dans `tasks/` comme preuve locale, et le commit de clôture les nomme.
 - [ ] Échec : given un défaut constaté, when il est corrigé, then le correctif reste dans cette story avec un test s'il est reproductible sans GUI.
 
-#### US-019: Vérifier sur le matériel macOS et Windows et corriger les écarts
-**Description:** As a développeur sous macOS ou Windows, I want que le défilement au pixel, les formes de curseur, le placement des glyphes et OSC 7501 se comportent comme sous Linux so that la release 0.17.7 n'embarque pas de régression vue seulement après publication.
+#### US-019: Vérifier sur le matériel Windows et corriger les écarts
+**Description:** As a développeur sous Windows, I want que le défilement au pixel, les formes de curseur, le placement des glyphes et OSC 7501 se comportent comme sous Linux so that la release 0.17.7 n'embarque pas de régression vue seulement après publication.
 
 **Priority:** P1
 **Size:** M (3 pts)
@@ -522,7 +523,7 @@ Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel mac
   - `dir /s` après un agrandissement puis une réduction ne décale plus la sortie (revérifié après `56b646ec`) ;
   - un script PowerShell qui émet OSC 7501 montre son état dans la puce et l'Attention Queue.
 - [ ] Validation de l'hypothèse ConPTY : given un programme qui envoie `OSC 7501 ; ?` puis `CSI c` dans un pane Windows, when les réponses arrivent, then la réponse 7501 précède celle de DA1. Le résultat est consigné, qu'il confirme ou infirme l'hypothèse.
-- [ ] Sur macOS, sur le matériel dont dispose Arthur, le trackpad produit un défilement au pixel et les formes de curseur s'affichent. Sans matériel macOS disponible, la story le dit et la vérification macOS est inscrite comme non faite dans le commit, jamais présumée.
+- [ ] Les jobs `macos_check` et `macos_render_smoke` sont verts sur le dernier commit de la branche. Le commit de clôture dit que macOS n'a pas été vérifié sur matériel, par décision, et ne le présume pas.
 - [ ] Avant tout commit depuis Windows, `git config user.email` du clone Windows renvoie l'adresse noreply du dépôt. Les six commits déjà signés `arthur.jean@strivex.fr` ne sont pas réécrits.
 - [ ] Échec : given un défaut constaté sur l'une des plateformes, when il est corrigé, then le correctif reste dans cet epic, avec un test s'il est reproductible sous Linux, sinon avec la vérification manuelle refaite et décrite.
 
@@ -660,7 +661,7 @@ Catégories écartées :
 | 7 | Le champ ajouté au manifeste casse un host ou un serve d'une autre version | Low | Med | Champ optionnel avec `skip_serializing_if` ; un host d'un autre pin est déjà `Incompatible` |
 | 8 | Une baseline réenregistrée masque une régression | Med | Med | Baselines seulement depuis un arbre propre, en commit séparé ; un budget dépassé bloque la story (US-007) |
 | 9 | Le site `paneflow-web` et le miroir divergent encore | Med | Low | Le miroir n'est régénéré que par le script, après le push du site (US-017) |
-| 10 | Pas de matériel macOS disponible pour la vérification | Med | Med | US-019 consigne la vérification macOS comme non faite plutôt que présumée |
+| 10 | Une régression propre à macOS (trackpad, formes de curseur) n'est vue qu'après publication, faute de vérification sur matériel | Low | Med | `macos_check` et `macos_render_smoke` verts exigés en US-019 ; confirmation demandée à un utilisateur macOS après publication, correctif en 0.17.8 si besoin |
 
 ## Non-Goals
 
@@ -672,6 +673,8 @@ Catégories écartées :
 - **Pas de réécriture de l'historique de `main`** pour les six commits signés `arthur.jean@strivex.fr` : réécrire une branche publique est destructif.
 - **Pas de notification pour `idle` ou `done`**, ni pour l'`error` d'un programme non-agent : seul `blocked` notifie.
 - **Pas de tag ni de publication de release** dans ce PRD : le tag reste l'action d'Arthur, comme la réponse publique d'US-021.
+- **Pas de vérification sur matériel macOS** pour 0.17.7. Le code touché sous macOS passe par GPUI macOS, la plateforme la plus éprouvée de Zed, et par une logique de défilement et de curseur commune aux trois plateformes, vérifiée sous Linux en US-018. La CI macOS couvre le build et le premier rendu.
+- **Pas de pré-release `-rc.N`.** Le tag 0.17.7 est la release finale ; le chemin d'installation et de signature n'a pas changé, et un correctif se publie en 0.17.8.
 
 ## Files NOT to Modify
 
@@ -721,6 +724,5 @@ Catégories écartées :
 ## Open Questions
 
 - **Notifications des programmes non-agent :** seul `blocked` notifie. Arthur veut-il aussi `error` ? À trancher à la passe d'US-018 ; seule la condition d'US-010 en dépend.
-- **Matériel macOS :** Arthur dispose-t-il d'un Mac pour US-019, ou faut-il louer un runner ? Sans réponse avant US-019, la vérification macOS est consignée comme non faite.
 - **Durée du signal « vu » :** la première frappe suffit-elle, ou faut-il aussi le focus du pane ? L'host ne connaît pas le focus aujourd'hui ; le PRD retient la frappe, exemple de la spec. À revoir à la passe d'US-018.
 [/PRD]

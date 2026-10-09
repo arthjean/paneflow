@@ -309,7 +309,7 @@
     },
     {
       "id": "US-019",
-      "title": "Vérifier sur le matériel macOS et Windows et corriger les écarts",
+      "title": "Vérifier sur le matériel Windows et corriger les écarts",
       "epic": "EP-006",
       "status": "TODO",
       "priority": "P1",
