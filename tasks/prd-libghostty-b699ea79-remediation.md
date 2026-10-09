@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-09 | Arthur Jean | PRD initial issu de l'audit du 2026-10-09 du PRD `tasks/prd-libghostty-b699ea79.md` (17 stories DONE, CI verte sur `958c574e`). Corrige les défauts confirmés (durée de vie OSC 7501, reset, rafales, défilement au pixel, capture du mode 2026, config, `host.status`), étend OSC 7501 aux programmes non-agent, rend falsifiables les tests qui ne l'étaient pas, réaligne la documentation, clôt le PRD source et prépare la release 0.17.7. 6 epics, 20 stories. |
+| 1.1 | 2026-10-09 | Arthur Jean | Ajoute EP-007 (US-021) : démo publique d'OSC 7501 par un programme sans agent et réponse à l'annonce de la spec par Mitchell Hashimoto, après la publication de 0.17.7. 7 epics, 21 stories. |
 
 ## Problem Statement
 
@@ -59,7 +60,9 @@ Le PRD corrige d'abord ce qui est faux, puis étend ce qui manque, puis prouve, 
 
 **EP-005 (P1)** réaligne la documentation interne, publique (`paneflow-web`, puis resynchronisation) et le PRD source, qu'il clôt.
 
-**EP-006 (P1, epic final)** regroupe la passe visuelle Linux, la vérification sur le matériel macOS et Windows, puis la préparation de la release 0.17.7.
+**EP-006 (P1)** regroupe la passe visuelle Linux, la vérification sur le matériel macOS et Windows, puis la préparation de la release 0.17.7.
+
+**EP-007 (P2, epic final)** prépare, une fois 0.17.7 publiée, une courte démo d'un script sans agent qui déclare son état, et la réponse à l'annonce de la spec par Mitchell Hashimoto. La publication reste l'action d'Arthur.
 
 Décisions structurantes et leur preuve :
 - **Les hooks gardent la précédence** (`AgentStateSource`, `crates/paneflow-ipc-client/src/agent.rs:53-79`). Aucune variante wire d'`AgentState` ni chaîne `SCREEN_*` ne change : l'erreur passe par la variante `Errored` existante.
@@ -163,6 +166,7 @@ Gates additionnels :
 - Stories du chemin de rendu (US-005, US-006, US-007) : `scripts/bench-terminal.sh` comparé à `bench/baselines/linux-x86_64/terminal.json`, et `scripts/perf-gates.sh` vert. Le résultat est cité dans le corps du commit.
 - Stories qui touchent un chemin `#[cfg(windows)]` ou ConPTY : le job « Windows x86_64 libghostty check » passe après le push. Le commit dit que Windows a été vérifié par inspection ; la vérification matérielle est en US-019.
 - Stories UI (US-005, US-009, US-010) : l'agent livre sans lancer l'app. La passe visuelle d'Arthur est regroupée en US-018.
+- Story de démo (US-021) : aucun code Rust ne change et les gates cargo ne s'appliquent pas. Le script de démo passe `bash -n`, et `shellcheck` s'il est installé.
 - Story du site (US-017) : les vérifications propres à `paneflow-web` (lint, format, build, définis dans son `package.json`) passent.
 - `cargo deny check advisories licenses sources` : seulement si une dépendance change ; aucune story n'en prévoit.
 
@@ -543,6 +547,35 @@ Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel mac
 
 ---
 
+### EP-007: Démonstration publique d'OSC 7501 hors agents
+
+Montrer, une fois 0.17.7 publiée, qu'un programme ordinaire déclare son état dans Paneflow, et en faire une réponse à l'annonce de la spec par Mitchell Hashimoto (https://mitchellh.com/writing/program-status-osc7501), qui demande des retours d'implémentation.
+
+**Definition of Done:** un script de démo, un enregistrement court fait sur la release 0.17.7 publiée et un brouillon de réponse sont prêts. La publication reste l'action d'Arthur.
+
+#### US-021: Préparer la démo OSC 7501 et la réponse à l'annonce de la spec
+**Description:** As a Arthur, I want une vidéo courte où un script sans agent passe par `working`, `blocked` puis `done` dans Paneflow so that ma réponse à l'annonce de Mitchell Hashimoto montre une implémentation concrète de la spec hors des agents, le cas qu'il défend.
+
+**Priority:** P2
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-020
+
+**Acceptance Criteria:**
+- [ ] Un script bash de démo, sans dépendance externe, est dans `tasks/osc7501-demo/` (preuve locale, non suivie par git). Au format de `ghostty/include/ghostty/vt/terminal.h:1227`, il émet :
+  - `working` avec une progression ;
+  - `blocked` de type `permission` avec un message ;
+  - `done`, puis il attend une frappe.
+- [ ] Avant d'écrire le script, la spec (https://www.superlogical.com/rex/docs/build/program-status) est relue. Si elle a changé depuis le 2026-10-06, le script suit la version en ligne et l'écart est consigné.
+- [ ] Arthur enregistre, sur la release 0.17.7 publiée et non sur un build debug, une vidéo de 30 s au plus qui montre :
+  - l'état dans la puce de l'en-tête du pane ;
+  - pendant `blocked`, l'entrée du pane dans l'Attention Queue et la notification qui le nomme ;
+  - `done` qui reste affiché jusqu'à la première frappe.
+- [ ] Un brouillon de réponse en anglais, trois phrases au plus et sans tiret dans la prose, est dans `tasks/osc7501-demo/`. Il dit ce que montre la vidéo et renvoie au repo.
+- [ ] Aucun agent ne publie : la réponse à l'annonce sur X est l'action d'Arthur.
+- [ ] Échec : given un état qui ne s'affiche pas comme prévu pendant l'enregistrement, when il est constaté, then la vidéo n'est pas publiée, la démo attend le correctif, et le défaut est consigné dans le statut de la story.
+
+---
+
 ## Functional Requirements
 
 - FR-01: Au début d'une invite (OSC 133 A) et à la sortie du programme, le host doit retirer les enregistrements `working`, `blocked` et `idle`, et garder `done` et `error`.
@@ -638,7 +671,7 @@ Catégories écartées :
 - **Pas de nouvel élément d'interface permanent pour les statuts**, ni de barre agrégée, ni de marque par commande ou par invite : la puce de pane et l'Attention Queue suffisent.
 - **Pas de réécriture de l'historique de `main`** pour les six commits signés `arthur.jean@strivex.fr` : réécrire une branche publique est destructif.
 - **Pas de notification pour `idle` ou `done`**, ni pour l'`error` d'un programme non-agent : seul `blocked` notifie.
-- **Pas de tag ni de publication de release** dans ce PRD : le tag reste l'action d'Arthur.
+- **Pas de tag ni de publication de release** dans ce PRD : le tag reste l'action d'Arthur, comme la réponse publique d'US-021.
 
 ## Files NOT to Modify
 

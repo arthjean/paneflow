@@ -53,6 +53,14 @@
       "priority": "P1",
       "stories_total": 3,
       "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "Démonstration publique d'OSC 7501 hors agents",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 1,
+      "stories_done": 0
     }
   ],
   "stories": [
@@ -324,6 +332,20 @@
         "US-016",
         "US-017",
         "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Préparer la démo OSC 7501 et la réponse à l'annonce de la spec",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [
+        "US-020"
       ],
       "started_at": null,
       "completed_at": null,
