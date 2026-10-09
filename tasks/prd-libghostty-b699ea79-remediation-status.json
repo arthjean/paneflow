@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Preuves, config et mémoire",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-005",
@@ -214,49 +214,49 @@
       "id": "US-012",
       "title": "Rendre falsifiables les tests de correctifs upstream",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-013",
       "title": "Vérifier les discriminants par le JSON de types et les hash de notice et de SBOM",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-014",
       "title": "Limiter une xt_checksum_extension invalide à sa propre clé",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-015",
       "title": "Rendre la mémoire observable pour toutes les sessions et recompresser l'historique restauré",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-016",
