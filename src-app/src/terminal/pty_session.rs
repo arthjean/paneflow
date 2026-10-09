@@ -953,6 +953,26 @@ impl TerminalState {
     }
 
     #[cfg(test)]
+    pub(crate) fn pending_mouse_buttons(
+        &self,
+    ) -> Vec<(paneflow_terminal_ghostty::MouseButton, usize)> {
+        self.pending_input
+            .lock()
+            .map(|pending| {
+                pending
+                    .iter()
+                    .filter_map(|input| match input {
+                        PendingTerminalInput::Mouse { input, repeat } => {
+                            input.button.map(|button| (button, *repeat))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub fn extract_scrollback(&self) -> Option<String> {
         self.ghostty.extract_scrollback()
     }

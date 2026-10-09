@@ -225,6 +225,7 @@ pub struct TerminalView {
     pub(super) scrollbar_visible: bool,
     pub(super) scrollbar_enabled: bool,
     pub(super) scroll_remainder: f32,
+    pub(super) app_scroll_remainder: f32,
     pub(super) smooth_scroll: bool,
     pub(super) search_active: bool,
     pub(super) search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
@@ -652,6 +653,7 @@ impl TerminalView {
             scrollbar_visible: false,
             scrollbar_enabled,
             scroll_remainder: 0.0,
+            app_scroll_remainder: 0.0,
             smooth_scroll: false,
             search_active: false,
             search_input,
@@ -783,7 +785,10 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
+    pub fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.settle_smooth_scroll() {
+            cx.notify();
+        }
         let was_composing = !self.ime_marked_text.is_empty();
         self.ime_marked_text.clear();
         {
@@ -1518,7 +1523,8 @@ impl Render for TerminalView {
                 self.release_ghostty_pressed_keys();
                 self.selecting = false;
                 self.scrollbar_drag = None;
-                self.scroll_remainder = 0.0;
+                self.settle_smooth_scroll();
+                self.app_scroll_remainder = 0.0;
                 self.hovered_cell = None;
                 self.ctrl_hovered_link = None;
                 self.link_modifier_held = false;
@@ -1676,7 +1682,7 @@ impl Render for TerminalView {
             frame_metrics,
             alt_screen,
             self.layout_cache.clone(),
-            self.smooth_scroll_offset(),
+            self.smooth_scroll_offset(cx),
             #[cfg(debug_assertions)]
             keystroke_at,
         );
@@ -2340,7 +2346,7 @@ mod tests {
             })
         };
         let offset = |cx: &mut gpui::VisualTestContext| {
-            terminal.read_with(cx, |view, _| view.smooth_scroll_offset())
+            terminal.update(cx, |view, cx| view.smooth_scroll_offset(cx))
         };
         let overscan_rows = |cx: &mut gpui::VisualTestContext| {
             terminal.read_with(cx, |view, _| {
@@ -2403,6 +2409,120 @@ mod tests {
             gpui::px(0.0),
             "wheel lines never shift by pixels"
         );
+    }
+
+    fn scrolled_history_terminal(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<TerminalView>, &mut gpui::VisualTestContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, _| {
+            let lines = (0..200)
+                .map(|line| format!("line {line:03}\r\n"))
+                .collect::<String>();
+            view.terminal.write_output(lines.as_bytes());
+            view.scroll_multiplier = 1.0;
+        });
+        cx.run_until_parked();
+        (terminal, cx)
+    }
+
+    fn pixel_offset(
+        terminal: &Entity<TerminalView>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> gpui::Pixels {
+        terminal.update(cx, |view, cx| view.smooth_scroll_offset(cx))
+    }
+
+    #[gpui::test]
+    fn reduce_motion_drops_the_pixel_offset_on_the_next_frame(cx: &mut gpui::TestAppContext) {
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        let line_height = terminal.read_with(cx, |view, _| view.line_height);
+        precise_scroll(&terminal, cx, 0.5);
+        assert_eq!(pixel_offset(&terminal, cx), line_height * 0.5);
+
+        cx.update(|_window, cx| cx.set_reduce_motion(true));
+        cx.run_until_parked();
+        terminal.read_with(cx, |view, _| {
+            assert!(
+                !view.smooth_scroll && view.scroll_remainder == 0.0,
+                "the frame built after the switch settles the offset without a scroll event"
+            );
+        });
+        assert_eq!(pixel_offset(&terminal, cx), gpui::px(0.0));
+
+        cx.update(|_window, cx| cx.set_reduce_motion(false));
+        cx.run_until_parked();
+        assert_eq!(
+            pixel_offset(&terminal, cx),
+            gpui::px(0.0),
+            "turning reduce_motion off again never brings the old offset back"
+        );
+    }
+
+    #[gpui::test]
+    fn a_keystroke_at_the_bottom_settles_the_pixel_offset(cx: &mut gpui::TestAppContext) {
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        focus_terminal(&terminal, cx);
+        let line_height = terminal.read_with(cx, |view, _| view.line_height);
+        let display_offset = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .display_offset
+            })
+        };
+
+        for keys in ["a", "enter"] {
+            precise_scroll(&terminal, cx, 0.5);
+            assert_eq!(display_offset(cx), 0, "the gesture stays at the bottom");
+            assert_eq!(pixel_offset(&terminal, cx), line_height * 0.5);
+
+            cx.simulate_keystrokes(keys);
+            cx.run_until_parked();
+            assert_eq!(
+                pixel_offset(&terminal, cx),
+                gpui::px(0.0),
+                "typing {keys} must not leave the prompt line cut"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn a_program_that_reads_the_mouse_after_a_gesture_gets_whole_wheel_lines(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        let line_height = terminal.read_with(cx, |view, _| view.line_height);
+        precise_scroll(&terminal, cx, 0.5);
+        assert_eq!(pixel_offset(&terminal, cx), line_height * 0.5);
+
+        terminal.update(cx, |view, _| view.terminal.write_output(b"\x1b[?1000h"));
+        eventually(cx, true, |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .modes()
+                    .contains(Modes::MOUSE_REPORT_CLICK)
+            })
+        });
+        assert_eq!(pixel_offset(&terminal, cx), gpui::px(0.0));
+
+        precise_scroll(&terminal, cx, 2.5);
+        precise_scroll(&terminal, cx, 0.75);
+        terminal.read_with(cx, |view, _| {
+            assert_eq!(
+                view.terminal.pending_mouse_buttons(),
+                vec![
+                    (paneflow_terminal_ghostty::MouseButton::Four, 2),
+                    (paneflow_terminal_ghostty::MouseButton::Four, 1),
+                ],
+                "wheel reports carry whole lines only"
+            );
+            assert!(!view.smooth_scroll);
+            assert_eq!(view.scroll_remainder, 0.0);
+        });
+        assert_eq!(pixel_offset(&terminal, cx), gpui::px(0.0));
     }
 
     #[gpui::test]

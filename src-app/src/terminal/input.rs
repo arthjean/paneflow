@@ -27,8 +27,30 @@ use super::{TerminalEvent, TerminalView};
 const SCROLLBAR_HIT_SLOP: gpui::Pixels = gpui::px(2.0);
 const SMOOTH_SCROLL_MAX_FRACTION: f32 = 1.0 - f32::EPSILON;
 
-fn smooth_scroll_applies(delta: &gpui::ScrollDelta, reduce_motion: bool) -> bool {
-    matches!(delta, gpui::ScrollDelta::Pixels(_)) && !reduce_motion
+fn app_reads_the_wheel(modes: Modes) -> bool {
+    modes.intersects(Modes::MOUSE_MODE)
+        || modes.contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL)
+}
+
+fn pixel_scroll_allowed(modes: Modes, reduce_motion: bool) -> bool {
+    !reduce_motion && !app_reads_the_wheel(modes)
+}
+
+fn smooth_scroll_applies(delta: &gpui::ScrollDelta, pixel_scroll_allowed: bool) -> bool {
+    matches!(delta, gpui::ScrollDelta::Pixels(_)) && pixel_scroll_allowed
+}
+
+fn pixel_scroll_offset(
+    line_height: gpui::Pixels,
+    remainder: f32,
+    smooth_scroll: bool,
+    pixel_scroll_allowed: bool,
+) -> gpui::Pixels {
+    if smooth_scroll && pixel_scroll_allowed {
+        line_height * remainder.clamp(0.0, SMOOTH_SCROLL_MAX_FRACTION)
+    } else {
+        gpui::px(0.0)
+    }
 }
 
 fn smooth_scroll_step(remainder: f32, display_offset: usize, history: usize) -> (i32, f32) {
@@ -411,7 +433,7 @@ impl TerminalView {
             if backend.grid_metrics().display_offset > 0 {
                 backend.scroll_to_bottom();
                 self.terminal.dirty = true;
-                self.scroll_remainder = 0.0;
+                self.settle_smooth_scroll();
                 cx.notify();
                 return;
             }
@@ -437,7 +459,9 @@ impl TerminalView {
                     backend.scroll_to_bottom();
                     self.terminal.dirty = true;
                 }
-                self.scroll_remainder = 0.0;
+                if self.settle_smooth_scroll() {
+                    cx.notify();
+                }
             }
             let backend_key = if encode_with_backend {
                 ghostty_key_input(
@@ -1286,15 +1310,14 @@ impl TerminalView {
     ) {
         let mode = self.terminal.session_backend().modes();
 
+        if app_reads_the_wheel(mode) && !event.modifiers.shift && self.settle_smooth_scroll() {
+            cx.notify();
+        }
+
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
-            let delta_y = event.delta.pixel_delta(self.line_height).y;
-            self.scroll_remainder += delta_y / self.line_height;
-            self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
-            let lines = self.scroll_remainder as i32;
-            if lines == 0 {
+            let Some(lines) = self.take_app_scroll_lines(event) else {
                 return;
-            }
-            self.scroll_remainder -= lines as f32;
+            };
 
             let count = lines.unsigned_abs() as usize;
             self.write_mouse_report(ReportedMouseInput {
@@ -1313,14 +1336,9 @@ impl TerminalView {
         }
 
         if mode.contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL) && !event.modifiers.shift {
-            let delta_y = event.delta.pixel_delta(self.line_height).y;
-            self.scroll_remainder += delta_y / self.line_height;
-            self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
-            let lines = self.scroll_remainder as i32;
-            if lines == 0 {
+            let Some(lines) = self.take_app_scroll_lines(event) else {
                 return;
-            }
-            self.scroll_remainder -= lines as f32;
+            };
 
             let app_cursor = mode.contains(Modes::APP_CURSOR);
             let arrow: &[u8] = match (lines > 0, app_cursor) {
@@ -1338,7 +1356,8 @@ impl TerminalView {
             return;
         }
 
-        let precise = smooth_scroll_applies(&event.delta, crate::ui_primitives::reduce_motion());
+        let precise =
+            smooth_scroll_applies(&event.delta, pixel_scroll_allowed(mode, cx.reduce_motion()));
         match event.touch_phase {
             TouchPhase::Started => {
                 if !precise {
@@ -1397,12 +1416,38 @@ impl TerminalView {
         }
     }
 
-    pub(super) fn smooth_scroll_offset(&self) -> gpui::Pixels {
-        if self.smooth_scroll {
-            self.line_height * self.scroll_remainder.clamp(0.0, SMOOTH_SCROLL_MAX_FRACTION)
-        } else {
-            gpui::px(0.0)
+    fn take_app_scroll_lines(&mut self, event: &ScrollWheelEvent) -> Option<i32> {
+        let delta_y = event.delta.pixel_delta(self.line_height).y;
+        self.app_scroll_remainder =
+            (self.app_scroll_remainder + delta_y / self.line_height).clamp(-500.0, 500.0);
+        let lines = self.app_scroll_remainder as i32;
+        if lines == 0 {
+            return None;
         }
+        self.app_scroll_remainder -= lines as f32;
+        Some(lines)
+    }
+
+    pub(super) fn settle_smooth_scroll(&mut self) -> bool {
+        let shifted = self.smooth_scroll || self.scroll_remainder != 0.0;
+        self.smooth_scroll = false;
+        self.scroll_remainder = 0.0;
+        shifted
+    }
+
+    pub(super) fn smooth_scroll_offset(&mut self, cx: &gpui::App) -> gpui::Pixels {
+        let allowed =
+            pixel_scroll_allowed(self.terminal.session_backend().modes(), cx.reduce_motion());
+        let offset = pixel_scroll_offset(
+            self.line_height,
+            self.scroll_remainder,
+            self.smooth_scroll,
+            allowed,
+        );
+        if !allowed {
+            self.settle_smooth_scroll();
+        }
+        offset
     }
 
     pub(super) fn handle_scroll_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1470,8 +1515,8 @@ impl TerminalView {
 #[cfg(test)]
 mod tests {
     use super::{
-        engine_pointer, normalize_paste_text, paths_to_pty_text, smooth_scroll_applies,
-        smooth_scroll_step,
+        engine_pointer, normalize_paste_text, paths_to_pty_text, pixel_scroll_allowed,
+        pixel_scroll_offset, smooth_scroll_applies, smooth_scroll_step,
     };
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
@@ -1480,10 +1525,44 @@ mod tests {
     fn only_precise_deltas_without_reduce_motion_scroll_by_the_pixel() {
         let pixels = gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(3.0)));
         let lines = gpui::ScrollDelta::Lines(gpui::point(0.0, 1.0));
-        assert!(smooth_scroll_applies(&pixels, false));
-        assert!(!smooth_scroll_applies(&pixels, true));
-        assert!(!smooth_scroll_applies(&lines, false));
-        assert!(!smooth_scroll_applies(&lines, true));
+        let allowed = pixel_scroll_allowed(Modes::empty(), false);
+        let reduced = pixel_scroll_allowed(Modes::empty(), true);
+        assert!(smooth_scroll_applies(&pixels, allowed));
+        assert!(!smooth_scroll_applies(&pixels, reduced));
+        assert!(!smooth_scroll_applies(&lines, allowed));
+        assert!(!smooth_scroll_applies(&lines, reduced));
+    }
+
+    #[test]
+    fn the_pixel_offset_is_zero_whenever_the_app_reads_the_wheel_or_motion_is_reduced() {
+        let line_height = gpui::px(20.0);
+        let cases = [
+            (Modes::empty(), false, gpui::px(10.0)),
+            (Modes::empty(), true, gpui::px(0.0)),
+            (Modes::MOUSE_REPORT_CLICK, false, gpui::px(0.0)),
+            (Modes::MOUSE_DRAG, false, gpui::px(0.0)),
+            (Modes::MOUSE_MOTION, false, gpui::px(0.0)),
+            (
+                Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL,
+                false,
+                gpui::px(0.0),
+            ),
+            (Modes::ALT_SCREEN, false, gpui::px(10.0)),
+            (Modes::ALTERNATE_SCROLL, false, gpui::px(10.0)),
+        ];
+        for (modes, reduce_motion, expected) in cases {
+            let allowed = pixel_scroll_allowed(modes, reduce_motion);
+            assert_eq!(
+                pixel_scroll_offset(line_height, 0.5, true, allowed),
+                expected,
+                "{modes:?} reduce_motion={reduce_motion}"
+            );
+            assert_eq!(
+                pixel_scroll_offset(line_height, 0.5, false, allowed),
+                gpui::px(0.0),
+                "{modes:?} without a gesture"
+            );
+        }
     }
 
     #[test]
