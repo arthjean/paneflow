@@ -1,0 +1,333 @@
+{
+  "prd": {
+    "file": "tasks/prd-libghostty-b699ea79-remediation.md",
+    "title": "Remédiation du re-pin libghostty-vt b699ea79",
+    "created_at": "2026-10-09",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Enregistrements OSC 7501 conformes à la spécification",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4
+    },
+    {
+      "id": "EP-002",
+      "title": "Défilement au pixel et sortie synchronisée exacts",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Statut OSC 7501 pour tout programme",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Preuves, config et mémoire",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Documentation alignée et clôture du PRD source",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Vérification réelle et préparation de la release",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Appliquer la durée de vie de la spec à l'invite, à la sortie et à la frappe",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
+    },
+    {
+      "id": "US-002",
+      "title": "Faire d'un reset manuel l'équivalent d'un RIS",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
+    },
+    {
+      "id": "US-003",
+      "title": "Ne perdre aucune transition de statut sous rafale",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
+    },
+    {
+      "id": "US-004",
+      "title": "Valider puis corriger la propagation d'un état purgé",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
+    },
+    {
+      "id": "US-005",
+      "title": "Limiter le décalage au pixel au défilement du scrollback local",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Garder la frame capturée d'une hold à travers les publications en direct",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Mesurer et garder les budgets de rendu de l'overscan et du défilement au pixel",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-005",
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Porter l'état déclaré de chaque session jusqu'à l'app",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-001",
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Afficher l'état déclaré dans la puce de l'en-tête du pane",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Mettre les programmes non-agent bloqués ou en échec dans l'Attention Queue",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Faire de l'erreur déclarée d'un agent un état Errored et nommer le pane",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Rendre falsifiables les tests de correctifs upstream",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Vérifier les discriminants par le JSON de types et les hash de notice et de SBOM",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Limiter une xt_checksum_extension invalide à sa propre clé",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Rendre la mémoire observable pour toutes les sessions et recompresser l'historique restauré",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Réaligner la documentation interne et clore le PRD source",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-004",
+        "US-007",
+        "US-011",
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Mettre à jour la documentation publique et le CHANGELOG",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-011",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Passe visuelle Linux des changements d'interface",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-005",
+        "US-006",
+        "US-009",
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Vérifier sur le matériel macOS et Windows et corriger les écarts",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-018"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Préparer la release 0.17.7",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-016",
+        "US-017",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
