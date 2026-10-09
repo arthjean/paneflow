@@ -2215,6 +2215,31 @@ mod tests {
         });
         assert_eq!(pointer(cx), gpui::CursorStyle::PointingHand);
 
+        let on_scrollbar = gpui::point(gpui::px(305.0), gpui::px(40.0));
+        terminal.update(cx, |view, _| {
+            view.scrollbar_enabled = true;
+            *view
+                .scrollbar_metrics
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) =
+                Some(super::super::element::ScrollbarMetrics {
+                    strip_left: gpui::px(300.0),
+                    strip_width: gpui::px(10.0),
+                    track_top: gpui::px(0.0),
+                    track_height: gpui::px(400.0),
+                    thumb_top: gpui::px(0.0),
+                    thumb_height: gpui::px(40.0),
+                    display_offset: 0,
+                    history_size: 100,
+                });
+        });
+        assert_eq!(
+            terminal.read_with(cx, |view, _| view.pointer_style(on_scrollbar)),
+            gpui::CursorStyle::Arrow,
+            "the scrollbar keeps the arrow over a requested pointer shape"
+        );
+        assert_eq!(pointer(cx), gpui::CursorStyle::PointingHand);
+
         terminal.update(cx, |view, _| {
             view.terminal.write_output(b"\x1b]22;col-resize\x1b\\");
         });
@@ -2231,6 +2256,11 @@ mod tests {
             });
         });
         assert_eq!(pointer(cx), gpui::CursorStyle::PointingHand);
+        assert_eq!(
+            terminal.read_with(cx, |view, _| view.pointer_style(on_scrollbar)),
+            gpui::CursorStyle::Arrow,
+            "the scrollbar outranks a hovered link"
+        );
         terminal.update(cx, |view, _| view.ctrl_hovered_link = None);
 
         terminal.update(cx, |view, _| {

@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn upstream_2b0ceff7d_the_paste_reader_stops_at_a_refused_write() {
+    fn the_paste_reader_stops_at_a_refused_write() {
         let representations = [PasteRepresentation {
             mime: "text/plain",
             data: b"hello",
@@ -312,7 +312,7 @@ mod tests {
     }
 
     struct RefusableAllocator {
-        refusing: std::cell::Cell<bool>,
+        refusals_left: std::cell::Cell<usize>,
     }
 
     fn allocation_layout(len: usize, alignment: u8) -> std::alloc::Layout {
@@ -327,7 +327,9 @@ mod tests {
         _: usize,
     ) -> *mut c_void {
         let allocator = unsafe { &*ctx.cast::<RefusableAllocator>() };
-        if allocator.refusing.get() {
+        let refusals_left = allocator.refusals_left.get();
+        if refusals_left > 0 {
+            allocator.refusals_left.set(refusals_left - 1);
             return std::ptr::null_mut();
         }
         unsafe { std::alloc::alloc(allocation_layout(len, alignment)).cast() }
@@ -382,74 +384,107 @@ mod tests {
         written.extend_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
     }
 
-    fn paste_through_terminal(terminal: sys::GhosttyTerminal, data: &[u8]) -> sys::GhosttyResult {
+    struct RecordingTerminal {
+        allocator_state: Box<RefusableAllocator>,
+        _allocator: Box<sys::GhosttyAllocator>,
+        #[allow(
+            clippy::box_collection,
+            reason = "libghostty keeps the userdata pointer, so the buffer address must not move"
+        )]
+        pty: Box<Vec<u8>>,
+        raw: sys::GhosttyTerminal,
+    }
+
+    impl RecordingTerminal {
+        fn new() -> Self {
+            let allocator_state = Box::new(RefusableAllocator {
+                refusals_left: std::cell::Cell::new(0),
+            });
+            let allocator = Box::new(sys::GhosttyAllocator {
+                ctx: (&raw const *allocator_state).cast_mut().cast(),
+                vtable: &REFUSABLE_VTABLE,
+            });
+            let mut raw: sys::GhosttyTerminal = std::ptr::null_mut();
+            check("terminal_new", unsafe {
+                sys::ghostty_terminal_new(&*allocator, &mut raw, 20, 3)
+            })
+            .expect("terminal must initialize");
+            let mut pty = Box::new(Vec::<u8>::new());
+            check("set_userdata", unsafe {
+                sys::ghostty_terminal_set(
+                    raw,
+                    sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA,
+                    (&raw mut *pty).cast_const().cast(),
+                )
+            })
+            .expect("userdata must install");
+            check("set_write_pty", unsafe {
+                sys::ghostty_terminal_set(
+                    raw,
+                    sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                    record_pty_write as *const c_void,
+                )
+            })
+            .expect("write_pty must install");
+            Self {
+                allocator_state,
+                _allocator: allocator,
+                pty,
+                raw,
+            }
+        }
+
+        fn paste(&mut self, read: sys::GhosttyMimeReaderFn, userdata: *mut c_void) -> sys::GhosttyResult {
+            let mime = sys::GhosttyString {
+                ptr: b"text/plain".as_ptr(),
+                len: "text/plain".len(),
+            };
+            let paste = sys::GhosttyPaste {
+                size: std::mem::size_of::<sys::GhosttyPaste>(),
+                location: ClipboardLocation::Standard.raw(),
+                source: sys::GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+                mimes: &mime,
+                mimes_len: 1,
+                reader: sys::GhosttyMimeReader { read, userdata },
+                allow_unsafe: false,
+            };
+            let mut written = false;
+            unsafe { sys::ghostty_terminal_paste(self.raw, &paste, &mut written) }
+        }
+
+        fn take_pty(&mut self) -> Vec<u8> {
+            std::mem::take(&mut *self.pty)
+        }
+    }
+
+    impl Drop for RecordingTerminal {
+        fn drop(&mut self) {
+            unsafe { sys::ghostty_terminal_free(self.raw) };
+        }
+    }
+
+    fn paste_with_paneflow_reader(terminal: &mut RecordingTerminal, data: &[u8]) -> sys::GhosttyResult {
         let representations = [PasteRepresentation {
             mime: "text/plain",
             data,
         }];
-        let mime = sys::GhosttyString {
-            ptr: b"text/plain".as_ptr(),
-            len: "text/plain".len(),
-        };
         let mut state = PasteState {
             representations: &representations,
         };
-        let paste = sys::GhosttyPaste {
-            size: std::mem::size_of::<sys::GhosttyPaste>(),
-            location: ClipboardLocation::Standard.raw(),
-            source: sys::GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_CLIPBOARD,
-            mimes: &mime,
-            mimes_len: 1,
-            reader: sys::GhosttyMimeReader {
-                read: Some(mime_read_trampoline),
-                userdata: (&raw mut state).cast(),
-            },
-            allow_unsafe: false,
-        };
-        let mut written = false;
-        unsafe { sys::ghostty_terminal_paste(terminal, &paste, &mut written) }
+        terminal.paste(Some(mime_read_trampoline), (&raw mut state).cast())
     }
 
     #[test]
-    fn upstream_2b0ceff7d_a_refused_paste_write_fails_the_paste_before_the_pty() {
-        let allocator_state = RefusableAllocator {
-            refusing: std::cell::Cell::new(false),
-        };
-        let allocator = sys::GhosttyAllocator {
-            ctx: (&raw const allocator_state).cast_mut().cast(),
-            vtable: &REFUSABLE_VTABLE,
-        };
-        let mut terminal: sys::GhosttyTerminal = std::ptr::null_mut();
-        check("terminal_new", unsafe {
-            sys::ghostty_terminal_new(&allocator, &mut terminal, 20, 3)
-        })
-        .expect("terminal must initialize");
-        let mut pty = Vec::<u8>::new();
-        check("set_userdata", unsafe {
-            sys::ghostty_terminal_set(
-                terminal,
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA,
-                (&raw mut pty).cast_const().cast(),
-            )
-        })
-        .expect("userdata must install");
-        check("set_write_pty", unsafe {
-            sys::ghostty_terminal_set(
-                terminal,
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-                record_pty_write as *const c_void,
-            )
-        })
-        .expect("write_pty must install");
+    fn a_refused_paste_write_fails_the_paste_before_the_pty() {
+        let mut terminal = RecordingTerminal::new();
 
-        let accepted = paste_through_terminal(terminal, b"hello");
-        let accepted_pty = std::mem::take(&mut pty);
+        let accepted = paste_with_paneflow_reader(&mut terminal, b"hello");
+        let accepted_pty = terminal.take_pty();
 
-        allocator_state.refusing.set(true);
-        let refused = paste_through_terminal(terminal, b"hello");
-        allocator_state.refusing.set(false);
-        let refused_pty = std::mem::take(&mut pty);
-        unsafe { sys::ghostty_terminal_free(terminal) };
+        terminal.allocator_state.refusals_left.set(usize::MAX);
+        let refused = paste_with_paneflow_reader(&mut terminal, b"hello");
+        terminal.allocator_state.refusals_left.set(0);
+        let refused_pty = terminal.take_pty();
 
         assert_eq!(accepted, sys::GhosttyResult_GHOSTTY_SUCCESS);
         assert_eq!(accepted_pty, b"hello");
@@ -461,6 +496,61 @@ mod tests {
         assert!(
             refused_pty.is_empty(),
             "nothing from a refused paste may reach the PTY, got {refused_pty:?}"
+        );
+    }
+
+    struct IgnoringReaderLog {
+        first_write_refused: bool,
+        second_write_accepted: bool,
+    }
+
+    unsafe extern "C" fn reader_that_ignores_a_refused_write(
+        userdata: *mut c_void,
+        _: sys::GhosttyString,
+        writer: sys::GhosttyWriter,
+    ) -> bool {
+        let log = unsafe { &mut *userdata.cast::<IgnoringReaderLog>() };
+        let Some(write) = writer.write else {
+            return false;
+        };
+        let first = b"refused-";
+        log.first_write_refused = !unsafe { write(writer.userdata, first.as_ptr(), first.len()) };
+        let second = b"after-refusal";
+        log.second_write_accepted =
+            unsafe { write(writer.userdata, second.as_ptr(), second.len()) };
+        true
+    }
+
+    #[test]
+    fn upstream_2b0ceff7d_a_reader_that_ignores_a_refused_write_still_fails_the_paste() {
+        let mut terminal = RecordingTerminal::new();
+        let mut log = IgnoringReaderLog {
+            first_write_refused: false,
+            second_write_accepted: false,
+        };
+
+        terminal.allocator_state.refusals_left.set(1);
+        let result = terminal.paste(
+            Some(reader_that_ignores_a_refused_write),
+            (&raw mut log).cast(),
+        );
+        terminal.allocator_state.refusals_left.set(0);
+        let pty = terminal.take_pty();
+
+        assert!(log.first_write_refused, "the first write must be refused");
+        assert!(
+            log.second_write_accepted,
+            "the write after the refusal must reach the paste buffer"
+        );
+        assert_ne!(
+            result,
+            sys::GhosttyResult_GHOSTTY_SUCCESS,
+            "a refused write must fail the paste even when the reader reports success"
+        );
+        assert!(
+            pty.is_empty(),
+            "nothing written after a refusal may reach the PTY, got {:?}",
+            String::from_utf8_lossy(&pty)
         );
     }
 }

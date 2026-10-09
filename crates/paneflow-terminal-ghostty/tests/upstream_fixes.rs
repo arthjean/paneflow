@@ -138,15 +138,35 @@ fn upstream_e6db5b633_narrowing_without_reflow_clears_an_orphaned_wide_head() {
     assert_eq!(plain_text(&mut terminal), "");
 }
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
 #[test]
 fn upstream_e6db5b633_narrowing_a_wide_tail_survives_a_thousand_resizes() {
     let mut terminal = terminal(3, 3);
-    for _ in 0..1_000 {
-        feed(
-            &mut terminal,
-            "\x1b[?7l\x1b[Ha一\x1b[1;2H\x1b[@\x1b[1K".as_bytes(),
+    for iteration in 0..1_000 {
+        feed(&mut terminal, "\x1b[?7l\x1b[Ha一".as_bytes());
+        let before = terminal.snapshot().unwrap();
+        assert_eq!(
+            before.cells[1].wide,
+            WideCell::Wide,
+            "iteration {iteration}: the wide head must sit in the column the shrink keeps last"
         );
+
         resize(&mut terminal, 2, 3);
+        let after = terminal.snapshot().unwrap();
+        assert_eq!(after.cols, 2);
+        assert_eq!(
+            after.cells[1].character, ' ',
+            "iteration {iteration}: the cut wide head must be cleared"
+        );
+        assert_eq!(
+            after.cells[1].wide,
+            WideCell::Narrow,
+            "iteration {iteration}: the last column must be narrow after the shrink"
+        );
+
         feed(&mut terminal, b"\x1b[1;2H\x1b[@\x1b[1K\x1b[2K");
         resize(&mut terminal, 3, 3);
     }
