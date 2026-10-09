@@ -2460,6 +2460,28 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_frame_under_reduce_motion_keeps_the_partial_wheel_line(cx: &mut gpui::TestAppContext) {
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        cx.update(|_window, cx| cx.set_reduce_motion(true));
+        cx.run_until_parked();
+
+        precise_scroll(&terminal, cx, 0.5);
+        cx.update(|window, _cx| window.refresh());
+        cx.run_until_parked();
+        precise_scroll(&terminal, cx, 0.5);
+
+        eventually(cx, 1, |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .display_offset
+            })
+        });
+        assert_eq!(pixel_offset(&terminal, cx), gpui::px(0.0));
+    }
+
+    #[gpui::test]
     fn a_keystroke_at_the_bottom_settles_the_pixel_offset(cx: &mut gpui::TestAppContext) {
         let (terminal, cx) = scrolled_history_terminal(cx);
         focus_terminal(&terminal, cx);

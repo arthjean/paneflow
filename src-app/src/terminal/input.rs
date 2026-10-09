@@ -1444,7 +1444,7 @@ impl TerminalView {
             self.smooth_scroll,
             allowed,
         );
-        if !allowed {
+        if !allowed && self.smooth_scroll {
             self.settle_smooth_scroll();
         }
         offset
