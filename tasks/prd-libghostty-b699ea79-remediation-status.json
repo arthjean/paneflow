@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Défilement au pixel et sortie synchronisée exacts",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-003",
@@ -118,40 +118,40 @@
       "id": "US-005",
       "title": "Limiter le décalage au pixel au défilement du scrollback local",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-006",
       "title": "Garder la frame capturée d'une hold à travers les publications en direct",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-007",
       "title": "Mesurer et garder les budgets de rendu de l'overscan et du défilement au pixel",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-005",
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-09",
+      "completed_at": "2026-10-09",
+      "reviewed_at": "2026-10-09"
     },
     {
       "id": "US-008",
