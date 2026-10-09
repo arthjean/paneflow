@@ -835,6 +835,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let visible = self.surfaces_under_user_eye(workspace_id, cx);
+        let pane_title = self.surface_pane_title(surface_id, cx);
         let config = self.cached_config.clone();
         let executor = cx.background_executor().clone();
         let Some(workspace) = self
@@ -865,6 +866,7 @@ impl PaneFlowApp {
                 crate::agents::notifications::DesktopNotification::needs_input_for(
                     &decision.runtime_label,
                     &workspace.title,
+                    pane_title.as_deref(),
                     decision.body.as_deref(),
                 )
             }
@@ -876,6 +878,17 @@ impl PaneFlowApp {
             Some(surface_id),
             executor,
         );
+    }
+
+    fn surface_pane_title(&self, surface_id: u64, cx: &gpui::App) -> Option<String> {
+        self.workspaces.iter().find_map(|ws| {
+            ws.collect_panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .terminals()
+                    .find(|terminal| terminal.entity_id().as_u64() == surface_id)
+                    .map(|terminal| crate::pane::Pane::terminal_surface_title(terminal, cx))
+            })
+        })
     }
 
     pub(crate) fn host_agent_row(&self, session: &SessionId) -> Option<&HostAgentRow> {

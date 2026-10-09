@@ -86,15 +86,22 @@ impl DesktopNotification {
     pub(crate) fn needs_input_for(
         runtime_label: &str,
         workspace_title: &str,
+        pane_title: Option<&str>,
         message: Option<&str>,
     ) -> Self {
-        let origin = message
+        let workspace = notification_detail(workspace_title);
+        let pane = pane_title
             .and_then(notification_detail)
-            .and_then(|_| notification_detail(workspace_title));
+            .filter(|pane| Some(pane) != workspace.as_ref());
         Self {
-            summary: match origin {
-                Some(pane) => format!("{runtime_label} needs input in {pane}"),
-                None => format!("{runtime_label} needs input"),
+            summary: match (pane, workspace) {
+                (Some(pane), Some(workspace)) => {
+                    format!("{runtime_label} needs input in {pane} ({workspace})")
+                }
+                (Some(origin), None) | (None, Some(origin)) => {
+                    format!("{runtime_label} needs input in {origin}")
+                }
+                (None, None) => format!("{runtime_label} needs input"),
             },
             body: attention_notification_body(workspace_title, message),
             urgency: DesktopNotificationUrgency::Critical,
@@ -392,6 +399,7 @@ mod tests {
         let attention = DesktopNotification::needs_input_for(
             TerminalAgent::ClaudeCode.display_name(),
             "backend",
+            None,
             Some("Approve edit?"),
         );
         assert_eq!(attention.summary, "Claude Code needs input in backend");
@@ -400,11 +408,30 @@ mod tests {
 
         let attention_without_message = DesktopNotification::needs_input_for(
             TerminalAgent::ClaudeCode.display_name(),
-            "backend",
+            "",
+            None,
             None,
         );
         assert_eq!(attention_without_message.summary, "Claude Code needs input");
-        assert_eq!(attention_without_message.body, "backend");
+        assert_eq!(attention_without_message.body, "Paneflow");
+    }
+
+    #[test]
+    fn a_blocked_agent_notification_names_its_pane_and_its_workspace() {
+        let attention =
+            DesktopNotification::needs_input_for("Claude Code", "backend", Some("api-tests"), None);
+        assert_eq!(
+            attention.summary,
+            "Claude Code needs input in api-tests (backend)"
+        );
+        assert_eq!(attention.body, "backend");
+
+        let same_name =
+            DesktopNotification::needs_input_for("Codex", "backend", Some("backend"), None);
+        assert_eq!(same_name.summary, "Codex needs input in backend");
+
+        let pane_only = DesktopNotification::needs_input_for("Codex", " ", Some("api"), None);
+        assert_eq!(pane_only.summary, "Codex needs input in api");
     }
 
     #[test]
@@ -412,10 +439,11 @@ mod tests {
         let attention = DesktopNotification::needs_input_for(
             "Codex",
             "back\u{2066}end",
+            Some("ap\u{202E}i"),
             Some("Apply \u{202E}nalp\u{2069} the plan?"),
         );
 
-        assert_eq!(attention.summary, "Codex needs input in backend");
+        assert_eq!(attention.summary, "Codex needs input in api (backend)");
         assert_eq!(attention.body, "Apply nalp the plan?");
         for text in [&attention.summary, &attention.body] {
             assert!(!text.contains('\u{202E}') && !text.contains('\u{2066}'));

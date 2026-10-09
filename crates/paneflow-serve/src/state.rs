@@ -758,6 +758,11 @@ impl WorkerState {
             .activity
             .as_ref()
             .is_some_and(|summary| summary.errored);
+        let declared_error = runtime.is_some()
+            && entry
+                .declared_status
+                .as_ref()
+                .is_some_and(DeclaredStatus::is_error);
         let dir = self.session_dir(session);
 
         self.engine
@@ -853,6 +858,7 @@ impl WorkerState {
         if !running && status == Status::Busy {
             status = Status::Idle;
         }
+        let errored = errored || (declared_error && !source.is_hooks());
         self.finish(session, status, source, errored, now)
     }
 
@@ -2598,6 +2604,96 @@ mod tests {
         assert_eq!(
             reattached[0]["declared_status"]["state"], "blocked",
             "a desktop that follows again receives the status the worker holds"
+        );
+    }
+
+    #[test]
+    fn an_agent_that_declares_error_is_errored_until_the_record_goes() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+
+        state.apply_core_session(&with_declared(
+            hookless_row(&session, Some(SCREEN_IDLE)),
+            "error",
+        ));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "errored");
+        assert_eq!(entry.to_value()["activity"]["state"], "errored");
+
+        state.apply_core_session(&hookless_row(&session, Some(SCREEN_IDLE)));
+        assert_eq!(
+            state.get(&session).unwrap().status(),
+            "idle",
+            "the next derivation after the keystroke leaves Errored"
+        );
+    }
+
+    #[test]
+    fn a_program_that_declares_error_without_an_agent_is_never_errored() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+
+        state.apply_core_snapshot(&[with_declared(core_row(&session), "error")]);
+
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+    }
+
+    #[test]
+    fn a_declared_error_never_overrides_the_hook_state() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.prompt_submit",
+            "UserPromptSubmit",
+            json!({}),
+        ));
+        assert_eq!(state.get(&session).unwrap().status(), "busy");
+        state.apply_core_snapshot(&[with_declared(
+            hookless_row(&session, Some(SCREEN_IDLE)),
+            "error",
+        )]);
+        assert_eq!(state.get(&session).unwrap().status(), "busy");
+
+        state.apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})));
+        state.apply_core_snapshot(&[with_declared(
+            hookless_row(&session, Some(SCREEN_IDLE)),
+            "error",
+        )]);
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.activity_source, ActivitySource::Hooks);
+        assert_eq!(
+            entry.status(),
+            "idle",
+            "an idle hook state is not turned into an error"
+        );
+    }
+
+    #[test]
+    fn an_error_the_exit_keeps_outlives_the_removed_declaration() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(
+            hookless_row(&session, Some(SCREEN_IDLE)),
+            "error",
+        )]);
+        assert_eq!(state.get(&session).unwrap().status(), "errored");
+        let mut crashed = frame_from_pid(&session, "ai.exit", "Exit", 10);
+        crashed["exit_code"] = json!(1);
+        assert!(state.apply_core_event(&crashed).is_some());
+
+        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_IDLE))]);
+
+        assert_eq!(
+            state.get(&session).unwrap().status(),
+            "errored",
+            "the exit holds the error after the declaration is gone"
         );
     }
 
