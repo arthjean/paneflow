@@ -477,16 +477,43 @@ fn checksum_reports_are_off_by_default_and_opt_in() {
 }
 
 #[test]
-fn an_out_of_range_checksum_extension_is_rejected_by_name_and_range() {
-    for invalid in ["32", "-1", "1.5", "\"1\""] {
-        let error = try_parse_and_validate(&format!(
-            r#"{{"terminal": {{"xt_checksum_extension": {invalid}}}}}"#
-        ))
-        .unwrap_err()
-        .to_string();
+#[tracing_test::traced_test]
+fn an_out_of_range_checksum_extension_drops_only_its_own_key() {
+    for invalid in ["32", "-1", "1.5", "\"4\""] {
+        let dir = tempfile::TempDir::new().expect("scratch config directory");
+        let path = dir.path().join("paneflow.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"theme": "One Dark", "terminal": {{"xt_checksum_report": true, "xt_checksum_extension": {invalid}}}}}"#
+            ),
+        )
+        .expect("config file");
+        let config = load_config_from_path(&path);
+        assert_eq!(config.theme.as_deref(), Some("One Dark"), "{invalid}");
+        let terminal = config.terminal.expect("terminal block survives");
+        assert_eq!(terminal.xt_checksum_extension, None, "{invalid}");
+        assert_eq!(terminal.resolved_xt_checksum_extension(), 0, "{invalid}");
+        assert!(terminal.resolved_xt_checksum_report(), "{invalid}");
         assert!(
-            error.contains("terminal.xt_checksum_extension") && error.contains("0 to 31"),
-            "{invalid}: {error}"
+            logs_contain(&format!(
+                "terminal.xt_checksum_extension must be an integer from 0 to 31, ignoring value and using 0 value={invalid}"
+            )),
+            "{invalid}"
         );
     }
+}
+
+#[test]
+#[tracing_test::traced_test]
+fn the_largest_checksum_extension_applies_without_a_warning() {
+    let config = parse_and_validate(r#"{"terminal": {"xt_checksum_extension": 31}}"#);
+    assert_eq!(
+        config
+            .terminal
+            .expect("terminal block")
+            .resolved_xt_checksum_extension(),
+        31
+    );
+    assert!(!logs_contain("xt_checksum_extension"));
 }

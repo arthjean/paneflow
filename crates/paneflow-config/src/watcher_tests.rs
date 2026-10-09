@@ -447,10 +447,14 @@ fn test_watcher_follows_a_retargeted_symlink() {
 }
 
 #[test]
-fn test_attempt_reload_out_of_range_checksum_extension_keeps_old_value() {
+fn test_attempt_reload_out_of_range_checksum_extension_drops_only_that_key() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("paneflow.json");
-    fs::write(&path, r#"{"terminal": {"xt_checksum_extension": 32}}"#).unwrap();
+    fs::write(
+        &path,
+        r#"{"theme": "One Dark", "terminal": {"xt_checksum_extension": 32}}"#,
+    )
+    .unwrap();
 
     let mut current = PaneFlowConfig {
         terminal: Some(crate::schema::TerminalConfig {
@@ -459,19 +463,25 @@ fn test_attempt_reload_out_of_range_checksum_extension_keeps_old_value() {
         }),
         ..Default::default()
     };
-    let called = Arc::new(Mutex::new(false));
-    let called_clone = Arc::clone(&called);
+    let received = Arc::new(Mutex::new(None::<PaneFlowConfig>));
+    let received_clone = Arc::clone(&received);
     let cb: Arc<dyn Fn(PaneFlowConfig) + Send + Sync> =
-        Arc::new(move |_| *called_clone.lock().unwrap() = true);
+        Arc::new(move |config| *received_clone.lock().unwrap() = Some(config));
 
     attempt_reload(&path, &mut current, &cb);
 
-    assert!(!*called.lock().unwrap());
+    let reloaded = received
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the reload must apply");
+    assert_eq!(reloaded.theme.as_deref(), Some("One Dark"));
     assert_eq!(
-        current
+        reloaded
             .terminal
             .as_ref()
             .map(crate::schema::TerminalConfig::resolved_xt_checksum_extension),
-        Some(4)
+        Some(0)
     );
+    assert_eq!(current, reloaded);
 }

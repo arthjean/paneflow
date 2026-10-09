@@ -2712,7 +2712,7 @@ fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control
 }
 
 #[test]
-fn new_sessions_follow_the_configured_checksum_reports_and_keep_them_on_an_invalid_edit() {
+fn new_sessions_follow_the_configured_checksum_reports_and_drop_only_an_invalid_extension() {
     let home = tempfile::tempdir().unwrap();
     let host = SessionHost::open(home.path(), Path::new("xt-checksum")).unwrap();
     let config = home.path().join("paneflow.json");
@@ -2737,7 +2737,14 @@ fn new_sessions_follow_the_configured_checksum_reports_and_keep_them_on_an_inval
         r#"{"terminal": {"xt_checksum_report": true, "xt_checksum_extension": 32}}"#,
     )
     .unwrap();
-    assert_eq!(host.current_xt_checksum(), opted_in);
+    let extension_dropped = crate::runtime::XtChecksum {
+        report: true,
+        extension: 0,
+    };
+    assert_eq!(host.current_xt_checksum(), extension_dropped);
+
+    std::fs::write(&config, r#"{"terminal": {"xt_checksum_report": tru"#).unwrap();
+    assert_eq!(host.current_xt_checksum(), extension_dropped);
 
     std::fs::write(&config, r#"{"terminal": {}}"#).unwrap();
     assert_eq!(

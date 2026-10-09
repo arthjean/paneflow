@@ -401,13 +401,6 @@ where
     lenient_opt_value(d, "positive integer config value")
 }
 
-pub(super) fn lenient_opt_u8<'de, D>(d: D) -> Result<Option<u8>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    lenient_opt_value(d, "small integer config value")
-}
-
 pub(super) fn lenient_opt_f32<'de, D>(d: D) -> Result<Option<f32>, D::Error>
 where
     D: serde::Deserializer<'de>,

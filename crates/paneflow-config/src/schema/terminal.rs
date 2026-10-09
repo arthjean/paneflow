@@ -1,7 +1,6 @@
 use super::config::{
     lenient_opt_bool, lenient_opt_cursor_blink, lenient_opt_cursor_shape, lenient_opt_f32,
-    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_u8,
-    lenient_opt_usize,
+    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_usize,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -162,6 +161,30 @@ impl TerminalSurfaceProfile {
     }
 }
 
+fn lenient_opt_xt_checksum_extension<'de, D>(d: D) -> Result<Option<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let maximum = TerminalConfig::MAX_XT_CHECKSUM_EXTENSION;
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => {
+            let flags = value
+                .as_u64()
+                .and_then(|flags| u8::try_from(flags).ok())
+                .filter(|flags| *flags <= maximum);
+            if flags.is_none() {
+                tracing::warn!(
+                    target: "paneflow_config",
+                    value = %value,
+                    "terminal.xt_checksum_extension must be an integer from 0 to {maximum}, ignoring value and using 0",
+                );
+            }
+            flags
+        }
+    })
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TerminalConfig {
@@ -195,7 +218,7 @@ pub struct TerminalConfig {
     pub osc52_clipboard: Option<Osc52ClipboardConfig>,
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub xt_checksum_report: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_opt_u8")]
+    #[serde(default, deserialize_with = "lenient_opt_xt_checksum_extension")]
     pub xt_checksum_extension: Option<u8>,
 }
 
