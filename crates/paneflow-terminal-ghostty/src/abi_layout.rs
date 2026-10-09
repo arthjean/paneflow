@@ -138,9 +138,21 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         content: sys::GhosttyString,
         terminator: sys::GhosttyOscTerminator
     });
+    check!(layouts, sys::GhosttyTerminalUnknownStringSequence, "GhosttyTerminalUnknownStringSequence", {
+        truncated: bool,
+        content: sys::GhosttyString
+    });
+    check!(layouts, sys::GhosttyTerminalUnknownSequenceValue, "GhosttyTerminalUnknownSequenceValue", {
+        apc: sys::GhosttyTerminalUnknownStringSequence,
+        osc: sys::GhosttyTerminalUnknownOscSequence
+    });
     check!(layouts, sys::GhosttyTerminalUnknownSequence, "GhosttyTerminalUnknownSequence", {
         tag: sys::GhosttyTerminalUnknownSequenceTag,
         value: sys::GhosttyTerminalUnknownSequenceValue
+    });
+    check!(layouts, sys::GhosttyTerminalModeConfig, "GhosttyTerminalModeConfig", {
+        mode: sys::GhosttyMode,
+        value: bool
     });
     check!(layouts, sys::GhosttyRenderStateOverscan, "GhosttyRenderStateOverscan", {
         above: u16, below: u16
@@ -234,5 +246,26 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn a_shifted_apc_arm_or_mode_config_field_is_named_in_the_mismatch() {
+        for (layout, field) in [
+            ("GhosttyTerminalUnknownStringSequence", "content"),
+            ("GhosttyTerminalUnknownSequenceValue", "apc"),
+            ("GhosttyTerminalModeConfig", "value"),
+        ] {
+            let mut layouts = pinned_layouts();
+            let offset = &mut layouts[layout]["fields"][field]["offset"];
+            let shifted = offset.as_u64().expect("field offset") + 1;
+            *offset = serde_json::Value::from(shifted);
+
+            let error = validate(&layouts).expect_err("a shifted field must not validate");
+            let expected = format!("{layout}.{field} offset/size");
+            assert!(
+                matches!(&error, GhosttyError::AbiMismatch(message) if message.starts_with(&expected)),
+                "{error:?}"
+            );
+        }
     }
 }

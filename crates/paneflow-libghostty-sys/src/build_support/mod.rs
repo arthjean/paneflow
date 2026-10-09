@@ -114,3 +114,72 @@ pub(crate) fn artifact_error(
 pub(crate) fn build_error(message: impl Into<String>) -> Box<dyn Error> {
     Box::new(io::Error::other(message.into()))
 }
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::checksum::verify_text_hash;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const MANIFEST: &str = include_str!("../../../../native/libghostty/manifest.toml");
+    const INVENTORY: [(&str, &str); 2] = [
+        ("notice_path", "notice_sha256"),
+        ("sbom_path", "sbom_sha256"),
+    ];
+
+    fn manifest_string(key: &str) -> String {
+        let table: toml::Table = MANIFEST.parse().expect("the reviewed manifest parses");
+        table
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .expect("the manifest declares the inventory key")
+            .to_owned()
+    }
+
+    fn workspace() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn verify_inventory_file(
+        workspace: &Path,
+        path_key: &str,
+        hash_key: &str,
+    ) -> Result<(), String> {
+        let relative = manifest_string(path_key);
+        verify_text_hash(&workspace.join(&relative), &manifest_string(hash_key))
+            .map_err(|detail| format!("{relative} rejected: {detail}"))
+    }
+
+    #[test]
+    fn the_notice_and_sbom_match_their_manifest_hashes() {
+        for (path_key, hash_key) in INVENTORY {
+            assert_eq!(
+                verify_inventory_file(&workspace(), path_key, hash_key),
+                Ok(()),
+                "{path_key}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_altered_inventory_file_without_an_updated_hash_is_rejected_by_name() {
+        for (path_key, hash_key) in INVENTORY {
+            let copy = tempfile::tempdir().expect("scratch workspace");
+            let relative = manifest_string(path_key);
+            let target = copy.path().join(&relative);
+            fs::create_dir_all(target.parent().expect("inventory file has a parent"))
+                .expect("scratch inventory directory");
+            let mut altered =
+                fs::read_to_string(workspace().join(&relative)).expect("reviewed inventory file");
+            altered.push_str("\nunreviewed addition\n");
+            fs::write(&target, altered).expect("altered copy");
+
+            let error = verify_inventory_file(copy.path(), path_key, hash_key)
+                .expect_err("an altered file must not match the reviewed hash");
+            assert!(
+                error.starts_with(&format!("{relative} rejected: checksum mismatch")),
+                "{error}"
+            );
+        }
+    }
+}

@@ -26,6 +26,7 @@ macro_rules! native_modules {
 
 native_modules!(
     abi,
+    abi_discriminants,
     abi_layout,
     batch,
     callback_ffi,
