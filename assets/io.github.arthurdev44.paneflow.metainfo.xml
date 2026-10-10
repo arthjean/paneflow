@@ -64,10 +64,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.17.7" date="2026-10-10">
+    <release version="0.17.7" date="2026-10-11">
       <description>
-        <p>A terminal engine release. Paneflow moves to Ghostty b699ea79, and any program can report its status with OSC 7501: the pane header shows it, and a blocked or failed program enters the Attention queue.</p>
+        <p>Agent turn status now comes only from OSC 7501, and Paneflow moves to Ghostty b699ea79. Any program, agent or not, can report its status: the pane header shows it, and a blocked or failed program enters the Attention queue. Paneflow no longer reads agent status off the screen, and six built-in agents are removed.</p>
         <ul>
+          <li>An agent that does not report its state with OSC 7501 shows no turn status</li>
           <li>Trackpad scrolling follows the gesture by the pixel, and mouse wheels keep scrolling by lines</li>
           <li>The mouse pointer takes the shape a program requests with OSC 22</li>
           <li>Each character is drawn on its own cell, and enlarging a pane on Windows no longer shifts the next output</li>
