@@ -501,16 +501,16 @@ Regrouper en fin de PRD la vérification sur le matériel Windows et la prépara
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Le job « Windows x86_64 libghostty check » et les lanes libghostty sont verts sur le dernier commit de la branche.
+- [x] Le job « Windows x86_64 libghostty check » et les lanes libghostty sont verts sur le dernier commit de la branche.
 - [ ] Sur le dual boot Windows d'Arthur, avec un build debug lancé par `scripts/dev.ps1`, sont vérifiés :
   - le pavé tactile de précision produit un défilement au pixel, et une molette défile par lignes ;
   - les formes de curseur OSC 22 s'affichent ;
   - `dir /s` après un agrandissement puis une réduction ne décale plus la sortie (revérifié après `56b646ec`) ;
   - un script PowerShell qui émet OSC 7501 montre son état dans la puce et l'Attention Queue.
 - [x] Validation de l'hypothèse ConPTY : given un programme qui envoie `OSC 7501 ; ?` puis `CSI c` dans un pane Windows, when les réponses arrivent, then la réponse 7501 précède celle de DA1. Le résultat est consigné, qu'il confirme ou infirme l'hypothèse.
-- [ ] Les jobs `macos_check` et `macos_render_smoke` sont verts sur le dernier commit de la branche. Le commit de clôture dit que macOS n'a pas été vérifié sur matériel, par décision, et ne le présume pas.
+- [x] Les jobs `macos_check` et `macos_render_smoke` sont verts sur le dernier commit de la branche. Le commit de clôture dit que macOS n'a pas été vérifié sur matériel, par décision, et ne le présume pas.
 - [x] Avant tout commit depuis Windows, `git config user.email` du clone Windows renvoie l'adresse noreply du dépôt. Les six commits déjà signés `arthur.jean@strivex.fr` ne sont pas réécrits.
-- [ ] Échec : given un défaut constaté sur l'une des plateformes, when il est corrigé, then le correctif reste dans cet epic, avec un test s'il est reproductible sous Linux, sinon avec la vérification manuelle refaite et décrite.
+- [x] Échec : given un défaut constaté sur l'une des plateformes, when il est corrigé, then le correctif reste dans cet epic, avec un test s'il est reproductible sous Linux, sinon avec la vérification manuelle refaite et décrite.
 
 #### US-020: Préparer la release 0.17.7
 **Description:** As a mainteneur, I want un commit de version 0.17.7 conforme au runbook so that la release qui embarque le re-pin et sa remédiation se tague en une commande après les vérifications.
@@ -520,15 +520,15 @@ Regrouper en fin de PRD la vérification sur le matériel Windows et la prépara
 **Dependencies:** Blocked by US-016, US-017, US-019
 
 **Acceptance Criteria:**
-- [ ] Le commit de version suit `docs/release/runbook.md:44-85` :
+- [x] Le commit de version suit `docs/release/runbook.md:44-85` :
   - version de `Cargo.toml` à `0.17.7` ;
   - strophe en tête de `debian/changelog` ;
   - section `[Unreleased]` du CHANGELOG renommée ;
   - entrée `<release version="0.17.7">` en tête de `assets/io.github.arthurdev44.paneflow.metainfo.xml`.
-- [ ] Le job CI `perf_gates` est vert sur ce commit. Les deux contrôles de performance que `runbook.md:94` réserve aux versions mineures ne s'appliquent pas à 0.17.7, et le commit le dit.
+- [x] Le job CI `perf_gates` est vert sur ce commit. Les deux contrôles de performance que `runbook.md:94` réserve aux versions mineures ne s'appliquent pas à 0.17.7, et le commit le dit.
 - [x] Le test temporel `crates/paneflow-mcp-install/src/agents/opencode.rs:115-133` n'asserte plus un délai réel de moins de 100 ms. Il vérifie le comportement sans dépendre de l'horloge (test).
 - [ ] Le home de développement `~/.paneflow-dev-repin` est mis à la corbeille par `gio trash` après `PANEFLOW_HOME=~/.paneflow-dev-repin target/debug/paneflow serve stop` et `host stop`.
-- [ ] Aucun tag n'est créé ni poussé : le commit de clôture dit que le tag attend Arthur.
+- [x] Aucun tag n'est créé ni poussé : le commit de clôture dit que le tag attend Arthur.
 - [ ] Échec : given un contrôle du runbook rouge, when la story se termine, then elle reste `IN_PROGRESS`, et aucun contrôle n'est contourné pour verdir le commit.
 
 ---
