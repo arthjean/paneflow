@@ -8,6 +8,7 @@
 | 1.0 | 2026-10-09 | Arthur Jean | PRD initial issu de l'audit du 2026-10-09 du PRD `tasks/prd-libghostty-b699ea79.md` (17 stories DONE, CI verte sur `958c574e`). Corrige les défauts confirmés (durée de vie OSC 7501, reset, rafales, défilement au pixel, capture du mode 2026, config, `host.status`), étend OSC 7501 aux programmes non-agent, rend falsifiables les tests qui ne l'étaient pas, réaligne la documentation, clôt le PRD source et prépare la release 0.17.7. 6 epics, 20 stories. |
 | 1.1 | 2026-10-09 | Arthur Jean | Ajoute EP-007 (US-021) : démo publique d'OSC 7501 par un programme sans agent et réponse à l'annonce de la spec par Mitchell Hashimoto, après la publication de 0.17.7. 7 epics, 21 stories. |
 | 1.2 | 2026-10-09 | Arthur Jean | Limite la vérification matérielle d'EP-006 à Linux et Windows : macOS repose sur `macos_check` et `macos_render_smoke`, sans vérification sur matériel, par décision. 0.17.7 se publie sans pré-release. 7 epics, 21 stories. |
+| 1.3 | 2026-10-09 | Arthur Jean | Sort la passe visuelle Linux (US-018) d'EP-006 vers EP-008, différé par décision : il ne bloque ni EP-006 ni la release 0.17.7, et US-019 n'en dépend plus. 8 epics, 21 stories. |
 
 ## Problem Statement
 
@@ -61,9 +62,11 @@ Le PRD corrige d'abord ce qui est faux, puis étend ce qui manque, puis prouve, 
 
 **EP-005 (P1)** réaligne la documentation interne, publique (`paneflow-web`, puis resynchronisation) et le PRD source, qu'il clôt.
 
-**EP-006 (P1)** regroupe la passe visuelle Linux, la vérification sur le matériel Windows, puis la préparation de la release 0.17.7. macOS est couvert par la CI, sans vérification sur matériel.
+**EP-006 (P1)** regroupe la vérification sur le matériel Windows, puis la préparation de la release 0.17.7. macOS est couvert par la CI, sans vérification sur matériel.
 
-**EP-007 (P2, epic final)** prépare, une fois 0.17.7 publiée, une courte démo d'un script sans agent qui déclare son état, et la réponse à l'annonce de la spec par Mitchell Hashimoto. La publication reste l'action d'Arthur.
+**EP-007 (P2)** prépare, une fois 0.17.7 publiée, une courte démo d'un script sans agent qui déclare son état, et la réponse à l'annonce de la spec par Mitchell Hashimoto. La publication reste l'action d'Arthur.
+
+**EP-008 (P3, différé)** porte la passe visuelle Linux, hors du chemin de la release : elle ne bloque aucune autre story.
 
 Décisions structurantes et leur preuve :
 - **Les hooks gardent la précédence** (`AgentStateSource`, `crates/paneflow-ipc-client/src/agent.rs:53-79`). Aucune variante wire d'`AgentState` ni chaîne `SCREEN_*` ne change : l'erreur passe par la variante `Errored` existante.
@@ -140,7 +143,7 @@ Key findings that informed this PRD:
 - **Un bloc lu de 32 Kio** (`READ_CHUNK_BYTES`, `runtime.rs:20`) **rempli de rapports minimaux tient dans un budget de 256 Kio d'octets en attente.** Raison : environ 1 700 rapports de 19 octets, avec un surcoût par événement compté de moins de 100 octets. US-003 le prouve.
 - **Un second render state par terminal du desktop coûte moins de 10 % de la mémoire résidente du terminal sur un écran de 200 × 60.** Raison : un render state contient une copie du viewport, pas du scrollback. US-006 mesure.
 - **GPUI livre des deltas `ScrollDelta::Pixels` pour le trackpad sous macOS et pour le pavé tactile de précision sous Windows**, et `ScrollDelta::Lines` pour une molette. US-019 le vérifie sous Windows. Sous macOS, l'hypothèse n'est pas vérifiée sur matériel : elle repose sur GPUI macOS, la plateforme la plus éprouvée de Zed, et sur les jobs CI `macos_check` et `macos_render_smoke`.
-- **ConPTY transmet OSC 7501 sans le perdre sous Windows 10 et 11.** Raison : le billet de Warp ; aucun test public de la réponse à `OSC 7501 ; ?`. US-019 le vérifie.
+- **ConPTY transmet OSC 7501 sans le perdre sous Windows 10 et 11.** Raison : le billet de Warp ; aucun test public de la réponse à `OSC 7501 ; ?`. US-019 le vérifie. Vérifié le 2026-10-09 sous Windows 11 (10.0.26300) avec le ConPTY embarqué 1.24.260710001 : la requête et DA1 traversent intacts, et la réponse 7501 précède celle de DA1 sur 6 passages par l'host réel. Windows 10 n'est pas mesuré.
 - **L'API de compression pilotée par l'appelant** (`ghostty_terminal_compression_activity`, `ghostty_terminal_compress`, `ghostty/include/ghostty/vt/terminal.h:3142,3173`) **recompresse un historique restauré compressé puis décompressé par une recherche.** US-015 le vérifie.
 - **Un statut déclaré tient dans le plafond de 64 Kio du manifeste** (`crates/paneflow-host/src/manifest.rs:13-15`). Raison : un `msg` fait au plus 2 048 octets décodés, un `title` 192 et un `app` 32.
 
@@ -166,7 +169,7 @@ These commands must pass for every user story:
 Gates additionnels :
 - Stories du chemin de rendu (US-005, US-006, US-007) : `scripts/bench-terminal.sh` comparé à `bench/baselines/linux-x86_64/terminal.json`, et `scripts/perf-gates.sh` vert. Le résultat est cité dans le corps du commit.
 - Stories qui touchent un chemin `#[cfg(windows)]` ou ConPTY : le job « Windows x86_64 libghostty check » passe après le push. Le commit dit que Windows a été vérifié par inspection ; la vérification matérielle est en US-019.
-- Stories UI (US-005, US-009, US-010) : l'agent livre sans lancer l'app. La passe visuelle d'Arthur est regroupée en US-018.
+- Stories UI (US-005, US-009, US-010) : l'agent livre sans lancer l'app. La passe visuelle d'Arthur est regroupée en US-019 sous Windows et en US-018 sous Linux (EP-008, différé).
 - Story de démo (US-021) : aucun code Rust ne change et les gates cargo ne s'appliquent pas. Le script de démo passe `bash -n`, et `shellcheck` s'il est installé.
 - Story du site (US-017) : les vérifications propres à `paneflow-web` (lint, format, build, définis dans son `package.json`) passent.
 - `cargo deny check advisories licenses sources` : seulement si une dépendance change ; aucune story n'en prévoit.
@@ -486,34 +489,16 @@ Faire dire à la documentation interne, publique et au PRD source ce que fait r�
 
 ### EP-006: Vérification réelle et préparation de la release
 
-Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel Windows, et la préparation de la version 0.17.7.
+Regrouper en fin de PRD la vérification sur le matériel Windows et la préparation de la version 0.17.7.
 
-**Definition of Done:** la passe visuelle Linux et la vérification sur le matériel Windows sont faites et consignées, et chaque défaut trouvé est corrigé avec un test s'il est reproductible sous Linux. Le commit de version 0.17.7 est prêt, avec les contrôles du runbook verts. Le tag reste l'action d'Arthur.
-
-#### US-018: Passe visuelle Linux des changements d'interface
-**Description:** As a Arthur, I want voir chaque changement d'interface du PRD source et de celui-ci dans un build debug so that aucun défaut visuel ne parte en release.
-
-**Priority:** P1
-**Size:** S (2 pts)
-**Dependencies:** Blocked by US-005, US-006, US-009, US-010
-
-**Acceptance Criteria:**
-- [ ] Sur un build debug lancé par `scripts/dev.sh`, Arthur vérifie et capture :
-  - un TUI en mode 2026 qui redessine pendant un défilement (US-006 et US-005 source) ;
-  - une forme de pointeur demandée par OSC 22 (US-006 source) ;
-  - le défilement au trackpad, puis htop ou lazygit qui lisent la souris (US-005 et US-008 source) ;
-  - un script qui émet `working`, `blocked`, `done` et `error` dans un pane sans agent (US-009, US-010) ;
-  - un agent bloqué (US-011 source).
-- [ ] Le décalage d'inset de 6 px en haut (`src-app/src/terminal/constants.rs:16`) ne laisse ni bande vide ni ligne dupliquée quand le décalage passe par zéro.
-- [ ] Les captures ou enregistrements sont dans `tasks/` comme preuve locale, et le commit de clôture les nomme.
-- [ ] Échec : given un défaut constaté, when il est corrigé, then le correctif reste dans cette story avec un test s'il est reproductible sans GUI.
+**Definition of Done:** la vérification sur le matériel Windows est faite et consignée, et chaque défaut trouvé est corrigé avec un test s'il est reproductible sous Linux. Le commit de version 0.17.7 est prêt, avec les contrôles du runbook verts. Le tag reste l'action d'Arthur.
 
 #### US-019: Vérifier sur le matériel Windows et corriger les écarts
 **Description:** As a développeur sous Windows, I want que le défilement au pixel, les formes de curseur, le placement des glyphes et OSC 7501 se comportent comme sous Linux so that la release 0.17.7 n'embarque pas de régression vue seulement après publication.
 
 **Priority:** P1
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-018
+**Dependencies:** None
 
 **Acceptance Criteria:**
 - [ ] Le job « Windows x86_64 libghostty check » et les lanes libghostty sont verts sur le dernier commit de la branche.
@@ -522,9 +507,9 @@ Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel Win
   - les formes de curseur OSC 22 s'affichent ;
   - `dir /s` après un agrandissement puis une réduction ne décale plus la sortie (revérifié après `56b646ec`) ;
   - un script PowerShell qui émet OSC 7501 montre son état dans la puce et l'Attention Queue.
-- [ ] Validation de l'hypothèse ConPTY : given un programme qui envoie `OSC 7501 ; ?` puis `CSI c` dans un pane Windows, when les réponses arrivent, then la réponse 7501 précède celle de DA1. Le résultat est consigné, qu'il confirme ou infirme l'hypothèse.
+- [x] Validation de l'hypothèse ConPTY : given un programme qui envoie `OSC 7501 ; ?` puis `CSI c` dans un pane Windows, when les réponses arrivent, then la réponse 7501 précède celle de DA1. Le résultat est consigné, qu'il confirme ou infirme l'hypothèse.
 - [ ] Les jobs `macos_check` et `macos_render_smoke` sont verts sur le dernier commit de la branche. Le commit de clôture dit que macOS n'a pas été vérifié sur matériel, par décision, et ne le présume pas.
-- [ ] Avant tout commit depuis Windows, `git config user.email` du clone Windows renvoie l'adresse noreply du dépôt. Les six commits déjà signés `arthur.jean@strivex.fr` ne sont pas réécrits.
+- [x] Avant tout commit depuis Windows, `git config user.email` du clone Windows renvoie l'adresse noreply du dépôt. Les six commits déjà signés `arthur.jean@strivex.fr` ne sont pas réécrits.
 - [ ] Échec : given un défaut constaté sur l'une des plateformes, when il est corrigé, then le correctif reste dans cet epic, avec un test s'il est reproductible sous Linux, sinon avec la vérification manuelle refaite et décrite.
 
 #### US-020: Préparer la release 0.17.7
@@ -541,7 +526,7 @@ Regrouper en fin de PRD la passe visuelle, la vérification sur le matériel Win
   - section `[Unreleased]` du CHANGELOG renommée ;
   - entrée `<release version="0.17.7">` en tête de `assets/io.github.arthurdev44.paneflow.metainfo.xml`.
 - [ ] Le job CI `perf_gates` est vert sur ce commit. Les deux contrôles de performance que `runbook.md:94` réserve aux versions mineures ne s'appliquent pas à 0.17.7, et le commit le dit.
-- [ ] Le test temporel `crates/paneflow-mcp-install/src/agents/opencode.rs:115-133` n'asserte plus un délai réel de moins de 100 ms. Il vérifie le comportement sans dépendre de l'horloge (test).
+- [x] Le test temporel `crates/paneflow-mcp-install/src/agents/opencode.rs:115-133` n'asserte plus un délai réel de moins de 100 ms. Il vérifie le comportement sans dépendre de l'horloge (test).
 - [ ] Le home de développement `~/.paneflow-dev-repin` est mis à la corbeille par `gio trash` après `PANEFLOW_HOME=~/.paneflow-dev-repin target/debug/paneflow serve stop` et `host stop`.
 - [ ] Aucun tag n'est créé ni poussé : le commit de clôture dit que le tag attend Arthur.
 - [ ] Échec : given un contrôle du runbook rouge, when la story se termine, then elle reste `IN_PROGRESS`, et aucun contrôle n'est contourné pour verdir le commit.
@@ -574,6 +559,32 @@ Montrer, une fois 0.17.7 publiée, qu'un programme ordinaire déclare son état 
 - [ ] Un brouillon de réponse en anglais, trois phrases au plus et sans tiret dans la prose, est dans `tasks/osc7501-demo/`. Il dit ce que montre la vidéo et renvoie au repo.
 - [ ] Aucun agent ne publie : la réponse à l'annonce sur X est l'action d'Arthur.
 - [ ] Échec : given un état qui ne s'affiche pas comme prévu pendant l'enregistrement, when il est constaté, then la vidéo n'est pas publiée, la démo attend le correctif, et le défaut est consigné dans le statut de la story.
+
+---
+
+### EP-008: Passe visuelle Linux (différée)
+
+Vérifier à l'œil, sous Linux, les changements d'interface du PRD source et de celui-ci. Différé par décision d'Arthur le 2026-10-09 : cet epic ne bloque ni EP-006 ni la release 0.17.7.
+
+**Definition of Done:** la passe visuelle Linux est faite et consignée, et chaque défaut trouvé est corrigé avec un test s'il est reproductible sans GUI.
+
+#### US-018: Passe visuelle Linux des changements d'interface
+**Description:** As a Arthur, I want voir chaque changement d'interface du PRD source et de celui-ci dans un build debug so that aucun défaut visuel ne parte en release.
+
+**Priority:** P3
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-005, US-006, US-009, US-010
+
+**Acceptance Criteria:**
+- [ ] Sur un build debug lancé par `scripts/dev.sh`, Arthur vérifie et capture :
+  - un TUI en mode 2026 qui redessine pendant un défilement (US-006 et US-005 source) ;
+  - une forme de pointeur demandée par OSC 22 (US-006 source) ;
+  - le défilement au trackpad, puis htop ou lazygit qui lisent la souris (US-005 et US-008 source) ;
+  - un script qui émet `working`, `blocked`, `done` et `error` dans un pane sans agent (US-009, US-010) ;
+  - un agent bloqué (US-011 source).
+- [ ] Le décalage d'inset de 6 px en haut (`src-app/src/terminal/constants.rs:16`) ne laisse ni bande vide ni ligne dupliquée quand le décalage passe par zéro.
+- [ ] Les captures ou enregistrements sont dans `tasks/` comme preuve locale, et le commit de clôture les nomme.
+- [ ] Échec : given un défaut constaté, when il est corrigé, then le correctif reste dans cette story avec un test s'il est reproductible sans GUI.
 
 ---
 
@@ -673,7 +684,7 @@ Catégories écartées :
 - **Pas de réécriture de l'historique de `main`** pour les six commits signés `arthur.jean@strivex.fr` : réécrire une branche publique est destructif.
 - **Pas de notification pour `idle` ou `done`**, ni pour l'`error` d'un programme non-agent : seul `blocked` notifie.
 - **Pas de tag ni de publication de release** dans ce PRD : le tag reste l'action d'Arthur, comme la réponse publique d'US-021.
-- **Pas de vérification sur matériel macOS** pour 0.17.7. Le code touché sous macOS passe par GPUI macOS, la plateforme la plus éprouvée de Zed, et par une logique de défilement et de curseur commune aux trois plateformes, vérifiée sous Linux en US-018. La CI macOS couvre le build et le premier rendu.
+- **Pas de vérification sur matériel macOS** pour 0.17.7. Le code touché sous macOS passe par GPUI macOS, la plateforme la plus éprouvée de Zed, et par une logique de défilement et de curseur commune aux trois plateformes, vérifiée sur le matériel Windows en US-019 ; la passe Linux d'US-018 est différée. La CI macOS couvre le build et le premier rendu.
 - **Pas de pré-release `-rc.N`.** Le tag 0.17.7 est la release finale ; le chemin d'installation et de signature n'a pas changé, et un correctif se publie en 0.17.8.
 
 ## Files NOT to Modify

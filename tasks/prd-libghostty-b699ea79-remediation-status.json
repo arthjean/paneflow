@@ -49,9 +49,9 @@
     {
       "id": "EP-006",
       "title": "Vérification réelle et préparation de la release",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
-      "stories_total": 3,
+      "stories_total": 2,
       "stories_done": 0
     },
     {
@@ -59,6 +59,14 @@
       "title": "Démonstration publique d'OSC 7501 hors agents",
       "status": "TODO",
       "priority": "P2",
+      "stories_total": 1,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "Passe visuelle Linux (différée)",
+      "status": "TODO",
+      "priority": "P3",
       "stories_total": 1,
       "stories_done": 0
     }
@@ -293,9 +301,9 @@
     {
       "id": "US-018",
       "title": "Passe visuelle Linux des changements d'interface",
-      "epic": "EP-006",
+      "epic": "EP-008",
       "status": "TODO",
-      "priority": "P1",
+      "priority": "P3",
       "size": "S",
       "blocked_by": [
         "US-005",
@@ -311,13 +319,11 @@
       "id": "US-019",
       "title": "Vérifier sur le matériel Windows et corriger les écarts",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "M",
-      "blocked_by": [
-        "US-018"
-      ],
-      "started_at": null,
+      "blocked_by": [],
+      "started_at": "2026-10-09",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -325,7 +331,7 @@
       "id": "US-020",
       "title": "Préparer la release 0.17.7",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
@@ -333,7 +339,7 @@
         "US-017",
         "US-019"
       ],
-      "started_at": null,
+      "started_at": "2026-10-09",
       "completed_at": null,
       "reviewed_at": null
     },
