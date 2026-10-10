@@ -6,7 +6,7 @@ platforms = ["linux", "macos"]
 
 [display]
 order = 18
-icon_asset_path = "icons/terminal.svg"
+icon_asset_path = "agents/fx.svg"
 icon_multicolor = false
 visibility_config_key = "fx_button_visible"
 
