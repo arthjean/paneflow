@@ -49,7 +49,7 @@
     {
       "id": "EP-006",
       "title": "Vérification réelle et préparation de la release",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 2,
       "stories_done": 0
@@ -319,7 +319,7 @@
       "id": "US-019",
       "title": "Vérifier sur le matériel Windows et corriger les écarts",
       "epic": "EP-006",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
@@ -331,7 +331,7 @@
       "id": "US-020",
       "title": "Préparer la release 0.17.7",
       "epic": "EP-006",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "S",
       "blocked_by": [

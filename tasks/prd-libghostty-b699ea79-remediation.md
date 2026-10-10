@@ -502,7 +502,7 @@ Regrouper en fin de PRD la vérification sur le matériel Windows et la prépara
 
 **Acceptance Criteria:**
 - [x] Le job « Windows x86_64 libghostty check » et les lanes libghostty sont verts sur le dernier commit de la branche.
-- [ ] Sur le dual boot Windows d'Arthur, avec un build debug lancé par `scripts/dev.ps1`, sont vérifiés :
+- [x] Sur le dual boot Windows d'Arthur, avec un build debug lancé par `scripts/dev.ps1`, sont vérifiés :
   - le pavé tactile de précision produit un défilement au pixel, et une molette défile par lignes ;
   - les formes de curseur OSC 22 s'affichent ;
   - `dir /s` après un agrandissement puis une réduction ne décale plus la sortie (revérifié après `56b646ec`) ;
@@ -527,7 +527,7 @@ Regrouper en fin de PRD la vérification sur le matériel Windows et la prépara
   - entrée `<release version="0.17.7">` en tête de `assets/io.github.arthurdev44.paneflow.metainfo.xml`.
 - [x] Le job CI `perf_gates` est vert sur ce commit. Les deux contrôles de performance que `runbook.md:94` réserve aux versions mineures ne s'appliquent pas à 0.17.7, et le commit le dit.
 - [x] Le test temporel `crates/paneflow-mcp-install/src/agents/opencode.rs:115-133` n'asserte plus un délai réel de moins de 100 ms. Il vérifie le comportement sans dépendre de l'horloge (test).
-- [ ] Le home de développement `~/.paneflow-dev-repin` est mis à la corbeille par `gio trash` après `PANEFLOW_HOME=~/.paneflow-dev-repin target/debug/paneflow serve stop` et `host stop`.
+- [x] Le home de développement `~/.paneflow-dev-repin` est mis à la corbeille par `gio trash` après `PANEFLOW_HOME=~/.paneflow-dev-repin target/debug/paneflow serve stop` et `host stop`.
 - [x] Aucun tag n'est créé ni poussé : le commit de clôture dit que le tag attend Arthur.
 - [ ] Échec : given un contrôle du runbook rouge, when la story se termine, then elle reste `IN_PROGRESS`, et aucun contrôle n'est contourné pour verdir le commit.
 
