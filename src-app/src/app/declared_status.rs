@@ -19,6 +19,8 @@ const UNNAMED_PROGRAM: &str = "A program";
 
 const BLOCKED_WITHOUT_MESSAGE: &str = "Needs input";
 
+const ERROR_WITHOUT_MESSAGE: &str = "Failed";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeclaredState {
     Idle,
@@ -166,6 +168,31 @@ pub(crate) fn blocked_notification_text(
     (summary, body)
 }
 
+fn error_notification_text(status: &DeclaredStatus, pane_title: &str) -> (String, String) {
+    let program = one_line(&status.app).unwrap_or_else(|| UNNAMED_PROGRAM.to_string());
+    let summary = match one_line(pane_title) {
+        Some(pane) => format!("{program} failed in {pane}"),
+        None => format!("{program} failed"),
+    };
+    let body = one_line(&status.message).unwrap_or_else(|| ERROR_WITHOUT_MESSAGE.to_string());
+    (summary, body)
+}
+
+fn attention_notification_text(
+    status: &DeclaredStatus,
+    pane_title: &str,
+) -> Option<(String, String)> {
+    match DeclaredState::of(status)? {
+        DeclaredState::Blocked => Some(blocked_notification_text(status, pane_title)),
+        DeclaredState::Error => Some(error_notification_text(status, pane_title)),
+        DeclaredState::Idle | DeclaredState::Working | DeclaredState::Done => None,
+    }
+}
+
+fn declared_attention_seen(visible: Option<&HashSet<u64>>, surface_id: u64, muted: bool) -> bool {
+    crate::app::agent_status::completion_was_seen(visible, Some(surface_id)) || muted
+}
+
 pub(crate) fn surface_has_agent(
     workspace: &Workspace,
     surface_id: u64,
@@ -208,7 +235,7 @@ impl DeclaredWatch {
             watched.state = state;
             watched.since = now;
         }
-        if !(entered && notifiable && state == Some(DeclaredState::Blocked)) {
+        if !(entered && notifiable && state.is_some_and(DeclaredState::queues)) {
             return false;
         }
         if watched
@@ -238,7 +265,7 @@ impl PaneFlowApp {
     pub(crate) fn refresh_declared_status(&mut self, cx: &mut Context<Self>) {
         let now = Instant::now();
         let mut live = HashSet::new();
-        let mut blocked = Vec::new();
+        let mut attention = Vec::new();
         for ws_idx in 0..self.workspaces.len() {
             for pane in self.workspaces[ws_idx].collect_panes() {
                 let terminals: Vec<Entity<TerminalView>> =
@@ -256,7 +283,7 @@ impl PaneFlowApp {
                         .declared_watch
                         .observe(surface_id, state, agentless, now)
                     {
-                        blocked.push((ws_idx, surface_id, terminal.clone()));
+                        attention.push((ws_idx, surface_id, terminal.clone()));
                     }
                     if terminal.read(cx).terminal.declared_status != declared {
                         terminal.update(cx, |view, _| view.terminal.declared_status = declared);
@@ -269,12 +296,12 @@ impl PaneFlowApp {
             }
         }
         self.host_agents.declared_watch.retain(&live);
-        for (ws_idx, surface_id, terminal) in blocked {
-            self.notify_declared_block(ws_idx, surface_id, &terminal, cx);
+        for (ws_idx, surface_id, terminal) in attention {
+            self.notify_declared_attention(ws_idx, surface_id, &terminal, cx);
         }
     }
 
-    fn notify_declared_block(
+    fn notify_declared_attention(
         &self,
         ws_idx: usize,
         surface_id: u64,
@@ -288,11 +315,14 @@ impl PaneFlowApp {
             return;
         };
         let pane_title = crate::pane::Pane::terminal_surface_title(terminal, cx);
-        let seen = crate::app::agent_status::completion_was_seen(
+        let Some((summary, body)) = attention_notification_text(&status, &pane_title) else {
+            return;
+        };
+        let seen = declared_attention_seen(
             self.surfaces_under_user_eye(workspace.id, cx).as_ref(),
-            Some(surface_id),
-        ) || workspace.muted;
-        let (summary, body) = blocked_notification_text(&status, &pane_title);
+            surface_id,
+            workspace.muted,
+        );
         crate::agents::notifications::fire_desktop_notification_for_session(
             crate::agents::notifications::program_notification(summary, body, &pane_title),
             &self.cached_config,
@@ -623,6 +653,145 @@ mod tests {
         let now = Instant::now();
         assert!(!watch.observe(4, Some(DeclaredState::Blocked), false, now));
         assert_eq!(watch.since(4), Some(now));
+        for state in [
+            DeclaredState::Idle,
+            DeclaredState::Working,
+            DeclaredState::Blocked,
+            DeclaredState::Done,
+            DeclaredState::Error,
+        ] {
+            let mut watch = DeclaredWatch::default();
+            assert!(!watch.observe(5, Some(state), false, now), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn only_blocked_and_error_notify_when_a_program_enters_them() {
+        for (state, notifies) in [
+            (DeclaredState::Idle, false),
+            (DeclaredState::Working, false),
+            (DeclaredState::Blocked, true),
+            (DeclaredState::Done, false),
+            (DeclaredState::Error, true),
+        ] {
+            let mut watch = DeclaredWatch::default();
+            assert_eq!(
+                watch.observe(1, Some(state), true, Instant::now()),
+                notifies,
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_and_error_share_one_notification_every_ten_seconds() {
+        let mut watch = DeclaredWatch::default();
+        let start = Instant::now();
+        assert!(watch.observe(1, Some(DeclaredState::Blocked), true, start));
+        assert!(
+            !watch.observe(
+                1,
+                Some(DeclaredState::Error),
+                true,
+                start + Duration::from_secs(1)
+            ),
+            "an error inside the blocked window stays silent"
+        );
+        let after = start + BLOCKED_NOTIFICATION_INTERVAL;
+        watch.observe(1, Some(DeclaredState::Working), true, after);
+        assert!(watch.observe(1, Some(DeclaredState::Error), true, after));
+        assert!(
+            !watch.observe(1, Some(DeclaredState::Blocked), true, after),
+            "a blocked inside the error window stays silent"
+        );
+    }
+
+    #[test]
+    fn the_error_notification_says_the_program_failed_and_names_the_pane() {
+        let mut failed = status("error");
+        failed.app = "car\u{202E}go".to_string();
+        failed.message = "3 tests \u{2066}failed\nsee log".to_string();
+        assert_eq!(
+            attention_notification_text(&failed, "build"),
+            Some((
+                "cargo failed in build".to_string(),
+                "3 tests failed".to_string()
+            ))
+        );
+        assert_eq!(
+            attention_notification_text(&status("error"), ""),
+            Some((
+                "A program failed".to_string(),
+                ERROR_WITHOUT_MESSAGE.to_string()
+            ))
+        );
+
+        let mut blocked = status("blocked");
+        blocked.app = "terraform".to_string();
+        blocked.message = "Apply the plan?".to_string();
+        assert_eq!(
+            attention_notification_text(&blocked, "infra"),
+            Some((
+                "terraform needs input in infra".to_string(),
+                "Apply the plan?".to_string()
+            ))
+        );
+        assert_eq!(
+            attention_notification_text(&blocked, "infra"),
+            Some(blocked_notification_text(&blocked, "infra"))
+        );
+        for wire in ["working", "idle", "done", "bogus"] {
+            assert_eq!(attention_notification_text(&status(wire), "build"), None);
+        }
+    }
+
+    #[test]
+    fn a_declared_notification_is_held_when_its_pane_is_seen_muted_or_disabled() {
+        use crate::agents::notifications::should_fire_desktop_notification;
+        use paneflow_config::schema::NotifyWhenAgentWaiting;
+
+        let watching_it = HashSet::from([9_u64]);
+        let watching_another = HashSet::from([8_u64]);
+        let cases: &[(Option<&HashSet<u64>>, bool, bool)] = &[
+            (Some(&watching_it), false, false),
+            (Some(&watching_another), true, false),
+            (Some(&watching_another), false, true),
+            (None, false, true),
+            (None, true, false),
+        ];
+        for (visible, muted, fires) in cases {
+            let seen = declared_attention_seen(*visible, 9, *muted);
+            assert_eq!(
+                should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, seen),
+                *fires,
+                "{visible:?} muted={muted}"
+            );
+            assert!(
+                !should_fire_desktop_notification(NotifyWhenAgentWaiting::Never, seen),
+                "notify_when_agent_waiting = Never holds every declared notification"
+            );
+        }
+    }
+
+    #[test]
+    fn fifty_errors_in_one_second_send_one_notification_and_queue_the_last_message() {
+        let mut watch = DeclaredWatch::default();
+        let start = Instant::now();
+        let mut sent = 0;
+        let mut last = status("error");
+        for step in 0..50_u64 {
+            last = status("error");
+            last.app = "cargo".to_string();
+            last.message = format!("failure {step}");
+            let state = DeclaredState::of(&last);
+            let now = start + Duration::from_millis(step * 20);
+            sent += usize::from(watch.observe(6, state, true, now));
+        }
+        assert_eq!(sent, 1);
+        assert_eq!(
+            queue_entry(Some(&last), "build").and_then(|entry| entry.message),
+            Some("failure 49".to_string())
+        );
     }
 
     #[test]
