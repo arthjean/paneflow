@@ -112,7 +112,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_fifo_jsonc_config_fails_at_once_and_releases_the_lock() {
+    fn a_fifo_jsonc_config_is_refused_as_not_regular_and_releases_the_lock() {
         let dir = tempfile::TempDir::new().unwrap();
         let jsonc = dir.path().join("opencode.jsonc");
         let made = std::process::Command::new("mkfifo")
@@ -122,14 +122,26 @@ mod tests {
         assert!(made);
         let w = test_writer(jsonc.clone());
 
-        let started = std::time::Instant::now();
-        assert!(w.install(Path::new("/data/paneflow-mcp")).is_err());
-        assert!(w.status(Some(Path::new("/data/paneflow-mcp"))).is_err());
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        let installed = w.install(Path::new("/data/paneflow-mcp")).unwrap_err();
+        assert_eq!(
+            io_error_kind(&installed),
+            Some(std::io::ErrorKind::InvalidInput)
+        );
+        let status = w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap_err();
+        assert_eq!(
+            io_error_kind(&status),
+            Some(std::io::ErrorKind::InvalidInput)
+        );
 
-        let relocked = std::time::Instant::now();
         drop(crate::io::lock_config(&jsonc).unwrap());
-        assert!(relocked.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    #[cfg(unix)]
+    fn io_error_kind(error: &anyhow::Error) -> Option<std::io::ErrorKind> {
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .map(std::io::Error::kind)
     }
 
     fn test_writer(path: PathBuf) -> OpenCode {
