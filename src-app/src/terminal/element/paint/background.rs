@@ -2,31 +2,66 @@ use gpui::{Bounds, Pixels, Point, Window, fill, px};
 
 use super::super::LayoutState;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridEdges {
+    pub top: Pixels,
+    pub bottom: Pixels,
+}
+
+impl GridEdges {
+    pub fn inset_within(bounds: Bounds<Pixels>) -> Self {
+        let inset_y = px(crate::app::constants::PANE_CONTENT_INSET_Y);
+        Self {
+            top: bounds.origin.y + inset_y,
+            bottom: bounds.origin.y + bounds.size.height - inset_y,
+        }
+    }
+}
+
 pub fn paint_base_fill(layout: &LayoutState, bounds: Bounds<Pixels>, window: &mut Window) {
     if layout.background_color.a > 0.0 {
         window.paint_quad(fill(bounds, layout.background_color));
     }
 }
 
+fn rect_vertical_span(
+    line_start: usize,
+    line_end: usize,
+    row_count: usize,
+    y_boundaries: &[Pixels],
+    edges: Option<GridEdges>,
+) -> (Pixels, Pixels) {
+    let top = y_boundaries[line_start];
+    let bottom = y_boundaries[line_end];
+    let Some(edges) = edges else {
+        return (top, bottom);
+    };
+    let top = if line_start == 0 {
+        edges.top.max(top)
+    } else {
+        top
+    };
+    let bottom = if line_end == row_count {
+        edges.bottom.max(bottom)
+    } else {
+        bottom
+    };
+    (top, bottom)
+}
+
 pub fn paint_cell_backgrounds(
     layout: &LayoutState,
-    bounds: Bounds<Pixels>,
+    edges: Option<GridEdges>,
     x_boundaries: &[Pixels],
     y_boundaries: &[Pixels],
     window: &mut Window,
 ) {
-    let inset_y = px(crate::app::constants::PANE_CONTENT_INSET_Y);
-    let widget_top = bounds.origin.y + inset_y;
-    let widget_bottom = bounds.origin.y + bounds.size.height - inset_y;
-
     let col_count = layout.desired_cols;
     let row_count = layout.desired_rows;
 
     if col_count == 0 || row_count == 0 {
         return;
     }
-
-    let last_row = row_count.saturating_sub(1) as i32;
 
     for rect in &layout.rects {
         if rect.color.a <= 0.0 {
@@ -51,16 +86,7 @@ pub fn paint_cell_backgrounds(
 
         let x = x_boundaries[rect.col];
         let right = x_boundaries[col_end];
-        let mut y = y_boundaries[line_start];
-        let mut bottom = y_boundaries[line_end];
-        let last_rect_line = rect.line + rect.num_lines as i32 - 1;
-
-        if rect.line == 0 {
-            y = widget_top;
-        }
-        if last_rect_line == last_row {
-            bottom = widget_bottom;
-        }
+        let (y, bottom) = rect_vertical_span(line_start, line_end, row_count, y_boundaries, edges);
 
         let rect_bounds = Bounds::new(
             Point { x, y },
@@ -132,5 +158,64 @@ pub fn paint_block_quads(
             ),
             bq.color,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LINE: f32 = 20.0;
+    const ROWS: usize = 3;
+    const EDGES: GridEdges = GridEdges {
+        top: px(6.0),
+        bottom: px(66.0),
+    };
+
+    fn boundaries(origin_y: f32, rows: usize) -> Vec<Pixels> {
+        (0..=rows)
+            .map(|row| px(origin_y + LINE * row as f32))
+            .collect()
+    }
+
+    #[test]
+    fn an_unshifted_viewport_stretches_its_edge_rows_to_the_inset() {
+        let y = boundaries(5.5, ROWS);
+        assert_eq!(
+            rect_vertical_span(0, 1, ROWS, &y, Some(EDGES)),
+            (px(6.0), px(25.5))
+        );
+        assert_eq!(
+            rect_vertical_span(2, 3, ROWS, &y, Some(EDGES)),
+            (px(45.5), px(66.0))
+        );
+        assert_eq!(
+            rect_vertical_span(1, 2, ROWS, &y, Some(EDGES)),
+            (px(25.5), px(45.5))
+        );
+    }
+
+    #[test]
+    fn a_shifted_first_row_never_paints_over_the_row_above_it() {
+        let y = boundaries(6.0 + 7.0, ROWS);
+        assert_eq!(
+            rect_vertical_span(0, 1, ROWS, &y, Some(EDGES)),
+            (px(13.0), px(33.0))
+        );
+        assert_eq!(
+            rect_vertical_span(2, 3, ROWS, &y, Some(EDGES)),
+            (px(53.0), px(73.0)),
+            "a last row pushed past the inset keeps its full height"
+        );
+    }
+
+    #[test]
+    fn the_overscan_row_paints_only_its_own_line() {
+        let shift = 7.0;
+        let above = boundaries(6.0 + shift - LINE, 1);
+        assert_eq!(
+            rect_vertical_span(0, 1, 1, &above, None),
+            (px(6.0 + shift - LINE), px(6.0 + shift))
+        );
     }
 }

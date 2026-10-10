@@ -1788,12 +1788,12 @@ impl Element for TerminalElement {
                     },
                     self.frame_metrics.metrics,
                 );
-                paint_overscan_row(above, &above_geom, bounds, base_font, font_size, window, cx);
+                paint_overscan_row(above, &above_geom, base_font, font_size, window, cx);
             }
 
             paint::background::paint_cell_backgrounds(
                 &layout,
-                bounds,
+                Some(paint::background::GridEdges::inset_within(bounds)),
                 &cell_x_bounds,
                 &cell_y_bounds,
                 window,
@@ -1916,7 +1916,6 @@ fn effective_smooth_scroll_offset(requested: Pixels, layout: &LayoutState) -> Pi
 fn paint_overscan_row(
     layout: &LayoutState,
     geom: &CellGeometry,
-    bounds: Bounds<Pixels>,
     base_font: &Font,
     font_size: Pixels,
     window: &mut Window,
@@ -1924,13 +1923,7 @@ fn paint_overscan_row(
 ) {
     let cell_x_bounds = geom.x_boundaries(layout.desired_cols);
     let cell_y_bounds = geom.y_boundaries(layout.desired_rows);
-    paint::background::paint_cell_backgrounds(
-        layout,
-        bounds,
-        &cell_x_bounds,
-        &cell_y_bounds,
-        window,
-    );
+    paint::background::paint_cell_backgrounds(layout, None, &cell_x_bounds, &cell_y_bounds, window);
     paint::background::paint_block_quads(layout, &cell_x_bounds, &cell_y_bounds, window);
     paint::sprites::paint_sprites(layout, geom, window);
     paint::decorations::paint_decorations(layout, geom, window);
