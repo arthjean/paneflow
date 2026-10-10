@@ -49,8 +49,6 @@ pub struct AgentsConfig {
     pub restore_conversations: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_preassign_session_id: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_screen_catalog: Option<bool>,
 }
 
 impl AgentsConfig {
@@ -60,10 +58,6 @@ impl AgentsConfig {
 
     pub fn resolved_claude_preassign_session_id(&self) -> bool {
         self.claude_preassign_session_id.unwrap_or(false)
-    }
-
-    pub fn resolved_remote_screen_catalog(&self) -> bool {
-        self.remote_screen_catalog.unwrap_or(true)
     }
 }
 

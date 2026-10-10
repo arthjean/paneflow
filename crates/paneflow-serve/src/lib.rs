@@ -12,8 +12,6 @@ pub mod activity;
 pub mod bootstrap;
 pub mod controller;
 pub mod core_link;
-pub mod hook_assets;
-pub mod hook_state;
 pub mod integrations;
 pub mod notifications;
 pub mod protocol;

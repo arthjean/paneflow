@@ -101,6 +101,12 @@ impl Instance {
         assert_eq!(reply["accepted"], true, "{reply}");
     }
 
+    fn declare(&mut self, session: &SessionId, generation: SessionGeneration, state: &str) {
+        self.owner
+            .input(session, generation, declare_command(state).as_bytes())
+            .expect("the declaration reaches the core-owned PTY");
+    }
+
     fn text(&self, session: &SessionId) -> String {
         self.core
             .text(session)
@@ -145,12 +151,12 @@ impl Instance {
         loop {
             let output = self.run(&["status", target, "--json"], None);
             let status: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
-            if status["state"] == state {
+            if status["state"] == state && status["activity_source"] == "declared" {
                 return status;
             }
             assert!(
                 Instant::now() < deadline,
-                "{target} never reached {state}: {status} {}",
+                "{target} never declared {state}: {status} {}",
                 String::from_utf8_lossy(&output.stderr)
             );
             std::thread::sleep(Duration::from_millis(100));
@@ -168,6 +174,15 @@ impl Instance {
             let _ = server.stop();
         }
     }
+}
+
+fn declare_command(state: &str) -> String {
+    #[cfg(windows)]
+    return format!(
+        "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state={state}' + [char]7)\"\r\n"
+    );
+    #[cfg(unix)]
+    return format!("printf '\\033]7501;state={state}\\007'\n");
 }
 
 fn reply(output: &Output) -> Value {
@@ -197,12 +212,7 @@ fn send_refuses_an_agent_that_waits_for_a_decision_or_left_the_foreground() {
         "ai.prompt_submit",
         "UserPromptSubmit",
     );
-    instance.hook(
-        &blocked,
-        blocked_gen,
-        "ai.notification",
-        "PermissionRequest",
-    );
+    instance.declare(&blocked, blocked_gen, "blocked");
     instance.await_state("agent-blocked", "waiting_for_input");
     let refused = instance.run(
         &["send", "agent-blocked", "echo pf-blocked-text", "--submit"],
@@ -222,7 +232,7 @@ fn send_refuses_an_agent_that_waits_for_a_decision_or_left_the_foreground() {
         "ai.prompt_submit",
         "UserPromptSubmit",
     );
-    instance.hook(&departed, departed_gen, "ai.stop", "Stop");
+    instance.declare(&departed, departed_gen, "done");
     instance.await_state("agent-departed", "finished");
     let refused = instance.run(&["send", "agent-departed", "pf-departed-text"], None);
     assert_eq!(refused.status.code(), Some(3), "{}", stderr(&refused));
@@ -250,7 +260,7 @@ fn a_submit_reports_a_start_only_after_a_state_transition() {
     let (session, generation) = instance.create("agent-turn", None);
     instance.start_worker();
     instance.hook(&session, generation, "ai.prompt_submit", "UserPromptSubmit");
-    instance.hook(&session, generation, "ai.stop", "Stop");
+    instance.declare(&session, generation, "done");
     instance.await_state("agent-turn", "finished");
 
     let echo_only = instance.run(
@@ -275,7 +285,7 @@ fn a_submit_reports_a_start_only_after_a_state_transition() {
         .spawn()
         .expect("the CLI starts");
     std::thread::sleep(Duration::from_millis(700));
-    instance.hook(&session, generation, "ai.prompt_submit", "UserPromptSubmit");
+    instance.declare(&session, generation, "working");
     let started = child.wait_with_output().expect("the CLI ends");
     assert_eq!(started.status.code(), Some(0), "{}", stderr(&started));
     let confirmed = reply(&started);
@@ -287,12 +297,13 @@ fn a_submit_reports_a_start_only_after_a_state_transition() {
 }
 
 #[test]
-fn wait_idle_returns_on_the_stop_hook_and_not_on_a_silent_tool() {
+fn wait_idle_returns_on_the_declared_turn_end_and_not_on_a_silent_tool() {
     let mut instance = Instance::open();
     let (session, generation) = instance.create("agent-silent", None);
     instance.start_worker();
     instance.hook(&session, generation, "ai.prompt_submit", "UserPromptSubmit");
     instance.hook(&session, generation, "ai.tool_use", "PreToolUse");
+    instance.declare(&session, generation, "working");
     instance.await_state("agent-silent", "thinking");
 
     let mut waiter = instance
@@ -319,11 +330,17 @@ fn wait_idle_returns_on_the_stop_hook_and_not_on_a_silent_tool() {
         "1.5 s of silence past a 5 ms window did not end the turn"
     );
     instance.hook(&session, generation, "ai.stop", "Stop");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        waiter.try_wait().expect("the waiter is alive").is_none(),
+        "a Stop hook does not end the turn without a declaration"
+    );
+    instance.declare(&session, generation, "done");
     let deadline = Instant::now() + STATE_WAIT;
     while waiter.try_wait().expect("the waiter is alive").is_none() {
         assert!(
             Instant::now() < deadline,
-            "the Stop hook never ended the wait"
+            "the declared turn end never ended the wait"
         );
         std::thread::sleep(Duration::from_millis(50));
     }

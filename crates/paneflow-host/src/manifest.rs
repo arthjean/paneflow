@@ -134,13 +134,7 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub screen_activity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub declared_blocker: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<HostedSessionRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,10 +421,7 @@ mod tests {
             hook_revision: 0,
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
-            screen_activity: None,
-            declared_blocker: None,
             declared_status: None,
-            menu_prompt_active: false,
             runtime: None,
             final_output: None,
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
@@ -446,7 +437,6 @@ mod tests {
         let mut manifest = sample(SessionId::new());
         let message = "\u{1}".repeat(crate::program_status::MAX_DECLARED_MESSAGE_BYTES);
         let label = "\u{1}".repeat(crate::program_status::MAX_DECLARED_LABEL_BYTES);
-        manifest.declared_blocker = Some(message.clone());
         manifest.declared_status = Some(crate::program_status::DeclaredStatus {
             state: "blocked".to_string(),
             kind: Some("permission".to_string()),

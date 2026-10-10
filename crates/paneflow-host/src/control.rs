@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use paneflow_agent_config::runtime_catalog::{RuntimeLifecycleAuthority, runtime_for_tool};
+use paneflow_agent_config::runtime_catalog::{RuntimeHookAdapter, runtime_for_tool};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_ipc_client::scrollback::{
     fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback, search_text,
@@ -32,8 +32,6 @@ pub const CONTROL_METHODS: &[&str] = &[
     "surface.send_text",
     "pane.write",
     "fleet.list",
-    "agent.capture",
-    "agent.explain",
 ];
 
 pub const CONTROLLER_ONLY_METHODS: &[&str] = &[
@@ -161,7 +159,7 @@ fn current_hook(
 
 fn hook_is_authoritative(hook: &HookRecord) -> bool {
     runtime_for_tool(&hook.tool)
-        .is_some_and(|runtime| runtime.lifecycle.authority == RuntimeLifecycleAuthority::Complete)
+        .is_some_and(|runtime| runtime.integration.hook_adapter != RuntimeHookAdapter::None)
 }
 
 fn agent_hook_fields(
@@ -676,28 +674,6 @@ fn answer(
             status["foreground_runtime"] = foreground_runtime(&summary);
             Ok(status)
         }
-        "agent.capture" => {
-            let scope = read_scope(host, params)?;
-            let session = resolve_session(aliases, params)?;
-            authorize_scoped_session(host, scope.as_ref(), &session)?;
-            let capture = crate::viewport_scan::capture(host, &session)?;
-            Ok(json!({
-                "session": session,
-                "screen": capture.scan.screen,
-                "cols": capture.scan.cols,
-                "rows": capture.scan.rows,
-                "title": capture.scan.title,
-                "progress": capture.scan.progress,
-                "program_status": crate::program_status::to_json(capture.scan.program_status.as_ref()),
-                "runtime_id": capture.runtime.map(|runtime| runtime.id),
-            }))
-        }
-        "agent.explain" => {
-            let scope = read_scope(host, params)?;
-            let session = resolve_session(aliases, params)?;
-            authorize_scoped_session(host, scope.as_ref(), &session)?;
-            Ok(crate::viewport_scan::explain(host, &session, now_ms)?)
-        }
         "fleet.list" => {
             let mut sessions = host.list(None);
             sessions.sort_by(|a, b| a.manifest.session.cmp(&b.manifest.session));
@@ -817,10 +793,7 @@ mod tests {
                 hook_revision: 0,
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
-                screen_activity: None,
-                declared_blocker: None,
                 declared_status: None,
-                menu_prompt_active: false,
                 runtime: None,
                 final_output: None,
                 host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,

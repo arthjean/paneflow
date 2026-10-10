@@ -12,12 +12,11 @@ pub(super) const SUITES: [&str; 2] = ["terminal", "active"];
 const AB_SESSIONS: usize = 8;
 const AB_WINDOW: Duration = Duration::from_secs(15);
 const AB_CPU_SLICES: u32 = 5;
-const HOST_ROLES: [&str; 11] = [
+const HOST_ROLES: [&str; 10] = [
     "host.session",
     "host.pty_reader",
     "host.pty_writer",
     "host.viewport_scan",
-    "host.cancellation_scan",
     "host.ipc_connection",
     "host.ipc_accept",
     "host.launch_owner",

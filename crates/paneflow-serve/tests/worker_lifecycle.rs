@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
@@ -35,6 +35,15 @@ fn delayed_marker_command(marker: &str) -> String {
     return format!("sleep 1 && echo {marker}\n");
 }
 
+fn declare_command(state: &str) -> String {
+    #[cfg(windows)]
+    return format!(
+        "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state={state}' + [char]7)\"\r\n"
+    );
+    #[cfg(unix)]
+    return format!("printf '\\033]7501;state={state}\\007'\n");
+}
+
 fn controller(endpoint: &std::path::Path) -> HostControl {
     let control =
         HostControl::connect(endpoint, "worker-lifecycle-test").expect("a Controller connects");
@@ -58,6 +67,21 @@ fn next_projected_event(follower: &mut HostControl) -> Value {
         }
     }
     panic!("no projected event arrived on the worker follow stream");
+}
+
+fn next_projected_status(
+    follower: &mut HostControl,
+    session: &paneflow_config::schema::SessionId,
+    status: &str,
+) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        let frame = next_projected_event(follower);
+        if frame["session"] == session.to_string() && frame["status"] == status {
+            return frame;
+        }
+    }
+    panic!("the session never projected {status}");
 }
 
 fn output_text(endpoint: &std::path::Path, session: &paneflow_config::schema::SessionId) -> String {
@@ -234,7 +258,8 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         late_session.to_string(),
         "unexpected frame: {late_projected}"
     );
-    assert_eq!(late_projected["agent"]["state"], "thinking");
+    assert_eq!(late_projected["agent"]["tool"], "codex");
+    assert_eq!(late_projected["status"], "idle");
     assert!(
         late_child.is_provably_live(),
         "discovering a late session never signals it"
@@ -264,16 +289,23 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
     );
     assert_eq!(projected["kind"], "ai.prompt_submit");
     assert_eq!(
-        projected["agent"]["state"], "thinking",
-        "the worker reduces, the core did not: {projected}"
+        projected["status"], "idle",
+        "a hook names the agent but never moves its state: {projected}"
     );
-    assert_eq!(projected["activity_source"], "hooks");
-    assert_eq!(projected["status"], "busy");
-    assert!(
-        projected["notify"].is_null(),
-        "an opening event is not a completion: {projected}"
-    );
+    assert_eq!(projected["activity_source"], "none");
+    assert!(projected["notify"].is_null(), "{projected}");
     assert_eq!(projected["runtime_id"], "com.anthropic.claude-code");
+
+    owner
+        .input(&session, generation, declare_command("working").as_bytes())
+        .expect("the declaration reaches the core-owned PTY");
+    let working = next_projected_status(&mut follower, &session, "busy");
+    assert_eq!(working["activity_source"], "declared");
+    assert_eq!(working["agent"]["state"], "thinking");
+    assert!(
+        working["notify"].is_null(),
+        "an opening turn is not a completion: {working}"
+    );
 
     owner
         .call(
@@ -291,8 +323,15 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
             }),
         )
         .expect("the core accepts the stop frame");
-    let settled = next_projected_event(&mut follower);
-    assert_eq!(settled["status"], "idle", "unexpected frame: {settled}");
+    let stopped = next_projected_event(&mut follower);
+    assert_eq!(
+        stopped["status"], "busy",
+        "a stop hook leaves the declared state alone: {stopped}"
+    );
+    owner
+        .input(&session, generation, declare_command("done").as_bytes())
+        .expect("the completion reaches the core-owned PTY");
+    let settled = next_projected_status(&mut follower, &session, "idle");
     assert_eq!(settled["outcome"], "completed");
     assert_eq!(settled["notify"]["kind"], "finished");
     assert_eq!(settled["notify"]["runtime_label"], "Claude Code");
@@ -315,20 +354,10 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
     );
 
     owner
-        .call(
-            METHOD_AGENT_EVENT,
-            json!({
-                "session": session,
-                "kind": "ai.prompt_submit",
-                "tool": "claude",
-                "emitted_at_ms": 1_200,
-                "runtime_generation": generation,
-                "hook_payload": {"hook_event_name": "UserPromptSubmit"},
-            }),
-        )
-        .expect("the core accepts the second opening frame");
-    let reopened = next_projected_event(&mut follower);
-    assert_eq!(reopened["status"], "busy", "unexpected frame: {reopened}");
+        .input(&session, generation, declare_command("working").as_bytes())
+        .expect("the second turn reaches the core-owned PTY");
+    let reopened = next_projected_status(&mut follower, &session, "busy");
+    assert!(reopened["notify"].is_null(), "{reopened}");
 
     let scrollback_marker = "worker-restart-keeps-scrollback";
     owner
@@ -399,11 +428,11 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
     assert_eq!(
         rebuilt.status(),
         "busy",
-        "the seed on disk replays the turn that was open"
+        "the declared status in the manifest restores the turn that was open"
     );
     assert_eq!(
         rebuilt.activity_source,
-        paneflow_serve::ActivitySource::Hooks
+        paneflow_serve::ActivitySource::Declared
     );
     assert!(
         child.is_provably_live(),
@@ -455,28 +484,6 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         "a worker replacement never signals a terminal"
     );
 
-    let session_dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-    paneflow_serve::hook_assets::record_hook_expiry(
-        &session_dir,
-        generation.get(),
-        SystemTime::now() + paneflow_serve::hook_state::HOOK_IDLE_TIMEOUT,
-    )
-    .expect("the lease expiry is persisted before the worker restarts");
-    replacement.stop();
-    let expired_worker = paneflow_serve::open(home.path()).expect("the expired turn is rebuilt");
-    let expired = expired_worker
-        .worker()
-        .lock_state()
-        .get(&session)
-        .cloned()
-        .expect("the expired session remains projected");
-    assert_eq!(expired.status(), "idle");
-    assert_eq!(expired.outcome.as_deref(), Some("expired"));
-    assert!(
-        child.is_provably_live(),
-        "replaying a durable expiry never signals the PTY"
-    );
-
     owner
         .call(
             "session.stop",
@@ -521,7 +528,7 @@ fn the_worker_owns_the_home_reduces_for_controllers_and_rebuilds_after_a_restart
         .expect("the replacement generation reports normally");
     assert_eq!(fresh["accepted"], true);
 
-    expired_worker.stop();
+    replacement.stop();
     let _ = owner.call(
         "session.stop",
         json!({"session": late_session, "generation": restarted_late.manifest.generation}),

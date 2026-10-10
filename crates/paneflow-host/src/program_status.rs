@@ -40,17 +40,8 @@ impl DeclaredStatus {
         self.state == state_wire(state)
     }
 
-    pub fn is_error(&self) -> bool {
-        self.is(ProgramStatusState::Error)
-    }
-
     pub fn awaits_acknowledgement(&self) -> bool {
         self.is(ProgramStatusState::Done) || self.is(ProgramStatusState::Error)
-    }
-
-    pub fn blocker(&self) -> Option<String> {
-        self.is(ProgramStatusState::Blocked)
-            .then(|| self.message.clone())
     }
 }
 
@@ -446,7 +437,6 @@ mod tests {
         assert_eq!(declared.progress, Some(40));
         assert_eq!(declared.message.len(), MAX_DECLARED_MESSAGE_BYTES);
         assert_eq!(declared.app.len(), MAX_DECLARED_LABEL_BYTES);
-        assert_eq!(declared.blocker(), Some(declared.message.clone()));
         assert!(!declared.awaits_acknowledgement());
     }
 

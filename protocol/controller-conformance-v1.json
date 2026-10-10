@@ -16,7 +16,7 @@
     },
     {
       "id": "unread_raised_and_acknowledged",
-      "summary": "A hook-sourced finished notification raises unread on the session it settles; agent.acknowledge lowers it and publishes the lowered row to every follower, so the desktop sidebar and a remote Controller show the same attention queue.",
+      "summary": "A finished notification, raised when an agent declares done through OSC 7501, raises unread on the session it settles; agent.acknowledge lowers it and publishes the lowered row to every follower, so the desktop sidebar and a remote Controller show the same attention queue.",
       "method": "agent.acknowledge"
     },
     {

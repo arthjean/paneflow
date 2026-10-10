@@ -65,6 +65,26 @@ fn next_event(stream: &mut FollowSession) -> Value {
     panic!("no agent.event frame arrived within {FRAME_WAIT:?}");
 }
 
+fn next_event_with_status(stream: &mut FollowSession, status: &str) -> Value {
+    let deadline = Instant::now() + FRAME_WAIT;
+    while Instant::now() < deadline {
+        let event = next_event(stream);
+        if event["status"] == status {
+            return event;
+        }
+    }
+    panic!("no agent.event frame reported {status} within {FRAME_WAIT:?}");
+}
+
+fn declare_command(state: &str) -> String {
+    #[cfg(windows)]
+    return format!(
+        "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state={state}' + [char]7)\"\r\n"
+    );
+    #[cfg(unix)]
+    return format!("printf '\\033]7501;state={state}\\007'\n");
+}
+
 fn first_bootstrap(stream: &mut FollowSession) -> paneflow_serve::Bootstrap {
     match stream.next(Duration::from_millis(200)) {
         FollowFrame::Bootstrap(bootstrap) => *bootstrap,
@@ -213,8 +233,20 @@ fn case_session_projection_fields(
     let event = next_event(stream);
     assert_eq!(event["session"], session.to_string());
     assert_projection_fields(&event);
-    assert_eq!(event["status"], "busy");
-    assert_eq!(event["activity_source"], "hooks");
+    assert_eq!(
+        event["status"], "idle",
+        "a hook never moves the state: {event}"
+    );
+    assert_eq!(event["activity_source"], "none");
+    assert_eq!(event["runtime_id"], "com.anthropic.claude-code");
+
+    owner
+        .input(session, generation, declare_command("working").as_bytes())
+        .expect("the declaration reaches the core-owned PTY");
+    let event = next_event_with_status(stream, "busy");
+    assert_eq!(event["session"], session.to_string());
+    assert_projection_fields(&event);
+    assert_eq!(event["activity_source"], "declared");
     assert_eq!(event["agent"]["state"], "thinking");
     assert_eq!(event["runtime_id"], "com.anthropic.claude-code");
     assert_eq!(event["unread"], false);
@@ -245,9 +277,12 @@ fn case_unread_raised_and_acknowledged(
             }),
         )
         .expect("the core accepts the stop hook");
-    let settled = next_event(stream);
-    assert_eq!(settled["status"], "idle", "unexpected frame: {settled}");
+    owner
+        .input(session, generation, declare_command("done").as_bytes())
+        .expect("the completion reaches the core-owned PTY");
+    let settled = next_event_with_status(stream, "idle");
     assert_eq!(settled["notify"]["kind"], "finished");
+    assert_eq!(settled["notify"]["body"], "2 files changed");
     assert_eq!(
         settled["unread"], true,
         "a finished notification raises unread on the session it settles: {settled}"

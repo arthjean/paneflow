@@ -19,16 +19,8 @@ script_path_signatures = []
 [environment]
 strip_inherited = []
 
-[lifecycle]
-source = "output"
-authority = "none"
-fallback = "none"
-escape_cancels_turn = true
-attention_clears_on_output = true
-anchor_start_event_to_output = true
-
 [integration]
-summary = "Muse Code is detected from its process; Paneflow reads no turn status from it."
+summary = "Paneflow shows Muse Code's turn status when Muse Code reports it through OSC 7501."
 hook_adapter = "none"
 
 [[suggested_presets]]

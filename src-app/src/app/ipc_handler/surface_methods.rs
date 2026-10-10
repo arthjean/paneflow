@@ -583,7 +583,7 @@ fn build_fleet_rows(
                     "pid": *pid,
                     "tool": s.tool.binary(),
                     "state": s.state.wire_str(),
-                    "hooked": true,
+                    "hooked": session_is_hooked(s),
                     "reason": serde_json::Value::Null,
                     "surface_id": s.surface_id,
                     "surface_name": surface_name,
@@ -625,6 +625,12 @@ fn build_fleet_rows(
     rows.into_iter().map(|(_, _, _, v)| v).collect()
 }
 
+fn session_is_hooked(session: &AgentSession) -> bool {
+    session.source == crate::ai_types::AgentStateSource::Hook
+        && session.tool.runtime().integration.hook_adapter
+            != paneflow_agent_config::RuntimeHookAdapter::None
+}
+
 fn surface_status_value(
     sid: u64,
     session: Option<&AgentSession>,
@@ -637,10 +643,7 @@ fn surface_status_value(
             "surface_id": sid,
             "state": s.state.wire_str(),
             "state_seq": s.state_seq,
-            "attention_reason": s.attention_reason,
-            "hooked": s.source == crate::ai_types::AgentStateSource::Hook
-                && s.tool.runtime().lifecycle.authority
-                    == paneflow_agent_config::RuntimeLifecycleAuthority::Complete,
+            "hooked": session_is_hooked(s),
             "tool": s.tool.binary(),
             "active_tool_name": s.active_tool_name,
             "message": s.message,
@@ -1877,7 +1880,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_status_value_is_hooked_only_for_a_hook_owned_complete_runtime() {
+    fn surface_status_value_is_hooked_only_for_hook_events_from_a_runtime_with_an_installer() {
         use crate::agent_launcher::TerminalAgent;
         use crate::ai_types::{AgentSession, AgentState, AgentStateSource};
         let mut screen = AgentSession::new(TerminalAgent::Gemini, AgentState::WaitingForInput);
@@ -1891,7 +1894,7 @@ mod tests {
         let v = surface_status_value(7, Some(&pi), 3, std::time::Instant::now(), None);
         assert_eq!(
             v["hooked"], false,
-            "a partial hook stream is not authoritative"
+            "a runtime without an installer is never hooked"
         );
     }
 

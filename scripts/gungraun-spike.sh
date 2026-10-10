@@ -10,7 +10,6 @@ rm -rf "$out"
 mkdir -p "$out"
 
 benches=(
-  "paneflow-agent-config|"
   "paneflow-terminal-ghostty|native"
 )
 
@@ -40,7 +39,6 @@ out = pathlib.Path(sys.argv[1])
 max_drift = float(sys.argv[2])
 failed = sys.argv[3].strip()
 expected = {
-    "screen_rules::evaluate_rules.twenty_rules_200x60",
     "terminal::parse_and_convert.mebibyte_220x60",
 }
 

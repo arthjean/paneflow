@@ -112,7 +112,7 @@ mod tests {
                 "state_seq": 6,
                 "status": "attention",
                 "outcome": null,
-                "menu_prompt_active": false,
+                "activity_source": "declared",
                 "runtime_id": "com.anthropic.claude-code",
                 "activity": {"state": "waiting_for_input", "tool": "claude", "message": "Approve edit?"},
             })],
@@ -134,8 +134,7 @@ mod tests {
             foreground_departure(&status, runtime).as_deref(),
             Some("a shell or another program")
         );
-        status["attention_reason"] = json!("bell");
-        assert_eq!(reduced_state(&status), Some(ATTENTION));
+        assert!(reports_turns(&status));
     }
 
     #[test]
@@ -145,17 +144,7 @@ mod tests {
             ("waiting_for_input", json!({}), Some(BLOCKED)),
             (
                 "waiting_for_input",
-                json!({"menu_prompt_active": true}),
-                Some(BLOCKED),
-            ),
-            (
-                "waiting_for_input",
                 json!({"outcome": "failed:rate limit"}),
-                Some(ATTENTION),
-            ),
-            (
-                "waiting_for_input",
-                json!({"attention_reason": "bell"}),
                 Some(ATTENTION),
             ),
             ("errored", json!({}), Some(ATTENTION)),
@@ -168,15 +157,12 @@ mod tests {
             assert_eq!(reduced_state(&status), reduced, "{state} {extra}");
         }
         assert_eq!(reduced_state(&json!({"hooked": false})), None);
-        assert_eq!(
-            blocked_reason(&json!({"menu_prompt_active": true, "message": "x"})),
-            "menu prompt"
-        );
+        assert_eq!(blocked_reason(&json!({"message": "x"})), "x");
         assert_eq!(blocked_reason(&json!({})), "permission or question");
     }
 
     #[test]
-    fn a_projection_without_an_agent_reads_idle_and_a_bell_keeps_its_reason() {
+    fn a_projection_without_an_agent_reads_idle() {
         let mut fleet = json!({"agents": [
             {"session": "a", "generation": 1},
             {"session": "b", "generation": 1},
@@ -186,11 +172,10 @@ mod tests {
             &mut fleet,
             &[
                 json!({"session": "a", "generation": 1, "state_seq": 0, "activity": null}),
-                json!({"session": "b", "generation": 1, "state_seq": 3, "attention_reason": "bell", "activity": {"state": "waiting_for_input"}}),
+                json!({"session": "b", "generation": 1, "state_seq": 3, "activity": {"state": "waiting_for_input"}}),
             ],
         );
         assert_eq!(fleet["agents"][0]["state"], "idle");
         assert_eq!(fleet["agents"][1]["state"], "waiting_for_input");
-        assert_eq!(fleet["agents"][1]["attention_reason"], "bell");
     }
 }

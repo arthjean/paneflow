@@ -75,6 +75,21 @@ impl Follower {
             );
         }
     }
+
+    fn next_event_with_status(&self, status: &str, budget: Duration) -> Value {
+        let deadline = Instant::now() + budget;
+        loop {
+            let event =
+                self.next_of_type("event", deadline.saturating_duration_since(Instant::now()));
+            if event["status"] == status {
+                return event;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no event reported {status} within {budget:?}"
+            );
+        }
+    }
 }
 
 impl Drop for Follower {
@@ -96,6 +111,15 @@ fn shell_params() -> Value {
         "cols": 80,
         "rows": 24,
     })
+}
+
+fn declare_command(state: &str) -> String {
+    #[cfg(windows)]
+    return format!(
+        "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state={state}' + [char]7)\"\r\n"
+    );
+    #[cfg(unix)]
+    return format!("printf '\\033]7501;state={state}\\007'\n");
 }
 
 fn reopen_once_the_endpoint_is_released(
@@ -169,7 +193,6 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
     assert_eq!(known["status"], "idle");
     assert_eq!(known["unread"], false);
 
-    let submitted = Instant::now();
     owner
         .call(
             METHOD_AGENT_EVENT,
@@ -183,11 +206,20 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
             }),
         )
         .expect("the core accepts the opening hook");
-    let busy = follower.next_of_type("event", LINE_WAIT);
+    let hooked = follower.next_of_type("event", LINE_WAIT);
+    assert_eq!(
+        hooked["status"], "idle",
+        "a hook never moves the state: {hooked}"
+    );
+
+    let submitted = Instant::now();
+    owner
+        .input(&session, generation, declare_command("working").as_bytes())
+        .expect("the declaration reaches the core-owned PTY");
+    let busy = follower.next_event_with_status("busy", LINE_WAIT);
     let latency = submitted.elapsed();
     assert_eq!(busy["session"], session.to_string());
-    assert_eq!(busy["status"], "busy");
-    assert_eq!(busy["activity_source"], "hooks");
+    assert_eq!(busy["activity_source"], "declared");
     assert_eq!(busy["agent"]["state"], "thinking");
     assert_eq!(busy["runtime_id"], "com.anthropic.claude-code");
     assert_eq!(busy["unread"], false);
@@ -209,8 +241,10 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
             }),
         )
         .expect("the core accepts the stop hook");
-    let settled = follower.next_of_type("event", LINE_WAIT);
-    assert_eq!(settled["status"], "idle");
+    owner
+        .input(&session, generation, declare_command("done").as_bytes())
+        .expect("the completion reaches the core-owned PTY");
+    let settled = follower.next_event_with_status("idle", LINE_WAIT);
     assert_eq!(settled["notify"]["kind"], "finished");
     assert_eq!(
         settled["unread"], true,

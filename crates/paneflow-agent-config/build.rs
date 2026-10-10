@@ -13,7 +13,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtimes_dir = manifest_dir.join("..").join("..").join("runtimes");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_support.rs");
-    println!("cargo:rerun-if-changed=src/screen_rules.rs");
     println!("cargo:rerun-if-changed={}", runtimes_dir.display());
     let descriptors =
         build_support::discover_and_validate(&runtimes_dir).map_err(io::Error::other)?;
@@ -21,9 +20,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rerun-if-changed={}", descriptor.path.display());
         if let Some(directory) = descriptor.path.parent() {
             println!("cargo:rerun-if-changed={}", directory.display());
-        }
-        if let Some(screen) = &descriptor.screen {
-            println!("cargo:rerun-if-changed={}", screen.path.display());
         }
     }
     let generated = build_support::generate_catalog(&descriptors).map_err(io::Error::other)?;

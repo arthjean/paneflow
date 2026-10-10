@@ -3,7 +3,11 @@ use std::collections::VecDeque;
 use paneflow_config::schema::{SessionGeneration, SessionId};
 use serde_json::{Value, json};
 
-use crate::hook_state::{Notice, Outcome};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    Finished,
+    NeedsInput,
+}
 
 pub const MAX_NOTIFICATION_BODY_CHARS: usize = 200;
 
@@ -58,13 +62,13 @@ impl ActivityLog {
         &mut self,
         session: &SessionId,
         generation: SessionGeneration,
-        outcome: &Outcome,
+        outcome: &str,
         at_ms: u64,
     ) {
         let entry = ActivityLogEntry {
             session: session.clone(),
             generation,
-            outcome: outcome.wire_string(),
+            outcome: outcome.to_string(),
             at_ms,
         };
         if self.entries.len() == ACTIVITY_LOG_CAPACITY {
@@ -108,13 +112,9 @@ pub fn truncate_body(raw: Option<&str>) -> Option<String> {
 
 pub fn notification_for(
     notice: Notice,
-    hook_sourced: bool,
     runtime_label: &str,
     body: Option<&str>,
 ) -> Option<Notification> {
-    if !hook_sourced && notice == Notice::Finished {
-        return None;
-    }
     let kind = match notice {
         Notice::Finished => KIND_FINISHED,
         Notice::NeedsInput => KIND_NEEDS_INPUT,
@@ -131,23 +131,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_screen_sourced_completion_never_notifies_but_a_menu_edge_does() {
-        assert_eq!(
-            notification_for(Notice::Finished, false, "Claude Code", Some("done")),
-            None
-        );
-        assert_eq!(
-            notification_for(Notice::NeedsInput, false, "Claude Code", None)
-                .map(|notification| notification.kind),
-            Some(KIND_NEEDS_INPUT)
-        );
-    }
-
-    #[test]
     fn a_finished_notification_carries_the_label_and_a_two_hundred_character_body() {
         let long = "x".repeat(500);
-        let notification = notification_for(Notice::Finished, true, "Claude Code", Some(&long))
-            .expect("a hook-sourced completion notifies");
+        let notification = notification_for(Notice::Finished, "Claude Code", Some(&long))
+            .expect("a completion notifies");
         assert_eq!(notification.kind, KIND_FINISHED);
         assert_eq!(notification.runtime_label, "Claude Code");
         assert_eq!(
@@ -155,7 +142,7 @@ mod tests {
             Some(MAX_NOTIFICATION_BODY_CHARS)
         );
 
-        let bare = notification_for(Notice::NeedsInput, true, "Codex", Some("   "))
+        let bare = notification_for(Notice::NeedsInput, "Codex", Some("   "))
             .expect("a need for input notifies");
         assert_eq!(bare.kind, KIND_NEEDS_INPUT);
         assert_eq!(bare.body, None);
@@ -165,34 +152,24 @@ mod tests {
     fn the_activity_log_keeps_each_settlement_and_stays_bounded() {
         let session = SessionId::new();
         let mut log = ActivityLog::default();
-        log.record(&session, SessionGeneration::FIRST, &Outcome::Expired, 10);
-        log.record(&session, SessionGeneration::FIRST, &Outcome::Expired, 20);
+        log.record(&session, SessionGeneration::FIRST, "completed", 10);
+        log.record(&session, SessionGeneration::FIRST, "completed", 20);
         assert_eq!(log.len(), 2);
 
-        log.record(
-            &session,
-            SessionGeneration::FIRST,
-            &Outcome::Failed(Some("matcher".to_string())),
-            30,
-        );
-        log.record(&session, SessionGeneration::FIRST, &Outcome::Cancelled, 40);
+        log.record(&session, SessionGeneration::FIRST, "failed:matcher", 30);
         assert_eq!(
             log.entries()
                 .map(|entry| entry.outcome.as_str())
                 .collect::<Vec<_>>(),
-            vec!["expired", "expired", "failed:matcher", "cancelled"]
+            vec!["completed", "completed", "failed:matcher"]
         );
 
         for tick in 0..ACTIVITY_LOG_CAPACITY * 2 {
-            let outcome = if tick % 2 == 0 {
-                Outcome::Completed
-            } else {
-                Outcome::Expired
-            };
+            let outcome = if tick % 2 == 0 { "completed" } else { "failed" };
             log.record(
                 &SessionId::new(),
                 SessionGeneration::FIRST,
-                &outcome,
+                outcome,
                 tick as u64,
             );
         }

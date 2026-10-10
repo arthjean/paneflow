@@ -24,7 +24,6 @@ use crate::runtime::{
     Checkpoint, CompletedRecord, LaunchCancel, LaunchWait, OutputSlice, RuntimeError,
     RuntimeNotice, RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
 };
-use crate::session_input::SessionInput;
 
 mod spawn_env;
 mod staging;
@@ -99,8 +98,6 @@ struct SessionRecord {
     runtime: Option<Arc<SessionRuntime>>,
     completed: Option<CompletedRuntime>,
     launch: Option<PendingLaunch>,
-    input: Arc<Mutex<SessionInput>>,
-    escape_fence: bool,
     seed: Arc<Mutex<SeedLedger>>,
     durability: Durability,
     critical: Arc<CriticalFlush>,
@@ -110,20 +107,11 @@ struct SessionRecord {
 
 impl SessionRecord {
     fn fresh(manifest: Arc<Mutex<SessionManifest>>) -> Self {
-        let escape_fence = escape_fence_of(
-            manifest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .runtime
-                .as_ref(),
-        );
         Self {
             manifest,
             runtime: None,
             completed: None,
             launch: None,
-            input: Arc::new(Mutex::new(SessionInput::default())),
-            escape_fence,
             seed: Arc::new(Mutex::new(SeedLedger::default())),
             durability: Arc::new(SessionPersistence::default()),
             critical: Arc::new(CriticalFlush::default()),
@@ -161,17 +149,7 @@ impl SessionRecord {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .generation
     }
-
-    fn set_escape_fence(&mut self, fenced: bool) {
-        self.escape_fence = fenced;
-        self.input
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
-    }
 }
-
-pub(crate) type FencedInputTarget = (SessionId, Arc<Mutex<SessionInput>>);
 
 pub(crate) struct ScanTarget {
     pub(crate) session: SessionId,
@@ -188,13 +166,6 @@ pub fn launch_binding_for_command(
         .and_then(|stem| stem.to_str())
         .unwrap_or(command);
     paneflow_agent_config::runtime_by_command_alias(alias)
-}
-
-fn escape_fence_of(runtime: Option<&HostedSessionRuntime>) -> bool {
-    runtime
-        .and_then(|runtime| runtime.launch_binding.as_deref())
-        .and_then(paneflow_agent_config::runtime_by_id)
-        .is_some_and(|runtime| runtime.lifecycle.escape_cancels_turn)
 }
 
 fn with_launch_binding(
@@ -239,7 +210,6 @@ pub struct SessionHost {
     helper_dir: Option<PathBuf>,
     permissions: crate::control::ControlPermissions,
     submit_paste_delay: std::time::Duration,
-    screen_rules: Arc<crate::screen_rule_registry::ScreenRuleRegistry>,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
     shutting_down: AtomicBool,
@@ -364,7 +334,6 @@ impl SessionHost {
             helper_dir,
             permissions,
             submit_paste_delay,
-            screen_rules: Arc::new(crate::screen_rule_registry::ScreenRuleRegistry::with_builtin()),
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
@@ -380,10 +349,7 @@ impl SessionHost {
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
-        host.reload_local_screen_rules();
         crate::viewport_scan::spawn(&host);
-        crate::screen_catalog::spawn(&host);
-        crate::cancellation_scan::spawn(&host);
         crate::maintenance::spawn(&host);
         Ok(host)
     }
@@ -446,55 +412,6 @@ impl SessionHost {
 
     fn next_operation(&self) -> OperationId {
         self.next_operation.fetch_add(1, Ordering::Relaxed)
-    }
-
-    pub(crate) fn fenced_input_targets(&self) -> Vec<FencedInputTarget> {
-        self.lock_sessions()
-            .iter()
-            .filter(|(_, record)| record.escape_fence && record.is_live())
-            .map(|(session, record)| (session.clone(), Arc::clone(&record.input)))
-            .collect()
-    }
-
-    pub(crate) fn commit_marker<T: Send + 'static>(
-        &self,
-        session: &SessionId,
-        generation: SessionGeneration,
-        write: impl FnOnce(&Path) -> T + Send + 'static,
-    ) -> Option<T> {
-        let (manifest, seed) = {
-            let sessions = self.lock_sessions();
-            let record = sessions.get(session)?;
-            (Arc::clone(&record.manifest), Arc::clone(&record.seed))
-        };
-        let directory = self.session_data_dir(session);
-        let named = session.clone();
-        let written = self.persistence.run_exclusive(CRITICAL_DEADLINE, move || {
-            let ledger = seed
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if ledger.removed {
-                return None;
-            }
-            let current = manifest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .generation;
-            if current != generation {
-                log::debug!(
-                    "paneflow-host: marker for session {named} generation {generation} dropped; the session is at {current}"
-                );
-                return None;
-            }
-            Some(write(&directory))
-        });
-        match written {
-            Ok(marker) => marker,
-            Err(error) => {
-                log::warn!("paneflow-host: marker of session {session} not recorded: {error}");
-                None
-            }
-        }
     }
 
     pub(crate) fn streaming_connections(&self) -> &AtomicUsize {
@@ -578,22 +495,6 @@ impl SessionHost {
         }
     }
 
-    pub(crate) fn announce_cancellation(
-        &self,
-        session: &SessionId,
-        generation: SessionGeneration,
-        marker: &crate::hook_assets::Cancellation,
-    ) {
-        self.agent_bus.broadcast(&json!({
-            "type": "cancellation",
-            "session": session,
-            "generation": generation,
-            "runtime_generation": marker.runtime_generation,
-            "cancelled_at": marker.cancelled_at,
-            "submitted_at": marker.submitted_at,
-        }));
-    }
-
     pub fn session_data_dir(&self, session: &SessionId) -> PathBuf {
         paneflow_home::host_session_data_dir_in(&self.home, session.as_str())
     }
@@ -612,27 +513,6 @@ impl SessionHost {
                 })
             })
             .collect()
-    }
-
-    pub(crate) fn scan_target(&self, session: &SessionId) -> Result<ScanTarget, HostError> {
-        let sessions = self.lock_sessions();
-        let record = sessions
-            .get(session)
-            .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
-        if record.launch.is_some() {
-            return Err(HostError::LaunchPending(session.clone()));
-        }
-        let runtime = record
-            .runtime
-            .clone()
-            .filter(|runtime| record.is_live() && !runtime.retired())
-            .ok_or_else(|| HostError::SessionNotLive(session.clone()))?;
-        Ok(ScanTarget {
-            session: session.clone(),
-            generation: record.generation(),
-            manifest: Arc::clone(&record.manifest),
-            runtime,
-        })
     }
 
     pub fn retire(&self) {
@@ -686,16 +566,8 @@ impl SessionHost {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions);
     }
 
-    pub fn screen_rules(&self) -> &crate::screen_rule_registry::ScreenRuleRegistry {
-        &self.screen_rules
-    }
-
     pub fn home(&self) -> &Path {
         &self.home
-    }
-
-    pub fn reload_local_screen_rules(&self) -> bool {
-        self.screen_rules.reload_local(&self.home)
     }
 
     pub fn submit_paste_delay(&self) -> std::time::Duration {
@@ -940,10 +812,6 @@ impl SessionHost {
                 "agent_bus_session_removed_broadcasts",
                 broadcasts.session_removed.get(),
             ),
-            (
-                "agent_bus_cancellation_broadcasts",
-                broadcasts.cancellation.get(),
-            ),
             ("agent_bus_event_broadcasts", broadcasts.event.get()),
             ("agent_bus_snapshot_broadcasts", self.agent_snapshots.get()),
         ] {
@@ -1005,10 +873,7 @@ impl SessionHost {
                     last_hook: summary.manifest.last_hook,
                     generation_started_at_ms: summary.manifest.generation_started_at_ms,
                     screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
-                    screen_activity: summary.manifest.screen_activity,
-                    declared_blocker: summary.manifest.declared_blocker,
                     declared_status: summary.manifest.declared_status,
-                    menu_prompt_active: summary.manifest.menu_prompt_active,
                     observed_runtime: summary
                         .manifest
                         .runtime
@@ -1306,10 +1171,7 @@ impl SessionHost {
             hook_revision: 0,
             generation_started_at_ms: Some(created),
             screen_changed_at_ms: None,
-            screen_activity: None,
-            declared_blocker: None,
             declared_status: None,
-            menu_prompt_active: false,
             runtime: None,
             final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -1498,10 +1360,7 @@ impl SessionHost {
             guard.last_hook = None;
             guard.generation_started_at_ms = Some(now_ms());
             guard.screen_changed_at_ms = None;
-            guard.screen_activity = None;
-            guard.declared_blocker = None;
             guard.declared_status = None;
-            guard.menu_prompt_active = false;
             guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
             guard.host_build_id = crate::protocol::host_build_id();
@@ -1534,7 +1393,6 @@ impl SessionHost {
                 cancelled: false,
                 fallback_owner: None,
             });
-            record.set_escape_fence(false);
             record.durability.clear_error();
             self.persistence.reserve_final(&record.durability);
             (manifest, spec, Arc::clone(&record.durability))
@@ -1552,12 +1410,10 @@ impl SessionHost {
                     .is_some_and(|launch| launch.operation == operation)
             {
                 record.launch = None;
-                let fenced = escape_fence_of(prior.runtime.as_ref());
                 *record
                     .manifest
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = prior;
-                record.set_escape_fence(fenced);
                 drop(sessions);
                 self.persist_final(&manifest, &durability);
             }
@@ -1863,10 +1719,6 @@ impl SessionHost {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let binding =
                 launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string());
-            let fenced = binding
-                .as_deref()
-                .and_then(paneflow_agent_config::runtime_by_id)
-                .is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
             guard.runtime = with_launch_binding(guard.runtime.take(), binding);
             guard.process = Some(process);
             guard.lifecycle = if cancelled {
@@ -1888,7 +1740,6 @@ impl SessionHost {
             record.runtime = Some(Arc::clone(&runtime));
             record.completed = None;
             record.launch = None;
-            record.set_escape_fence(fenced);
             cancelled
         };
         if cancelled {
@@ -2244,24 +2095,9 @@ impl SessionHost {
         bytes: Vec<u8>,
         origin: InputOrigin,
     ) -> Result<usize, HostError> {
-        let fenced = {
-            let sessions = self.lock_sessions();
-            sessions
-                .get(session)
-                .filter(|record| record.escape_fence)
-                .map(|record| (Arc::clone(&record.input), record.generation()))
-        };
-        let observed = fenced.as_ref().map(|_| bytes.clone());
-        let accepted = self.with_live_runtime(session, generation, |runtime| {
+        self.with_live_runtime(session, generation, |runtime| {
             runtime.input_from(bytes, origin)
-        })?;
-        if let (Some((input, captured)), Some(observed)) = (fenced, observed) {
-            input
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .observe(&observed, std::time::SystemTime::now(), captured);
-        }
-        Ok(accepted)
+        })
     }
 
     pub fn bind_runtime(
@@ -2307,17 +2143,9 @@ impl SessionHost {
                 m.runtime = with_launch_binding(m.runtime.take(), binding);
             },
         );
-        let fenced = bound.is_some_and(|bound| bound.lifecycle.escape_cancels_turn);
-        if let Some(record) = self.lock_sessions().get_mut(session)
-            && record.generation() == current
-            && Arc::ptr_eq(&record.manifest, &manifest)
-        {
-            record.set_escape_fence(fenced);
-        }
         Ok(json!({
             "session": session,
             "launch_binding": bound.map(|bound| bound.id),
-            "escape_cancels_turn": fenced,
         }))
     }
 
@@ -2767,9 +2595,6 @@ impl SessionHost {
             |record| {
                 apply(record);
                 if !record.lifecycle.is_running() {
-                    record.screen_activity = None;
-                    record.declared_blocker = None;
-                    record.menu_prompt_active = false;
                     retain_declared_outcome(&mut record.declared_status);
                 }
             },
@@ -2815,9 +2640,6 @@ impl SessionHost {
                             code: exit.code,
                             signal: exit.signal,
                         };
-                        guard.screen_activity = None;
-                        guard.declared_blocker = None;
-                        guard.menu_prompt_active = false;
                         retain_declared_outcome(&mut guard.declared_status);
                     }
                     RuntimeNotice::Unverified(reason) => {

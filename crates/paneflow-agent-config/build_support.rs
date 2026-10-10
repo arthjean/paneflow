@@ -1,15 +1,5 @@
 #![cfg_attr(test, allow(dead_code))]
 
-#[cfg(not(all(test, feature = "screen-rules")))]
-#[path = "src/screen_rules.rs"]
-#[allow(
-    dead_code,
-    reason = "the build script only parses and validates rules, the evaluator serves the host"
-)]
-mod screen_rules;
-#[cfg(all(test, feature = "screen-rules"))]
-use crate::screen_rules;
-
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -26,7 +16,6 @@ pub struct Descriptor {
     pub display: Display,
     pub detection: Detection,
     pub environment: Environment,
-    pub lifecycle: Lifecycle,
     pub integration: Integration,
     pub resume: Option<Resume>,
     pub sessions: Option<Sessions>,
@@ -67,49 +56,6 @@ pub const CONTESTED_ALIASES: &[&str] = &["fx"];
 #[serde(deny_unknown_fields)]
 pub struct Environment {
     pub strip_inherited: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Lifecycle {
-    pub source: LifecycleSource,
-    pub authority: LifecycleAuthority,
-    pub fallback: LifecycleFallback,
-    pub escape_cancels_turn: bool,
-    pub attention_clears_on_output: bool,
-    pub anchor_start_event_to_output: bool,
-    #[serde(default)]
-    pub bell_attention: Option<bool>,
-}
-
-impl Lifecycle {
-    fn resolved_bell_attention(&self) -> bool {
-        self.bell_attention
-            .unwrap_or(self.authority != LifecycleAuthority::Complete)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleSource {
-    Hooks,
-    Output,
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleAuthority {
-    Complete,
-    Screen,
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LifecycleFallback {
-    Screen,
-    None,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -194,7 +140,6 @@ impl TryFrom<String> for SkillsDir {
 }
 
 pub const ACCEPTED_HOOK_ADAPTERS: &str = "none, claude, codex";
-pub const INSTALLER_HOOK_ADAPTERS: &str = "claude, codex";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
@@ -314,28 +259,6 @@ pub struct SuggestedPreset {
 pub struct LocatedDescriptor {
     pub path: PathBuf,
     pub descriptor: Descriptor,
-    pub screen: Option<ScreenRules>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScreenRules {
-    pub path: PathBuf,
-    pub states: BTreeSet<&'static str>,
-}
-
-pub const SCREEN_RULES_FILE: &str = "screen.toml";
-
-fn read_screen_rules(path: &Path) -> Result<Option<ScreenRules>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let rules = screen_rules::parse_base_rules(&text, screen_rules::RuleOrigin::Builtin)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(Some(ScreenRules {
-        path: path.to_path_buf(),
-        states: rules.iter().map(|rule| rule.state.as_str()).collect(),
-    }))
 }
 
 pub fn discover_and_validate(root: &Path) -> Result<Vec<LocatedDescriptor>, String> {
@@ -361,12 +284,7 @@ pub fn discover_and_validate(root: &Path) -> Result<Vec<LocatedDescriptor>, Stri
             fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let descriptor = toml::from_str::<Descriptor>(&text)
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        let screen = read_screen_rules(&path.with_file_name(SCREEN_RULES_FILE))?;
-        descriptors.push(LocatedDescriptor {
-            path,
-            descriptor,
-            screen,
-        });
+        descriptors.push(LocatedDescriptor { path, descriptor });
     }
     descriptors.sort_by_key(|located| located.descriptor.display.order);
     validate(&descriptors)?;
@@ -513,58 +431,10 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 path.display()
             ));
         }
-        if runtime.lifecycle.bell_attention == Some(true)
-            && runtime.lifecycle.authority == LifecycleAuthority::Complete
-        {
-            errors.push(format!(
-                "{}: lifecycle.bell_attention = true conflicts with authority = 'complete', whose hooks own attention",
-                path.display()
-            ));
-        }
-        let screen_states = located.screen.as_ref().map(|screen| &screen.states);
-        if runtime.lifecycle.fallback == LifecycleFallback::Screen
-            && !screen_states
-                .is_some_and(|states| states.contains("working") && states.contains("idle"))
-        {
-            errors.push(format!(
-                "{}: lifecycle.fallback = 'screen' requires a {SCREEN_RULES_FILE} beside it with at least one working and one idle rule",
-                path.display()
-            ));
-        }
-        if runtime.lifecycle.authority == LifecycleAuthority::None
-            && runtime.lifecycle.fallback != LifecycleFallback::None
-        {
-            errors.push(format!(
-                "{}: lifecycle.authority = 'none' requires fallback = 'none'",
-                path.display()
-            ));
-        }
-        if runtime.lifecycle.authority == LifecycleAuthority::Screen
-            && runtime.lifecycle.fallback != LifecycleFallback::Screen
-        {
-            errors.push(format!(
-                "{}: lifecycle.authority = 'screen' requires fallback = 'screen'",
-                path.display()
-            ));
-        }
         let adapter = runtime.integration.hook_adapter;
-        if runtime.lifecycle.authority == LifecycleAuthority::Complete && !adapter.has_installer() {
-            errors.push(format!(
-                "{}: lifecycle.authority = 'complete' requires an integration.hook_adapter with an installer, got '{}'; accepted adapters: {INSTALLER_HOOK_ADAPTERS}",
-                path.display(),
-                adapter.name()
-            ));
-        }
         if adapter.has_installer() && runtime.integration.mcp_config.is_none() {
             errors.push(format!(
                 "{}: integration.hook_adapter = '{}' installs the MCP bridge with the hooks and requires an integration.mcp_config; accepted writers: {ACCEPTED_MCP_CONFIGS}",
-                path.display(),
-                adapter.name()
-            ));
-        }
-        if adapter.has_installer() && runtime.lifecycle.authority != LifecycleAuthority::Complete {
-            errors.push(format!(
-                "{}: integration.hook_adapter = '{}' installs lifecycle hooks and requires lifecycle.authority = 'complete'",
                 path.display(),
                 adapter.name()
             ));
@@ -793,16 +663,6 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             strings(&runtime.environment.strip_inherited)
         ));
         output.push_str(&format!(
-            "lifecycle: RuntimeLifecycle {{ source: RuntimeLifecycleSource::{}, authority: RuntimeLifecycleAuthority::{}, fallback: RuntimeLifecycleFallback::{}, escape_cancels_turn: {}, attention_clears_on_output: {}, anchor_start_event_to_output: {}, bell_attention: {} }},\n",
-            source(runtime.lifecycle.source),
-            authority(runtime.lifecycle.authority),
-            fallback(runtime.lifecycle.fallback),
-            runtime.lifecycle.escape_cancels_turn,
-            runtime.lifecycle.attention_clears_on_output,
-            runtime.lifecycle.anchor_start_event_to_output,
-            runtime.lifecycle.resolved_bell_attention()
-        ));
-        output.push_str(&format!(
             "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {} }},\n",
             runtime.integration.summary,
             option_string(runtime.integration.post_install_step.as_deref()),
@@ -931,23 +791,6 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         ));
     }
     output.push_str("_ => None,\n}\n}\n");
-    output.push_str("#[cfg(feature = \"screen-rules\")]\npub static SCREEN_RULE_SOURCES: &[(&str, &str)] = &[\n");
-    for located in descriptors {
-        let Some(screen) = &located.screen else {
-            continue;
-        };
-        let path = fs::canonicalize(&screen.path)
-            .map_err(|error| format!("{}: {error}", screen.path.display()))?;
-        let path = path
-            .to_str()
-            .ok_or_else(|| format!("{}: the path is not valid UTF-8", screen.path.display()))?;
-        output.push_str(&format!(
-            "({:?}, include_str!({:?})),\n",
-            located.descriptor.slug,
-            path.strip_prefix(r"\\?\").unwrap_or(path)
-        ));
-    }
-    output.push_str("];\n");
     Ok(output)
 }
 
@@ -1050,29 +893,6 @@ fn option_string(value: Option<&str>) -> String {
     value.map_or_else(|| "None".to_string(), |value| format!("Some({value:?})"))
 }
 
-fn source(value: LifecycleSource) -> &'static str {
-    match value {
-        LifecycleSource::Hooks => "Hooks",
-        LifecycleSource::Output => "Output",
-        LifecycleSource::None => "None",
-    }
-}
-
-fn authority(value: LifecycleAuthority) -> &'static str {
-    match value {
-        LifecycleAuthority::Complete => "Complete",
-        LifecycleAuthority::Screen => "Screen",
-        LifecycleAuthority::None => "None",
-    }
-}
-
-fn fallback(value: LifecycleFallback) -> &'static str {
-    match value {
-        LifecycleFallback::Screen => "Screen",
-        LifecycleFallback::None => "None",
-    }
-}
-
 fn hook_adapter(value: HookAdapter) -> &'static str {
     match value {
         HookAdapter::Claude => "Claude",
@@ -1107,14 +927,6 @@ script_path_signatures = []
 
 [environment]
 strip_inherited = []
-
-[lifecycle]
-source = "output"
-authority = "none"
-fallback = "none"
-escape_cancels_turn = false
-attention_clears_on_output = true
-anchor_start_event_to_output = true
 
 [integration]
 summary = "None"
@@ -1157,8 +969,15 @@ command = "{alias}"
             (
                 "terminal_title_signal",
                 base.replace(
-                    "anchor_start_event_to_output = true\n",
-                    "anchor_start_event_to_output = true\nterminal_title_signal = false\n",
+                    "script_path_signatures = []\n",
+                    "script_path_signatures = []\nterminal_title_signal = false\n",
+                ),
+            ),
+            (
+                "lifecycle",
+                base.replace(
+                    "[integration]",
+                    "[lifecycle]\nescape_cancels_turn = false\n\n[integration]",
                 ),
             ),
             (
@@ -1207,28 +1026,9 @@ command = "{alias}"
     }
 
     #[test]
-    fn a_complete_authority_without_an_installer_fails_naming_the_file_field_and_adapters() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("source = \"output\"", "source = \"hooks\"")
-            .replace("authority = \"none\"", "authority = \"complete\"");
-        write_runtime(temp.path(), "alpha", &text);
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(error.contains("alpha"), "{error}");
-        assert!(error.contains("runtime.toml"), "{error}");
-        assert!(error.contains("lifecycle.authority"), "{error}");
-        assert!(error.contains("integration.hook_adapter"), "{error}");
-        assert!(
-            error.contains("accepted adapters: claude, codex"),
-            "{error}"
-        );
-    }
-
-    #[test]
     fn a_hook_adapter_without_an_installer_fails_listing_the_accepted_adapters() {
         let temp = tempfile::TempDir::new().unwrap();
         let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("authority = \"none\"", "authority = \"complete\"")
             .replace("hook_adapter = \"none\"", "hook_adapter = \"gemini\"");
         write_runtime(temp.path(), "alpha", &text);
         let error = discover_and_validate(temp.path()).unwrap_err();
@@ -1267,84 +1067,6 @@ command = "{alias}"
                 && error.contains(ACCEPTED_MCP_CONFIGS),
             "{error}"
         );
-    }
-
-    #[test]
-    fn an_installer_adapter_requires_the_complete_authority() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("hook_adapter = \"none\"", "hook_adapter = \"claude\"");
-        write_runtime(temp.path(), "alpha", &text);
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(
-            error.contains("requires lifecycle.authority = 'complete'"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn a_screen_authority_requires_the_screen_fallback() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("authority = \"none\"", "authority = \"screen\"");
-        write_runtime(temp.path(), "alpha", &text);
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(
-            error.contains("lifecycle.authority = 'screen' requires fallback = 'screen'"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn an_invalid_screen_rule_file_fails_the_build_with_its_path_and_line() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("authority = \"none\"", "authority = \"screen\"")
-            .replace("fallback = \"none\"", "fallback = \"screen\"");
-        write_runtime(temp.path(), "alpha", &text);
-        fs::write(
-            temp.path().join("alpha").join(SCREEN_RULES_FILE),
-            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['(open']\n",
-        )
-        .unwrap();
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(error.contains("screen.toml: line 6"), "{error}");
-        assert!(error.contains("invalid regex"), "{error}");
-
-        fs::write(
-            temp.path().join("alpha").join(SCREEN_RULES_FILE),
-            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['busy']\n",
-        )
-        .unwrap();
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(
-            error.contains("at least one working and one idle rule"),
-            "{error}"
-        );
-
-        fs::write(
-            temp.path().join("alpha").join(SCREEN_RULES_FILE),
-            "engine = 2\n\n[[rules]]\nid = \"busy\"\nstate = \"working\"\nany = ['busy']\n\n[[rules]]\nid = \"prompt\"\nstate = \"idle\"\nany = ['>']\n",
-        )
-        .unwrap();
-        let descriptors = discover_and_validate(temp.path()).unwrap();
-        let generated = generate_catalog(&descriptors).unwrap();
-        assert!(generated.contains("SCREEN_RULE_SOURCES"), "{generated}");
-        assert!(
-            generated.contains("(\"alpha\", include_str!("),
-            "{generated}"
-        );
-    }
-
-    #[test]
-    fn rejects_screen_and_authority_inconsistencies() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let text = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("fallback = \"none\"", "fallback = \"screen\"");
-        write_runtime(temp.path(), "alpha", &text);
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(error.contains("requires a screen.toml"));
-        assert!(error.contains("authority = 'none'"));
     }
 
     fn with_resume(resume: &str) -> String {
@@ -1504,7 +1226,6 @@ command = "{alias}"
             generated.contains("title_prefix: Some(\"fx v\")"),
             "{generated}"
         );
-        assert!(generated.contains("bell_attention: true"), "{generated}");
 
         write_runtime(
             temp.path(),
@@ -1518,36 +1239,6 @@ command = "{alias}"
         );
     }
 
-    #[test]
-    fn bell_attention_defaults_from_the_authority_and_is_refused_beside_complete_hooks() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let hooked = descriptor("alpha", "com.example.alpha", "alpha")
-            .replace("authority = \"none\"", "authority = \"complete\"")
-            .replace("source = \"output\"", "source = \"hooks\"")
-            .replace(
-                "hook_adapter = \"none\"",
-                "hook_adapter = \"claude\"\nmcp_config = \"claude\"",
-            );
-        write_runtime(temp.path(), "alpha", &hooked);
-        let descriptors = discover_and_validate(temp.path()).unwrap();
-        let generated = generate_catalog(&descriptors).unwrap();
-        assert!(generated.contains("bell_attention: false"), "{generated}");
-
-        write_runtime(
-            temp.path(),
-            "alpha",
-            &hooked.replace(
-                "anchor_start_event_to_output = true",
-                "anchor_start_event_to_output = true\nbell_attention = true",
-            ),
-        );
-        let error = discover_and_validate(temp.path()).unwrap_err();
-        assert!(
-            error.contains("lifecycle.bell_attention = true conflicts with authority = 'complete'"),
-            "{error}"
-        );
-    }
-
     fn fixture_catalog_with_an_added_runtime() -> tempfile::TempDir {
         let catalog = tempfile::TempDir::new().unwrap();
         let runtimes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtimes");
@@ -1557,10 +1248,6 @@ command = "{alias}"
                 let slug = source.parent().unwrap().file_name().unwrap();
                 fs::create_dir_all(catalog.path().join(slug)).unwrap();
                 fs::copy(&source, catalog.path().join(slug).join("runtime.toml")).unwrap();
-                let rules = source.with_file_name("screen.toml");
-                if rules.is_file() {
-                    fs::copy(&rules, catalog.path().join(slug).join("screen.toml")).unwrap();
-                }
             }
         }
         write_runtime(

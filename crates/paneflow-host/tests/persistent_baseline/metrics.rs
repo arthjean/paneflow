@@ -379,7 +379,6 @@ fn role_of(thread_name: &str) -> &'static str {
         ("paneflow-host-pty-reader", "host.pty_reader"),
         ("paneflow-host-pty-writer", "host.pty_writer"),
         ("paneflow-host-viewport", "host.viewport_scan"),
-        ("paneflow-host-cancellation", "host.cancellation_scan"),
         ("paneflow-host-conn", "host.ipc_connection"),
         ("paneflow-host-accept", "host.ipc_accept"),
         ("paneflow-host-launch-owner", "host.launch_owner"),

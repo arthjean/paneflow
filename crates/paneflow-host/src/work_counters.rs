@@ -13,7 +13,6 @@ pub const HOST_COUNTERS: &[&str] = &[
     "foreground_observations",
     "agent_bus_session_broadcasts",
     "agent_bus_session_removed_broadcasts",
-    "agent_bus_cancellation_broadcasts",
     "agent_bus_event_broadcasts",
     "agent_bus_snapshot_broadcasts",
 ];

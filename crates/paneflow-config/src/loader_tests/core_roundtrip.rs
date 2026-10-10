@@ -46,7 +46,6 @@ fn test_serialization_roundtrip() {
         claude_code_bypass_permissions: None,
         ai_unrestricted: None,
         ai_injection_fence: None,
-        menu_attention_detection: None,
         on_quit: None,
         sidebar_ended_sessions: None,
         agent_button_visibility: BTreeMap::new(),

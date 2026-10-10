@@ -21,7 +21,6 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_FALLBACK: Duration = Duration::from_secs(2);
 const FRAME_WAIT: Duration = Duration::from_millis(100);
 const DRAIN_PER_TICK: usize = 256;
-const MENU_EVIDENCE_DEADLINE: Duration = Duration::from_millis(100);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -107,7 +106,6 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         capabilities: advertised_capabilities(),
     };
     let mut state = WorkerState::new(home);
-    state.set_menu_attention_detection(menu_attention_detection(home));
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
     let worker = Arc::new(Worker {
@@ -149,11 +147,6 @@ pub fn open(home: &Path) -> Result<RunningWorker, WorkerError> {
         .and_then(|executable| crate::protocol::executable_build_id(&executable))
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
     open_with_build_id(home, BUILD_ID.get_or_init(|| build_id).clone())
-}
-
-fn menu_attention_detection(home: &Path) -> bool {
-    paneflow_config::loader::load_config_from_path(&home.join("paneflow.json"))
-        .menu_attention_detection_enabled()
 }
 
 fn write_instance_record(worker: &Worker) {
@@ -280,14 +273,10 @@ fn pump(worker: &Arc<Worker>, home: &Path) {
 
 fn sweep(worker: &Arc<Worker>) {
     worker.sweeps.increment();
-    let core_endpoint = worker.core_endpoint.clone();
-    let evidence = move |session: &paneflow_config::schema::SessionId| {
-        crate::core_link::menu_prompt_active(&core_endpoint, session, MENU_EVIDENCE_DEADLINE)
-    };
     let (settled, sessions) = {
         let mut state = worker.lock_state();
         state.refresh_health();
-        let settled = state.sweep(std::time::SystemTime::now(), &evidence);
+        let settled = state.sweep();
         let sessions = state.snapshot();
         (settled, sessions)
     };
@@ -367,13 +356,6 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
             let projected = worker.lock_state().apply_core_event(&value);
             if let Some(projection) = projected {
                 broadcast_projection(worker, &projection, &value);
-            }
-        }
-        CoreFrame::Cancellation(value) => {
-            worker.core_connected.store(true, Ordering::Release);
-            let projected = worker.lock_state().apply_cancellation(&value);
-            if let Some(projection) = projected {
-                broadcast_projection(worker, &projection, &json!({}));
             }
         }
         CoreFrame::Disconnected(reason) => {
@@ -609,18 +591,6 @@ mod tests {
             std::fs::read_to_string(untracked.path().join(".claude").join("settings.local.json"))
                 .unwrap();
         assert!(untouched.contains("paneflow-ai-hook"));
-    }
-
-    #[test]
-    fn menu_attention_detection_defaults_on_and_the_setting_turns_it_off() {
-        let home = tempfile::tempdir().expect("a temporary home");
-        let running = open_with_config(home.path(), "{}");
-        assert!(running.worker().lock_state().menu_attention_detection());
-        running.stop();
-
-        let running = open_with_config(home.path(), r#"{"menu_attention_detection": false}"#);
-        assert!(!running.worker().lock_state().menu_attention_detection());
-        running.stop();
     }
 
     #[test]

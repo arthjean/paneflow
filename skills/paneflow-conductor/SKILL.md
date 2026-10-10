@@ -42,12 +42,13 @@ paneflow ls            # the panes themselves (surface_id, name, cwd, cmd)
 Paneflow detected but cannot hook). Target any pane by its `surface_id`, its
 name, `cmdline:<substr>`, or `cwd:<path>`.
 
-Every agent row also carries `hooked`. `hooked:true` means Paneflow tracks the
-agent's turns: you get its `ai.stop` / `ai.notification` events and its
-`last_result`, and its `state` is real. `hooked:false` means it was only spotted
-by a process scan - the row then reads `state:"unknown_running"` plus a short
-`reason` (e.g. `"no_hook"`), and you must NOT trust any derived `thinking`/`idle`
-for it. **Drive hooked agents by event; spawn them through `paneflow up` (section
+Every agent row also carries `hooked`. `hooked:true` means Paneflow receives the
+agent's lifecycle hooks: you get its `ai.stop` / `ai.notification` events and
+its `last_result`. The `state` itself comes only from what the agent declares
+through OSC 7501: trust a `thinking`/`waiting_for_input`/`idle` when the row's
+`activity_source` is `declared`, and treat any other row as having no turn
+state. `hooked:false` with `state:"unknown_running"` and a short `reason` (e.g.
+`"no_hook"`) means the agent was only spotted by a process scan. **Drive hooked agents by event; spawn them through `paneflow up` (section
 4) so they are hooked from the first frame instead of coming up `unknown_running`.**
 
 ## 2. Read one agent's state
@@ -168,7 +169,7 @@ starts, not a sentinel that was merely echoed in your prompt. `watch` emits
 
 Spawn agents from a declarative spec, NOT by typing `paneflow send <shell>
 "claude" --submit` into a bare shell. An agent launched via `up` is **hooked**
-(turn events, real `state`, `last_result`) and gets a stable name, cwd, and
+(turn events, `last_result`) and gets a stable name, cwd, and
 session; one you start by hand in a shell comes up `unknown_running`, so you get
 no `ai.stop` to wait on and have to fall back to scraping output.
 

@@ -313,10 +313,7 @@ fn finished_manifest(
         hook_revision: 0,
         generation_started_at_ms: None,
         screen_changed_at_ms: None,
-        screen_activity: None,
-        declared_blocker: None,
         declared_status: None,
-        menu_prompt_active: false,
         runtime: None,
         final_output: None,
         host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -360,10 +357,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
             hook_revision: 0,
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
-            screen_activity: None,
-            declared_blocker: None,
             declared_status: None,
-            menu_prompt_active: false,
             runtime: None,
             final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -637,15 +631,22 @@ fn a_listing_leaves_the_launch_environment_out_so_many_sessions_still_fit_a_fram
     let _ = host.stop(&created.manifest.session, None);
 }
 
+#[cfg(unix)]
+const DECLARE_BLOCKED_COMMAND: &[u8] =
+    b"printf '\\033]7501;state=blocked:kind=question:app=terraform\\007'\r\n";
+
+#[cfg(windows)]
+const DECLARE_BLOCKED_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state=blocked:kind=question:app=terraform' + [char]7)\"\r\n";
+
 #[test]
-fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
+fn the_viewport_scan_stamps_the_screen_and_publishes_a_declared_status() {
     let home = tempfile::tempdir().unwrap();
     let endpoint = home.path().join("host.sock");
     let host = SessionHost::open(home.path(), &endpoint).unwrap();
     let created = host.create(shell_request(100, 24)).unwrap();
     let session = created.manifest.session.clone();
     assert!(created.manifest.screen_changed_at_ms.is_none());
-    assert!(!created.manifest.menu_prompt_active);
+    assert!(created.manifest.declared_status.is_none());
 
     assert!(
         wait_until(Duration::from_secs(15), || {
@@ -655,33 +656,11 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
         "the scan stamps the first painted screen"
     );
     let stamped = host.inspect(&session).unwrap().manifest;
-    assert!(!stamped.menu_prompt_active);
+    assert!(stamped.declared_status.is_none());
     assert!(
         stamped.runtime.is_none(),
         "a plain shell is never mistaken for an agent runtime"
     );
-
-    host.input(
-        &session,
-        Some(SessionGeneration::FIRST),
-        b"echo Enter to select - up/down to navigate - Esc to cancel
-"
-        .to_vec(),
-    )
-    .unwrap();
-    assert!(
-        wait_until(Duration::from_secs(15), || {
-            host.inspect(&session).is_ok_and(|summary| {
-                summary.manifest.screen_changed_at_ms > stamped.screen_changed_at_ms
-            })
-        }),
-        "the echoed footer is scanned"
-    );
-    assert!(
-        !host.inspect(&session).unwrap().manifest.menu_prompt_active,
-        "a menu footer in a pane without an agent runtime is not an agent blocker"
-    );
-    let bin = tempfile::tempdir().unwrap();
 
     let manifest = Arc::clone(&host.lock_sessions()[&session].manifest);
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -690,7 +669,7 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
     let once = AtomicBool::new(false);
     host.set_barrier(Arc::new(move |point| {
         if point == Barrier::ManifestPersist
-            && manifest.lock().unwrap().menu_prompt_active
+            && manifest.lock().unwrap().declared_status.is_some()
             && !once.swap(true, Ordering::SeqCst)
         {
             entered_tx.send(()).unwrap();
@@ -704,134 +683,40 @@ fn the_viewport_scan_stamps_the_screen_and_flags_an_agent_drawn_menu() {
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        claude_in_foreground_after_echo(
-            bin.path(),
-            "Enter to select - up/down to navigate - Esc to cancel",
-        ),
+        DECLARE_BLOCKED_COMMAND.to_vec(),
     )
     .unwrap();
+    let blocked = |manifest: &SessionManifest| {
+        manifest
+            .declared_status
+            .as_ref()
+            .is_some_and(|declared| declared.state == "blocked")
+    };
     assert!(
         wait_until(Duration::from_secs(15), || {
             host.inspect(&session)
-                .is_ok_and(|summary| summary.manifest.menu_prompt_active)
+                .is_ok_and(|summary| blocked(&summary.manifest))
         }),
-        "an agent-drawn menu footer reaches the manifest without any hook"
+        "a declared status reaches the manifest without any hook"
     );
     let asking = host.inspect(&session).unwrap().manifest;
     assert!(asking.screen_changed_at_ms >= stamped.screen_changed_at_ms);
     entered_rx.recv_timeout(Duration::from_secs(15)).unwrap();
     let path = crate::manifest::manifest_path(home.path(), &session);
-    let persisted_while_paused = read_manifest(&path).unwrap().menu_prompt_active;
+    let persisted_while_paused = blocked(&read_manifest(&path).unwrap());
     release_tx.send(()).unwrap();
     host.set_barrier(Arc::new(|_| {}));
     assert!(
         !persisted_while_paused,
         "inspection observes the viewport edge before its persistence completes"
     );
-    assert!(wait_until(Duration::from_secs(15), || {
-        read_manifest(&path).is_ok_and(|manifest| manifest.menu_prompt_active)
-    }));
     assert!(
-        read_manifest(&path).unwrap().menu_prompt_active,
+        wait_until(Duration::from_secs(15), || {
+            read_manifest(&path).is_ok_and(|manifest| blocked(&manifest))
+        }),
         "the edge is persisted, not only held in memory"
     );
 
-    host.stop(&session, None).unwrap();
-}
-
-#[test]
-fn a_bare_escape_in_a_bound_claude_pane_fences_the_turn_and_the_next_enter_resumes_it() {
-    let home = tempfile::tempdir().unwrap();
-    let endpoint = home.path().join("host.sock");
-    let host = SessionHost::open(home.path(), &endpoint).unwrap();
-    let created = host.create(shell_request(100, 24)).unwrap();
-    let session = created.manifest.session.clone();
-    let directory = host.session_data_dir(&session);
-    let subscription = host.subscribe_agents();
-
-    host.input(&session, None, b"\x1b".to_vec()).unwrap();
-    std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 2);
-    assert_eq!(
-        crate::hook_assets::read_cancellation(&directory),
-        None,
-        "an unbound pane never fences a turn"
-    );
-
-    host.bind_runtime(&session, None, Some("com.anthropic.claude-code"))
-        .unwrap();
-    assert_eq!(
-        host.inspect(&session)
-            .unwrap()
-            .manifest
-            .runtime
-            .and_then(|runtime| runtime.launch_binding)
-            .as_deref(),
-        Some("com.anthropic.claude-code")
-    );
-
-    host.input(&session, None, b"\x1b".to_vec()).unwrap();
-    assert!(
-        wait_until(Duration::from_secs(5), || {
-            crate::hook_assets::read_cancellation(&directory).is_some()
-        }),
-        "a bare escape settles into a cancellation marker"
-    );
-    let fenced = crate::hook_assets::read_cancellation(&directory).unwrap();
-    assert_eq!(fenced.runtime_generation, SessionGeneration::FIRST.get());
-    assert_eq!(fenced.submitted_at, None);
-
-    let announced = wait_until(Duration::from_secs(5), || {
-        matches!(
-            subscription.frames.try_recv(),
-            Ok(frame) if frame["type"] == "cancellation"
-                && frame["session"] == session.to_string()
-        )
-    });
-    assert!(announced, "the fence is announced on the agent bus");
-
-    host.input(&session, None, b"retry\r".to_vec()).unwrap();
-    assert!(
-        wait_until(Duration::from_secs(5), || {
-            crate::hook_assets::read_cancellation(&directory)
-                .is_some_and(|marker| marker.submitted_at.is_some())
-        }),
-        "the next Enter records the resumption in the same marker"
-    );
-
-    host.bind_runtime(&session, None, None).unwrap();
-    host.input(&session, None, b"\x1b".to_vec()).unwrap();
-    std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 2);
-    let unbound = crate::hook_assets::read_cancellation(&directory).unwrap();
-    assert_eq!(
-        unbound.cancelled_at, fenced.cancelled_at,
-        "unbinding the runtime retires the fence"
-    );
-
-    assert!(
-        host.bind_runtime(&session, None, Some("com.example.nope"))
-            .is_err(),
-        "only a catalog runtime can be bound"
-    );
-
-    host.stop(&session, None).unwrap();
-}
-
-#[test]
-fn a_codex_pane_never_fences_an_escape_because_its_interrupt_hook_settles_the_turn() {
-    let home = tempfile::tempdir().unwrap();
-    let endpoint = home.path().join("host.sock");
-    let host = SessionHost::open(home.path(), &endpoint).unwrap();
-    let created = host.create(shell_request(80, 24)).unwrap();
-    let session = created.manifest.session.clone();
-    host.bind_runtime(&session, None, Some("com.openai.codex"))
-        .unwrap();
-
-    host.input(&session, None, b"\x1b".to_vec()).unwrap();
-    std::thread::sleep(crate::session_input::ESCAPE_SETTLE * 3);
-    assert_eq!(
-        crate::hook_assets::read_cancellation(&host.session_data_dir(&session)),
-        None
-    );
     host.stop(&session, None).unwrap();
 }
 
@@ -1412,10 +1297,7 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
         hook_revision: 0,
         generation_started_at_ms: None,
         screen_changed_at_ms: None,
-        screen_activity: None,
-        declared_blocker: None,
         declared_status: None,
-        menu_prompt_active: false,
         runtime: None,
         final_output: None,
         host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -1744,10 +1626,7 @@ fn admission_stops_at_eight_unresolved_launches() {
                 hook_revision: 0,
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
-                screen_activity: None,
-                declared_blocker: None,
                 declared_status: None,
-                menu_prompt_active: false,
                 runtime: None,
                 final_output: None,
                 host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -2129,7 +2008,7 @@ fn accepted_hook_frames_fit_the_reload_limit_and_oversized_events_never_commit()
 }
 
 #[test]
-fn a_delayed_seed_or_marker_write_never_recreates_a_removed_session_directory() {
+fn a_delayed_seed_write_never_recreates_a_removed_session_directory() {
     let home = tempfile::tempdir().unwrap();
     let host = SessionHost::open(home.path(), Path::new("seed-barrier")).unwrap();
     let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
@@ -2150,13 +2029,6 @@ fn a_delayed_seed_or_marker_write_never_recreates_a_removed_session_directory() 
         host.ingest_agent_event(&event),
         Err(HostError::SessionNotFound(_))
     ));
-    assert!(
-        host.commit_marker(&session, SessionGeneration::FIRST, |dir| {
-            crate::hook_assets::record_cancellation(dir, 1, std::time::SystemTime::now())
-        })
-        .is_none(),
-        "a marker for a removed session is dropped at the barrier"
-    );
     let late_seed = crate::manifest::write_hook_seed(
         home.path(),
         &session,
@@ -2166,11 +2038,6 @@ fn a_delayed_seed_or_marker_write_never_recreates_a_removed_session_directory() 
     assert!(
         late_seed.is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
         "a late seed write is refused instead of recreating the directory"
-    );
-    assert!(
-        crate::hook_assets::record_cancellation(&directory, 1, std::time::SystemTime::now())
-            .unwrap()
-            .is_none()
     );
     assert!(
         !directory.exists(),
@@ -2248,23 +2115,6 @@ fn a_data_directory_lost_mid_session_never_holds_the_final_state_or_the_quit() {
         !directory.exists(),
         "a skipped seed never recreates the lost directory"
     );
-}
-
-#[test]
-fn a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs() {
-    let home = tempfile::tempdir().unwrap();
-    let host = SessionHost::open(home.path(), Path::new("marker-generation")).unwrap();
-    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
-    host.stop(&session, None).unwrap();
-    host.restart(&session, None).unwrap();
-    let stale = host.commit_marker(&session, SessionGeneration::FIRST, |_| ());
-    assert!(
-        stale.is_none(),
-        "the captured generation is re-checked at commit"
-    );
-    let current = host.commit_marker(&session, SessionGeneration::FIRST.next(), |_| ());
-    assert!(current.is_some());
-    host.stop(&session, None).unwrap();
 }
 
 #[test]
@@ -2511,11 +2361,11 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
         .find(|target| target.session == session)
         .unwrap();
     assert_eq!(
-        host.commit_scan(&target, |record| record.menu_prompt_active = true),
+        host.commit_scan(&target, |record| record.screen_changed_at_ms = Some(42)),
         Some(true)
     );
     let observed = next_frame_of_type(&subscription, "session");
-    assert_eq!(observed["entry"]["menu_prompt_active"], true);
+    assert_eq!(observed["entry"]["screen_changed_at_ms"], 42);
 
     while subscription.frames.try_recv().is_ok() {}
     host.ingest_agent_event(&burst_event(&session, 0)).unwrap();
@@ -2554,37 +2404,20 @@ fn claude_in_foreground_after_echo(bin: &Path, line: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-fn control_call(host: &SessionHost, method: &str, params: Value) -> Value {
-    let permissions = crate::control::ControlPermissions {
-        scripting: false,
-        orchestration: false,
-        fenced_reads: true,
-    };
-    crate::control::dispatch(
-        host,
-        &mut crate::control::ConnectionAliases::default(),
-        permissions,
-        method,
-        &params,
-        crate::manifest::now_ms(),
-    )
-    .expect("a host-served method")
-    .unwrap_or_else(|error| panic!("{method} failed: {error:?}"))
-}
-
 #[test]
-fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control_plane() {
+fn a_foreground_agent_process_is_observed_without_any_hook_and_a_stale_hook_is_not() {
     let home = tempfile::tempdir().unwrap();
-    let host = SessionHost::open(home.path(), Path::new("screen-rules-hot-reload")).unwrap();
+    let host = SessionHost::open(home.path(), Path::new("foreground-observation")).unwrap();
     let created = host.create(shell_request(100, 24)).unwrap();
     let session = created.manifest.session.clone();
-
-    let unrecognized = control_call(&host, "agent.capture", json!({"session": session}));
-    assert_eq!(
-        unrecognized["runtime_id"],
-        Value::Null,
-        "a plain shell has no recognized agent, so a capture is refused by the CLI"
-    );
+    let observed = |host: &SessionHost| {
+        host.inspect(&session)
+            .unwrap()
+            .manifest
+            .runtime
+            .and_then(|runtime| runtime.current_observation)
+            .map(|observation| observation.id)
+    };
 
     let hook = crate::agent::AgentEvent::from_params(&json!({
         "session": session,
@@ -2598,115 +2431,32 @@ fn a_local_screen_rule_edit_is_live_within_a_second_and_explained_by_the_control
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        b"echo Press enter to confirm or esc to cancel\r\n".to_vec(),
+        b"echo SHELL_MARKER\r\n".to_vec(),
     )
     .unwrap();
     assert!(wait_until(Duration::from_secs(15), || {
         host.text(&session)
-            .is_ok_and(|text| text.text.contains("esc to cancel"))
+            .is_ok_and(|text| text.text.contains("SHELL_MARKER"))
     }));
     std::thread::sleep(crate::viewport_scan::VIEWPORT_SCAN_INTERVAL * 3);
-    let shell = control_call(&host, "agent.capture", json!({"session": session}));
     assert_eq!(
-        shell["runtime_id"],
-        Value::Null,
+        observed(&host),
+        None,
         "a hook left by an agent that exited does not make the shell an agent"
     );
-    let manifest = host.inspect(&session).unwrap().manifest;
-    assert!(
-        !manifest.menu_prompt_active,
-        "the exited agent's blocker rules never run over the shell"
-    );
-    assert_eq!(manifest.screen_activity, None);
 
     let bin = tempfile::tempdir().unwrap();
     host.input(
         &session,
         Some(SessionGeneration::FIRST),
-        claude_in_foreground_after_echo(bin.path(), "LOCAL_BUSY_MARKER"),
+        claude_in_foreground_after_echo(bin.path(), "AGENT_MARKER"),
     )
     .unwrap();
-    assert!(wait_until(Duration::from_secs(15), || {
-        host.text(&session)
-            .is_ok_and(|text| text.text.contains("LOCAL_BUSY_MARKER"))
-    }));
-
-    let mut captured = Value::Null;
     assert!(
         wait_until(Duration::from_secs(15), || {
-            captured = control_call(&host, "agent.capture", json!({"session": session}));
-            captured["runtime_id"] == "com.anthropic.claude-code"
+            observed(&host).as_deref() == Some("com.anthropic.claude-code")
         }),
-        "a process named claude in the foreground is the agent: {captured}"
-    );
-    assert_eq!(captured["cols"], 100);
-    assert_eq!(captured["rows"], 24);
-    assert!(
-        captured["screen"]
-            .as_str()
-            .is_some_and(|screen| screen.contains("LOCAL_BUSY_MARKER"))
-    );
-
-    let rules_dir = paneflow_home::screen_rule_overrides_dir_in(home.path()).join("claude-code");
-    std::fs::create_dir_all(&rules_dir).unwrap();
-    let written = Instant::now();
-    std::fs::write(
-        rules_dir.join("screen.toml"),
-        "engine = 2\n\n[[rules]]\nid = \"local-busy\"\nstate = \"working\"\npriority = 50\nany = ['LOCAL_BUSY_MARKER']\n",
-    )
-    .unwrap();
-    assert!(
-        wait_until(Duration::from_secs(1), || {
-            host.screen_rules()
-                .rules_for("claude-code")
-                .is_some_and(|rules| rules.iter().any(|rule| rule.id == "local-busy"))
-        }),
-        "a valid local edit is active within one second"
-    );
-    let active_after = written.elapsed();
-    assert!(active_after < Duration::from_secs(1), "{active_after:?}");
-
-    let explained = control_call(&host, "agent.explain", json!({"session": session}));
-    assert_eq!(explained["runtime_slug"], "claude-code");
-    assert_eq!(explained["winner"], "local-busy");
-    assert_eq!(explained["screen_state"], "working");
-    assert_eq!(explained["last_hook"]["event"], "Stop");
-    assert_eq!(explained["last_hook"]["current_generation"], true);
-    let local = explained["rules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|rule| rule["id"] == "local-busy")
-        .cloned()
-        .unwrap();
-    assert_eq!(local["origin"], "local");
-    assert_eq!(local["matched"], true);
-    assert!(
-        explained["rules"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|rule| rule["id"] == "idle-prompt" && rule["origin"] == "builtin")
-    );
-
-    std::thread::sleep(Duration::from_millis(50));
-    std::fs::write(
-        rules_dir.join("screen.toml"),
-        "engine = 2\n\n[[rules]]\nid = \"local-busy\"\nstate = \"working\"\npriority = 50\nany = ['(LOCAL']\n",
-    )
-    .unwrap();
-    assert!(wait_until(Duration::from_secs(1), || {
-        host.screen_rules()
-            .status("claude-code")
-            .local_error
-            .is_some()
-    }));
-    let explained = control_call(&host, "agent.explain", json!({"session": session}));
-    let error = explained["sources"]["local_error"].as_str().unwrap();
-    assert!(error.contains("screen.toml: line 7"), "{error}");
-    assert_eq!(
-        explained["winner"], "local-busy",
-        "the previous valid local rules stay active"
+        "a process named claude in the foreground is the agent"
     );
 
     host.stop(&session, None).unwrap();
@@ -2882,14 +2632,20 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
         .into_iter()
         .find(|target| target.session == session)
         .unwrap();
+    let declared = |state: &str, message: &str| crate::program_status::DeclaredStatus {
+        state: state.to_string(),
+        kind: None,
+        progress: None,
+        app: String::new(),
+        title: String::new(),
+        message: message.to_string(),
+    };
     host.commit_scan(&target, |record| {
-        record.screen_activity = Some("blocked".to_string());
-        record.declared_blocker = Some("Apply?".to_string());
-        record.menu_prompt_active = true;
+        record.declared_status = Some(declared("blocked", "Apply?"));
     });
     assert_eq!(
-        host.inspect(&session).unwrap().manifest.declared_blocker,
-        Some("Apply?".to_string())
+        host.inspect(&session).unwrap().manifest.declared_status,
+        Some(declared("blocked", "Apply?"))
     );
 
     host.input(&session, None, b"exit\r\n".to_vec()).unwrap();
@@ -2900,7 +2656,7 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
         )
     }));
     let late_scan = host.commit_scan(&target, |record| {
-        record.declared_blocker = Some("late".to_string());
+        record.declared_status = Some(declared("blocked", "late"));
     });
 
     assert_eq!(
@@ -2908,17 +2664,16 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
         Some(false),
         "a scan taken before the exit lands nowhere"
     );
-    let manifest = host.inspect(&session).unwrap().manifest;
-    assert_eq!(manifest.declared_blocker, None);
-    assert_eq!(manifest.screen_activity, None);
-    assert!(!manifest.menu_prompt_active);
+    assert_eq!(
+        host.inspect(&session).unwrap().manifest.declared_status,
+        None
+    );
     let entry = host
         .agent_snapshot()
         .into_iter()
         .find(|entry| entry.session == session)
         .unwrap();
-    assert_eq!(entry.declared_blocker, None);
-    assert_eq!(entry.screen_activity, None);
+    assert_eq!(entry.declared_status, None);
     let manifest_path = crate::manifest::manifest_path(home.path(), &session);
     assert!(wait_until(Duration::from_secs(5), || {
         read_manifest(&manifest_path)
@@ -2927,12 +2682,11 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
 
     drop(host);
     let reopened = SessionHost::open(home.path(), endpoint).unwrap();
-    let restored = reopened.inspect(&session).unwrap().manifest;
     assert_eq!(
-        restored.declared_blocker, None,
+        reopened.inspect(&session).unwrap().manifest.declared_status,
+        None,
         "a later attach never sees the blocker again"
     );
-    assert_eq!(restored.screen_activity, None);
 }
 
 #[cfg(unix)]
@@ -2968,7 +2722,6 @@ fn a_program_without_an_agent_reaches_the_agent_snapshot_with_its_declared_statu
     let manifest = host.inspect(&session).unwrap().manifest;
     assert_eq!(manifest.declared_status, Some(declared));
     assert_eq!(manifest.runtime, None, "no agent was observed");
-    assert_eq!(manifest.screen_activity, None, "no agent classification");
     host.stop(&session, None).unwrap();
     host.remove(&session).unwrap();
 }

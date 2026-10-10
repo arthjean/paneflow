@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::runtime_catalog::{runtime_by_id, runtime_for_tool, Runtime, RuntimeLifecycleAuthority};
+use crate::runtime_catalog::{runtime_by_id, runtime_for_tool, Runtime};
 
 pub const WORKING: &str = "working";
 pub const ATTENTION: &str = "attention";
@@ -11,11 +11,13 @@ pub const IDLE: &str = "idle";
 
 pub const FOREGROUND_RUNTIME: &str = "foreground_runtime";
 
+pub const DECLARED_SOURCE: &str = "declared";
+
 pub const SUBMIT_START_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub const SUBMIT_START_POLL: Duration = Duration::from_millis(60);
 
-const PROJECTED_FACTS: [&str; 3] = ["outcome", "menu_prompt_active", "activity_source"];
+const PROJECTED_FACTS: [&str; 2] = ["outcome", "activity_source"];
 
 const MAX_BLOCKED_REASON_CHARS: usize = 120;
 
@@ -31,17 +33,13 @@ pub fn reduced_state(status: &Value) -> Option<&'static str> {
 }
 
 fn waits_without_a_decision(status: &Value) -> bool {
-    status.get("attention_reason").and_then(Value::as_str) == Some("bell")
-        || status
-            .get("outcome")
-            .and_then(Value::as_str)
-            .is_some_and(|outcome| outcome.starts_with("failed"))
+    status
+        .get("outcome")
+        .and_then(Value::as_str)
+        .is_some_and(|outcome| outcome.starts_with("failed"))
 }
 
 pub fn blocked_reason(status: &Value) -> String {
-    if status.get("menu_prompt_active").and_then(Value::as_bool) == Some(true) {
-        return "menu prompt".to_string();
-    }
     status
         .get("message")
         .and_then(Value::as_str)
@@ -64,8 +62,8 @@ pub fn agent_runtime(status: &Value) -> Option<&'static Runtime> {
         })
 }
 
-pub fn reports_turns(runtime: &Runtime) -> bool {
-    runtime.lifecycle.authority != RuntimeLifecycleAuthority::None
+pub fn reports_turns(status: &Value) -> bool {
+    status.get("activity_source").and_then(Value::as_str) == Some(DECLARED_SOURCE)
 }
 
 pub fn foreground_departure(status: &Value, runtime: &Runtime) -> Option<String> {
@@ -127,12 +125,6 @@ pub fn reduce_row(row: &mut Value, projections: &[Value]) {
     if let Some(state_seq) = projection.get("state_seq").and_then(Value::as_u64) {
         object.insert("state_seq".into(), Value::from(state_seq));
     }
-    if let Some(reason) = projection
-        .get("attention_reason")
-        .filter(|reason| !reason.is_null())
-    {
-        object.insert("attention_reason".into(), reason.clone());
-    }
     for fact in PROJECTED_FACTS {
         if let Some(value) = projection.get(fact) {
             object.insert(fact.into(), value.clone());
@@ -180,7 +172,7 @@ pub fn confirm_turn_start(
     poll: Duration,
 ) -> TurnStart {
     let baseline = before
-        .filter(|status| agent_runtime(status).is_some_and(reports_turns))
+        .filter(|status| reports_turns(status))
         .and_then(|status| status.get("state_seq").and_then(Value::as_u64));
     let Some(baseline) = baseline else {
         return TurnStart {
@@ -247,10 +239,10 @@ mod tests {
 
     #[test]
     fn a_turn_starts_only_on_a_later_sequence() {
-        let before = json!({"agent_runtime": CLAUDE, "state": "idle", "state_seq": 4});
+        let before = json!({"activity_source": DECLARED_SOURCE, "state": "idle", "state_seq": 4});
         let mut answers = vec![
-            json!({"agent_runtime": CLAUDE, "state": "idle", "state_seq": 4}),
-            json!({"agent_runtime": CLAUDE, "state": "waiting_for_input", "state_seq": 5}),
+            json!({"activity_source": DECLARED_SOURCE, "state": "idle", "state_seq": 4}),
+            json!({"activity_source": DECLARED_SOURCE, "state": "waiting_for_input", "state_seq": 5}),
         ]
         .into_iter();
         let start = confirm_turn_start(
@@ -274,5 +266,14 @@ mod tests {
         let silent = confirm_turn_start(|| None, None, Duration::ZERO, Duration::ZERO);
         assert_eq!(silent.started, None);
         assert_eq!(silent.reason, "no_signal");
+
+        let undeclared = json!({"agent_runtime": CLAUDE, "state": "idle", "state_seq": 4});
+        let unreported = confirm_turn_start(
+            || Some(undeclared.clone()),
+            Some(&undeclared),
+            Duration::ZERO,
+            Duration::ZERO,
+        );
+        assert_eq!(unreported.reason, "no_signal");
     }
 }

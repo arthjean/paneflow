@@ -94,7 +94,6 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
-            menu_attention_detection: Some(false),
             on_quit: Some(OnQuit::Stop),
             sidebar_ended_sessions: Some(3),
             agent_button_visibility: [
@@ -140,7 +139,6 @@ mod tests {
             agents: Some(AgentsConfig {
                 restore_conversations: Some(true),
                 claude_preassign_session_id: Some(false),
-                remote_screen_catalog: Some(true),
             }),
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),

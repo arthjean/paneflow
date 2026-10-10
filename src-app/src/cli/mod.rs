@@ -3,7 +3,6 @@ use paneflow_ipc_client::host_control::{ControlTarget, HostTransport, resolve_co
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
-mod agent_cmd;
 mod control_cmds;
 mod flow_cmd;
 mod flow_spec;
@@ -363,7 +362,7 @@ enum Commands {
         pattern: Option<String>,
         #[arg(
             long,
-            help = "Wait until the pane's agent ends its turn: for a runtime with hooks or screen rules, return on its next idle or attention state (at once if it already waits). Other panes wait for their output to go quiet (no `output_generation` change for `--for` ms) on the push stream. Single-target"
+            help = "Wait until the pane's agent ends its turn: for an agent that declares its state through OSC 7501, return on its next idle or attention state (at once if it already waits). Other panes wait for their output to go quiet (no `output_generation` change for `--for` ms) on the push stream. Single-target"
         )]
         idle: bool,
         #[arg(
@@ -410,11 +409,6 @@ enum Commands {
         #[arg(long, help = "Emit JSON lines instead of a human table")]
         json: bool,
     },
-    #[command(
-        subcommand,
-        about = "Capture and explain how Paneflow reads an agent's screen"
-    )]
-    Agent(agent_cmd::AgentCommand),
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -641,7 +635,6 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             human,
         } => read_cmds::search(client, &target, &pattern, max, human),
         Commands::Ps { json } => read_cmds::ps(client, json),
-        Commands::Agent(command) => agent_cmd::run(client, command),
         Commands::Status { target, json } => read_cmds::status(client, &target, json),
         Commands::New { name, cwd } => {
             control_cmds::new_workspace(client, name.as_deref(), cwd.as_deref())

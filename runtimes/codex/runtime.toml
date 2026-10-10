@@ -18,16 +18,8 @@ script_path_signatures = ["@openai/codex"]
 [environment]
 strip_inherited = ["CODEX_CI", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_TUI_RECORD_SESSION", "CODEX_TUI_SESSION_LOG_PATH"]
 
-[lifecycle]
-source = "hooks"
-authority = "complete"
-fallback = "screen"
-escape_cancels_turn = false
-attention_clears_on_output = true
-anchor_start_event_to_output = true
-
 [integration]
-summary = "Installs Paneflow lifecycle hooks in Codex's global hooks file."
+summary = "Installs Paneflow hooks in Codex's global hooks file so its conversations can be resumed; its turn status comes from OSC 7501."
 post_install_step = "Trust the Paneflow hooks once in Codex with /hooks."
 hook_adapter = "codex"
 mcp_config = "codex"

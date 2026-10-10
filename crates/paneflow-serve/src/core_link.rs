@@ -17,7 +17,6 @@ pub enum CoreFrame {
     Session(Box<Value>),
     SessionRemoved(String),
     Event(Box<Value>),
-    Cancellation(Box<Value>),
     Disconnected(String),
     Refused(String),
 }
@@ -81,26 +80,6 @@ pub fn call_core(endpoint: &Path, method: &str, params: &Value) -> Result<Value,
     control.request(method, params.clone())
 }
 
-pub fn menu_prompt_active(
-    endpoint: &Path,
-    session: &paneflow_config::schema::SessionId,
-    deadline: Duration,
-) -> Option<bool> {
-    let mut control = HostControl::connect_with_deadline(endpoint, CLIENT_NAME, deadline).ok()?;
-    let snapshot = control
-        .request_with_deadline(
-            paneflow_ipc_client::host_control::METHOD_AGENT_SNAPSHOT,
-            json!({}),
-            deadline,
-        )
-        .ok()?;
-    snapshot["sessions"]
-        .as_array()?
-        .iter()
-        .find(|row| row["session"].as_str() == Some(session.as_str()))
-        .map(|row| row["menu_prompt_active"].as_bool().unwrap_or(false))
-}
-
 fn follow_once(endpoint: &Path, tx: &SyncSender<CoreFrame>) -> FollowEnd {
     let mut control = match HostControl::connect(endpoint, CLIENT_NAME) {
         Ok(control) => control,
@@ -136,7 +115,6 @@ fn stream_frames(control: &mut HostControl, tx: &SyncSender<CoreFrame>) -> Resul
                     send(tx, CoreFrame::SessionRemoved(session.to_string()))?;
                 }
             }
-            Some("cancellation") => send(tx, CoreFrame::Cancellation(Box::new(value)))?,
             Some("end") => {
                 return Err(value["reason"]
                     .as_str()

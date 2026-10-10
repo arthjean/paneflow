@@ -12,7 +12,7 @@ use super::send_cmd::status_of;
 use super::surface_read::{
     READ_WINDOW_LINES, ReadSnapshot, SurfaceRead, read_baseline, read_surface, text_after_baseline,
 };
-use super::worker_state::{ATTENTION, BLOCKED, IDLE, agent_runtime, reduced_state, reports_turns};
+use super::worker_state::{ATTENTION, BLOCKED, IDLE, reduced_state, reports_turns};
 use super::{CliError, EXIT_OK, EXIT_TIMEOUT};
 
 const POLL_INTERVAL_MS: u64 = 500;
@@ -246,7 +246,7 @@ fn turn_settled(state: Option<&str>) -> bool {
 }
 
 fn follows_turns(status: &Value) -> bool {
-    agent_runtime(status).is_some_and(reports_turns) && status.get("state_seq").is_some()
+    reports_turns(status) && status.get("state_seq").is_some()
 }
 
 fn wait_turn_end(
@@ -516,14 +516,14 @@ mod tests {
         json!({
             "state": state,
             "state_seq": state_seq,
-            "hooked": true,
+            "activity_source": "declared",
             "agent_runtime": "com.anthropic.claude-code",
             "output_generation": 7,
         })
     }
 
     #[test]
-    fn a_hooked_agent_in_a_silent_tool_is_not_idle_before_its_stop_hook() {
+    fn a_declaring_agent_in_a_silent_tool_is_not_idle_before_it_declares_the_turn_over() {
         let mut statuses = vec![hooked("thinking", 1); 5];
         statuses.push(hooked("finished", 2));
         let agent = HookedAgent {
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(
             agent.status_calls.get(),
             6,
-            "the wait outlived a 5 ms quiet window and returned on the Stop-driven state"
+            "the wait outlived a 5 ms quiet window and returned on the declared state"
         );
     }
 

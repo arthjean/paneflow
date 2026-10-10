@@ -201,7 +201,6 @@ compare() {
 }
 
 instruction_benches=(
-  "paneflow-agent-config|"
   "paneflow-terminal-ghostty|native"
 )
 instruction_limit_percent=2

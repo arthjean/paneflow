@@ -223,14 +223,14 @@ mod tests {
         let line = human_event(&json!({
             "session": "01JABC",
             "status": "idle",
-            "activity_source": "hooks",
+            "activity_source": "declared",
             "runtime_id": "com.anthropic.claude-code",
             "unread": true,
             "notify": {"kind": "finished"},
         }));
         assert!(line.contains("01JABC"));
         assert!(line.contains("idle"));
-        assert!(line.contains("hooks"));
+        assert!(line.contains("declared"));
         assert!(line.contains("com.anthropic.claude-code"));
         assert!(line.contains("unread"));
         assert!(line.contains("notify:finished"));

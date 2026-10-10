@@ -19,16 +19,8 @@ script_path_signatures = ["@anthropic-ai/claude-code"]
 [environment]
 strip_inherited = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"]
 
-[lifecycle]
-source = "hooks"
-authority = "complete"
-fallback = "screen"
-escape_cancels_turn = true
-attention_clears_on_output = true
-anchor_start_event_to_output = true
-
 [integration]
-summary = "Installs Paneflow lifecycle hooks in Claude Code's global settings."
+summary = "Installs Paneflow hooks in Claude Code's global settings so its conversations can be resumed; its turn status comes from OSC 7501."
 hook_adapter = "claude"
 mcp_config = "claude"
 skills_dir = "claude"

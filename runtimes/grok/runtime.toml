@@ -18,16 +18,8 @@ script_path_signatures = []
 [environment]
 strip_inherited = []
 
-[lifecycle]
-source = "output"
-authority = "none"
-fallback = "none"
-escape_cancels_turn = false
-attention_clears_on_output = false
-anchor_start_event_to_output = false
-
 [integration]
-summary = "Grok is detected from its process; Paneflow reads no turn status from it."
+summary = "Paneflow shows Grok's turn status when Grok reports it through OSC 7501."
 hook_adapter = "none"
 
 [resume]

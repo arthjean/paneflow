@@ -1123,16 +1123,7 @@ mod tests {
     }
 
     #[test]
-    fn every_runtime_claims_complete_authority_exactly_when_it_has_an_installer() {
-        use paneflow_agent_config::RuntimeLifecycleAuthority;
-        for runtime in RUNTIMES {
-            assert_eq!(
-                runtime.lifecycle.authority == RuntimeLifecycleAuthority::Complete,
-                has_installer(runtime),
-                "{}",
-                runtime.slug
-            );
-        }
+    fn only_claude_code_and_codex_have_an_installer() {
         let installers: Vec<_> = RUNTIMES
             .iter()
             .filter(|runtime| has_installer(runtime))
@@ -1153,18 +1144,6 @@ mod tests {
                 "{slug}"
             );
         }
-        let gemini = runtime_by_slug("gemini").expect("gemini");
-        assert_eq!(
-            gemini.lifecycle.authority,
-            RuntimeLifecycleAuthority::Screen
-        );
-        assert_eq!(
-            runtime_by_slug("opencode")
-                .expect("opencode")
-                .lifecycle
-                .authority,
-            RuntimeLifecycleAuthority::Screen
-        );
     }
 
     #[test]

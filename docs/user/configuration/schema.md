@@ -82,7 +82,6 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
-| `menu_attention_detection` | boolean/null | `true` | Worker start | Marks a session as needing input when Claude Code or Codex draws a numbered approval menu, which fires no lifecycle hook. Set to `false` to leave such a session on its hook- or screen-derived state. The worker (`paneflow serve`) reads it when it starts. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
@@ -146,7 +145,6 @@ and macOS keep every agent below.
 | --- | --- | --- | --- |
 | `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
 | `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
-| `agents.remote_screen_catalog` | boolean/null | `true` | The host fetches the signed screen rule catalog from GitHub Releases one minute after it starts, then once a day, and applies it only when its signature, engine and strictly newer version check out. `false` makes no network call; the cached and built-in rules stay active. |
 
 ## `worktrees`
 

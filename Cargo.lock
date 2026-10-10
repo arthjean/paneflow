@@ -4273,7 +4273,6 @@ name = "paneflow-agent-config"
 version = "0.17.7"
 dependencies = [
  "dirs",
- "gungraun",
  "log",
  "paneflow-home",
  "regex",

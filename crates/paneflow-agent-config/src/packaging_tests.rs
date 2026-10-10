@@ -111,10 +111,6 @@ fn a_fixture_runtime_without_a_wix_entry_fails_naming_its_alias() {
             let slug = source.parent().unwrap().file_name().unwrap();
             fs::create_dir_all(catalog.path().join(slug)).unwrap();
             fs::copy(&source, catalog.path().join(slug).join("runtime.toml")).unwrap();
-            let rules = source.with_file_name("screen.toml");
-            if rules.is_file() {
-                fs::copy(&rules, catalog.path().join(slug).join("screen.toml")).unwrap();
-            }
         }
     }
     let fixture = fs::read_to_string(runtimes.join("amp").join("runtime.toml"))

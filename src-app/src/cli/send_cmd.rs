@@ -340,7 +340,7 @@ mod tests {
         json!({
             "state": state,
             "state_seq": state_seq,
-            "hooked": true,
+            "activity_source": "declared",
             "tool": "claude",
             "agent_runtime": "com.anthropic.claude-code",
             "foreground_runtime": "com.anthropic.claude-code",
@@ -513,14 +513,14 @@ mod tests {
     }
 
     #[test]
-    fn a_runtime_without_hooks_or_screen_rules_reports_no_signal() {
+    fn a_runtime_that_declares_nothing_reports_no_signal() {
         let quiet = json!({
             "state": "idle",
             "state_seq": 2,
             "agent_runtime": "com.sourcegraph.amp",
             "foreground_runtime": "com.sourcegraph.amp",
         });
-        assert!(agent_runtime(&quiet).is_some_and(|runtime| !reports_turns(runtime)));
+        assert!(agent_runtime(&quiet).is_some() && !reports_turns(&quiet));
         let fake = ScriptedTransport::with_statuses(vec![agent_reply()], vec![quiet]);
         let result = send_to(&fake, 12, "hi", opts(false, true, false)).expect("delivered");
         assert_eq!(result["delivered"], true);

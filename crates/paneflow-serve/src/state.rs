@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use paneflow_agent_config::runtime_catalog::{
-    Runtime, RuntimeLifecycleAuthority, RuntimeLifecycleFallback, RuntimeLifecycleSource,
-};
+use paneflow_agent_config::runtime_catalog::Runtime;
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::agent::AgentEvent;
 use paneflow_host::manifest::{SessionLifecycle, SessionManifest};
@@ -15,37 +13,29 @@ use paneflow_ipc_client::agent::{AgentState, next_waiting_since};
 use serde_json::{Value, json};
 
 use crate::activity::{AgentDecision, AgentSummary, apply_event, reconcile_adopted};
-use crate::hook_assets;
-use crate::hook_state::{ActivityEngine, HookEventInput, HookState, Notice, Outcome, at_unix_ms};
-use crate::notifications::{ActivityLog, Notification, notification_for};
+use crate::notifications::{ActivityLog, Notice, Notification, notification_for};
 use crate::protocol::restart_recommendation;
 
-pub const MAX_SEED_BYTES: u64 = hook_assets::MAX_SEED_BYTES;
+pub const DECLARED_WORKING: &str = "working";
+pub const DECLARED_BLOCKED: &str = "blocked";
+pub const DECLARED_DONE: &str = "done";
+pub const DECLARED_ERROR: &str = "error";
 
-pub const SCREEN_WORKING: &str = "working";
-pub const SCREEN_IDLE: &str = "idle";
-pub const SCREEN_BLOCKED: &str = "blocked";
-
-pub type MenuEvidence<'a> = dyn Fn(&SessionId) -> Option<bool> + 'a;
+pub const OUTCOME_COMPLETED: &str = "completed";
+pub const OUTCOME_FAILED: &str = "failed";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySource {
-    Hooks,
-    Screen,
+    Declared,
     None,
 }
 
 impl ActivitySource {
     pub fn wire_str(self) -> &'static str {
         match self {
-            Self::Hooks => "hooks",
-            Self::Screen => "screen",
+            Self::Declared => "declared",
             Self::None => "none",
         }
-    }
-
-    pub fn is_hooks(self) -> bool {
-        matches!(self, Self::Hooks)
     }
 }
 
@@ -75,6 +65,10 @@ impl Status {
             Self::Errored => AgentState::Errored,
         }
     }
+
+    fn in_turn(self) -> bool {
+        matches!(self, Self::Busy | Self::Attention)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +93,6 @@ pub struct SessionEntry {
     pub hook_revision: u64,
     pub session: SessionId,
     pub generation: SessionGeneration,
-    pub generation_started_at_ms: Option<u64>,
-    launch_hook_capable: bool,
     pub workspace: Option<WorkspaceId>,
     pub title: Option<String>,
     pub cwd: Option<String>,
@@ -109,35 +101,21 @@ pub struct SessionEntry {
     pub core_protocol: u32,
     pub core_build_id: String,
     pub activity: Option<AgentSummary>,
-    screen_owned_activity: bool,
+    declared_activity: bool,
     pub activity_source: ActivitySource,
     pub status: Status,
     pub outcome: Option<String>,
     pub health: Health,
-    pub activity_signal: u64,
-    pub output_changed_at_ms: Option<u64>,
-    pub screen_activity: Option<String>,
-    pub declared_blocker: Option<String>,
     pub declared_status: Option<DeclaredStatus>,
-    pub menu_prompt_active: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
-    pub bell_at_ms: Option<u64>,
-    pub input_at_ms: Option<u64>,
-    bell_seen_at_ms: u64,
-    bell_attention_since: Option<u64>,
-    bell_notice_pending: bool,
     pub state_seq: u64,
     pub unread: bool,
     pub updated_at_ms: u64,
 }
 
-pub const ATTENTION_REASON_BELL: &str = "bell";
-const BELL_OUTPUT_GRACE_MS: u64 = 1_000;
-
 impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
-        let launch_hook_capable = command_is_hook_capable(&manifest.launch.shell);
         let observed_runtime = manifest
             .runtime
             .and_then(|runtime| runtime.current_observation);
@@ -145,8 +123,6 @@ impl SessionEntry {
             hook_revision: 0,
             session: manifest.session,
             generation: manifest.generation,
-            generation_started_at_ms: manifest.generation_started_at_ms,
-            launch_hook_capable,
             workspace: manifest.workspace,
             title: manifest.title,
             cwd: Some(manifest.current_cwd.unwrap_or(manifest.cwd)),
@@ -158,34 +134,52 @@ impl SessionEntry {
                 .last_hook
                 .as_ref()
                 .map(|hook| AgentSummary::declared(&hook.tool, manifest.updated_at_ms)),
-            screen_owned_activity: false,
+            declared_activity: false,
             activity_source: ActivitySource::None,
             status: Status::Idle,
             outcome: None,
             health: Health::NonResumable,
-            activity_signal: manifest.screen_changed_at_ms.unwrap_or_default(),
-            output_changed_at_ms: None,
-            screen_activity: manifest.screen_activity,
-            declared_blocker: manifest.declared_blocker,
             declared_status: manifest.declared_status,
-            menu_prompt_active: manifest.menu_prompt_active,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
-            bell_at_ms: None,
-            input_at_ms: None,
-            bell_seen_at_ms: 0,
-            bell_attention_since: None,
-            bell_notice_pending: false,
             state_seq: 0,
             unread: false,
             updated_at_ms: manifest.updated_at_ms,
         };
+        entry.adopt_declared_verdict();
         entry.refresh_health();
         entry
     }
 
-    fn reconcile_screen_owned_activity(&mut self, source: ActivitySource, now_ms: u64) -> bool {
-        if source == ActivitySource::Screen {
+    fn adopt_declared_verdict(&mut self) {
+        let (status, source) = self.declared_verdict();
+        self.status = status;
+        self.activity_source = source;
+        self.outcome = self
+            .agent_declaration()
+            .and_then(|declared| declared_outcome(declared, None));
+    }
+
+    fn agent_declaration(&self) -> Option<&DeclaredStatus> {
+        self.runtime().and(self.declared_status.as_ref())
+    }
+
+    fn declared_verdict(&self) -> (Status, ActivitySource) {
+        let Some(declared) = self.agent_declaration() else {
+            return (Status::Idle, ActivitySource::None);
+        };
+        let running = self.lifecycle.is_running();
+        let status = match declared.state.as_str() {
+            DECLARED_ERROR => Status::Errored,
+            DECLARED_WORKING if running => Status::Busy,
+            DECLARED_BLOCKED if running => Status::Attention,
+            _ => Status::Idle,
+        };
+        (status, ActivitySource::Declared)
+    }
+
+    fn reconcile_declared_activity(&mut self, source: ActivitySource, now_ms: u64) -> bool {
+        if source == ActivitySource::Declared {
             if self.activity.is_some() {
                 return false;
             }
@@ -201,53 +195,15 @@ impl SessionEntry {
             let mut summary = AgentSummary::declared(tool, now_ms);
             summary.pid = Some(observation.pid);
             self.activity = Some(summary);
-            self.screen_owned_activity = true;
+            self.declared_activity = true;
             return true;
         }
-        if self.screen_owned_activity && self.activity.is_some() {
+        if self.declared_activity && self.activity.is_some() {
             self.activity = None;
-            self.screen_owned_activity = false;
+            self.declared_activity = false;
             return true;
         }
         false
-    }
-
-    fn foreground_runtime(&self) -> Option<&'static Runtime> {
-        self.observed_runtime
-            .as_ref()
-            .and_then(RuntimeObservation::runtime)
-    }
-
-    fn observe_bell(&mut self) -> bool {
-        let rang_at = self.bell_at_ms.unwrap_or_default();
-        let fresh_bell = rang_at > self.bell_seen_at_ms;
-        self.bell_seen_at_ms = self.bell_seen_at_ms.max(rang_at);
-        let runtime = self
-            .foreground_runtime()
-            .filter(|runtime| runtime.lifecycle.bell_attention)
-            .filter(|_| self.lifecycle.is_running());
-        let Some(runtime) = runtime else {
-            self.bell_attention_since = None;
-            return false;
-        };
-        if fresh_bell && self.bell_attention_since.is_none() {
-            self.bell_attention_since = Some(rang_at);
-            self.bell_notice_pending = true;
-        }
-        let Some(since) = self.bell_attention_since else {
-            return false;
-        };
-        let typed = self.input_at_ms.is_some_and(|typed_at| typed_at > since);
-        let printed = runtime.lifecycle.attention_clears_on_output
-            && self
-                .output_changed_at_ms
-                .is_some_and(|printed_at| printed_at > since + BELL_OUTPUT_GRACE_MS);
-        if typed || printed {
-            self.bell_attention_since = None;
-            self.bell_notice_pending = false;
-            return false;
-        }
-        true
     }
 
     pub fn refresh_health(&mut self) {
@@ -277,12 +233,6 @@ impl SessionEntry {
             })
     }
 
-    fn foreground_identity(&self) -> Option<String> {
-        self.observed_runtime
-            .as_ref()
-            .map(RuntimeObservation::identity)
-    }
-
     pub fn runtime_label(&self) -> String {
         match self.runtime() {
             Some(runtime) => runtime.label.to_string(),
@@ -292,6 +242,14 @@ impl SessionEntry {
                 .map(|summary| summary.tool.clone())
                 .unwrap_or_else(|| "Agent".to_string()),
         }
+    }
+
+    fn declared_message(&self) -> Option<String> {
+        self.declared_status
+            .as_ref()
+            .map(|declared| declared.message.trim())
+            .filter(|message| !message.is_empty())
+            .map(str::to_owned)
     }
 
     pub fn to_value(&self) -> Value {
@@ -312,10 +270,7 @@ impl SessionEntry {
             "outcome": self.outcome,
             "runtime_id": self.runtime().map(|runtime| runtime.id),
             "foreground_runtime_id": self.foreground_runtime,
-            "menu_prompt_active": self.menu_prompt_active,
             "declared_status": self.declared_status,
-            "attention_reason": (self.status == Status::Attention && self.bell_attention_since.is_some())
-                .then_some(ATTENTION_REASON_BELL),
             "unread": self.unread,
             "core_protocol": self.core_protocol,
             "core_build_id": self.core_build_id,
@@ -332,18 +287,32 @@ impl SessionEntry {
 
 pub use paneflow_agent_config::runtime_catalog::runtime_for_tool;
 
-fn screen_fallback(entry: &SessionEntry) -> Option<Status> {
-    if !entry.lifecycle.is_running() {
-        return None;
+fn declared_outcome(declared: &DeclaredStatus, held: Option<&str>) -> Option<String> {
+    match declared.state.as_str() {
+        DECLARED_DONE => Some(OUTCOME_COMPLETED.to_string()),
+        DECLARED_ERROR => Some(match declared.message.trim() {
+            "" => OUTCOME_FAILED.to_string(),
+            message => format!("{OUTCOME_FAILED}:{}", failure_reason_text(message)),
+        }),
+        DECLARED_WORKING => None,
+        _ => held.map(str::to_owned),
     }
-    let runtime = entry.runtime()?;
-    if runtime.lifecycle.fallback != RuntimeLifecycleFallback::Screen {
-        return None;
-    }
-    match entry.screen_activity.as_deref()? {
-        SCREEN_WORKING => Some(Status::Busy),
-        SCREEN_IDLE => Some(Status::Idle),
-        SCREEN_BLOCKED => Some(Status::Attention),
+}
+
+fn notice_between(
+    previous: Status,
+    current: Status,
+    declared: Option<&DeclaredStatus>,
+) -> Option<Notice> {
+    match (previous, current) {
+        (Status::Attention, Status::Attention) | (Status::Errored, Status::Errored) => None,
+        (_, Status::Attention | Status::Errored) => Some(Notice::NeedsInput),
+        (previous, Status::Idle)
+            if previous.in_turn()
+                && declared.is_some_and(|declared| declared.state == DECLARED_DONE) =>
+        {
+            Some(Notice::Finished)
+        }
         _ => None,
     }
 }
@@ -359,9 +328,7 @@ pub struct Projection {
 pub struct WorkerState {
     home: PathBuf,
     sessions: BTreeMap<SessionId, SessionEntry>,
-    engine: ActivityEngine,
     log: ActivityLog,
-    menu_attention_detection: bool,
 }
 
 impl WorkerState {
@@ -369,19 +336,8 @@ impl WorkerState {
         Self {
             home: home.into(),
             sessions: BTreeMap::new(),
-            engine: ActivityEngine::new(),
             log: ActivityLog::default(),
-            menu_attention_detection: true,
         }
-    }
-
-    pub fn set_menu_attention_detection(&mut self, enabled: bool) {
-        self.menu_attention_detection = enabled;
-    }
-
-    #[cfg(test)]
-    pub fn menu_attention_detection(&self) -> bool {
-        self.menu_attention_detection
     }
 
     pub fn len(&self) -> usize {
@@ -406,10 +362,6 @@ impl WorkerState {
 
     pub fn snapshot(&self) -> Vec<Value> {
         self.sessions.values().map(SessionEntry::to_value).collect()
-    }
-
-    fn session_dir(&self, session: &SessionId) -> PathBuf {
-        paneflow_home::host_session_data_dir_in(&self.home, session.as_str())
     }
 
     pub fn rebuild_from_home(&mut self, home: &Path) -> usize {
@@ -442,15 +394,14 @@ impl WorkerState {
             rebuilt.insert(entry.session.clone(), entry);
         }
         self.sessions = rebuilt;
-        let live: BTreeSet<SessionId> = self.sessions.keys().cloned().collect();
-        self.engine.retain_sessions(&live);
         for frame in accepted_events {
             self.apply_core_event(&frame);
         }
         self.reconcile_adopted_activity();
-        let now = SystemTime::now();
-        for session in live {
-            self.derive(&session, now, &|_| None);
+        let sessions: Vec<SessionId> = self.sessions.keys().cloned().collect();
+        let now = now_ms();
+        for session in sessions {
+            self.derive(&session, now);
         }
         self.sessions.len()
     }
@@ -483,12 +434,7 @@ impl WorkerState {
     }
 
     pub fn forget_core_session(&mut self, session: &SessionId) -> bool {
-        if self.sessions.remove(session).is_none() {
-            return false;
-        }
-        let kept = self.sessions.keys().cloned().collect::<BTreeSet<_>>();
-        self.engine.retain_sessions(&kept);
-        true
+        self.sessions.remove(session).is_some()
     }
 
     fn apply_core_rows(&mut self, entries: &[Value], prune: bool) -> Vec<Projection> {
@@ -543,13 +489,12 @@ impl WorkerState {
         }
         if prune {
             self.sessions.retain(|session, _| seen.contains(session));
-            self.engine.retain_sessions(&seen);
         }
         self.reconcile_adopted_activity();
-        let now = SystemTime::now();
+        let now = now_ms();
         seen.into_iter()
             .filter_map(|session| {
-                let mut projection = self.derive(&session, now, &|_| None)?;
+                let mut projection = self.derive(&session, now)?;
                 let recovered_event = recovered.contains_key(&session);
                 if let Some(recovery) = recovered.remove(&session) {
                     projection.changed |= recovery.changed;
@@ -565,32 +510,16 @@ impl WorkerState {
             .collect()
     }
 
-    pub fn sweep(&mut self, now: SystemTime, menu_evidence: &MenuEvidence<'_>) -> Vec<Projection> {
+    pub fn sweep(&mut self) -> Vec<Projection> {
         let sessions: Vec<SessionId> = self.sessions.keys().cloned().collect();
+        let now = now_ms();
         sessions
             .into_iter()
             .filter_map(|session| {
-                let projection = self.derive(&session, now, menu_evidence)?;
+                let projection = self.derive(&session, now)?;
                 (projection.changed || projection.notification.is_some()).then_some(projection)
             })
             .collect()
-    }
-
-    pub fn apply_cancellation(&mut self, frame: &Value) -> Option<Projection> {
-        let session = frame["session"]
-            .as_str()
-            .and_then(|raw| SessionId::parse(raw).ok())?;
-        let generation = self.sessions.get(&session)?.generation.get();
-        let marker = crate::hook_assets::Cancellation {
-            runtime_generation: frame["runtime_generation"].as_u64()?,
-            cancelled_at: frame["cancelled_at"].as_u64()?,
-            submitted_at: frame["submitted_at"].as_u64(),
-        };
-        let dir = self.session_dir(&session);
-        self.engine.bind_session_dir(&session, &dir);
-        self.engine
-            .observe_cancellation(&session, &marker, generation);
-        self.derive(&session, SystemTime::now(), &|_| None)
     }
 
     pub fn apply_core_event(&mut self, frame: &Value) -> Option<Projection> {
@@ -614,298 +543,40 @@ impl WorkerState {
         }
         entry.hook_revision = revision;
         let now_ms = frame["received_at_ms"].as_u64().unwrap_or_else(now_ms);
-        let session = event.session.clone();
-        let previous_activity = entry.activity.clone();
-        let previous_screen_owned_activity = entry.screen_owned_activity;
-        let previous_updated_at_ms = entry.updated_at_ms;
-        entry.screen_owned_activity = false;
         match apply_event(entry.activity.as_ref(), &event, now_ms) {
             AgentDecision::Stale(reason) => {
-                log::debug!("paneflow-serve: refused an event for {session}: {reason}");
-                entry.screen_owned_activity = previous_screen_owned_activity;
+                log::debug!(
+                    "paneflow-serve: refused an event for {}: {reason}",
+                    event.session
+                );
                 return None;
             }
-            AgentDecision::Clear => {
-                entry.activity = None;
-                entry.activity_source = ActivitySource::None;
-                entry.status = Status::Idle;
-                entry.outcome = None;
-                entry.updated_at_ms = now_ms;
-                self.engine.remove_session(&session);
-                let value = self.sessions.get(&session)?.to_value();
-                return Some(Projection {
-                    session: value,
-                    notification: None,
-                    changed: true,
-                });
-            }
-            AgentDecision::Update(summary) => {
-                entry.activity = Some(*summary);
-                entry.updated_at_ms = now_ms;
-            }
+            AgentDecision::Clear => entry.activity = None,
+            AgentDecision::Update(summary) => entry.activity = Some(*summary),
         }
-
-        let generation = entry.generation.get();
-        let generation_started_at_ms = entry.generation_started_at_ms;
-        let launch_hook_capable = entry.launch_hook_capable;
-        let output_changed_at_ms = entry.output_changed_at_ms;
-        let anchor_start_to_output = entry
-            .runtime()
-            .is_none_or(|runtime| runtime.lifecycle.anchor_start_event_to_output);
-        let foreground_identity = entry.foreground_identity();
-        let hook_event_name = frame["hook_payload"]["hook_event_name"]
-            .as_str()
-            .unwrap_or_else(|| event.kind.as_str())
-            .to_string();
-        let notification_type = frame["hook_payload"]["notification_type"]
-            .as_str()
-            .map(str::to_owned);
-        let failure_reason = frame["hook_payload"]["error"]
-            .as_str()
-            .or_else(|| frame["hook_payload"]["reason"].as_str())
-            .map(failure_reason_text);
-        let background_tasks_pending = payload_has_background_tasks(&frame["hook_payload"]);
-        let raw_name = if event.is_interrupt() {
-            crate::hook_state::EVENT_STOP_CANCELLED.to_string()
-        } else {
-            hook_event_name
-        };
-        let dir = self.session_dir(&session);
-        self.engine.bind_session_dir(&session, &dir);
-        if !launch_hook_capable {
-            self.engine
-                .observe_foreground_runtime(&session, foreground_identity.as_deref());
-        }
-        let accepted = self.engine.apply_hook_event(
-            &session,
-            HookEventInput {
-                raw_name: &raw_name,
-                tool_name: event.tool_name.as_deref(),
-                notification_type: notification_type.as_deref(),
-                failure_reason: failure_reason.as_deref(),
-                background_tasks_pending,
-                event_generation: event.generation.map(SessionGeneration::get),
-                current_generation: generation,
-                generation_started_at_ms,
-            },
-            at_unix_ms(now_ms),
-        );
-        if !accepted {
-            log::debug!(
-                "paneflow-serve: the reducer refused {raw_name} for {session}: stale runtime provenance"
-            );
-            if let Some(entry) = self.sessions.get_mut(&session) {
-                entry.activity = previous_activity;
-                entry.screen_owned_activity = previous_screen_owned_activity;
-                entry.updated_at_ms = previous_updated_at_ms;
-            }
-            return None;
-        }
-        let canonical = crate::hook_state::normalize_event_name(&raw_name);
-        if revision > 0
-            && matches!(
-                canonical.as_str(),
-                crate::hook_state::EVENT_USER_PROMPT_SUBMIT | crate::hook_state::EVENT_START
-            )
-        {
-            let event_at = at_unix_ms(now_ms);
-            let lease_at = if canonical == crate::hook_state::EVENT_USER_PROMPT_SUBMIT
-                || anchor_start_to_output
-            {
-                output_changed_at_ms
-                    .map(at_unix_ms)
-                    .map_or(event_at, |output| output.max(event_at))
-            } else {
-                event_at
-            };
-            self.engine
-                .restore_opening_lease(&session, &dir, generation, event_at, lease_at);
-        }
-        self.derive(&session, at_unix_ms(now_ms), &|_| None)
+        entry.declared_activity = false;
+        entry.updated_at_ms = now_ms;
+        let mut projection = self.derive(&event.session, now_ms)?;
+        projection.changed = true;
+        Some(projection)
     }
 
-    fn derive(
-        &mut self,
-        session: &SessionId,
-        now: SystemTime,
-        menu_evidence: &MenuEvidence<'_>,
-    ) -> Option<Projection> {
-        let Some(entry) = self.sessions.get(session) else {
-            self.engine.remove_session(session);
-            return None;
-        };
-        let runtime = entry.runtime();
-        let hook_capable = runtime
-            .is_some_and(|runtime| runtime.lifecycle.source == RuntimeLifecycleSource::Hooks);
-        let screen_authority = runtime.is_some_and(|runtime| {
-            runtime.lifecycle.authority == RuntimeLifecycleAuthority::Screen
-        });
-        let launch_hook_capable = entry.launch_hook_capable;
-        let attention_clears_on_output = runtime
-            .map(|runtime| runtime.lifecycle.attention_clears_on_output)
-            .unwrap_or(true);
-        let anchor_start_event_to_output = runtime
-            .map(|runtime| runtime.lifecycle.anchor_start_event_to_output)
-            .unwrap_or(true);
-        let generation = entry.generation.get();
-        let generation_started_at_ms = entry.generation_started_at_ms;
-        let activity_signal = entry.activity_signal;
-        let menu_prompt_active = entry.menu_prompt_active;
-        let running = entry.lifecycle.is_running();
-        let declared_blocker = running && entry.declared_blocker.is_some();
-        let foreground_identity = entry.foreground_identity();
-        let errored = entry
-            .activity
-            .as_ref()
-            .is_some_and(|summary| summary.errored);
-        let declared_error = runtime.is_some()
-            && entry
-                .declared_status
-                .as_ref()
-                .is_some_and(DeclaredStatus::is_error);
-        let dir = self.session_dir(session);
-
-        self.engine
-            .observe_runtime_launch(session, generation, generation_started_at_ms);
-        if !launch_hook_capable {
-            self.engine
-                .observe_foreground_runtime(session, foreground_identity.as_deref());
-        }
-        self.engine.bind_session_dir(session, &dir);
-        if hook_capable && entry.hook_revision == 0 {
-            self.engine.seed_from_disk(
-                session,
-                &dir,
-                anchor_start_event_to_output,
-                generation_started_at_ms,
-                generation,
-                entry.output_changed_at_ms,
-            );
-        } else if hook_capable {
-            self.engine
-                .sync_cancellation_from_disk(session, &dir, generation);
-            self.engine.sync_background_from_disk(
-                session,
-                &dir,
-                generation,
-                generation_started_at_ms,
-            );
-        }
-        let hooks_latched = self.engine.is_latched(session);
-        self.engine.observe_menu_prompt(
-            session,
-            menu_prompt_active || (declared_blocker && !hooks_latched),
-            now,
-        );
-
-        let mut source = ActivitySource::None;
-        let mut status = if self.engine.is_latched(session) && !screen_authority {
-            let mut allow_attention_clear = attention_clears_on_output;
-            if allow_attention_clear
-                && self
-                    .engine
-                    .attention_has_new_output(session, activity_signal)
-            {
-                match menu_evidence(session) {
-                    Some(menu_visible) => allow_attention_clear = !menu_visible,
-                    None => {
-                        return self.finish(
-                            session,
-                            Status::Attention,
-                            ActivitySource::Hooks,
-                            errored,
-                            now,
-                        );
-                    }
-                }
-            }
-            self.engine
-                .note_output_and_sweep(session, activity_signal, allow_attention_clear, now);
-            source = ActivitySource::Hooks;
-            match self.engine.hook_owned_state(session) {
-                Some(HookState::Busy) => Status::Busy,
-                Some(HookState::Attention) => Status::Attention,
-                Some(HookState::Idle) | None => Status::Idle,
-            }
-        } else {
-            self.engine.clear_output_baseline(session);
-            let entry = self.sessions.get(session)?;
-            match screen_fallback(entry) {
-                Some(verdict) => {
-                    source = ActivitySource::Screen;
-                    verdict
-                }
-                None => Status::Idle,
-            }
-        };
-
-        if self.menu_attention_detection
-            && menu_prompt_active
-            && matches!(status, Status::Busy | Status::Idle)
-        {
-            status = Status::Attention;
-        }
-        let bell_attention = self
-            .sessions
-            .get_mut(session)
-            .is_some_and(SessionEntry::observe_bell);
-        if bell_attention && matches!(status, Status::Busy | Status::Idle) {
-            status = Status::Attention;
-            if source == ActivitySource::None {
-                source = ActivitySource::Screen;
-            }
-        }
-        if !running && status == Status::Busy {
-            status = Status::Idle;
-        }
-        let errored = errored || (declared_error && !source.is_hooks());
-        self.finish(session, status, source, errored, now)
-    }
-
-    fn finish(
-        &mut self,
-        session: &SessionId,
-        status: Status,
-        source: ActivitySource,
-        errored: bool,
-        now: SystemTime,
-    ) -> Option<Projection> {
-        let status = if errored && status == Status::Idle {
-            Status::Errored
-        } else {
-            status
-        };
-        let bell_notice = self
-            .sessions
-            .get_mut(session)
-            .is_some_and(|entry| std::mem::take(&mut entry.bell_notice_pending));
-        let notice = self
-            .engine
-            .take_notice(session)
-            .or(bell_notice.then_some(Notice::NeedsInput));
-        let outcome = self.engine.outcome(session);
-        let generation = self.sessions.get(session)?.generation;
-        let outcome_changed = self
-            .sessions
-            .get(session)
-            .is_some_and(|entry| entry.outcome != outcome.as_ref().map(Outcome::wire_string));
-        if outcome_changed && let Some(outcome) = outcome.as_ref() {
-            self.log.record(
-                session,
-                generation,
-                outcome,
-                crate::hook_state::unix_ms(now),
-            );
-        }
+    fn derive(&mut self, session: &SessionId, now_ms: u64) -> Option<Projection> {
         let entry = self.sessions.get_mut(session)?;
-        let now_ms = crate::hook_state::unix_ms(now);
-        let screen_row_changed = entry.reconcile_screen_owned_activity(source, now_ms);
-        let wire_outcome = outcome.as_ref().map(Outcome::wire_string);
+        let (status, source) = entry.declared_verdict();
+        let declared = entry.agent_declaration();
+        let notice = notice_between(entry.status, status, declared);
+        let outcome = match declared {
+            Some(declared) => declared_outcome(declared, entry.outcome.as_deref()),
+            None => entry.outcome.clone(),
+        };
+        let outcome_changed = entry.outcome != outcome;
+        let declared_row_changed = entry.reconcile_declared_activity(source, now_ms);
         let state = status.agent_state();
-        let settled = !screen_row_changed
+        let settled = !declared_row_changed
             && entry.status == status
             && entry.activity_source == source
-            && entry.outcome == wire_outcome
+            && entry.outcome == outcome
             && entry
                 .activity
                 .as_ref()
@@ -915,7 +586,7 @@ impl WorkerState {
         }
         entry.status = status;
         entry.activity_source = source;
-        entry.outcome = wire_outcome;
+        entry.outcome.clone_from(&outcome);
         if let Some(summary) = entry.activity.as_mut() {
             let previous = AgentState::parse(&summary.state);
             summary.waiting_since_ms = next_waiting_since(
@@ -934,35 +605,33 @@ impl WorkerState {
         if !settled {
             entry.updated_at_ms = now_ms;
         }
-        let runtime_label = entry.runtime_label();
         let body = match notice {
             Some(Notice::Finished) => entry
                 .activity
                 .as_ref()
-                .and_then(|summary| summary.last_result.clone()),
-            Some(Notice::NeedsInput) => entry
-                .activity
-                .as_ref()
-                .and_then(|summary| summary.message.clone())
-                .or_else(|| {
-                    (!source.is_hooks())
-                        .then(|| entry.declared_blocker.clone())
-                        .flatten()
-                }),
+                .and_then(|summary| summary.last_result.clone())
+                .or_else(|| entry.declared_message()),
+            Some(Notice::NeedsInput) => entry.declared_message().or_else(|| {
+                entry
+                    .activity
+                    .as_ref()
+                    .and_then(|summary| summary.message.clone())
+            }),
             None => None,
         };
-        let notification = notice.and_then(|notice| {
-            notification_for(notice, source.is_hooks(), &runtime_label, body.as_deref())
-        });
+        let notification = notice
+            .and_then(|notice| notification_for(notice, &entry.runtime_label(), body.as_deref()));
         if notification
             .as_ref()
             .is_some_and(|notification| notification.kind == crate::notifications::KIND_FINISHED)
         {
             entry.unread = true;
         }
-        let value = entry.to_value();
+        if outcome_changed && let Some(outcome) = outcome.as_deref() {
+            self.log.record(session, entry.generation, outcome, now_ms);
+        }
         Some(Projection {
-            session: value,
+            session: entry.to_value(),
             notification,
             changed: !settled,
         })
@@ -989,8 +658,7 @@ impl WorkerState {
 
 fn source_wire(source: ActivitySource) -> &'static str {
     match source {
-        ActivitySource::Hooks => "hook",
-        ActivitySource::Screen => "terminal",
+        ActivitySource::Declared => "terminal",
         ActivitySource::None => "hook",
     }
 }
@@ -1003,24 +671,6 @@ fn failure_reason_text(raw: &str) -> String {
         end -= 1;
     }
     raw[..end].to_string()
-}
-
-fn command_is_hook_capable(command: &str) -> bool {
-    let alias = Path::new(command)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or(command);
-    runtime_for_tool(alias)
-        .is_some_and(|runtime| runtime.lifecycle.source == RuntimeLifecycleSource::Hooks)
-}
-
-fn payload_has_background_tasks(payload: &Value) -> bool {
-    match &payload["background_tasks"] {
-        Value::Array(tasks) => !tasks.is_empty(),
-        Value::Number(count) => count.as_u64().is_some_and(|count| count > 0),
-        Value::Bool(pending) => *pending,
-        _ => false,
-    }
 }
 
 fn foreground_runtime_id(observation: Option<&RuntimeObservation>) -> Option<&'static str> {
@@ -1044,46 +694,25 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
     let held_activity = same_generation
         .then(|| held.as_ref().and_then(|entry| entry.activity.clone()))
         .flatten();
-    let screen_owned_activity = held_activity.is_some()
-        && held
-            .as_ref()
-            .is_some_and(|entry| entry.screen_owned_activity);
+    let declared_activity =
+        held_activity.is_some() && held.as_ref().is_some_and(|entry| entry.declared_activity);
     let process = serde_json::from_value(raw["process"].clone())
         .ok()
         .or_else(|| held.as_ref().and_then(|entry| entry.process));
     let declared = raw["last_hook"]["tool"]
         .as_str()
         .map(|tool| AgentSummary::declared(tool, now_ms()));
-    let bell_at_ms = raw["bell_at_ms"].as_u64();
-    let held_bell = held
-        .as_ref()
-        .filter(|entry| entry.generation == generation)
-        .map(|entry| (entry.bell_seen_at_ms, entry.bell_attention_since));
-    let (bell_seen_at_ms, bell_attention_since) = match (&held, held_bell) {
-        (_, Some(held_bell)) => held_bell,
-        (Some(_), None) => (0, None),
-        (None, None) => (bell_at_ms.unwrap_or_default(), None),
-    };
     let current_observation: Option<RuntimeObservation> =
         serde_json::from_value(raw["observed_runtime"].clone())
             .ok()
             .flatten();
-    SessionEntry {
+    let mut entry = SessionEntry {
         hook_revision: held
             .as_ref()
             .filter(|entry| entry.generation == generation)
             .map_or(0, |entry| entry.hook_revision),
         session,
         generation,
-        generation_started_at_ms: raw["generation_started_at_ms"].as_u64().or_else(|| {
-            held.as_ref()
-                .and_then(|entry| entry.generation_started_at_ms)
-        }),
-        launch_hook_capable: raw["launch_shell"]
-            .as_str()
-            .map(command_is_hook_capable)
-            .or_else(|| held.as_ref().map(|entry| entry.launch_hook_capable))
-            .unwrap_or(false),
         workspace,
         title: raw["title"].as_str().map(str::to_owned),
         cwd: raw["cwd"].as_str().map(str::to_owned),
@@ -1102,44 +731,33 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         activity: held_activity
             .or(declared)
             .or_else(|| serde_json::from_value::<AgentSummary>(raw["agent"].clone()).ok()),
-        screen_owned_activity,
-        activity_source: same_generation
-            .then(|| held.as_ref().map(|entry| entry.activity_source))
-            .flatten()
-            .unwrap_or(ActivitySource::None),
-        status: same_generation
-            .then(|| held.as_ref().map(|entry| entry.status))
-            .flatten()
-            .unwrap_or(Status::Idle),
-        outcome: same_generation
-            .then(|| held.as_ref().and_then(|entry| entry.outcome.clone()))
-            .flatten(),
+        declared_activity,
+        activity_source: ActivitySource::None,
+        status: Status::Idle,
+        outcome: None,
         health: Health::NonResumable,
-        activity_signal: raw["screen_changed_at_ms"].as_u64().unwrap_or_default(),
-        output_changed_at_ms: raw["output_changed_at_ms"].as_u64(),
-        screen_activity: raw["screen_activity"].as_str().map(str::to_owned),
-        declared_blocker: raw["declared_blocker"].as_str().map(str::to_owned),
         declared_status: serde_json::from_value(raw["declared_status"].clone())
             .ok()
             .flatten(),
-        menu_prompt_active: raw["menu_prompt_active"].as_bool().unwrap_or_default(),
         foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
         observed_runtime: current_observation.or_else(|| {
             held.as_ref()
                 .and_then(|entry| entry.observed_runtime.clone())
         }),
-        bell_at_ms,
-        input_at_ms: raw["input_at_ms"].as_u64(),
-        bell_seen_at_ms,
-        bell_attention_since,
-        bell_notice_pending: false,
         state_seq: held.as_ref().map_or(0, |entry| entry.state_seq),
-        unread: same_generation
-            .then(|| held.as_ref().map(|entry| entry.unread))
-            .flatten()
-            .unwrap_or(false),
+        unread: false,
         updated_at_ms: now_ms(),
+    };
+    match held.filter(|_| same_generation) {
+        Some(held) => {
+            entry.activity_source = held.activity_source;
+            entry.status = held.status;
+            entry.outcome = held.outcome;
+            entry.unread = held.unread;
+        }
+        None => entry.adopt_declared_verdict(),
     }
+    entry
 }
 
 pub fn now_ms() -> u64 {
@@ -1152,12 +770,14 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hook_state::HOOK_IDLE_TIMEOUT;
     use crate::notifications::{KIND_FINISHED, KIND_NEEDS_INPUT};
     use paneflow_config::schema::HostInstanceToken;
     use paneflow_host::manifest::{
         HookRecord, MANIFEST_SCHEMA_VERSION, SessionLaunch, write_manifest,
     };
+
+    const CLAUDE: &str = "com.anthropic.claude-code";
+    const LAUNCHED_AT: u64 = 1_000;
 
     fn observation(id: &str, pid: u32, started_at: u64) -> RuntimeObservation {
         RuntimeObservation {
@@ -1169,8 +789,6 @@ mod tests {
             argv: None,
         }
     }
-
-    const LAUNCHED_AT: u64 = 1_000;
 
     fn manifest(session: SessionId, last_hook: Option<HookRecord>) -> SessionManifest {
         SessionManifest {
@@ -1196,10 +814,7 @@ mod tests {
             hook_revision: 0,
             generation_started_at_ms: Some(LAUNCHED_AT),
             screen_changed_at_ms: None,
-            screen_activity: None,
-            declared_blocker: None,
             declared_status: None,
-            menu_prompt_active: false,
             runtime: None,
             final_output: None,
             host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
@@ -1241,27 +856,396 @@ mod tests {
         })
     }
 
-    fn seed(dir: &Path, name: &str, generation: u64) {
-        std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(
-            dir.join(hook_assets::SEED_FILE),
-            serde_json::to_vec(&json!({"hook_event_name": name, "runtime_generation": generation}))
-                .unwrap(),
-        )
-        .unwrap();
+    fn frame_from_pid(session: &SessionId, kind: &str, hook_event_name: &str, pid: u32) -> Value {
+        let mut frame = frame(session, kind, hook_event_name, json!({}));
+        frame["pid"] = json!(pid);
+        frame
     }
 
-    fn set_seed_modified_at(dir: &Path, modified_at: SystemTime) {
-        let seed = std::fs::File::options()
-            .write(true)
-            .open(dir.join(hook_assets::SEED_FILE))
-            .unwrap();
-        seed.set_times(std::fs::FileTimes::new().set_modified(modified_at))
-            .unwrap();
+    fn core_row(session: &SessionId) -> Value {
+        json!({
+            "session": session,
+            "generation": SessionGeneration::FIRST,
+            "generation_started_at_ms": LAUNCHED_AT,
+            "live": true,
+            "lifecycle": SessionLifecycle::Running,
+            "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
+            "host_build_id": "test-build",
+        })
+    }
+
+    fn agent_row(session: &SessionId) -> Value {
+        let mut row = core_row(session);
+        row["observed_runtime"] = serde_json::to_value(observation(CLAUDE, 10, 5)).unwrap();
+        row
+    }
+
+    fn declared(state: &str, message: &str) -> Value {
+        json!({"state": state, "kind": "permission", "app": "claude", "message": message})
+    }
+
+    fn with_declared(mut raw: Value, state: &str, message: &str) -> Value {
+        raw["declared_status"] = declared(state, message);
+        raw
+    }
+
+    fn exited(mut row: Value) -> Value {
+        row["live"] = json!(false);
+        row["lifecycle"] = json!(SessionLifecycle::Exited {
+            code: 0,
+            signal: None,
+        });
+        row
+    }
+
+    fn running_state(home: &Path, session: &SessionId) -> WorkerState {
+        write_manifest(home, &manifest(session.clone(), None)).unwrap();
+        let mut state = WorkerState::new(home);
+        state.rebuild_from_home(home);
+        state
+    }
+
+    fn notifications(projections: &[Projection]) -> Vec<&'static str> {
+        projections
+            .iter()
+            .filter_map(|projection| projection.notification.as_ref())
+            .map(|notification| notification.kind)
+            .collect()
     }
 
     #[test]
-    fn revisioned_host_snapshots_recover_a_lost_notification_and_reject_queued_older_events() {
+    fn a_declared_turn_runs_busy_and_its_done_notifies_finished_once() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[agent_row(&session)]);
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+        assert_eq!(
+            state.get(&session).unwrap().activity_source,
+            ActivitySource::None
+        );
+
+        let projections =
+            state.apply_core_session(&with_declared(agent_row(&session), "working", ""));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "busy");
+        assert_eq!(entry.activity_source, ActivitySource::Declared);
+        assert_eq!(entry.to_value()["activity_source"], "declared");
+        let activity = entry.activity.as_ref().expect("the agent gets a row");
+        assert_eq!(activity.tool, "claude");
+        assert_eq!(activity.state, "thinking");
+        assert_eq!(activity.source, "terminal");
+        assert!(notifications(&projections).is_empty());
+
+        let projections =
+            state.apply_core_session(&with_declared(agent_row(&session), "done", "All set"));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "idle");
+        assert_eq!(entry.outcome.as_deref(), Some(OUTCOME_COMPLETED));
+        assert!(entry.unread);
+        assert_eq!(notifications(&projections), [KIND_FINISHED]);
+        let notification = projections
+            .iter()
+            .find_map(|projection| projection.notification.as_ref())
+            .unwrap();
+        assert_eq!(notification.runtime_label, "Claude Code");
+        assert_eq!(notification.body.as_deref(), Some("All set"));
+        assert!(
+            state
+                .activity_log()
+                .to_values(1)
+                .first()
+                .is_some_and(|entry| entry["outcome"] == OUTCOME_COMPLETED)
+        );
+
+        let projections =
+            state.apply_core_session(&with_declared(agent_row(&session), "done", "All set"));
+        assert!(
+            notifications(&projections).is_empty(),
+            "a held done is quiet"
+        );
+    }
+
+    #[test]
+    fn an_idle_after_a_turn_settles_without_a_finished_notification() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+
+        let projections = state.apply_core_session(&with_declared(agent_row(&session), "idle", ""));
+
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+        assert!(
+            notifications(&projections).is_empty(),
+            "only done reports a finished turn"
+        );
+    }
+
+    #[test]
+    fn a_declared_blocker_asks_for_attention_once_with_its_message() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+
+        let projections = state.apply_core_session(&with_declared(
+            agent_row(&session),
+            "blocked",
+            "Apply the plan?",
+        ));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "attention");
+        assert_eq!(entry.activity.as_ref().unwrap().state, "waiting_for_input");
+        assert_eq!(notifications(&projections), [KIND_NEEDS_INPUT]);
+        let notification = projections
+            .iter()
+            .find_map(|projection| projection.notification.as_ref())
+            .unwrap();
+        assert_eq!(notification.body.as_deref(), Some("Apply the plan?"));
+
+        let projections = state.apply_core_session(&with_declared(
+            agent_row(&session),
+            "blocked",
+            "Apply the plan?",
+        ));
+        assert!(notifications(&projections).is_empty());
+    }
+
+    #[test]
+    fn an_agent_that_declares_error_is_errored_and_failed_until_the_record_goes() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+
+        let projections = state.apply_core_session(&with_declared(
+            agent_row(&session),
+            "error",
+            "2 tests failed",
+        ));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "errored");
+        assert_eq!(entry.to_value()["activity"]["state"], "errored");
+        assert_eq!(entry.outcome.as_deref(), Some("failed:2 tests failed"));
+        assert_eq!(notifications(&projections), [KIND_NEEDS_INPUT]);
+
+        state.apply_core_session(&agent_row(&session));
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "idle");
+        assert_eq!(entry.activity_source, ActivitySource::None);
+        assert_eq!(
+            entry.outcome.as_deref(),
+            Some("failed:2 tests failed"),
+            "the last outcome stays readable once the record goes"
+        );
+    }
+
+    #[test]
+    fn a_program_without_an_agent_keeps_its_declared_status_but_never_moves_the_row() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[core_row(&session)]);
+
+        for declared_state in ["working", "blocked", "error", "done"] {
+            let projections = state.apply_core_session(&with_declared(
+                core_row(&session),
+                declared_state,
+                "Apply the plan?",
+            ));
+            let entry = state.get(&session).unwrap();
+            assert!(entry.runtime().is_none());
+            assert_eq!(
+                entry.status(),
+                "idle",
+                "{declared_state}: a program is not an agent"
+            );
+            assert_eq!(entry.to_value()["activity"], Value::Null);
+            assert_eq!(entry.to_value()["declared_status"]["state"], declared_state);
+            assert!(
+                projections
+                    .iter()
+                    .any(|projection| projection.session["declared_status"]["state"]
+                        == declared_state),
+                "a declared change is announced even when the status does not move"
+            );
+            assert!(
+                notifications(&projections).is_empty(),
+                "serve never notifies for a program, the desktop does"
+            );
+        }
+
+        let projections = state.apply_core_session(&core_row(&session));
+        assert_eq!(
+            state.get(&session).unwrap().to_value()["declared_status"],
+            Value::Null
+        );
+        assert!(!projections.is_empty(), "a removed record is announced too");
+    }
+
+    #[test]
+    fn a_hook_event_carries_metadata_but_never_moves_the_declared_state() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+
+        let projection = state
+            .apply_core_event(&frame(
+                &session,
+                "ai.prompt_submit",
+                "UserPromptSubmit",
+                json!({"session_id": "provider-1", "transcript_path": "/tmp/t.jsonl"}),
+            ))
+            .expect("the hook projects");
+        assert_eq!(projection.session["status"], "idle");
+        assert_eq!(projection.session["activity_source"], "none");
+        assert_eq!(projection.session["runtime_id"], CLAUDE);
+        let activity = state.get(&session).unwrap().activity.clone().unwrap();
+        assert_eq!(activity.provider_session_id.as_deref(), Some("provider-1"));
+        assert_eq!(activity.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
+        assert!(projection.notification.is_none());
+
+        state.apply_core_session(&with_declared(core_row(&session), "working", ""));
+        assert_eq!(
+            state.get(&session).unwrap().status(),
+            "busy",
+            "the hook named the agent, the declaration moves it"
+        );
+
+        let projection = state
+            .apply_core_event(&frame(
+                &session,
+                "ai.stop",
+                "Stop",
+                json!({"last_result": "2 files changed"}),
+            ))
+            .expect("the stop projects");
+        assert_eq!(projection.session["status"], "busy");
+        assert!(projection.notification.is_none());
+
+        let projections = state.apply_core_session(&with_declared(core_row(&session), "done", ""));
+        let notification = projections
+            .iter()
+            .find_map(|projection| projection.notification.as_ref())
+            .expect("done notifies");
+        assert_eq!(notification.kind, KIND_FINISHED);
+        assert_eq!(
+            notification.body.as_deref(),
+            Some("2 files changed"),
+            "the hook's last result names the finished turn"
+        );
+    }
+
+    #[test]
+    fn an_exited_agent_never_holds_attention_or_busy() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "blocked", "Apply?")]);
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+
+        let projections = state.apply_core_snapshot(&[exited(with_declared(
+            agent_row(&session),
+            "blocked",
+            "Apply?",
+        ))]);
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+        assert!(notifications(&projections).is_empty(), "{projections:?}");
+
+        state.apply_core_snapshot(&[exited(with_declared(agent_row(&session), "working", ""))]);
+        assert_eq!(state.get(&session).unwrap().status(), "idle");
+    }
+
+    #[test]
+    fn a_rebuilt_worker_restores_the_declared_state_without_replaying_its_notification() {
+        let home = tempfile::tempdir().unwrap();
+        let blocked = SessionId::new();
+        let ended = SessionId::new();
+        for (session, state, lifecycle) in [
+            (&blocked, "blocked", SessionLifecycle::Running),
+            (&ended, "working", SessionLifecycle::Lost),
+        ] {
+            let mut held = manifest(
+                session.clone(),
+                Some(hook("Stop", SessionGeneration::FIRST)),
+            );
+            held.lifecycle = lifecycle;
+            held.declared_status = serde_json::from_value(declared(state, "Apply?")).ok();
+            write_manifest(home.path(), &held).unwrap();
+        }
+
+        let mut restarted = WorkerState::new(home.path());
+        restarted.rebuild_from_home(home.path());
+
+        assert_eq!(restarted.get(&blocked).unwrap().status(), "attention");
+        assert_ne!(restarted.get(&ended).unwrap().status(), "busy");
+        let snapshot = restarted.snapshot();
+        assert!(
+            snapshot
+                .iter()
+                .any(|row| row["declared_status"]["state"] == "blocked"),
+            "a worker rebuilt from the manifests serves the held status"
+        );
+        let projections = restarted.apply_core_snapshot(&[with_declared(
+            agent_row(&blocked),
+            "blocked",
+            "Apply?",
+        )]);
+        assert!(
+            notifications(&projections).is_empty(),
+            "a status held before the restart is not announced again"
+        );
+    }
+
+    #[test]
+    fn a_session_discovered_mid_turn_takes_its_state_without_a_notification() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+
+        let projections =
+            state.apply_core_snapshot(&[with_declared(agent_row(&session), "blocked", "Apply?")]);
+
+        assert_eq!(state.get(&session).unwrap().status(), "attention");
+        assert!(notifications(&projections).is_empty());
+    }
+
+    #[test]
+    fn a_declared_activity_ends_when_the_agent_stops_declaring() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+        assert!(state.get(&session).unwrap().activity.is_some());
+
+        state.apply_core_snapshot(&[agent_row(&session)]);
+
+        assert!(state.get(&session).unwrap().activity.is_none());
+    }
+
+    #[test]
+    fn a_hook_event_takes_over_a_declared_activity() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+        let mut prompt = frame_from_pid(&session, "ai.prompt_submit", "UserPromptSubmit", 10);
+        prompt["emitted_at_ms"] = json!(now_ms());
+        state.apply_core_event(&prompt).expect("the hook projects");
+
+        state.apply_core_snapshot(&[agent_row(&session)]);
+
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.activity_source, ActivitySource::None);
+        assert!(
+            entry.activity.is_some(),
+            "a hook-owned activity outlives the declaration"
+        );
+    }
+
+    #[test]
+    fn revisioned_host_snapshots_recover_a_lost_event_and_reject_queued_older_events() {
         let home = tempfile::tempdir().unwrap();
         let host = paneflow_host::host::SessionHost::open(home.path(), Path::new("hook-recovery"))
             .unwrap();
@@ -1297,58 +1281,33 @@ mod tests {
         accepted("ai.prompt_submit", "UserPromptSubmit", 10);
         let first = agents.frames.try_recv().unwrap();
         state.apply_core_event(&first).unwrap();
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-        let blocked_seed = paneflow_home::host_session_data_dir_in(home.path(), session.as_str())
-            .join(hook_assets::SEED_FILE);
-        std::fs::remove_file(&blocked_seed).unwrap();
-        std::fs::create_dir(&blocked_seed).unwrap();
-        let second_ack = accepted("ai.notification", "PermissionRequest", 11);
-        assert_eq!(second_ack["durable"], false);
-        assert!(second_ack["persistence_error"].as_str().is_some());
+        assert_eq!(state.get(&session).unwrap().hook_revision, 1);
+        accepted("ai.notification", "PermissionRequest", 11);
         let second = agents.frames.try_recv().unwrap();
+
         let projections = state.apply_core_snapshot(&snapshot());
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-        assert_eq!(state.get(&session).unwrap().hook_revision, 2);
+        assert_eq!(
+            state.get(&session).unwrap().hook_revision,
+            2,
+            "the snapshot recovers the event the stream lost"
+        );
         assert!(!projections.is_empty());
         assert!(state.apply_core_event(&first).is_none());
         assert!(state.apply_core_event(&second).is_none());
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
         assert!(state.apply_core_snapshot(&snapshot()).is_empty());
+
         let mut replacement = WorkerState::new(home.path());
         replacement.rebuild_from_home(home.path());
         assert_eq!(replacement.get(&session).unwrap().hook_revision, 2);
-        assert_eq!(replacement.get(&session).unwrap().status(), "attention");
-        let mut stale = AgentEvent::from_params(&first).unwrap();
-        stale.kind = paneflow_host::agent::AgentEventKind::SessionEnd;
-        assert_eq!(host.ingest_agent_event(&stale).unwrap()["accepted"], false);
-        assert_eq!(host.inspect(&session).unwrap().manifest.hook_revision, 2);
-        std::fs::remove_dir(&blocked_seed).unwrap();
-        let retry = accepted("ai.notification", "PermissionRequest", 11);
-        assert_eq!(retry["durable"], true);
-        assert_eq!(retry["duplicate"], true);
-        assert!(agents.frames.try_recv().is_err());
-        accepted("ai.tool_use", "PreToolUse", 12);
-        agents.frames.try_recv().unwrap();
-        let mut replacement = WorkerState::new(home.path());
-        replacement.rebuild_from_home(home.path());
-        assert_eq!(replacement.get(&session).unwrap().hook_revision, 3);
-        assert_eq!(replacement.get(&session).unwrap().status(), "attention");
-        let mut background = frame(
-            &session,
-            "ai.stop",
-            "Stop",
-            json!({"background_tasks": true}),
+        assert_eq!(
+            replacement
+                .get(&session)
+                .unwrap()
+                .activity
+                .as_ref()
+                .map(|activity| activity.tool.as_str()),
+            Some("claude")
         );
-        background["runtime_generation"] = json!(1);
-        background["emitted_at_ms"] = json!(13);
-        host.ingest_agent_event(&AgentEvent::from_params(&background).unwrap())
-            .unwrap();
-        let pending = agents.frames.try_recv().unwrap();
-        replacement.apply_core_event(&pending).unwrap();
-        assert_eq!(replacement.get(&session).unwrap().status(), "busy");
-        let mut restored = WorkerState::new(home.path());
-        restored.rebuild_from_home(home.path());
-        assert_eq!(restored.get(&session).unwrap().status(), "busy");
         host.stop(&session, None).unwrap();
     }
 
@@ -1367,795 +1326,6 @@ mod tests {
             state.get(&session).unwrap().generation,
             SessionGeneration::FIRST.next()
         );
-    }
-
-    fn running_state(home: &Path, session: &SessionId) -> WorkerState {
-        write_manifest(home, &manifest(session.clone(), None)).unwrap();
-        let mut state = WorkerState::new(home);
-        state.rebuild_from_home(home);
-        state
-    }
-
-    fn cancellation_frame(
-        session: &SessionId,
-        cancelled_at: u64,
-        submitted_at: Option<u64>,
-    ) -> Value {
-        json!({
-            "type": "cancellation",
-            "session": session.to_string(),
-            "generation": 1,
-            "runtime_generation": 1,
-            "cancelled_at": cancelled_at,
-            "submitted_at": submitted_at,
-        })
-    }
-
-    #[test]
-    fn an_escape_fence_settles_a_busy_turn_without_completing_it_and_the_next_prompt_rearms() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-
-        let busy = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.prompt_submit",
-                "UserPromptSubmit",
-                json!({}),
-            ))
-            .expect("the opening hook projects");
-        assert_eq!(busy.session["status"], "busy");
-
-        let cancelled_at = crate::hook_state::unix_ms(SystemTime::now()) - 2_000;
-        let settled = state
-            .apply_cancellation(&cancellation_frame(&session, cancelled_at, None))
-            .expect("the fence projects");
-        assert_eq!(settled.session["status"], "idle");
-        assert_eq!(settled.session["outcome"], "cancelled");
-        assert!(
-            settled.notification.is_none(),
-            "a cancelled turn never notifies a completion"
-        );
-
-        assert!(
-            state
-                .apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})))
-                .is_none(),
-            "a Stop arriving after the fence never completes the turn"
-        );
-        assert_eq!(
-            state.sessions.get(&session).unwrap().to_value()["status"],
-            "idle"
-        );
-        assert_eq!(
-            state.sessions.get(&session).unwrap().to_value()["outcome"],
-            "cancelled"
-        );
-
-        state.apply_cancellation(&cancellation_frame(
-            &session,
-            cancelled_at,
-            Some(cancelled_at + 1_000),
-        ));
-        let rearmed = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.prompt_submit",
-                "UserPromptSubmit",
-                json!({}),
-            ))
-            .expect("the next prompt projects");
-        assert_eq!(rearmed.session["status"], "busy");
-    }
-
-    #[test]
-    fn a_cancellation_for_an_unknown_session_or_generation_changes_nothing() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-
-        assert!(
-            state
-                .apply_cancellation(&cancellation_frame(&SessionId::new(), 10, None))
-                .is_none()
-        );
-        let mut stale = cancellation_frame(&session, 10, None);
-        stale["runtime_generation"] = json!(9);
-        state.apply_cancellation(&stale);
-        assert_eq!(
-            state.sessions.get(&session).unwrap().to_value()["status"],
-            "busy"
-        );
-    }
-
-    #[test]
-    fn a_prompt_latches_the_session_busy_and_a_stop_completes_it_with_one_notification() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-
-        let busy = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.prompt_submit",
-                "UserPromptSubmit",
-                json!({}),
-            ))
-            .expect("the opening hook projects");
-        assert_eq!(busy.session["status"], "busy");
-        assert_eq!(busy.session["activity_source"], "hooks");
-        assert_eq!(busy.session["runtime_id"], "com.anthropic.claude-code");
-        assert!(busy.notification.is_none());
-
-        let done = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.stop",
-                "Stop",
-                json!({"last_result": "3 files changed"}),
-            ))
-            .expect("the stop projects");
-        assert_eq!(done.session["status"], "idle");
-        assert_eq!(done.session["outcome"], "completed");
-        let notification = done.notification.expect("a real completion notifies");
-        assert_eq!(notification.kind, KIND_FINISHED);
-        assert_eq!(notification.runtime_label, "Claude Code");
-        assert_eq!(notification.body.as_deref(), Some("3 files changed"));
-        assert_eq!(
-            state
-                .activity_log()
-                .entries()
-                .map(|entry| entry.outcome.as_str())
-                .collect::<Vec<_>>(),
-            vec!["completed"]
-        );
-
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let second = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.stop",
-                "Stop",
-                json!({"last_assistant_message": "second turn"}),
-            ))
-            .expect("the second stop projects");
-        assert_eq!(
-            second.notification.unwrap().body.as_deref(),
-            Some("second turn")
-        );
-        assert_eq!(state.activity_log().len(), 2);
-    }
-
-    #[test]
-    fn a_stop_failure_asks_for_attention_naming_the_error_cut_to_128_bytes() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-
-        let error = format!("rate_limit{}", "é".repeat(100));
-        let failed = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.stop",
-                "StopFailure",
-                json!({"error": error, "last_assistant_message": "API Error: Rate limit reached"}),
-            ))
-            .expect("the failure projects");
-        assert_eq!(failed.session["status"], "attention");
-        assert_eq!(failed.session["activity"]["state"], "waiting_for_input");
-        let outcome = failed.session["outcome"].as_str().unwrap();
-        let reason = outcome.strip_prefix("failed:").unwrap();
-        assert!(reason.starts_with("rate_limit"), "{outcome}");
-        assert!(reason.len() <= 128, "{} bytes", reason.len());
-        assert_eq!(
-            failed.notification.map(|notification| notification.kind),
-            Some(KIND_NEEDS_INPUT)
-        );
-    }
-
-    #[test]
-    fn a_codex_interrupt_still_settles_the_turn_to_idle() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let mut interrupted = frame(&session, "ai.stop", "Interrupt", json!({}));
-        interrupted["event_source"] = json!("interrupt");
-        let settled = state
-            .apply_core_event(&interrupted)
-            .expect("the interrupt projects");
-        assert_eq!(settled.session["status"], "idle");
-        assert_eq!(settled.session["outcome"], "cancelled");
-        assert!(settled.notification.is_none());
-    }
-
-    #[test]
-    fn a_permission_request_asks_for_input_once_and_names_its_message() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-
-        let asking = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.notification",
-                "PermissionRequest",
-                json!({"message": "Approve edit?"}),
-            ))
-            .expect("the permission request projects");
-        assert_eq!(asking.session["status"], "attention");
-        let notification = asking.notification.expect("a need for input notifies");
-        assert_eq!(notification.kind, KIND_NEEDS_INPUT);
-        assert_eq!(notification.body.as_deref(), Some("Approve edit?"));
-
-        let again = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.notification",
-                "Notification",
-                json!({"notification_type": "permission_prompt"}),
-            ))
-            .expect("the duplicate still projects");
-        assert!(
-            again.notification.is_none(),
-            "two signals for one question are one need for input"
-        );
-    }
-
-    #[test]
-    fn a_subagent_edge_latches_without_completing_the_main_turn() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let child = state
-            .apply_core_event(&frame(&session, "ai.session_start", "HookSeen", json!({})))
-            .expect("the child edge projects");
-        assert_eq!(child.session["status"], "busy");
-        assert!(child.notification.is_none());
-    }
-
-    #[test]
-    fn a_stop_carrying_background_tasks_keeps_the_pane_busy_until_the_list_empties() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-
-        let pending = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.stop",
-                "Stop",
-                json!({"background_tasks": ["build"]}),
-            ))
-            .expect("the stop projects");
-        assert_eq!(pending.session["status"], "busy");
-        assert_eq!(pending.session["activity_source"], "hooks");
-        assert!(pending.notification.is_none());
-
-        let settled = state
-            .apply_core_event(&frame(
-                &session,
-                "ai.stop",
-                "Stop",
-                json!({"background_tasks": []}),
-            ))
-            .expect("the final stop projects");
-        assert_eq!(settled.session["status"], "idle");
-        assert!(settled.notification.is_some());
-    }
-
-    #[test]
-    fn a_quarantined_legacy_stop_has_no_summary_side_effects() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        let entry = state.sessions.get_mut(&session).unwrap();
-        entry.generation = SessionGeneration::FIRST.next();
-        entry.generation_started_at_ms = Some(now_ms());
-
-        let rejected = state.apply_core_event(&frame(
-            &session,
-            "ai.stop",
-            "Stop",
-            json!({"last_assistant_message": "stale result"}),
-        ));
-        assert!(rejected.is_none());
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "idle");
-        assert!(
-            entry
-                .activity
-                .as_ref()
-                .is_none_or(|activity| activity.last_result.is_none()),
-            "a rejected event cannot alter controller metadata"
-        );
-    }
-
-    #[test]
-    fn a_lost_stop_expires_after_the_lease_without_a_completion_notification() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        std::fs::create_dir_all(paneflow_home::host_session_data_dir_in(
-            home.path(),
-            session.as_str(),
-        ))
-        .unwrap();
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-
-        let later = SystemTime::now() + HOOK_IDLE_TIMEOUT + HOOK_IDLE_TIMEOUT;
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        let settled = state.sweep(later, &|_| Some(false));
-        assert_eq!(settled.len(), 1);
-        assert_eq!(settled[0].session["status"], "idle");
-        assert_eq!(settled[0].session["outcome"], "expired");
-        assert!(settled[0].notification.is_none());
-        assert!(
-            state
-                .session_dir(&session)
-                .join(hook_assets::EXPIRY_FILE)
-                .is_file(),
-            "the expiry watermark survives a restart"
-        );
-    }
-
-    #[test]
-    fn raw_output_never_rearms_the_screen_change_lease() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let opened_at = SystemTime::now();
-        state.sweep(opened_at, &|_| Some(false));
-        state
-            .sessions
-            .get_mut(&session)
-            .unwrap()
-            .output_changed_at_ms = Some(now_ms() + 1_000);
-
-        let settled = state.sweep(
-            opened_at + HOOK_IDLE_TIMEOUT + std::time::Duration::from_secs(1),
-            &|_| Some(false),
-        );
-        assert_eq!(settled[0].session["status"], "idle");
-        assert_eq!(settled[0].session["outcome"], "expired");
-    }
-
-    #[test]
-    fn a_failed_menu_read_keeps_attention_and_its_output_baseline() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        state.apply_core_event(&frame(
-            &session,
-            "ai.notification",
-            "PermissionRequest",
-            json!({}),
-        ));
-        state.sweep(SystemTime::now(), &|_| Some(false));
-
-        state.sessions.get_mut(&session).unwrap().activity_signal = 99;
-        let blind = state.sweep(SystemTime::now(), &|_| None);
-        assert!(blind.iter().all(|row| row.session["status"] == "attention"));
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-
-        state.sessions.get_mut(&session).unwrap().activity_signal = 100;
-        let menu_gone = state.sweep(SystemTime::now(), &|_| Some(false));
-        assert_eq!(menu_gone[0].session["status"], "busy");
-    }
-
-    #[test]
-    fn a_visible_menu_never_lets_changed_output_clear_the_question() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        state.apply_core_event(&frame(
-            &session,
-            "ai.notification",
-            "PermissionRequest",
-            json!({}),
-        ));
-        state.sweep(SystemTime::now(), &|_| Some(true));
-        state.sessions.get_mut(&session).unwrap().activity_signal = 55;
-        state.sweep(SystemTime::now(), &|_| Some(true));
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-    }
-
-    #[test]
-    fn a_restart_rebuilds_a_busy_turn_from_its_seed_and_leaves_a_bare_session_idle() {
-        let home = tempfile::tempdir().unwrap();
-        let busy = SessionId::new();
-        let bare = SessionId::new();
-        write_manifest(
-            home.path(),
-            &manifest(
-                busy.clone(),
-                Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-            ),
-        )
-        .unwrap();
-        write_manifest(home.path(), &manifest(bare.clone(), None)).unwrap();
-        seed(
-            &paneflow_home::host_session_data_dir_in(home.path(), busy.as_str()),
-            "UserPromptSubmit",
-            1,
-        );
-
-        let mut state = WorkerState::new(home.path());
-        assert_eq!(state.rebuild_from_home(home.path()), 2);
-        let replayed = state.get(&busy).expect("the busy session is rebuilt");
-        assert_eq!(replayed.status(), "busy");
-        assert_eq!(replayed.activity_source, ActivitySource::Hooks);
-
-        let untouched = state.get(&bare).expect("a session with no seed is rebuilt");
-        assert_eq!(untouched.status(), "idle");
-        assert_eq!(untouched.activity_source, ActivitySource::None);
-    }
-
-    #[test]
-    fn a_replayed_notification_seed_restores_the_attention_the_live_event_produced() {
-        let replayed_status = |seed_body: Value| {
-            let home = tempfile::tempdir().unwrap();
-            let session = SessionId::new();
-            write_manifest(
-                home.path(),
-                &manifest(
-                    session.clone(),
-                    Some(hook("Notification", SessionGeneration::FIRST)),
-                ),
-            )
-            .unwrap();
-            let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(
-                dir.join(hook_assets::SEED_FILE),
-                serde_json::to_vec(&seed_body).unwrap(),
-            )
-            .unwrap();
-            let mut state = WorkerState::new(home.path());
-            state.rebuild_from_home(home.path());
-            assert_eq!(state.get(&session).unwrap().hook_revision, 0);
-            state.get(&session).unwrap().status()
-        };
-        let live_status = |payload: Value| {
-            let home = tempfile::tempdir().unwrap();
-            let session = SessionId::new();
-            let mut state = running_state(home.path(), &session);
-            state.apply_core_event(&frame(&session, "ai.notification", "Notification", payload));
-            state.get(&session).unwrap().status()
-        };
-
-        let live = live_status(json!({"notification_type": "permission_prompt"}));
-        assert_eq!(live, "attention");
-        assert_eq!(
-            replayed_status(json!({
-                "hook_event_name": "Notification",
-                "notification_type": "permission_prompt",
-                "runtime_generation": 1,
-            })),
-            live
-        );
-
-        assert_eq!(
-            replayed_status(json!({
-                "hook_event_name": "Notification",
-                "runtime_generation": 1,
-            })),
-            live_status(json!({}))
-        );
-    }
-
-    #[test]
-    fn a_seed_holding_a_stop_never_reopens_the_turn() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        write_manifest(
-            home.path(),
-            &manifest(
-                session.clone(),
-                Some(hook("Stop", SessionGeneration::FIRST)),
-            ),
-        )
-        .unwrap();
-        seed(
-            &paneflow_home::host_session_data_dir_in(home.path(), session.as_str()),
-            "Stop",
-            1,
-        );
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
-        assert_eq!(
-            state.get(&session).unwrap().outcome.as_deref(),
-            Some("completed")
-        );
-    }
-
-    #[test]
-    fn a_seed_from_a_generation_the_session_has_left_is_never_replayed() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut record = manifest(
-            session.clone(),
-            Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-        );
-        record.generation = SessionGeneration::FIRST.next();
-        write_manifest(home.path(), &record).unwrap();
-        seed(
-            &paneflow_home::host_session_data_dir_in(home.path(), session.as_str()),
-            "UserPromptSubmit",
-            1,
-        );
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "idle",
-            "a seed the session has left never speaks for the new generation"
-        );
-    }
-
-    #[test]
-    fn an_expiry_watermark_keeps_a_replayed_turn_idle_after_a_restart() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        write_manifest(
-            home.path(),
-            &manifest(
-                session.clone(),
-                Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-            ),
-        )
-        .unwrap();
-        let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-        seed(&dir, "UserPromptSubmit", 1);
-        hook_assets::record_hook_expiry(&dir, 1, SystemTime::now() + HOOK_IDLE_TIMEOUT).unwrap();
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
-    }
-
-    #[test]
-    fn a_cancellation_fence_is_restored_before_the_seed_is_applied() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        write_manifest(
-            home.path(),
-            &manifest(
-                session.clone(),
-                Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-            ),
-        )
-        .unwrap();
-        let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-        seed(&dir, "UserPromptSubmit", 1);
-        std::fs::write(
-            dir.join(hook_assets::CANCELLATION_FILE),
-            serde_json::to_vec(&json!({
-                "runtime_generation": 1,
-                "cancelled_at": now_ms() + 60_000,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "idle",
-            "an escape fence settles the pane until the next submission"
-        );
-    }
-
-    #[test]
-    fn a_new_foreground_agent_drops_the_latch_the_previous_one_left_behind() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some(observation("com.anthropic.claude-code", 10, 5));
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "busy",
-            "an unchanged foreground identity is not an edge"
-        );
-
-        state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some(observation("com.openai.codex", 11, 6));
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "idle",
-            "a stale latch never speaks for the process that replaced it"
-        );
-        assert_eq!(
-            state.get(&session).unwrap().activity_source,
-            ActivitySource::None
-        );
-    }
-
-    #[test]
-    fn a_prompt_submitted_before_the_first_runtime_observation_keeps_its_turn() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        let mut submitted = frame(&session, "ai.prompt_submit", "UserPromptSubmit", json!({}));
-        submitted["runtime_generation"] = json!(SessionGeneration::FIRST);
-        state.apply_core_event(&submitted);
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-
-        state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some(observation("com.anthropic.claude-code", 10, 5));
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "busy",
-            "the first identity the snapshot reports is the agent that submitted the prompt"
-        );
-        assert_eq!(
-            state.get(&session).unwrap().activity_source,
-            ActivitySource::Hooks
-        );
-    }
-
-    #[test]
-    fn a_hook_capable_launch_keeps_its_latch_across_foreground_observations() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut record = manifest(session.clone(), None);
-        record.launch.shell = "claude".to_string();
-        write_manifest(home.path(), &record).unwrap();
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some(observation("com.anthropic.claude-code", 10, 5));
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        state.sessions.get_mut(&session).unwrap().observed_runtime =
-            Some(observation("com.anthropic.claude-code", 11, 6));
-        state.sweep(SystemTime::now(), &|_| Some(false));
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-        assert_eq!(
-            state.get(&session).unwrap().activity_source,
-            ActivitySource::Hooks
-        );
-    }
-
-    #[test]
-    fn a_worker_started_long_after_a_seeded_turn_settles_it_during_rebuild() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let now = SystemTime::now();
-        let old_seed = now - HOOK_IDLE_TIMEOUT - std::time::Duration::from_secs(60);
-        let mut record = manifest(
-            session.clone(),
-            Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-        );
-        record.generation_started_at_ms = Some(crate::hook_state::unix_ms(
-            old_seed - std::time::Duration::from_secs(60),
-        ));
-        write_manifest(home.path(), &record).unwrap();
-        let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-        seed(&dir, "UserPromptSubmit", 1);
-        set_seed_modified_at(&dir, old_seed);
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
-        assert_eq!(
-            state.get(&session).unwrap().outcome.as_deref(),
-            Some("expired")
-        );
-    }
-
-    #[test]
-    fn recovered_opening_lease_anchors_to_the_last_output_time() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let now = SystemTime::now();
-        let seed_at = now - HOOK_IDLE_TIMEOUT - std::time::Duration::from_secs(60);
-        let output_at = now - std::time::Duration::from_secs(10);
-        let mut record = manifest(
-            session.clone(),
-            Some(hook("UserPromptSubmit", SessionGeneration::FIRST)),
-        );
-        record.generation_started_at_ms = Some(crate::hook_state::unix_ms(
-            seed_at - std::time::Duration::from_secs(60),
-        ));
-        let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-        seed(&dir, "UserPromptSubmit", 1);
-        set_seed_modified_at(&dir, seed_at);
-
-        let mut state = WorkerState::new(home.path());
-        let mut entry = SessionEntry::from_manifest(record);
-        entry.output_changed_at_ms = Some(crate::hook_state::unix_ms(output_at));
-        state.sessions.insert(session.clone(), entry);
-        state.derive(&session, now, &|_| Some(false));
-
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-        assert_eq!(state.get(&session).unwrap().outcome, None);
     }
 
     #[test]
@@ -2227,8 +1397,6 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
         let process = ProcessIdentity::capture(std::process::id());
-        let dir = paneflow_home::host_session_data_dir_in(home.path(), session.as_str());
-        seed(&dir, "UserPromptSubmit", 1);
         let raw = json!({
             "session": session,
             "generation": SessionGeneration::FIRST,
@@ -2246,8 +1414,9 @@ mod tests {
             .get(&session)
             .expect("the new core session is projected");
         assert_eq!(entry.health, Health::Live);
-        assert_eq!(entry.status(), "busy");
-        assert_eq!(entry.activity_source, ActivitySource::Hooks);
+        assert_eq!(entry.status(), "idle");
+        assert_eq!(entry.activity_source, ActivitySource::None);
+        assert_eq!(entry.activity.as_ref().unwrap().tool, "claude");
     }
 
     fn adopted_row(session: &SessionId, lifecycle: SessionLifecycle, stale: bool) -> Value {
@@ -2304,579 +1473,14 @@ mod tests {
     }
 
     #[test]
-    fn a_rebuild_keeps_a_live_busy_turn_busy_and_never_reports_an_ended_one_busy() {
-        let home = tempfile::tempdir().unwrap();
-        let ended = SessionId::new();
-        let live = SessionId::new();
-        for (session, lifecycle) in [
-            (&ended, SessionLifecycle::Lost),
-            (&live, SessionLifecycle::Running),
-        ] {
-            let mut last_hook = hook("UserPromptSubmit", SessionGeneration::FIRST);
-            last_hook.activity_event = Some(frame(
-                session,
-                "ai.prompt_submit",
-                "UserPromptSubmit",
-                json!({}),
-            ));
-            let mut adopted = manifest(session.clone(), Some(last_hook));
-            adopted.lifecycle = lifecycle;
-            write_manifest(home.path(), &adopted).unwrap();
-        }
-
-        let mut state = WorkerState::new(home.path());
-        state.rebuild_from_home(home.path());
-        let stale = |session: &SessionId| {
-            state
-                .get(session)
-                .and_then(|entry| entry.activity.as_ref())
-                .expect("the replayed activity is kept")
-                .stale
-        };
-        assert_ne!(state.get(&ended).unwrap().status(), "busy");
-        assert_eq!(state.get(&live).unwrap().status(), "busy");
-        assert!(!stale(&live));
-    }
-
-    #[test]
-    fn a_recognized_runtime_without_a_latch_takes_the_screen_verdict() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let raw = json!({
-            "session": session,
-            "generation": SessionGeneration::FIRST,
-            "live": true,
-            "lifecycle": SessionLifecycle::Running,
-            "last_hook": {
-                "hook_event_name": "HookSeen",
-                "tool": "claude",
-                "runtime_generation": SessionGeneration::FIRST,
-                "received_at_ms": 1,
-            },
-            "screen_activity": SCREEN_WORKING,
-        });
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[raw]);
-        let entry = state.get(&session).expect("the screen tier projects");
-        assert_eq!(entry.status(), "busy");
-        assert_eq!(entry.activity_source, ActivitySource::Screen);
-        assert_eq!(entry.outcome, None);
-    }
-
-    #[test]
-    fn an_observed_runtime_without_any_hook_takes_the_screen_verdict() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let raw = json!({
-            "session": session,
-            "generation": SessionGeneration::FIRST,
-            "live": true,
-            "lifecycle": SessionLifecycle::Running,
-            "screen_activity": SCREEN_WORKING,
-            "observed_runtime": observation("com.anthropic.claude-code", 10, 5),
-        });
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[raw]);
-        let entry = state.get(&session).expect("the screen tier projects");
-        assert_eq!(
-            entry.runtime().map(|runtime| runtime.slug),
-            Some("claude-code")
-        );
-        assert_eq!(entry.status(), "busy");
-        assert_eq!(entry.activity_source, ActivitySource::Screen);
-        assert_eq!(entry.outcome, None);
-    }
-
-    #[test]
-    fn a_shim_session_start_does_not_take_a_screen_authority_runtime_from_its_screen() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let row = |screen_activity: &str| {
-            json!({
-                "session": session,
-                "generation": SessionGeneration::FIRST,
-                "live": true,
-                "lifecycle": SessionLifecycle::Running,
-                "screen_activity": screen_activity,
-                "observed_runtime": observation("ai.opencode.cli", 10, 5),
-            })
-        };
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[row(SCREEN_IDLE)]);
-        state.apply_core_event(&json!({
-            "session": session.to_string(),
-            "kind": "ai.session_start",
-            "tool": "opencode",
-            "pid": 10,
-            "hook_payload": {"hook_event_name": "HookSeen"},
-        }));
-
-        for (screen_activity, status) in [
-            (SCREEN_WORKING, "busy"),
-            (SCREEN_BLOCKED, "attention"),
-            (SCREEN_IDLE, "idle"),
-        ] {
-            state.apply_core_snapshot(&[row(screen_activity)]);
-            let entry = state.get(&session).expect("the screen tier projects");
-            assert_eq!(entry.status(), status, "{screen_activity}");
-            assert_eq!(entry.activity_source, ActivitySource::Screen);
-        }
-    }
-
-    fn hookless_row(session: &SessionId, screen_activity: Option<&str>) -> Value {
-        let mut raw = json!({
-            "session": session,
-            "generation": SessionGeneration::FIRST,
-            "live": true,
-            "lifecycle": SessionLifecycle::Running,
-            "observed_runtime": observation("com.anthropic.claude-code", 10, 5),
-        });
-        if let Some(screen_activity) = screen_activity {
-            raw["screen_activity"] = json!(screen_activity);
-        }
-        raw
-    }
-
-    #[test]
-    fn a_screen_verdict_without_any_hook_projects_an_activity_the_sidebar_can_render() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-
-        let value = state.get(&session).unwrap().to_value();
-        assert_eq!(value["activity_source"], "screen");
-        assert_eq!(value["activity"]["tool"], "claude");
-        assert_eq!(value["activity"]["state"], "thinking");
-        assert_eq!(value["activity"]["pid"], 10);
-
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_IDLE))]);
-        let value = state.get(&session).unwrap().to_value();
-        assert_eq!(value["activity"]["state"], "finished");
-    }
-
-    #[test]
-    fn a_blocked_screen_verdict_without_any_hook_asks_for_attention() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_BLOCKED))]);
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "attention");
-        assert_eq!(entry.activity_source, ActivitySource::Screen);
-    }
-
-    #[test]
-    fn a_screen_owned_activity_ends_when_the_screen_stops_recognizing_the_agent() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-        assert!(state.get(&session).unwrap().activity.is_some());
-
-        let projections = state.apply_core_snapshot(&[hookless_row(&session, None)]);
-
-        assert!(state.get(&session).unwrap().activity.is_none());
-        assert!(
-            projections.iter().any(|projection| projection.changed),
-            "the controller must learn that the row went away"
-        );
-    }
-
-    #[test]
-    fn a_hook_event_takes_over_a_screen_owned_activity() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        state.apply_core_snapshot(&[hookless_row(&session, None)]);
-
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.activity_source, ActivitySource::Hooks);
-        assert!(
-            entry.activity.is_some(),
-            "a hook-owned activity is never cleared by the screen tier"
-        );
-    }
-
-    fn declared_blocker_row(session: &SessionId, message: &str) -> Value {
-        let mut raw = hookless_row(session, Some(SCREEN_BLOCKED));
-        raw["declared_blocker"] = json!(message);
-        raw
-    }
-
-    #[test]
-    fn a_declared_blocker_without_hooks_asks_for_attention_with_its_message() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-
-        let projections =
-            state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
-
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "attention");
-        assert_eq!(entry.activity_source, ActivitySource::Screen);
-        let notification = projections
-            .iter()
-            .find_map(|projection| projection.notification.as_ref())
-            .expect("a declared blocker raises the needs-input notification");
-        assert_eq!(notification.kind, crate::notifications::KIND_NEEDS_INPUT);
-        assert_eq!(notification.body.as_deref(), Some("Apply the plan?"));
-    }
-
-    fn declared(state: &str, message: &str) -> Value {
-        json!({"state": state, "kind": "permission", "app": "terraform", "message": message})
-    }
-
-    fn with_declared(mut raw: Value, state: &str) -> Value {
-        raw["declared_status"] = declared(state, "Apply the plan?");
-        raw
-    }
-
-    #[test]
-    fn a_session_without_a_runtime_keeps_and_serializes_its_declared_status() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[core_row(&session)]);
-
-        let projections = state.apply_core_session(&with_declared(core_row(&session), "blocked"));
-
-        let entry = state.get(&session).unwrap();
-        assert!(entry.runtime().is_none());
-        assert_eq!(entry.status(), "idle", "a program is not an agent");
-        let row = entry.to_value();
-        assert_eq!(
-            row["declared_status"],
-            declared("blocked", "Apply the plan?")
-        );
-        assert_eq!(row["activity"], Value::Null);
-        assert!(
-            projections
-                .iter()
-                .any(|projection| projection.session["declared_status"]["state"] == "blocked"),
-            "a declared change is announced even when the status does not move: {projections:?}"
-        );
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none()),
-            "serve never notifies for a program, the desktop does"
-        );
-
-        let projections = state.apply_core_session(&core_row(&session));
-        assert_eq!(
-            state.get(&session).unwrap().to_value()["declared_status"],
-            Value::Null
-        );
-        assert!(!projections.is_empty(), "a removed record is announced too");
-    }
-
-    #[test]
-    fn a_reattaching_desktop_gets_a_held_blocked_status_without_a_new_report() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut held = manifest(session.clone(), None);
-        held.declared_status = serde_json::from_value(declared("blocked", "Apply the plan?")).ok();
-        write_manifest(home.path(), &held).unwrap();
-
-        let mut restarted = WorkerState::new(home.path());
-        restarted.rebuild_from_home(home.path());
-        let follow_header = restarted.snapshot();
-        assert_eq!(
-            follow_header[0]["declared_status"],
-            declared("blocked", "Apply the plan?"),
-            "a worker rebuilt from the manifests serves the held status"
-        );
-
-        let mut running = WorkerState::new(home.path());
-        running.apply_core_snapshot(&[with_declared(core_row(&session), "blocked")]);
-        let reattached = running.snapshot();
-        assert_eq!(
-            reattached[0]["declared_status"]["state"], "blocked",
-            "a desktop that follows again receives the status the worker holds"
-        );
-    }
-
-    #[test]
-    fn an_agent_that_declares_error_is_errored_until_the_record_goes() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-
-        state.apply_core_session(&with_declared(
-            hookless_row(&session, Some(SCREEN_IDLE)),
-            "error",
-        ));
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "errored");
-        assert_eq!(entry.to_value()["activity"]["state"], "errored");
-
-        state.apply_core_session(&hookless_row(&session, Some(SCREEN_IDLE)));
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "idle",
-            "the next derivation after the keystroke leaves Errored"
-        );
-    }
-
-    #[test]
-    fn a_program_that_declares_error_without_an_agent_is_never_errored() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-
-        state.apply_core_snapshot(&[with_declared(core_row(&session), "error")]);
-
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
-    }
-
-    #[test]
-    fn a_declared_error_never_overrides_the_hook_state() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-        state.apply_core_snapshot(&[with_declared(
-            hookless_row(&session, Some(SCREEN_IDLE)),
-            "error",
-        )]);
-        assert_eq!(state.get(&session).unwrap().status(), "busy");
-
-        state.apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})));
-        state.apply_core_snapshot(&[with_declared(
-            hookless_row(&session, Some(SCREEN_IDLE)),
-            "error",
-        )]);
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.activity_source, ActivitySource::Hooks);
-        assert_eq!(
-            entry.status(),
-            "idle",
-            "an idle hook state is not turned into an error"
-        );
-    }
-
-    #[test]
-    fn an_error_the_exit_keeps_outlives_the_removed_declaration() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[with_declared(
-            hookless_row(&session, Some(SCREEN_IDLE)),
-            "error",
-        )]);
-        assert_eq!(state.get(&session).unwrap().status(), "errored");
-        let mut crashed = frame_from_pid(&session, "ai.exit", "Exit", 10);
-        crashed["exit_code"] = json!(1);
-        assert!(state.apply_core_event(&crashed).is_some());
-
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_IDLE))]);
-
-        assert_eq!(
-            state.get(&session).unwrap().status(),
-            "errored",
-            "the exit holds the error after the declaration is gone"
-        );
-    }
-
-    fn exited(mut row: Value) -> Value {
-        row["live"] = json!(false);
-        row["lifecycle"] = json!(SessionLifecycle::Exited {
-            code: 0,
-            signal: None,
-        });
-        row
-    }
-
-    #[test]
-    fn an_exited_program_is_never_held_in_attention_by_its_declared_blocker() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-
-        let host_after_exit = exited(hookless_row(&session, None));
-        state.apply_core_snapshot(&[host_after_exit]);
-        assert_ne!(state.get(&session).unwrap().status(), "attention");
-
-        let stale = exited(declared_blocker_row(&session, "Apply the plan?"));
-        let projections = state.apply_core_snapshot(&[stale]);
-        assert_ne!(
-            state.get(&session).unwrap().status(),
-            "attention",
-            "a stale row from a host that kept the blocker past the exit"
-        );
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none()),
-            "{projections:?}"
-        );
-    }
-
-    #[test]
-    fn a_declared_blocker_never_overrides_the_hook_state() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let busy = state.get(&session).unwrap().status();
-        assert_eq!(busy, "busy");
-
-        let projections =
-            state.apply_core_snapshot(&[declared_blocker_row(&session, "Apply the plan?")]);
-
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.activity_source, ActivitySource::Hooks);
-        assert_eq!(entry.status(), busy);
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none()),
-            "{projections:?}"
-        );
-    }
-
-    #[test]
-    fn a_refused_stop_from_a_foreign_process_leaves_the_activity_screen_owned() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = WorkerState::new(home.path());
-        state.apply_core_snapshot(&[hookless_row(&session, Some(SCREEN_WORKING))]);
-
-        let refused = state.apply_core_event(&frame(&session, "ai.stop", "Stop", json!({})));
-        assert!(
-            refused.is_none(),
-            "a stop from another pid cannot end the run"
-        );
-        state.apply_core_snapshot(&[hookless_row(&session, None)]);
-
-        assert!(
-            state.get(&session).unwrap().activity.is_none(),
-            "the screen tier still owns the row after a refused hook event"
-        );
-    }
-
-    #[test]
-    fn a_hook_latch_ignores_the_screen_verdict_that_contradicts_it() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.sessions.get_mut(&session).unwrap().screen_activity = Some(SCREEN_IDLE.to_string());
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        let entry = state.get(&session).expect("the latched session projects");
-        assert_eq!(entry.status(), "busy");
-        assert_eq!(entry.activity_source, ActivitySource::Hooks);
-    }
-
-    #[test]
-    fn a_menu_the_host_detected_overrides_busy_and_idle_with_attention() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
-        state.sessions.get_mut(&session).unwrap().menu_prompt_active = true;
-        let flipped = state.sweep(SystemTime::now(), &|_| Some(true));
-        assert_eq!(flipped[0].session["status"], "attention");
-        assert_eq!(
-            flipped[0]
-                .notification
-                .as_ref()
-                .map(|notification| notification.kind),
-            Some(KIND_NEEDS_INPUT)
-        );
-
-        state.set_menu_attention_detection(false);
-        let ignored = state.sweep(SystemTime::now(), &|_| Some(true));
-        assert_eq!(ignored[0].session["status"], "busy");
-    }
-
-    #[test]
-    fn a_menu_edge_without_a_hook_latch_still_notifies_for_input() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
-        state.sessions.get_mut(&session).unwrap().menu_prompt_active = true;
-
-        let asking = state.sweep(SystemTime::now(), &|_| Some(true));
-        assert_eq!(asking[0].session["status"], "attention");
-        assert_eq!(asking[0].session["activity_source"], "none");
-        assert_eq!(
-            asking[0]
-                .notification
-                .as_ref()
-                .map(|notification| notification.kind),
-            Some(KIND_NEEDS_INPUT)
-        );
-    }
-
-    fn two_running_sessions(home: &Path) -> (WorkerState, SessionId, SessionId) {
-        let (first, second) = (SessionId::new(), SessionId::new());
-        for session in [&first, &second] {
-            write_manifest(home, &manifest(session.clone(), None)).unwrap();
-        }
-        let mut state = WorkerState::new(home);
-        state.rebuild_from_home(home);
-        (state, first, second)
-    }
-
-    fn frame_from_pid(session: &SessionId, kind: &str, hook_event_name: &str, pid: u32) -> Value {
-        let mut frame = frame(session, kind, hook_event_name, json!({}));
-        frame["pid"] = json!(pid);
-        frame
-    }
-
-    fn core_row(session: &SessionId) -> Value {
-        json!({
-            "session": session,
-            "generation": SessionGeneration::FIRST,
-            "generation_started_at_ms": LAUNCHED_AT,
-            "live": true,
-            "lifecycle": SessionLifecycle::Running,
-            "host_protocol_version": paneflow_host::HOST_PROTOCOL_VERSION,
-            "host_build_id": "test-build",
-        })
-    }
-
-    #[test]
     fn two_agents_of_one_tool_keep_their_own_rows_and_closing_one_pane_keeps_the_other() {
         let home = tempfile::tempdir().unwrap();
-        let (mut state, first, second) = two_running_sessions(home.path());
+        let (first, second) = (SessionId::new(), SessionId::new());
+        for session in [&first, &second] {
+            write_manifest(home.path(), &manifest(session.clone(), None)).unwrap();
+        }
+        let mut state = WorkerState::new(home.path());
+        state.rebuild_from_home(home.path());
         for (session, pid) in [(&first, 101), (&second, 102)] {
             state.apply_core_event(&frame_from_pid(
                 session,
@@ -2885,62 +1489,18 @@ mod tests {
                 pid,
             ));
         }
-        state.apply_core_event(&frame_from_pid(&first, "ai.stop", "Stop", 101));
+        state.apply_core_snapshot(&[
+            with_declared(core_row(&first), "done", ""),
+            with_declared(core_row(&second), "working", ""),
+        ]);
         assert_eq!(state.get(&first).unwrap().status(), "idle");
-        assert_eq!(
-            state.get(&second).unwrap().status(),
-            "busy",
-            "the stop of one Claude session never settles its sibling"
-        );
+        assert_eq!(state.get(&second).unwrap().status(), "busy");
 
-        state.apply_core_snapshot(&[core_row(&second)]);
+        state.apply_core_snapshot(&[with_declared(core_row(&second), "working", "")]);
         assert!(state.get(&first).is_none(), "the closed pane's row is gone");
         let kept = state.get(&second).expect("the other pane's row stays");
         assert_eq!(kept.status(), "busy");
-        assert_eq!(kept.activity.as_ref().unwrap().tool, "claude");
-    }
-
-    #[test]
-    fn a_pid_recycled_into_another_pane_never_moves_the_session_that_held_it() {
-        let home = tempfile::tempdir().unwrap();
-        let (mut state, first, second) = two_running_sessions(home.path());
-        state.apply_core_event(&frame_from_pid(
-            &first,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            4242,
-        ));
-        state.apply_core_event(&frame_from_pid(&first, "ai.stop", "Stop", 4242));
-
-        state.apply_core_event(&frame_from_pid(
-            &second,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            4242,
-        ));
-        assert_eq!(state.get(&second).unwrap().status(), "busy");
-        let first_entry = state.get(&first).unwrap();
-        assert_eq!(
-            first_entry.status(),
-            "idle",
-            "a new agent reusing the PID is its own session, never the old one resumed"
-        );
-        assert_eq!(first_entry.outcome.as_deref(), Some("completed"));
-    }
-
-    fn bell_row(session: &SessionId, runtime_id: Option<&str>, bell_at_ms: u64) -> Value {
-        let mut row = core_row(session);
-        row["bell_at_ms"] = json!(bell_at_ms);
-        if let Some(runtime_id) = runtime_id {
-            row["observed_runtime"] = serde_json::to_value(observation(runtime_id, 40, 7)).unwrap();
-        }
-        row
-    }
-
-    fn bell_state(home: &Path, session: &SessionId, runtime_id: Option<&str>) -> WorkerState {
-        let mut state = running_state(home, session);
-        state.apply_core_snapshot(&[bell_row(session, runtime_id, 0)]);
-        state
+        assert_eq!(kept.activity.as_ref().unwrap().pid, Some(102));
     }
 
     #[test]
@@ -2948,10 +1508,17 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
         let mut state = running_state(home.path(), &session);
-        state.apply_core_snapshot(&[bell_row(&session, None, 0)]);
+        let observed_row = |runtime_id: Option<&str>| {
+            let mut row = core_row(&session);
+            if let Some(runtime_id) = runtime_id {
+                row["observed_runtime"] =
+                    serde_json::to_value(observation(runtime_id, 40, 7)).unwrap();
+            }
+            row
+        };
+        state.apply_core_snapshot(&[observed_row(None)]);
 
-        let observed =
-            state.apply_core_session(&bell_row(&session, Some("com.sourcegraph.amp"), 0));
+        let observed = state.apply_core_session(&observed_row(Some("com.sourcegraph.amp")));
         let projection = observed
             .iter()
             .find(|projection| projection.session["session"] == json!(session))
@@ -2964,12 +1531,12 @@ mod tests {
 
         assert!(
             state
-                .apply_core_session(&bell_row(&session, Some("com.sourcegraph.amp"), 0))
+                .apply_core_session(&observed_row(Some("com.sourcegraph.amp")))
                 .is_empty(),
             "an unchanged observation is not announced again"
         );
 
-        let left = state.apply_core_session(&bell_row(&session, None, 0));
+        let left = state.apply_core_session(&observed_row(None));
         let projection = left
             .iter()
             .find(|projection| projection.session["session"] == json!(session))
@@ -2977,219 +1544,31 @@ mod tests {
         assert_eq!(projection.session["foreground_runtime_id"], Value::Null);
         assert_eq!(
             projection.session["runtime_id"], "com.sourcegraph.amp",
-            "the latched runtime keeps its rules while only the foreground leaves"
+            "the last observed runtime stays named while only the foreground leaves"
         );
-    }
-
-    #[test]
-    fn a_bell_from_an_agent_without_hooks_lands_in_the_attention_queue_with_its_reason() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
-        assert!(state.get(&session).unwrap().activity.is_none());
-
-        let rang_at = now_ms();
-        let projections =
-            state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), rang_at)]);
-        let projection = projections
-            .iter()
-            .find(|projection| projection.session["session"] == json!(session))
-            .expect("the bell is announced");
-        assert_eq!(projection.session["status"], "attention");
-        assert_eq!(
-            projection.session["attention_reason"],
-            ATTENTION_REASON_BELL
-        );
-        assert_eq!(projection.session["activity"]["state"], "waiting_for_input");
-        assert_eq!(projection.session["activity"]["tool"], "amp");
-        assert_eq!(
-            projection
-                .notification
-                .as_ref()
-                .map(|notification| notification.kind),
-            Some(KIND_NEEDS_INPUT),
-            "a bell notifies exactly like a hook that asks for input"
-        );
-    }
-
-    #[test]
-    fn the_bell_fx_declares_as_its_attention_signal_asks_for_attention() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, Some("sh.fx.cli"));
-        let projections =
-            state.apply_core_snapshot(&[bell_row(&session, Some("sh.fx.cli"), now_ms())]);
-        let projection = projections
-            .iter()
-            .find(|projection| projection.session["session"] == json!(session))
-            .expect("the fx bell is announced");
-        assert_eq!(projection.session["status"], "attention");
-        assert_eq!(
-            projection.session["attention_reason"],
-            ATTENTION_REASON_BELL
-        );
-        assert_eq!(projection.session["activity"]["tool"], "fx");
-    }
-
-    #[test]
-    fn a_bell_flood_raises_one_attention_and_never_reports_the_pane_finished() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
-        let first = now_ms();
-        let mut notifications = Vec::new();
-        let mut statuses = BTreeSet::new();
-        for offset in 0..1_000 {
-            for projection in state.apply_core_snapshot(&[bell_row(
-                &session,
-                Some("com.sourcegraph.amp"),
-                first + offset,
-            )]) {
-                statuses.insert(projection.session["status"].as_str().unwrap().to_string());
-                notifications.extend(
-                    projection
-                        .notification
-                        .map(|notification| notification.kind),
-                );
-            }
-        }
-        assert_eq!(notifications, [KIND_NEEDS_INPUT]);
-        assert!(!notifications.contains(&KIND_FINISHED));
-        assert_eq!(statuses, BTreeSet::from(["attention".to_string()]));
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-    }
-
-    #[test]
-    fn a_bell_never_moves_an_agent_whose_hooks_are_complete() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, Some("com.anthropic.claude-code"));
-        let projections = state.apply_core_snapshot(&[bell_row(
-            &session,
-            Some("com.anthropic.claude-code"),
-            now_ms(),
-        )]);
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none())
-        );
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "idle");
-        assert!(entry.to_value()["attention_reason"].is_null());
-    }
-
-    #[test]
-    fn a_bell_in_a_shell_without_an_agent_creates_no_agent_row() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, None);
-        let projections = state.apply_core_snapshot(&[bell_row(&session, None, now_ms())]);
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none())
-        );
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "idle");
-        assert!(entry.activity.is_none(), "no agent row for a plain shell");
-    }
-
-    #[test]
-    fn bell_attention_clears_on_the_next_keystroke() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        let mut state = bell_state(home.path(), &session, Some("com.sourcegraph.amp"));
-        let rang_at = now_ms();
-        state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), rang_at)]);
-        assert_eq!(state.get(&session).unwrap().status(), "attention");
-
-        let mut typed = bell_row(&session, Some("com.sourcegraph.amp"), rang_at);
-        typed["input_at_ms"] = json!(rang_at + 1);
-        state.apply_core_snapshot(&[typed]);
-        let entry = state.get(&session).unwrap();
-        assert_eq!(entry.status(), "idle");
-        assert!(entry.to_value()["attention_reason"].is_null());
-        assert!(
-            entry.activity.is_none(),
-            "the bell row leaves with the attention"
-        );
-    }
-
-    #[test]
-    fn bell_attention_clears_on_later_output_only_where_the_runtime_allows_it() {
-        for (runtime_id, clears) in [("com.sourcegraph.amp", true), ("ai.x.grok-cli", false)] {
-            let home = tempfile::tempdir().unwrap();
-            let session = SessionId::new();
-            let mut state = bell_state(home.path(), &session, Some(runtime_id));
-            let rang_at = now_ms();
-            state.apply_core_snapshot(&[bell_row(&session, Some(runtime_id), rang_at)]);
-            assert_eq!(
-                state.get(&session).unwrap().status(),
-                "attention",
-                "{runtime_id}"
-            );
-
-            let mut echoed = bell_row(&session, Some(runtime_id), rang_at);
-            echoed["output_changed_at_ms"] = json!(rang_at + 20);
-            state.apply_core_snapshot(&[echoed]);
-            assert_eq!(
-                state.get(&session).unwrap().status(),
-                "attention",
-                "{runtime_id}: output drawn with the bell is not an answer"
-            );
-
-            let mut printed = bell_row(&session, Some(runtime_id), rang_at);
-            printed["output_changed_at_ms"] = json!(rang_at + BELL_OUTPUT_GRACE_MS + 1);
-            state.apply_core_snapshot(&[printed]);
-            let expected = if clears { "idle" } else { "attention" };
-            assert_eq!(
-                state.get(&session).unwrap().status(),
-                expected,
-                "{runtime_id}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_bell_rung_before_the_worker_started_is_not_replayed() {
-        let home = tempfile::tempdir().unwrap();
-        let session = SessionId::new();
-        write_manifest(home.path(), &manifest(session.clone(), None)).unwrap();
-        let mut state = WorkerState::new(home.path());
-        let projections =
-            state.apply_core_snapshot(&[bell_row(&session, Some("com.sourcegraph.amp"), now_ms())]);
-        assert!(
-            projections
-                .iter()
-                .all(|projection| projection.notification.is_none())
-        );
-        assert_eq!(state.get(&session).unwrap().status(), "idle");
     }
 
     #[test]
     fn state_seq_counts_each_reduced_state_transition_and_nothing_else() {
         let home = tempfile::tempdir().unwrap();
         let session = SessionId::new();
-        let mut state = running_state(home.path(), &session);
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[agent_row(&session)]);
         let start = state.get(&session).unwrap().state_seq;
-        state.apply_core_event(&frame(
-            &session,
-            "ai.prompt_submit",
-            "UserPromptSubmit",
-            json!({}),
-        ));
+        state.apply_core_session(&with_declared(agent_row(&session), "working", ""));
         assert_eq!(state.get(&session).unwrap().state_seq, start + 1);
-        state.sweep(SystemTime::now(), &|_| Some(false));
+        state.sweep();
+        state.apply_core_session(&with_declared(agent_row(&session), "working", ""));
         assert_eq!(
             state.get(&session).unwrap().state_seq,
             start + 1,
-            "a sweep that keeps the state is not a transition"
+            "a sweep or a repeated declaration is not a transition"
         );
-        let mut stopped = frame(&session, "ai.stop", "Stop", json!({}));
-        stopped["emitted_at_ms"] = json!(now_ms() + 1);
-        let projection = state.apply_core_event(&stopped).expect("the stop projects");
+        let projections = state.apply_core_session(&with_declared(agent_row(&session), "done", ""));
+        let projection = projections
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the completion projects");
         assert_eq!(projection.session["state_seq"], start + 2);
         assert_eq!(projection.session["status"], "idle");
     }

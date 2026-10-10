@@ -20,22 +20,16 @@ const DRAIN_MAX_PER_TICK: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivitySource {
-    Hooks,
-    Screen,
+    Declared,
     None,
 }
 
 impl ActivitySource {
     pub(crate) fn parse(raw: Option<&str>) -> Self {
         match raw {
-            Some("hooks") => Self::Hooks,
-            Some("screen") => Self::Screen,
+            Some("declared") => Self::Declared,
             _ => Self::None,
         }
-    }
-
-    pub(crate) fn is_hooks(self) -> bool {
-        matches!(self, Self::Hooks)
     }
 }
 
@@ -65,10 +59,10 @@ pub(crate) struct HostAgentRow {
     pub(crate) stale: bool,
     pub(crate) live: bool,
     pub(crate) activity_source: ActivitySource,
+    pub(crate) hooked: bool,
     pub(crate) restart_recommended: bool,
     pub(crate) unread: bool,
     pub(crate) state_seq: u64,
-    pub(crate) attention_reason: Option<String>,
     pub(crate) provider_session_id: Option<String>,
     pub(crate) declared_status: Option<paneflow_host::program_status::DeclaredStatus>,
 }
@@ -246,6 +240,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
         activity_source: ActivitySource::parse(
             entry.get("activity_source").and_then(Value::as_str),
         ),
+        hooked: entry
+            .get("hook_revision")
+            .and_then(Value::as_u64)
+            .is_some_and(|revision| revision > 0),
         restart_recommended: entry.get("restart_recommended").is_some_and(|value| {
             value.get("token").and_then(Value::as_str) == Some(paneflow_serve::RESTART_RECOMMENDED)
         }),
@@ -253,10 +251,6 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .get("state_seq")
             .and_then(Value::as_u64)
             .unwrap_or_default(),
-        attention_reason: entry
-            .get("attention_reason")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
         unread: entry
             .get("unread")
             .and_then(Value::as_bool)
@@ -327,7 +321,7 @@ fn projected_session(
         .unwrap_or_else(|| AgentSession::new(tool, state));
     session.tool = tool;
     session.state = state;
-    session.source = if row.activity_source.is_hooks() {
+    session.source = if row.hooked {
         AgentStateSource::Hook
     } else {
         AgentStateSource::Terminal
@@ -337,7 +331,6 @@ fn projected_session(
     session.last_result = row.last_result.clone();
     session.last_event_at_ms = row.last_event_at_ms;
     session.state_seq = row.state_seq;
-    session.attention_reason = row.attention_reason.clone();
     session.surface_id = Some(surface_id);
     session.waiting_since =
         (state == AgentState::WaitingForInput).then(|| waiting_since_instant(row.waiting_since_ms));
@@ -763,6 +756,9 @@ impl PaneFlowApp {
             self.seed_session_surface(row, workspace_id, surface_id);
         }
         self.refresh_declared_status(cx);
+        if let Some(decision) = WorkerNotification::from_frame(frame) {
+            self.deliver_worker_notification(&decision, &session, workspace_id, surface_id, cx);
+        }
         let Some(kind) = frame.get("kind").and_then(Value::as_str).map(str::to_owned) else {
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
@@ -773,9 +769,6 @@ impl PaneFlowApp {
             self.apply_projected_agent_metadata(&kind, &params, workspace_id, surface_id, cx);
         }
         let next_state = row.as_ref().and_then(|row| row.state);
-        if let Some(decision) = WorkerNotification::from_frame(frame) {
-            self.deliver_worker_notification(&decision, &session, workspace_id, surface_id, cx);
-        }
         if next_state == Some(AgentState::Errored)
             && previous_state != Some(AgentState::Errored)
             && let Some(exit_code) = frame
@@ -971,7 +964,8 @@ mod tests {
             "live": false,
             "lifecycle": {"state": "lost"},
             "status": "busy",
-            "activity_source": "hooks",
+            "activity_source": "declared",
+            "hook_revision": 3,
             "unread": true,
             "activity": {
                 "tool": "claude",
@@ -991,7 +985,8 @@ mod tests {
         assert_eq!(row.state, Some(AgentState::Thinking));
         assert!(row.stale);
         assert!(!row.live);
-        assert_eq!(row.activity_source, ActivitySource::Hooks);
+        assert_eq!(row.activity_source, ActivitySource::Declared);
+        assert!(row.hooked);
         assert!(!row.restart_recommended);
         assert_eq!(row.waiting_since_ms, None);
 
@@ -1002,6 +997,7 @@ mod tests {
         assert!(!row.stale);
         assert!(row.live);
         assert_eq!(row.activity_source, ActivitySource::None);
+        assert!(!row.hooked);
 
         assert!(row_from_snapshot(&json!({"live": true})).is_none());
         assert!(row_from_snapshot(&json!({"session": "not-a-uuid"})).is_none());
@@ -1079,11 +1075,11 @@ mod tests {
     }
 
     #[test]
-    fn a_bell_from_an_agent_without_hooks_reaches_the_attention_queue_as_waiting_for_input() {
+    fn a_blocked_declaration_from_an_agent_without_hooks_reaches_the_attention_queue() {
         let home = tempfile::tempdir().expect("home");
         let session = SessionId::new();
         let mut worker = paneflow_serve::state::WorkerState::new(home.path());
-        let row = |bell_at_ms: Option<u64>| {
+        let row = |declared: Option<&str>| {
             let mut row = json!({
                 "session": session.to_string(),
                 "generation": 1,
@@ -1101,22 +1097,19 @@ mod tests {
                     argv: None,
                 },
             });
-            if let Some(bell_at_ms) = bell_at_ms {
-                row["bell_at_ms"] = json!(bell_at_ms);
+            if let Some(state) = declared {
+                row["declared_status"] = json!({"state": state, "message": "Approve?"});
             }
             row
         };
         worker.apply_core_snapshot(&[row(None)]);
-        let rang_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_millis() as u64;
         let projection = worker
-            .apply_core_snapshot(&[row(Some(rang_at))])
+            .apply_core_snapshot(&[row(Some("blocked"))])
             .into_iter()
             .next()
-            .expect("the bell is announced");
-        assert_eq!(projection.session["attention_reason"], "bell");
+            .expect("the declaration is announced");
+        assert_eq!(projection.session["status"], "attention");
+        assert_eq!(projection.session["activity_source"], "declared");
         let host_row = row_from_snapshot(&projection.session).expect("row");
         let session = projected_session(&host_row, 9, None).expect("agent session");
         assert_eq!(session.state, AgentState::WaitingForInput);
@@ -1125,7 +1118,6 @@ mod tests {
             TerminalAgent::from_binary("amp").expect("amp")
         );
         assert_eq!(session.source, AgentStateSource::Terminal);
-        assert_eq!(session.attention_reason.as_deref(), Some("bell"));
         assert!(session.state_seq > 0);
         assert!(session.waiting_since.is_some());
     }
@@ -1207,21 +1199,21 @@ mod tests {
     }
 
     #[test]
-    fn a_screen_sourced_row_is_named_as_such_and_never_as_a_hook() {
+    fn a_declared_row_without_hooks_is_named_as_terminal_sourced() {
         let session = SessionId::new();
         let row = row_from_snapshot(&json!({
             "session": session.to_string(),
             "live": true,
-            "activity_source": "screen",
+            "activity_source": "declared",
             "activity": {"tool": "codex", "state": "thinking", "source": "terminal", "updated_at_ms": 1},
         }))
         .expect("row");
-        assert_eq!(row.activity_source, ActivitySource::Screen);
-        assert!(!row.activity_source.is_hooks());
+        assert_eq!(row.activity_source, ActivitySource::Declared);
+        assert!(!row.hooked);
         assert_eq!(
             row.state,
             Some(AgentState::Thinking),
-            "a screen verdict still animates the spinner"
+            "a declared working state animates the spinner"
         );
         let projected = projected_session(&row, 17, None).expect("projected session");
         assert_eq!(projected.state, AgentState::Thinking);
@@ -1235,7 +1227,8 @@ mod tests {
         let row = row_from_snapshot(&json!({
             "session": session.to_string(),
             "live": true,
-            "activity_source": "hooks",
+            "activity_source": "declared",
+            "hook_revision": 1,
             "activity": {
                 "tool": "claude",
                 "state": "waiting_for_input",
@@ -1307,24 +1300,24 @@ mod tests {
     }
 
     #[test]
-    fn a_screen_verdict_reaches_the_controller_labelled_as_a_screen_verdict() {
+    fn a_declared_verdict_reaches_the_controller_labelled_as_declared() {
         let frame = json!({
             "type": "event",
             "session": SessionId::new().to_string(),
             "kind": "ai.stop",
             "tool": "codex",
-            "activity_source": "screen",
+            "activity_source": "declared",
             "hook_payload": {},
         });
         let params = legacy_ai_params(&frame, 7, 11).expect("params");
-        assert_eq!(params["activity_source"], "screen");
-        let hooked = legacy_ai_params(
-            &json!({"kind": "ai.stop", "tool": "claude", "activity_source": "hooks"}),
+        assert_eq!(params["activity_source"], "declared");
+        let undeclared = legacy_ai_params(
+            &json!({"kind": "ai.stop", "tool": "claude", "activity_source": "none"}),
             7,
             11,
         )
         .expect("params");
-        assert_eq!(hooked["activity_source"], "hooks");
+        assert_eq!(undeclared["activity_source"], "none");
         let silent =
             legacy_ai_params(&json!({"kind": "ai.stop", "tool": "claude"}), 7, 11).expect("params");
         assert!(
@@ -1353,11 +1346,11 @@ mod tests {
         let row = row_from_snapshot(&json!({
             "session": session.to_string(),
             "live": true,
-            "activity_source": "hooks",
+            "activity_source": "declared",
             "activity": {
                 "tool": "claude",
                 "state": "waiting_for_input",
-                "source": "hook",
+                "source": "terminal",
                 "waiting_since_ms": 1_000,
                 "updated_at_ms": 1_000,
             },
@@ -1388,7 +1381,7 @@ mod tests {
     fn the_controller_delivers_the_workers_decision_and_never_infers_one_of_its_own() {
         let finished = WorkerNotification::from_frame(&json!({
             "status": "idle",
-            "activity_source": "hooks",
+            "activity_source": "declared",
             "notify": {"kind": "finished", "runtime_label": "Claude Code", "body": "2 files changed"},
         }))
         .expect("a worker completion reaches the desktop");
@@ -1406,11 +1399,11 @@ mod tests {
         assert_eq!(
             WorkerNotification::from_frame(&json!({
                 "status": "idle",
-                "activity_source": "screen",
+                "activity_source": "declared",
                 "notify": Value::Null,
             })),
             None,
-            "a screen-sourced settle carries no decision, so the desktop stays quiet"
+            "a settle without a notification carries no decision, so the desktop stays quiet"
         );
         assert_eq!(
             WorkerNotification::from_frame(&json!({"status": "idle", "outcome": "expired"})),

@@ -176,13 +176,7 @@ pub struct AgentSnapshotEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub screen_activity: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub declared_blocker: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub menu_prompt_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_runtime: Option<crate::runtime_observer::RuntimeObservation>,
     #[serde(default)]
@@ -207,7 +201,6 @@ pub struct AgentBus {
 pub struct BroadcastCounts {
     pub session: Counter,
     pub session_removed: Counter,
-    pub cancellation: Counter,
     pub snapshot: Counter,
     pub event: Counter,
     pub other: Counter,
@@ -218,7 +211,6 @@ impl BroadcastCounts {
         let counter = match frame.get("type").and_then(Value::as_str) {
             Some("session") => &self.session,
             Some("session_removed") => &self.session_removed,
-            Some("cancellation") => &self.cancellation,
             Some("snapshot") => &self.snapshot,
             Some("event") => &self.event,
             _ => &self.other,
@@ -437,7 +429,6 @@ mod tests {
         bus.broadcast(&json!({"type": "snapshot", "sessions": []}));
         bus.broadcast(&json!({"type": "event"}));
         bus.broadcast(&json!({"type": "session_removed"}));
-        bus.broadcast(&json!({"type": "cancellation"}));
         bus.broadcast(&json!({"kind": "untyped"}));
         let counts = bus.broadcasts();
         assert_eq!(
@@ -446,10 +437,9 @@ mod tests {
                 counts.snapshot.get(),
                 counts.event.get(),
                 counts.session_removed.get(),
-                counts.cancellation.get(),
                 counts.other.get(),
             ],
-            [1, 1, 1, 1, 1, 1]
+            [1, 1, 1, 1, 1]
         );
     }
 

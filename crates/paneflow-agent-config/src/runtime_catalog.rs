@@ -6,26 +6,6 @@ pub enum RuntimePlatform {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeLifecycleSource {
-    Hooks,
-    Output,
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeLifecycleAuthority {
-    Complete,
-    Screen,
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeLifecycleFallback {
-    Screen,
-    None,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeHookAdapter {
     Claude,
     Codex,
@@ -52,17 +32,6 @@ pub struct RuntimeDetection {
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeEnvironment {
     pub strip_inherited: &'static [&'static str],
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RuntimeLifecycle {
-    pub source: RuntimeLifecycleSource,
-    pub authority: RuntimeLifecycleAuthority,
-    pub fallback: RuntimeLifecycleFallback,
-    pub escape_cancels_turn: bool,
-    pub attention_clears_on_output: bool,
-    pub anchor_start_event_to_output: bool,
-    pub bell_attention: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +126,6 @@ pub struct Runtime {
     pub display: RuntimeDisplay,
     pub detection: RuntimeDetection,
     pub environment: RuntimeEnvironment,
-    pub lifecycle: RuntimeLifecycle,
     pub integration: RuntimeIntegration,
     pub sessions: Option<RuntimeSessions>,
     pub suggested_presets: &'static [RuntimeSuggestedPreset],
@@ -321,19 +289,10 @@ mod tests {
     }
 
     #[test]
-    fn fx_rings_for_attention_and_complete_hook_runtimes_do_not() {
+    fn fx_runs_on_linux_and_macos_only() {
         let fx = runtime_by_slug("fx").expect("fx");
-        assert!(fx.lifecycle.bell_attention);
         assert!(!fx.supports(RuntimePlatform::Windows));
         assert!(fx.supports(RuntimePlatform::Linux) && fx.supports(RuntimePlatform::Macos));
-        for runtime in RUNTIMES {
-            assert_eq!(
-                runtime.lifecycle.bell_attention,
-                runtime.lifecycle.authority != RuntimeLifecycleAuthority::Complete,
-                "{}",
-                runtime.slug
-            );
-        }
     }
 
     #[test]
@@ -373,7 +332,6 @@ mod tests {
                 "CLAUDE_PID",
             ]
         );
-        assert_eq!(claude.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
 
         let codex = runtime_by_slug("codex").expect("codex");
         assert_eq!(
@@ -386,30 +344,6 @@ mod tests {
                 "CODEX_TUI_SESSION_LOG_PATH",
             ]
         );
-        assert_eq!(codex.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
-
-        let gemini = runtime_by_slug("gemini").expect("gemini");
-        assert!(gemini.lifecycle.escape_cancels_turn);
-        assert_eq!(gemini.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
-
-        let grok = runtime_by_slug("grok").expect("grok");
-        assert!(!grok.lifecycle.attention_clears_on_output);
-        assert!(!grok.lifecycle.anchor_start_event_to_output);
-
-        for slug in ["opencode", "pi", "hermes"] {
-            let runtime = runtime_by_slug(slug).expect("runtime");
-            assert_eq!(
-                runtime.lifecycle.authority,
-                RuntimeLifecycleAuthority::Screen
-            );
-            assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
-        }
-
-        for slug in ["amp", "openclaw"] {
-            let runtime = runtime_by_slug(slug).expect("runtime");
-            assert_eq!(runtime.lifecycle.authority, RuntimeLifecycleAuthority::None);
-            assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::None);
-        }
     }
 
     #[test]

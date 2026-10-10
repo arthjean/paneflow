@@ -2211,9 +2211,11 @@ mod tests {
         let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
         let generation = SessionGeneration::FIRST;
         let declared = || {
-            crate::viewport_scan::capture(&host, &session)
-                .ok()
-                .and_then(|capture| capture.scan.program_status)
+            host.live_scan_targets()
+                .into_iter()
+                .find(|target| target.session == session)
+                .and_then(|target| target.runtime.viewport_scan(Duration::from_secs(1)).ok())
+                .and_then(|scan| scan.program_status)
                 .map(|report| report.state)
         };
         let done = Some(paneflow_terminal_ghostty::ProgramStatusState::Done);

@@ -58,7 +58,6 @@ pub const ROW_FIELDS: &[&str] = &[
     "activity_source",
     "outcome",
     "runtime_id",
-    "menu_prompt_active",
     "unread",
     "restart_recommended",
 ];

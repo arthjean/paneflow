@@ -349,11 +349,11 @@ mod tests {
             last_event_at_ms: None,
             stale,
             live: !stale,
-            activity_source: crate::app::host_agents::ActivitySource::Hooks,
+            activity_source: crate::app::host_agents::ActivitySource::None,
+            hooked: true,
             restart_recommended: false,
             unread: false,
             state_seq: 0,
-            attention_reason: None,
             provider_session_id: None,
             declared_status: None,
         }
