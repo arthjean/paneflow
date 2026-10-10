@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.17.7] - 2026-10-10
+
+Paneflow 0.17.7 moves the terminal engine to Ghostty `b699ea79` and lets any program report its status with OSC 7501, agent or not. A script that reports `blocked` or `error` shows in its pane header and in the Attention queue, and a declared `done` stays until you type in the pane. Trackpad scrolling follows the gesture by the pixel, the mouse pointer takes the shape a program asks for, and each character is drawn on its own cell.
+
 ### Upgrade notes
 
 - **Sessions that outlive the update end as `Incompatible`.** The session host embeds the terminal engine, and a host started by the previous version cannot serve a desktop built on the new engine. Updating from inside Paneflow stops the host before restarting, so this only happens after an update made outside the app (a system package, Homebrew, or an MSI installed by hand) or when you choose **Keep sessions running** before updating. Each such session ends with `Retry` and `Stop host and restart`; choose `Stop host and restart` to start the new host, or let the sessions finish first.
