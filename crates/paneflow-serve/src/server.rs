@@ -127,6 +127,7 @@ impl Worker {
         self.bus.broadcast(&json!({
             "type": "event",
             "session": session["session"],
+            "title": session["title"],
             "kind": source["kind"],
             "tool": source["tool"],
             "pid": source["pid"],
