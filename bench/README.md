@@ -295,9 +295,10 @@ slot's samples and log under `attempt-<n>/`.
 
 After both builds and before the timed rounds, `scripts/perf-ab.sh` counts the
 instructions of the pure CPU paths with Gungraun (Callgrind `Ir`): each
-commit's `instructions` benchmarks in `paneflow-agent-config` (20 screen rules
-on a 200x60 screen) and `paneflow-terminal-ghostty` (parse and conversion of a
-1 MiB corpus through the statically linked libghostty). The base saves a
+commit's `instructions` benchmark in `paneflow-terminal-ghostty` (parse and
+conversion of a 1 MiB corpus through the statically linked libghostty). The
+screen rules benchmark in `paneflow-agent-config` left with the screen rules on
+2026-10-10; the runs below that name it predate that removal. The base saves a
 Gungraun baseline (`--save-baseline=base`) in the scratch directory, and the
 head is compared against it (`--baseline=base`) with a soft limit of +2 %.
 Instruction counts are deterministic, so one execution is a verdict: a
@@ -501,19 +502,6 @@ With that rule no run would reach the 90 % calibration of the promotion
 criterion, so the A/A now bounds the p50s, and each p95 is judged only where
 its own A/A holds.
 
-## Screen rule corpus
-
-`bench/screen-corpus-baseline.json` is not a timing baseline: it records how
-the built-in screen rules classify every capture under
-`runtimes/<slug>/fixtures/screens/`, with the accuracy and the states still
-missing per runtime. `cargo test -p paneflow-agent-config` fails when the
-classification drifts from it. After an intended rule or corpus change,
-regenerate it with `PANEFLOW_SCREEN_CORPUS_BLESS=1 cargo test -p
-paneflow-agent-config the_screen_corpus` and review the diff. The evaluation
-cost is the ignored test
-`twenty_rules_on_a_200_by_60_viewport_evaluate_within_a_millisecond_p95`, run
-with `cargo test -p paneflow-agent-config --release -- --ignored`.
-
 ## Persistent session suite
 
 The suite is the ignored integration test `persistent_session_baseline` in
@@ -541,7 +529,7 @@ For each scenario it settles for
 four seconds, then samples per-thread CPU time of the host process over a ten
 second window and attributes it by thread name: `host.session`,
 `host.pty_reader`, `host.pty_writer`, `host.viewport_scan`,
-`host.cancellation_scan`, `host.ipc_connection`, `host.ipc_accept`,
+`host.ipc_connection`, `host.ipc_accept`,
 `host.launch_owner`, `host.main`, `host.other`. It also records the creation
 time per session, real attachment latency and checkpoint size, the
 `session.list` round trip and resident memory. A bounded paused-follower probe
@@ -558,7 +546,7 @@ run: the result is not candidate-qualified.
 `--with-worker` (`-WithWorker`) starts the existing `paneflow serve run` entry
 point and attributes its CPU separately. `--with-desktop` includes the worker
 and attributes native mirror, follower, and runtime threads separately from
-the host viewport and cancellation scans. Cursor blinking and telemetry are
+the host viewport scan. Cursor blinking and telemetry are
 disabled in the isolated fixture configuration. Native desktop runs require a
 working graphical session and display a benchmark window.
 
@@ -818,7 +806,6 @@ Nested counters are addressed with dots, for example
 | host, `host.status` | `foreground_observations` | foreground job walks | `runtime_observer::observe_foreground_runtime`, once the leader is provably live. The viewport scan reuses its last walk while the foreground group, its leader's start instant and its leader's name are unchanged, and only when the leader itself was identified or still has no child process (`ForegroundCache`) |
 | host, `host.status` | `agent_bus_session_broadcasts` | agent bus frames of type `session` | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_session_removed_broadcasts` | frames of type `session_removed` | `AgentBus::broadcast` |
-| host, `host.status` | `agent_bus_cancellation_broadcasts` | frames of type `cancellation` | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_event_broadcasts` | hook event frames | `AgentBus::broadcast` |
 | host, `host.status` | `agent_bus_snapshot_broadcasts` | full agent snapshots served (`agent.snapshot` replies and follow headers) | `SessionHost::agent_snapshot` |
 | worker, `worker.status` | `snapshot_broadcasts` | full snapshots broadcast to controllers, only when their content (without `updated_at_ms`) changed since the last broadcast | `AgentBus::broadcast` of type `snapshot`, through `Worker::broadcast_snapshot_if_changed`; a follower still receives the full snapshot as its stream header |

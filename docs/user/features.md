@@ -39,9 +39,11 @@ connects to its own model provider. Read its output, interrupt it, or take
 over with the keyboard. Open project sessions for coding tasks, or an agent
 chat from your home directory (`~`) for research and planning outside a project.
 
-Claude Code and Codex can report whether they are working, waiting for input,
-finished, or in an error state through lifecycle hooks. Install these once
-per machine with `paneflow integrations install claude-code` or
+An agent reports whether it is working, waiting for input, finished, or in
+an error state through the OSC 7501 sequence described below, and Paneflow
+shows exactly that. Lifecycle hooks for Claude Code and Codex let Paneflow
+resume their conversations and name their tabs. Install these once per
+machine with `paneflow integrations install claude-code` or
 `paneflow integrations install codex`. Codex asks you to trust the hooks
 through `/hooks`. You can also use **Install hooks** in the
 [agent settings](/docs/settings). The same command registers the Paneflow
@@ -50,8 +52,8 @@ Paneflow home owns (a debug build next to a release, or a second
 `PANEFLOW_HOME`) is left alone: the command names both homes, and `--force`
 takes the entry over.
 
-For agents without hooks, Paneflow estimates activity from the running
-processes and terminal output. Status tracking depends on the agent integration.
+An agent that does not report through OSC 7501 is still detected from its
+process, but shows no turn status: Paneflow never guesses it from the screen.
 Use `paneflow sessions` to read session status even when the window is closed.
 The [automation guide](/docs/scripting) explains hooks and events.
 
@@ -70,10 +72,13 @@ teammates run inside the lead's pane.
 Any program can also declare its own status with an OSC 7501 sequence,
 agent or not: a build, a deploy script, a long test run. The pane header shows
 the declared state. A program without an agent that reports `blocked` or
-`error` enters the **Attention queue**, and `blocked` also sends a desktop
-notification that names the pane, at most once every 10 seconds per pane, when
-`agent_panel.notify_when_agent_waiting` allows it. For an agent, hooks keep
-precedence, and a declared `error` marks it as errored.
+`error` enters the **Attention queue** and sends a desktop notification that
+names the pane, at most once every 10 seconds per pane, when
+`agent_panel.notify_when_agent_waiting` allows it. An `error` entry leaves the
+queue once you have looked at the pane, while the header keeps `error` until
+you type. For an agent, the declared status is its turn state: `blocked` and
+`error` notify that it needs you, `done` after a turn notifies that it
+finished, and a declared `error` marks it as errored.
 
 ```sh
 printf '\033]7501;state=working:app=deploy\033\\'

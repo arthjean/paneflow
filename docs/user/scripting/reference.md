@@ -121,7 +121,6 @@ flag `--raw` passes `fenced: false`.
 | `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
 | `hooked` | Whether the current launch reports through lifecycle hooks Paneflow installs; a hook from a previous launch never counts |
 | `state_seq` | Per-session counter that increases on every state transition, on `status` |
-| `attention_reason` | `bell` when the agent asked for attention with the terminal bell |
 | `reason` | Detection reason, including `no_hook` |
 | `surface_id` | Pane id |
 | `surface_name` | Pane name |
@@ -243,7 +242,7 @@ printf '%s\
 | `events.subscribe` | `surfaces?`, `types?` | Persistent newline-delimited event stream |
 
 The `ai.*` lifecycle methods are no longer accepted on the app socket;
-agent status comes from the `paneflow-ai-hook` reporter, and
+lifecycle events come from the `paneflow-ai-hook` reporter, and
 `events.subscribe` still delivers `ai.*` events.
 
 Structured failures use JSON-RPC `error` envelopes: `-32602` invalid
@@ -295,8 +294,9 @@ Returned terminal output is fenced as untrusted data.
 
 `paneflow-ai-hook` reads event JSON on stdin, sends one lifecycle event
 (`ai.stop`, `ai.notification`, and so on) to the local host, and exits `0` so
-a stopped Paneflow instance does not break the agent. The hook surface powers
-status, notifications, `ps`, `status`, `watch`, and `paneflow sessions`.
+a stopped Paneflow instance does not break the agent. Hooks carry the agent's
+identity and session metadata to `ps`, `status`, `watch`, and
+`paneflow sessions`; turn status comes from OSC 7501.
 
 | Command | Effect |
 | --- | --- |
@@ -311,15 +311,15 @@ Hooks are installed once per machine, from the CLI or **Settings > Agents**.
 Claude Code hooks go to `$CLAUDE_CONFIG_DIR/settings.json` (default
 `~/.claude/settings.json`), Codex hooks to `$CODEX_HOME/hooks.json` (default
 `~/.codex/hooks.json`), and they exit immediately outside a Paneflow pane.
-Other agents have no installer: they still run, but their state is limited to
-process detection.
+Other agents have no installer: they still run, are detected from their
+process, and get a turn status only when they report it through OSC 7501.
 
 ## Worker and sessions
 
 Agent state lives in a per-home worker, started as `paneflow serve run`. It
-runs detached, one per `PANEFLOW_HOME`, reduces hook events to one state per
-session, rebuilds that state from disk when it restarts, and never touches a
-running shell. `status`, `send --submit`, and `wait --idle` read the reduced
+runs detached, one per `PANEFLOW_HOME`, reduces each session's declared
+OSC 7501 status to one state, rebuilds that state from disk when it restarts,
+and never touches a running shell. `status`, `send --submit`, and `wait --idle` read the reduced
 state from the worker whether or not a window is open; `paneflow sessions`
 reads the worker directly.
 

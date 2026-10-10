@@ -59,7 +59,7 @@ boundaries it touched and invalidates the evidence that depends on them:
 
 | Changed boundary | Files | Invalidated evidence |
 |---|---|---|
-| Session lifecycle, ownership, persistence | `crates/paneflow-host/src/{host,runtime,process,persistence,manifest,cold_text,viewport_scan,cancellation_scan}.rs` | Every W01-W08 cell on every OS |
+| Session lifecycle, ownership, persistence | `crates/paneflow-host/src/{host,runtime,process,persistence,manifest,cold_text,viewport_scan}.rs` | Every W01-W08 cell on every OS |
 | IPC protocol or framing | `crates/paneflow-host/src/{protocol,server,client,control}.rs`, `crates/paneflow-ipc-client/` | W02, W03, W04, W06, W08 on every OS |
 | Terminal engine pin or PTY adapter | `native/libghostty/`, `native/conpty/`, `crates/paneflow-host/src/pty/` | Every cell on the affected OS; W02, W03 on every OS |
 | Worker projection | `crates/paneflow-serve/` | W04 worker cells, W07, W08 on every OS |

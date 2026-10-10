@@ -61,7 +61,7 @@ paneflow status backend --json
 paneflow read backend --lines 120
 ```
 
-A healthy tracked agent has `hooked: true`. When Paneflow detects a process but cannot attach lifecycle hooks, the agent may appear as `unknown_running` with `reason: "no_hook"`. You can still read its pane, but turn state, waiting messages, and events will be limited. Claude Code and Codex report hooks once their integration is installed: **Install hooks** in **Settings > Agents**, or `paneflow integrations install claude-code` and `paneflow integrations install codex`. Without a running window, `ps` and `status` cannot see hook state; read it with `paneflow sessions`.
+A healthy tracked agent has `hooked: true`. When Paneflow detects a process but cannot attach lifecycle hooks, the agent may appear as `unknown_running` with `reason: "no_hook"`. Turn state does not depend on hooks: it comes from the status the agent declares through OSC 7501, and `state` is reliable when the agent's `paneflow sessions` row has `activity_source` set to `declared`. Without hooks, you can still read the pane, but the agent's events (`ai.*`) and resume metadata are limited. Claude Code and Codex report hooks once their integration is installed: **Install hooks** in **Settings > Agents**, or `paneflow integrations install claude-code` and `paneflow integrations install codex`. Without a running window, `ps` and `status` cannot see agent state; read it with `paneflow sessions`.
 
 For declarative setup, use `paneflow up <file>` from the scripting surface. Name panes in the workspace file so conductors can target them with stable selectors instead of brittle process substrings.
 

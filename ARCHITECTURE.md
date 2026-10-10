@@ -331,33 +331,31 @@ agent CLI (claude, codex, opencode, …)
   name; unknown tools are reported as themselves. It emits `session_start`,
   `exit` and `session_end` on its own, so presence and exit never depend on
   the agent cooperating.
-- **Hooks**: agents that support lifecycle hooks (Claude Code, Codex, …)
+- **Hooks**: Claude Code and Codex, once their integration is installed,
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
   `exit`, and `session_end` as `agent.event` frames on the host endpoint; the
   worker projects them and the app rebroadcasts them as `ai.*` events. The
-  app socket itself answers an `ai.*` call with `-32601`. Richest source,
-  and the only one that names the active sub-tool or carries a turn summary.
-- **Hooks own the state once a session latches.** The first hook event of a
-  session makes it hook-owned, and from then on only hook events and the
-  bounded lease below move it. Raw output growth never starts a busy state.
-  Hooks can be switched off outside Paneflow's reach (Claude Code's managed
-  settings do exactly that), so a lower-confidence screen tier backs them: a
-  runtime that ships `screen.toml` rules beside its descriptor and has no latch
-  takes the host's screen verdict, published as `activity_source = screen`. A
-  screen verdict never produces a completion notification, and hooks win the
-  moment they latch.
+  app socket itself answers an `ai.*` call with `-32601`. Hooks name the agent
+  and carry its metadata: the provider session id and transcript path that
+  make a conversation resumable, the submitted prompt that names the tab, the
+  active sub-tool, the waiting message and the last result. They never move
+  the turn state.
+- **OSC 7501 is the only source of turn state.** The worker derives a
+  session's state from the program status the agent declares (below) and from
+  nothing else: no hook latch, no screen reading, no keystroke heuristic, no
+  terminal bell. An agent that declares nothing shows no turn state.
 - **Where the reduction happens**: in the worker, never in the core and never
   in a Controller. The core validates a hook frame against the session's
-  runtime generation, writes `last-hook-event.json` and records the raw
-  `last_hook` on the manifest; the worker
-  (`crates/paneflow-serve/src/hook_state.rs`) turns that stream into a state
-  and `crates/paneflow-serve/src/state.rs` publishes it with an
-  `activity_source` of `hooks`, `screen` or `none`. The GPUI app subscribes and
-  renders; it computes no lifecycle of its own.
-- **States**: thinking, waiting for input (with the actual prompt text),
-  finished, errored (non-zero exit, or an OSC 7501 `error` the agent declared
-  while no hook decides the state). Each state routes to the UI - and to your own tooling, since
-  the same events are observable over IPC.
+  runtime generation and records the raw `last_hook` on the manifest, and its
+  viewport scan publishes the declared status; the worker
+  (`crates/paneflow-serve/src/state.rs`) maps the declaration of a recognized
+  agent to a state and publishes it with an `activity_source` of `declared` or
+  `none`. The GPUI app subscribes and renders; it computes no lifecycle of its
+  own.
+- **States**: thinking (`working`), waiting for input (`blocked`, with the
+  declared message), finished (`idle` or `done`), errored (`error`). Each state
+  routes to the UI - and to your own tooling, since the same events are
+  observable over IPC.
 - **Declared program status (OSC 7501).** Any program, agent or not, can
   declare its own state with `ESC ] 7501 ; state=<working|blocked|idle|done|error|clear> ...`
   following the program status spec
@@ -446,116 +444,52 @@ same-version development rebuild replaces the old worker instead of adopting
 stale code.
 
 - **Restarts are free.** On start the worker rebuilds every session from the
-  manifests under `<home>/host/sessions/` and the durable seeds under
-  `<home>/host/session-data/<id>/last-hook-event.json`. No terminal receives a
+  manifests under `<home>/host/sessions/`, replaying the hook frames each
+  manifest holds for the agent metadata and taking the declared status it
+  recorded. No terminal receives a
   signal, because the worker owns no PTY. When the app ships a newer worker it
   stops the old one with a five second drain and starts its own; the sessions
   list is identical across the swap.
-- **The activity reducer.** `hook_state.rs` holds one latch per session.
-  `Start` and `UserPromptSubmit` open a turn and arm a five-minute lease;
-  `Stop` settles it as completed; `StopFailure` and `Idle` settle it without
-  completion; Codex's `Interrupt` settles it as cancelled and only a new
-  opening event re-arms it; `PermissionRequest` (except
-  `tool_name = AskUserQuestion`) asks for input. `SessionStart`,
-  `SubagentStart`, `SubagentStop` and informational notifications latch hook
-  ownership and change nothing. A `Stop` whose payload counts pending
-  `background_tasks` keeps the pane busy until the count reaches zero.
-- **The lease bounds a lost stop.** Every busy turn carries a deadline five
-  minutes past its last changed screen signal. The live reducer consumes only
-  the host's `screen_changed_at_ms`; raw PTY output growth never re-arms the
-  lease. The host's separate `output_changed_at_ms` timestamp may anchor a
-  recovered opening seed, so output written before a worker restart is not
-  mistaken for new live activity. When the deadline passes the session settles
-  to idle without completion and the worker writes a generation-scoped
-  watermark to `<session dir>/hook-expiry.json`, so a restart cannot revive the
-  turn.
+- **The declared state.** For a session whose agent the worker recognizes, by
+  the tool its hooks name or by the foreground runtime the host observed,
+  `working` is busy, `blocked` is attention, `error` is errored, and `idle` and
+  `done` are idle; an exited session is never busy or waiting. A program the
+  worker does not recognize as an agent keeps `idle` and reaches the app through
+  `declared_status` alone. `done` records the outcome `completed` and `error`
+  records `failed` (with the declared message), `working` clears it, and every
+  outcome lands in the worker's bounded activity log (`agent.activity_log`).
+  `state_seq` counts each change of the reduced state, which is what
+  `paneflow send --submit` and `paneflow wait --idle` follow.
 - **Generations reject stale events.** A frame naming a runtime generation
-  below the manifest's is refused. An untagged settling event arriving within
-  30 seconds of an in-place relaunch is quarantined until the replacement
-  runtime opens a turn of its own. For sessions whose launch command is not
-  hook-capable, a change in the observed foreground identity
-  (`runtime_id:pid:pid_started_at`) resets the latch while keeping the
-  generation; the first sighting is recorded, never treated as an edge.
-- **Restart replays the durable seed.** `last-hook-event.json` is read with its
-  own file handle for both metadata and bytes, capped at 64 KiB, and applied
-  with the file's mtime as the event time. An opening event's lease is anchored
-  at `max(seed mtime, activity signal)`; a seed holding a stop uses only its own
-  mtime, so a later repaint cannot reopen a finished turn.
-  `hook-cancellation.json` is restored before the seed, so an escape fence
-  survives the restart.
-- **The escape cancellation fence.** Claude Code, Gemini and Muse Code fire no
-  hook when the user interrupts a turn with Escape, so the host reads the
-  intent from the input it already delivers. A session carries a launch
-  binding: `runtime.launch_binding` in its manifest, derived from the launch
-  command when the agent is the pane's own shell and set over
-  `session.runtime.bind` when the app declares the agent it just launched from
-  a preset. A hand-typed agent in a blank pane has no binding and is never
-  fenced, and neither is a runtime whose descriptor leaves
-  `escape_cancels_turn` false, Codex first, whose native `Interrupt` hook
-  already settles the turn. For a bound fenced session, `session_input.rs`
-  parses the delivered bytes: a lone `ESC` with no continuation within 150 ms
-  is a cancellation, while a CSI or SS3 sequence, a modified key, bracketed
-  paste and the Kitty escape release are not. The thread named
-  `paneflow-host-cancellation` settles the parser every 100 ms, writes
-  `<session dir>/hook-cancellation.json` under an exclusive lock and announces
-  the marker on the agent bus, so the worker fences the turn without waiting
-  for its own sweep. The first Enter after a fence records `submitted_at` in
-  the same marker; the reducer keeps the session idle without completion until
-  an opening hook arrives after that submission, and an opener that raced ahead
-  of the Enter is retained and applied when the submission lands. No signal is
-  ever sent to the process.
+  below the manifest's is refused, and a hook revision at or below the one the
+  worker holds is ignored, so a snapshot recovers an event the stream lost
+  without replaying an older one.
 - **Background agents are tracked per child.** On Claude's `SubagentStart` the
   hook reporter atomically creates
   `<session dir>/background-hooks/<generation>/<agent_id>.json` before it
   broadcasts, and `SubagentStop` removes that one file. An `agent_id` outside
-  `[A-Za-z0-9_-]` or longer than 160 bytes writes nothing and the event still
-  latches hook ownership. The reducer holds the session busy while any marker
-  is unexpired, so a child finishing never completes the main turn, and settles
-  to the main turn's outcome once the last marker is gone. Markers carry their
-  own generation directory, so a relaunch never inherits children, and a marker
-  whose lease runs out with no screen change expires without a completion
-  notification. `Attention` on the main turn outranks a busy child, and a
-  cancelled turn outranks both: an interrupt ends the children it started, so
-  markers a lost `SubagentStop` left behind never hold a fenced pane busy.
-- **The worker decides notifications.** Only a hook-sourced completed `Stop`
-  earns a `Finished` decision, and only a `PermissionRequest` or a
-  `menu_prompt_active` false-to-true edge earns `Needs input`, deduplicated to
-  one per ten seconds. The decision rides on the `agent.event` frame as
+  `[A-Za-z0-9_-]` or longer than 160 bytes writes nothing.
+- **The worker decides notifications.** A transition into `blocked` or `error`
+  earns `Needs input`, carrying the declared message, and a transition from
+  `working` or `blocked` to `done` earns `Finished`, carrying the last result
+  the hooks reported or the declared message. `idle` never notifies, and a
+  state the worker finds already held when it starts or discovers a session is
+  not announced again. The decision rides on the `agent.event` frame as
   `notify`; the Controller decides whether the user already saw the pane and
-  delivers it. Failures, expiries and cancellations never notify, and every
-  settled turn is recorded in the worker's bounded activity log
-  (`agent.activity_log`) as `completed`, `failed:<reason>`, `expired` or
-  `cancelled`.
-- **The host viewport scan.** Every 500 ms the host thread named
+  delivers it.
+- **The host viewport scan.**- **The host viewport scan.** Every 500 ms the host thread named
   `paneflow-host-viewport` asks each live session for its rendered screen and
-  its foreground process group, then edge-writes six manifest fields:
+  its foreground process group, then edge-writes three manifest fields:
   `screen_changed_at_ms` when the screen text hash changes (coalesced to one
   stamp per second, so an idle TUI repainting identical content costs zero
-  writes), `screen_activity` (`working`, `idle` or `blocked`) from the
-  foreground runtime's layered screen rules (local override, signed remote
-  catalog, built-in `screen.toml`; see `runtimes/README.md`), where the tool the
-  hooks declared stands in only when the foreground job cannot be observed,
-  `menu_prompt_active` while a `visible_blocker` rule matches,
-  `declared_status` with the session's current OSC 7501 record (state, kind,
-  progress, app, title, and a message bounded to 2,048 bytes),
-  `declared_blocker` with the message of a declared `blocked` when the
-  foreground runtime has screen rules, and `observed_runtime` with the
-  foreground runtime identity, dropped when the
-  runtime declares a `title_prefix` the pane title does not carry. For a
-  recognized runtime a declared state decides `screen_activity` over the text
-  rules (`error` maps to `idle` there). `declared_status` is written for every
-  session, agent or not, and a typed key or a reset triggers a rescan even
-  without new output, so a purged record leaves the manifest promptly. The
-  program's exit clears `screen_activity`, `declared_blocker` and
-  `menu_prompt_active`. Nothing is
-  written when nothing changed. The worker consumes the screen signals below
-  the hooks: a hook latch ignores `screen_activity`, an unlatched session maps
-  it to busy, idle or attention with `activity_source = screen`, and a visible
-  blocker overrides busy/idle with attention while `menu_attention_detection`
-  is enabled. A declared blocker on a running session no hook has latched is
-  fed to the reducer as a menu prompt (`observe_menu_prompt`). A declared
-  `error` marks an agent `Errored` unless the state comes from the hooks,
-  which keep precedence. The worker carries
+  writes), `declared_status` with the session's current OSC 7501 record (state,
+  kind, progress, app, title, and a message bounded to 2,048 bytes), and
+  `observed_runtime` with the foreground runtime identity, dropped when the
+  runtime declares a `title_prefix` the pane title does not carry.
+  `declared_status` is written for every session, agent or not, and a typed key
+  or a reset triggers a rescan even without new output, so a purged record
+  leaves the manifest promptly. Nothing is written when nothing changed. The
+  screen text is never classified. The worker carries
   `declared_status` on each snapshot entry, so a program without an agent
   reaches the app too: its state shows in the pane header's progress chip,
   `blocked` and `error` enter the Attention Queue labeled by the declared app
@@ -709,9 +643,8 @@ reports or fails, then re-checks the record and the operation at commit. A stop
 that raced a restart drops its outcome when the generation moved on, so a stop
 of generation N never writes `exited` into N+1. A restart is transactional:
 the previous manifest is restored when its persist fails and no `starting`
-record is stranded. Viewport scans, cancellation markers, hook events and the
-`SessionInput` escape fence capture the generation they observed and are
-re-checked when they commit (`SessionHost::commit_scan`, `commit_marker`,
+record is stranded. Viewport scans and hook events capture the generation they
+observed and are re-checked when they commit (`SessionHost::commit_scan`,
 `ingest_agent_event`). Admission is bounded at eight unresolved launches
 (`MAX_PENDING_LAUNCHES`); a pending launch is reported as `starting`, never as
 a verified process. No registry lock is held across PTY I/O, process waits or
@@ -728,8 +661,8 @@ latest event and latest activity transition as two bounded frames; ingress rejec
 an event before commit if its manifest would exceed the 64 KiB reload limit.
 Workers reject older revisions and recover newer accepted state from snapshots or
 disk, including when the compact seed write fails. A full worker queue reconnects
-for a new snapshot instead of silently dropping accepted state. Hook seeds and cancellation
-markers are written on the persistence writer thread as exclusive jobs that
+for a new snapshot instead of silently dropping accepted state. Hook seeds are
+written on the persistence writer thread as exclusive jobs that
 re-check the session ledger `session.remove` marks removed, so a delayed write
 cannot recreate a removed session directory. The fixtures behind these guarantees are
 `crates/paneflow-host/src/bin/paneflow-session-fixture.rs` (idle, echo, flood,

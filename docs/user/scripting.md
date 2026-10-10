@@ -38,7 +38,7 @@ text unless you deliberately pass `--raw`.
 | `paneflow mcp install` | Let MCP-capable agents read panes and message each other | Only after a human allows the pair |
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
-| `paneflow hooks setup` | Report agent lifecycle state to Paneflow | No |
+| `paneflow hooks setup` | Report agent lifecycle events to Paneflow | No |
 | `paneflow sessions` | Read agent session state from the worker, with or without a window | No |
 
 The CLI and MCP bridge use the same local socket. Inside a Paneflow
@@ -70,7 +70,6 @@ the counter, the field is absent rather than zero.
 | `hooked` | `true` only when the last lifecycle hook came from the current launch of the agent and its runtime reports through hooks Paneflow installs (Claude Code, Codex). A hook left by a previous launch never counts. |
 | `state` | The reduced state the sidebar shows: `thinking`, `waiting_for_input`, `finished`, `errored`, or `idle`. It is absent when no state projection exists for the pane, never `unknown`. |
 | `state_seq` | A per-session counter that increases on every reduced-state transition. Compare two reads to tell a new turn from an unchanged one. |
-| `attention_reason` | Present when the pane asks for attention because the agent rang the terminal bell (`bell`). |
 
 Without a window, the CLI asks the host for `hooked` and
 `output_generation` and the per-home worker for `state` and
@@ -144,15 +143,15 @@ With `--submit`, the JSON reply reports what happened:
 | Field | Meaning |
 | --- | --- |
 | `delivered` | `true` once the text and the carriage return were written. |
-| `started` | `true` when the agent's reduced state moved (`state_seq` grew) within 5 s, `false` when it did not, `null` when the runtime has neither hooks nor screen rules to report a turn. The paste echo alone never counts. |
+| `started` | `true` when the agent's reduced state moved (`state_seq` grew) within 5 s, `false` when it did not, `null` when the agent has not declared its state through OSC 7501. The paste echo alone never counts. |
 | `reason` | `state_transition`, `no_state_transition`, or `no_signal`. |
 | `state` | The last reduced state observed: `working`, `attention`, `blocked`, or `idle`. |
 
 A reply with `started: false` exits with code 1, as an unconfirmed
 start always did.
 
-`wait --idle` follows the turn of an agent whose runtime reports
-through hooks or screen rules: it returns when the agent's reduced
+`wait --idle` follows the turn of an agent that declares its state
+through OSC 7501: it returns when the agent's reduced
 state becomes `idle`, `attention`, or `blocked`, and at once when the
 agent already waits, so a long silent tool call is never mistaken for
 the end of a turn. `--for` does not apply there. Other panes still wait
@@ -276,10 +275,11 @@ without clobbering unrelated entries.
 
 ## How do lifecycle hooks fit in?
 
-Lifecycle hooks report agent state back to Paneflow. They power sidebar
-status, notifications, `ps`, `status`, `watch`, and
-`paneflow sessions`; they are not a
-generic workflow trigger system.
+Lifecycle hooks name the agent and carry its session metadata back to
+Paneflow: the agent's session id that resumes the conversation, the prompt
+that names the tab, and the last result. `ps`, `status`, `watch`, and
+`paneflow sessions` show that metadata, while turn status comes from
+OSC 7501. Hooks are not a generic workflow trigger system.
 
 ```bash
 paneflow integrations list
@@ -293,10 +293,11 @@ once per machine, from the CLI or with **Install hooks** in
 **Settings > Agents**; installing also registers the `paneflow` MCP server,
 and Codex asks you once to trust the new hooks with `/hooks`. The hooks exit immediately
 outside a Paneflow pane. `paneflow hooks setup` installs every detected
-runtime that has an installer. Agents without an installer can still run in
-panes, but fleet state and lifecycle events are limited.
+runtime that has an installer. Agents without an installer still run in
+panes and report their turn status through OSC 7501 when they support it,
+without hook events.
 
-Hook state lives in a per-home worker, `paneflow serve`, that outlives the
+Agent state lives in a per-home worker, `paneflow serve`, that outlives the
 window. `status`, `send --submit`, and `wait --idle` read it whether or not a
 window is open; `paneflow sessions` reads it directly and takes `--json` and
 `--follow`.

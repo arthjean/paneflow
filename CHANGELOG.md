@@ -7,10 +7,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- Agent status now comes only from OSC 7501. An agent's sidebar state, Attention queue entry, and notifications follow what it declares: `working` shows as working, `blocked` as waiting with its message, `idle` and `done` as idle, and `error` as errored. Entering `blocked` or `error` sends a needs-input notification, and `done` after a turn sends a finished notification; `idle` sends none. An agent that declares nothing shows no turn status. Claude Code and Codex hooks stay installed and still resume conversations, name tabs, and report the last result, but they no longer move the state. `paneflow send --submit` and `paneflow wait --idle` follow the declared state too, so for an agent that declares nothing `send` reports `no_signal` and `wait --idle` waits for the output to go quiet.
 - A program without an agent that reports `error` with OSC 7501 now sends a desktop notification that names the pane, such as `cargo failed in build`, sharing the limit of one notification every 10 seconds per pane with `blocked`. Its Attention queue entry leaves the queue once you have looked at the pane, while the pane header keeps `error` until you type in it.
 
 ### Removed
 
+- Paneflow no longer reads agent status off the screen. The built-in `screen.toml` rules, local overrides in `~/.paneflow/runtimes/`, the signed screen rule catalog and its download from GitHub Releases, `paneflow agent capture`, and `paneflow agent explain` are removed. The `menu_attention_detection` and `agents.remote_screen_catalog` settings are ignored, and `~/.paneflow/cache/screen-catalog/` can be deleted.
+- The terminal bell no longer puts an agent in the Attention queue, and `attention_reason` is gone from `status --json`. Pressing Escape in an agent pane no longer settles its turn on Paneflow's side.
 - Six built-in agents are gone: Antigravity, CodeBuddy, Cursor Agent, DeepSeek Harness, Kiro, and Qoder. Their launcher buttons, their PATH shims (`agy`, `codebuddy`, `cursor-agent`, `dsh`, `kiro-cli`, `qodercli`), their rows in Settings, and the Kiro conversations in the session sidebar are removed. A leftover `*_button_visible` key for one of them is ignored, and an `agent_profiles` entry based on one of them is skipped with a warning.
 
 ## [0.17.7] - 2026-10-10
