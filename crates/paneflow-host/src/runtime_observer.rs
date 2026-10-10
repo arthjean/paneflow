@@ -1276,7 +1276,14 @@ mod tests {
             .spawn()
             .unwrap();
         let group = child.id() as i32;
-        let stamp = ForegroundLeader::read(Some(group)).expect("a live group leader");
+        let exec_settled_by = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let stamp = loop {
+            let stamp = ForegroundLeader::read(Some(group)).expect("a live group leader");
+            if stamp.name == "sleep" || std::time::Instant::now() >= exec_settled_by {
+                break stamp;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
         assert_eq!(stamp.process_group, child.id());
         assert_eq!(
             Some(stamp.started_at),
