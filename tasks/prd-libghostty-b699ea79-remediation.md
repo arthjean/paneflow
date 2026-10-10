@@ -529,7 +529,7 @@ Regrouper en fin de PRD la vérification sur le matériel Windows et la prépara
 - [x] Le test temporel `crates/paneflow-mcp-install/src/agents/opencode.rs:115-133` n'asserte plus un délai réel de moins de 100 ms. Il vérifie le comportement sans dépendre de l'horloge (test).
 - [x] Le home de développement `~/.paneflow-dev-repin` est mis à la corbeille par `gio trash` après `PANEFLOW_HOME=~/.paneflow-dev-repin target/debug/paneflow serve stop` et `host stop`.
 - [x] Aucun tag n'est créé ni poussé : le commit de clôture dit que le tag attend Arthur.
-- [ ] Échec : given un contrôle du runbook rouge, when la story se termine, then elle reste `IN_PROGRESS`, et aucun contrôle n'est contourné pour verdir le commit.
+- [x] Échec : given un contrôle du runbook rouge, when la story se termine, then elle reste `IN_PROGRESS`, et aucun contrôle n'est contourné pour verdir le commit.
 
 ---
 

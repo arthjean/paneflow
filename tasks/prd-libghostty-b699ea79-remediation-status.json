@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Vérification réelle et préparation de la release",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-007",
@@ -319,19 +319,19 @@
       "id": "US-019",
       "title": "Vérifier sur le matériel Windows et corriger les écarts",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-10-09",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-10",
+      "reviewed_at": "2026-10-10"
     },
     {
       "id": "US-020",
       "title": "Préparer la release 0.17.7",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
@@ -340,8 +340,8 @@
         "US-019"
       ],
       "started_at": "2026-10-09",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-10",
+      "reviewed_at": "2026-10-10"
     },
     {
       "id": "US-021",
