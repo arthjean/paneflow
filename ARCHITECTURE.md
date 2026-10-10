@@ -559,8 +559,12 @@ stale code.
   `declared_status` on each snapshot entry, so a program without an agent
   reaches the app too: its state shows in the pane header's progress chip,
   `blocked` and `error` enter the Attention Queue labeled by the declared app
-  or the pane, and only `blocked` notifies, at most once per pane every 10 s,
-  naming the pane (`src-app/src/app/declared_status.rs`). Text shown outside
+  or the pane, and `blocked` and `error` notify, naming the pane and sharing
+  one notification per pane every 10 s (`src-app/src/app/declared_status.rs`).
+  An `error` entry leaves the queue once its pane has been on screen: the app
+  acknowledges it per surface on render, and the acknowledgment falls when the
+  declared state changes, while the host record and the chip keep `error`
+  until the first keystroke. Text shown outside
   the grid is stripped of bidi, zero-width and line-separator controls and
   kept to one line. No declared state ever triggers an action on a program.
 - **Foreground runtime observation.** The scan matches the foreground job
