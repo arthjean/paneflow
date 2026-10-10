@@ -69,6 +69,14 @@
       "priority": "P3",
       "stories_total": 1,
       "stories_done": 1
+    },
+    {
+      "id": "EP-009",
+      "title": "Signal d'attention des programmes non-agent",
+      "status": "DONE",
+      "priority": "P2",
+      "stories_total": 2,
+      "stories_done": 2
     }
   ],
   "stories": [
@@ -356,6 +364,30 @@
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Notifier aussi l'`error` d'un programme non-agent",
+      "epic": "EP-009",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-10",
+      "completed_at": "2026-10-10",
+      "reviewed_at": "2026-10-10"
+    },
+    {
+      "id": "US-023",
+      "title": "Retirer de l'Attention Queue une entrée `error` déjà vue",
+      "epic": "EP-009",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-10",
+      "completed_at": "2026-10-10",
+      "reviewed_at": "2026-10-10"
     }
   ]
 }

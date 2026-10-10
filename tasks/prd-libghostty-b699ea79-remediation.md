@@ -10,6 +10,7 @@
 | 1.2 | 2026-10-09 | Arthur Jean | Limite la vérification matérielle d'EP-006 à Linux et Windows : macOS repose sur `macos_check` et `macos_render_smoke`, sans vérification sur matériel, par décision. 0.17.7 se publie sans pré-release. 7 epics, 21 stories. |
 | 1.3 | 2026-10-09 | Arthur Jean | Sort la passe visuelle Linux (US-018) d'EP-006 vers EP-008, différé par décision : il ne bloque ni EP-006 ni la release 0.17.7, et US-019 n'en dépend plus. 8 epics, 21 stories. |
 | 1.4 | 2026-10-10 | Arthur Jean | Retire l'exigence de captures d'US-018 : la passe visuelle Linux est prouvée par l'attestation d'Arthur, par décision. 8 epics, 21 stories. |
+| 1.5 | 2026-10-10 | Arthur Jean | Tranche les deux questions ouvertes après la passe d'US-018 : l'`error` d'un programme non-agent notifie aussi (US-022), et une entrée `error` quitte l'Attention Queue une fois vue, la frappe restant le seul signal qui retire l'enregistrement (US-023). Ajoute EP-009. 9 epics, 23 stories. |
 
 ## Problem Statement
 
@@ -68,6 +69,8 @@ Le PRD corrige d'abord ce qui est faux, puis étend ce qui manque, puis prouve, 
 **EP-007 (P2)** prépare, une fois 0.17.7 publiée, une courte démo d'un script sans agent qui déclare son état, et la réponse à l'annonce de la spec par Mitchell Hashimoto. La publication reste l'action d'Arthur.
 
 **EP-008 (P3, différé)** porte la passe visuelle Linux, hors du chemin de la release : elle ne bloque aucune autre story.
+
+**EP-009 (P2)** fait notifier l'`error` d'un programme non-agent comme `blocked`, et retire de l'Attention Queue une entrée `error` dès que son pane a été vu. L'enregistrement, lui, garde la durée de vie de la spec.
 
 Décisions structurantes et leur preuve :
 - **Les hooks gardent la précédence** (`AgentStateSource`, `crates/paneflow-ipc-client/src/agent.rs:53-79`). Aucune variante wire d'`AgentState` ni chaîne `SCREEN_*` ne change : l'erreur passe par la variante `Errored` existante.
@@ -171,6 +174,7 @@ Gates additionnels :
 - Stories du chemin de rendu (US-005, US-006, US-007) : `scripts/bench-terminal.sh` comparé à `bench/baselines/linux-x86_64/terminal.json`, et `scripts/perf-gates.sh` vert. Le résultat est cité dans le corps du commit.
 - Stories qui touchent un chemin `#[cfg(windows)]` ou ConPTY : le job « Windows x86_64 libghostty check » passe après le push. Le commit dit que Windows a été vérifié par inspection ; la vérification matérielle est en US-019.
 - Stories UI (US-005, US-009, US-010) : l'agent livre sans lancer l'app. La passe visuelle d'Arthur est regroupée en US-019 sous Windows et en US-018 sous Linux (EP-008, différé).
+- Stories UI d'EP-009 (US-022, US-023) : l'agent livre sans lancer l'app ; la vérification à l'œil d'US-023 est un critère de la story.
 - Story de démo (US-021) : aucun code Rust ne change et les gates cargo ne s'appliquent pas. Le script de démo passe `bash -n`, et `shellcheck` s'il est installé.
 - Story du site (US-017) : les vérifications propres à `paneflow-web` (lint, format, build, définis dans son `package.json`) passent.
 - `cargo deny check advisories licenses sources` : seulement si une dépendance change ; aucune story n'en prévoit.
@@ -589,6 +593,47 @@ Vérifier à l'œil, sous Linux, les changements d'interface du PRD source et de
 
 ---
 
+### EP-009: Signal d'attention des programmes non-agent
+
+Faire d'un `error` déclaré un signal qui atteint Arthur même quand il regarde ailleurs, et qui quitte l'Attention Queue une fois vu, sans toucher à la durée de vie des enregistrements imposée par la spec (FR-02). Décidé par Arthur le 2026-10-10 à la suite de la passe d'US-018.
+
+**Definition of Done:** un `error` déclaré par un programme non-agent notifie sous les mêmes limites que `blocked`, une entrée `error` quitte l'Attention Queue dès que son pane a été sous les yeux d'Arthur, et la puce garde `error` jusqu'à la première frappe.
+
+#### US-022: Notifier aussi l'`error` d'un programme non-agent
+**Description:** As a développeur qui lance un build long puis change de pane, I want qu'un programme sans agent qui déclare `error` me notifie so that je n'aie pas à surveiller l'Attention Queue pour apprendre un échec.
+
+**Priority:** P2
+**Size:** S (2 pts)
+**Dependencies:** None (US-010 est DONE)
+
+**Acceptance Criteria:**
+- [x] `DeclaredWatch::observe` (`src-app/src/app/declared_status.rs:194-222`) signale l'entrée d'une surface non-agent dans `error` comme dans `blocked`. `working`, `idle` et `done` ne notifient toujours pas (test par état).
+- [x] `blocked` et `error` partagent la limite d'une notification par pane toutes les 10 s (`BLOCKED_NOTIFICATION_INTERVAL`) : un `blocked` suivi d'un `error` dans la même fenêtre ne produit qu'une notification (test).
+- [x] La notification d'un `error` dit que le programme a échoué et nomme le pane, par exemple « cargo failed in build », et son corps est le `message` nettoyé, sinon un texte fixe. Le texte de `blocked` (`blocked_notification_text`, `declared_status.rs:156-167`) ne change pas (test).
+- [x] La notification passe par le même chemin que `blocked` (`notify_declared_block`, `declared_status.rs:277-303`) : elle ne part pas si le pane est sous les yeux d'Arthur (`surfaces_under_user_eye`) ou si le workspace est muet, et elle respecte `notify_when_agent_waiting` (test du chemin qui décide `seen`).
+- [x] Un pane qui porte un agent ne notifie jamais par ce chemin, quel que soit son état déclaré (test).
+- [x] FR-08 tient : aucun chemin ajouté n'écrit dans le PTY (le test d'US-010 reste vert).
+- [x] Échec : given un programme qui déclare `error` 50 fois en une seconde avec des messages différents, when l'app les reçoit, then une seule notification part et l'Attention Queue montre le dernier message (test).
+
+#### US-023: Retirer de l'Attention Queue une entrée `error` déjà vue
+**Description:** As a développeur, I want qu'une entrée `error` quitte l'Attention Queue dès que j'ai regardé son pane so that la file ne liste que ce qui me demande encore quelque chose, sans perdre l'état `error` de la puce.
+
+**Priority:** P2
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [x] Une entrée `error` non-agent est acquittée dès que son pane est sous les yeux d'Arthur, au sens de `surfaces_under_user_eye` (`src-app/src/app/agent_status.rs:14`). Acquittée, elle n'est plus une ligne d'`attention_queue_rows` (`src-app/src/app/attention_queue.rs:48`) (test).
+- [x] L'acquittement a lieu sans attendre un nouvel événement de l'host : un changement de pane, d'onglet, de workspace ou de fenêtre active suffit (test qui n'émet aucun événement host entre l'affichage et la vérification).
+- [x] Une entrée `blocked` n'est jamais acquittée par le regard : elle reste dans la file tant que l'état déclaré vaut `blocked` (test).
+- [x] L'acquittement vit côté app, par surface, et tombe dès que l'état déclaré change : un nouvel `error` après un `working` revient dans la file (test).
+- [x] La puce garde `error` jusqu'à la première frappe (FR-02) : l'acquittement ne change ni l'enregistrement de l'host ni `declared_chip` (test).
+- [x] Une entrée `error` jamais regardée reste dans la file jusqu'à la frappe ou au changement d'état, comme aujourd'hui (test).
+- [x] Arthur vérifie à l'œil, sur un build debug lancé par `scripts/dev.sh`, qu'un `error` dans un pane en arrière-plan apparaît dans la file, puis la quitte quand il affiche le pane, et que la puce garde `error` (attestation d'Arthur du 2026-10-10).
+- [x] Échec : given un `error` dans un pane détaché dont la fenêtre n'est pas active, when la fenêtre principale a le focus, then l'entrée reste dans la file (test).
+
+---
+
 ## Functional Requirements
 
 - FR-01: Au début d'une invite (OSC 133 A) et à la sortie du programme, le host doit retirer les enregistrements `working`, `blocked` et `idle`, et garder `done` et `error`.
@@ -596,7 +641,7 @@ Vérifier à l'œil, sous Linux, les changements d'interface du PRD source et de
 - FR-03: Un reset manuel doit vider les enregistrements, la progression et le titre de la session, comme un RIS.
 - FR-04: Le système ne doit PAS perdre une transition de statut tant que les événements en attente restent sous 256 Kio. Au-delà, il doit vider tous les enregistrements plutôt que garder un état partiel.
 - FR-05: Chaque session vivante, agent ou non, doit exposer son état déclaré à l'app.
-- FR-06: Un programme non-agent `blocked` ou `error` doit apparaître dans l'Attention Queue. `blocked` doit produire au plus une notification par pane toutes les 10 s.
+- FR-06: Un programme non-agent `blocked` ou `error` doit apparaître dans l'Attention Queue. `blocked` et `error` doivent produire au plus une notification par pane toutes les 10 s, limite partagée entre les deux états. Une entrée `error` doit quitter l'Attention Queue dès que son pane a été vu ; une entrée `blocked` ne la quitte qu'en changeant d'état.
 - FR-07: L'`error` déclaré d'un agent doit donner `Errored`, sauf si les hooks disent autre chose.
 - FR-08: Le système ne doit PAS déclencher d'action sur un agent ou un programme à partir d'un état déclaré.
 - FR-09: Le décalage au pixel doit valoir 0 tant que l'application lit la souris, que l'écran alternatif est en défilement alterné ou que `reduce_motion` est vrai.
@@ -653,6 +698,9 @@ Vérifier à l'œil, sous Linux, les changements d'interface du PRD source et de
 | 16 | Compression non supportée | Plateforme sans compression | L'étape de repos s'arrête sans erreur | Aucun |
 | 17 | OSC 7501 coupé par ConPTY | Sortie entrelacée sous Windows | À constater en US-019 ; correctif dans l'epic final | Aucun |
 | 18 | Push du site non autorisé | US-017 sans accord d'Arthur | Diff prêt, miroir non régénéré | Aucun |
+| 19 | `error` dans un pane en arrière-plan | Un build échoue pendant qu'Arthur est dans un autre pane | Une notification qui nomme le pane, une entrée dans la file | « cargo failed in build » |
+| 20 | `error` vu sans frappe | Arthur affiche le pane puis repart sans taper | L'entrée quitte la file, la puce garde `error` jusqu'à la frappe | Aucun |
+| 21 | `blocked` vu sans réponse | Arthur affiche un pane bloqué puis repart | L'entrée reste dans la file | Aucun |
 
 Catégories écartées :
 - dégradation réseau : rien ne passe par le réseau à l'exécution ;
@@ -683,7 +731,8 @@ Catégories écartées :
 - **Pas de compression du scrollback côté host.** La recompression au repos ne touche que l'historique restauré du desktop. La compression du host demande sa propre mesure de mémoire et de CPU, dans un PRD séparé.
 - **Pas de nouvel élément d'interface permanent pour les statuts**, ni de barre agrégée, ni de marque par commande ou par invite : la puce de pane et l'Attention Queue suffisent.
 - **Pas de réécriture de l'historique de `main`** pour les six commits signés `arthur.jean@strivex.fr` : réécrire une branche publique est destructif.
-- **Pas de notification pour `idle` ou `done`**, ni pour l'`error` d'un programme non-agent : seul `blocked` notifie.
+- **Pas de notification pour `idle` ou `done`** : seuls `blocked` et `error` notifient (US-010, US-022).
+- **Pas de retrait d'une notification de bureau déjà affichée** quand le pane est vu : seule l'entrée de l'Attention Queue est acquittée (US-023).
 - **Pas de tag ni de publication de release** dans ce PRD : le tag reste l'action d'Arthur, comme la réponse publique d'US-021.
 - **Pas de vérification sur matériel macOS** pour 0.17.7. Le code touché sous macOS passe par GPUI macOS, la plateforme la plus éprouvée de Zed, et par une logique de défilement et de curseur commune aux trois plateformes, vérifiée sur le matériel Windows en US-019 ; la passe Linux d'US-018 est différée. La CI macOS couvre le build et le premier rendu.
 - **Pas de pré-release `-rc.N`.** Le tag 0.17.7 est la release finale ; le chemin d'installation et de signature n'a pas changé, et un correctif se publie en 0.17.8.
@@ -735,6 +784,6 @@ Catégories écartées :
 
 ## Open Questions
 
-- **Notifications des programmes non-agent :** seul `blocked` notifie. Arthur veut-il aussi `error` ? À trancher à la passe d'US-018 ; seule la condition d'US-010 en dépend.
-- **Durée du signal « vu » :** la première frappe suffit-elle, ou faut-il aussi le focus du pane ? L'host ne connaît pas le focus aujourd'hui ; le PRD retient la frappe, exemple de la spec. À revoir à la passe d'US-018.
+- **Notifications des programmes non-agent :** tranché le 2026-10-10, `error` notifie aussi, sous la même limite que `blocked` (US-022).
+- **Durée du signal « vu » :** tranché le 2026-10-10. La première frappe reste le seul signal qui retire `done` et `error` de l'host (FR-02, spec) ; le regard sur le pane acquitte seulement l'entrée `error` de l'Attention Queue, côté app (US-023).
 [/PRD]
