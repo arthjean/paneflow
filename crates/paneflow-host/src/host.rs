@@ -502,6 +502,7 @@ impl SessionHost {
     }
 
     pub fn resource_report(&self) -> ResourceReport {
+        let deadline = Instant::now() + crate::runtime::MEMORY_USAGE_BUDGET;
         let sessions = self.lock_sessions();
         let live_runtimes = sessions.values().filter(|record| record.is_live()).count();
         let pending_launches = sessions
@@ -529,7 +530,6 @@ impl SessionHost {
             })
             .collect();
         drop(sessions);
-        let deadline = Instant::now() + crate::runtime::MEMORY_USAGE_BUDGET;
         let requested: Vec<_> = rows
             .into_iter()
             .map(|(session, source)| match source {

@@ -2833,12 +2833,20 @@ fn host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions() {
     let sessions: Vec<SessionId> = (0..64)
         .map(|_| host.create(shell_request(80, 24)).unwrap().manifest.session)
         .collect();
-    for session in &sessions {
-        host.lock_sessions()[session]
-            .runtime
-            .clone()
-            .unwrap()
-            .inject_stall(Duration::from_secs(3));
+    let runtimes: Vec<_> = sessions
+        .iter()
+        .map(|session| host.lock_sessions()[session].runtime.clone().unwrap())
+        .collect();
+    for runtime in &runtimes {
+        assert!(
+            wait_until(Duration::from_secs(15), || runtime
+                .output(0, 1)
+                .is_ok_and(|slice| !slice.data.is_empty())),
+            "every shell has started before the measurement"
+        );
+    }
+    for runtime in &runtimes {
+        runtime.inject_stall(Duration::from_secs(3));
     }
 
     let started = Instant::now();
