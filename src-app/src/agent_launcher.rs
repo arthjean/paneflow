@@ -802,7 +802,7 @@ mod tests {
 
     #[test]
     fn catalog_tables_match_the_pre_catalog_reference() {
-        let reference: [(&str, &str, Option<&str>); 19] = [
+        let reference: [(&str, &str, Option<&str>); 13] = [
             (
                 "com.anthropic.claude-code",
                 "claude_code_button_visible",
@@ -818,28 +818,14 @@ mod tests {
             ("ai.hermes.agent", "hermes_agent_button_visible", None),
             ("ai.x.grok-cli", "grok_button_visible", Some("grok")),
             ("com.sourcegraph.amp", "amp_button_visible", None),
-            ("com.cursor.agent", "cursor_button_visible", None),
             (
                 "com.google.gemini-cli",
                 "gemini_button_visible",
                 Some("gemini"),
             ),
-            ("com.amazon.kiro-cli", "kiro_button_visible", Some("kiro")),
-            (
-                "com.google.antigravity-cli",
-                "antigravity_button_visible",
-                None,
-            ),
             ("com.github.copilot-cli", "copilot_button_visible", None),
-            ("com.tencent.codebuddy", "codebuddy_button_visible", None),
             ("com.factory.droid", "factory_button_visible", None),
-            ("com.alibaba.qoder-cli", "qoder_button_visible", None),
             ("ai.openclaw.cli", "openclaw_button_visible", None),
-            (
-                "ai.deepseek.harness",
-                "deepseek_harness_button_visible",
-                None,
-            ),
             ("com.muse.code", "muse_button_visible", None),
             ("sh.fx.cli", "fx_button_visible", None),
         ];
@@ -880,7 +866,6 @@ mod tests {
                 "dev.mariozechner.pi",
                 "ai.x.grok-cli",
                 "com.google.gemini-cli",
-                "com.amazon.kiro-cli",
             ],
             "session sidebar groups keep the order of the former SessionAgent enum"
         );
@@ -899,12 +884,7 @@ mod tests {
     #[test]
     fn bare_commands_preserve_multi_token_agent_commands() {
         let cfg = PaneFlowConfig::default();
-        assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
-        assert_eq!(
-            TerminalAgent::DeepseekHarness.command(&cfg),
-            "dsh --profile tui"
-        );
         assert_eq!(TerminalAgent::MuseCode.command(&cfg), "muse");
     }
 
@@ -1054,10 +1034,10 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(builtins.len(), 5);
             assert_eq!(
-                TerminalAgent::from_tag("antigravity").map(TerminalAgent::display_name),
-                Some("Antigravity")
+                TerminalAgent::from_tag("grok").map(TerminalAgent::display_name),
+                Some("Grok")
             );
-            assert!(!builtins.contains(&TerminalAgent::Antigravity));
+            assert!(!builtins.contains(&TerminalAgent::Grok));
         } else {
             assert_eq!(builtins.len(), TerminalAgent::all().count());
         }

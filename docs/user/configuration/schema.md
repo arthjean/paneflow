@@ -108,16 +108,10 @@ and macOS keep every agent below.
 | `hermes_agent_button_visible` | Hermes Agent |
 | `grok_button_visible` | Grok |
 | `amp_button_visible` | Amp |
-| `cursor_button_visible` | Cursor |
 | `gemini_button_visible` | Gemini |
-| `kiro_button_visible` | Kiro |
-| `antigravity_button_visible` | Antigravity |
 | `copilot_button_visible` | Copilot |
-| `codebuddy_button_visible` | CodeBuddy |
 | `factory_button_visible` | Factory |
-| `qoder_button_visible` | Qoder |
 | `openclaw_button_visible` | OpenClaw |
-| `deepseek_harness_button_visible` | DeepSeek Harness |
 | `muse_button_visible` | Muse Code |
 | `fx_button_visible` | fx (Linux and macOS) |
 
@@ -208,7 +202,7 @@ Settings > Agents > Profiles edits the same list.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `agent_profiles.*.name` | string | required | Label shown in the launcher. |
-| `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `cursor`, `gemini`, `kiro`, `antigravity`, `copilot`, `codebuddy`, `factory`, `qoder`, or `openclaw`. |
+| `agent_profiles.*.agent` | string | required | Tag of the base agent: `claude_code`, `codex`, `opencode`, `pi`, `hermes`, `grok`, `amp`, `gemini`, `copilot`, `factory`, or `openclaw`. |
 | `agent_profiles.*.env` | object | `{}` | Environment variables set on the agent process. A leading `~` expands to the home directory, and `$NAME`, `${NAME}` or `%NAME%` anywhere in a value takes that variable from Paneflow's own environment. A `$` or `%` that names nothing stays literal; a name the environment does not define is refused by the Settings editor and, in a hand-written config, leaves the whole value untouched with a warning in the log. |
 | `agent_profiles.*.args` | string array | `[]` | Extra arguments appended after the base agent's own flags. Each token must be a plain word: letters, digits, `-`, `_`, `.`, `=`. |
 

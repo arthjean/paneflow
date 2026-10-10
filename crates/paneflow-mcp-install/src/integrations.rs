@@ -1140,16 +1140,7 @@ mod tests {
             .collect();
         assert_eq!(installers, ["claude-code", "codex"]);
         let (_directory, paths, binaries) = fixture();
-        for slug in [
-            "codebuddy",
-            "cursor-agent",
-            "gemini",
-            "muse-code",
-            "opencode",
-            "qoder",
-            "hermes",
-            "grok",
-        ] {
+        for slug in ["gemini", "muse-code", "opencode", "hermes", "grok"] {
             let runtime = runtime_by_slug(slug).expect("runtime");
             let summary = runtime.integration.summary.to_ascii_lowercase();
             assert!(

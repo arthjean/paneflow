@@ -987,8 +987,8 @@ mod tests {
         );
         assert_eq!(clear_then_for_shell("claude", "pwsh"), "Clear-Host; claude");
         assert_eq!(
-            clear_then_for_shell("kiro-cli chat", "pwsh"),
-            "Clear-Host; kiro-cli chat"
+            clear_then_for_shell("openclaw tui", "pwsh"),
+            "Clear-Host; openclaw tui"
         );
     }
 
@@ -999,8 +999,8 @@ mod tests {
             "clear && opencode"
         );
         assert_eq!(
-            clear_then_for_shell("kiro-cli chat", "/bin/zsh"),
-            "clear && kiro-cli chat"
+            clear_then_for_shell("openclaw tui", "/bin/zsh"),
+            "clear && openclaw tui"
         );
     }
 

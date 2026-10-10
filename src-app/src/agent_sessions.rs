@@ -393,9 +393,6 @@ pub(crate) fn read_sessions_for_cwd_with_omitted(
         RuntimeSessionReader::Gemini => {
             crate::command_sessions::read_gemini_sessions_for_cwd(agent, cwd)
         }
-        RuntimeSessionReader::Kiro => {
-            crate::command_sessions::read_kiro_sessions_for_cwd(agent, cwd)
-        }
         RuntimeSessionReader::Grok => {
             crate::command_sessions::read_grok_sessions_for_cwd(agent, cwd)
         }
@@ -742,9 +739,7 @@ mod tests {
                 "pi_button_visible": false,
                 "hermes_agent_button_visible": false,
                 "grok_button_visible": false,
-                "cursor_button_visible": false,
                 "gemini_button_visible": false,
-                "kiro_button_visible": false,
                 "amp_button_visible": true,
             }))
             .unwrap();

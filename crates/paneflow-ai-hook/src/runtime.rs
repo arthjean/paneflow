@@ -309,11 +309,11 @@ mod tests {
             "an unidentified hook is never attributed to Claude"
         );
         assert_eq!(
-            detect_tool_from(Some("cursor-agent"), &serde_json::json!({}))
+            detect_tool_from(Some("droid"), &serde_json::json!({}))
                 .expect("valid tool")
                 .expect("named tool")
                 .as_str(),
-            "cursor-agent"
+            "droid"
         );
         assert!(detect_tool_from(Some("tool/../etc"), &serde_json::json!({})).is_err());
         assert_eq!(

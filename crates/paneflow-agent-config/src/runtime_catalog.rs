@@ -106,7 +106,6 @@ pub enum RuntimeSessionReader {
     OpenCode,
     Pi,
     Gemini,
-    Kiro,
     Grok,
 }
 
@@ -118,7 +117,6 @@ impl RuntimeSessionReader {
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
             Self::Gemini => "gemini",
-            Self::Kiro => "kiro",
             Self::Grok => "grok",
         }
     }
@@ -270,8 +268,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_nineteen_complete_runtime_packages() {
-        assert_eq!(RUNTIMES.len(), 19);
+    fn catalog_has_thirteen_complete_runtime_packages() {
+        assert_eq!(RUNTIMES.len(), 13);
         for runtime in RUNTIMES {
             assert!(
                 !runtime.detection.command_aliases.is_empty(),
@@ -407,7 +405,7 @@ mod tests {
             assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::Screen);
         }
 
-        for slug in ["antigravity", "deepseek-harness"] {
+        for slug in ["amp", "openclaw"] {
             let runtime = runtime_by_slug(slug).expect("runtime");
             assert_eq!(runtime.lifecycle.authority, RuntimeLifecycleAuthority::None);
             assert_eq!(runtime.lifecycle.fallback, RuntimeLifecycleFallback::None);
@@ -442,7 +440,6 @@ mod tests {
                 "pi",
                 "grok",
                 "gemini",
-                "kiro",
                 "fx"
             ]
         );

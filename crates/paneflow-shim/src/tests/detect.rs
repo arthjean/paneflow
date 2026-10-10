@@ -11,8 +11,8 @@ fn detect_tool_from_stem_maps_known_stems() {
         }
     }
     assert_eq!(detect_tool_from_stem("claude"), Some("claude"));
-    assert_eq!(detect_tool_from_stem("cursor-agent"), Some("cursor-agent"));
-    assert_eq!(detect_tool_from_stem("qodercli"), Some("qodercli"));
+    assert_eq!(detect_tool_from_stem("droid"), Some("droid"));
+    assert_eq!(detect_tool_from_stem("cursor-agent"), None);
 }
 
 #[test]

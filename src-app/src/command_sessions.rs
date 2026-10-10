@@ -31,21 +31,6 @@ pub(crate) fn read_gemini_sessions_for_cwd(
     )
 }
 
-pub(crate) fn read_kiro_sessions_for_cwd(
-    agent: SessionAgent,
-    cwd: &str,
-) -> (Vec<SessionMeta>, usize) {
-    read_command_sessions(
-        CommandSessionConfig {
-            agent,
-            program: "kiro-cli",
-            args: &["chat", "--list-sessions"],
-            parse_line: parse_session_line,
-        },
-        cwd,
-    )
-}
-
 pub(crate) fn read_grok_sessions_for_cwd(
     agent: SessionAgent,
     cwd: &str,
@@ -459,7 +444,7 @@ mod tests {
         let out = b"Session ID: abc123\n";
         let (sessions, _) = parse_command_sessions(
             out,
-            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
             "/repo",
             parse_session_line,
         );
@@ -495,7 +480,7 @@ mod tests {
         let out = b"id=abc123 label from command\n";
         let (sessions, _) = parse_command_sessions(
             out,
-            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
+            crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Grok),
             "/repo",
             parse_session_line,
         );

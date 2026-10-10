@@ -1396,7 +1396,7 @@ mod tests {
             "Terminal",
             "New pane",
             "New tab",
-            "Qoder",
+            "Amp",
         ] {
             assert_eq!(
                 restored_tab_title_source(&legacy_tab(title), &[]),

@@ -469,16 +469,10 @@ jobs:
             'hermes.exe',
             'grok.exe',
             'amp.exe',
-            'cursor-agent.exe',
             'gemini.exe',
-            'kiro-cli.exe',
-            'agy.exe',
             'copilot.exe',
-            'codebuddy.exe',
             'droid.exe',
-            'qodercli.exe',
             'openclaw.exe',
-            'dsh.exe',
             'muse.exe'
           )) {
             Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir $name) -Force

@@ -1037,11 +1037,6 @@ mod tests {
                 id,
                 format!("gemini --resume {id}"),
             ),
-            (
-                crate::agent_sessions::session_agent_of(crate::agent_launcher::TerminalAgent::Kiro),
-                id,
-                format!("kiro-cli chat --resume-id {id}"),
-            ),
         ];
 
         assert_eq!(

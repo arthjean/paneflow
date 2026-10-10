@@ -233,7 +233,7 @@ impl TryFrom<String> for HookAdapter {
     }
 }
 
-pub const ACCEPTED_SESSION_READERS: &str = "claude, codex, opencode, pi, gemini, kiro, grok";
+pub const ACCEPTED_SESSION_READERS: &str = "claude, codex, opencode, pi, gemini, grok";
 pub const VISIBILITY_CONFIG_KEY_SUFFIX: &str = "_button_visible";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -250,7 +250,6 @@ pub enum SessionReader {
     OpenCode,
     Pi,
     Gemini,
-    Kiro,
     Grok,
 }
 
@@ -262,7 +261,6 @@ impl SessionReader {
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
             Self::Gemini => "Gemini",
-            Self::Kiro => "Kiro",
             Self::Grok => "Grok",
         }
     }
@@ -278,7 +276,6 @@ impl TryFrom<String> for SessionReader {
             "opencode" => Ok(Self::OpenCode),
             "pi" => Ok(Self::Pi),
             "gemini" => Ok(Self::Gemini),
-            "kiro" => Ok(Self::Kiro),
             "grok" => Ok(Self::Grok),
             other => Err(format!(
                 "sessions.reader '{other}' is not a session reader; accepted readers: {ACCEPTED_SESSION_READERS}"
@@ -1445,7 +1442,7 @@ command = "{alias}"
         assert!(error.contains("runtime.toml"), "{error}");
         assert!(error.contains("sessions.reader 'inconnu'"), "{error}");
         assert!(
-            error.contains("accepted readers: claude, codex, opencode, pi, gemini, kiro, grok"),
+            error.contains("accepted readers: claude, codex, opencode, pi, gemini, grok"),
             "{error}"
         );
     }

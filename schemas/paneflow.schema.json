@@ -416,24 +416,9 @@
       "description": "Show the built-in 'Amp' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
-    "cursor_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'Cursor' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
     "gemini_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Gemini' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
-    "kiro_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'Kiro' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
-    "antigravity_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'Antigravity' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
     "copilot_button_visible": {
@@ -441,29 +426,14 @@
       "description": "Show the built-in 'Copilot' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
-    "codebuddy_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'CodeBuddy' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
     "factory_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Factory' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
-    "qoder_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'Qoder' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
     "openclaw_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Openclaw' command button. Null/omitted auto-detects the CLI binary.",
-      "default": null
-    },
-    "deepseek_harness_button_visible": {
-      "type": ["boolean", "null"],
-      "description": "Show the built-in 'DeepSeek Harness' command button. Null/omitted auto-detects the CLI binary.",
       "default": null
     },
     "muse_button_visible": {
@@ -541,7 +511,7 @@
         },
         "agent": {
           "type": "string",
-          "enum": ["claude_code", "codex", "opencode", "pi", "hermes", "grok", "amp", "cursor", "gemini", "kiro", "antigravity", "copilot", "codebuddy", "factory", "qoder", "openclaw"],
+          "enum": ["claude_code", "codex", "opencode", "pi", "hermes", "grok", "amp", "gemini", "copilot", "factory", "openclaw"],
           "description": "Tag of the built-in agent this profile launches."
         },
         "env": {

@@ -9,6 +9,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 - A program without an agent that reports `error` with OSC 7501 now sends a desktop notification that names the pane, such as `cargo failed in build`, sharing the limit of one notification every 10 seconds per pane with `blocked`. Its Attention queue entry leaves the queue once you have looked at the pane, while the pane header keeps `error` until you type in it.
 
+### Removed
+
+- Six built-in agents are gone: Antigravity, CodeBuddy, Cursor Agent, DeepSeek Harness, Kiro, and Qoder. Their launcher buttons, their PATH shims (`agy`, `codebuddy`, `cursor-agent`, `dsh`, `kiro-cli`, `qodercli`), their rows in Settings, and the Kiro conversations in the session sidebar are removed. A leftover `*_button_visible` key for one of them is ignored, and an `agent_profiles` entry based on one of them is skipped with a warning.
+
 ## [0.17.7] - 2026-10-10
 
 Paneflow 0.17.7 moves the terminal engine to Ghostty `b699ea79` and lets any program report its status with OSC 7501, agent or not. A script that reports `blocked` or `error` shows in its pane header and in the Attention queue, and a declared `done` stays until you type in the pane. Trackpad scrolling follows the gesture by the pixel, the mouse pointer takes the shape a program asks for, and each character is drawn on its own cell.
