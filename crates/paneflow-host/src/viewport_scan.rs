@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use paneflow_config::schema::{SessionGeneration, SessionId};
 use paneflow_terminal_ghostty::ProgramStatusReport;
@@ -16,6 +16,7 @@ use crate::runtime_observer::{ForegroundCache, ForegroundRuntime, RuntimeObserva
 pub const VIEWPORT_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 
 const VIEWPORT_SCAN_BUDGET: Duration = Duration::from_millis(250);
+const OBSERVATION_SETTLE: Duration = Duration::from_millis(1_500);
 
 const SCREEN_STAMP_COALESCE_MS: u64 = 1_000;
 
@@ -62,6 +63,7 @@ pub struct ViewportTracker {
     foreground: ForegroundCache,
     scanned_output_end: Option<u64>,
     terminal_signals: Option<[Option<u64>; 3]>,
+    observation_settles_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -112,6 +114,15 @@ impl ViewportTracker {
             ForegroundRuntime::Observed(observation) => observation,
             ForegroundRuntime::Unobservable => None,
         }
+    }
+
+    pub fn observation_settle_due(&self, now: Instant) -> bool {
+        self.observation_settles_at.is_some_and(|at| now >= at)
+    }
+
+    pub fn schedule_observation_settle(&mut self, output_moved: bool, now: Instant) {
+        self.observation_settles_at =
+            (output_moved && self.observation.is_none()).then(|| now + OBSERVATION_SETTLE);
     }
 
     pub fn record_scanned_output(&mut self, output_end: u64) {
@@ -221,8 +232,11 @@ fn scan_target(
     let output_end = target.runtime.stream().end_offset();
     let input_at_ms = target.runtime.input_at_ms();
     let resets = target.runtime.resets();
+    let now = Instant::now();
     if trackers.get(&key).is_some_and(|tracker| {
-        !tracker.scan_due(output_end) && !tracker.declared_rescan_due(input_at_ms, resets)
+        !tracker.scan_due(output_end)
+            && !tracker.declared_rescan_due(input_at_ms, resets)
+            && !tracker.observation_settle_due(now)
     }) {
         return false;
     }
@@ -230,9 +244,11 @@ fn scan_target(
         return false;
     };
     let tracker = trackers.entry(key).or_default();
+    let output_moved = tracker.scan_due(output_end);
     let observation =
         tracker.observe_foreground(target.runtime.process(), scan.foreground_process_group);
     let edges = tracker.observe(ScreenView::of(&scan), observation, now_ms());
+    tracker.schedule_observation_settle(output_moved, now);
     tracker.record_scanned_output(output_end);
     tracker.record_scanned_terminal(input_at_ms, resets);
     if !edges.write_due {
@@ -525,5 +541,21 @@ mod tests {
         assert_eq!(changed.observed_runtime, Some(moved.clone()));
         let settled = observe(&mut tracker, screen, Some(moved), 5_500);
         assert!(!settled.write_due);
+    }
+
+    #[test]
+    fn an_unobserved_scan_after_output_rescans_once_the_process_listing_settles() {
+        let mut tracker = ViewportTracker::default();
+        let scanned = Instant::now();
+        tracker.schedule_observation_settle(true, scanned);
+        assert!(!tracker.observation_settle_due(scanned));
+        let settled = scanned + OBSERVATION_SETTLE;
+        assert!(tracker.observation_settle_due(settled));
+
+        tracker.schedule_observation_settle(false, settled);
+        assert!(
+            !tracker.observation_settle_due(settled + OBSERVATION_SETTLE * 4),
+            "the settling rescan is not repeated without new output"
+        );
     }
 }
