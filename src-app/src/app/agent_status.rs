@@ -10,6 +10,17 @@ pub(crate) fn completion_was_seen(
     }
 }
 
+pub(crate) fn pane_on_screen(
+    detached_window_active: Option<bool>,
+    main_visible: bool,
+    in_active_tab: bool,
+) -> bool {
+    match detached_window_active {
+        Some(active) => active,
+        None => main_visible && in_active_tab,
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn surfaces_under_user_eye(
         &self,
@@ -32,19 +43,16 @@ impl PaneFlowApp {
         let mut visible = std::collections::HashSet::new();
         for pane in ws.collect_panes() {
             let state = pane.read(cx);
-            let shown = match state.detached {
-                Some(placement) => {
+            let shown = pane_on_screen(
+                state.detached.map(|placement| {
                     crate::agents::notifications::is_window_active(placement.window.window_id())
-                }
-                None => {
-                    main_visible
-                        && ws
-                            .active_tab()
-                            .root
-                            .as_ref()
-                            .is_some_and(|root| root.contains_leaf(&pane))
-                }
-            };
+                }),
+                main_visible,
+                ws.active_tab()
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| root.contains_leaf(&pane)),
+            );
             if shown && let Some(terminal) = state.active_terminal_opt() {
                 visible.insert(terminal.entity_id().as_u64());
             }
@@ -77,6 +85,15 @@ mod tests {
         assert!(completion_was_seen(Some(&watched), Some(7)));
         assert!(!completion_was_seen(Some(&watched), Some(8)));
         assert!(!completion_was_seen(None, Some(7)));
+    }
+
+    #[test]
+    fn a_detached_pane_is_on_screen_only_while_its_own_window_is_active() {
+        assert!(!pane_on_screen(Some(false), true, true));
+        assert!(pane_on_screen(Some(true), false, false));
+        assert!(pane_on_screen(None, true, true));
+        assert!(!pane_on_screen(None, true, false));
+        assert!(!pane_on_screen(None, false, true));
     }
 
     #[test]

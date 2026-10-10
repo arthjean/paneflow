@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Entity, SharedString};
+use gpui::{App, Context, Entity, SharedString};
 use paneflow_host::program_status::DeclaredStatus;
 
 use crate::PaneFlowApp;
@@ -210,6 +210,13 @@ struct Watched {
     state: Option<DeclaredState>,
     since: Instant,
     notified_at: Option<Instant>,
+    acknowledged: bool,
+}
+
+impl Watched {
+    fn awaits_acknowledgment(&self) -> bool {
+        self.state == Some(DeclaredState::Error) && !self.acknowledged
+    }
 }
 
 #[derive(Debug, Default)]
@@ -229,11 +236,13 @@ impl DeclaredWatch {
             state: None,
             since: now,
             notified_at: None,
+            acknowledged: false,
         });
         let entered = watched.state != state;
         if entered {
             watched.state = state;
             watched.since = now;
+            watched.acknowledged = false;
         }
         if !(entered && notifiable && state.is_some_and(DeclaredState::queues)) {
             return false;
@@ -253,6 +262,37 @@ impl DeclaredWatch {
             .get(&surface_id)
             .filter(|watched| watched.state.is_some())
             .map(|watched| watched.since)
+    }
+
+    pub(crate) fn queue_entry(
+        &self,
+        surface_id: u64,
+        status: Option<&DeclaredStatus>,
+        pane_title: &str,
+    ) -> Option<DeclaredQueueEntry> {
+        queue_entry(status, pane_title)
+            .filter(|entry| !(entry.errored && self.acknowledged(surface_id)))
+    }
+
+    fn acknowledged(&self, surface_id: u64) -> bool {
+        self.surfaces
+            .get(&surface_id)
+            .is_some_and(|watched| watched.acknowledged)
+    }
+
+    fn awaits_acknowledgment(&self) -> bool {
+        self.surfaces.values().any(Watched::awaits_acknowledgment)
+    }
+
+    fn acknowledge_seen(&mut self, visible: &HashSet<u64>) -> bool {
+        let mut acknowledged = false;
+        for (surface_id, watched) in &mut self.surfaces {
+            if watched.awaits_acknowledgment() && visible.contains(surface_id) {
+                watched.acknowledged = true;
+                acknowledged = true;
+            }
+        }
+        acknowledged
     }
 
     fn retain(&mut self, live: &HashSet<u64>) {
@@ -299,6 +339,19 @@ impl PaneFlowApp {
         for (ws_idx, surface_id, terminal) in attention {
             self.notify_declared_attention(ws_idx, surface_id, &terminal, cx);
         }
+    }
+
+    pub(crate) fn acknowledge_seen_declared_errors(&mut self, cx: &App) -> bool {
+        if !self.host_agents.declared_watch.awaits_acknowledgment() {
+            return false;
+        }
+        let visible: HashSet<u64> = self
+            .workspaces
+            .iter()
+            .filter_map(|workspace| self.surfaces_under_user_eye(workspace.id, cx))
+            .flatten()
+            .collect();
+        self.host_agents.declared_watch.acknowledge_seen(&visible)
     }
 
     fn notify_declared_attention(
@@ -789,9 +842,100 @@ mod tests {
         }
         assert_eq!(sent, 1);
         assert_eq!(
-            queue_entry(Some(&last), "build").and_then(|entry| entry.message),
+            watch
+                .queue_entry(6, Some(&last), "build")
+                .and_then(|entry| entry.message),
             Some("failure 49".to_string())
         );
+    }
+
+    #[test]
+    fn a_seen_error_leaves_the_queue_without_a_new_host_event() {
+        let mut watch = DeclaredWatch::default();
+        let failed = status("error");
+        watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
+        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
+
+        assert!(watch.acknowledge_seen(&HashSet::from([7])));
+        assert_eq!(watch.queue_entry(7, Some(&failed), "build"), None);
+        assert!(
+            !watch.acknowledge_seen(&HashSet::from([7])),
+            "an acknowledged entry is not acknowledged twice"
+        );
+        assert!(!watch.awaits_acknowledgment());
+    }
+
+    #[test]
+    fn a_blocked_entry_is_never_acknowledged_by_sight() {
+        let mut watch = DeclaredWatch::default();
+        let blocked = status("blocked");
+        watch.observe(7, Some(DeclaredState::Blocked), true, Instant::now());
+        assert!(!watch.acknowledge_seen(&HashSet::from([7])));
+        assert!(watch.queue_entry(7, Some(&blocked), "infra").is_some());
+    }
+
+    #[test]
+    fn an_acknowledgment_falls_as_soon_as_the_declared_state_changes() {
+        let mut watch = DeclaredWatch::default();
+        let failed = status("error");
+        let start = Instant::now();
+        watch.observe(7, Some(DeclaredState::Error), true, start);
+        watch.acknowledge_seen(&HashSet::from([7]));
+        assert_eq!(watch.queue_entry(7, Some(&failed), "build"), None);
+
+        watch.observe(7, Some(DeclaredState::Working), true, start);
+        watch.observe(7, Some(DeclaredState::Error), true, start);
+        assert!(
+            watch.queue_entry(7, Some(&failed), "build").is_some(),
+            "a new error after a working comes back to the queue"
+        );
+    }
+
+    #[test]
+    fn acknowledging_an_error_keeps_the_chip_on_error() {
+        let mut watch = DeclaredWatch::default();
+        let mut failed = status("error");
+        failed.title = "cargo test".to_string();
+        let before = failed.clone();
+        watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
+        watch.acknowledge_seen(&HashSet::from([7]));
+        assert_eq!(failed, before);
+        assert_eq!(
+            declared_chip(Some(&failed)),
+            DeclaredChip::Show {
+                label: "error · cargo test".into(),
+                error: true,
+            }
+        );
+    }
+
+    #[test]
+    fn an_error_never_on_screen_stays_queued() {
+        let mut watch = DeclaredWatch::default();
+        let failed = status("error");
+        watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
+        assert!(!watch.acknowledge_seen(&HashSet::from([8])));
+        assert!(!watch.acknowledge_seen(&HashSet::new()));
+        assert!(watch.awaits_acknowledgment());
+        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
+    }
+
+    #[test]
+    fn an_error_in_a_detached_pane_stays_queued_while_the_main_window_has_focus() {
+        use crate::app::agent_status::pane_on_screen;
+
+        let mut watch = DeclaredWatch::default();
+        let failed = status("error");
+        watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
+        let panes = [(7_u64, Some(false), true), (8, None, true)];
+        let visible: HashSet<u64> = panes
+            .iter()
+            .filter(|(_, detached, in_active_tab)| pane_on_screen(*detached, true, *in_active_tab))
+            .map(|(surface_id, _, _)| *surface_id)
+            .collect();
+        assert_eq!(visible, HashSet::from([8]));
+        assert!(!watch.acknowledge_seen(&visible));
+        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
     }
 
     #[test]

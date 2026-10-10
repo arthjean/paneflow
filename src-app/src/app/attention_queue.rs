@@ -7,7 +7,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
-use crate::app::declared_status::{queue_entry, surface_has_agent};
+use crate::app::declared_status::surface_has_agent;
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::terminal::view::conversation::{ALLOW_WRITE_LABEL, DENY_WRITE_LABEL};
@@ -106,7 +106,8 @@ impl PaneFlowApp {
                     if surface_has_agent(ws, surface_id, row) {
                         continue;
                     }
-                    let Some(entry) = queue_entry(
+                    let Some(entry) = self.host_agents.declared_watch.queue_entry(
+                        surface_id,
                         view.terminal.declared_status.as_ref(),
                         &crate::pane::Pane::terminal_surface_title(terminal, cx),
                     ) else {
