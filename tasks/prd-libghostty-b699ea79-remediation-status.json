@@ -65,10 +65,10 @@
     {
       "id": "EP-008",
       "title": "Passe visuelle Linux (différée)",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P3",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     }
   ],
   "stories": [
@@ -302,7 +302,7 @@
       "id": "US-018",
       "title": "Passe visuelle Linux des changements d'interface",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P3",
       "size": "S",
       "blocked_by": [
@@ -311,9 +311,9 @@
         "US-009",
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-10",
+      "completed_at": "2026-10-10",
+      "reviewed_at": "2026-10-10"
     },
     {
       "id": "US-019",

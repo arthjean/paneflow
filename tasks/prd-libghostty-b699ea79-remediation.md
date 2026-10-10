@@ -9,6 +9,7 @@
 | 1.1 | 2026-10-09 | Arthur Jean | Ajoute EP-007 (US-021) : démo publique d'OSC 7501 par un programme sans agent et réponse à l'annonce de la spec par Mitchell Hashimoto, après la publication de 0.17.7. 7 epics, 21 stories. |
 | 1.2 | 2026-10-09 | Arthur Jean | Limite la vérification matérielle d'EP-006 à Linux et Windows : macOS repose sur `macos_check` et `macos_render_smoke`, sans vérification sur matériel, par décision. 0.17.7 se publie sans pré-release. 7 epics, 21 stories. |
 | 1.3 | 2026-10-09 | Arthur Jean | Sort la passe visuelle Linux (US-018) d'EP-006 vers EP-008, différé par décision : il ne bloque ni EP-006 ni la release 0.17.7, et US-019 n'en dépend plus. 8 epics, 21 stories. |
+| 1.4 | 2026-10-10 | Arthur Jean | Retire l'exigence de captures d'US-018 : la passe visuelle Linux est prouvée par l'attestation d'Arthur, par décision. 8 epics, 21 stories. |
 
 ## Problem Statement
 
@@ -576,15 +577,15 @@ Vérifier à l'œil, sous Linux, les changements d'interface du PRD source et de
 **Dependencies:** Blocked by US-005, US-006, US-009, US-010
 
 **Acceptance Criteria:**
-- [ ] Sur un build debug lancé par `scripts/dev.sh`, Arthur vérifie et capture :
+- [x] Sur un build debug lancé par `scripts/dev.sh`, Arthur vérifie :
   - un TUI en mode 2026 qui redessine pendant un défilement (US-006 et US-005 source) ;
   - une forme de pointeur demandée par OSC 22 (US-006 source) ;
   - le défilement au trackpad, puis htop ou lazygit qui lisent la souris (US-005 et US-008 source) ;
   - un script qui émet `working`, `blocked`, `done` et `error` dans un pane sans agent (US-009, US-010) ;
   - un agent bloqué (US-011 source).
-- [ ] Le décalage d'inset de 6 px en haut (`src-app/src/terminal/constants.rs:16`) ne laisse ni bande vide ni ligne dupliquée quand le décalage passe par zéro.
-- [ ] Les captures ou enregistrements sont dans `tasks/` comme preuve locale, et le commit de clôture les nomme.
-- [ ] Échec : given un défaut constaté, when il est corrigé, then le correctif reste dans cette story avec un test s'il est reproductible sans GUI.
+- [x] Le décalage d'inset de 6 px en haut (`src-app/src/app/constants.rs:16`, `PANE_CONTENT_INSET_Y`) ne laisse ni bande vide ni ligne dupliquée quand le décalage passe par zéro.
+- [x] La passe est consignée par l'attestation d'Arthur du 2026-10-10 dans le statut de la story, sans capture, par décision.
+- [x] Échec : given un défaut constaté, when il est corrigé, then le correctif reste dans cette story avec un test s'il est reproductible sans GUI.
 
 ---
 
