@@ -98,6 +98,25 @@ fn shell_params() -> Value {
     })
 }
 
+fn reopen_once_the_endpoint_is_released(
+    home: &std::path::Path,
+) -> (paneflow_serve::worker::RunningWorker, Instant) {
+    let released_by = Instant::now() + Duration::from_secs(10);
+    loop {
+        let attempt = Instant::now();
+        match paneflow_serve::open(home) {
+            Ok(worker) => return (worker, attempt),
+            Err(paneflow_serve::WorkerError::Endpoint { source, .. })
+                if source.kind() == std::io::ErrorKind::PermissionDenied
+                    && Instant::now() < released_by =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("a replacement worker takes the home: {error:?}"),
+        }
+    }
+}
+
 #[test]
 fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_restart() {
     let home = tempfile::tempdir().expect("a temporary home");
@@ -211,9 +230,7 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
     );
 
     worker.stop();
-    let restarted = Instant::now();
-    let replacement =
-        paneflow_serve::open(home.path()).expect("a replacement worker takes the home");
+    let (replacement, restarted) = reopen_once_the_endpoint_is_released(home.path());
     let startup = restarted.elapsed();
     let resumed = follower.next_of_type("bootstrap", RECONNECT_BUDGET + LINE_WAIT);
     assert!(
