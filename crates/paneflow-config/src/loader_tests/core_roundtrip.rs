@@ -30,6 +30,7 @@ fn test_serialization_roundtrip() {
         linux_chrome_material: None,
         unfocused_pane_opacity: None,
         reduce_motion: None,
+        comfortable_density: None,
         sidebar_show: SidebarShow::default(),
         editor: EditorDisplayConfig::default(),
         automation: AutomationConfig::default(),

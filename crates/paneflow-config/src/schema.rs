@@ -62,6 +62,7 @@ mod tests {
             linux_chrome_material: Some(true),
             unfocused_pane_opacity: Some(0.7),
             reduce_motion: Some(false),
+            comfortable_density: Some(true),
             sidebar_show: SidebarShow {
                 branch: Some(true),
                 diffstat: Some(true),

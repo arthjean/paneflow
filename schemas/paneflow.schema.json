@@ -104,6 +104,11 @@
       "description": "Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. Default false.",
       "default": false
     },
+    "comfortable_density": {
+      "type": ["boolean", "null"],
+      "description": "Separate the panes of a workspace into rounded cards with a gutter between them. false joins them edge to edge with a 1 px divider. Default true.",
+      "default": true
+    },
     "sidebar_show": {
       "type": ["object", "null"],
       "description": "What the workspaces rail shows beyond a row's name. Everything off is the default rail.",

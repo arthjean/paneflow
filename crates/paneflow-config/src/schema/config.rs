@@ -37,6 +37,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub reduce_motion: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub comfortable_density: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
@@ -310,6 +312,10 @@ impl PaneFlowConfig {
 
     pub fn reduce_motion_enabled(&self) -> bool {
         self.reduce_motion.unwrap_or(false)
+    }
+
+    pub fn comfortable_density_enabled(&self) -> bool {
+        self.comfortable_density.unwrap_or(true)
     }
 
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {
