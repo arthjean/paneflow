@@ -97,6 +97,38 @@ impl PaneFlowApp {
                 })),
             );
 
+        let comfortable_density = self.cached_config.comfortable_density_enabled();
+        let density_row = div()
+            .id("row-comfortable-density")
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .px(px(12.))
+            .py(px(10.))
+            .child(setting_text(
+                ui,
+                search::COMFORTABLE_DENSITY.title,
+                search::COMFORTABLE_DENSITY.description,
+            ))
+            .child(
+                toggle_switch(
+                    "comfortable-density-toggle",
+                    search::COMFORTABLE_DENSITY.title,
+                    comfortable_density,
+                    ui,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.persist_setting(
+                        false,
+                        "comfortable_density",
+                        serde_json::Value::Bool(!comfortable_density),
+                        cx,
+                    );
+                })),
+            );
+
         let theme_block = Block::new("Theme")
             .child(header)
             .region("theme-mode", search::THEME_MODES, mode_row)
@@ -108,7 +140,11 @@ impl PaneFlowApp {
         let preferences_block = Block::new("Preferences")
             .top_gap(18.)
             .child(section_header(ui, "Preferences"))
-            .card(SearchCard::new(ui).row(&search::REDUCE_MOTION, motion_row))
+            .card(
+                SearchCard::new(ui)
+                    .row(&search::REDUCE_MOTION, motion_row)
+                    .row(&search::COMFORTABLE_DENSITY, density_row),
+            )
             .finish();
         let content = div()
             .flex()

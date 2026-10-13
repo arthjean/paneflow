@@ -1238,6 +1238,18 @@ pub(crate) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        label: "Comfortable density",
+        icon: None,
+        keywords: "appearance compact panes gutter spacing cards layout",
+        needs: Needs::Always,
+        kind: Kind::Toggle {
+            read: |app| app.cached_config.comfortable_density_enabled(),
+            write: |app, next, cx| {
+                app.persist_setting(false, "comfortable_density", json!(next), cx)
+            },
+        },
+    },
+    Command {
         label: "Show the branch in the sidebar",
         icon: None,
         keywords: "git appearance",

@@ -652,7 +652,11 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn render_pane_palette(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_pane_palette(
+        &self,
+        frame: crate::layout::CardFrame,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(palette) = self.pane_palette.as_ref() else {
             return div().into_any_element();
         };
@@ -742,10 +746,16 @@ impl PaneFlowApp {
             .overflow_hidden()
             .track_focus(&self.pane_palette_focus)
             .on_key_down(cx.listener(Self::handle_pane_palette_key_down))
-            .child(squircle_fill(
-                crate::app::constants::PANE_CARD_RADIUS,
-                crate::theme::active_theme().background,
-            ))
+            .map(|card| match frame {
+                crate::layout::CardFrame::Card => card.child(squircle_fill(
+                    crate::app::constants::PANE_CARD_RADIUS,
+                    crate::theme::active_theme().background,
+                )),
+                crate::layout::CardFrame::Flush(edges) => card.child(crate::layout::flush_fill(
+                    edges,
+                    crate::theme::active_theme().background,
+                )),
+            })
             .child(
                 div()
                     .relative()
@@ -755,6 +765,13 @@ impl PaneFlowApp {
                     .items_center()
                     .justify_center()
                     .child(column),
+            )
+            .when_some(
+                match frame {
+                    crate::layout::CardFrame::Card => None,
+                    crate::layout::CardFrame::Flush(edges) => Some(edges),
+                },
+                |card, edges| card.child(crate::layout::flush_border(edges, ui.border)),
             )
             .into_any_element()
     }

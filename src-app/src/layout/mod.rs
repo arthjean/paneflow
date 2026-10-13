@@ -1,4 +1,5 @@
 mod close;
+mod density;
 mod mutations;
 mod navigation;
 mod presets;
@@ -7,6 +8,10 @@ mod render;
 mod serde;
 mod tree;
 
+pub(crate) use density::{
+    CardFrame, PaneDensity, flush_border, flush_corner_radius, flush_corners, flush_fill,
+    flush_outline, grid_edges,
+};
 pub use navigation::{FocusDirection, FocusNav};
 pub(crate) use render::SplitPreview;
 pub(crate) use tree::MIN_PANE_SIZE;

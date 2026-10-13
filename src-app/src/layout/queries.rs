@@ -1,8 +1,9 @@
-use gpui::{App, Entity, Focusable, Window};
+use gpui::{App, Edges, Entity, Focusable, Window};
 
 use crate::pane::Pane;
 
-use super::tree::LayoutTree;
+use super::density::{CardFrame, PaneDensity, child_edges};
+use super::tree::{LayoutTree, SplitDirection};
 
 impl LayoutTree {
     pub(crate) fn cancel_resize(&self) {
@@ -72,6 +73,61 @@ impl LayoutTree {
                 });
             }
         }
+    }
+
+    pub(crate) fn docked_leaf_edges(
+        &self,
+        edges: Edges<bool>,
+        cx: &App,
+        visit: &mut impl FnMut(&Entity<Pane>, Edges<bool>),
+    ) {
+        match self {
+            LayoutTree::Leaf(pane) => {
+                if !pane.read(cx).is_detached() {
+                    visit(pane, edges);
+                }
+            }
+            LayoutTree::Container {
+                direction,
+                children,
+                ..
+            } => {
+                let docked: Vec<_> = children
+                    .iter()
+                    .filter(|child| child.node.has_docked_panes(cx))
+                    .collect();
+                let last = docked.len().saturating_sub(1);
+                for (index, child) in docked.into_iter().enumerate() {
+                    let edges = child_edges(edges, *direction, index == 0, index == last);
+                    child.node.docked_leaf_edges(edges, cx, visit);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn sync_card_frames(
+        &self,
+        density: PaneDensity,
+        outer: Edges<bool>,
+        split_preview: Option<(&Entity<Pane>, SplitDirection)>,
+        cx: &mut App,
+    ) -> CardFrame {
+        let mut frames = Vec::new();
+        let mut preview_frame = density.frame(outer);
+        self.docked_leaf_edges(outer, cx, &mut |pane, edges| {
+            let edges = match split_preview {
+                Some((target, direction)) if target == pane => {
+                    preview_frame = density.frame(child_edges(edges, direction, false, true));
+                    child_edges(edges, direction, true, false)
+                }
+                _ => edges,
+            };
+            frames.push((pane.clone(), density.frame(edges)));
+        });
+        for (pane, frame) in frames {
+            pane.update(cx, |pane, cx| pane.set_card_frame(frame, cx));
+        }
+        preview_frame
     }
 
     pub fn for_each_leaf(&self, visit: &mut impl FnMut(&Entity<Pane>)) {
@@ -171,7 +227,95 @@ pub(crate) fn dim_policy(leaf_count: usize, focused: Option<usize>) -> DimPolicy
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{AppContext, Edges, Entity, TestAppContext};
+
     use super::{DimPolicy, dim_policy};
+    use crate::layout::density::{CardFrame, PaneDensity, grid_edges};
+    use crate::layout::tree::{LayoutChild, LayoutTree, SplitDirection};
+    use crate::pane::Pane;
+    use crate::terminal::TerminalView;
+
+    fn test_pane(cx: &mut TestAppContext) -> Entity<Pane> {
+        cx.update(|cx| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        })
+    }
+
+    fn split(direction: SplitDirection, nodes: Vec<LayoutTree>) -> LayoutTree {
+        let ratio = 1.0 / nodes.len() as f32;
+        LayoutTree::Container {
+            direction,
+            children: nodes
+                .into_iter()
+                .map(|node| LayoutChild {
+                    node,
+                    ratio: Rc::new(Cell::new(ratio)),
+                })
+                .collect(),
+            drag: Rc::new(Cell::new(None)),
+            container_size: Rc::new(Cell::new(0.0)),
+        }
+    }
+
+    fn edges(top: bool, right: bool, bottom: bool, left: bool) -> CardFrame {
+        CardFrame::Flush(Edges {
+            top,
+            right,
+            bottom,
+            left,
+        })
+    }
+
+    #[gpui::test]
+    fn compact_frames_follow_each_pane_position_in_the_grid(cx: &mut TestAppContext) {
+        let left = test_pane(cx);
+        let top_right = test_pane(cx);
+        let bottom_right = test_pane(cx);
+        let tree = split(
+            SplitDirection::Vertical,
+            vec![
+                LayoutTree::Leaf(left.clone()),
+                split(
+                    SplitDirection::Horizontal,
+                    vec![
+                        LayoutTree::Leaf(top_right.clone()),
+                        LayoutTree::Leaf(bottom_right.clone()),
+                    ],
+                ),
+            ],
+        );
+        let frame_of = |pane: &Entity<Pane>, cx: &mut TestAppContext| {
+            cx.update(|cx| pane.read(cx).card_frame())
+        };
+
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::Compact, grid_edges(true), None, cx));
+        assert_eq!(frame_of(&left, cx), edges(true, false, true, true));
+        assert_eq!(frame_of(&top_right, cx), edges(true, true, false, false));
+        assert_eq!(frame_of(&bottom_right, cx), edges(false, true, true, false));
+
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::Compact, grid_edges(false), None, cx));
+        assert_eq!(frame_of(&top_right, cx), edges(true, false, false, false));
+
+        let palette = cx.update(|cx| {
+            tree.sync_card_frames(
+                PaneDensity::Compact,
+                grid_edges(true),
+                Some((&left, SplitDirection::Horizontal)),
+                cx,
+            )
+        });
+        assert_eq!(frame_of(&left, cx), edges(true, false, false, true));
+        assert_eq!(palette, edges(false, false, true, true));
+
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::Comfortable, grid_edges(true), None, cx));
+        for pane in [&left, &top_right, &bottom_right] {
+            assert_eq!(frame_of(pane, cx), CardFrame::Card);
+        }
+    }
 
     #[test]
     fn dim_policy_never_dims_a_lone_pane() {

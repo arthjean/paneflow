@@ -28,8 +28,9 @@ use self::branch::render_diff_branch_chip;
 use self::git::build_diff_dock;
 use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DiffChrome};
 use self::render::{
-    diff_file_header_path, diff_panel_centered, render_diff_error_banner, render_diff_file_header,
-    render_diff_files_toolbar, render_diff_resize_handle, render_diff_tab_strip,
+    diff_file_header_path, diff_panel_centered, dock_card_border, dock_card_fill,
+    render_diff_error_banner, render_diff_file_header, render_diff_files_toolbar,
+    render_diff_resize_handle, render_diff_tab_strip,
 };
 use self::surface_picker::{render_diff_picker_header, render_diff_surface_picker};
 use crate::PaneFlowApp;
@@ -39,7 +40,6 @@ use crate::diff::{
     h_scrollbar_click_offset, h_scrollbar_segments, palette, row_at_offset, set_file_side_offset,
     split_right_side_at_x,
 };
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 
 impl PaneFlowApp {
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
@@ -387,11 +387,12 @@ impl PaneFlowApp {
         width: f32,
         max_width: f32,
         files_width: f32,
+        frame: crate::layout::CardFrame,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty() {
-            return self.render_diff_dock_picker(width, max_width, ui, cx);
+            return self.render_diff_dock_picker(width, max_width, frame, ui, cx);
         }
         self.refresh_diff_dock_if_theme_changed(cx);
         let data = self.diff_dock.data.clone();
@@ -500,7 +501,6 @@ impl PaneFlowApp {
                 )
             });
 
-        let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .relative()
             .map(|panel| {
@@ -514,14 +514,14 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(squircle_fill(radius, ui.base))
+            .child(dock_card_fill(frame, ui))
             .when(!fills_panel, |panel| {
-                panel.child(render_diff_resize_handle(width, max_width, ui, cx))
+                panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
             .child(header)
             .children(toolbar)
             .child(body)
-            .child(squircle_border(radius, px(1.), ui.border))
+            .child(dock_card_border(frame, ui))
             .into_any_element()
     }
 
@@ -529,10 +529,10 @@ impl PaneFlowApp {
         &mut self,
         width: f32,
         max_width: f32,
+        frame: crate::layout::CardFrame,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let radius = crate::app::constants::PANE_CARD_RADIUS;
         let fills_panel = self.diff_dock_fills_panel();
         div()
             .relative()
@@ -547,13 +547,13 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(squircle_fill(radius, ui.base))
+            .child(dock_card_fill(frame, ui))
             .when(!fills_panel, |panel| {
-                panel.child(render_diff_resize_handle(width, max_width, ui, cx))
+                panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
             .child(render_diff_picker_header(ui, cx))
             .child(render_diff_surface_picker(ui, cx))
-            .child(squircle_border(radius, px(1.), ui.border))
+            .child(dock_card_border(frame, ui))
             .into_any_element()
     }
 

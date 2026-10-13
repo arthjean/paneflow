@@ -88,6 +88,55 @@ fn pane_card_background(
     }
 }
 
+#[derive(Clone, Copy)]
+enum CardShape {
+    Squircle(Pixels),
+    Flush(gpui::Edges<bool>),
+}
+
+impl CardShape {
+    fn overlay(self, color: Hsla) -> AnyElement {
+        match self {
+            Self::Squircle(radius) => squircle_fill(radius, color),
+            Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
+        }
+    }
+
+    fn background(self, color: Hsla) -> AnyElement {
+        match self {
+            Self::Squircle(radius) => pane_card_fill(radius, color),
+            Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
+        }
+    }
+
+    fn border(self, color: Hsla, outline: bool) -> AnyElement {
+        match self {
+            Self::Squircle(radius) => squircle_border(radius, px(1.), color).into_any_element(),
+            Self::Flush(edges) if outline => {
+                crate::layout::flush_outline(edges, color).into_any_element()
+            }
+            Self::Flush(edges) => crate::layout::flush_border(edges, color).into_any_element(),
+        }
+    }
+
+    fn round(self, element: gpui::Div) -> gpui::Div {
+        match self {
+            Self::Squircle(radius) => element.rounded(radius),
+            Self::Flush(edges) => crate::layout::flush_corners(element, edges),
+        }
+    }
+
+    fn left_insets(self) -> (Pixels, Pixels) {
+        match self {
+            Self::Squircle(radius) => (radius, radius),
+            Self::Flush(edges) => (
+                crate::layout::flush_corner_radius(edges, true),
+                crate::layout::flush_corner_radius(edges, false),
+            ),
+        }
+    }
+}
+
 fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
     if cfg!(target_os = "linux") && color.a < 1.0 {
         div()
@@ -354,6 +403,7 @@ pub struct Pane {
     dim_from: f32,
     dim_alpha: Rc<Cell<f32>>,
     dim_seq: usize,
+    card_frame: crate::layout::CardFrame,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -413,6 +463,7 @@ impl Pane {
             dim_from: 0.0,
             dim_alpha: Rc::new(Cell::new(0.0)),
             dim_seq: 0,
+            card_frame: crate::layout::CardFrame::Card,
         }
     }
 
@@ -560,6 +611,34 @@ impl Pane {
         cx.notify();
     }
 
+    pub(crate) fn set_card_frame(
+        &mut self,
+        frame: crate::layout::CardFrame,
+        cx: &mut Context<Self>,
+    ) {
+        if self.card_frame != frame {
+            self.card_frame = frame;
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn card_frame(&self) -> crate::layout::CardFrame {
+        self.card_frame
+    }
+
+    fn card_shape(&self) -> CardShape {
+        if self.is_detached() {
+            return CardShape::Squircle(px(10.));
+        }
+        match self.card_frame {
+            crate::layout::CardFrame::Card => {
+                CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS)
+            }
+            crate::layout::CardFrame::Flush(edges) => CardShape::Flush(edges),
+        }
+    }
+
     pub fn set_swap_source(&mut self, source: bool, cx: &mut Context<Self>) {
         if self.swap_source != source {
             self.swap_source = source;
@@ -687,10 +766,7 @@ impl Pane {
                         cx.stop_propagation();
                         dismiss_backdrop(cx);
                     })
-                    .child(squircle_fill(
-                        crate::app::constants::PANE_CARD_RADIUS,
-                        gpui::hsla(0., 0., 0., 0.25),
-                    ))
+                    .child(self.card_shape().overlay(gpui::hsla(0., 0., 0., 0.25)))
                     .child(
                         div()
                             .id("composer-panel")
@@ -1900,6 +1976,7 @@ impl Render for Pane {
             0.0
         };
         let dim_fill = theme.background;
+        let card_shape = self.card_shape();
         let dim_from = self.dim_from;
         let dim_live = self.dim_alpha.clone();
         let dim_layer = (dim_target > PANE_DIM_EPSILON || self.dim_alpha.get() > PANE_DIM_EPSILON)
@@ -1907,11 +1984,7 @@ impl Render for Pane {
                 let distance = (dim_target - dim_from).abs();
                 if self.dim_seq == 0 || distance <= f32::EPSILON {
                     dim_live.set(dim_target);
-                    return squircle_fill(
-                        crate::app::constants::PANE_CARD_RADIUS,
-                        dim_fill.opacity(dim_target),
-                    )
-                    .into_any_element();
+                    return card_shape.overlay(dim_fill.opacity(dim_target));
                 }
                 let anim_id = SharedString::from(format!(
                     "pane-dim-{}-{}",
@@ -1931,10 +2004,7 @@ impl Render for Pane {
                             let alpha =
                                 (dim_from + (dim_target - dim_from) * delta).clamp(0.0, 1.0);
                             dim_live.set(alpha);
-                            layer.child(squircle_fill(
-                                crate::app::constants::PANE_CARD_RADIUS,
-                                dim_fill.opacity(alpha),
-                            ))
+                            layer.child(card_shape.overlay(dim_fill.opacity(alpha)))
                         },
                     )
                     .into_any_element()
@@ -2063,26 +2133,22 @@ impl Render for Pane {
         let has_attention = self.attention;
         let attention_color = pane_colors().vc_conflict;
         let composer = self.render_composer_overlay(cx);
-        let card_radius = if self.is_detached() {
-            px(10.)
-        } else {
-            crate::app::constants::PANE_CARD_RADIUS
-        };
+        let (stripe_top, stripe_bottom) = card_shape.left_insets();
         div()
             .flex()
             .flex_col()
             .size_full()
             .relative()
             .overflow_hidden()
-            .child(pane_card_fill(card_radius, card_background))
+            .child(card_shape.background(card_background))
             .child(content)
             .when_some(self.broadcast_stripe, |d, idx| {
                 d.child(
                     div()
                         .absolute()
                         .left_0()
-                        .top(card_radius)
-                        .bottom(card_radius)
+                        .top(stripe_top)
+                        .bottom(stripe_bottom)
                         .w(px(3.))
                         .bg(pane_colors().group_color(idx)),
                 )
@@ -2090,10 +2156,8 @@ impl Render for Pane {
             .when(self.swap_source, |d| {
                 let tint = pane_colors().text;
                 d.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(card_radius)
+                    card_shape
+                        .round(div().absolute().inset_0())
                         .border_2()
                         .border_color(tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
                         .bg(tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
@@ -2113,14 +2177,13 @@ impl Render for Pane {
                         ),
                 )
             })
-            .child(squircle_border(
-                card_radius,
-                px(1.),
+            .child(card_shape.border(
                 if has_attention {
                     attention_color.opacity(0.7)
                 } else {
                     pane_colors().border
                 },
+                has_attention,
             ))
             .children(composer)
     }

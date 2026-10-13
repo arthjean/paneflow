@@ -3,9 +3,10 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
-    Window, canvas, div, px, relative,
+    Window, canvas, deferred, div, px, relative,
 };
 
+use super::density::{COMPACT_DIVIDER_HIT_PX, PaneDensity};
 use super::tree::{
     DIVIDER_HIT_PX, DIVIDER_PX, DragState, LayoutTree, MIN_PANE_SIZE, SplitDirection,
     resize_adjacent_ratios,
@@ -31,9 +32,57 @@ fn finish_drag(
     }
 }
 
-fn available_main_axis_px(container_px: f32, child_count: usize) -> f32 {
-    let divider_px = DIVIDER_PX * child_count.saturating_sub(1) as f32;
-    (container_px - divider_px).max(0.0)
+fn available_main_axis_px(container_px: f32, child_count: usize, divider_px: f32) -> f32 {
+    let dividers_px = divider_px * child_count.saturating_sub(1) as f32;
+    (container_px - dividers_px).max(0.0)
+}
+
+fn divider_hit_area(dir: SplitDirection, density: PaneDensity) -> gpui::Div {
+    match density {
+        PaneDensity::Comfortable => {
+            let margin = (DIVIDER_PX - DIVIDER_HIT_PX) / 2.0;
+            match dir {
+                SplitDirection::Horizontal => div()
+                    .h(px(DIVIDER_HIT_PX))
+                    .w_full()
+                    .my(px(margin))
+                    .flex_shrink_0(),
+                SplitDirection::Vertical => div()
+                    .w(px(DIVIDER_HIT_PX))
+                    .h_full()
+                    .mx(px(margin))
+                    .flex_shrink_0(),
+            }
+        }
+        PaneDensity::Compact => {
+            let overhang = (COMPACT_DIVIDER_HIT_PX - density.divider_px()) / 2.0;
+            match dir {
+                SplitDirection::Horizontal => div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-overhang))
+                    .h(px(COMPACT_DIVIDER_HIT_PX)),
+                SplitDirection::Vertical => div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-overhang))
+                    .w(px(COMPACT_DIVIDER_HIT_PX)),
+            }
+        }
+    }
+}
+
+fn compact_divider_line(dir: SplitDirection, density: PaneDensity) -> gpui::Div {
+    let line = div()
+        .relative()
+        .flex_shrink_0()
+        .bg(crate::theme::ui_colors().border);
+    match dir {
+        SplitDirection::Horizontal => line.h(px(density.divider_px())).w_full(),
+        SplitDirection::Vertical => line.w(px(density.divider_px())).h_full(),
+    }
 }
 
 #[cfg(test)]
@@ -49,6 +98,7 @@ impl LayoutTree {
         cx: &App,
         on_resize_end: Option<ResizeEndCallback>,
         preview: Option<&SplitPreview>,
+        density: PaneDensity,
     ) -> AnyElement {
         if !self.has_docked_panes(cx) {
             return crate::app::detached_panes::render_detached_placeholder(self, cx);
@@ -70,13 +120,16 @@ impl LayoutTree {
                             .min_h(px(MIN_PANE_SIZE))
                             .overflow_hidden()
                     };
-                    let gap = match dir {
-                        SplitDirection::Horizontal => {
-                            div().h(px(DIVIDER_PX)).w_full().flex_shrink_0()
-                        }
-                        SplitDirection::Vertical => {
-                            div().w(px(DIVIDER_PX)).h_full().flex_shrink_0()
-                        }
+                    let gap = match density {
+                        PaneDensity::Comfortable => match dir {
+                            SplitDirection::Horizontal => {
+                                div().h(px(DIVIDER_PX)).w_full().flex_shrink_0()
+                            }
+                            SplitDirection::Vertical => {
+                                div().w(px(DIVIDER_PX)).h_full().flex_shrink_0()
+                            }
+                        },
+                        PaneDensity::Compact => compact_divider_line(dir, density),
                     };
                     let container = div().flex().size_full().overflow_hidden();
                     let container = match dir {
@@ -112,7 +165,11 @@ impl LayoutTree {
                 let child_count = children.len();
                 let child_minimums: Vec<f32> = children
                     .iter()
-                    .map(|child| child.node.docked_min_main_axis_px(dir, cx))
+                    .map(|child| {
+                        child
+                            .node
+                            .docked_min_main_axis_px(dir, density.divider_px(), cx)
+                    })
                     .collect();
                 let resize_end_for_move = on_resize_end.clone();
 
@@ -124,7 +181,11 @@ impl LayoutTree {
                                 window.refresh();
                                 return;
                             }
-                            let csize = available_main_axis_px(size_for_drag.get(), child_count);
+                            let csize = available_main_axis_px(
+                                size_for_drag.get(),
+                                child_count,
+                                density.divider_px(),
+                            );
                             if csize <= 0.0 {
                                 return;
                             }
@@ -213,20 +274,13 @@ impl LayoutTree {
                         let ratio_before = children[divider_idx].ratio.clone();
                         let ratio_after = child.ratio.clone();
 
-                        let divider_hit_margin = (DIVIDER_PX - DIVIDER_HIT_PX) / 2.0;
                         let divider = match dir {
-                            SplitDirection::Horizontal => div()
-                                .h(px(DIVIDER_HIT_PX))
-                                .w_full()
-                                .my(px(divider_hit_margin))
-                                .flex_shrink_0()
-                                .cursor_row_resize(),
-                            SplitDirection::Vertical => div()
-                                .w(px(DIVIDER_HIT_PX))
-                                .h_full()
-                                .mx(px(divider_hit_margin))
-                                .flex_shrink_0()
-                                .cursor_col_resize(),
+                            SplitDirection::Horizontal => {
+                                divider_hit_area(dir, density).cursor_row_resize()
+                            }
+                            SplitDirection::Vertical => {
+                                divider_hit_area(dir, density).cursor_col_resize()
+                            }
                         };
 
                         #[cfg(test)]
@@ -236,7 +290,7 @@ impl LayoutTree {
                         );
 
                         let divider =
-                            divider.on_mouse_down(MouseButton::Left, move |e, _window, _cx| {
+                            divider.on_mouse_down(MouseButton::Left, move |e, _window, cx| {
                                 let pos = match dir {
                                     SplitDirection::Horizontal => e.position.y.as_f32(),
                                     SplitDirection::Vertical => e.position.x.as_f32(),
@@ -247,15 +301,25 @@ impl LayoutTree {
                                     start_ratio_before: ratio_before.get(),
                                     start_ratio_after: ratio_after.get(),
                                 }));
+                                if density == PaneDensity::Compact {
+                                    cx.stop_propagation();
+                                }
                             });
 
-                        container = container.child(divider);
+                        container = match density {
+                            PaneDensity::Comfortable => container.child(divider),
+                            PaneDensity::Compact => container
+                                .child(compact_divider_line(dir, density).child(deferred(divider))),
+                        };
                     }
 
-                    let elem =
-                        child
-                            .node
-                            .render_with_preview(window, cx, on_resize_end.clone(), preview);
+                    let elem = child.node.render_with_preview(
+                        window,
+                        cx,
+                        on_resize_end.clone(),
+                        preview,
+                        density,
+                    );
                     let child_wrapper = div()
                         .flex_basis(gpui::relative(child.ratio.get() / visible_ratio))
                         .flex_grow(1.0)
@@ -365,6 +429,7 @@ mod tests {
 
     struct RenderHarness {
         tree: LayoutTree,
+        density: PaneDensity,
     }
 
     impl Render for RenderHarness {
@@ -373,7 +438,8 @@ mod tests {
             window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
-            self.tree.render_with_preview(window, cx, None, None)
+            self.tree
+                .render_with_preview(window, cx, None, None, self.density)
         }
     }
 
@@ -392,6 +458,7 @@ mod tests {
                 });
             });
             RenderHarness {
+                density: PaneDensity::Comfortable,
                 tree: LayoutTree::Container {
                     direction: SplitDirection::Vertical,
                     children: panes
@@ -456,6 +523,7 @@ mod tests {
                 .collect();
 
             RenderHarness {
+                density: PaneDensity::Comfortable,
                 tree: LayoutTree::Container {
                     direction: SplitDirection::Vertical,
                     children,
@@ -501,6 +569,76 @@ mod tests {
     }
 
     #[gpui::test]
+    fn compact_density_joins_panes_with_a_hairline_and_a_wide_grip(cx: &mut TestAppContext) {
+        let container_w = 900.0_f32;
+        let ratios = [0.5, 0.5].map(|ratio| Rc::new(Cell::new(ratio)));
+        let ratios_for_tree = ratios.clone();
+        let drag = Rc::new(Cell::new(None));
+        let drag_for_tree = drag.clone();
+        let (_view, cx) = cx.add_window_view(move |_, cx| {
+            let panes = [test_pane(cx, 1), test_pane(cx, 1)];
+            RenderHarness {
+                density: PaneDensity::Compact,
+                tree: LayoutTree::Container {
+                    direction: SplitDirection::Vertical,
+                    children: panes
+                        .into_iter()
+                        .zip(ratios_for_tree)
+                        .map(|(pane, ratio)| LayoutChild {
+                            node: LayoutTree::Leaf(pane),
+                            ratio,
+                        })
+                        .collect(),
+                    drag: drag_for_tree,
+                    container_size: Rc::new(Cell::new(0.0)),
+                },
+            }
+        });
+        cx.simulate_resize(size(px(container_w), px(600.0)));
+        cx.run_until_parked();
+
+        let b0 = cx.debug_bounds("layout-child-0").expect("child-0");
+        let b1 = cx.debug_bounds("layout-child-1").expect("child-1");
+        let grip = cx.debug_bounds("layout-divider-0").expect("divider-0");
+        assert_px_eq(
+            b0.size.width + b1.size.width,
+            container_w - 1.0,
+            "panes share all but the hairline",
+        );
+        assert_px_eq(
+            b1.origin.x - (b0.origin.x + b0.size.width),
+            1.0,
+            "hairline width",
+        );
+        assert_px_eq(grip.size.width, COMPACT_DIVIDER_HIT_PX, "grip width");
+        assert!(
+            grip.origin.x < b0.origin.x + b0.size.width
+                && grip.origin.x + grip.size.width > b1.origin.x,
+            "the grip straddles both panes"
+        );
+
+        let inside_next_pane = point(b1.origin.x + px(2.0), px(300.0));
+        cx.simulate_mouse_down(inside_next_pane, MouseButton::Left, Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            drag.get().is_some(),
+            "the grip overhang wins over the pane it covers"
+        );
+        cx.simulate_mouse_move(
+            point(inside_next_pane.x + px(90.0), px(300.0)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let expected = 0.5 + 90.0 / (container_w - 1.0);
+        assert!(
+            (ratios[0].get() - expected).abs() < 0.0001,
+            "ratio {} expected {expected}",
+            ratios[0].get()
+        );
+    }
+
+    #[gpui::test]
     #[ignore = "EP-004 performance gate: eight-pane GPUI input-to-paint P95"]
     #[allow(
         clippy::assertions_on_constants,
@@ -531,6 +669,7 @@ mod tests {
                 })
                 .collect();
             RenderHarness {
+                density: PaneDensity::Comfortable,
                 tree: equal_container(SplitDirection::Horizontal, rows),
             }
         });
@@ -661,10 +800,9 @@ mod tests {
             window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
-            let panes = self
-                .panes
-                .as_ref()
-                .map(|tree| tree.render_with_preview(window, cx, None, None));
+            let panes = self.panes.as_ref().map(|tree| {
+                tree.render_with_preview(window, cx, None, None, PaneDensity::Comfortable)
+            });
             div()
                 .flex()
                 .flex_row()
@@ -1164,12 +1302,13 @@ mod tests {
     #[test]
     fn available_main_axis_excludes_fixed_dividers() {
         assert!(
-            (available_main_axis_px(500.0, 3) - (500.0 - 2.0 * DIVIDER_PX)).abs() < f32::EPSILON
+            (available_main_axis_px(500.0, 3, DIVIDER_PX) - (500.0 - 2.0 * DIVIDER_PX)).abs()
+                < f32::EPSILON
         );
     }
 
     #[test]
     fn available_main_axis_never_goes_negative() {
-        assert_eq!(available_main_axis_px(4.0, 3), 0.0);
+        assert_eq!(available_main_axis_px(4.0, 3, DIVIDER_PX), 0.0);
     }
 }

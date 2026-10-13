@@ -8,15 +8,38 @@ use super::model::{DiffChrome, DiffDockTab};
 use super::new_tab_menu::render_diff_new_tab_menu;
 use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
+use crate::layout::CardFrame;
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, ROW_RADIUS, squircle_skin};
+
+pub(super) fn dock_card_fill(frame: CardFrame, ui: crate::theme::UiColors) -> AnyElement {
+    match frame {
+        CardFrame::Card => squircle_fill(crate::app::constants::PANE_CARD_RADIUS, ui.base),
+        CardFrame::Flush(edges) => crate::layout::flush_fill(edges, ui.base).into_any_element(),
+    }
+}
+
+pub(super) fn dock_card_border(frame: CardFrame, ui: crate::theme::UiColors) -> AnyElement {
+    match frame {
+        CardFrame::Card => {
+            squircle_border(crate::app::constants::PANE_CARD_RADIUS, px(1.), ui.border)
+                .into_any_element()
+        }
+        CardFrame::Flush(edges) => {
+            crate::layout::flush_outline(edges, ui.border).into_any_element()
+        }
+    }
+}
 
 pub(super) fn render_diff_resize_handle(
     width: f32,
     max_width: f32,
+    frame: CardFrame,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let overlaps_the_grid = matches!(frame, CardFrame::Flush(_));
     div()
         .id("diff-dock-resize")
         .absolute()
@@ -30,6 +53,9 @@ pub(super) fn render_diff_resize_handle(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, _w, cx| {
                 this.diff_dock.resize = Some((f32::from(event.position.x), width, max_width));
+                if overlaps_the_grid {
+                    cx.stop_propagation();
+                }
                 cx.notify();
             }),
         )

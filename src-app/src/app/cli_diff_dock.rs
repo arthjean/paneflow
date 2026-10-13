@@ -18,9 +18,8 @@ fn diff_dock_fit(preferred: f32, available: f32) -> (f32, f32) {
     (preferred.min(max), max)
 }
 
-fn diff_dock_maximized_width(available: f32, left_gutter: f32) -> f32 {
-    (available - left_gutter - crate::app::constants::PANE_OUTER_GUTTER)
-        .max(DIFF_DOCK_PANEL_MIN_WIDTH)
+fn diff_dock_maximized_width(available: f32, left_gutter: f32, right_gutter: f32) -> f32 {
+    (available - left_gutter - right_gutter).max(DIFF_DOCK_PANEL_MIN_WIDTH)
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -374,6 +373,10 @@ impl PaneFlowApp {
         self.diff_dock.open && self.settings_section.is_none()
     }
 
+    pub(crate) fn diff_dock_beside_grid(&self) -> bool {
+        self.diff_dock_visible() || self.diff_dock_closing()
+    }
+
     fn diff_dock_closing(&self) -> bool {
         !self.diff_dock.open
             && self.settings_section.is_none()
@@ -388,6 +391,7 @@ impl PaneFlowApp {
         body: AnyElement,
         available_width: f32,
         left_gutter: f32,
+        density: crate::layout::PaneDensity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -399,8 +403,9 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let grid = self.rendered_pane_grid_layout(window);
         let fills_panel = grid != PaneGridLayout::Flex;
+        let outer_gutter = density.outer_gutter_px();
         let (width, max_width) = if fills_panel {
-            let width = diff_dock_maximized_width(available_width, left_gutter);
+            let width = diff_dock_maximized_width(available_width, left_gutter, outer_gutter);
             (width, width)
         } else {
             diff_dock_fit(self.diff_dock.width, available_width)
@@ -411,7 +416,13 @@ impl PaneFlowApp {
         } else {
             self.rendered_dock_reveal(window)
         };
-        let dock_column_width = width + crate::app::constants::PANE_OUTER_GUTTER;
+        let dock_column_width = width + outer_gutter;
+        let dock_frame = density.frame(gpui::Edges {
+            top: true,
+            right: true,
+            bottom: true,
+            left: grid == PaneGridLayout::Hidden,
+        });
         div()
             .size_full()
             .flex()
@@ -482,10 +493,17 @@ impl PaneFlowApp {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .pt(px(crate::layout::PANE_GUTTER_PX))
-                    .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
-                    .pr(px(crate::app::constants::PANE_OUTER_GUTTER))
-                    .child(self.render_diff_dock_panel(width, max_width, files_width, ui, cx));
+                    .pt(px(density.top_gutter_px()))
+                    .pb(px(outer_gutter))
+                    .pr(px(outer_gutter))
+                    .child(self.render_diff_dock_panel(
+                        width,
+                        max_width,
+                        files_width,
+                        dock_frame,
+                        ui,
+                        cx,
+                    ));
                 match reveal {
                     Some(progress) => div()
                         .relative()
@@ -581,12 +599,19 @@ mod tests {
     fn a_maximized_dock_spans_the_panel_minus_the_gutters() {
         let available = 1920.;
         let left_gutter = crate::app::constants::PANE_OUTER_GUTTER;
+        let right_gutter = crate::app::constants::PANE_OUTER_GUTTER;
         assert_eq!(
-            diff_dock_maximized_width(available, left_gutter),
-            available - left_gutter - crate::app::constants::PANE_OUTER_GUTTER
+            diff_dock_maximized_width(available, left_gutter, right_gutter),
+            available - left_gutter - right_gutter
         );
         assert!(
-            diff_dock_maximized_width(available, left_gutter) > diff_dock_fit(880., available).1
+            diff_dock_maximized_width(available, left_gutter, right_gutter)
+                > diff_dock_fit(880., available).1
+        );
+        assert_eq!(
+            diff_dock_maximized_width(available, 0., 0.),
+            available,
+            "a compact dock spans the whole panel"
         );
     }
 
@@ -610,7 +635,7 @@ mod tests {
     #[test]
     fn a_maximized_dock_never_drops_below_the_floor() {
         assert_eq!(
-            diff_dock_maximized_width(200., 0.),
+            diff_dock_maximized_width(200., 0., 0.),
             DIFF_DOCK_PANEL_MIN_WIDTH
         );
     }

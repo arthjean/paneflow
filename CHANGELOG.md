@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- Comfortable density, a new setting in Settings > Appearance and in the command palette. It is on by default and keeps panes as separate rounded cards with a gutter between them. Turned off, the panes of a workspace and the diff dock join edge to edge with a 1 px divider, and only the outer corners of the grid stay rounded. The divider keeps a 7 px grab area for resizing. The setting is stored as `comfortable_density` in `paneflow.json`.
+
 ## [0.17.7] - 2026-10-11
 
 Paneflow 0.17.7 makes OSC 7501 the only source of agent turn status and moves the terminal engine to Ghostty `b699ea79`. Any program, agent or not, can report `working`, `blocked`, `done`, or `error`: the pane header shows it, a blocked or failed program enters the Attention queue, and a declared `done` stays until you type in the pane. Paneflow no longer reads agent status off the screen, and six built-in agents are removed. Trackpad scrolling follows the gesture by the pixel, the mouse pointer takes the shape a program asks for, and each character is drawn on its own cell.

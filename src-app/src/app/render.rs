@@ -189,12 +189,19 @@ impl Render for PaneFlowApp {
         };
         let panel_edge_share = 1. - primary_sidebar_opacity;
         let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
-        let pane_grid_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
-        let pane_grid_right_gutter = if self.diff_dock_visible() {
+        let density = crate::layout::PaneDensity::from_config(&self.cached_config);
+        let pane_grid_left_gutter = density.outer_gutter_px() * panel_edge_share;
+        let comfortable_right_gutter = if self.diff_dock_visible() {
             (crate::layout::PANE_GUTTER_PX + crate::app::constants::PANE_OUTER_GUTTER) / 2.
         } else {
             crate::app::constants::PANE_OUTER_GUTTER
         };
+        let pane_grid_right_gutter = match density {
+            crate::layout::PaneDensity::Comfortable => comfortable_right_gutter,
+            crate::layout::PaneDensity::Compact => density.outer_gutter_px(),
+        };
+        let welcome_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
+        let grid_edges = crate::layout::grid_edges(!self.diff_dock_beside_grid());
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
         let main_panel_width = f32::from(window.viewport_size().width)
             - primary_sidebar_width
@@ -256,26 +263,37 @@ impl Render for PaneFlowApp {
                     let _ = app_weak.update(cx, |app, cx| app.save_session(cx));
                 });
                 root.sync_unfocused_dim(window, cx);
+                let split_palette = self.pending_split_palette();
+                let palette_frame = root.sync_card_frames(
+                    density,
+                    grid_edges,
+                    split_palette
+                        .as_ref()
+                        .map(|(target, direction)| (target, *direction)),
+                    cx,
+                );
                 let outer = div()
                     .flex()
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
                     .pr(px(pane_grid_right_gutter))
-                    .pt(px(crate::layout::PANE_GUTTER_PX))
-                    .pb(px(crate::app::constants::PANE_OUTER_GUTTER));
-                let preview = self.pending_split_palette().map(|(target, direction)| {
-                    crate::layout::SplitPreview {
+                    .pt(px(density.top_gutter_px()))
+                    .pb(px(density.outer_gutter_px()));
+                let preview =
+                    split_palette.map(|(target, direction)| crate::layout::SplitPreview {
                         target,
                         direction,
-                        element: std::cell::RefCell::new(Some(self.render_pane_palette(cx))),
-                    }
-                });
+                        element: std::cell::RefCell::new(Some(
+                            self.render_pane_palette(palette_frame, cx),
+                        )),
+                    });
                 outer
                     .child(root.render_with_preview(
                         window,
                         cx,
                         Some(on_resize_end),
                         preview.as_ref(),
+                        density,
                     ))
                     .into_any_element()
             } else if self
@@ -288,9 +306,9 @@ impl Render for PaneFlowApp {
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
                     .pr(px(pane_grid_right_gutter))
-                    .pt(px(crate::layout::PANE_GUTTER_PX))
-                    .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
-                    .child(self.render_pane_palette(cx))
+                    .pt(px(density.top_gutter_px()))
+                    .pb(px(density.outer_gutter_px()))
+                    .child(self.render_pane_palette(density.frame(grid_edges), cx))
                     .into_any_element()
             } else {
                 div().size_full().into_any_element()
@@ -299,8 +317,8 @@ impl Render for PaneFlowApp {
             div()
                 .flex()
                 .size_full()
-                .pl(px(pane_grid_left_gutter))
-                .pr(px(pane_grid_right_gutter))
+                .pl(px(welcome_left_gutter))
+                .pr(px(comfortable_right_gutter))
                 .pt(px(crate::layout::PANE_GUTTER_PX))
                 .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
                 .child(self.render_welcome(cx))
@@ -310,6 +328,7 @@ impl Render for PaneFlowApp {
             main_content,
             main_panel_width,
             pane_grid_left_gutter,
+            density,
             window,
             cx,
         );

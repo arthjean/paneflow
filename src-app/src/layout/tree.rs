@@ -141,7 +141,12 @@ impl LayoutTree {
         }
     }
 
-    pub(super) fn docked_min_main_axis_px(&self, axis: SplitDirection, cx: &App) -> f32 {
+    pub(super) fn docked_min_main_axis_px(
+        &self,
+        axis: SplitDirection,
+        divider_px: f32,
+        cx: &App,
+    ) -> f32 {
         match self {
             Self::Leaf(pane) => {
                 if pane.read(cx).is_detached() {
@@ -158,7 +163,7 @@ impl LayoutTree {
                 let mut count = 0usize;
                 let mut minimum = 0.0_f32;
                 for child in children {
-                    let child_minimum = child.node.docked_min_main_axis_px(axis, cx);
+                    let child_minimum = child.node.docked_min_main_axis_px(axis, divider_px, cx);
                     if child_minimum == 0.0 {
                         continue;
                     }
@@ -170,7 +175,7 @@ impl LayoutTree {
                     }
                 }
                 if *direction == axis {
-                    minimum += DIVIDER_PX * count.saturating_sub(1) as f32;
+                    minimum += divider_px * count.saturating_sub(1) as f32;
                 }
                 minimum
             }

@@ -149,7 +149,7 @@ Nerd Font as the default.
 | Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
 | Primary sidebar | Workspaces rail in Agents, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/app/render.rs` |
 | Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/app/render.rs`, `src-app/src/window_chrome/mod.rs` |
-| Pane grid | Binary split tree of pane cards, one per workspace tab | Gutter 8, divider hit area 7, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
+| Pane grid | Binary split tree of pane cards, one per workspace tab | Comfortable density: gutter 8, divider hit area 7, minimum pane 80. Compact density (`comfortable_density: false`): no outer gutter, a 1 px `border` divider whose 7 px hit area straddles both panes, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
 | Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 880 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
@@ -287,7 +287,7 @@ to the surfaces named:
 | --- | --- | --- | --- |
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
-| Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only |
+| Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only. In compact density a pane rounds only the corners it shares with the outer edge of the grid, at the main panel radius 10, and draws its `border` only on those outer sides; attention outlines the whole pane. The dock keeps a full 1 px `border`, which is the line between the grid and the dock |
 | Settings card, System Info and About dialogs, toast | 20 | squircle | none on a settings card or a toast, 1 px `border` at 0.6 on a dialog |
 | Pane palette ground | 24 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
@@ -317,7 +317,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Measure | Value |
 | --- | --- |
 | Panel inset | 4 |
-| Pane gutter | 8 |
+| Pane gutter | 8 in comfortable density, 1 px divider and no outer gutter in compact density |
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
@@ -540,7 +540,10 @@ tab structure changes reset the transition to avoid stale rows.
 
 ### 5.3 Pane card
 
-A 24 px squircle filled with the terminal background, 1 px `border`. The
+A 24 px squircle filled with the terminal background, 1 px `border`. With
+`comfortable_density` off, the card loses its own radius and gutter: it fills
+its cell of the grid, rounds only the corners on the grid's outer edge, and the
+1 px divider between cells stands in for the shared borders. The
 header shares the 44 px surface tab row, with no repeated pane name: a 6 px status dot, 9 px
 chips for progress and worktree, and on the right 22 px action buttons that
 appear only on the focused pane (split vertical, split horizontal,

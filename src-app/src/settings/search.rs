@@ -59,6 +59,11 @@ pub(crate) const REDUCE_MOTION: SettingCopy = SettingCopy {
     description: "Settle hover transitions and the sidebar slide instantly instead of animating \
                   them.",
 };
+pub(crate) const COMFORTABLE_DENSITY: SettingCopy = SettingCopy {
+    title: "Comfortable density",
+    description: "Separate panes into rounded cards with a gutter between them. Off joins them \
+                  edge to edge with a thin divider.",
+};
 #[cfg(target_os = "windows")]
 pub(crate) const CHROME_MATERIAL: SettingCopy = SettingCopy {
     title: "Chrome material",
@@ -186,6 +191,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &REDUCE_MOTION,
+    &COMFORTABLE_DENSITY,
     &CHROME_MATERIAL,
 ];
 #[cfg(target_os = "macos")]
@@ -193,6 +199,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &REDUCE_MOTION,
+    &COMFORTABLE_DENSITY,
     &SIDEBAR_TRANSPARENCY,
 ];
 #[cfg(target_os = "linux")]
@@ -200,10 +207,11 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &REDUCE_MOTION,
+    &COMFORTABLE_DENSITY,
     &CHROME_TRANSPARENCY,
 ];
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION];
+const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION, &COMFORTABLE_DENSITY];
 #[cfg(target_os = "windows")]
 const TERMINAL_COPIES: &[&SettingCopy] = &[
     &CURSOR_SHAPE,
