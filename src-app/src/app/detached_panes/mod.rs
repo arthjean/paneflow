@@ -109,7 +109,7 @@ impl PaneFlowApp {
         pane.update(cx, |pane, cx| {
             pane.zoomed = false;
             pane.reveal_active_surface();
-            pane.set_dimmed(false, cx);
+            pane.set_split_focus(crate::pane::SplitFocus::Alone, cx);
             for terminal in pane.terminals() {
                 terminal.update(cx, |_, cx| cx.notify());
             }

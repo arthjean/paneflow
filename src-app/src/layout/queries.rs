@@ -1,6 +1,6 @@
 use gpui::{App, Edges, Entity, Focusable, Window};
 
-use crate::pane::Pane;
+use crate::pane::{Pane, SplitFocus};
 
 use super::density::{CardFrame, PaneDensity, child_edges};
 use super::tree::{LayoutTree, SplitDirection};
@@ -59,7 +59,7 @@ impl LayoutTree {
                     if pane.read(cx).is_detached() {
                         return;
                     }
-                    pane.update(cx, |pane, cx| pane.set_dimmed(false, cx));
+                    pane.update(cx, |pane, cx| pane.set_split_focus(SplitFocus::Alone, cx));
                 });
             }
             DimPolicy::DimAllExcept(idx) => {
@@ -68,7 +68,12 @@ impl LayoutTree {
                     if pane.read(cx).is_detached() {
                         return;
                     }
-                    pane.update(cx, |pane, cx| pane.set_dimmed(index != idx, cx));
+                    let focus = if index == idx {
+                        SplitFocus::Focused
+                    } else {
+                        SplitFocus::Unfocused
+                    };
+                    pane.update(cx, |pane, cx| pane.set_split_focus(focus, cx));
                     index += 1;
                 });
             }

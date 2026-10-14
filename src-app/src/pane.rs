@@ -50,6 +50,25 @@ impl PaneSurface {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SplitFocus {
+    Alone,
+    Focused,
+    Unfocused,
+}
+
+impl SplitFocus {
+    fn dims(self) -> bool {
+        self == Self::Unfocused
+    }
+}
+
+fn hide_until_hover<E: Styled + InteractiveElement>(element: E, group: &SharedString) -> E {
+    element
+        .invisible()
+        .group_hover(group.clone(), |style| style.visible())
+}
+
 fn pane_colors() -> crate::theme::UiColors {
     crate::theme::ui_colors()
 }
@@ -109,8 +128,15 @@ impl CardShape {
         }
     }
 
-    fn border(self, color: Hsla, outline: bool) -> AnyElement {
+    fn border(self, background: Hsla, color: Hsla, outline: bool) -> AnyElement {
         match self {
+            Self::Squircle(radius) if card_paints_quads(background) => div()
+                .absolute()
+                .inset_0()
+                .rounded(radius)
+                .border_1()
+                .border_color(color)
+                .into_any_element(),
             Self::Squircle(radius) => squircle_border(radius, px(1.), color).into_any_element(),
             Self::Flush(edges) if outline => {
                 crate::layout::flush_outline(edges, color).into_any_element()
@@ -137,8 +163,12 @@ impl CardShape {
     }
 }
 
+fn card_paints_quads(background: Hsla) -> bool {
+    cfg!(target_os = "linux") && background.a < 1.0
+}
+
 fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
-    if cfg!(target_os = "linux") && color.a < 1.0 {
+    if card_paints_quads(color) {
         div()
             .absolute()
             .inset_0()
@@ -159,6 +189,8 @@ const ACTION_BUTTON_SIZE: f32 = 22.0;
 const HEADER_GROUP: &str = "pane-header-group";
 const HEADER_HOVER_MS: u64 = 120;
 const PANE_DIM_FADE_MS: u64 = 130;
+const FOCUSED_PANE_BORDER_ALPHA: f32 = 0.24;
+const UNFOCUSED_PANE_TITLE_ALPHA: f32 = 0.65;
 const PANE_DIM_EPSILON: f32 = 0.002;
 const OVERLAY_MARGIN: f32 = 8.0;
 const OVERLAY_RADIUS: f32 = 8.0;
@@ -399,7 +431,7 @@ pub struct Pane {
     pending_prefill: bool,
     broadcast_stripe: Option<usize>,
     swap_source: bool,
-    dimmed: bool,
+    split_focus: SplitFocus,
     dim_from: f32,
     dim_alpha: Rc<Cell<f32>>,
     dim_seq: usize,
@@ -459,7 +491,7 @@ impl Pane {
             pending_prefill: false,
             broadcast_stripe: None,
             swap_source: false,
-            dimmed: false,
+            split_focus: SplitFocus::Alone,
             dim_from: 0.0,
             dim_alpha: Rc::new(Cell::new(0.0)),
             dim_seq: 0,
@@ -601,14 +633,20 @@ impl Pane {
         }
     }
 
-    pub fn set_dimmed(&mut self, dimmed: bool, cx: &mut Context<Self>) {
-        if self.dimmed == dimmed {
+    pub(crate) fn set_split_focus(&mut self, focus: SplitFocus, cx: &mut Context<Self>) {
+        if self.split_focus == focus {
             return;
         }
-        self.dim_from = self.dim_alpha.get();
-        self.dim_seq = self.dim_seq.wrapping_add(1);
-        self.dimmed = dimmed;
+        if self.split_focus.dims() != focus.dims() {
+            self.dim_from = self.dim_alpha.get();
+            self.dim_seq = self.dim_seq.wrapping_add(1);
+        }
+        self.split_focus = focus;
         cx.notify();
+    }
+
+    fn dimmed(&self) -> bool {
+        self.split_focus.dims()
     }
 
     pub(crate) fn set_card_frame(
@@ -1508,6 +1546,7 @@ impl Pane {
         let pane_id = cx.entity().entity_id().as_u64();
         let rail_hover = crate::app::constants::sidebar_tab_hover_background();
         let rail_active = crate::app::constants::sidebar_tab_active_background();
+        let content_group = SharedString::from(format!("pane-content-{pane_id}"));
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1529,6 +1568,11 @@ impl Pane {
                 (None, Some(rail_hover))
             };
             let text = if active { ui.text } else { ui.muted };
+            let text = if self.dimmed() {
+                text.opacity(UNFOCUSED_PANE_TITLE_ALPHA)
+            } else {
+                text
+            };
             let unified_active_border = if ui.base.l > 0.5 {
                 ui.accent.opacity(0.14)
             } else {
@@ -1785,7 +1829,9 @@ impl Pane {
                     .when(!self.is_detached(), |button| {
                         button
                             .size(px(ACTION_BUTTON_SIZE))
-                            .when(self.dimmed, |button| button.invisible())
+                            .when(self.dimmed(), |element| {
+                                hide_until_hover(element, &content_group)
+                            })
                     })
                     .flex()
                     .items_center()
@@ -1837,14 +1883,18 @@ impl Pane {
                         .w(px(1.))
                         .h(px(16.))
                         .mx(px(6.))
-                        .when(self.dimmed, |divider| divider.invisible())
+                        .when(self.dimmed(), |element| {
+                            hide_until_hover(element, &content_group)
+                        })
                         .bg(ui.border),
                 )
                 .child(
                     div()
                         .h_full()
                         .flex_none()
-                        .when(self.dimmed, |actions| actions.invisible())
+                        .when(self.dimmed(), |element| {
+                            hide_until_hover(element, &content_group)
+                        })
                         .child(self.render_header(cx)),
                 );
         }
@@ -1970,7 +2020,7 @@ impl Render for Pane {
             terminal_selected,
         );
 
-        let dim_target = if self.dimmed && self.composer_slot.is_none() {
+        let dim_target = if self.dimmed() && self.composer_slot.is_none() {
             self.cached_config.resolved_unfocused_pane_dim_alpha()
         } else {
             0.0
@@ -2178,8 +2228,11 @@ impl Render for Pane {
                 )
             })
             .child(card_shape.border(
+                card_background,
                 if has_attention {
                     attention_color.opacity(0.7)
+                } else if self.split_focus == SplitFocus::Focused && !self.zoomed {
+                    pane_colors().text.opacity(FOCUSED_PANE_BORDER_ALPHA)
                 } else {
                     pane_colors().border
                 },
@@ -2250,8 +2303,8 @@ mod tests {
 
     use super::{
         MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
-        header_hover_animates, pane_card_background, pane_status_label, progress_chip_label,
-        tab_badge, truncate_surface_title,
+        card_paints_quads, header_hover_animates, pane_card_background, pane_status_label,
+        progress_chip_label, tab_badge, truncate_surface_title,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
@@ -2539,6 +2592,15 @@ mod tests {
         assert_eq!(material, gpui::black().opacity(super::LINUX_TERMINAL_SHADE));
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         assert_eq!(material, theme.background);
+    }
+
+    #[test]
+    fn a_translucent_linux_card_strokes_its_border_on_the_fill_geometry() {
+        let theme = crate::theme::paneflow_dark();
+
+        assert!(!card_paints_quads(theme.background));
+        #[cfg(target_os = "linux")]
+        assert!(card_paints_quads(pane_card_background(&theme, true, true)));
     }
 
     #[test]
