@@ -74,20 +74,44 @@ impl PaneFlowApp {
             (None, Some(hover_bg))
         };
         let text_color = ui.text;
+        let shimmer_title = !is_renaming
+            && !crate::ui_primitives::reduce_motion()
+            && self.sidebar_filter_input.read(cx).value().trim().is_empty()
+            && matches!(
+                lane,
+                Some(Lane::Agent(SidebarAgentSummary {
+                    state: SidebarAgentState::Thinking,
+                    ..
+                }))
+            );
 
         let title_el = if is_renaming {
             self.inline_rename_field(ui)
         } else {
-            div()
+            let title_text = div()
                 .min_w_0()
                 .overflow_x_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_color(text_color)
                 .text_size(px(14.))
                 .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .font_weight(FontWeight::MEDIUM)
-                .child(self.sidebar_filter_label(title.clone(), cx))
+                .font_weight(FontWeight::MEDIUM);
+            if shimmer_title {
+                lane::mark_shimmer_drawn();
+                title_text.text_color(text_color).child(
+                    crate::ui_primitives::shimmer::shimmer_text(
+                        SharedString::from(title.clone()),
+                        text_color,
+                        crate::ui_primitives::shimmer::shimmer_glint(text_color),
+                        true,
+                        SharedString::from(title.clone()),
+                    ),
+                )
+            } else {
+                title_text
+                    .text_color(text_color)
+                    .child(self.sidebar_filter_label(title.clone(), cx))
+            }
         };
 
         let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));

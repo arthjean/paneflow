@@ -436,6 +436,8 @@ pub struct Pane {
     dim_alpha: Rc<Cell<f32>>,
     dim_seq: usize,
     card_frame: crate::layout::CardFrame,
+    shimmer_drawn: Cell<bool>,
+    shimmer_ticker: Option<gpui::Task<()>>,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -496,6 +498,8 @@ impl Pane {
             dim_alpha: Rc::new(Cell::new(0.0)),
             dim_seq: 0,
             card_frame: crate::layout::CardFrame::Card,
+            shimmer_drawn: Cell::new(false),
+            shimmer_ticker: None,
         }
     }
 
@@ -1264,6 +1268,32 @@ impl Pane {
         }
     }
 
+    fn sync_shimmer_clock(&mut self, cx: &mut Context<Self>) {
+        if !self.shimmer_drawn.replace(false) {
+            self.shimmer_ticker = None;
+            return;
+        }
+        if self.shimmer_ticker.is_some() {
+            return;
+        }
+        self.shimmer_ticker = Some(cx.spawn(async move |pane, cx| {
+            loop {
+                let executor = cx.background_executor().clone();
+                let elapsed = executor.now().saturating_duration_since(
+                    crate::ui_primitives::animation_clock::animation_epoch(),
+                );
+                executor
+                    .timer(crate::ui_primitives::shimmer::until_next_shimmer_frame(
+                        elapsed,
+                    ))
+                    .await;
+                if pane.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
     pub fn active_terminal_opt(&self) -> Option<&Entity<TerminalView>> {
         self.surface().as_terminal()
     }
@@ -1321,16 +1351,34 @@ impl Pane {
             .as_terminal()
             .filter(|_| leading_slots < 2)
             .and_then(|terminal| header_chip(&terminal.read(cx).terminal));
-        let progress_chip = progress.as_ref().map(|(error, label)| {
-            div()
+        let progress_chip = progress.as_ref().map(|(tone, label)| {
+            let chip = div()
                 .flex_none()
                 .px(px(4.))
                 .rounded(px(3.))
                 .bg(ui.subtle)
                 .text_size(px(9.))
-                .text_color(if *error { ui.agent_error } else { ui.muted })
-                .child(label.clone())
+                .text_color(if *tone == ChipTone::Error {
+                    ui.agent_error
+                } else {
+                    ui.muted
+                });
+            if *tone == ChipTone::Working
+                && !self.dimmed()
+                && !crate::ui_primitives::reduce_motion()
+            {
+                self.shimmer_drawn.set(true);
+                chip.child(crate::ui_primitives::shimmer::shimmer_text(
+                    label.clone(),
+                    ui.muted,
+                    ui.text,
+                    false,
+                    label.clone(),
+                ))
                 .into_any_element()
+            } else {
+                chip.child(label.clone()).into_any_element()
+            }
         });
 
         let match_badge = {
@@ -2184,6 +2232,7 @@ impl Render for Pane {
         let attention_color = pane_colors().vc_conflict;
         let composer = self.render_composer_overlay(cx);
         let (stripe_top, stripe_bottom) = card_shape.left_insets();
+        self.sync_shimmer_clock(cx);
         div()
             .flex()
             .flex_col()
@@ -2258,23 +2307,42 @@ fn pane_status_label(errored: bool, attention: bool) -> Option<&'static str> {
     }
 }
 
-fn header_chip(terminal: &crate::terminal::TerminalState) -> Option<(bool, SharedString)> {
-    use crate::app::declared_status::{DeclaredChip, declared_chip};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChipTone {
+    Quiet,
+    Working,
+    Error,
+}
 
-    match declared_chip(terminal.declared_status.as_ref()) {
-        DeclaredChip::Show { label, error } => Some((error, label)),
+fn header_chip(terminal: &crate::terminal::TerminalState) -> Option<(ChipTone, SharedString)> {
+    use crate::app::declared_status::{DeclaredChip, DeclaredState, declared_chip};
+
+    let declared = terminal.declared_status.as_ref();
+    match declared_chip(declared) {
+        DeclaredChip::Show { label, error } => {
+            let tone = if error {
+                ChipTone::Error
+            } else if declared.and_then(DeclaredState::of) == Some(DeclaredState::Working) {
+                ChipTone::Working
+            } else {
+                ChipTone::Quiet
+            };
+            Some((tone, label))
+        }
         DeclaredChip::Hidden => None,
         DeclaredChip::Fallback => terminal.progress.and_then(|report| {
-            progress_chip_label(report).map(|label| {
-                (
-                    matches!(
-                        report.state,
-                        paneflow_terminal_ghostty::ProgressState::Error
-                    ),
-                    label,
-                )
-            })
+            progress_chip_label(report).map(|label| (progress_chip_tone(report.state), label))
         }),
+    }
+}
+
+fn progress_chip_tone(state: paneflow_terminal_ghostty::ProgressState) -> ChipTone {
+    use paneflow_terminal_ghostty::ProgressState;
+
+    match state {
+        ProgressState::Error => ChipTone::Error,
+        ProgressState::Set | ProgressState::Indeterminate => ChipTone::Working,
+        ProgressState::Pause | ProgressState::Remove => ChipTone::Quiet,
     }
 }
 
@@ -2302,9 +2370,9 @@ mod tests {
     use gpui::{AppContext, Entity, TestAppContext};
 
     use super::{
-        MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
+        ChipTone, MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
         card_paints_quads, header_hover_animates, pane_card_background, pane_status_label,
-        progress_chip_label, tab_badge, truncate_surface_title,
+        progress_chip_label, progress_chip_tone, tab_badge, truncate_surface_title,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
@@ -2592,6 +2660,17 @@ mod tests {
         assert_eq!(material, gpui::black().opacity(super::LINUX_TERMINAL_SHADE));
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         assert_eq!(material, theme.background);
+    }
+
+    #[test]
+    fn only_active_progress_shimmers() {
+        assert_eq!(progress_chip_tone(ProgressState::Set), ChipTone::Working);
+        assert_eq!(
+            progress_chip_tone(ProgressState::Indeterminate),
+            ChipTone::Working
+        );
+        assert_eq!(progress_chip_tone(ProgressState::Pause), ChipTone::Quiet);
+        assert_eq!(progress_chip_tone(ProgressState::Error), ChipTone::Error);
     }
 
     #[test]

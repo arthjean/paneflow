@@ -217,6 +217,7 @@ const SPINNER_CYCLE_MS: u64 = SPINNER_STEP_MS * SPINNER_STEPS;
 
 thread_local! {
     static SPINNER_DRAWN: Cell<bool> = const { Cell::new(false) };
+    static SHIMMER_DRAWN: Cell<bool> = const { Cell::new(false) };
 }
 
 fn spinner_head(elapsed: Duration) -> usize {
@@ -224,40 +225,75 @@ fn spinner_head(elapsed: Duration) -> usize {
     (cycle_elapsed * u128::from(SPINNER_STEPS) / u128::from(SPINNER_CYCLE_MS)) as usize
 }
 
-fn spinner_next_step(elapsed: Duration) -> Duration {
-    animation_clock::until_next_tick(elapsed, Duration::from_millis(SPINNER_STEP_MS))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClockDemand {
+    spinner: bool,
+    shimmer: bool,
+}
+
+impl ClockDemand {
+    fn until_next_wake(self, elapsed: Duration) -> Duration {
+        let spinner = self.spinner.then(|| {
+            animation_clock::until_next_tick(elapsed, Duration::from_millis(SPINNER_STEP_MS))
+        });
+        let shimmer = self
+            .shimmer
+            .then(|| crate::ui_primitives::shimmer::until_next_shimmer_frame(elapsed));
+        spinner
+            .into_iter()
+            .chain(shimmer)
+            .min()
+            .unwrap_or(Duration::MAX)
+    }
 }
 
 fn take_spinner_drawn() -> bool {
     SPINNER_DRAWN.with(|drawn| drawn.replace(false))
 }
 
+pub(super) fn mark_shimmer_drawn() {
+    SHIMMER_DRAWN.with(|drawn| drawn.set(true));
+}
+
+fn take_shimmer_drawn() -> bool {
+    SHIMMER_DRAWN.with(|drawn| drawn.replace(false))
+}
+
 #[derive(Default)]
 pub(crate) struct SpinnerClock {
-    ticker: Option<Task<()>>,
+    ticker: Option<(ClockDemand, Task<()>)>,
 }
 
 impl SpinnerClock {
     pub(crate) fn sync<V: 'static>(&mut self, cx: &mut Context<V>) {
-        if !take_spinner_drawn() {
+        let demand = ClockDemand {
+            spinner: take_spinner_drawn(),
+            shimmer: take_shimmer_drawn(),
+        };
+        if !demand.spinner && !demand.shimmer {
             self.ticker = None;
             return;
         }
-        if self.ticker.is_some() {
+        if self
+            .ticker
+            .as_ref()
+            .is_some_and(|(running, _)| *running == demand)
+        {
             return;
         }
-        self.ticker = Some(cx.spawn(async move |view, cx| {
+        let ticker = cx.spawn(async move |view, cx| {
             loop {
                 let executor = cx.background_executor().clone();
                 let elapsed = executor
                     .now()
                     .saturating_duration_since(animation_clock::animation_epoch());
-                executor.timer(spinner_next_step(elapsed)).await;
+                executor.timer(demand.until_next_wake(elapsed)).await;
                 if view.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
                 }
             }
-        }));
+        });
+        self.ticker = Some((demand, ticker));
     }
 
     #[cfg(test)]
@@ -341,6 +377,33 @@ mod tests {
     }
 
     #[test]
+    fn the_shared_clock_wakes_for_whichever_of_spinner_and_shimmer_comes_first() {
+        let spinner = ClockDemand {
+            spinner: true,
+            shimmer: false,
+        };
+        let both = ClockDemand {
+            spinner: true,
+            shimmer: true,
+        };
+        let band_on_text = Duration::from_millis(1_700);
+        let between_passes = Duration::from_millis(2_573);
+        assert_eq!(
+            spinner.until_next_wake(between_passes),
+            animation_clock::until_next_tick(
+                between_passes,
+                Duration::from_millis(SPINNER_STEP_MS)
+            )
+        );
+        assert!(both.until_next_wake(band_on_text) <= Duration::from_millis(34));
+        assert_eq!(
+            both.until_next_wake(between_passes),
+            spinner.until_next_wake(between_passes),
+            "between passes the shimmer adds no wake-ups to the spinner's"
+        );
+    }
+
+    #[test]
     fn an_agent_state_outranks_the_pull_request() {
         let working = SidebarAgentSummary {
             state: SidebarAgentState::Thinking,
@@ -399,13 +462,25 @@ mod tests {
             spinner_head(Duration::from_millis(SPINNER_CYCLE_MS + 91)),
             1
         );
-        assert_eq!(spinner_next_step(Duration::ZERO), Duration::from_millis(91));
         assert_eq!(
-            spinner_next_step(Duration::from_millis(89)),
+            animation_clock::until_next_tick(
+                Duration::ZERO,
+                Duration::from_millis(SPINNER_STEP_MS)
+            ),
+            Duration::from_millis(91)
+        );
+        assert_eq!(
+            animation_clock::until_next_tick(
+                Duration::from_millis(89),
+                Duration::from_millis(SPINNER_STEP_MS)
+            ),
             Duration::from_millis(2)
         );
         assert_eq!(
-            spinner_next_step(Duration::from_millis(181)),
+            animation_clock::until_next_tick(
+                Duration::from_millis(181),
+                Duration::from_millis(SPINNER_STEP_MS)
+            ),
             Duration::from_millis(90)
         );
     }
