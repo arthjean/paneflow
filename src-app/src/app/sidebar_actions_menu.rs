@@ -239,7 +239,7 @@ impl PaneFlowApp {
             .child(settings_row)
             .into_any_element();
 
-        let mut footer = div().relative().flex_none().pt(px(0.)).pb(px(9.5));
+        let mut footer = div().relative().flex_none().py(px(9.5));
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
             footer = footer.child(banner);
         }
