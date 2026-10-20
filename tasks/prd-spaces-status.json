@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Attention entre espaces",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-004",
@@ -199,29 +199,29 @@
       "id": "US-011",
       "title": "Afficher un badge d'attention par espace",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-012",
       "title": "Nommer l'espace dans la file d'attention et les notifications",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-013",
