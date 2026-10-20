@@ -170,6 +170,7 @@ pub(crate) struct SurfaceMeta {
     pub scope: &'static str,
     pub tab_id: Option<u64>,
     pub tab_title: Option<String>,
+    pub space: serde_json::Value,
 }
 
 fn authorize_surface_workspace(
@@ -263,6 +264,7 @@ fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
         "scope": s.scope,
         "tab_id": s.tab_id,
         "tab_title": s.tab_title,
+        "space": s.space,
     })
 }
 
@@ -685,6 +687,12 @@ impl PaneFlowApp {
                 scope: "workspace",
                 tab_id: entry.tab.as_ref().map(|(id, _)| *id),
                 tab_title: entry.tab.as_ref().map(|(_, title)| title.clone()),
+                space: crate::app::spaces::space_json(
+                    &self.cached_config,
+                    self.workspaces
+                        .get(entry.workspace_idx)
+                        .and_then(|ws| ws.space.as_ref()),
+                ),
             })
             .collect();
 
@@ -1652,12 +1660,14 @@ mod tests {
             scope: "workspace",
             tab_id: Some(11),
             tab_title: Some("build".to_string()),
+            space: serde_json::json!({ "id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work" }),
         });
         assert_eq!(workspace["workspace_id"], 42);
         assert_eq!(workspace["workspace"], 2);
         assert_eq!(workspace["scope"], "workspace");
         assert_eq!(workspace["tab_id"], 11);
         assert_eq!(workspace["tab_title"], "build");
+        assert_eq!(workspace["space"]["name"], "Work");
     }
 
     #[test]
@@ -1673,6 +1683,7 @@ mod tests {
             scope: "workspace",
             tab_id: Some(3),
             tab_title: None,
+            space: serde_json::Value::Null,
         };
 
         assert!(super::surface_matches_workspace(&surface, Some(42)));
@@ -2176,6 +2187,7 @@ mod tests {
             scope: "workspace",
             tab_id: Some(tab_of(hidden_sid).0),
             tab_title: Some(tab_of(hidden_sid).1),
+            space: serde_json::Value::Null,
         });
         assert_eq!(value["tab_id"], back_tab_id);
         assert_eq!(value["tab_title"], "background");

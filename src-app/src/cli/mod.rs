@@ -246,6 +246,11 @@ enum Commands {
         name: Option<String>,
         #[arg(long, help = "Working directory for the first pane (must exist)")]
         cwd: Option<String>,
+        #[arg(
+            long,
+            help = "Space to create the workspace in, by name (any case) or id; defaults to the active space"
+        )]
+        space: Option<String>,
     },
     #[command(about = "Select a workspace by index")]
     Select {
@@ -636,8 +641,8 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
         } => read_cmds::search(client, &target, &pattern, max, human),
         Commands::Ps { json } => read_cmds::ps(client, json),
         Commands::Status { target, json } => read_cmds::status(client, &target, json),
-        Commands::New { name, cwd } => {
-            control_cmds::new_workspace(client, name.as_deref(), cwd.as_deref())
+        Commands::New { name, cwd, space } => {
+            control_cmds::new_workspace(client, name.as_deref(), cwd.as_deref(), space.as_deref())
         }
         Commands::Select { index } => control_cmds::select(client, index),
         Commands::Split { direction, target } => {

@@ -92,14 +92,26 @@ fn print_surfaces_table(result: &Value) {
         println!("(no surfaces)");
         return;
     }
-    println!("{:>4}  {:<20}  {:<24}  CWD", "ID", "NAME", "CMD");
+    println!(
+        "{:>4}  {:<20}  {:<16}  {:<24}  CWD",
+        "ID", "NAME", "SPACE", "CMD"
+    );
     for s in surfaces {
         let id = s.get("surface_id").and_then(Value::as_u64).unwrap_or(0);
         let name = s.get("name").and_then(Value::as_str).unwrap_or("");
+        let space = surface_space_label(s);
         let cmd = s.get("cmd").and_then(Value::as_str).unwrap_or("");
         let cwd = s.get("cwd").and_then(Value::as_str).unwrap_or("");
-        println!("{id:>4}  {name:<20}  {cmd:<24}  {cwd}");
+        println!("{id:>4}  {name:<20}  {space:<16}  {cmd:<24}  {cwd}");
     }
+}
+
+fn surface_space_label(surface: &Value) -> &str {
+    surface
+        .get("space")
+        .and_then(|space| space.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or(paneflow_config::schema::DEFAULT_SPACE_NAME)
 }
 
 pub fn ps(client: &impl IpcTransport, json_out: bool) -> Result<i32, CliError> {
@@ -164,5 +176,20 @@ fn print_agents_table(result: &Value) {
         let ws = a.get("workspace").and_then(Value::as_u64).unwrap_or(0);
         let pane = a.get("surface_name").and_then(Value::as_str).unwrap_or("-");
         println!("{pid:>7}  {tool:<10}  {state:<18}  {ws:>2}  {pane}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_human_listing_names_the_default_space_for_a_surface_without_one() {
+        assert_eq!(
+            surface_space_label(&json!({ "space": { "id": "x", "name": "Work" } })),
+            "Work"
+        );
+        assert_eq!(surface_space_label(&json!({ "space": null })), "Default");
+        assert_eq!(surface_space_label(&json!({})), "Default");
     }
 }

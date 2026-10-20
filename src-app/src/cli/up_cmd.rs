@@ -36,6 +36,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     let offsets = allocate_port_offsets(&port_refs, port_base, port_is_free)?;
 
     let config = paneflow_config::loader::load_config();
+    check_space(&config, spec.space.as_deref())?;
     worktree::set_worktrees_root(config.worktrees.dir_path());
     let mut panes = Vec::with_capacity(spec.panes.len());
     for (idx, pane) in spec.panes.iter().enumerate() {
@@ -60,6 +61,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
 
     let params = json!({
         "name": spec.name,
+        "space": spec.space,
         "layout": spec.layout.as_ipc(),
         "panes": panes,
     });
@@ -100,6 +102,15 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     };
     super::print_json(&result)?;
     Ok(EXIT_OK)
+}
+
+fn check_space(config: &PaneFlowConfig, space: Option<&str>) -> Result<(), CliError> {
+    match space {
+        Some(value) if crate::app::spaces::find_space(config, value).is_none() => {
+            Err(CliError::runtime(format!("unknown space: {value}")))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn panes_need_orchestration(panes: &[PaneSpec]) -> bool {
@@ -951,5 +962,65 @@ mod tests {
         let lines: Vec<&str> = tail.lines().map(str::trim).collect();
         let expected: Vec<String> = (11..=30).map(|i| format!("line{i}")).collect();
         assert_eq!(lines, expected);
+    }
+
+    struct RecordingTransport(std::cell::RefCell<Vec<(String, Value)>>);
+    impl IpcTransport for RecordingTransport {
+        fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+            self.0.borrow_mut().push((method.to_string(), params));
+            Ok(json!({ "index": 1, "surface_ids": [7] }))
+        }
+    }
+
+    #[test]
+    fn up_sends_the_spec_space_to_workspace_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("paneflow.workspace.toml");
+        let cwd = dir.path().to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            &file,
+            format!("space = \"default\"\n[[panes]]\ncwd = \"{cwd}\"\n"),
+        )
+        .expect("write spec");
+        let fake = RecordingTransport(std::cell::RefCell::new(Vec::new()));
+
+        assert_eq!(
+            up(&fake, file.to_str().expect("utf-8 path"), false).expect("ok"),
+            EXIT_OK
+        );
+
+        let calls = fake.0.borrow();
+        let (method, params) = calls.last().expect("workspace.up was called");
+        assert_eq!(method, "workspace.up");
+        assert_eq!(params["space"], "default");
+    }
+
+    #[test]
+    fn up_refuses_an_unknown_space_before_creating_any_worktree() {
+        let mut config = PaneFlowConfig::default();
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: paneflow_config::schema::SpaceId::parse("550e8400-e29b-41d4-a716-446655440001")
+                .expect("valid id"),
+            name: "Work".to_string(),
+            color: None,
+        });
+        assert!(check_space(&config, Some("WORK")).is_ok());
+        assert!(check_space(&config, None).is_ok());
+        let err = check_space(&config, Some("Client")).expect_err("no space is named Client");
+        assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
+        assert_eq!(err.message, "unknown space: Client");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("paneflow.workspace.toml");
+        let cwd = dir.path().to_string_lossy().replace('\\', "/");
+        std::fs::write(
+            &file,
+            format!("space = \"no-such-space-7f3a9c\"\n[[panes]]\ncwd = \"{cwd}\"\n"),
+        )
+        .expect("write spec");
+        let fake = RecordingTransport(std::cell::RefCell::new(Vec::new()));
+        let err = up(&fake, file.to_str().expect("utf-8 path"), false).expect_err("refused");
+        assert_eq!(err.message, "unknown space: no-such-space-7f3a9c");
+        assert!(fake.0.borrow().is_empty());
     }
 }

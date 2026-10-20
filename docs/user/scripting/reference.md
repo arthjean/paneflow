@@ -24,8 +24,8 @@ launching the app.
 | `search <target> <pattern>` | `surface.search` | No | Search pane scrollback |
 | `ps [--json]` | `fleet.list` | No | List detected agents across workspaces |
 | `status <target> [--json]` | `surface.status` | No | Read one pane's agent state |
-| `new` | `workspace.create` | No | Create a workspace |
-| `select <index>` | `workspace.select` | No | Select a workspace |
+| `new [--name] [--cwd] [--space]` | `workspace.create` | No | Create a workspace, in the active space unless `--space` names another |
+| `select <index>` | `workspace.select` | No | Select a workspace, switching to its space |
 | `split <h\|v>` | `surface.split` | No | Split a pane |
 | `focus <target>` | `surface.focus` | No | Focus a pane and its workspace |
 | `send <target> <text>` | `surface.send_text` | Gated | Stage or submit text |
@@ -142,6 +142,7 @@ tracked agent returns idle state, not an error.
 | Top-level field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `name` | string | `"Workspace"` | Workspace title |
+| `space` | string | active space | Space name (any case) or id; `Default` names the default space |
 | `layout` | string | `"even_h"` | `even_h`, `even_v`, `main_vertical`, or `tiled` |
 | `port_base` | integer | `3000` | Base for `${port_offset}` allocation |
 | `[[panes]]` | array | required | One entry per pane |
@@ -221,14 +222,14 @@ printf '%s\
 | `system.ping` | - | Liveness check |
 | `system.capabilities` | - | `{scripting, methods[]}` |
 | `system.identify` | - | `{name, version, protocol}` |
-| `workspace.list` | - | Workspaces with indexes and titles |
-| `workspace.current` | - | Active workspace |
-| `workspace.create` | `name?`, `cwd?`, `layout?` | Create a workspace |
-| `workspace.select` | `index` | Switch workspace |
+| `workspace.list` | - | Workspaces with global indexes, titles, and `space: {id, name}` or `null` for the default space |
+| `workspace.current` | - | Shown workspace, with its `space` |
+| `workspace.create` | `name?`, `cwd?`, `layout?`, `space?` | Create a workspace; `space` is a name (any case) or id, the active space when absent; an unknown one is refused with `unknown space: <value>` |
+| `workspace.select` | `index` | Switch workspace, and to its space when it is hidden |
 | `workspace.close` | `index` | Close a workspace |
-| `workspace.up` | `name`, `layout`, `panes[]` | Declarative spawn used by `up` and flow roots |
+| `workspace.up` | `name`, `layout`, `panes[]`, `space?` | Declarative spawn used by `up` and flow roots; `space` as for `workspace.create` |
 | `workspace.restore_layout` | `layout` | Apply a layout tree |
-| `surface.list` | - | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace}]}` |
+| `surface.list` | - | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace,space}]}` |
 | `surface.read` | `surface_id`, `lines?`, `offset?`, `fenced?` | Scrollback and `output_generation` |
 | `surface.search` | `surface_id`, `pattern`, `max_matches?` | Case-insensitive substring matches |
 | `surface.rename` | `surface_id`, `name` | Rename or clear a pane name |
