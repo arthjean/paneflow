@@ -248,13 +248,13 @@ fn capture_closed_pane_record(
 
 fn undo_pane_destination(
     workspaces: &[Workspace],
-    active_idx: usize,
+    shown_idx: Option<usize>,
     record: &ClosedPaneRecord,
 ) -> Result<(usize, usize), String> {
     let ws_idx = workspaces
         .iter()
         .position(|ws| ws.id == record.workspace_id)
-        .or((active_idx < workspaces.len()).then_some(active_idx))
+        .or(shown_idx.filter(|&idx| idx < workspaces.len()))
         .ok_or_else(|| "No active workspace to restore pane".to_string())?;
     let ws = &workspaces[ws_idx];
     let tab_idx = ws
@@ -463,11 +463,12 @@ impl PaneFlowApp {
             self.workspaces.is_empty() || self.active_idx < self.workspaces.len(),
             "active_idx out of bounds"
         );
-        self.workspaces.get(self.active_idx)
+        self.workspaces.get(self.shown_workspace_idx()?)
     }
 
     pub(crate) fn active_workspace_mut(&mut self) -> Option<&mut Workspace> {
-        self.workspaces.get_mut(self.active_idx)
+        let idx = self.shown_workspace_idx()?;
+        self.workspaces.get_mut(idx)
     }
 
     pub(crate) fn select_workspace(
@@ -490,9 +491,8 @@ impl PaneFlowApp {
             return false;
         }
 
-        let changed = idx != self.active_idx;
+        let changed = self.point_at_workspace(idx);
         self.dismiss_transient_surfaces();
-        self.active_idx = idx;
 
         match focus_target {
             WorkspaceFocusTarget::FirstPane => {
@@ -543,9 +543,8 @@ impl PaneFlowApp {
             return false;
         }
 
-        let changed = idx != self.active_idx;
+        let changed = self.point_at_workspace(idx);
         self.dismiss_transient_surfaces();
-        self.active_idx = idx;
         self.sync_files_sidebar_session(cx);
         if self.agent_sessions.sessions_sidebar_open {
             self.close_sessions_sidebar(cx);
@@ -600,17 +599,15 @@ impl PaneFlowApp {
         paths: &[std::path::PathBuf],
         cx: &mut Context<Self>,
     ) {
-        let shown_before = self.active_workspace().map(|workspace| workspace.id);
         let existing = self.workspaces.len();
-        let mut opened = false;
+        let mut target = None;
         for path in paths {
             if !path.is_dir() {
                 continue;
             }
             let cwd = path.display().to_string();
             if let Some(at) = self.workspaces.iter().position(|ws| ws.cwd == cwd) {
-                self.active_idx = at;
-                opened = true;
+                target = Some(at);
                 continue;
             }
             let n = self.workspaces.len() + 1;
@@ -621,17 +618,17 @@ impl PaneFlowApp {
             let ws_id = next_workspace_id();
             let ws = Workspace::empty_with_cwd_and_id(ws_id, title, path.clone());
             Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-            self.workspaces.push(ws);
-            self.active_idx = self.workspaces.len() - 1;
-            opened = true;
+            target = Some(self.add_workspace(ws));
         }
-        if !opened {
+        let Some(target) = target else {
+            return;
+        };
+        self.record_recent_workspaces(paths, cx);
+        if target < existing {
+            self.activate_workspace_without_window(target, cx);
             return;
         }
-        if self.active_idx < existing {
-            self.probe_workspace_git_if_shown_changed(shown_before, cx);
-        }
-        self.record_recent_workspaces(paths, cx);
+        self.active_idx = target;
         self.save_session(cx);
         cx.notify();
     }
@@ -864,7 +861,9 @@ impl PaneFlowApp {
             if let Some(ws) = self.active_workspace_mut() {
                 ws.active_tab_mut().root = Some(LayoutTree::Leaf(new_pane));
             }
-            self.workspaces[self.active_idx].focus_first(window, cx);
+            if let Some(ws) = self.active_workspace() {
+                ws.focus_first(window, cx);
+            }
         }
 
         self.save_session(cx);
@@ -890,7 +889,7 @@ impl PaneFlowApp {
         };
 
         let (ws_idx, tab_idx) =
-            match undo_pane_destination(&self.workspaces, self.active_idx, &record) {
+            match undo_pane_destination(&self.workspaces, self.shown_workspace_idx(), &record) {
                 Ok(destination) => destination,
                 Err(message) => {
                     self.closed_panes.push(ClosedRecord::Pane(record));
@@ -898,11 +897,8 @@ impl PaneFlowApp {
                     return;
                 }
             };
-        let shown_before = self.active_workspace().map(|workspace| workspace.id);
-        self.dismiss_transient_surfaces();
-        self.active_idx = ws_idx;
         self.workspaces[ws_idx].set_active_tab(tab_idx);
-        self.probe_workspace_git_if_shown_changed(shown_before, cx);
+        self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::FirstPane, window, cx);
         let ws_id = self.workspaces[ws_idx].id;
         let worktree = self.workspaces[ws_idx].active_tab().worktree.clone();
         let ClosedPaneRecord {
@@ -958,7 +954,9 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_workspace_at(self.active_idx, window, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.close_workspace_at(idx, window, cx);
+        }
     }
 
     pub(crate) fn handle_copy_workspace_path(
@@ -967,7 +965,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.copy_workspace_path(self.active_idx, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.copy_workspace_path(idx, cx);
+        }
     }
 
     pub(crate) fn handle_reveal_workspace_in_file_manager(
@@ -976,7 +976,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.reveal_workspace_in_file_manager(self.active_idx, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.reveal_workspace_in_file_manager(idx, cx);
+        }
     }
 
     pub(crate) fn handle_open_workspace_in_zed(
@@ -985,7 +987,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_workspace_in_editor(self.active_idx, "zed", "Zed", cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.open_workspace_in_editor(idx, "zed", "Zed", cx);
+        }
     }
 
     pub(crate) fn handle_open_workspace_in_cursor(
@@ -994,7 +998,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_workspace_in_editor(self.active_idx, "cursor", "Cursor", cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.open_workspace_in_editor(idx, "cursor", "Cursor", cx);
+        }
     }
 
     pub(crate) fn handle_open_workspace_in_vscode(
@@ -1003,7 +1009,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_workspace_in_editor(self.active_idx, "code", "VS Code", cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.open_workspace_in_editor(idx, "code", "VS Code", cx);
+        }
     }
 
     pub(crate) fn handle_open_workspace_in_windsurf(
@@ -1012,7 +1020,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_workspace_in_editor(self.active_idx, "windsurf", "Windsurf", cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.open_workspace_in_editor(idx, "windsurf", "Windsurf", cx);
+        }
     }
 
     pub(crate) fn close_workspace_at(
@@ -1052,16 +1062,16 @@ impl PaneFlowApp {
             self.renaming_tab = None;
         }
         self.dismiss_transient_surfaces();
-        if self.workspaces.is_empty() {
-            self.active_idx = 0;
-        } else {
-            if self.active_idx >= self.workspaces.len() {
-                self.active_idx = self.workspaces.len() - 1;
-            } else if self.active_idx > idx {
-                self.active_idx -= 1;
-            }
-            if let Some(window) = window {
-                self.workspaces[self.active_idx].focus_first(window, cx);
+        self.active_idx = crate::app::spaces::active_idx_after_removal(
+            &self.workspaces,
+            self.active_idx,
+            idx,
+            self.active_space.as_ref(),
+        );
+        if let Some(window) = window {
+            match self.active_workspace() {
+                Some(ws) => ws.focus_first(window, cx),
+                None => window.focus(&self.welcome_focus, cx),
             }
         }
         self.probe_workspace_git_if_shown_changed(shown_before, cx);
@@ -1082,7 +1092,7 @@ impl PaneFlowApp {
         let Some(from_idx) = self.workspaces.iter().position(|ws| ws.id == from_id) else {
             return;
         };
-        let active_id = self.workspaces.get(self.active_idx).map(|ws| ws.id);
+        let active_id = self.active_workspace().map(|ws| ws.id);
         let ws = self.workspaces.remove(from_idx);
         let insert_at = to_idx.min(self.workspaces.len());
         if from_idx == insert_at {
@@ -1193,8 +1203,8 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let order = Self::compute_display_order(&self.workspaces);
-        if let Some(next) = next_in_display_order(&order, self.active_idx) {
+        let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
+        if let Some(next) = next_in_display_order(&order, self.shown_workspace_idx()) {
             self.select_workspace(next, window, cx);
         }
     }
@@ -1205,11 +1215,12 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspaces.is_empty() {
+        let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
+        if order.is_empty() {
             self.open_recent_workspace(idx, window, cx);
             return;
         }
-        if let Some(target) = Self::compute_display_order(&self.workspaces).get(idx) {
+        if let Some(target) = order.get(idx) {
             self.select_workspace(*target, window, cx);
         }
     }
@@ -1288,8 +1299,8 @@ impl PaneFlowApp {
     }
 }
 
-fn next_in_display_order(order: &[usize], active: usize) -> Option<usize> {
-    let position = order.iter().position(|&idx| idx == active);
+fn next_in_display_order(order: &[usize], active: Option<usize>) -> Option<usize> {
+    let position = order.iter().position(|&idx| Some(idx) == active);
     let next = position.map_or(0, |position| (position + 1) % order.len());
     order.get(next).copied()
 }
@@ -1637,25 +1648,29 @@ mod tests {
         let unzoom = Err("Unzoom before restoring a closed pane".to_string());
 
         assert_eq!(
-            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, origin_id, None)),
+            undo_pane_destination(&workspaces, Some(0), &pane_record(None, 9, origin_id, None)),
             Ok((1, 0)),
             "the record follows its workspace id, not the active index"
         );
         assert_eq!(
-            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, zoomed_id, None)),
+            undo_pane_destination(&workspaces, Some(0), &pane_record(None, 9, zoomed_id, None)),
             unzoom
         );
         assert_eq!(
-            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, 404, None)),
+            undo_pane_destination(&workspaces, Some(0), &pane_record(None, 9, 404, None)),
             unzoom,
             "a vanished tab falls back to the active tab, which is zoomed here"
         );
         assert_eq!(
-            undo_pane_destination(&workspaces, 0, &pane_record(None, 9, full_id, None)),
+            undo_pane_destination(&workspaces, Some(0), &pane_record(None, 9, full_id, None)),
             Err(format!("Maximum pane count reached ({MAX_PANES})"))
         );
         assert_eq!(
-            undo_pane_destination(&workspaces, 0, &pane_record(None, 42, origin_id, None)),
+            undo_pane_destination(
+                &workspaces,
+                Some(0),
+                &pane_record(None, 42, origin_id, None)
+            ),
             Ok((0, 0)),
             "a closed workspace falls back to the active one"
         );
@@ -1738,7 +1753,7 @@ mod tests {
             named_workspace(2, None, &["b"]),
             named_workspace(3, Some("/repo"), &["c"]),
         ];
-        let order = PaneFlowApp::compute_display_order(&workspaces);
+        let order = PaneFlowApp::compute_display_order(&workspaces, None);
         assert_eq!(
             order,
             vec![0, 2, 1],
@@ -1750,10 +1765,50 @@ mod tests {
             Some(2),
             "Cmd/Ctrl+2 opens the second row"
         );
-        assert_eq!(next_in_display_order(&order, 0), Some(2));
-        assert_eq!(next_in_display_order(&order, 2), Some(1));
-        assert_eq!(next_in_display_order(&order, 1), Some(0));
-        assert_eq!(next_in_display_order(&[], 0), None);
+        assert_eq!(next_in_display_order(&order, Some(0)), Some(2));
+        assert_eq!(next_in_display_order(&order, Some(2)), Some(1));
+        assert_eq!(next_in_display_order(&order, Some(1)), Some(0));
+        assert_eq!(next_in_display_order(&[], Some(0)), None);
+    }
+
+    #[test]
+    fn workspace_shortcuts_only_walk_the_active_space_and_keep_repo_groups() {
+        let work = paneflow_config::schema::SpaceId::new();
+        let mut workspaces = vec![
+            named_workspace(1, Some("/repo"), &["a"]),
+            named_workspace(2, None, &["b"]),
+            named_workspace(3, Some("/repo"), &["c"]),
+            named_workspace(4, Some("/repo"), &["d"]),
+            named_workspace(5, None, &["e"]),
+        ];
+        for idx in [1, 2, 3] {
+            workspaces[idx].space = Some(work.clone());
+        }
+
+        let order = PaneFlowApp::compute_display_order(&workspaces, Some(&work));
+        assert_eq!(
+            order,
+            vec![1, 2, 3],
+            "only the space's workspaces, its two /repo checkouts grouped"
+        );
+        assert_eq!(
+            PaneFlowApp::compute_display_order(&workspaces, None),
+            vec![0, 4],
+            "a lone checkout of a repo shared with another space is not grouped"
+        );
+        assert_eq!(next_in_display_order(&order, Some(3)), Some(1));
+        assert_eq!(
+            next_in_display_order(&order, Some(0)),
+            Some(1),
+            "from a workspace outside the space, Next starts at the space's first"
+        );
+        assert_eq!(
+            PaneFlowApp::compute_display_order(
+                &workspaces,
+                Some(&paneflow_config::schema::SpaceId::new())
+            ),
+            Vec::<usize>::new()
+        );
     }
 
     #[test]

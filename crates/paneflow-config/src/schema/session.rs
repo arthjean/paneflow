@@ -1,4 +1,4 @@
-use super::identity::{SessionId, WorkspaceId};
+use super::identity::{SessionId, SpaceId, WorkspaceId};
 use super::layout::{default_layout_pane, LayoutNode, SurfaceDefinition};
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +21,12 @@ pub struct SessionState {
         deserialize_with = "lenient_detached_panes"
     )]
     pub detached_panes: Vec<DetachedPaneSession>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_space_ref"
+    )]
+    pub active_space: Option<SpaceId>,
 }
 
 pub const MAX_DETACHED_PANE_WINDOWS: usize = 16;
@@ -34,6 +40,22 @@ where
         .into_iter()
         .filter_map(|entry| serde_json::from_value(entry).ok())
         .collect())
+}
+
+fn lenient_space_ref<'de, D>(deserializer: D) -> Result<Option<SpaceId>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(
+        |value| match serde_json::from_value::<SpaceId>(value.clone()) {
+            Ok(space) => Some(space),
+            Err(error) => {
+                tracing::warn!(%value, %error, "session: ignoring a malformed space reference");
+                None
+            }
+        },
+    ))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -219,6 +241,12 @@ pub struct WorkspaceSession {
     pub sidebar_collapsed: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub muted: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_space_ref"
+    )]
+    pub space: Option<SpaceId>,
 }
 
 pub fn migrate_session_v1(state: &mut SessionState) {

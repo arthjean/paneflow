@@ -316,8 +316,10 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
                 window.window_handle().window_id(),
                 window.is_window_active(),
             );
-            if window.is_window_active() {
-                this.probe_workspace_git_now(this.active_idx, cx);
+            if window.is_window_active()
+                && let Some(idx) = this.shown_workspace_idx()
+            {
+                this.probe_workspace_git_now(idx, cx);
             }
             #[cfg(target_os = "linux")]
             crate::window_chrome::linux_backdrop::refresh_blur_region(
@@ -349,7 +351,7 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
     });
 
     view.update(cx, |app, cx| {
-        if let Some(ws) = app.workspaces.get(app.active_idx) {
+        if let Some(ws) = app.active_workspace() {
             ws.focus_first(window, cx);
         }
         cx.on_next_frame(window, |app, window, cx| {

@@ -138,7 +138,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         window.blur(cx);
-        if let Some(ws) = self.workspaces.get(self.active_idx) {
+        if let Some(ws) = self.active_workspace() {
             ws.focus_first(window, cx);
         }
     }

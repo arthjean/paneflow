@@ -215,12 +215,17 @@ impl PaneFlowApp {
         crate::ui_primitives::highlight_matches(label, &query)
     }
 
-    fn sidebar_order_signature(workspaces: &[Workspace]) -> u64 {
+    fn sidebar_order_signature(
+        workspaces: &[Workspace],
+        active_space: Option<&paneflow_config::schema::SpaceId>,
+    ) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         workspaces.len().hash(&mut hasher);
+        active_space.hash(&mut hasher);
         for workspace in workspaces {
             workspace.id.hash(&mut hasher);
+            workspace.space.hash(&mut hasher);
             match &workspace.repo_root {
                 Some(root) => root.hash(&mut hasher),
                 None => 0u8.hash(&mut hasher),
@@ -229,17 +234,26 @@ impl PaneFlowApp {
         hasher.finish()
     }
 
-    pub(crate) fn compute_display_order(workspaces: &[Workspace]) -> Vec<usize> {
+    pub(crate) fn compute_display_order(
+        workspaces: &[Workspace],
+        space: Option<&paneflow_config::schema::SpaceId>,
+    ) -> Vec<usize> {
         let mut repo_members: std::collections::HashMap<&std::path::Path, Vec<usize>> =
             std::collections::HashMap::new();
+        let mut placed: Vec<bool> = workspaces
+            .iter()
+            .map(|workspace| !crate::app::spaces::in_space(workspace, space))
+            .collect();
         for (index, workspace) in workspaces.iter().enumerate() {
+            if placed[index] {
+                continue;
+            }
             if let Some(root) = &workspace.repo_root {
                 repo_members.entry(root.as_path()).or_default().push(index);
             }
         }
 
         let mut order = Vec::with_capacity(workspaces.len());
-        let mut placed = vec![false; workspaces.len()];
         for (index, workspace) in workspaces.iter().enumerate() {
             if placed[index] {
                 continue;
@@ -515,9 +529,9 @@ impl PaneFlowApp {
     }
 
     fn sidebar_rows(&self, query: &str) -> Vec<SidebarRow> {
-        let signature = Self::sidebar_order_signature(&self.workspaces);
+        let signature = Self::sidebar_order_signature(&self.workspaces, self.active_space.as_ref());
         if self.sidebar_order_cache.borrow().signature != Some(signature) {
-            let order = Self::compute_display_order(&self.workspaces);
+            let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
             let mut cache = self.sidebar_order_cache.borrow_mut();
             cache.order = order;
             cache.signature = Some(signature);
@@ -588,14 +602,15 @@ impl PaneFlowApp {
             .iter()
             .map(|ws| (ws.id, ws.tabs().iter().map(|tab| tab.id).collect()))
             .collect();
-        let order: Vec<_> = Self::compute_display_order(&self.workspaces)
-            .into_iter()
-            .flat_map(|i| {
-                std::iter::once(SidebarRow::Folder(i)).chain(
-                    (0..self.workspaces[i].tab_count()).map(move |tab| SidebarRow::Tab(i, tab)),
-                )
-            })
-            .collect();
+        let order: Vec<_> =
+            Self::compute_display_order(&self.workspaces, self.active_space.as_ref())
+                .into_iter()
+                .flat_map(|i| {
+                    std::iter::once(SidebarRow::Folder(i)).chain(
+                        (0..self.workspaces[i].tab_count()).map(move |tab| SidebarRow::Tab(i, tab)),
+                    )
+                })
+                .collect();
         let (animated_rows, animating) = {
             let mut motion = self.sidebar_row_motion.borrow_mut();
             motion.update(topology, &query, &rows, &order, std::time::Instant::now());

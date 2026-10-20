@@ -346,8 +346,7 @@ impl PaneFlowApp {
             Workspace::with_id(ws_id, &name, pane)
         };
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        self.workspaces.push(ws);
-        let idx = self.workspaces.len() - 1;
+        let idx = self.add_workspace(ws);
 
         let panes = if let Some(ref mut layout) = layout {
             let previous_idx = self.active_idx;
@@ -460,8 +459,7 @@ impl PaneFlowApp {
         let mut ws = Workspace::restored_with_id(ws_id, &name, ws_cwd, tabs, active_tab);
         ws.managed_worktrees = managed_worktrees;
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        self.workspaces.push(ws);
-        let idx = self.workspaces.len() - 1;
+        let idx = self.add_workspace(ws);
         self.activate_workspace_without_window(idx, cx);
         if let Some(pane) = requested_focus.and_then(|i| panes.get(i)) {
             self.pending_pane_focus = Some(pane.clone());
@@ -619,6 +617,7 @@ impl PaneFlowApp {
     ) -> serde_json::Value {
         match method {
             "workspace.list" => {
+                let shown = self.shown_workspace_idx();
                 let list: Vec<_> = self
                     .workspaces
                     .iter()
@@ -629,7 +628,7 @@ impl PaneFlowApp {
                             "title": ws.title,
                             "cwd": ws.cwd,
                             "panes": ws.pane_count(),
-                            "active": i == self.active_idx,
+                            "active": Some(i) == shown,
                         })
                     })
                     .collect();

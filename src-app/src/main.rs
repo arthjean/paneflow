@@ -170,6 +170,8 @@ struct PaneFlowApp {
     pending_detached_panes: Vec<paneflow_config::schema::DetachedPaneSession>,
     workspaces: Vec<Workspace>,
     active_idx: usize,
+    active_space: Option<paneflow_config::schema::SpaceId>,
+    space_last_shown: std::collections::HashMap<Option<paneflow_config::schema::SpaceId>, u64>,
     renaming_tab: Option<TabKey>,
     sidebar_focus: FocusHandle,
     sidebar_cursor: Option<app::sidebar::keyboard::SidebarCursor>,

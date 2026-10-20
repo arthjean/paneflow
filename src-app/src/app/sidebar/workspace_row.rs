@@ -29,7 +29,7 @@ impl PaneFlowApp {
             .aria_level(1)
             .aria_label(ws_title.clone())
             .aria_expanded(is_expanded)
-            .aria_selected(i == self.active_idx)
+            .aria_selected(self.shown_workspace_idx() == Some(i))
             .when_some(title_tooltip, |shell, title| {
                 shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
             })

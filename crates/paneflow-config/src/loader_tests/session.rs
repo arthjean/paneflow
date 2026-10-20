@@ -13,6 +13,7 @@ fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSes
         managed_worktrees: vec![],
         sidebar_collapsed: false,
         muted: false,
+        space: None,
     }
 }
 
@@ -79,6 +80,7 @@ fn test_session_roundtrip_single_workspace() {
             })],
         )],
         detached_panes: Vec::new(),
+        active_space: None,
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -108,6 +110,7 @@ fn test_session_roundtrip_multiple_workspaces() {
             make_workspace("devops", "/home/user/infra", vec![TabSession::empty()]),
         ],
         detached_panes: Vec::new(),
+        active_space: None,
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -149,6 +152,7 @@ fn test_session_roundtrip_nested_splits() {
             })],
         )],
         detached_panes: Vec::new(),
+        active_space: None,
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -175,6 +179,7 @@ fn test_session_roundtrip_with_scrollback() {
             })],
         )],
         detached_panes: Vec::new(),
+        active_space: None,
     };
     let json = serde_json::to_string_pretty(&state).unwrap();
     let restored: SessionState = serde_json::from_str(&json).unwrap();
@@ -718,6 +723,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
             ],
         )],
         detached_panes: Vec::new(),
+        active_space: None,
     };
     let json = serde_json::to_string(&state).unwrap();
     let back: SessionState = serde_json::from_str(&json).unwrap();
@@ -908,4 +914,86 @@ fn an_agent_session_round_trips_and_an_older_reader_ignores_it() {
     let mut from_the_future = json;
     from_the_future["agent_session_v2"] = serde_json::json!({ "unknown": true });
     assert!(serde_json::from_value::<SurfaceDefinition>(from_the_future).is_ok());
+}
+
+const WORK_SPACE: &str = "550e8400-e29b-41d4-a716-446655440001";
+const HOME_SPACE: &str = "550e8400-e29b-41d4-a716-446655440002";
+
+#[test]
+fn space_membership_and_the_active_space_round_trip_as_additive_fields() {
+    let work = SpaceId::parse(WORK_SPACE).unwrap();
+    let home = SpaceId::parse(HOME_SPACE).unwrap();
+    let mut workspaces = vec![
+        make_workspace("api", "/work/api", vec![]),
+        make_workspace("blog", "/home/blog", vec![]),
+        make_workspace("scratch", "/tmp", vec![]),
+    ];
+    workspaces[0].space = Some(work.clone());
+    workspaces[1].space = Some(home);
+    let state = SessionState {
+        version: SESSION_SCHEMA_VERSION,
+        active_workspace: 0,
+        workspaces,
+        detached_panes: Vec::new(),
+        active_space: Some(work),
+    };
+
+    let json = serde_json::to_value(&state).unwrap();
+    assert_eq!(json["version"], 3);
+    assert_eq!(json["active_space"], WORK_SPACE);
+    assert_eq!(json["workspaces"][0]["space"], WORK_SPACE);
+    assert_eq!(json["workspaces"][1]["space"], HOME_SPACE);
+    assert!(json["workspaces"][2].get("space").is_none());
+    let restored: SessionState = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, state);
+}
+
+#[test]
+fn a_session_written_before_spaces_loads_every_workspace_in_the_default_space() {
+    let json = r#"{"version": 3, "active_workspace": 1, "workspaces": [
+        {"title": "a", "cwd": "/a"}, {"title": "b", "cwd": "/b"}
+    ]}"#;
+    let restored: SessionState = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.active_space, None);
+    assert!(restored.workspaces.iter().all(|ws| ws.space.is_none()));
+}
+
+#[test]
+fn a_malformed_space_reference_is_dropped_instead_of_failing_the_session() {
+    let json = r#"{"version": 3, "active_workspace": 0, "active_space": 7, "workspaces": [
+        {"title": "a", "cwd": "/a", "space": "not-a-uuid"}
+    ]}"#;
+    let restored: SessionState = serde_json::from_str(json).unwrap();
+    assert_eq!(restored.active_space, None);
+    assert_eq!(restored.workspaces[0].space, None);
+}
+
+#[test]
+fn the_previous_version_reads_a_session_that_carries_spaces() {
+    #[derive(serde::Deserialize)]
+    struct PreviousWorkspaceSession {
+        title: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct PreviousSessionState {
+        version: u32,
+        active_workspace: usize,
+        workspaces: Vec<PreviousWorkspaceSession>,
+    }
+    let mut workspace = make_workspace("api", "/work/api", vec![]);
+    workspace.space = Some(SpaceId::parse(WORK_SPACE).unwrap());
+    let state = SessionState {
+        version: SESSION_SCHEMA_VERSION,
+        active_workspace: 0,
+        workspaces: vec![workspace],
+        detached_panes: Vec::new(),
+        active_space: Some(SpaceId::parse(HOME_SPACE).unwrap()),
+    };
+    let written = serde_json::to_string(&state).unwrap();
+    assert!(written.contains("\"space\"") && written.contains("\"active_space\""));
+
+    let previous: PreviousSessionState = serde_json::from_str(&written).unwrap();
+    assert_eq!(previous.version, SESSION_SCHEMA_VERSION);
+    assert_eq!(previous.active_workspace, 0);
+    assert_eq!(previous.workspaces[0].title, "api");
 }

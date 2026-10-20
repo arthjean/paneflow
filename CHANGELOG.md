@@ -8,6 +8,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Added
 
 - Comfortable density, a new setting in Settings > Appearance and in the command palette. It is on by default and keeps panes as separate rounded cards with a gutter between them. Turned off, the panes of a workspace and the diff dock join edge to edge with a 1 px divider, and only the outer corners of the grid stay rounded. The divider keeps a 7 px grab area for resizing. The setting is stored as `comfortable_density` in `paneflow.json`.
+- Spaces group workspaces into named contexts, such as work and personal projects. `paneflow.json` takes a `spaces` list of up to 9 entries, each with an `id`, a `name` of at most 32 characters, and an optional `color` (`red`, `green`, `yellow`, `blue`, `magenta`, or `cyan`); hand edits apply without a restart, and an invalid entry is skipped with a warning while the others load. Every workspace belongs to one space, `Default` when it has none, and new workspaces join the active space. The sidebar, `Ctrl+1` to `Ctrl+9`, and Next workspace only cover the active space, and opening a workspace of another space, for example a folder that is already open there, switches to that space. Each workspace's space and the active space are kept in `session.json` as optional fields, so a previous version still reads the file; a space removed from `paneflow.json` sends its workspaces back to `Default`. With no `spaces` entry, nothing changes.
 
 ### Changed
 

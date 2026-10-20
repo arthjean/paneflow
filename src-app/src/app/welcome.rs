@@ -130,8 +130,7 @@ impl PaneFlowApp {
             let _ = this.update_in(cx, |app, window, cx| match state {
                 Some(crate::fs_probe::DirProbe::Dir) => {
                     app.open_workspace_folders(std::slice::from_ref(&entry.path), cx);
-                    let idx = app.active_idx;
-                    if idx < app.workspaces.len() {
+                    if let Some(idx) = app.shown_workspace_idx() {
                         app.select_workspace(idx, window, cx);
                     }
                 }

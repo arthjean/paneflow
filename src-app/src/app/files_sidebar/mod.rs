@@ -85,7 +85,7 @@ impl PaneFlowApp {
             self.close_files_sidebar(cx);
             return;
         }
-        let Some(ws) = self.workspaces.get(self.active_idx) else {
+        let Some(ws) = self.active_workspace() else {
             return;
         };
         let root = PathBuf::from(&ws.cwd);
@@ -182,7 +182,7 @@ impl PaneFlowApp {
         if !self.files_sidebar_open {
             return;
         }
-        let Some(ws) = self.workspaces.get(self.active_idx) else {
+        let Some(ws) = self.active_workspace() else {
             return;
         };
         let root = PathBuf::from(&ws.cwd);
