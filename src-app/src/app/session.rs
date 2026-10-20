@@ -49,6 +49,7 @@ impl PaneFlowApp {
             detached_panes: self.serialize_detached_panes(cx),
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: self.active_idx,
+            active_space: self.active_space.clone(),
             workspaces: self
                 .workspaces
                 .iter()
@@ -87,6 +88,7 @@ impl PaneFlowApp {
                         .collect(),
                     sidebar_collapsed: !ws.sidebar_expanded,
                     muted: ws.muted,
+                    space: ws.space.clone(),
                 })
                 .collect(),
         }
@@ -528,8 +530,13 @@ impl PaneFlowApp {
 
     pub(crate) fn restore_workspaces(
         session: &paneflow_config::schema::SessionState,
+        config: &paneflow_config::schema::PaneFlowConfig,
         cx: &mut Context<Self>,
-    ) -> (Vec<Workspace>, usize) {
+    ) -> (
+        Vec<Workspace>,
+        usize,
+        Option<paneflow_config::schema::SpaceId>,
+    ) {
         let mut workspaces = Vec::new();
 
         for ws_session in &session.workspaces {
@@ -578,6 +585,7 @@ impl PaneFlowApp {
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
             workspace.muted = ws_session.muted;
+            workspace.space = ws_session.space.clone();
             let unread_surfaces: Vec<u64> = ws_session
                 .tabs
                 .iter()
@@ -624,10 +632,8 @@ impl PaneFlowApp {
             .detach();
         }
 
-        let active_idx = session
-            .active_workspace
-            .min(workspaces.len().saturating_sub(1));
-        (workspaces, active_idx)
+        let (active_idx, active_space) = restored_space_view(&mut workspaces, session, config);
+        (workspaces, active_idx, active_space)
     }
 
     fn build_restored_surface(
@@ -854,6 +860,31 @@ fn restored_path_fallbacks(workspaces: &[Workspace], missing: &[PathBuf]) -> Res
         }
     }
     plan
+}
+
+fn restored_space_view(
+    workspaces: &mut [Workspace],
+    session: &paneflow_config::schema::SessionState,
+    config: &paneflow_config::schema::PaneFlowConfig,
+) -> (usize, Option<paneflow_config::schema::SpaceId>) {
+    let mut active_space = session.active_space.clone();
+    let orphans = crate::app::spaces::release_undeclared_spaces(
+        workspaces,
+        &mut active_space,
+        &mut crate::app::spaces::SpaceMemory::new(),
+        config,
+    );
+    if orphans > 0 {
+        log::info!(
+            "session restore: {orphans} reference(s) to undeclared spaces fall back to the default space"
+        );
+    }
+    let active_idx = crate::app::spaces::restored_active_idx(
+        workspaces,
+        session.active_workspace,
+        active_space.as_ref(),
+    );
+    (active_idx, active_space)
 }
 
 fn restored_pull_requests(
@@ -1651,8 +1682,10 @@ mod tests {
                 managed_worktrees: Vec::new(),
                 sidebar_collapsed: false,
                 muted: false,
+                space: None,
             }],
             detached_panes: Vec::new(),
+            active_space: None,
         };
 
         forget_terminal_sessions(&mut state);
@@ -2515,5 +2548,139 @@ mod tests {
             PaneFlowApp::load_session_with_recovery_at(&path).0,
             Some(interrupted)
         );
+    }
+
+    fn space_config(
+        ids: &[&paneflow_config::schema::SpaceId],
+    ) -> paneflow_config::schema::PaneFlowConfig {
+        paneflow_config::schema::PaneFlowConfig {
+            spaces: ids
+                .iter()
+                .enumerate()
+                .map(|(n, id)| paneflow_config::schema::SpaceConfig {
+                    id: (*id).clone(),
+                    name: format!("Space {n}"),
+                    color: None,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn spaced_session(
+        spaces: &[Option<paneflow_config::schema::SpaceId>],
+        active_workspace: usize,
+        active_space: Option<paneflow_config::schema::SpaceId>,
+    ) -> (Vec<Workspace>, paneflow_config::schema::SessionState) {
+        let workspaces = spaces
+            .iter()
+            .enumerate()
+            .map(|(n, space)| {
+                let mut ws = Workspace::empty_with_cwd_and_id(
+                    n as u64 + 1,
+                    format!("ws{n}"),
+                    PathBuf::new(),
+                );
+                ws.space = space.clone();
+                ws
+            })
+            .collect();
+        let state = paneflow_config::schema::SessionState {
+            version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
+            active_workspace,
+            workspaces: spaces
+                .iter()
+                .map(|space| paneflow_config::schema::WorkspaceSession {
+                    id: None,
+                    title: String::new(),
+                    cwd: String::new(),
+                    tabs: Vec::new(),
+                    active_tab: 0,
+                    legacy_layout: None,
+                    custom_buttons: Vec::new(),
+                    expanded_paths: Vec::new(),
+                    managed_worktrees: Vec::new(),
+                    sidebar_collapsed: false,
+                    muted: false,
+                    space: space.clone(),
+                })
+                .collect(),
+            detached_panes: Vec::new(),
+            active_space,
+        };
+        (workspaces, state)
+    }
+
+    #[test]
+    fn three_workspaces_over_two_spaces_and_the_default_restore_their_spaces() {
+        let work = paneflow_config::schema::SpaceId::new();
+        let home = paneflow_config::schema::SpaceId::new();
+        let config = space_config(&[&work, &home]);
+        let memberships = [Some(work.clone()), Some(home.clone()), None];
+        let (mut workspaces, state) = spaced_session(&memberships, 1, Some(home.clone()));
+        let json = serde_json::to_string(&state).unwrap();
+        let state: paneflow_config::schema::SessionState = serde_json::from_str(&json).unwrap();
+
+        let (active_idx, active_space) = restored_space_view(&mut workspaces, &state, &config);
+
+        assert_eq!((active_idx, active_space), (1, Some(home)));
+        let restored: Vec<_> = workspaces.iter().map(|ws| ws.space.clone()).collect();
+        assert_eq!(restored, memberships);
+    }
+
+    #[test]
+    fn references_to_spaces_missing_from_the_config_fall_back_to_the_default() {
+        let work = paneflow_config::schema::SpaceId::new();
+        let gone = paneflow_config::schema::SpaceId::new();
+        let config = space_config(&[&work]);
+        let (mut workspaces, state) = spaced_session(
+            &[Some(gone.clone()), Some(work.clone()), None],
+            1,
+            Some(gone),
+        );
+
+        let (active_idx, active_space) = restored_space_view(&mut workspaces, &state, &config);
+
+        assert_eq!(active_space, None);
+        assert_eq!(workspaces[0].space, None);
+        assert_eq!(workspaces[1].space, Some(work));
+        assert_eq!(
+            active_idx, 0,
+            "the saved workspace left the default space, so its first workspace shows"
+        );
+    }
+
+    #[test]
+    fn an_active_workspace_outside_the_restored_space_yields_the_first_or_none() {
+        let work = paneflow_config::schema::SpaceId::new();
+        let empty = paneflow_config::schema::SpaceId::new();
+        let config = space_config(&[&work, &empty]);
+        let (mut workspaces, state) = spaced_session(
+            &[None, Some(work.clone()), Some(work.clone())],
+            0,
+            Some(work.clone()),
+        );
+        let (active_idx, _) = restored_space_view(&mut workspaces, &state, &config);
+        assert_eq!(active_idx, 1);
+
+        let (mut workspaces, state) = spaced_session(&[None, Some(work)], 0, Some(empty.clone()));
+        let (active_idx, active_space) = restored_space_view(&mut workspaces, &state, &config);
+        assert_eq!(active_space, Some(empty.clone()));
+        assert_eq!(
+            crate::app::spaces::shown_index(&workspaces, active_idx, Some(&empty)),
+            None,
+            "an empty active space shows the empty state"
+        );
+    }
+
+    #[test]
+    fn a_session_from_before_spaces_restores_everything_in_the_default_space() {
+        let (mut workspaces, mut state) = spaced_session(&[None, None], 1, None);
+        let json = serde_json::to_value(&state).unwrap();
+        assert!(json.get("active_space").is_none());
+        state = serde_json::from_value(json).unwrap();
+        let (active_idx, active_space) =
+            restored_space_view(&mut workspaces, &state, &space_config(&[]));
+        assert_eq!((active_idx, active_space), (1, None));
     }
 }

@@ -78,11 +78,12 @@ fn git_dirs_changed_by(event: &notify::Event) -> Vec<std::path::PathBuf> {
 
 impl PaneFlowApp {
     fn shown_workspace_indices(&self, cx: &App) -> Vec<usize> {
+        let shown = self.shown_workspace_idx();
         self.workspaces
             .iter()
             .enumerate()
             .filter(|(idx, workspace)| {
-                *idx == self.active_idx
+                Some(*idx) == shown
                     || workspace
                         .collect_panes()
                         .iter()
@@ -168,8 +169,10 @@ impl PaneFlowApp {
         shown_before: Option<u64>,
         cx: &mut Context<Self>,
     ) {
-        if self.active_workspace().map(|workspace| workspace.id) != shown_before {
-            self.probe_workspace_git_now(self.active_idx, cx);
+        if let Some(idx) = self.shown_workspace_idx()
+            && Some(self.workspaces[idx].id) != shown_before
+        {
+            self.probe_workspace_git_now(idx, cx);
         }
     }
 

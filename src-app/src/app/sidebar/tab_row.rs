@@ -32,7 +32,7 @@ impl PaneFlowApp {
         let tab_id = tab.id;
         let title = tab_display_title(tab, tab_idx);
         let is_active_tab = tab_idx == ws.active_tab_idx();
-        let is_active_workspace = ws_idx == self.active_idx;
+        let is_active_workspace = self.shown_workspace_idx() == Some(ws_idx);
         let tab_key = TabKey {
             workspace_id: ws_id,
             tab_id,

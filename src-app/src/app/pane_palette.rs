@@ -223,10 +223,10 @@ impl PaneFlowApp {
         if self.settings_section.is_some() {
             return;
         }
-        let ws_idx = self.active_idx;
-        let Some(ws) = self.workspaces.get(ws_idx) else {
+        let Some(ws_idx) = self.shown_workspace_idx() else {
             return;
         };
+        let ws = &self.workspaces[ws_idx];
         let tab = ws.active_tab();
         if tab.root.is_some() || tab.saved_layout.is_some() {
             return;

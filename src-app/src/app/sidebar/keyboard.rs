@@ -42,13 +42,10 @@ impl PaneFlowApp {
             self.toggle_primary_sidebar(cx);
         }
         if self.sidebar_cursor_index(cx).is_none() {
-            self.sidebar_cursor = self
-                .workspaces
-                .get(self.active_idx)
-                .map(|ws| SidebarCursor {
-                    workspace_id: ws.id,
-                    tab_id: None,
-                });
+            self.sidebar_cursor = self.active_workspace().map(|ws| SidebarCursor {
+                workspace_id: ws.id,
+                tab_id: None,
+            });
         }
         self.sidebar_focus.focus(window, cx);
         cx.notify();
@@ -118,7 +115,7 @@ impl PaneFlowApp {
     }
 
     fn return_focus_to_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ws) = self.workspaces.get(self.active_idx) {
+        if let Some(ws) = self.active_workspace() {
             ws.focus_first(window, cx);
         }
         cx.notify();
@@ -154,7 +151,8 @@ impl PaneFlowApp {
                 self.reorder_workspace_tab(&drag, ws_idx, target, cx);
             }
             SidebarRow::Folder(ws_idx) => {
-                let order = Self::compute_display_order(&self.workspaces);
+                let order =
+                    Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
                 let Some(position) = order.iter().position(|&index| index == ws_idx) else {
                     return;
                 };

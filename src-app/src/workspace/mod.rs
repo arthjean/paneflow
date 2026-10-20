@@ -113,6 +113,7 @@ pub struct Workspace {
     pub managed_worktrees: Vec<worktree::ManagedWorktree>,
     pub sidebar_expanded: bool,
     pub muted: bool,
+    pub space: Option<paneflow_config::schema::SpaceId>,
     pub(crate) pending_pull_requests: Vec<(String, crate::app::pull_request::PullRequest)>,
 }
 
@@ -185,6 +186,7 @@ impl Workspace {
             managed_worktrees: Vec::new(),
             sidebar_expanded: true,
             muted: false,
+            space: None,
             pending_pull_requests: Vec::new(),
         }
     }

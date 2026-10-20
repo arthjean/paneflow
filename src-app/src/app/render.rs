@@ -236,7 +236,7 @@ impl Render for PaneFlowApp {
             if rename_live {
                 window.focus(&rename_focus, cx);
             } else if rename_focus.is_focused(window)
-                && let Some(ws) = self.workspaces.get(self.active_idx)
+                && let Some(ws) = self.active_workspace()
             {
                 ws.focus_first(window, cx);
             }
@@ -246,7 +246,7 @@ impl Render for PaneFlowApp {
         }
         self.prune_stale_split_palette(cx);
         self.ensure_pane_palette_for_empty_workspace(cx);
-        if self.workspaces.is_empty()
+        if self.active_workspace().is_none()
             && self.settings_section.is_none()
             && window.focused(cx).is_none()
         {

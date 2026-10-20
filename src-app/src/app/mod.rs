@@ -40,6 +40,7 @@ pub mod sessions_sidebar;
 pub mod settings;
 pub mod sidebar;
 pub mod sidebar_actions_menu;
+pub(crate) mod spaces;
 pub mod system_info_dialog;
 pub mod tab_worktree;
 pub mod telemetry_events;

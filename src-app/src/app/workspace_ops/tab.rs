@@ -109,7 +109,9 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_pane_palette(self.active_idx, window, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.open_pane_palette(idx, window, cx);
+        }
     }
 
     pub(crate) fn handle_next_tab(
@@ -145,7 +147,9 @@ impl PaneFlowApp {
         }
         let current = ws.active_tab_idx() as isize;
         let next = (current + step).rem_euclid(count as isize) as usize;
-        self.focus_workspace_tab(self.active_idx, next, window, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.focus_workspace_tab(idx, next, window, cx);
+        }
         cx.notify();
     }
 
@@ -179,7 +183,7 @@ impl PaneFlowApp {
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.set_active_tab(tab_idx);
         }
-        if ws_idx == self.active_idx {
+        if self.shown_workspace_idx() == Some(ws_idx) {
             self.workspaces[ws_idx].focus_first(window, cx);
             self.save_session(cx);
         } else {
@@ -189,26 +193,22 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn acknowledge_visible_completions(&mut self, cx: &mut Context<Self>) {
-        let Some(ws) = self.workspaces.get(self.active_idx) else {
+        let Some(shown) = self.shown_workspace_idx() else {
             return;
         };
+        let ws = &self.workspaces[shown];
         let badge_unread = ws.agent_completion_notification.is_unread();
         let seen = ws.active_tab().surface_ids(cx);
         let acknowledged = self.unread_sessions_for_surfaces(&seen, cx);
         if acknowledged.is_empty() && !badge_unread {
             return;
         }
-        let live: std::collections::HashSet<u64> = self
-            .workspaces
-            .get(self.active_idx)
-            .map(|ws| {
-                ws.tabs()
-                    .iter()
-                    .flat_map(|tab| tab.surface_ids(cx))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if badge_unread && let Some(ws) = self.workspaces.get_mut(self.active_idx) {
+        let live: std::collections::HashSet<u64> = self.workspaces[shown]
+            .tabs()
+            .iter()
+            .flat_map(|tab| tab.surface_ids(cx))
+            .collect();
+        if badge_unread && let Some(ws) = self.active_workspace_mut() {
             ws.agent_completion_notification.acknowledge(&seen, &live);
         }
         crate::app::host_agents::acknowledge_worker_unread(
@@ -259,7 +259,7 @@ impl PaneFlowApp {
             self.renaming_tab = None;
         }
         self.dismiss_transient_surfaces();
-        if ws_idx == self.active_idx {
+        if self.shown_workspace_idx() == Some(ws_idx) {
             self.workspaces[ws_idx].focus_first(window, cx);
         }
         self.save_session(cx);
@@ -300,7 +300,8 @@ impl PaneFlowApp {
             .workspaces
             .iter()
             .position(|ws| ws.id == record.workspace_id)
-            .unwrap_or(self.active_idx);
+            .or(self.shown_workspace_idx())
+            .unwrap_or(usize::MAX);
         let Some(ws) = self.workspaces.get(ws_idx) else {
             self.closed_panes.push(ClosedRecord::Tab(record));
             self.show_toast("No workspace to reopen the tab in", cx);
@@ -394,7 +395,9 @@ impl PaneFlowApp {
         let Some(tab_idx) = self.active_workspace().map(|ws| ws.active_tab_idx()) else {
             return;
         };
-        self.close_workspace_tab(self.active_idx, tab_idx, window, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.close_workspace_tab(idx, tab_idx, window, cx);
+        }
     }
 
     pub(crate) fn begin_tab_rename(

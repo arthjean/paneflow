@@ -543,6 +543,7 @@ impl PaneFlowApp {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
             }
+            self.reconcile_spaces_with_config(cx);
             cx.notify();
         }
 

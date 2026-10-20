@@ -466,7 +466,9 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.resume_ended_sessions_in_workspace(self.active_idx, cx);
+        if let Some(idx) = self.shown_workspace_idx() {
+            self.resume_ended_sessions_in_workspace(idx, cx);
+        }
     }
 
     pub(crate) fn handle_remove_ended_sessions(
@@ -475,7 +477,7 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws) = self.workspaces.get(self.active_idx) else {
+        let Some(ws) = self.active_workspace() else {
             return;
         };
         let ended: Vec<SessionId> = self
@@ -693,8 +695,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_idx < self.workspaces.len() {
-            let ws_idx = self.active_idx;
+        if let Some(ws_idx) = self.shown_workspace_idx() {
             self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
             return;
         }
@@ -729,8 +730,7 @@ impl PaneFlowApp {
         let pane = self.create_pane(terminal, ws_id, cx);
         let ws = Workspace::with_cwd_and_id(ws_id, listed.label(), cwd, pane.clone());
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        self.workspaces.push(ws);
-        self.active_idx = self.workspaces.len() - 1;
+        self.active_idx = self.add_workspace(ws);
         self.seed_surface_from_host(&listed.session, ws_id, surface_id, cx);
         self.owned_sessions
             .rows
@@ -751,9 +751,12 @@ impl PaneFlowApp {
         if ws_idx >= self.workspaces.len() {
             return;
         }
-        let shown_before = self.active_workspace().map(|workspace| workspace.id);
-        self.active_idx = ws_idx;
-        self.probe_workspace_git_if_shown_changed(shown_before, cx);
+        self.activate_workspace_at(
+            ws_idx,
+            crate::app::workspace_ops::WorkspaceFocusTarget::FirstPane,
+            window,
+            cx,
+        );
         let ws_id = self.workspaces[ws_idx].id;
         let cwd = std::path::PathBuf::from(&listed.cwd);
         let terminal = cx.new(|cx| {

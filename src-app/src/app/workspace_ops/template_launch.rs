@@ -56,10 +56,10 @@ impl PaneFlowApp {
 
     pub(crate) fn open_workspace_index_for_project(&self, project: &str) -> Option<usize> {
         let project = canonicalize_workspace_cwd(project).ok()?;
-        if let Some(active) = self.workspaces.get(self.active_idx)
-            && workspace_cwd_matches(&active.cwd, &project)
+        if let Some(active) = self.shown_workspace_idx()
+            && workspace_cwd_matches(&self.workspaces[active].cwd, &project)
         {
-            return Some(self.active_idx);
+            return Some(active);
         }
         self.workspaces
             .iter()
@@ -147,10 +147,8 @@ impl PaneFlowApp {
             }
         }
 
-        if self.active_idx != target_idx {
-            self.active_idx = target_idx;
-            self.sync_files_sidebar_session(cx);
-            self.probe_workspace_git_now(target_idx, cx);
+        if self.shown_workspace_idx() != Some(target_idx) {
+            self.activate_workspace_without_window(target_idx, cx);
         }
         if let Some(pane) = focus_pane {
             self.pending_pane_focus = Some(pane);

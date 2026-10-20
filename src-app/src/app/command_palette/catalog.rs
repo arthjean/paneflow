@@ -222,7 +222,7 @@ fn workspace_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
             } else {
                 workspace.title.clone()
             },
-            current: idx == app.active_idx,
+            current: Some(idx) == app.shown_workspace_idx(),
             apply: Apply::Workspace(idx),
         })
         .collect()
@@ -797,8 +797,9 @@ pub(crate) const COMMANDS: &[Command] = &[
                     .is_some_and(|workspace| workspace.muted)
             },
             write: |app, _next, cx| {
-                let active = app.active_idx;
-                app.toggle_workspace_muted(active, cx);
+                if let Some(active) = app.shown_workspace_idx() {
+                    app.toggle_workspace_muted(active, cx);
+                }
             },
         },
     },
@@ -808,8 +809,9 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "notification acknowledge agent",
         needs: Needs::Workspace,
         kind: Kind::Run(|app, _window, cx| {
-            let active = app.active_idx;
-            app.mark_workspace_read(active, cx);
+            if let Some(active) = app.shown_workspace_idx() {
+                app.mark_workspace_read(active, cx);
+            }
         }),
     },
     Command {

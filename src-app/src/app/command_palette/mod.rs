@@ -360,8 +360,9 @@ impl PaneFlowApp {
             Apply::InterfaceStyle(style) => self.apply_interface_style(style, cx),
             Apply::Workspace(idx) => self.select_workspace(idx, window, cx),
             Apply::Tab(idx) => {
-                let workspace = self.active_idx;
-                self.select_workspace_tab(workspace, idx, window, cx);
+                if let Some(workspace) = self.shown_workspace_idx() {
+                    self.select_workspace_tab(workspace, idx, window, cx);
+                }
             }
             Apply::Action(name) => {
                 if let Some(action) = crate::keybindings::action_for_name(name) {

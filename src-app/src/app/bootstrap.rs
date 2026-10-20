@@ -66,23 +66,24 @@ impl PaneFlowApp {
             .map(|session| session.detached_panes.clone())
             .unwrap_or_default();
 
-        let (workspaces, active_idx, session_restored) = match saved_session {
+        let (workspaces, active_idx, active_space, session_restored) = match saved_session {
             Some(session) => {
                 log::info!(
                     "restoring session: {} workspace(s)",
                     session.workspaces.len()
                 );
-                let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
+                let (workspaces, active_idx, active_space) =
+                    Self::restore_workspaces(&session, &cached_config, cx);
                 if workspaces.is_empty() {
                     log::info!(
                         "session restore: no restorable workspace; opening the welcome screen"
                     );
-                    (workspaces, 0, false)
+                    (workspaces, 0, active_space, false)
                 } else {
-                    (workspaces, active_idx, true)
+                    (workspaces, active_idx, active_space, true)
                 }
             }
-            None => (Vec::new(), 0, false),
+            None => (Vec::new(), 0, None, false),
         };
         crate::startup_trace::mark("workspaces_restored");
 
@@ -229,6 +230,8 @@ impl PaneFlowApp {
             pending_detached_panes,
             workspaces,
             active_idx,
+            active_space,
+            space_last_shown: Default::default(),
             renaming_tab: None,
             sidebar_focus: cx.focus_handle(),
             sidebar_cursor: None,

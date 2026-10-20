@@ -94,7 +94,9 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     });
     cx.on_action(|_: &CloseWorkspace, cx| {
         with_active_paneflow_window(cx, |app, window, cx| {
-            app.close_workspace_at(app.active_idx, window, cx);
+            if let Some(idx) = app.shown_workspace_idx() {
+                app.close_workspace_at(idx, window, cx);
+            }
         });
     });
     cx.on_action(|_: &NextWorkspace, cx| {

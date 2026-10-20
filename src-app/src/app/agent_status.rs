@@ -33,8 +33,7 @@ impl PaneFlowApp {
         let ws = self.workspaces.iter().find(|ws| ws.id == workspace_id)?;
         let main_visible = self.settings_section.is_none()
             && self
-                .workspaces
-                .get(self.active_idx)
+                .active_workspace()
                 .is_some_and(|active| active.id == workspace_id)
             && cx.windows().into_iter().any(|window| {
                 window.downcast::<PaneFlowApp>().is_some()

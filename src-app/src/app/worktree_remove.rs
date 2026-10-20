@@ -390,7 +390,7 @@ impl PaneFlowApp {
         if self.worktree_remove_dialog.take().is_some() {
             if self.settings_section.is_some() {
                 self.settings_focus.focus(window, cx);
-            } else if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
+            } else if let Some(ws) = self.active_workspace() {
                 ws.focus_first(window, cx);
             }
             cx.notify();
