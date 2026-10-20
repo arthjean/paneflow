@@ -131,6 +131,13 @@ pub(crate) fn space_label<'a>(config: &'a PaneFlowConfig, space: Option<&SpaceId
         .map_or(DEFAULT_SPACE_NAME, |space| space.name.as_str())
 }
 
+pub(crate) fn declared_space_label<'a>(
+    config: &'a PaneFlowConfig,
+    workspace: &Workspace,
+) -> Option<&'a str> {
+    (!config.spaces.is_empty()).then(|| space_label(config, workspace.space.as_ref()))
+}
+
 pub(crate) fn reorder_in_space(
     workspaces: &mut Vec<Workspace>,
     active_idx: &mut usize,

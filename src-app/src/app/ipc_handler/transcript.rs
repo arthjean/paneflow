@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct TranscriptTurnEndNotification {
     pub(super) agent: TerminalAgent,
     pub(super) title: String,
+    pub(super) space: Option<String>,
     pub(super) config: PaneFlowConfig,
     pub(super) seen: bool,
     pub(super) executor: BackgroundExecutor,
@@ -112,6 +113,7 @@ impl PaneFlowApp {
                             notification.agent,
                             &notification.title,
                             extracted.as_deref(),
+                            notification.space.as_deref(),
                         ),
                         &notification.config,
                         notification.seen,

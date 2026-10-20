@@ -2,11 +2,14 @@ use super::*;
 
 use paneflow_config::schema::{DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceId};
 
+use crate::app::attention_queue::{AttentionLevel, SpaceAttention};
 use crate::app::spaces::SPACE_LIMIT_REASON;
 
 pub(super) const SPACE_BUTTON_SIZE: f32 = 22.0;
 pub(super) const SPACE_BUTTON_GAP: f32 = 4.0;
 const SPACE_BUTTON_RADIUS: f32 = 7.0;
+const SPACE_BADGE_DOT: f32 = 6.0;
+const SPACE_BADGE_PILL: f32 = 11.0;
 
 pub(crate) fn space_tint(color: Option<SpaceColor>, ui: crate::theme::UiColors) -> gpui::Hsla {
     let theme = crate::theme::active_theme();
@@ -29,12 +32,60 @@ pub(crate) fn space_initial(name: &str) -> String {
         .unwrap_or_default()
 }
 
-pub(super) fn space_button_label(name: &str, current: bool) -> String {
-    if current {
-        format!("Space {name}, current")
-    } else {
-        format!("Space {name}")
+pub(super) fn space_button_label(name: &str, current: bool, attention: usize) -> String {
+    match (current, attention) {
+        (true, _) => format!("Space {name}, current"),
+        (false, 0) => format!("Space {name}"),
+        (false, 1) => format!("Space {name}, 1 agent needs attention"),
+        (false, n) => format!("Space {name}, {n} agents need attention"),
     }
+}
+
+pub(super) fn hidden_space_attention(
+    current: bool,
+    attention: Option<SpaceAttention>,
+) -> SpaceAttention {
+    attention.filter(|_| !current).unwrap_or_default()
+}
+
+fn attention_color(level: AttentionLevel, ui: crate::theme::UiColors) -> gpui::Hsla {
+    match level {
+        AttentionLevel::Input => crate::app::constants::sidebar_needs_input_color(),
+        AttentionLevel::Error => ui.agent_error,
+        AttentionLevel::Finished => crate::app::constants::sidebar_finished_color(),
+    }
+}
+
+fn render_space_badge(attention: SpaceAttention, ui: crate::theme::UiColors) -> Option<AnyElement> {
+    let color = attention_color(attention.most_urgent()?, ui);
+    let total = attention.total();
+    let badge = div().absolute().rounded_full().bg(color);
+    if total == 1 {
+        return Some(
+            badge
+                .top(px(1.))
+                .right(px(1.))
+                .size(px(SPACE_BADGE_DOT))
+                .into_any_element(),
+        );
+    }
+    Some(
+        badge
+            .top(px(-3.))
+            .right(px(-3.))
+            .h(px(SPACE_BADGE_PILL))
+            .min_w(px(SPACE_BADGE_PILL))
+            .px(px(2.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(8.))
+            .line_height(px(SPACE_BADGE_PILL))
+            .font_weight(FontWeight::BOLD)
+            .text_color(ui.base)
+            .child(total.to_string())
+            .into_any_element(),
+    )
 }
 
 impl PaneFlowApp {
@@ -52,6 +103,7 @@ impl PaneFlowApp {
                 .iter()
                 .map(|space| (Some(space.id.clone()), space.name.as_str(), space.color)),
         );
+        let attention = self.space_attention(cx);
         let mut row = div()
             .id("sidebar-space-switcher")
             .role(Role::Group)
@@ -67,8 +119,10 @@ impl PaneFlowApp {
             .overflow_hidden();
         for (position, (space, name, color)) in entries.enumerate() {
             let current = space == self.active_space;
-            row =
-                row.child(self.render_space_button(position, space, name, color, current, ui, cx));
+            let badge = hidden_space_attention(current, attention.get(&space).copied());
+            row = row.child(
+                self.render_space_button(position, space, name, color, current, badge, ui, cx),
+            );
         }
         row = row.child(render_new_space_button(
             self.cached_config.spaces.len() >= MAX_SPACES,
@@ -86,6 +140,7 @@ impl PaneFlowApp {
         name: &str,
         color: Option<SpaceColor>,
         current: bool,
+        attention: SpaceAttention,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -106,7 +161,7 @@ impl PaneFlowApp {
             (!current).then_some(hover_bg),
         )
         .role(Role::Button)
-        .aria_label(space_button_label(name, current))
+        .aria_label(space_button_label(name, current, attention.total()))
         .cursor_pointer()
         .delayed_tooltip(crate::ui_primitives::text_tooltip(name.to_string()))
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -119,6 +174,7 @@ impl PaneFlowApp {
                 .text_color(space_tint(color, ui))
                 .child(space_initial(name)),
         )
+        .children(render_space_badge(attention, ui))
         .into_any_element()
     }
 }
@@ -184,8 +240,38 @@ mod tests {
 
     #[test]
     fn a_space_button_names_its_space_and_the_current_one() {
-        assert_eq!(space_button_label("Work", false), "Space Work");
-        assert_eq!(space_button_label("Work", true), "Space Work, current");
+        assert_eq!(space_button_label("Work", false, 0), "Space Work");
+        assert_eq!(space_button_label("Work", true, 0), "Space Work, current");
+    }
+
+    #[test]
+    fn a_hidden_space_button_announces_its_waiting_agents() {
+        assert_eq!(
+            space_button_label("Work", false, 1),
+            "Space Work, 1 agent needs attention"
+        );
+        assert_eq!(
+            space_button_label("Work", false, 3),
+            "Space Work, 3 agents need attention"
+        );
+    }
+
+    #[test]
+    fn the_active_space_shows_no_badge() {
+        let waiting = SpaceAttention {
+            input: 2,
+            errors: 1,
+            finished: 0,
+        };
+        assert_eq!(
+            hidden_space_attention(true, Some(waiting)),
+            SpaceAttention::default()
+        );
+        assert_eq!(hidden_space_attention(false, Some(waiting)), waiting);
+        assert_eq!(
+            hidden_space_attention(false, None),
+            SpaceAttention::default()
+        );
     }
 
     #[test]

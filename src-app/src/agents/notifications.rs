@@ -67,18 +67,25 @@ impl DesktopNotification {
         agent: TerminalAgent,
         workspace_title: &str,
         session_summary: Option<&str>,
+        space: Option<&str>,
     ) -> Self {
-        Self::turn_finished_for(agent.display_name(), workspace_title, session_summary)
+        Self::turn_finished_for(
+            agent.display_name(),
+            workspace_title,
+            session_summary,
+            space,
+        )
     }
 
     pub(crate) fn turn_finished_for(
         runtime_label: &str,
         workspace_title: &str,
         session_summary: Option<&str>,
+        space: Option<&str>,
     ) -> Self {
         Self {
             summary: format!("{runtime_label} finished"),
-            body: notification_context_body(workspace_title, session_summary),
+            body: notification_context_body(workspace_title, session_summary, space),
             urgency: DesktopNotificationUrgency::Normal,
         }
     }
@@ -88,6 +95,7 @@ impl DesktopNotification {
         workspace_title: &str,
         pane_title: Option<&str>,
         message: Option<&str>,
+        space: Option<&str>,
     ) -> Self {
         let workspace = notification_detail(workspace_title);
         let pane = pane_title
@@ -103,7 +111,7 @@ impl DesktopNotification {
                 }
                 (None, None) => format!("{runtime_label} needs input"),
             },
-            body: attention_notification_body(workspace_title, message),
+            body: attention_notification_body(workspace_title, message, space),
             urgency: DesktopNotificationUrgency::Critical,
         }
     }
@@ -112,10 +120,11 @@ impl DesktopNotification {
         agent: TerminalAgent,
         workspace_title: &str,
         exit_code: i32,
+        space: Option<&str>,
     ) -> Self {
         Self {
             summary: format!("{} exited unexpectedly", agent.display_name()),
-            body: agent_exit_notification_body(workspace_title, exit_code),
+            body: agent_exit_notification_body(workspace_title, exit_code, space),
             urgency: DesktopNotificationUrgency::Critical,
         }
     }
@@ -211,21 +220,37 @@ fn notification_detail(raw: &str) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
-fn notification_context_body(workspace_title: &str, session_summary: Option<&str>) -> String {
-    session_summary
+fn notification_context_body(
+    workspace_title: &str,
+    session_summary: Option<&str>,
+    space: Option<&str>,
+) -> String {
+    let context = session_summary
         .and_then(notification_detail)
-        .or_else(|| notification_detail(workspace_title))
-        .unwrap_or_else(|| "Paneflow".to_string())
+        .or_else(|| notification_detail(workspace_title));
+    match (space.and_then(notification_detail), context) {
+        (Some(space), Some(context)) => format!("{space} · {context}"),
+        (Some(origin), None) | (None, Some(origin)) => origin,
+        (None, None) => "Paneflow".to_string(),
+    }
 }
 
-pub(crate) fn attention_notification_body(workspace_title: &str, message: Option<&str>) -> String {
-    notification_context_body(workspace_title, message)
+pub(crate) fn attention_notification_body(
+    workspace_title: &str,
+    message: Option<&str>,
+    space: Option<&str>,
+) -> String {
+    notification_context_body(workspace_title, message, space)
 }
 
-pub(crate) fn agent_exit_notification_body(workspace_title: &str, exit_code: i32) -> String {
+pub(crate) fn agent_exit_notification_body(
+    workspace_title: &str,
+    exit_code: i32,
+    space: Option<&str>,
+) -> String {
     format!(
         "{}: exited with code {exit_code}",
-        notification_context_body(workspace_title, None)
+        notification_context_body(workspace_title, None, space)
     )
 }
 
@@ -365,34 +390,62 @@ mod tests {
     #[test]
     fn notification_bodies_are_specific_and_non_empty() {
         assert_eq!(
-            attention_notification_body("backend", Some("Allow `cargo test`?")),
+            attention_notification_body("backend", Some("Allow `cargo test`?"), None),
             "Allow `cargo test`?"
         );
-        assert_eq!(attention_notification_body("backend", None), "backend");
         assert_eq!(
-            attention_notification_body("backend", Some("   ")),
+            attention_notification_body("backend", None, None),
             "backend"
         );
         assert_eq!(
-            agent_exit_notification_body("api", 1),
+            attention_notification_body("backend", Some("   "), None),
+            "backend"
+        );
+        assert_eq!(
+            agent_exit_notification_body("api", 1, None),
             "api: exited with code 1"
         );
         assert_eq!(
-            notification_context_body("workspace", Some("Finished the release draft")),
+            notification_context_body("workspace", Some("Finished the release draft"), None),
             "Finished the release draft"
         );
     }
 
     #[test]
+    fn a_notification_names_the_space_of_its_agent() {
+        assert_eq!(
+            attention_notification_body("backend", Some("Approve edit?"), Some("Work")),
+            "Work · Approve edit?"
+        );
+        assert_eq!(
+            DesktopNotification::turn_finished_for("Codex", "backend", None, Some("Work")).body,
+            "Work · backend"
+        );
+        assert_eq!(
+            agent_exit_notification_body("api", 1, Some("Perso")),
+            "Perso · api: exited with code 1"
+        );
+        assert_eq!(notification_context_body("", None, Some("Work")), "Work");
+        assert_eq!(
+            notification_context_body("backend", None, Some("Wo\u{202E}rk")),
+            "Work · backend"
+        );
+    }
+
+    #[test]
     fn desktop_notification_constructors_set_title_body_and_urgency() {
-        let finished =
-            DesktopNotification::turn_finished(TerminalAgent::Codex, "backend", Some("Tests pass"));
+        let finished = DesktopNotification::turn_finished(
+            TerminalAgent::Codex,
+            "backend",
+            Some("Tests pass"),
+            None,
+        );
         assert_eq!(finished.summary, "Codex finished");
         assert_eq!(finished.body, "Tests pass");
         assert_eq!(finished.urgency, DesktopNotificationUrgency::Normal);
 
         let finished_without_summary =
-            DesktopNotification::turn_finished(TerminalAgent::Codex, "backend", None);
+            DesktopNotification::turn_finished(TerminalAgent::Codex, "backend", None, None);
         assert_eq!(finished_without_summary.summary, "Codex finished");
         assert_eq!(finished_without_summary.body, "backend");
 
@@ -401,6 +454,7 @@ mod tests {
             "backend",
             None,
             Some("Approve edit?"),
+            None,
         );
         assert_eq!(attention.summary, "Claude Code needs input in backend");
         assert_eq!(attention.body, "Approve edit?");
@@ -411,6 +465,7 @@ mod tests {
             "",
             None,
             None,
+            None,
         );
         assert_eq!(attention_without_message.summary, "Claude Code needs input");
         assert_eq!(attention_without_message.body, "Paneflow");
@@ -418,8 +473,13 @@ mod tests {
 
     #[test]
     fn a_blocked_agent_notification_names_its_pane_and_its_workspace() {
-        let attention =
-            DesktopNotification::needs_input_for("Claude Code", "backend", Some("api-tests"), None);
+        let attention = DesktopNotification::needs_input_for(
+            "Claude Code",
+            "backend",
+            Some("api-tests"),
+            None,
+            None,
+        );
         assert_eq!(
             attention.summary,
             "Claude Code needs input in api-tests (backend)"
@@ -427,10 +487,10 @@ mod tests {
         assert_eq!(attention.body, "backend");
 
         let same_name =
-            DesktopNotification::needs_input_for("Codex", "backend", Some("backend"), None);
+            DesktopNotification::needs_input_for("Codex", "backend", Some("backend"), None, None);
         assert_eq!(same_name.summary, "Codex needs input in backend");
 
-        let pane_only = DesktopNotification::needs_input_for("Codex", " ", Some("api"), None);
+        let pane_only = DesktopNotification::needs_input_for("Codex", " ", Some("api"), None, None);
         assert_eq!(pane_only.summary, "Codex needs input in api");
     }
 
@@ -441,6 +501,7 @@ mod tests {
             "back\u{2066}end",
             Some("ap\u{202E}i"),
             Some("Apply \u{202E}nalp\u{2069} the plan?"),
+            None,
         );
 
         assert_eq!(attention.summary, "Codex needs input in api (backend)");

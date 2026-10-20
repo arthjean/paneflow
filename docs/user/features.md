@@ -43,6 +43,14 @@ delete spaces in **Settings > Spaces**. A space organizes your workspaces;
 it does not isolate them, and without any space Paneflow looks exactly as
 before.
 
+A hidden space never hides an agent that needs you. Its button carries a dot
+in the sidebar's status color for its most urgent agent: amber when one waits
+for input or a write approval, red when one failed, blue when one finished
+while you were elsewhere, with the count once more than one does. Finished
+agents of a muted workspace are left out, as they are from notifications.
+The Attention queue and desktop notifications name the space of each agent,
+and choosing an entry in the queue switches to its space and focuses its pane.
+
 ## Run and follow coding agents
 
 Launch Claude Code, Codex, OpenCode, Gemini, Pi, Hermes, or another CLI agent

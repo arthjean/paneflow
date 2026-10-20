@@ -784,7 +784,7 @@ impl PaneFlowApp {
         {
             crate::app::ipc_handler::fire_agent_exit_notification(
                 tool,
-                &workspace.title,
+                workspace,
                 exit_code,
                 &self.cached_config,
                 crate::app::agent_status::completion_was_seen(
@@ -841,6 +841,7 @@ impl PaneFlowApp {
         let seen =
             crate::app::agent_status::completion_was_seen(visible.as_ref(), Some(surface_id))
                 || workspace.muted;
+        let space = crate::app::spaces::declared_space_label(&config, workspace);
         let notification = match decision.kind {
             WorkerNotificationKind::Finished => {
                 workspace
@@ -853,6 +854,7 @@ impl PaneFlowApp {
                     &decision.runtime_label,
                     &workspace.title,
                     decision.body.as_deref(),
+                    space,
                 )
             }
             WorkerNotificationKind::NeedsInput => {
@@ -861,6 +863,7 @@ impl PaneFlowApp {
                     &workspace.title,
                     pane_title.as_deref(),
                     decision.body.as_deref(),
+                    space,
                 )
             }
         };
