@@ -6,6 +6,7 @@ mod lane;
 mod meta;
 mod pull_request;
 mod session_rows;
+mod space_switcher;
 mod style;
 mod tab_row;
 mod workspace_row;
@@ -22,6 +23,7 @@ use drop::*;
 pub(crate) use lane::SpinnerClock;
 use lane::{Lane, LaneSlot, infer_lane, render_lane_slot};
 use meta::*;
+pub(crate) use space_switcher::{space_initial, space_tint};
 pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
@@ -46,6 +48,30 @@ fn sidebar_empty_state_button(
     crate::settings::components::select_item(SharedString::from(id), false, ui)
         .w_full()
         .justify_center()
+}
+
+fn sidebar_motion_topology(workspaces: &[Workspace], shown: &[usize]) -> Vec<(u64, Vec<u64>)> {
+    shown
+        .iter()
+        .map(|&i| {
+            let ws = &workspaces[i];
+            (ws.id, ws.tabs().iter().map(|tab| tab.id).collect())
+        })
+        .collect()
+}
+
+fn sidebar_empty_state_message(
+    config: &paneflow_config::schema::PaneFlowConfig,
+    active_space: Option<&paneflow_config::schema::SpaceId>,
+) -> String {
+    if config.spaces.is_empty() {
+        "Open a folder to start a workspace".to_string()
+    } else {
+        format!(
+            "No workspaces in {}",
+            crate::app::spaces::space_label(config, active_space)
+        )
+    }
 }
 
 #[derive(Default)]
@@ -392,13 +418,20 @@ impl PaneFlowApp {
             .flex_col()
             .pb(px(4.));
 
-        if self.workspaces.is_empty() {
+        if !self
+            .workspaces
+            .iter()
+            .any(|ws| crate::app::spaces::in_space(ws, self.active_space.as_ref()))
+        {
             list = list.child(self.render_sidebar_empty_state(ui, cx));
         }
 
         list = self.render_workspace_rows(list, ui, window, cx);
         list = self.render_fallback_session_group(list, ui, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
+        if let Some(switcher) = self.render_space_switcher(ui, cx) {
+            sidebar = sidebar.child(switcher);
+        }
         sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar
     }
@@ -483,7 +516,7 @@ impl PaneFlowApp {
                             .text_center()
                             .text_size(px(11.))
                             .text_color(ui.muted)
-                            .child("Open a folder to start a workspace"),
+                            .child(self.sidebar_empty_state_message()),
                     )
                     .child(
                         sidebar_empty_state_button("sidebar-empty-open-folder", ui)
@@ -526,6 +559,10 @@ impl PaneFlowApp {
                             .child(div().text_color(ui.text).child("Clone repository")),
                     ),
             )
+    }
+
+    fn sidebar_empty_state_message(&self) -> String {
+        sidebar_empty_state_message(&self.cached_config, self.active_space.as_ref())
     }
 
     fn sidebar_rows(&self, query: &str) -> Vec<SidebarRow> {
@@ -572,7 +609,11 @@ impl PaneFlowApp {
     fn all_workspaces_expanded(&self) -> Option<bool> {
         let mut rows_somewhere = false;
         let mut all = true;
-        for ws in &self.workspaces {
+        for ws in self
+            .workspaces
+            .iter()
+            .filter(|ws| crate::app::spaces::in_space(ws, self.active_space.as_ref()))
+        {
             if ws.is_empty_shell() {
                 continue;
             }
@@ -597,20 +638,16 @@ impl PaneFlowApp {
             .to_lowercase();
         let rows = self.sidebar_rows(&query);
         let keyboard_focused = self.sidebar_focus.is_focused(window);
-        let topology = self
-            .workspaces
-            .iter()
-            .map(|ws| (ws.id, ws.tabs().iter().map(|tab| tab.id).collect()))
+        let shown_order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
+        let topology = sidebar_motion_topology(&self.workspaces, &shown_order);
+        let order: Vec<_> = shown_order
+            .into_iter()
+            .flat_map(|i| {
+                std::iter::once(SidebarRow::Folder(i)).chain(
+                    (0..self.workspaces[i].tab_count()).map(move |tab| SidebarRow::Tab(i, tab)),
+                )
+            })
             .collect();
-        let order: Vec<_> =
-            Self::compute_display_order(&self.workspaces, self.active_space.as_ref())
-                .into_iter()
-                .flat_map(|i| {
-                    std::iter::once(SidebarRow::Folder(i)).chain(
-                        (0..self.workspaces[i].tab_count()).map(move |tab| SidebarRow::Tab(i, tab)),
-                    )
-                })
-                .collect();
         let (animated_rows, animating) = {
             let mut motion = self.sidebar_row_motion.borrow_mut();
             motion.update(topology, &query, &rows, &order, std::time::Instant::now());
@@ -766,6 +803,95 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
+    fn space(n: u8) -> paneflow_config::schema::SpaceId {
+        paneflow_config::schema::SpaceId::parse(&format!(
+            "550e8400-e29b-41d4-a716-4466554400{n:02}"
+        ))
+        .unwrap()
+    }
+
+    fn workspace(id: u64, space: Option<paneflow_config::schema::SpaceId>) -> super::Workspace {
+        let mut workspace = super::Workspace::empty_with_cwd_and_id(
+            id,
+            format!("ws{id}"),
+            std::path::PathBuf::new(),
+        );
+        workspace.space = space;
+        workspace
+    }
+
+    #[test]
+    fn switching_spaces_replaces_the_rows_without_animation() {
+        let workspaces = vec![
+            workspace(1, None),
+            workspace(2, Some(space(1))),
+            workspace(3, None),
+        ];
+        let now = std::time::Instant::now();
+        let mut motion = super::SidebarRowMotion::default();
+
+        let default_order = super::PaneFlowApp::compute_display_order(&workspaces, None);
+        let default_rows: Vec<_> = default_order
+            .iter()
+            .map(|&i| super::SidebarRow::Folder(i))
+            .collect();
+        motion.update(
+            super::sidebar_motion_topology(&workspaces, &default_order),
+            "",
+            &default_rows,
+            &default_rows,
+            now,
+        );
+
+        let work_order = super::PaneFlowApp::compute_display_order(&workspaces, Some(&space(1)));
+        assert_eq!(work_order, vec![1]);
+        let work_rows = vec![super::SidebarRow::Folder(1)];
+        motion.update(
+            super::sidebar_motion_topology(&workspaces, &work_order),
+            "",
+            &work_rows,
+            &work_rows,
+            now + std::time::Duration::from_millis(10),
+        );
+        assert!(motion.started.is_none(), "a space switch must not animate");
+        assert_eq!(motion.rows, vec![(super::SidebarRow::Folder(1), 1.)]);
+    }
+
+    #[test]
+    fn the_motion_topology_only_lists_the_shown_workspaces() {
+        let workspaces = vec![
+            workspace(1, None),
+            workspace(2, Some(space(1))),
+            workspace(3, None),
+        ];
+        let order = super::PaneFlowApp::compute_display_order(&workspaces, None);
+        let topology = super::sidebar_motion_topology(&workspaces, &order);
+        let ids: Vec<u64> = topology.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn an_empty_space_names_itself_in_the_sidebar_empty_state() {
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        assert_eq!(
+            super::sidebar_empty_state_message(&config, None),
+            "Open a folder to start a workspace"
+        );
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: space(1),
+            name: "Work".to_string(),
+            color: None,
+        });
+        assert_eq!(
+            super::sidebar_empty_state_message(&config, Some(&space(1))),
+            "No workspaces in Work"
+        );
+        assert_eq!(
+            super::sidebar_empty_state_message(&config, None),
+            "No workspaces in Default"
+        );
+    }
+
     #[test]
     fn sidebar_row_motion_animates_a_folder_that_folds_and_unfolds() {
         let now = std::time::Instant::now();

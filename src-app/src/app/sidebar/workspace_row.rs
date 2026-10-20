@@ -62,7 +62,11 @@ impl PaneFlowApp {
                     this.commit_rename(cx);
                     this.dismiss_transient_surfaces();
                     this.place_sidebar_cursor(SidebarRow::Folder(idx), window, cx);
-                    this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
+                    this.workspace_menu_open = Some(WorkspaceContextMenu {
+                        idx,
+                        position,
+                        space_submenu_open: false,
+                    });
                     cx.stop_propagation();
                     cx.notify();
                 }

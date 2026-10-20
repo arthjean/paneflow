@@ -383,6 +383,22 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_workspace_in_vscode))
             .on_action(cx.listener(Self::handle_open_workspace_in_windsurf))
             .on_action(cx.listener(Self::handle_next_workspace))
+            .on_action(cx.listener(|this: &mut Self, _: &NextSpace, window, cx| {
+                this.cycle_space(true, window, cx);
+            }))
+            .on_action(
+                cx.listener(|this: &mut Self, _: &PreviousSpace, window, cx| {
+                    this.cycle_space(false, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this: &mut Self, _: &NewSpace, window, cx| {
+                this.new_space_in_settings(window, cx);
+            }))
+            .on_action(
+                cx.listener(|this: &mut Self, _: &MoveWorkspaceToSpace, window, cx| {
+                    this.open_move_workspace_to_space_palette(window, cx);
+                }),
+            )
             .on_action(cx.listener(Self::handle_toggle_zoom))
             .on_action(cx.listener(Self::handle_toggle_detached_pane))
             .on_action(cx.listener(Self::handle_layout_even_h))

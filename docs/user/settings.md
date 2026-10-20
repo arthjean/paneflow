@@ -28,6 +28,7 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
+| Spaces | The spaces that group workspaces: the implicit Default space, then each space with its name, its color among six theme tints, and a delete action that moves its workspaces to Default after a confirmation. Up to 9 spaces. | `spaces` | Hot-reloads, and the sidebar's space row follows. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
 | Agents | Which agents the launcher shows, with their installed version and hook state, an **Install hooks** button for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; **Install hooks** writes the agent's own hook config | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
@@ -77,6 +78,19 @@ it moves toward the nearest theme color.
 Changes hot-reload in open terminals. To turn the correction off
 everywhere, set `"minimum_contrast": 0` under `terminal` in
 [`paneflow.json`](/docs/configuration/schema).
+
+## Spaces
+
+**Spaces** lists `Default` first. It holds every workspace that has no
+space and cannot be renamed or deleted. Click a space's name to edit it,
+then press `Enter` to save or `Escape` to cancel. A name must be 1 to 32
+characters, cannot be `Default`, and cannot repeat another space's name,
+ignoring case; an invalid name shows the reason under the field and
+nothing is saved. Pick one of the six theme colors, or none, to tint the
+space's letter in the sidebar. **New space** adds `Space N` with the
+first free number and is unavailable once 9 spaces exist. Deleting a
+space asks for confirmation, moves its workspaces to `Default` without
+closing any terminal, and makes `Default` active if the deleted space was.
 
 ## AI access vs MCP
 

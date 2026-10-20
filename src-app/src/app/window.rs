@@ -9,6 +9,7 @@ pub(crate) enum SettingsSection {
     Agents,
     McpServers,
     Workspaces,
+    Spaces,
     Worktrees,
 }
 
@@ -100,6 +101,7 @@ pub(crate) enum WorkspaceTemplateDropdown {
 pub(crate) struct WorkspaceContextMenu {
     pub(crate) idx: usize,
     pub(crate) position: Point<Pixels>,
+    pub(crate) space_submenu_open: bool,
 }
 
 #[derive(Clone)]

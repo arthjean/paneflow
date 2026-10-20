@@ -94,6 +94,12 @@ const NAV_GROUPS: &[NavGroup] = &[
                 ],
             },
             NavItem {
+                section: SettingsSection::Spaces,
+                label: "Spaces",
+                icon: "icons/folders.svg",
+                keywords: &["space", "spaces", "context", "work", "personal", "group"],
+            },
+            NavItem {
                 section: SettingsSection::Worktrees,
                 label: "Worktrees",
                 icon: "icons/git-branch-sidebar.svg",
@@ -176,6 +182,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Agents => "Agents",
         SettingsSection::McpServers => "Plugins",
         SettingsSection::Workspaces => "Workspaces",
+        SettingsSection::Spaces => "Spaces",
         SettingsSection::Worktrees => "Worktrees",
     }
 }
@@ -445,6 +452,7 @@ impl PaneFlowApp {
             SettingsSection::Agents => self.render_agents_content(cx).into_any_element(),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
+            SettingsSection::Spaces => self.render_spaces_content(cx).into_any_element(),
             SettingsSection::Worktrees => self.render_worktrees_content(cx).into_any_element(),
             SettingsSection::Shortcuts => gpui::Empty.into_any_element(),
         };

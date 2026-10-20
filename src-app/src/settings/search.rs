@@ -277,6 +277,7 @@ const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
 const AGENTS_HEADERS: &[&str] = &["Agents", "Not installed", "Profiles", "Permissions"];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];
 const WORKSPACES_HEADERS: &[&str] = &["Workspace templates"];
+const SPACES_HEADERS: &[&str] = &["Spaces"];
 const WORKTREES_HEADERS: &[&str] = &["Storage and cleanup", "Managed worktrees", "Snapshots"];
 
 fn section_copies(section: SettingsSection) -> &'static [&'static SettingCopy] {
@@ -287,7 +288,7 @@ fn section_copies(section: SettingsSection) -> &'static [&'static SettingCopy] {
         SettingsSection::Worktrees => WORKTREES_COPIES,
         SettingsSection::McpServers => MCP_COPIES,
         SettingsSection::Agents => AGENTS_COPIES,
-        SettingsSection::Workspaces | SettingsSection::Shortcuts => &[],
+        SettingsSection::Workspaces | SettingsSection::Spaces | SettingsSection::Shortcuts => &[],
     }
 }
 
@@ -299,6 +300,7 @@ fn section_headers(section: SettingsSection) -> &'static [&'static str] {
         SettingsSection::Agents => AGENTS_HEADERS,
         SettingsSection::McpServers => MCP_HEADERS,
         SettingsSection::Workspaces => WORKSPACES_HEADERS,
+        SettingsSection::Spaces => SPACES_HEADERS,
         SettingsSection::Worktrees => WORKTREES_HEADERS,
         SettingsSection::Shortcuts => &[],
     }
@@ -596,6 +598,7 @@ mod tests {
             SettingsSection::Agents,
             SettingsSection::McpServers,
             SettingsSection::Workspaces,
+            SettingsSection::Spaces,
             SettingsSection::Worktrees,
         ] {
             assert!(section_matches(section, ""), "{section:?}");

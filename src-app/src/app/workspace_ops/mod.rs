@@ -1092,20 +1092,13 @@ impl PaneFlowApp {
         let Some(from_idx) = self.workspaces.iter().position(|ws| ws.id == from_id) else {
             return;
         };
-        let active_id = self.active_workspace().map(|ws| ws.id);
-        let ws = self.workspaces.remove(from_idx);
-        let insert_at = to_idx.min(self.workspaces.len());
-        if from_idx == insert_at {
-            self.workspaces.insert(insert_at, ws);
+        if !crate::app::spaces::reorder_in_space(
+            &mut self.workspaces,
+            &mut self.active_idx,
+            from_idx,
+            to_idx,
+        ) {
             return;
-        }
-        self.workspaces.insert(insert_at, ws);
-        if let Some(id) = active_id {
-            self.active_idx = self
-                .workspaces
-                .iter()
-                .position(|ws| ws.id == id)
-                .unwrap_or(0);
         }
         self.save_session(cx);
         cx.notify();

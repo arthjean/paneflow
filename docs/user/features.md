@@ -31,6 +31,18 @@ Use the four [layout presets](/docs/layouts) to arrange panes. Consult
 [shortcuts and actions](/docs/keybindings) for keyboard navigation and
 custom bindings.
 
+Group workspaces into **spaces**, for example one for work and one for
+personal projects. Once you create a space, a row of space buttons appears
+at the bottom of the sidebar: the sidebar, `Cmd/Ctrl+1` to `Cmd/Ctrl+9`,
+and Next workspace then only cover the active space, and each space
+remembers the workspace it last showed. Click a button to switch, or use
+`Cmd+Alt+Left` and `Cmd+Alt+Right` on macOS, `Ctrl+Alt+PageUp` and
+`Ctrl+Alt+PageDown` on Linux and Windows. Right-click a workspace and
+choose **Move to space** to file it elsewhere. Create, rename, color, and
+delete spaces in **Settings > Spaces**. A space organizes your workspaces;
+it does not isolate them, and without any space Paneflow looks exactly as
+before.
+
 ## Run and follow coding agents
 
 Launch Claude Code, Codex, OpenCode, Gemini, Pi, Hermes, or another CLI agent

@@ -71,11 +71,15 @@ pub(crate) enum ToastAction {
     OpenReleasesPage(String),
     OpenReleaseNotes(String),
     ReopenTab(u64),
+    ShowSpace(Option<paneflow_config::schema::SpaceId>),
 }
 
 impl ToastAction {
     fn reports_failure(&self) -> bool {
-        !matches!(self, Self::ReopenTab(_) | Self::OpenReleaseNotes(_))
+        !matches!(
+            self,
+            Self::ReopenTab(_) | Self::OpenReleaseNotes(_) | Self::ShowSpace(_)
+        )
     }
 }
 
@@ -242,6 +246,7 @@ impl PaneFlowApp {
                         ("View release notes", format!("toast-release-notes-{idx}"))
                     }
                     ToastAction::ReopenTab(_) => ("Undo", format!("toast-undo-{idx}")),
+                    ToastAction::ShowSpace(_) => ("Show", format!("toast-show-space-{idx}")),
                 };
                 let action_clone = action.clone();
                 let group = SharedString::from(format!("{button_id}-squircle"));
@@ -278,6 +283,10 @@ impl PaneFlowApp {
                         }
                         ToastAction::ReopenTab(tab_id) => {
                             this.reopen_closed_tab(*tab_id, window, cx);
+                            this.dismiss_toast(cx);
+                        }
+                        ToastAction::ShowSpace(space) => {
+                            this.activate_space(space.clone(), Some(window), cx);
                             this.dismiss_toast(cx);
                         }
                     },
