@@ -194,6 +194,38 @@ Run `paneflow up paneflow.workspace.toml --dry-run` to validate the
 resolved plan without mutating the running instance. Prompts are
 prefilled, not submitted.
 
+## How do I target a space?
+
+A [space](/docs/features) groups workspaces. Scripts see every
+workspace whatever space is shown, and workspace indexes stay global:
+index 3 is the same workspace in every space.
+
+```bash
+paneflow new --name api --space Work
+paneflow ls --human
+paneflow select 3
+```
+
+- `paneflow new --space <name>` and a top-level `space = "Work"` key in
+  `paneflow.workspace.toml` create the workspace in that space. A space
+  is named by its name, in any case, or by its id; `Default` names the
+  default space. Without either, the workspace joins the space shown in
+  the window.
+- An unknown space fails before anything is created, with the message
+  `unknown space: <name>` and exit code `1`.
+- `workspace.list`, `workspace.current`, and every surface of
+  `paneflow ls` carry `space: {id, name}`, or `null` for the default
+  space. `paneflow ls --human` adds a SPACE column.
+- `paneflow select <index>` and `paneflow up` switch the window to the
+  space of the workspace they show. `paneflow new` never changes the
+  space on screen.
+
+A space organizes work; it does not isolate it. Every CLI verb and
+JSON-RPC method reaches every space, the MCP bridge with
+`PANEFLOW_MCP_SCOPE=all` reads panes across the whole instance, and
+`write_pane` can message an agent in any space once a human allows the
+pair.
+
 ## How do I run a multi-agent flow?
 
 Use `paneflow flow run <file>` when the workflow has dependencies,

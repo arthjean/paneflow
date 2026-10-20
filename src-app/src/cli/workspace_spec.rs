@@ -10,6 +10,8 @@ pub struct WorkspaceSpec {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
     pub layout: LayoutPreset,
     #[serde(default)]
     pub port_base: Option<u16>,
@@ -278,5 +280,13 @@ mod tests {
         let src = "[[panes]]\nagent = \"claude\"\n".repeat(MAX_PANES + 1);
         let err = load(&src).unwrap_err();
         assert!(err.contains("too many panes"), "got: {err}");
+    }
+
+    #[test]
+    fn a_spec_can_name_its_space() {
+        let spec = load("space = \"Work\"\n[[panes]]\ncwd = \"/tmp\"\n").expect("valid");
+        assert_eq!(spec.space.as_deref(), Some("Work"));
+        let spec = load("[[panes]]\ncwd = \"/tmp\"\n").expect("valid");
+        assert_eq!(spec.space, None);
     }
 }

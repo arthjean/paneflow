@@ -8,6 +8,7 @@ pub fn new_workspace(
     client: &impl IpcTransport,
     name: Option<&str>,
     cwd: Option<&str>,
+    space: Option<&str>,
 ) -> Result<i32, CliError> {
     let mut params = json!({});
     if let Some(name) = name {
@@ -15,6 +16,9 @@ pub fn new_workspace(
     }
     if let Some(cwd) = cwd {
         params["cwd"] = json!(cwd);
+    }
+    if let Some(space) = space {
+        params["space"] = json!(space);
     }
     let result = super::reject_legacy_error(
         client
@@ -166,5 +170,40 @@ mod tests {
     fn select_success_returns_ok() {
         let fake = FakeTransport(json!({ "selected": 2 }));
         assert_eq!(select(&fake, 2).expect("ok"), EXIT_OK);
+    }
+
+    struct RefusingTransport(String);
+    impl IpcTransport for RefusingTransport {
+        fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
+            Err(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn new_forwards_the_space_to_workspace_create() {
+        let fake = RoutedTransport::new(json!({ "index": 3, "title": "api", "panes": 1 }));
+        assert_eq!(
+            new_workspace(&fake, Some("api"), None, Some("Work")).expect("ok"),
+            EXIT_OK
+        );
+        let calls = fake.calls.borrow();
+        assert_eq!(calls[0].0, "workspace.create");
+        assert_eq!(calls[0].1["space"], "Work");
+
+        let plain = RoutedTransport::new(json!({ "index": 0 }));
+        new_workspace(&plain, None, None, None).expect("ok");
+        assert!(plain.calls.borrow()[0].1.get("space").is_none());
+    }
+
+    #[test]
+    fn new_with_an_unknown_space_exits_with_the_cli_error() {
+        let fake = RefusingTransport("paneflow error -32602: unknown space: Client".to_string());
+        let err = new_workspace(&fake, None, None, Some("Client")).expect_err("refused");
+        assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
+        assert!(
+            err.message.contains("unknown space: Client"),
+            "{}",
+            err.message
+        );
     }
 }

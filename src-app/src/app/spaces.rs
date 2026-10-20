@@ -131,6 +131,27 @@ pub(crate) fn space_label<'a>(config: &'a PaneFlowConfig, space: Option<&SpaceId
         .map_or(DEFAULT_SPACE_NAME, |space| space.name.as_str())
 }
 
+pub(crate) fn space_json(config: &PaneFlowConfig, space: Option<&SpaceId>) -> serde_json::Value {
+    space.and_then(|id| config.space(id)).map_or(
+        serde_json::Value::Null,
+        |space| serde_json::json!({ "id": space.id, "name": space.name }),
+    )
+}
+
+pub(crate) fn find_space(config: &PaneFlowConfig, value: &str) -> Option<Option<SpaceId>> {
+    let folded = value.trim().to_lowercase();
+    if folded == DEFAULT_SPACE_NAME.to_lowercase() {
+        return Some(None);
+    }
+    config
+        .spaces
+        .iter()
+        .find(|space| {
+            space.id.as_str() == value.trim() || space.name.trim().to_lowercase() == folded
+        })
+        .map(|space| Some(space.id.clone()))
+}
+
 pub(crate) fn declared_space_label<'a>(
     config: &'a PaneFlowConfig,
     workspace: &Workspace,
@@ -261,8 +282,17 @@ impl PaneFlowApp {
         )
     }
 
-    pub(crate) fn add_workspace(&mut self, mut workspace: Workspace) -> usize {
-        workspace.space = self.active_space.clone();
+    pub(crate) fn add_workspace(&mut self, workspace: Workspace) -> usize {
+        let space = self.active_space.clone();
+        self.add_workspace_in(workspace, space)
+    }
+
+    pub(crate) fn add_workspace_in(
+        &mut self,
+        mut workspace: Workspace,
+        space: Option<SpaceId>,
+    ) -> usize {
+        workspace.space = space;
         self.workspaces.push(workspace);
         self.workspaces.len() - 1
     }
@@ -843,6 +873,31 @@ mod tests {
         assert!(
             !is_declared(&config, Some(&space(2))),
             "a Show toast that outlives its space must not activate it"
+        );
+    }
+
+    #[test]
+    fn a_script_names_a_space_by_its_name_in_any_case_or_by_its_id() {
+        let config = config_with(&["Work", "Perso"]);
+        assert_eq!(find_space(&config, "work"), Some(Some(space(1))));
+        assert_eq!(find_space(&config, " PERSO "), Some(Some(space(2))));
+        assert_eq!(find_space(&config, space(2).as_str()), Some(Some(space(2))));
+        assert_eq!(find_space(&config, "default"), Some(None));
+        assert_eq!(find_space(&config, "Client"), None);
+        assert_eq!(find_space(&PaneFlowConfig::default(), "Work"), None);
+    }
+
+    #[test]
+    fn the_default_space_is_null_and_others_carry_their_id_and_name() {
+        let config = config_with(&["Work"]);
+        assert_eq!(space_json(&config, None), serde_json::Value::Null);
+        assert_eq!(
+            space_json(&config, Some(&space(1))),
+            serde_json::json!({ "id": space(1).as_str(), "name": "Work" })
+        );
+        assert_eq!(
+            space_json(&config, Some(&space(2))),
+            serde_json::Value::Null
         );
     }
 
