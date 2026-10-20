@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Interface des espaces",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-003",
@@ -128,72 +128,72 @@
       "id": "US-006",
       "title": "Filtrer la sidebar par espace",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-007",
       "title": "Afficher le sélecteur d'espaces en bas de la sidebar",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001",
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-008",
       "title": "Déplacer un workspace vers un autre espace",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-009",
       "title": "Changer d'espace au clavier et par la palette",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-010",
       "title": "Gérer les espaces dans Settings",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-011",
