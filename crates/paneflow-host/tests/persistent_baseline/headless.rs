@@ -149,21 +149,36 @@ pub(super) fn start_desktop_in(
     .map_err(desktop_failure)
 }
 
-pub(super) fn submit_prompt(endpoint: &Path, session: &SessionId) -> Value {
-    HostClient::connect(endpoint, &ClientHello::control("headless-spike-ai-hook"))
+pub(super) const DECLARING_FIXTURE: [&str; 1] = ["declare"];
+
+pub(super) fn start_thinking(
+    client: &mut HostClient,
+    endpoint: &Path,
+    session: &SessionId,
+    generation: SessionGeneration,
+) -> Value {
+    let identity = HostClient::connect(endpoint, &ClientHello::control("headless-spike-ai-hook"))
         .and_then(|mut hook| {
             hook.call(
                 paneflow_host::protocol::METHOD_AGENT_EVENT,
                 json!({
                     "session": session,
                     "runtime_generation": 1,
-                    "kind": "ai.prompt_submit",
+                    "kind": "ai.session_start",
                     "tool": "claude",
-                    "hook_payload": {"hook_event_name": "UserPromptSubmit", "session_id": "headless-spike"},
+                    "hook_payload": {"hook_event_name": "SessionStart", "session_id": "headless-spike"},
                 }),
             )
-        })
-        .unwrap_or_else(|error| json!({"error": error.to_string()}))
+        });
+    if let Err(error) = identity {
+        return json!({"error": format!("the SessionStart identity hook was refused: {error}")});
+    }
+    match client.input(session, generation, b"working\r") {
+        Ok(_) => json!({"identity": "ai.session_start", "declared": "OSC 7501 state=working"}),
+        Err(error) => {
+            json!({"error": format!("the fixture was never asked to declare working: {error}")})
+        }
+    }
 }
 
 pub(super) fn focus_window(desktop: &DesktopProcess) -> Result<(), String> {

@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -11,6 +11,7 @@ fn main() -> ExitCode {
     let mode = args.first().map(String::as_str).unwrap_or("");
     let outcome = match mode {
         "idle" => idle(),
+        "declare" => declare(),
         "echo" => echo(),
         "flood" => flood(arg_u64(&args, 1).unwrap_or(1 << 20)),
         "stream" => stream(
@@ -66,7 +67,7 @@ fn idle() -> Result<(), u8> {
     }
 }
 
-fn echo() -> Result<(), u8> {
+fn silence_terminal_echo() {
     #[cfg(unix)]
     unsafe {
         let mut termios: libc::termios = std::mem::zeroed();
@@ -75,6 +76,28 @@ fn echo() -> Result<(), u8> {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios);
         }
     }
+}
+
+fn declare() -> Result<(), u8> {
+    silence_terminal_echo();
+    announce("fixture idle, declaring each stdin line as an OSC 7501 state")?;
+    let mut stdout = std::io::stdout().lock();
+    for line in std::io::stdin().lines() {
+        let line = line.map_err(|_| 3)?;
+        let state = line.trim();
+        if state.is_empty() {
+            continue;
+        }
+        write!(stdout, "\x1b]7501;state={state}\x1b\\").map_err(|_| 3)?;
+        stdout.flush().map_err(|_| 3)?;
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+fn echo() -> Result<(), u8> {
+    silence_terminal_echo();
     announce("fixture echo")?;
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();

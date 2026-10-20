@@ -257,23 +257,29 @@ fn focused_idle_renders(
     }
 }
 
+const BLINK_ALONE_RENDERS_PER_S: f64 = 2.0;
+
 fn focused_thinking_renders(
     focus: &Result<(), String>,
-    submitted: &Value,
+    thinking: &Value,
     renders: Measurement,
     window_s: f64,
 ) -> Measurement {
-    match (focus, &renders, submitted.get("error")) {
-        (Err(reason), _, _) => Measurement::Missing(format!(
+    match (focus, thinking.get("error")) {
+        (Err(reason), _) => Measurement::Missing(format!(
             "the thinking window was never focused, so the cursor blink is not measured: {reason}"
         )),
-        (Ok(()), _, Some(error)) => Measurement::Missing(format!(
-            "the simulated prompt was not accepted, so no agent thinks: {error}"
+        (Ok(()), Some(error)) => Measurement::Missing(format!(
+            "no spinner drawn: the agent never declared its turn: {error}"
         )),
-        (Ok(()), Measurement::Value(count), None) if *count <= 3.0 => Measurement::Missing(
-            format!("the agent never started thinking: {count} root renders in the window"),
-        ),
-        _ => per(renders, window_s),
+        (Ok(()), None) => match per(renders, window_s) {
+            Measurement::Value(rate) if rate <= BLINK_ALONE_RENDERS_PER_S => {
+                Measurement::Missing(format!(
+                    "no spinner drawn: {rate:.3} root renders per second, no more than the cursor blink alone ({BLINK_ALONE_RENDERS_PER_S})"
+                ))
+            }
+            measured => measured,
+        },
     }
 }
 
@@ -295,7 +301,7 @@ pub(super) fn desktop_idle_and_thinking(
     endpoint: &Path,
     values: &mut Values,
 ) -> Value {
-    let sessions = match open(client, ledger, &["idle"], DESKTOP_PANES) {
+    let sessions = match open(client, ledger, &headless::DECLARING_FIXTURE, DESKTOP_PANES) {
         Ok(sessions) => sessions,
         Err(reason) => {
             record_all(values, &DESKTOP_NAMES, &reason);
@@ -327,14 +333,15 @@ pub(super) fn desktop_idle_and_thinking(
                 "desktop.focused_idle.root_renders_per_s".to_string(),
                 focused_idle_renders(&focus, counter(&focused, "root_renders"), focused_s),
             );
-            let submitted = headless::submit_prompt(endpoint, &sessions[0]);
+            let declared =
+                headless::start_thinking(client, endpoint, &sessions[0], SessionGeneration::FIRST);
             std::thread::sleep(SETTLE);
             let (thinking, thinking_s) = desktop_window(&desktop, GATE_WINDOW);
             values.insert(
                 "desktop.thinking.root_renders_per_s".to_string(),
                 focused_thinking_renders(
                     &focus,
-                    &submitted,
+                    &declared,
                     counter(&thinking, "root_renders"),
                     thinking_s,
                 ),
@@ -344,7 +351,7 @@ pub(super) fn desktop_idle_and_thinking(
                 "settle_s": SETTLE.as_secs_f64(),
                 "idle": {"window_s": idle_s, "work_counters": idle},
                 "focused_idle": {"window_s": focused_s, "work_counters": focused, "focus": focus.err()},
-                "thinking": {"window_s": thinking_s, "work_counters": thinking, "prompt_submit": submitted},
+                "thinking": {"window_s": thinking_s, "work_counters": thinking, "start_thinking": declared},
             })
         }
     };
@@ -578,23 +585,53 @@ mod tests {
     fn a_thinking_window_that_was_never_focused_never_satisfies_its_budget() {
         let unfocused =
             Err("the desktop window 42 did not take the X input focus within 5 s".to_string());
-        let accepted = json!({"accepted": true});
+        let declared = json!({"declared": "OSC 7501 state=working"});
         assert!(matches!(
-            focused_thinking_renders(&unfocused, &accepted, Measurement::Value(333.0), 30.0),
+            focused_thinking_renders(&unfocused, &declared, Measurement::Value(333.0), 30.0),
             Measurement::Missing(reason) if reason.contains("never focused") && reason.contains("window 42")
         ));
         assert!(matches!(
             focused_thinking_renders(&Ok(()), &json!({"error": "refused"}), Measurement::Value(333.0), 30.0),
-            Measurement::Missing(reason) if reason.contains("refused")
+            Measurement::Missing(reason) if reason.starts_with("no spinner drawn") && reason.contains("refused")
         ));
         assert!(matches!(
-            focused_thinking_renders(&Ok(()), &accepted, Measurement::Value(3.0), 30.0),
-            Measurement::Missing(reason) if reason.contains("never started thinking")
+            focused_thinking_renders(&Ok(()), &declared, Measurement::Value(3.0), 30.0),
+            Measurement::Missing(reason) if reason.starts_with("no spinner drawn")
         ));
         assert_eq!(
-            focused_thinking_renders(&Ok(()), &accepted, Measurement::Value(333.0), 30.0),
+            focused_thinking_renders(&Ok(()), &declared, Measurement::Value(333.0), 30.0),
             Measurement::Value(333.0 / 30.0)
         );
+    }
+
+    fn thinking_verdict(measured: Measurement) -> gates::Verdict {
+        let budget = gates::BUDGETS
+            .iter()
+            .find(|budget| budget.counter == "desktop.thinking.root_renders_per_s")
+            .expect("the thinking budget exists");
+        let values = BTreeMap::from([(budget.counter.to_string(), measured)]);
+        gates::verify(std::slice::from_ref(budget), &values).remove(0)
+    }
+
+    #[test]
+    fn the_blink_alone_never_satisfies_the_thinking_budget() {
+        let declared = json!({"declared": "OSC 7501 state=working"});
+        let blink_alone =
+            focused_thinking_renders(&Ok(()), &declared, Measurement::Value(56.0), 30.0);
+        assert!(
+            matches!(
+                &blink_alone,
+                Measurement::Missing(reason) if reason.starts_with("no spinner drawn: 1.867 root renders per second")
+            ),
+            "{blink_alone:?}"
+        );
+        assert!(thinking_verdict(blink_alone).failed());
+        assert!(thinking_verdict(Measurement::Value(1.866)).failed());
+        assert!(thinking_verdict(Measurement::Value(9.9)).failed());
+        assert!(thinking_verdict(Measurement::Value(12.1)).failed());
+        assert!(!thinking_verdict(Measurement::Value(11.1)).failed());
+        assert!(!thinking_verdict(Measurement::Value(10.0)).failed());
+        assert!(!thinking_verdict(Measurement::Value(12.0)).failed());
     }
 
     #[test]

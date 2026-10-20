@@ -192,10 +192,13 @@ pub(super) const BUDGETS: &[Budget] = &[
     },
     Budget {
         counter: "desktop.thinking.root_renders_per_s",
-        limit: Limit::AtMost(12.0),
+        limit: Limit::Within {
+            baseline: 11.0,
+            tolerance: 1.0 / 11.0,
+        },
         unit: "renders per second",
         scenario: &DESKTOP_THINKING,
-        margin: "the PRD bound (FR-04); the spinner steps every 90 ms and the blink lands on its steps, so 11.1 per second; 13.0 when they drew separate frames",
+        margin: "10 to 12 (FR-04, FR-13): the spinner steps every 90 ms and the blink lands on its steps, so 11.1 per second, 13.0 when they drew separate frames; the floor fails a window that draws the blink alone, 1.866 per second from 513f504a until the agent declared its turn by OSC 7501, against 11.13 on 195a9f5f; measured 11.10 once the shimmer stepped on the same grid, 26.5 with its 33 ms frames",
     },
     Budget {
         counter: "desktop.diff_stat.probes",
@@ -318,7 +321,7 @@ impl Limit {
                 } else {
                     let delta = measured - baseline;
                     Outcome::Fail(format!(
-                        "{}{}: below the baseline, refresh it in this PR with scripts/perf-gates.sh --refresh-alloc-baselines",
+                        "{}{}{BELOW_BASELINE}",
                         signed(delta),
                         relative(delta, baseline)
                     ))
@@ -327,6 +330,8 @@ impl Limit {
         }
     }
 }
+
+const BELOW_BASELINE: &str = ": below the baseline";
 
 fn verdict(
     counter: String,
@@ -460,7 +465,7 @@ pub(super) fn allocation_verdicts(
                     (Some(value), Some(_)) => Measurement::Value(value),
                 },
             };
-            verdicts.push(verdict(
+            let mut judged = verdict(
                 counter,
                 Limit::Within {
                     baseline: before.unwrap_or(0.0),
@@ -469,7 +474,15 @@ pub(super) fn allocation_verdicts(
                 unit,
                 scenario,
                 measured,
-            ));
+            );
+            if let Outcome::Fail(excess) = &mut judged.outcome
+                && excess.ends_with(BELOW_BASELINE)
+            {
+                excess.push_str(
+                    ", refresh it in this PR with scripts/perf-gates.sh --refresh-alloc-baselines",
+                );
+            }
+            verdicts.push(judged);
         }
     }
     verdicts

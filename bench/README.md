@@ -182,6 +182,18 @@ focused only while its window is active; under Xvfb the inactive window drew
 0, the focused one 1.87 per second, and the thinking state 11.10 per second
 (local Xvfb, 2026-10-06).
 
+The thinking state puts the agent in a turn the way a real agent does since
+`328a8fe1`, which takes the turn state only from OSC 7501: an `ai.session_start`
+hook names the agent (Claude Code's hooks still carry its identity), then the
+pane's program, `paneflow-session-fixture declare`, turns the line `working`
+typed into it into `ESC ] 7501 ; state=working ST`. Until then the harness
+injected `ai.prompt_submit`, which no longer moves the state, so from
+`513f504a` the gate measured the cursor blink alone, 1.866 root renders per
+second against 11.13 on `195a9f5f`, and still passed its `<= 12` bound. The
+budget is now a band, 10 to 12 per second, and a window that draws no more
+than the blink alone (2 per second) is reported missing with "no spinner
+drawn", never within budget.
+
 Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
 snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate
 measured 15 snapshots in the 30 s idle window against a budget of 0 and
@@ -857,7 +869,9 @@ release host with an isolated `PANEFLOW_HOME`, launches the desktop with
 `PANEFLOW_SOCKET_PATH` and `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1`, cursor blinking
 and telemetry off, and reads `system.counters` over IPC. It measures 5 windows
 of 30 s for three states: the desktop idle with 4 panes, one simulated agent
-thinking (an `ai.prompt_submit` hook event that starts the sidebar spinner),
+thinking (an `ai.session_start` hook names the agent, then the pane's
+`paneflow-session-fixture declare` program prints OSC 7501 `state=working`,
+which starts the sidebar spinner),
 and 4 `stream` sessions. For each counter it reports the mean and the
 coefficient of variation across the 5 windows. The first frame is bounded by
 the time until every restored pane shows the fixture announcement, with a 90 s
@@ -897,8 +911,9 @@ inside `TestAppContext` or a third-party runner and blocked US-013.
 The ignored test `desktop_tab_badges_cpu` measures what the pane tab badges
 cost the desktop main thread. It opens 12 idle fixture sessions in two side by
 side panes of 6 tabs, because a pane holds at most 8 tabs (`MAX_PANE_TABS`),
-sends an `ai.prompt_submit` hook event so one agent thinks and the sidebar
-spinner runs, waits 4 s, then measures 5 windows of 30 s: the CPU time of the
+names the agent with an `ai.session_start` hook and has its `declare` fixture
+print OSC 7501 `state=working`, so one agent thinks and the sidebar spinner
+runs, waits 4 s, then measures 5 windows of 30 s: the CPU time of the
 desktop main thread, read from `/proc/<pid>/task/<pid>/stat` (Linux only; the
 other platforms report it pending and the test fails), and the desktop work
 counters. It needs a display and the release binaries:

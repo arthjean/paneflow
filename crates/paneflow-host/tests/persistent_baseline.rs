@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use paneflow_host::protocol::ClientHello;
-use paneflow_host::{CreateSession, HostClient, SessionId, bootstrap};
+use paneflow_host::{CreateSession, HostClient, SessionGeneration, SessionId, bootstrap};
 use paneflow_ipc_client::host_control::HostControl;
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::{Value, json};
@@ -864,7 +864,7 @@ fn desktop_headless_spike() {
             .collect()
     };
 
-    let idle = open(&mut client, &["idle"]);
+    let idle = open(&mut client, &headless::DECLARING_FIXTURE);
     let desktop_started = Instant::now();
     let mut states = json!({});
     let mut failure = None;
@@ -874,11 +874,16 @@ fn desktop_headless_spike() {
             first_frame = Some(desktop_started.elapsed());
             states["idle_4_panes"] =
                 headless::measure_state(&desktop, headless::SPIKE_RUNS, headless::SPIKE_WINDOW);
-            let submitted = headless::submit_prompt(&endpoint, &idle[0]);
+            let thinking = headless::start_thinking(
+                &mut client,
+                &endpoint,
+                &idle[0],
+                SessionGeneration::FIRST,
+            );
             std::thread::sleep(SETTLE);
             states["one_agent_thinking"] =
                 headless::measure_state(&desktop, headless::SPIKE_RUNS, headless::SPIKE_WINDOW);
-            states["one_agent_thinking"]["prompt_submit"] = submitted;
+            states["one_agent_thinking"]["start_thinking"] = thinking;
         }
         Err(error) => failure = Some(error),
     }
@@ -995,7 +1000,7 @@ fn desktop_tab_badges_cpu() {
     let sessions: Vec<SessionId> = (0..TAB_BADGE_TABS)
         .map(|_| {
             let created = client
-                .create(&workloads::fixture(&["idle"]))
+                .create(&workloads::fixture(&headless::DECLARING_FIXTURE))
                 .expect("the fixture session starts");
             ledger.record(&mut client, &created.manifest.session);
             created.manifest.session
@@ -1003,7 +1008,12 @@ fn desktop_tab_badges_cpu() {
         .collect();
     let desktop =
         DesktopProcess::start_in_two_panes(home.path(), &sessions, headless::FIRST_FRAME_LIMIT);
-    let submitted = headless::submit_prompt(&endpoint, &sessions[0]);
+    let thinking = headless::start_thinking(
+        &mut client,
+        &endpoint,
+        &sessions[0],
+        SessionGeneration::FIRST,
+    );
     std::thread::sleep(SETTLE);
     let pid = desktop.child.id();
     let runs: Vec<Value> = (0..headless::SPIKE_RUNS)
@@ -1047,7 +1057,7 @@ fn desktop_tab_badges_cpu() {
         "schema_version": SCHEMA_VERSION,
         "tabs": TAB_BADGE_TABS,
         "state": "two side by side panes of 6 terminal tabs each (12 tab badges, a pane holds at most 8), one agent thinking",
-        "prompt_submit": submitted,
+        "start_thinking": thinking,
         "main_thread_cpu_percent": workloads::stats(&cpu, headless::SPIKE_RUNS),
         "runs": runs,
         "stamp": stamp(),
