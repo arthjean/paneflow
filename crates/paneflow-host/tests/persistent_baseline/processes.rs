@@ -166,6 +166,34 @@ impl DesktopProcess {
         json!({"version": 3, "active_workspace": 0, "workspaces": workspaces})
     }
 
+    pub(super) fn start_one_workspace_per_session(
+        home: &Path,
+        workspaces: &[(PathBuf, SessionId)],
+        ready_deadline: Duration,
+    ) -> Self {
+        let saved = json!({
+            "version": 3,
+            "active_workspace": 0,
+            "workspaces": workspaces.iter().enumerate().map(|(index, (cwd, session))| json!({
+                "title": format!("Workspace {index:02}"),
+                "cwd": cwd.display().to_string(),
+                "tabs": [{
+                    "title": session.as_str(),
+                    "layout": {"type": "pane", "surfaces": [{"surface_type": "terminal", "session": session, "custom_name": session.as_str()}]},
+                }],
+                "active_tab": 0,
+            })).collect::<Vec<_>>(),
+        });
+        Self::launch(
+            home,
+            &saved,
+            BLINKING_DESKTOP_CONFIG,
+            workspaces.len(),
+            None,
+            ready_deadline,
+        )
+    }
+
     pub(super) fn start_in_two_panes(
         home: &Path,
         sessions: &[SessionId],

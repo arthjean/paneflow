@@ -12,7 +12,9 @@ not_measured with its reason, never 0. See "Real hardware protocol" in
 bench/README.md.
 
 .PARAMETER State
-idle-4-panes, agent-thinking, stream-4 or panes-8.
+idle-4-panes, agent-thinking, stream-4, panes-8 or tui-30-workspaces. The last
+one needs bench/fixtures/tui-agent.ps1 running in the active pane of the
+measured instance (bench/README.md).
 
 .PARAMETER Label
 The build under test, for example v0.17.5 or main-0a74eb30.
@@ -26,7 +28,7 @@ Window length in seconds, 60 unless overridden.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("idle-4-panes", "agent-thinking", "stream-4", "panes-8")]
+    [ValidateSet("idle-4-panes", "agent-thinking", "stream-4", "panes-8", "tui-30-workspaces")]
     [string]$State,
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^[A-Za-z0-9._-]+$")]
@@ -49,6 +51,15 @@ if ($desktops.Count -ne 1) {
 if ($hosts.Count -gt 1 -or $workers.Count -gt 1) {
     Write-Error "more than one paneflow-host or worker is running: stop the other instances' hosts and workers first"
     exit 1
+}
+
+if ($State -eq "tui-30-workspaces") {
+    $fixture = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" |
+        Where-Object { $_.CommandLine -match "tui-agent\.ps1" })
+    if ($fixture.Count -eq 0) {
+        Write-Error "tui-30-workspaces replays bench/fixtures/tui-agent.ps1: run it in the active pane of the measured instance (bench\fixtures\tui-agent.ps1 -Seconds 600), then run this script again"
+        exit 1
+    }
 }
 
 $exe = $desktops[0].ExecutablePath

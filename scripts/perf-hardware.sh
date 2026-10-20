@@ -13,7 +13,9 @@ frame times from --frame-log. A source that cannot be read is recorded
 not_measured with its reason, never 0. See "Real hardware protocol" in
 bench/README.md.
 
-States: idle-4-panes, agent-thinking, stream-4, panes-8.
+States: idle-4-panes, agent-thinking, stream-4, panes-8, tui-30-workspaces.
+        tui-30-workspaces needs bench/fixtures/tui-agent.sh running in the
+        active pane of the measured instance (bench/README.md).
 Label:  the build under test, for example v0.17.5 or main-0a74eb30.
 USAGE
 }
@@ -36,7 +38,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$state" in
-  idle-4-panes | agent-thinking | stream-4 | panes-8) ;;
+  idle-4-panes | agent-thinking | stream-4 | panes-8 | tui-30-workspaces) ;;
   *) usage >&2; exit 2 ;;
 esac
 if ! printf '%s' "$label" | grep -Eq '^[A-Za-z0-9._-]+$'; then
@@ -60,6 +62,11 @@ if [ "${#desktops[@]}" -ne 1 ]; then
 fi
 if [ "${#hosts[@]}" -gt 1 ] || [ "${#workers[@]}" -gt 1 ]; then
   echo "more than one paneflow-host (${hosts[*]}) or worker (${workers[*]}) is running: stop the other instances' hosts and workers first" >&2
+  exit 1
+fi
+
+if [ "$state" = tui-30-workspaces ] && ! pgrep -u "$uid" -f 'bench/fixtures/tui-agent\.sh' >/dev/null; then
+  echo "tui-30-workspaces replays bench/fixtures/tui-agent.sh: run it in the active pane of the measured instance (bench/fixtures/tui-agent.sh 600), then run this script again" >&2
   exit 1
 fi
 

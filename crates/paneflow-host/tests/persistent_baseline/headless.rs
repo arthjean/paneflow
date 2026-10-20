@@ -149,6 +149,40 @@ pub(super) fn start_desktop_in(
     .map_err(desktop_failure)
 }
 
+pub(super) fn start_desktop_with_workspaces(
+    home: &Path,
+    workspaces: &[(PathBuf, SessionId)],
+) -> Result<DesktopProcess, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DesktopProcess::start_one_workspace_per_session(home, workspaces, FIRST_FRAME_LIMIT)
+    }))
+    .map_err(desktop_failure)
+}
+
+pub(super) fn surface_showing(desktop: &DesktopProcess, marker: &str) -> Result<u64, String> {
+    let ipc = IpcClient::new(desktop.endpoint.clone());
+    let listed = ipc
+        .call("surface.list", json!({}))
+        .map_err(|error| format!("surface.list failed: {error:?}"))?;
+    let surfaces: Vec<u64> = listed["surfaces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|surface| surface["surface_id"].as_u64())
+        .collect();
+    surfaces
+        .iter()
+        .copied()
+        .find(|surface_id| {
+            ipc.call(
+                "surface.read",
+                json!({"surface_id": surface_id, "lines": 60}),
+            )
+            .is_ok_and(|read| read.to_string().contains(marker))
+        })
+        .ok_or_else(|| format!("none of the {} surfaces shows {marker:?}", surfaces.len()))
+}
+
 pub(super) const DECLARING_FIXTURE: [&str; 1] = ["declare"];
 
 pub(super) fn start_thinking(

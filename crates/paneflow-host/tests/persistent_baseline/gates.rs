@@ -50,6 +50,18 @@ pub(super) const DESKTOP_DIFF_STAT: Scenario = Scenario {
     reproduce: "scripts/perf-gates.sh",
 };
 
+pub(super) const DESKTOP_TUI_30_WORKSPACES: Scenario = Scenario {
+    id: "desktop_tui_30_workspaces",
+    description: "release desktop on 30 workspaces, each on a git repository that does not change, the active pane running bench/fixtures/tui-agent.sh, window focused, two 30 s windows",
+    reproduce: "scripts/perf-gates.sh",
+};
+
+pub(super) const DESKTOP_TUI_30_WORKSPACES_INACTIVE: Scenario = Scenario {
+    id: "desktop_tui_30_workspaces_inactive",
+    description: "the same desktop before xdotool focuses it, so no window is active, 60 s window",
+    reproduce: "scripts/perf-gates.sh",
+};
+
 pub(super) const DESKTOP_STARTUP: Scenario = Scenario {
     id: "desktop_startup",
     description: "startup suite, 10 timed launches each on a stale desktop IPC socket",
@@ -213,6 +225,20 @@ pub(super) const BUDGETS: &[Budget] = &[
         unit: "git processes per probe",
         scenario: &DESKTOP_DIFF_STAT,
         margin: "no margin: rev-parse, diff and ls-files, the filter query reused from its cache (US-009, FR-07)",
+    },
+    Budget {
+        counter: "desktop.tui_30_workspaces.git_spawns_per_min",
+        limit: Limit::AtMost(30.0),
+        unit: "git processes per minute",
+        scenario: &DESKTOP_TUI_30_WORKSPACES,
+        margin: "the PRD bound (FR-01): the shown workspace every 30 s and a tenth of the 29 others per poll, 3 processes per probe, so 24 per minute, 27 with the probe of the window activation; measured 24.0 (12 per 30 s window), 180 when every workspace was polled",
+    },
+    Budget {
+        counter: "desktop.tui_30_workspaces_inactive.git_spawns_per_window",
+        limit: Limit::Exactly(0.0),
+        unit: "git processes per window",
+        scenario: &DESKTOP_TUI_30_WORKSPACES_INACTIVE,
+        margin: "no margin: no window is active, so no periodic probe runs and nothing changes under .git (FR-02); measured 0, 180 when the poll ignored window activity",
     },
     Budget {
         counter: "desktop.startup.stale_socket_ipc_server_started_p95_ms",
@@ -684,7 +710,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 20 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 22 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -705,7 +731,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("20 budgets, 2 failed, 0 not measured."),
+            summary.contains("22 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(

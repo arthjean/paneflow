@@ -466,6 +466,199 @@ pub(super) fn desktop_diff_stat(
     detail
 }
 
+pub(super) const TUI_WORKSPACES: usize = 30;
+const TUI_SETTLE: Duration = Duration::from_secs(10);
+const TUI_INACTIVE_WINDOW: Duration = Duration::from_secs(60);
+const TUI_FIXTURE_SECONDS: u64 = 300;
+const TUI_FIXTURE_MARKER: &str = "tui fixture line";
+
+pub(super) const TUI_NAMES: [&str; 4] = [
+    "desktop.tui_30_workspaces.root_renders_per_s",
+    "desktop.tui_30_workspaces.git_spawns",
+    "desktop.tui_30_workspaces.git_spawns_per_min",
+    "desktop.tui_30_workspaces_inactive.git_spawns_per_window",
+];
+
+fn tui_fixture(cwd: &Path, seconds: u64) -> CreateSession {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/fixtures");
+    #[cfg(windows)]
+    let (shell, script) = (
+        "powershell",
+        vec!["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"],
+    );
+    #[cfg(windows)]
+    let script_path = fixtures.join("tui-agent.ps1");
+    #[cfg(not(windows))]
+    let (shell, script) = ("sh", Vec::<&str>::new());
+    #[cfg(not(windows))]
+    let script_path = fixtures.join("tui-agent.sh");
+    CreateSession {
+        shell: Some(shell.to_string()),
+        args: script
+            .into_iter()
+            .map(str::to_string)
+            .chain([script_path.display().to_string(), seconds.to_string()])
+            .collect(),
+        cwd: Some(cwd.display().to_string()),
+        cols: Some(80),
+        rows: Some(24),
+        ..CreateSession::default()
+    }
+}
+
+fn sum(first: Measurement, second: Measurement) -> Measurement {
+    match (first, second) {
+        (Measurement::Value(first), Measurement::Value(second)) => {
+            Measurement::Value(first + second)
+        }
+        (Measurement::Value(_), missing) | (missing, _) => missing,
+    }
+}
+
+pub(super) struct TuiWindows<'a> {
+    pub(super) started: &'a Result<u64, String>,
+    pub(super) focus: &'a Result<(), String>,
+    pub(super) inactive: &'a Value,
+    pub(super) first: &'a Value,
+    pub(super) first_s: f64,
+    pub(super) second: &'a Value,
+    pub(super) second_s: f64,
+}
+
+pub(super) fn tui_measurements(windows: &TuiWindows) -> Vec<(&'static str, Measurement)> {
+    let all_missing = |reason: String| -> Vec<(&'static str, Measurement)> {
+        TUI_NAMES
+            .iter()
+            .map(|name| (*name, Measurement::Missing(reason.clone())))
+            .collect()
+    };
+    if let Err(reason) = windows.started {
+        return all_missing(format!(
+            "the TUI fixture never drew in the active pane: {reason}"
+        ));
+    }
+    if let Err(reason) = windows.focus {
+        return all_missing(format!(
+            "the window was never focused, so the active workspace is not measured: {reason}"
+        ));
+    }
+    let renders = per(counter(windows.first, "root_renders"), windows.first_s);
+    if let Measurement::Value(rate) = renders
+        && rate <= BLINK_ALONE_RENDERS_PER_S
+    {
+        return all_missing(format!(
+            "the TUI pane received no output: {rate:.3} root renders per second, no more than the cursor blink alone"
+        ));
+    }
+    let spawns = counter(windows.first, "git_spawns.total");
+    let minute = per(
+        sum(spawns.clone(), counter(windows.second, "git_spawns.total")),
+        (windows.first_s + windows.second_s) / 60.0,
+    );
+    vec![
+        (TUI_NAMES[0], renders),
+        (TUI_NAMES[1], spawns),
+        (TUI_NAMES[2], minute),
+        (TUI_NAMES[3], counter(windows.inactive, "git_spawns.total")),
+    ]
+}
+
+fn seed_tui_repositories(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let repositories: Vec<PathBuf> = (0..TUI_WORKSPACES)
+        .map(|index| root.join(format!("repository-{index:02}")))
+        .collect();
+    repositories
+        .iter()
+        .try_for_each(|repository| committed_repository(repository))
+        .map_err(|reason| {
+            format!("the {TUI_WORKSPACES} workspace repositories were not seeded: {reason}")
+        })?;
+    Ok(repositories)
+}
+
+pub(super) fn desktop_tui_30_workspaces(
+    client: &mut HostClient,
+    ledger: &FixtureLedger,
+    home: &Path,
+    values: &mut Values,
+) -> Value {
+    let repositories = match seed_tui_repositories(&home.join("tui-workspaces")) {
+        Ok(repositories) => repositories,
+        Err(reason) => {
+            record_all(values, &TUI_NAMES, &reason);
+            return json!({"failed": reason});
+        }
+    };
+    let mut sessions = Vec::with_capacity(TUI_WORKSPACES);
+    for (index, repository) in repositories.iter().enumerate() {
+        let request = if index == 0 {
+            tui_fixture(repository, TUI_FIXTURE_SECONDS)
+        } else {
+            CreateSession {
+                cwd: Some(repository.display().to_string()),
+                ..workloads::fixture(&["idle"])
+            }
+        };
+        match client.create(&request) {
+            Ok(created) => {
+                ledger.record(client, &created.manifest.session);
+                sessions.push(created.manifest.session);
+            }
+            Err(error) => {
+                stop(client, &sessions);
+                let reason = format!("the session of workspace {index} did not start: {error}");
+                record_all(values, &TUI_NAMES, &reason);
+                return json!({"failed": reason});
+            }
+        }
+    }
+    let workspaces: Vec<(PathBuf, SessionId)> = repositories
+        .into_iter()
+        .zip(sessions.iter().cloned())
+        .collect();
+    let detail = match headless::start_desktop_with_workspaces(home, &workspaces) {
+        Err(error) => {
+            let reason = format!(
+                "the desktop did not start under the virtual display (display server or Vulkan adapter): {error}"
+            );
+            record_all(values, &TUI_NAMES, &reason);
+            json!({"failed": reason})
+        }
+        Ok(desktop) => {
+            std::thread::sleep(TUI_SETTLE);
+            let started = headless::surface_showing(&desktop, TUI_FIXTURE_MARKER);
+            let (inactive, inactive_s) = desktop_window(&desktop, TUI_INACTIVE_WINDOW);
+            let focus = headless::focus_window(&desktop);
+            std::thread::sleep(SETTLE);
+            let (first, first_s) = desktop_window(&desktop, GATE_WINDOW);
+            let (second, second_s) = desktop_window(&desktop, GATE_WINDOW);
+            let windows = TuiWindows {
+                started: &started,
+                focus: &focus,
+                inactive: &inactive,
+                first: &first,
+                first_s,
+                second: &second,
+                second_s,
+            };
+            for (name, measurement) in tui_measurements(&windows) {
+                values.insert(name.to_string(), measurement);
+            }
+            json!({
+                "workspaces": TUI_WORKSPACES,
+                "settle_s": TUI_SETTLE.as_secs_f64(),
+                "fixture": {"surface_id": started.as_ref().ok(), "failed": started.as_ref().err()},
+                "inactive": {"window_s": inactive_s, "work_counters": inactive},
+                "focused": {"focus": focus.err()},
+                "active_first": {"window_s": first_s, "work_counters": first},
+                "active_second": {"window_s": second_s, "work_counters": second},
+            })
+        }
+    };
+    stop(client, &sessions);
+    detail
+}
+
 fn read_json(path: &Path) -> Result<Value, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
@@ -648,6 +841,92 @@ mod tests {
         assert!(!thinking_verdict(Measurement::Value(11.1)).failed());
         assert!(!thinking_verdict(Measurement::Value(10.0)).failed());
         assert!(!thinking_verdict(Measurement::Value(12.0)).failed());
+    }
+
+    fn tui_window(root_renders: u64, git_spawns: u64) -> Value {
+        json!({"root_renders": root_renders, "git_spawns.total": git_spawns})
+    }
+
+    #[test]
+    fn a_tui_scenario_without_a_drawing_fixture_leaves_every_budget_missing() {
+        let inactive = tui_window(750, 0);
+        let busy = tui_window(750, 9);
+        let measure = |started: Result<u64, String>, first: &Value| {
+            tui_measurements(&TuiWindows {
+                started: &started,
+                focus: &Ok(()),
+                inactive: &inactive,
+                first,
+                first_s: 30.0,
+                second: &busy,
+                second_s: 30.0,
+            })
+        };
+        let never_started = measure(
+            Err("none of the 30 surfaces shows \"tui fixture line\"".to_string()),
+            &busy,
+        );
+        assert_eq!(never_started.len(), TUI_NAMES.len());
+        assert!(never_started.iter().all(|(_, measurement)| matches!(
+            measurement,
+            Measurement::Missing(reason) if reason.contains("never drew")
+        )));
+        let silent = measure(Ok(7), &tui_window(56, 0));
+        assert!(silent.iter().all(|(_, measurement)| matches!(
+            measurement,
+            Measurement::Missing(reason) if reason.contains("received no output")
+        )));
+        let measured: BTreeMap<_, _> = measure(Ok(7), &busy).into_iter().collect();
+        assert_eq!(measured[TUI_NAMES[0]], Measurement::Value(25.0));
+        assert_eq!(measured[TUI_NAMES[1]], Measurement::Value(9.0));
+        assert_eq!(measured[TUI_NAMES[2]], Measurement::Value(18.0));
+        assert_eq!(measured[TUI_NAMES[3]], Measurement::Value(0.0));
+    }
+
+    #[test]
+    fn a_home_that_cannot_seed_its_repositories_leaves_the_git_budgets_missing() {
+        let home = tempfile::tempdir().unwrap();
+        let blocked = home.path().join("tui-workspaces");
+        std::fs::write(&blocked, "a file where the repositories should go").unwrap();
+        let reason = seed_tui_repositories(&blocked).unwrap_err();
+        assert!(reason.contains("were not seeded"), "{reason}");
+        let mut values = Values::new();
+        record_all(&mut values, &TUI_NAMES, &reason);
+        let verdicts = gates::verify(gates::BUDGETS, &values);
+        let git_budgets: Vec<&gates::Verdict> = verdicts
+            .iter()
+            .filter(|verdict| {
+                verdict.counter.contains("tui_30_workspaces")
+                    && verdict.counter.contains("git_spawns")
+            })
+            .collect();
+        assert_eq!(git_budgets.len(), 2);
+        for verdict in git_budgets {
+            assert!(verdict.failed(), "{}", verdict.line());
+            assert!(
+                verdict.line().contains("were not seeded"),
+                "{}",
+                verdict.line()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unfocused_tui_scenario_measures_no_active_workspace() {
+        let window = tui_window(750, 9);
+        let measured = tui_measurements(&TuiWindows {
+            started: &Ok(7),
+            focus: &Err("no visible X11 window belongs to the desktop pid 7".to_string()),
+            inactive: &window,
+            first: &window,
+            first_s: 30.0,
+            second: &window,
+            second_s: 30.0,
+        });
+        assert!(measured.iter().all(|(_, measurement)| matches!(
+            measurement,
+            Measurement::Missing(reason) if reason.contains("never focused")
+        )));
     }
 
     #[test]

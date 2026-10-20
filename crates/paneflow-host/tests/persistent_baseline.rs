@@ -1117,6 +1117,8 @@ fn perf_gates() {
     );
     measurements["desktop_diff_stat"] =
         gate_runs::desktop_diff_stat(&mut client, &ledger, home.path(), &mut values);
+    measurements["desktop_tui_30_workspaces"] =
+        gate_runs::desktop_tui_30_workspaces(&mut client, &ledger, home.path(), &mut values);
     measurements["hook_burst"] = gate_runs::hook_burst(&inputs, &mut values);
     measurements["desktop_startup"] = gate_runs::startup(&inputs, &mut values);
     measurements["terminal_trickle"] = gate_runs::trickle(&inputs, &mut values);

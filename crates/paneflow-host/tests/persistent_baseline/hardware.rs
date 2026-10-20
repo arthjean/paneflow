@@ -4,8 +4,13 @@ use paneflow_host::work_counters::{
     CounterSample, DESKTOP_COUNTERS, HOST_COUNTERS, WORKER_COUNTERS,
 };
 
-pub(super) const HARDWARE_STATES: [&str; 4] =
-    ["idle-4-panes", "agent-thinking", "stream-4", "panes-8"];
+pub(super) const HARDWARE_STATES: [&str; 5] = [
+    "idle-4-panes",
+    "agent-thinking",
+    "stream-4",
+    "panes-8",
+    "tui-30-workspaces",
+];
 pub(super) const HARDWARE_WINDOW: Duration = Duration::from_secs(60);
 pub(super) const FRAME_TIME_COLUMNS: [&str; 3] = ["MsBetweenPresents", "FrameTime", "frametime"];
 

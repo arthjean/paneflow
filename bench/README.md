@@ -102,7 +102,7 @@ cold build by about a quarter), runs the terminal and editor suites,
 the hook burst test and the startup suite, starts its own Xvfb with the
 lavapipe ICD forced, then runs the ignored test `perf_gates` in
 `crates/paneflow-host/tests/persistent_baseline.rs`. That test drives the real
-host, worker and desktop through four scenarios: 8 idle sessions and 8
+host, worker and desktop through five scenarios: 8 idle sessions and 8
 `stream 16384 60` sessions for the host and the worker (30 s windows), then
 the desktop idle with 4 panes and the cursor blink on, idle again once
 `xdotool` gives its window the X input focus (Xvfb runs no window manager, so
@@ -110,7 +110,7 @@ the window is otherwise never active, and a terminal in an inactive window
 does not blink), with one agent thinking in that focused window, on a
 workspace whose git repository does not change, its window focused because
 the git poll only runs while a window is active (35 s window, one 30 s git
-poll). It
+poll), and on 30 workspaces (`desktop_tui_30_workspaces`, described below). It
 reads the other suites' results from `target/perf-gates/` and judges every
 budget.
 
@@ -194,6 +194,36 @@ second against 11.13 on `195a9f5f`, and still passed its `<= 12` bound. The
 budget is now a band, 10 to 12 per second, and a window that draws no more
 than the blink alone (2 per second) is reported missing with "no spinner
 drawn", never within budget.
+
+`desktop_tui_30_workspaces` reproduces an agent whose interface animates among
+many workspaces. The home holds 30 workspaces, each on its own committed git
+repository with one modified file that nothing touches during the run; the
+active one runs `bench/fixtures/tui-agent.sh` (`tui-agent.ps1` on Windows),
+which prints 40 lines and then rewrites three bottom lines every 50 ms inside
+a DEC 2026 synchronized output block and changes the OSC title every 100 ms,
+like Claude Code's status line. The other 29 run the idle fixture. After a
+10 s settle the scenario measures 60 s while no window is active
+(`desktop.tui_30_workspaces_inactive.*`), then focuses the window with
+`xdotool` and measures two 30 s windows (`desktop.tui_30_workspaces.*`:
+root renders per second and git processes over the first window, git
+processes per minute over both). A fixture that never drew in a pane, a
+window that never took the focus, or a pane that received no output (no more
+root renders than the blink alone) leaves every budget of the scenario
+missing with its reason.
+
+Measured locally on 2026-10-14 under Xvfb with lavapipe (Fedora 44, `gates`
+profile). On `main` at `3a4ca9e1`, once the harness declared the turn by OSC
+7501, the thinking state drew 26.5 root renders per second, the 11.1 of the
+spinner and blink plus the shimmer's 33 ms frames, and the 30 workspaces cost
+180 git processes per minute whether a window was active or not (3 per probe,
+every workspace every 30 s). With the shimmer on the 90 ms grid and the poll
+limited to the shown workspace of an active window, the thinking state drew
+11.10 per second, the scenario 24.0 git processes per minute with the window
+active and 0 in the 60 s without one, and the TUI pane alone drove 22.5 to 23.1
+root renders per second. On real hardware the same state costs the desktop
+main thread about 22 % of a core at 25 root renders per second, before and
+after EP-001, with git going from 180 to 24 processes per minute
+([hardware-summary-2026-10-20.md](results/hardware-summary-2026-10-20.md)).
 
 Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
 snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate
@@ -992,7 +1022,7 @@ before a run.
 5. Maximize the window and wait until the first frame and the session restore
    settle.
 
-### The four states
+### The states
 
 Each state is held for the whole 60 s window, with nobody touching the
 machine. Run the script about 10 s after the state is reached.
@@ -1003,11 +1033,25 @@ machine. Run the script about 10 s after the state is reached.
 | `agent-thinking` | `idle-4-panes`, with one pane running Claude Code or Codex on a prompt that keeps it thinking for more than 60 s, its spinner visible in the sidebar. |
 | `stream-4` | Four panes each running `paneflow-session-fixture stream 16384 600` from a release build of `main` (`target/release/`), the same stream the active scenario uses. |
 | `panes-8` | One workspace split into 8 visible panes (2 rows of 4), idle shells. |
+| `tui-30-workspaces` | 30 workspaces, each an idle shell in its own git repository, the active pane running `bench/fixtures/tui-agent.sh 600` (`bench\fixtures\tui-agent.ps1 -Seconds 600` on Windows), the replay of an agent's animated interface that `perf_gates` uses. The script refuses to measure this state when the fixture is not running. |
 
 ```bash
 scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
 scripts/perf-hardware.sh --state agent-thinking --label v0.17.5 --frame-log /tmp/hw/paneflow_*.csv
 scripts/perf-hardware.ps1 -State stream-4 -Label v0.17.5 -FrameLog C:\hw\presentmon.csv
+```
+
+The 30 workspaces of `tui-30-workspaces` can be opened from the measured
+build's own CLI, in the terminal that launched it:
+
+```bash
+for index in $(seq -w 1 30); do
+  repo="$PANEFLOW_HOME/tui-repos/repo-$index"
+  mkdir -p "$repo" && git -C "$repo" init -q && echo one >"$repo/tracked.txt"
+  git -C "$repo" add tracked.txt && git -C "$repo" -c user.name=hw -c user.email=hw@localhost commit -qm fixture
+  echo two >>"$repo/tracked.txt"
+  ./paneflow new --name "tui $index" --cwd "$repo"
+done
 ```
 
 On Windows, capture the frame log in parallel with PresentMon 2.x:
