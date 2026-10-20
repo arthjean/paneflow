@@ -188,6 +188,7 @@ impl PaneFlowApp {
                 .active_workspace()
                 .is_some_and(|workspace| workspace.is_git_repo),
             Needs::ManyWorkspaces => self.workspaces.len() > 1,
+            Needs::Spaces => !self.cached_config.spaces.is_empty(),
             Needs::ManyTabs => self
                 .active_workspace()
                 .is_some_and(|workspace| workspace.tab_count() > 1),
@@ -310,6 +311,20 @@ impl PaneFlowApp {
         self.apply_scope_value(value, window, cx);
     }
 
+    pub(crate) fn open_move_workspace_to_space_palette(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cached_config.spaces.is_empty() || self.shown_workspace_idx().is_none() {
+            return;
+        }
+        if !self.command_palette_open {
+            self.open_command_palette(window, cx);
+        }
+        self.enter_palette_scope(Scope::MoveToSpace, cx);
+    }
+
     fn enter_palette_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         self.command_palette_scope = Some(scope);
         self.reset_palette_input(Some(scope), cx);
@@ -359,6 +374,19 @@ impl PaneFlowApp {
             }
             Apply::InterfaceStyle(style) => self.apply_interface_style(style, cx),
             Apply::Workspace(idx) => self.select_workspace(idx, window, cx),
+            Apply::Space(space) => {
+                self.activate_space(space, Some(window), cx);
+            }
+            Apply::MoveToSpace(space) => {
+                if let Some(idx) = self.shown_workspace_idx() {
+                    self.move_workspace_to_space(idx, space, window, cx);
+                }
+            }
+            Apply::MoveToNewSpace => {
+                if let Some(idx) = self.shown_workspace_idx() {
+                    self.move_workspace_to_new_space(idx, window, cx);
+                }
+            }
             Apply::Tab(idx) => {
                 if let Some(workspace) = self.shown_workspace_idx() {
                     self.select_workspace_tab(workspace, idx, window, cx);

@@ -188,6 +188,12 @@ impl PaneFlowApp {
         });
         cx.observe(&agent_profile_name_input, |_, _, cx| cx.notify())
             .detach();
+        let space_name_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Space name", cx)
+                .with_accessible_name("Space name")
+        });
+        cx.observe(&space_name_input, |_, _, cx| cx.notify())
+            .detach();
         let agent_profile_args_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "--model opus", cx)
                 .with_accessible_name("Extra arguments")
@@ -285,6 +291,9 @@ impl PaneFlowApp {
             integration_busy: None,
             integration_errors: std::collections::HashMap::new(),
             agent_profile_name_input,
+            space_name_input,
+            space_name_editor: None,
+            space_delete_armed: None,
             agent_profile_args_input,
             mcp_status: None,
             mcp_install: None,

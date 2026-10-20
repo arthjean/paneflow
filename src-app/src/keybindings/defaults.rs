@@ -449,13 +449,35 @@ const MACOS_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
         action_name: "terminal_select_all",
         context: Some("Terminal"),
     },
+    DefaultBinding {
+        key: "cmd-alt-right",
+        action_name: "next_space",
+        context: None,
+    },
+    DefaultBinding {
+        key: "cmd-alt-left",
+        action_name: "previous_space",
+        context: None,
+    },
 ];
 
-const OTHER_PLATFORM_DEFAULTS: &[DefaultBinding] = &[DefaultBinding {
-    key: "ctrl-v",
-    action_name: "terminal_paste",
-    context: Some("Terminal"),
-}];
+const OTHER_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
+    DefaultBinding {
+        key: "ctrl-v",
+        action_name: "terminal_paste",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
+        key: "ctrl-alt-pagedown",
+        action_name: "next_space",
+        context: None,
+    },
+    DefaultBinding {
+        key: "ctrl-alt-pageup",
+        action_name: "previous_space",
+        context: None,
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -551,6 +573,46 @@ mod tests {
                 "`{}` ({}) resolves to Cmd+Space on macOS, which Spotlight swallows",
                 binding.key,
                 binding.action_name,
+            );
+        }
+    }
+
+    #[test]
+    fn spaces_have_two_platform_shortcuts() {
+        let keys = |defaults: &[DefaultBinding], action: &str| -> Vec<&'static str> {
+            defaults
+                .iter()
+                .filter(|binding| binding.action_name == action)
+                .map(|binding| binding.key)
+                .collect()
+        };
+        assert_eq!(
+            keys(MACOS_PLATFORM_DEFAULTS, "next_space"),
+            ["cmd-alt-right"]
+        );
+        assert_eq!(
+            keys(MACOS_PLATFORM_DEFAULTS, "previous_space"),
+            ["cmd-alt-left"]
+        );
+        assert_eq!(
+            keys(OTHER_PLATFORM_DEFAULTS, "next_space"),
+            ["ctrl-alt-pagedown"]
+        );
+        assert_eq!(
+            keys(OTHER_PLATFORM_DEFAULTS, "previous_space"),
+            ["ctrl-alt-pageup"]
+        );
+        for binding in DEFAULTS {
+            assert!(
+                ![
+                    "ctrl-alt-pagedown",
+                    "ctrl-alt-pageup",
+                    "cmd-alt-right",
+                    "cmd-alt-left"
+                ]
+                .contains(&binding.key),
+                "{} already takes a space shortcut",
+                binding.action_name
             );
         }
     }

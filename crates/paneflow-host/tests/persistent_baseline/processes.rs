@@ -83,6 +83,26 @@ const QUIET_DESKTOP_CONFIG: &[u8] =
 
 const BLINKING_DESKTOP_CONFIG: &[u8] =
     br#"{"telemetry":{"enabled":false},"terminal":{"cursor_blink":"on"}}"#;
+const SPREAD_SPACES: [(&str, &str); 2] = [
+    ("5f6a1c2e-0b3d-4e8f-9a7b-1c2d3e4f5a01", "Work"),
+    ("5f6a1c2e-0b3d-4e8f-9a7b-1c2d3e4f5a02", "Perso"),
+];
+
+fn spread_space(index: usize) -> Option<&'static str> {
+    index
+        .checked_rem(SPREAD_SPACES.len() + 1)
+        .and_then(|slot| slot.checked_sub(1))
+        .map(|slot| SPREAD_SPACES[slot].0)
+}
+
+fn blinking_config_with_spaces() -> Vec<u8> {
+    let mut config: Value = serde_json::from_slice(BLINKING_DESKTOP_CONFIG).unwrap();
+    config["spaces"] = SPREAD_SPACES
+        .iter()
+        .map(|(id, name)| json!({"id": id, "name": name}))
+        .collect();
+    serde_json::to_vec(&config).unwrap()
+}
 
 pub(super) struct DesktopProcess {
     pub(super) child: std::process::Child,
@@ -174,20 +194,26 @@ impl DesktopProcess {
         let saved = json!({
             "version": 3,
             "active_workspace": 0,
-            "workspaces": workspaces.iter().enumerate().map(|(index, (cwd, session))| json!({
-                "title": format!("Workspace {index:02}"),
-                "cwd": cwd.display().to_string(),
-                "tabs": [{
-                    "title": session.as_str(),
-                    "layout": {"type": "pane", "surfaces": [{"surface_type": "terminal", "session": session, "custom_name": session.as_str()}]},
-                }],
-                "active_tab": 0,
-            })).collect::<Vec<_>>(),
+            "workspaces": workspaces.iter().enumerate().map(|(index, (cwd, session))| {
+                let mut workspace = json!({
+                    "title": format!("Workspace {index:02}"),
+                    "cwd": cwd.display().to_string(),
+                    "tabs": [{
+                        "title": session.as_str(),
+                        "layout": {"type": "pane", "surfaces": [{"surface_type": "terminal", "session": session, "custom_name": session.as_str()}]},
+                    }],
+                    "active_tab": 0,
+                });
+                if let Some(space) = spread_space(index) {
+                    workspace["space"] = json!(space);
+                }
+                workspace
+            }).collect::<Vec<_>>(),
         });
         Self::launch(
             home,
             &saved,
-            BLINKING_DESKTOP_CONFIG,
+            &blinking_config_with_spaces(),
             workspaces.len(),
             None,
             ready_deadline,

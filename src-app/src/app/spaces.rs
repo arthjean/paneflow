@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use gpui::{Context, Window};
-use paneflow_config::schema::{PaneFlowConfig, SpaceId};
+use paneflow_config::schema::{
+    DEFAULT_SPACE_NAME, MAX_SPACES, PaneFlowConfig, SpaceConfig, SpaceId, validate_space_name,
+};
 
 use crate::PaneFlowApp;
 use crate::workspace::Workspace;
@@ -97,14 +99,17 @@ pub(crate) fn active_idx_after_removal(
         .unwrap_or(split.min(remaining.len() - 1))
 }
 
+pub(crate) fn is_declared(config: &PaneFlowConfig, space: Option<&SpaceId>) -> bool {
+    space.is_none_or(|id| config.space(id).is_some())
+}
+
 pub(crate) fn release_undeclared_spaces(
     workspaces: &mut [Workspace],
     active_space: &mut Option<SpaceId>,
     memory: &mut SpaceMemory,
     config: &PaneFlowConfig,
 ) -> usize {
-    let declared =
-        |space: &Option<SpaceId>| space.as_ref().is_none_or(|id| config.space(id).is_some());
+    let declared = |space: &Option<SpaceId>| is_declared(config, space.as_ref());
     let mut released = 0;
     for workspace in workspaces.iter_mut() {
         if !declared(&workspace.space) {
@@ -118,6 +123,105 @@ pub(crate) fn release_undeclared_spaces(
     }
     memory.retain(|space, _| declared(space));
     released
+}
+
+pub(crate) fn space_label<'a>(config: &'a PaneFlowConfig, space: Option<&SpaceId>) -> &'a str {
+    space
+        .and_then(|id| config.space(id))
+        .map_or(DEFAULT_SPACE_NAME, |space| space.name.as_str())
+}
+
+pub(crate) fn reorder_in_space(
+    workspaces: &mut Vec<Workspace>,
+    active_idx: &mut usize,
+    from: usize,
+    to: usize,
+) -> bool {
+    if from >= workspaces.len() {
+        return false;
+    }
+    let space = workspaces[from].space.clone();
+    let mut naive: Vec<usize> = (0..workspaces.len()).collect();
+    let moved = naive.remove(from);
+    naive.insert(to.min(naive.len()), moved);
+    let mut members = naive
+        .into_iter()
+        .filter(|&idx| workspaces[idx].space == space);
+    let order: Vec<usize> = (0..workspaces.len())
+        .map(|idx| {
+            if workspaces[idx].space == space {
+                members.next().unwrap_or(idx)
+            } else {
+                idx
+            }
+        })
+        .collect();
+    if order.iter().enumerate().all(|(slot, &idx)| slot == idx) {
+        return false;
+    }
+    let shown = workspaces.get(*active_idx).map(|workspace| workspace.id);
+    let mut slots: Vec<Option<Workspace>> =
+        std::mem::take(workspaces).into_iter().map(Some).collect();
+    *workspaces = order
+        .into_iter()
+        .filter_map(|idx| slots[idx].take())
+        .collect();
+    if let Some(id) = shown {
+        *active_idx = workspaces
+            .iter()
+            .position(|workspace| workspace.id == id)
+            .unwrap_or(0);
+    }
+    true
+}
+
+pub(crate) const SPACE_LIMIT_REASON: &str = "9 spaces maximum";
+
+pub(crate) fn next_space_name(config: &PaneFlowConfig) -> String {
+    let taken = || config.spaces.iter().map(|space| space.name.as_str());
+    (1..)
+        .map(|n| format!("Space {n}"))
+        .find(|name| validate_space_name(name, taken()).is_ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn space_order(config: &PaneFlowConfig) -> Vec<Option<SpaceId>> {
+    std::iter::once(None)
+        .chain(config.spaces.iter().map(|space| Some(space.id.clone())))
+        .collect()
+}
+
+pub(crate) fn cycled_space(
+    config: &PaneFlowConfig,
+    active: Option<&SpaceId>,
+    forward: bool,
+) -> Option<Option<SpaceId>> {
+    if config.spaces.is_empty() {
+        return None;
+    }
+    let order = space_order(config);
+    let current = order
+        .iter()
+        .position(|space| space.as_ref() == active)
+        .unwrap_or(0);
+    let next = if forward {
+        (current + 1) % order.len()
+    } else {
+        (current + order.len() - 1) % order.len()
+    };
+    order.into_iter().nth(next)
+}
+
+pub(crate) fn display_neighbor(order: &[usize], idx: usize) -> Option<usize> {
+    let position = order.iter().position(|&shown| shown == idx)?;
+    order
+        .get(position + 1)
+        .or_else(|| {
+            position
+                .checked_sub(1)
+                .and_then(|previous| order.get(previous))
+        })
+        .copied()
 }
 
 pub(crate) fn restored_active_idx(
@@ -162,7 +266,7 @@ impl PaneFlowApp {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if space == self.active_space {
+        if space == self.active_space || !is_declared(&self.cached_config, space.as_ref()) {
             return false;
         }
         let shown_before = self.shown_workspace_idx();
@@ -173,6 +277,10 @@ impl PaneFlowApp {
             &mut self.space_last_shown,
             space,
         );
+        self.sidebar_cursor = target.map(|idx| crate::app::sidebar::keyboard::SidebarCursor {
+            workspace_id: self.workspaces[idx].id,
+            tab_id: None,
+        });
         match (target, window) {
             (Some(idx), window) => {
                 let probed = match window {
@@ -188,20 +296,131 @@ impl PaneFlowApp {
                     self.probe_workspace_git_now(idx, cx);
                 }
             }
-            (None, window) => {
-                self.dismiss_transient_surfaces();
-                if let Some(window) = window {
-                    window.focus(&self.welcome_focus, cx);
-                }
-                self.sync_files_sidebar_session(cx);
-                if self.agent_sessions.sessions_sidebar_open {
-                    self.close_sessions_sidebar(cx);
-                }
-                self.save_session(cx);
-                cx.notify();
-            }
+            (None, window) => self.show_empty_space(window, cx),
         }
         true
+    }
+
+    fn show_empty_space(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        self.dismiss_transient_surfaces();
+        if let Some(window) = window {
+            window.focus(&self.welcome_focus, cx);
+        }
+        self.sync_files_sidebar_session(cx);
+        if self.agent_sessions.sessions_sidebar_open {
+            self.close_sessions_sidebar(cx);
+        }
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn persist_spaces(&mut self, spaces: Vec<SpaceConfig>, cx: &mut Context<Self>) {
+        let value = if spaces.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::to_value(spaces).unwrap_or(serde_json::Value::Null)
+        };
+        self.persist_setting(false, "spaces", value, cx);
+        self.reconcile_spaces_with_config(cx);
+    }
+
+    pub(crate) fn add_space(&mut self, cx: &mut Context<Self>) -> Option<SpaceId> {
+        if self.cached_config.spaces.len() >= MAX_SPACES {
+            self.show_toast(SPACE_LIMIT_REASON, cx);
+            return None;
+        }
+        let id = SpaceId::new();
+        let mut spaces = self.cached_config.spaces.clone();
+        spaces.push(SpaceConfig {
+            id: id.clone(),
+            name: next_space_name(&self.cached_config),
+            color: None,
+        });
+        self.persist_spaces(spaces, cx);
+        self.cached_config.space(&id).map(|space| space.id.clone())
+    }
+
+    pub(crate) fn new_space_in_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.add_space(cx) {
+            self.open_settings_at(crate::SettingsSection::Spaces, window, cx);
+            self.edit_space_name(id, window, cx);
+        }
+    }
+
+    pub(crate) fn cycle_space(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(target) = cycled_space(&self.cached_config, self.active_space.as_ref(), forward)
+        {
+            self.activate_space(target, Some(window), cx);
+        }
+    }
+
+    pub(crate) fn move_workspace_to_space(
+        &mut self,
+        idx: usize,
+        target: Option<SpaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspaces.get(idx).is_none_or(|ws| ws.space == target)
+            || !is_declared(&self.cached_config, target.as_ref())
+        {
+            return;
+        }
+        let shown = self.shown_workspace_idx() == Some(idx);
+        let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
+        let neighbor = display_neighbor(&order, idx);
+        self.workspaces[idx].space = target.clone();
+        self.workspace_menu_open = None;
+        if shown {
+            match neighbor {
+                Some(neighbor) => {
+                    self.activate_workspace_at(
+                        neighbor,
+                        crate::app::workspace_ops::WorkspaceFocusTarget::FirstPane,
+                        window,
+                        cx,
+                    );
+                }
+                None => self.show_empty_space(Some(window), cx),
+            }
+        }
+        let moved = &self.workspaces[idx];
+        let title = if moved.title.is_empty() {
+            moved.cwd.clone()
+        } else {
+            moved.title.clone()
+        };
+        let message = format!(
+            "Moved {title} to {}",
+            space_label(&self.cached_config, target.as_ref())
+        );
+        self.push_toast(
+            message,
+            vec![crate::app::notifications::ToastAction::ShowSpace(target)],
+            crate::app::constants::TOAST_HOLD_MS * 3,
+            cx,
+        );
+        self.save_session(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn move_workspace_to_new_space(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.add_space(cx) else {
+            return;
+        };
+        self.move_workspace_to_space(idx, Some(id.clone()), window, cx);
+        self.open_settings_at(crate::SettingsSection::Spaces, window, cx);
+        self.edit_space_name(id, window, cx);
     }
 
     pub(crate) fn reconcile_spaces_with_config(&mut self, cx: &mut Context<Self>) {
@@ -517,6 +736,131 @@ mod tests {
         let empty_space = restored_active_idx(&workspaces, 0, Some(&space(3)));
         assert_eq!(shown_index(&workspaces, empty_space, Some(&space(3))), None);
         assert_eq!(restored_active_idx(&[], 4, None), 0);
+    }
+
+    fn ids(workspaces: &[Workspace]) -> Vec<u64> {
+        workspaces.iter().map(|workspace| workspace.id).collect()
+    }
+
+    #[test]
+    fn reordering_inside_a_space_leaves_other_spaces_in_place() {
+        let mut workspaces = mixed();
+        let mut active_idx = 3;
+        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 0, 2));
+        assert_eq!(ids(&workspaces), vec![12, 11, 10, 13, 14]);
+        assert_eq!(active_idx, 3, "the shown workspace keeps its identity");
+
+        let mut workspaces = mixed();
+        let mut active_idx = 0;
+        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 4, 0));
+        assert_eq!(ids(&workspaces), vec![10, 14, 12, 13, 11]);
+        assert_eq!(workspaces[active_idx].id, 10);
+    }
+
+    #[test]
+    fn the_trailing_drop_slot_moves_a_workspace_last_in_its_space() {
+        let mut workspaces = mixed();
+        let mut active_idx = 1;
+        let len = workspaces.len();
+        assert!(reorder_in_space(
+            &mut workspaces,
+            &mut active_idx,
+            1,
+            len - 1
+        ));
+        assert_eq!(ids(&workspaces), vec![10, 14, 12, 13, 11]);
+        assert_eq!(workspaces[active_idx].id, 11);
+    }
+
+    #[test]
+    fn without_spaces_reordering_matches_a_plain_move() {
+        let mut workspaces: Vec<Workspace> = (0..4).map(|id| workspace(id, None)).collect();
+        let mut active_idx = 2;
+        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 0, 3));
+        assert_eq!(ids(&workspaces), vec![1, 2, 3, 0]);
+        assert_eq!(active_idx, 1);
+        assert!(!reorder_in_space(&mut workspaces, &mut active_idx, 1, 1));
+        assert!(!reorder_in_space(&mut workspaces, &mut active_idx, 9, 0));
+    }
+
+    #[test]
+    fn the_default_space_is_named_default_and_others_by_their_config_name() {
+        let mut config = PaneFlowConfig::default();
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: space(1),
+            name: "Work".to_string(),
+            color: None,
+        });
+        assert_eq!(space_label(&config, None), "Default");
+        assert_eq!(space_label(&config, Some(&space(1))), "Work");
+        assert_eq!(space_label(&config, Some(&space(2))), "Default");
+    }
+
+    fn config_with(names: &[&str]) -> PaneFlowConfig {
+        let mut config = PaneFlowConfig::default();
+        for (n, name) in names.iter().enumerate() {
+            config.spaces.push(SpaceConfig {
+                id: space(n as u8 + 1),
+                name: name.to_string(),
+                color: None,
+            });
+        }
+        config
+    }
+
+    #[test]
+    fn space_shortcuts_cycle_through_default_and_wrap_around() {
+        let config = config_with(&["Work", "Perso"]);
+        assert_eq!(cycled_space(&config, None, true), Some(Some(space(1))));
+        assert_eq!(
+            cycled_space(&config, Some(&space(1)), true),
+            Some(Some(space(2)))
+        );
+        assert_eq!(cycled_space(&config, Some(&space(2)), true), Some(None));
+        assert_eq!(cycled_space(&config, None, false), Some(Some(space(2))));
+        assert_eq!(cycled_space(&config, Some(&space(1)), false), Some(None));
+    }
+
+    #[test]
+    fn space_shortcuts_do_nothing_without_spaces() {
+        let config = PaneFlowConfig::default();
+        assert_eq!(cycled_space(&config, None, true), None);
+        assert_eq!(cycled_space(&config, None, false), None);
+    }
+
+    #[test]
+    fn a_removed_space_is_no_longer_a_switch_target() {
+        let config = config_with(&["Work"]);
+        assert!(is_declared(&config, None));
+        assert!(is_declared(&config, Some(&space(1))));
+        assert!(
+            !is_declared(&config, Some(&space(2))),
+            "a Show toast that outlives its space must not activate it"
+        );
+    }
+
+    #[test]
+    fn a_new_space_takes_the_first_free_number() {
+        assert_eq!(next_space_name(&PaneFlowConfig::default()), "Space 1");
+        assert_eq!(
+            next_space_name(&config_with(&["Space 1", "space 2", "Space 4"])),
+            "Space 3"
+        );
+    }
+
+    #[test]
+    fn moving_the_shown_workspace_shows_its_neighbor_in_the_space() {
+        let workspaces = mixed();
+        let order = PaneFlowApp::compute_display_order(&workspaces, Some(&space(1)));
+        assert_eq!(order, vec![0, 2]);
+        assert_eq!(display_neighbor(&order, 0), Some(2));
+        assert_eq!(display_neighbor(&order, 2), Some(0));
+        assert_eq!(
+            display_neighbor(&[3], 3),
+            None,
+            "the last one leaves the space empty"
+        );
+        assert_eq!(display_neighbor(&order, 4), None);
     }
 
     #[test]

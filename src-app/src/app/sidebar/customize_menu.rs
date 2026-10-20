@@ -151,7 +151,12 @@ fn render_menu(
 impl PaneFlowApp {
     fn set_all_workspaces_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
         self.sidebar_customize_menu_open = true;
-        for ws in &mut self.workspaces {
+        let space = self.active_space.clone();
+        for ws in self
+            .workspaces
+            .iter_mut()
+            .filter(|ws| crate::app::spaces::in_space(ws, space.as_ref()))
+        {
             ws.sidebar_expanded = expanded;
         }
         self.save_session(cx);

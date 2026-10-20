@@ -19,6 +19,7 @@ use crate::{
     TerminalSelectAll, ToggleCopyMode, ToggleDetachedPane, ToggleSearch, ToggleSearchRegex,
     ToggleZoom, UndoClosePane,
 };
+use crate::{MoveWorkspaceToSpace, NewSpace, NextSpace, PreviousSpace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ShortcutGroup {
@@ -189,6 +190,34 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(NextWorkspace),
         context: "",
         description: "Next workspace",
+        group: ShortcutGroup::Workspaces,
+    },
+    ActionMeta {
+        name: "next_space",
+        factory: || Box::new(NextSpace),
+        context: "",
+        description: "Next space",
+        group: ShortcutGroup::Workspaces,
+    },
+    ActionMeta {
+        name: "previous_space",
+        factory: || Box::new(PreviousSpace),
+        context: "",
+        description: "Previous space",
+        group: ShortcutGroup::Workspaces,
+    },
+    ActionMeta {
+        name: "new_space",
+        factory: || Box::new(NewSpace),
+        context: "",
+        description: "New space",
+        group: ShortcutGroup::Workspaces,
+    },
+    ActionMeta {
+        name: "move_workspace_to_space",
+        factory: || Box::new(MoveWorkspaceToSpace),
+        context: "",
+        description: "Move workspace to space",
         group: ShortcutGroup::Workspaces,
     },
     ActionMeta {

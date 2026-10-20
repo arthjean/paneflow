@@ -2,6 +2,8 @@ use gpui::{Context, Window};
 use paneflow_config::schema::InterfaceStyle;
 use serde_json::{Value, json};
 
+use paneflow_config::schema::SpaceId;
+
 use crate::{PaneFlowApp, SettingsSection, ThemeMode};
 
 pub(crate) type RunFn = fn(&mut PaneFlowApp, &mut Window, &mut Context<PaneFlowApp>);
@@ -21,6 +23,7 @@ pub(crate) enum Needs {
     Workspace,
     GitRepo,
     ManyWorkspaces,
+    Spaces,
     ManyTabs,
     NativeMaterial,
 }
@@ -31,6 +34,8 @@ pub(crate) enum Scope {
     ThemeMode,
     InterfaceStyle,
     Workspace,
+    Space,
+    MoveToSpace,
     Tab,
     OpenWorkspaceIn,
     PaneLayout,
@@ -76,6 +81,9 @@ pub(crate) enum Apply {
     Mode(ThemeMode),
     InterfaceStyle(InterfaceStyle),
     Workspace(usize),
+    Space(Option<SpaceId>),
+    MoveToSpace(Option<SpaceId>),
+    MoveToNewSpace,
     Tab(usize),
     Action(&'static str),
     Settings(SettingsSection),
@@ -87,7 +95,13 @@ impl Apply {
             Apply::Setting { .. } | Apply::Theme(_) | Apply::Mode(_) | Apply::InterfaceStyle(_) => {
                 true
             }
-            Apply::Workspace(_) | Apply::Tab(_) | Apply::Action(_) | Apply::Settings(_) => false,
+            Apply::Workspace(_)
+            | Apply::Space(_)
+            | Apply::MoveToSpace(_)
+            | Apply::MoveToNewSpace
+            | Apply::Tab(_)
+            | Apply::Action(_)
+            | Apply::Settings(_) => false,
         }
     }
 }
@@ -105,6 +119,8 @@ impl Scope {
             Scope::ThemeMode => "Theme mode",
             Scope::InterfaceStyle => "Interface style",
             Scope::Workspace => "Workspace",
+            Scope::Space => "Space",
+            Scope::MoveToSpace => "Destination space",
             Scope::Tab => "Tab",
             Scope::OpenWorkspaceIn => "Open in",
             Scope::PaneLayout => "Layout",
@@ -140,6 +156,8 @@ impl Scope {
             Scope::ThemeMode => mode_values(app),
             Scope::InterfaceStyle => interface_style_values(app),
             Scope::Workspace => workspace_values(app),
+            Scope::Space => space_values(app),
+            Scope::MoveToSpace => move_to_space_values(app),
             Scope::Tab => tab_values(app),
             Scope::OpenWorkspaceIn => action_values(&[
                 ("Zed", "open_workspace_in_zed"),
@@ -213,19 +231,89 @@ fn interface_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
 }
 
 fn workspace_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
-    app.workspaces
-        .iter()
-        .enumerate()
-        .map(|(idx, workspace)| ScopeValue {
-            label: if workspace.title.is_empty() {
-                workspace.cwd.clone()
-            } else {
-                workspace.title.clone()
-            },
-            current: Some(idx) == app.shown_workspace_idx(),
+    let shown = app.shown_workspace_idx();
+    palette_workspace_order(
+        &app.workspaces,
+        &app.cached_config,
+        app.active_space.as_ref(),
+    )
+    .into_iter()
+    .map(|idx| {
+        let workspace = &app.workspaces[idx];
+        let title = if workspace.title.is_empty() {
+            workspace.cwd.clone()
+        } else {
+            workspace.title.clone()
+        };
+        let label = if workspace.space == app.active_space {
+            title
+        } else {
+            format!(
+                "{} · {title}",
+                crate::app::spaces::space_label(&app.cached_config, workspace.space.as_ref())
+            )
+        };
+        ScopeValue {
+            label,
+            current: Some(idx) == shown,
             apply: Apply::Workspace(idx),
+        }
+    })
+    .collect()
+}
+
+pub(crate) fn palette_workspace_order(
+    workspaces: &[crate::workspace::Workspace],
+    config: &paneflow_config::schema::PaneFlowConfig,
+    active: Option<&SpaceId>,
+) -> Vec<usize> {
+    if config.spaces.is_empty() {
+        return (0..workspaces.len()).collect();
+    }
+    let mut order = PaneFlowApp::compute_display_order(workspaces, active);
+    for space in crate::app::spaces::space_order(config) {
+        if space.as_ref() != active {
+            order.extend(PaneFlowApp::compute_display_order(
+                workspaces,
+                space.as_ref(),
+            ));
+        }
+    }
+    order
+}
+
+fn space_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
+    crate::app::spaces::space_order(&app.cached_config)
+        .into_iter()
+        .map(|space| ScopeValue {
+            label: crate::app::spaces::space_label(&app.cached_config, space.as_ref()).to_string(),
+            current: space == app.active_space,
+            apply: Apply::Space(space),
         })
         .collect()
+}
+
+fn move_to_space_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
+    let Some(workspace) = app.active_workspace() else {
+        return Vec::new();
+    };
+    let mut values: Vec<ScopeValue> = crate::app::spaces::space_order(&app.cached_config)
+        .into_iter()
+        .filter(|space| *space != workspace.space)
+        .map(|space| ScopeValue {
+            label: crate::app::spaces::space_label(&app.cached_config, space.as_ref()).to_string(),
+            current: false,
+            apply: Apply::MoveToSpace(space),
+        })
+        .collect();
+    if app.cached_config.spaces.len() < paneflow_config::schema::MAX_SPACES {
+        values.push(ScopeValue {
+            label: "New space…".to_string(),
+            current: false,
+            apply: Apply::MoveToNewSpace,
+        });
+    }
+    values
 }
 
 fn tab_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
@@ -266,6 +354,7 @@ fn settings_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         ("Appearance", SettingsSection::Appearance),
         ("Terminal", SettingsSection::Terminal),
         ("Workspaces", SettingsSection::Workspaces),
+        ("Spaces", SettingsSection::Spaces),
         ("Worktrees", SettingsSection::Worktrees),
         ("Agents", SettingsSection::Agents),
         ("MCP servers", SettingsSection::McpServers),
@@ -743,6 +832,41 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "cycle",
         needs: Needs::ManyWorkspaces,
         kind: Kind::Action("next_workspace"),
+    },
+    Command {
+        label: "Switch space",
+        icon: Some("icons/folders.svg"),
+        keywords: "go to change context work personal",
+        needs: Needs::Spaces,
+        kind: Kind::Scope(Scope::Space),
+    },
+    Command {
+        label: "Next space",
+        icon: None,
+        keywords: "cycle context",
+        needs: Needs::Spaces,
+        kind: Kind::Action("next_space"),
+    },
+    Command {
+        label: "Previous space",
+        icon: None,
+        keywords: "cycle context",
+        needs: Needs::Spaces,
+        kind: Kind::Action("previous_space"),
+    },
+    Command {
+        label: "New space",
+        icon: None,
+        keywords: "create context group work personal",
+        needs: Needs::Always,
+        kind: Kind::Action("new_space"),
+    },
+    Command {
+        label: "Move workspace to space",
+        icon: None,
+        keywords: "context group organize",
+        needs: Needs::Spaces,
+        kind: Kind::Scope(Scope::MoveToSpace),
     },
     Command {
         label: "Clone repository…",
@@ -1469,6 +1593,44 @@ pub(crate) const COMMANDS: &[Command] = &[
 mod tests {
     use super::*;
 
+    fn workspace_in(id: u64, space: Option<SpaceId>) -> crate::workspace::Workspace {
+        let mut workspace = crate::workspace::Workspace::empty_with_cwd_and_id(
+            id,
+            format!("ws{id}"),
+            std::path::PathBuf::new(),
+        );
+        workspace.space = space;
+        workspace
+    }
+
+    #[test]
+    fn the_workspace_picker_lists_the_active_space_first() {
+        let work = SpaceId::parse("550e8400-e29b-41d4-a716-446655440001").unwrap();
+        let workspaces = vec![
+            workspace_in(1, None),
+            workspace_in(2, Some(work.clone())),
+            workspace_in(3, None),
+        ];
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        assert_eq!(
+            palette_workspace_order(&workspaces, &config, None),
+            [0, 1, 2]
+        );
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: work.clone(),
+            name: "Work".to_string(),
+            color: None,
+        });
+        assert_eq!(
+            palette_workspace_order(&workspaces, &config, Some(&work)),
+            [1, 0, 2]
+        );
+        assert_eq!(
+            palette_workspace_order(&workspaces, &config, None),
+            [0, 2, 1]
+        );
+    }
+
     #[test]
     fn every_command_action_exists_in_the_registry() {
         for command in COMMANDS {
@@ -1488,6 +1650,8 @@ mod tests {
             Scope::ThemeMode,
             Scope::InterfaceStyle,
             Scope::Workspace,
+            Scope::Space,
+            Scope::MoveToSpace,
             Scope::Tab,
             Scope::OpenWorkspaceIn,
             Scope::PaneLayout,

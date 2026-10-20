@@ -39,6 +39,8 @@ pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+const MOVE_TO_SPACE_SUBMENU_WIDTH: f32 = 180.;
+
 fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
     div()
         .mx(px(6.))
@@ -194,9 +196,14 @@ impl PaneFlowApp {
         let workflow_rows = usize::from(workflow_template.is_some());
         let service_rows = services.len();
         let notification_rows = 1 + usize::from(has_unread);
+        let space_rows = usize::from(!self.cached_config.spaces.is_empty());
         let separator_rows = 3 + workflow_rows + usize::from(service_rows > 0);
-        let menu_rows =
-            EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows + notification_rows;
+        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len()
+            + 4
+            + workflow_rows
+            + service_rows
+            + notification_rows
+            + space_rows;
         let menu_height = menu_height(menu_rows as f32, separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -345,6 +352,13 @@ impl PaneFlowApp {
             }),
         ));
 
+        if space_rows > 0 {
+            let opens_left = menu_pos.x + px(248. + MOVE_TO_SPACE_SUBMENU_WIDTH)
+                > window.window_bounds().get_bounds().size.width;
+            context_menu =
+                context_menu.child(self.render_move_to_space_row(&menu, opens_left, ui, cx));
+        }
+
         context_menu = context_menu.child(context_menu_divider(ui));
 
         if has_unread {
@@ -408,6 +422,113 @@ impl PaneFlowApp {
             context_menu,
         ))
         .priority(3)
+        .into_any_element()
+    }
+
+    fn render_move_to_space_row(
+        &self,
+        menu: &WorkspaceContextMenu,
+        opens_left: bool,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let idx = menu.idx;
+        let open = menu.space_submenu_open;
+        let row = menu_row("workspace-context-move-to-space", open, ui)
+            .relative()
+            .cursor(CursorStyle::Arrow)
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                if let Some(menu) = this.workspace_menu_open.as_mut() {
+                    menu.space_submenu_open = !menu.space_submenu_open;
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_nowrap()
+                    .text_color(ui.text)
+                    .child("Move to space"),
+            )
+            .child(
+                svg()
+                    .size(px(13.))
+                    .flex_none()
+                    .path("icons/chevron-right.svg")
+                    .text_color(ui.muted),
+            );
+        if !open {
+            return row.into_any_element();
+        }
+        let current = self.workspaces.get(idx).and_then(|ws| ws.space.clone());
+        let targets: Vec<(Option<paneflow_config::schema::SpaceId>, String)> =
+            crate::app::spaces::space_order(&self.cached_config)
+                .into_iter()
+                .filter(|space| *space != current)
+                .map(|space| {
+                    let name = crate::app::spaces::space_label(&self.cached_config, space.as_ref())
+                        .to_string();
+                    (space, name)
+                })
+                .collect();
+        let at_limit = self.cached_config.spaces.len() >= paneflow_config::schema::MAX_SPACES;
+        let mut submenu = crate::settings::components::menu_panel(
+            div().id("workspace-context-space-submenu"),
+            ui,
+        )
+        .w(px(MOVE_TO_SPACE_SUBMENU_WIDTH))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        for (position, (space, name)) in targets.into_iter().enumerate() {
+            submenu = submenu.child(self.render_select_menu_item(
+                SharedString::from(format!("workspace-context-space-{position}")),
+                &name,
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.move_workspace_to_space(idx, space.clone(), window, cx);
+                }),
+            ));
+        }
+        submenu = submenu.child(context_menu_divider(ui));
+        submenu = submenu.child(if at_limit {
+            Self::render_disabled_select_menu_item(
+                "workspace-context-space-new".into(),
+                crate::app::spaces::SPACE_LIMIT_REASON,
+                ui,
+            )
+            .into_any_element()
+        } else {
+            self.render_select_menu_item(
+                "workspace-context-space-new".into(),
+                "New space…",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.move_workspace_to_new_space(idx, window, cx);
+                }),
+            )
+            .into_any_element()
+        });
+        let left = if opens_left {
+            -MOVE_TO_SPACE_SUBMENU_WIDTH + 12.
+        } else {
+            248. - 20.
+        };
+        row.child(
+            deferred(
+                div()
+                    .absolute()
+                    .top(px(-5.))
+                    .left(px(left))
+                    .occlude()
+                    .child(submenu),
+            )
+            .priority(4),
+        )
         .into_any_element()
     }
 

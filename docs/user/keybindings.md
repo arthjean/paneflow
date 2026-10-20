@@ -61,6 +61,8 @@ pane. Search actions apply while the corresponding search is active.
 | Workspaces | `new_workspace` | `Cmd/Ctrl+Shift+N` |
 | Workspaces | `close_workspace` | `Cmd/Ctrl+Shift+Q` |
 | Workspaces | `next_workspace` | `Ctrl+Tab` |
+| Workspaces | `next_space` | `Cmd+Alt+Right` on macOS, `Ctrl+Alt+PageDown` on Linux and Windows |
+| Workspaces | `previous_space` | `Cmd+Alt+Left` on macOS, `Ctrl+Alt+PageUp` on Linux and Windows |
 | Workspaces | `jump_next_waiting` | `Cmd/Ctrl+Shift+J` |
 | Workspaces | `focus_workspaces_sidebar` | `Cmd/Ctrl+Alt+S` |
 | Workspaces | `select_workspace_1` | `Cmd/Ctrl+1` |
@@ -132,9 +134,18 @@ pane. Search actions apply while the corresponding search is active.
 | Scope | Action | Shortcut |
 | --- | --- | --- |
 | App views | `close_window` | Close the active window. |
+| Workspaces | `new_space` | Create a space and open its name in Settings > Spaces. |
+| Workspaces | `move_workspace_to_space` | Pick another space for the shown workspace in the command palette. |
 | Terminal pane | `fork_conversation` | Fork the agent conversation into a split. |
 | Terminal pane | `accept_conversation_notice` | Run the action of the pane's conversation notice. |
 | Terminal pane | `dismiss_conversation_notice` | Dismiss the pane's conversation notice. |
+
+`next_space` and `previous_space` go through `Default` and then the spaces
+in their `paneflow.json` order, and wrap around at the end. They do nothing
+until you create a space. On a laptop without dedicated `PageUp` and
+`PageDown` keys, remap them, for example
+`"ctrl+alt+]": "next_space"` and `"ctrl+alt+[": "previous_space"`, or use
+**Switch space** in the command palette.
 
 ## Customize a shortcut
 
