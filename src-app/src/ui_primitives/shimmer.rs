@@ -7,7 +7,7 @@ use gpui::{
 
 use super::{animation_clock, lerp_color};
 
-const SHIMMER_FRAME: Duration = Duration::from_millis(33);
+const SHIMMER_FRAME: Duration = Duration::from_millis(animation_clock::ANIMATION_STEP_MS);
 const SHIMMER_SWEEP: Duration = Duration::from_millis(3_400);
 const SHIMMER_HALF_WIDTH: f32 = 0.36;
 const SHIMMER_STRIP_WIDTH: f32 = 2.0;
@@ -54,8 +54,9 @@ pub(crate) fn until_next_shimmer_frame(elapsed: Duration) -> Duration {
     if entered < visible + settle {
         animation_clock::until_next_tick(elapsed, SHIMMER_FRAME)
     } else {
-        Duration::from_secs_f32((SHIMMER_COPY_SPACING - entered) / SHIMMER_TRAVEL * sweep)
-            + Duration::from_millis(1)
+        let until_next_copy =
+            Duration::from_secs_f32((SHIMMER_COPY_SPACING - entered) / SHIMMER_TRAVEL * sweep);
+        until_next_copy + animation_clock::until_next_tick(elapsed + until_next_copy, SHIMMER_FRAME)
     }
 }
 
@@ -261,9 +262,25 @@ mod tests {
         );
         let idle = until_next_shimmer_frame(at(2.04));
         assert!(
-            (idle.as_secs_f32() - 0.341).abs() < 0.005,
-            "sleeps until the next copy enters: {idle:?}"
+            idle.as_secs_f32() >= 0.341 && idle <= Duration::from_millis(341) + SHIMMER_FRAME,
+            "sleeps until the first spinner step after the next copy enters: {idle:?}"
         );
+    }
+
+    #[test]
+    fn every_shimmer_wake_lands_on_a_spinner_step_so_both_share_one_frame() {
+        let step = Duration::from_millis(animation_clock::ANIMATION_STEP_MS);
+        assert_eq!(SHIMMER_FRAME, step);
+        for offset_us in (0..2 * SHIMMER_SWEEP.as_micros() as u64).step_by(1_337) {
+            let elapsed = Duration::from_micros(offset_us);
+            let wake_at = elapsed + until_next_shimmer_frame(elapsed);
+            let spinner_asleep_since = wake_at - Duration::from_millis(2);
+            assert_eq!(
+                spinner_asleep_since + animation_clock::until_next_tick(spinner_asleep_since, step),
+                wake_at,
+                "the shimmer from {elapsed:?} wakes off the spinner grid"
+            );
+        }
     }
 
     const ROW_LABEL: &str = "Running focused E2E files for EP-004 and the rest";
