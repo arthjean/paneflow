@@ -401,14 +401,19 @@ pub(crate) fn fire_worker_notification(
 
 pub(crate) fn fire_agent_exit_notification(
     agent: TerminalAgent,
-    workspace_title: &str,
+    workspace: &crate::workspace::Workspace,
     exit_code: i32,
     config: &paneflow_config::schema::PaneFlowConfig,
     seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
-        DesktopNotification::agent_exited(agent, workspace_title, exit_code),
+        DesktopNotification::agent_exited(
+            agent,
+            &workspace.title,
+            exit_code,
+            crate::app::spaces::declared_space_label(config, workspace),
+        ),
         config,
         seen,
         executor,
@@ -478,11 +483,11 @@ mod tests {
     #[test]
     fn agent_exit_body_carries_workspace_and_code() {
         assert_eq!(
-            crate::agents::notifications::agent_exit_notification_body("api", 1),
+            crate::agents::notifications::agent_exit_notification_body("api", 1, None),
             "api: exited with code 1"
         );
         assert_eq!(
-            crate::agents::notifications::agent_exit_notification_body("ws", -1073741510),
+            crate::agents::notifications::agent_exit_notification_body("ws", -1073741510, None),
             "ws: exited with code -1073741510"
         );
     }
