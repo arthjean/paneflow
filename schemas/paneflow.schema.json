@@ -481,6 +481,13 @@
       "items": { "$ref": "#/definitions/agentProfile" },
       "default": []
     },
+    "spaces": {
+      "type": "array",
+      "description": "Named groups of workspaces, like Arc spaces. The sidebar lists only the workspaces of the active space. Up to 9 entries; the implicit space named Default holds every workspace without a space.",
+      "items": { "$ref": "#/definitions/space" },
+      "maxItems": 9,
+      "default": []
+    },
     "telemetry": {
       "type": ["object", "null"],
       "description": "Opt-in desktop telemetry consent. The first-run consent modal only appears when 'enabled' is unanswered.",
@@ -494,6 +501,29 @@
     }
   },
   "definitions": {
+    "space": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "Stable lowercase hyphenated UUID. session.json refers to the space by this id."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 32,
+          "description": "Name shown in the space switcher. Unique ignoring case; Default is reserved."
+        },
+        "color": {
+          "type": "string",
+          "enum": ["red", "green", "yellow", "blue", "magenta", "cyan"],
+          "description": "Tint taken from the active theme's ANSI palette."
+        }
+      }
+    },
     "agentProfile": {
       "type": "object",
       "required": ["name", "agent"],

@@ -1,6 +1,6 @@
 use super::{
     AgentPanelConfig, AgentsConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
-    Osc52ClipboardConfig, TelemetryConfig, TerminalConfig,
+    Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -92,6 +92,12 @@ pub struct PaneFlowConfig {
         deserialize_with = "lenient_value_or_default"
     )]
     pub agent_profiles: Vec<AgentProfileConfig>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "super::space::lenient_spaces"
+    )]
+    pub spaces: Vec<SpaceConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +383,10 @@ impl PaneFlowConfig {
         self.sidebar_ended_sessions
             .filter(|cap| ENDED_SESSION_CAPS.contains(cap))
             .unwrap_or(DEFAULT_ENDED_SESSION_CAP)
+    }
+
+    pub fn space(&self, id: &SpaceId) -> Option<&SpaceConfig> {
+        self.spaces.iter().find(|space| &space.id == id)
     }
 }
 
