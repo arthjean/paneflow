@@ -1,0 +1,356 @@
+{
+  "prd": {
+    "file": "tasks/prd-spaces.md",
+    "title": "Espaces, regrouper les workspaces et séparer les comptes des agents",
+    "created_at": "2026-10-20",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Socle des espaces",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 5
+    },
+    {
+      "id": "EP-002",
+      "title": "Interface des espaces",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Attention entre espaces",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Espaces dans l'IPC et la CLI",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Environnement et comptes par espace",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Vérifier sur le matériel réel",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Déclarer les espaces dans paneflow.json",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
+    },
+    {
+      "id": "US-002",
+      "title": "Persister l'appartenance et l'espace actif",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
+    },
+    {
+      "id": "US-003",
+      "title": "Basculer d'espace et filtrer la navigation",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
+    },
+    {
+      "id": "US-004",
+      "title": "Garder le workspace affiché dans l'espace actif sur chaque chemin d'activation",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
+    },
+    {
+      "id": "US-005",
+      "title": "Créer chaque workspace dans l'espace actif",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
+    },
+    {
+      "id": "US-006",
+      "title": "Filtrer la sidebar par espace",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Afficher le sélecteur d'espaces en bas de la sidebar",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001",
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Déplacer un workspace vers un autre espace",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Changer d'espace au clavier et par la palette",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Gérer les espaces dans Settings",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Afficher un badge d'attention par espace",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Nommer l'espace dans la file d'attention et les notifications",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Exposer et cibler les espaces par IPC",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Cibler les espaces depuis la CLI et documenter le scripting",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Valider l'hypothèse : une variable de dossier isole deux comptes par CLI",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Injecter l'env de l'espace dans chaque terminal",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-010",
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Installer les hooks et le MCP dans les dossiers de l'espace",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Faire suivre l'env de l'espace aux sous-processus de l'app",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Retrouver et reprendre les sessions sous le compte de l'espace",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Vérifier les espaces sur Windows réel (release 1)",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-009",
+        "US-012",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Vérifier l'env et les comptes sur Windows réel (release 2)",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-017",
+        "US-018",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
