@@ -3,6 +3,7 @@ mod config;
 mod identity;
 mod layout;
 mod session;
+mod space;
 mod terminal;
 
 pub use agent_panel::*;
@@ -10,6 +11,7 @@ pub use config::*;
 pub use identity::*;
 pub use layout::*;
 pub use session::*;
+pub use space::*;
 pub use terminal::*;
 
 #[cfg(test)]
@@ -150,6 +152,11 @@ mod tests {
                 )]),
                 args: vec!["--model".to_string(), "opus".to_string()],
             }],
+            spaces: vec![SpaceConfig {
+                id: SpaceId::new(),
+                name: "Work".to_string(),
+                color: Some(SpaceColor::Blue),
+            }],
         };
 
         let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -210,6 +217,11 @@ mod tests {
             object_keys(&serialized["agent_profiles"][0]),
             object_keys(&schema["definitions"]["agentProfile"]["properties"]),
             "AgentProfileConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["spaces"][0]),
+            object_keys(&schema["definitions"]["space"]["properties"]),
+            "SpaceConfig and public JSON Schema drifted"
         );
 
         let command = CommandDefinition {

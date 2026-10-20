@@ -144,3 +144,6 @@ mod session_tests;
 #[cfg(test)]
 #[path = "loader_tests/settings.rs"]
 mod settings_tests;
+#[cfg(test)]
+#[path = "loader_tests/spaces.rs"]
+mod spaces_tests;

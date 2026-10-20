@@ -56,6 +56,7 @@ fn test_serialization_roundtrip() {
         agents: None,
         external_editor: None,
         agent_profiles: Vec::new(),
+        spaces: Vec::new(),
     };
 
     let json = serde_json::to_string_pretty(&config).unwrap();

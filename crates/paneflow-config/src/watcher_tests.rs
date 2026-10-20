@@ -485,3 +485,28 @@ fn test_attempt_reload_out_of_range_checksum_extension_drops_only_that_key() {
     );
     assert_eq!(current, reloaded);
 }
+
+#[test]
+fn test_attempt_reload_picks_up_hand_edited_spaces() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("paneflow.json");
+    write_valid_config(&path);
+    let mut current = load_config_from_path(&path);
+    assert!(current.spaces.is_empty());
+    fs::write(
+        &path,
+        r#"{"default_shell": "/bin/bash", "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}"#,
+    )
+    .unwrap();
+
+    let received = Arc::new(Mutex::new(None::<PaneFlowConfig>));
+    let received_clone = Arc::clone(&received);
+    let cb: Arc<dyn Fn(PaneFlowConfig) + Send + Sync> =
+        Arc::new(move |cfg| *received_clone.lock().unwrap() = Some(cfg));
+    attempt_reload(&path, &mut current, &cb);
+
+    let reloaded = received.lock().unwrap().clone().expect("reload fires");
+    let names: Vec<_> = reloaded.spaces.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Work"]);
+    assert_eq!(current.spaces, reloaded.spaces);
+}

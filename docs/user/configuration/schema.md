@@ -80,6 +80,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `terminal` | object/null | defaults below | Mixed | Namespaced terminal renderer and PTY settings. |
 | `commands` | array | `[]` | Settings/Run | Command palette entries and workspace templates. |
 | `agent_profiles` | array | `[]` | Hot reload | Custom launcher entries that run a built-in agent with extra environment variables and arguments, for example a second Claude Code account through `CLAUDE_CONFIG_DIR`. Settings > Agents > Profiles edits the same list. |
+| `spaces` | array | `[]` | Hot reload | Named groups of workspaces, at most 9. The sidebar lists only the active space's workspaces. See [`spaces`](#spaces). |
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
@@ -217,6 +218,37 @@ with a warning; the other profiles still load.
       "env": { "CLAUDE_CONFIG_DIR": "~/.claude-perso" },
       "args": ["--model", "opus"]
     }
+  ]
+}
+```
+
+## `spaces`
+
+`spaces` is a list of named groups of workspaces, like spaces in Arc. Each
+workspace belongs to one space, and the sidebar and `Ctrl+1` to `Ctrl+9` only
+cover the workspaces of the active space. A workspace with no space belongs to
+the implicit space named `Default`. With no `spaces` entry, nothing changes.
+Which space holds each workspace, and which space is active, are kept in
+`session.json`, not here.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `spaces.*.id` | string | required | Lowercase hyphenated UUID that `session.json` uses to refer to the space. Keep it when you rename the space. |
+| `spaces.*.name` | string | required | Name shown for the space, 1 to 32 characters after trimming, unique ignoring case. `Default` is reserved. |
+| `spaces.*.color` | string | none | `red`, `green`, `yellow`, `blue`, `magenta`, or `cyan`, drawn from the active theme's ANSI palette. Any other value leaves the space without a color. |
+
+An entry with a missing or malformed `id`, an `id` already used, an empty,
+duplicate, reserved, or too long name, or any entry after the ninth valid one,
+is skipped with a warning in the log; the other spaces still load. A `spaces`
+value that is not an array loads as an empty list. When an edit removes a
+space while Paneflow runs, its workspaces move to `Default`, which becomes the
+active space if the removed one was.
+
+```json
+{
+  "spaces": [
+    { "id": "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "name": "Work", "color": "blue" },
+    { "id": "9b8a7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d", "name": "Personal" }
   ]
 }
 ```

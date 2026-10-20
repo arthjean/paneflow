@@ -57,6 +57,14 @@ The JSON Schema additionally rejects unknown keys at edit time
 (`additionalProperties: false`), so your editor flags typos before
 you save. The runtime stays permissive on purpose.
 
+## Spaces
+
+`spaces` groups workspaces into named contexts, for example work and personal
+projects. Each entry needs an `id` (a UUID) and a `name`, and takes an
+optional `color`; up to 9 spaces are allowed next to the implicit `Default`
+space. Hand edits apply without a restart. See the
+[schema page](/docs/configuration/schema#spaces) for the limits.
+
 ## What's next?
 
 - [Schema](/docs/configuration/schema): The full reference: every key, type, default, apply timing, and runtime notes.

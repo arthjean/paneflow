@@ -83,6 +83,7 @@ macro_rules! uuid_identity {
 
 uuid_identity!(SessionId, "session id");
 uuid_identity!(WorkspaceId, "workspace id");
+uuid_identity!(SpaceId, "space id");
 uuid_identity!(HostInstanceToken, "host instance token");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
