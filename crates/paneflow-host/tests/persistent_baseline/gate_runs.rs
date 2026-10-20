@@ -431,19 +431,35 @@ pub(super) fn desktop_diff_stat(
         }
         Ok(desktop) => {
             std::thread::sleep(SETTLE);
+            let focus = headless::focus_window(&desktop);
+            std::thread::sleep(SETTLE);
             let (window, window_s) = desktop_window(&desktop, DIFF_STAT_WINDOW);
             let probes = counter(&window, "git_spawns.by_subcommand.diff");
             let spawns = counter(&window, "git_spawns.total");
-            values.insert(probes_name.to_string(), probes.clone());
-            let measurement = match (probes, spawns) {
-                (Measurement::Value(0.0), _) => Measurement::Missing(format!(
-                    "no diff-stat probe ran during the {window_s:.0} s window"
-                )),
-                (Measurement::Value(probes), spawns) => per(spawns, probes),
-                (missing, _) => missing,
+            let (probes, measurement) = match (&focus, probes, spawns) {
+                (Err(reason), _, _) => {
+                    let reason = format!(
+                        "the window was never focused, and the git poll only runs while a window is active: {reason}"
+                    );
+                    (
+                        Measurement::Missing(reason.clone()),
+                        Measurement::Missing(reason),
+                    )
+                }
+                (Ok(()), Measurement::Value(0.0), _) => (
+                    Measurement::Value(0.0),
+                    Measurement::Missing(format!(
+                        "no diff-stat probe ran during the {window_s:.0} s window"
+                    )),
+                ),
+                (Ok(()), Measurement::Value(probes), spawns) => {
+                    (Measurement::Value(probes), per(spawns, probes))
+                }
+                (Ok(()), missing, _) => (missing.clone(), missing),
             };
+            values.insert(probes_name.to_string(), probes);
             values.insert(name.to_string(), measurement);
-            json!({"window_s": window_s, "work_counters": window, "repository": repository.display().to_string()})
+            json!({"window_s": window_s, "work_counters": window, "focus": focus.err(), "repository": repository.display().to_string()})
         }
     };
     stop(client, &sessions);

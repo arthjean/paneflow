@@ -311,15 +311,18 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
         }
     });
     view.update(cx, |_, cx| {
-        let subscription = cx.observe_window_activation(window, |_this, window, cx| {
+        let subscription = cx.observe_window_activation(window, |this, window, cx| {
             crate::agents::notifications::set_window_active(
                 window.window_handle().window_id(),
                 window.is_window_active(),
             );
+            if window.is_window_active() {
+                this.probe_workspace_git_now(this.active_idx, cx);
+            }
             #[cfg(target_os = "linux")]
             crate::window_chrome::linux_backdrop::refresh_blur_region(
                 window,
-                _this.cached_config.native_material_requested(),
+                this.cached_config.native_material_requested(),
             );
             cx.notify();
         });

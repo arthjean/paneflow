@@ -138,13 +138,24 @@ impl PaneFlowApp {
                         })
                         .detach();
                     }
-                    cx.observe_window_activation(window, |_, window, cx| {
-                        crate::agents::notifications::set_window_active(
-                            window.window_handle().window_id(),
-                            window.is_window_active(),
-                        );
-                        cx.notify();
-                    })
+                    cx.observe_window_activation(
+                        window,
+                        |this: &mut DetachedPaneWindow, window, cx| {
+                            crate::agents::notifications::set_window_active(
+                                window.window_handle().window_id(),
+                                window.is_window_active(),
+                            );
+                            if window.is_window_active()
+                                && let Some(owner) = this.owner.upgrade()
+                            {
+                                let pane = this.pane.clone();
+                                owner.update(cx, |owner, cx| {
+                                    owner.probe_pane_workspace_git_now(&pane, cx)
+                                });
+                            }
+                            cx.notify();
+                        },
+                    )
                     .detach();
                     DetachedPaneWindow {
                         pane: content.clone(),

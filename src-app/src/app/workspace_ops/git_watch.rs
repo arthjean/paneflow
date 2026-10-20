@@ -5,6 +5,51 @@ const GIT_EVENT_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis
 
 const GIT_EVENT_DEBOUNCE_CAP: std::time::Duration = std::time::Duration::from_secs(2);
 
+const SHOWN_GIT_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+
+const HIDDEN_GIT_PROBE_AGE: std::time::Duration = std::time::Duration::from_secs(300);
+
+const HIDDEN_GIT_POLL_ROUNDS: usize = 10;
+
+fn plan_git_poll(
+    window_active: bool,
+    shown: &[String],
+    hidden: &[String],
+    probed_at: &std::collections::HashMap<String, std::time::Instant>,
+    now: std::time::Instant,
+) -> Vec<String> {
+    if !window_active {
+        return Vec::new();
+    }
+    let mut due: Vec<(Option<std::time::Instant>, &String)> = hidden
+        .iter()
+        .map(|cwd| (probed_at.get(cwd).copied(), cwd))
+        .filter(|(probed, _)| {
+            probed.is_none_or(|probed| now.duration_since(probed) >= HIDDEN_GIT_PROBE_AGE)
+        })
+        .collect();
+    due.sort_by_key(|(probed, _)| *probed);
+    let quota = hidden.len().div_ceil(HIDDEN_GIT_POLL_ROUNDS);
+    shown
+        .iter()
+        .cloned()
+        .chain(due.into_iter().take(quota).map(|(_, cwd)| cwd.clone()))
+        .collect()
+}
+
+fn workspace_git_cwds(workspace: &crate::workspace::Workspace) -> Vec<String> {
+    let mut cwds: Vec<String> = Vec::new();
+    for cwd in std::iter::once(workspace.cwd.clone())
+        .chain(workspace.bound_tab_worktrees())
+        .filter(|cwd| !cwd.is_empty())
+    {
+        if !cwds.contains(&cwd) {
+            cwds.push(cwd);
+        }
+    }
+    cwds
+}
+
 fn git_refresh_due(
     burst_started: std::time::Instant,
     last_event: std::time::Instant,
@@ -32,6 +77,102 @@ fn git_dirs_changed_by(event: &notify::Event) -> Vec<std::path::PathBuf> {
 }
 
 impl PaneFlowApp {
+    fn shown_workspace_indices(&self, cx: &App) -> Vec<usize> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .filter(|(idx, workspace)| {
+                *idx == self.active_idx
+                    || workspace
+                        .collect_panes()
+                        .iter()
+                        .any(|pane| pane.read(cx).detached.is_some())
+            })
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    fn due_git_poll_cwds(&mut self, now: std::time::Instant, cx: &App) -> Vec<String> {
+        let live: std::collections::HashSet<String> = self.git_probe_cwds().into_iter().collect();
+        self.git_probed_at.retain(|cwd, _| live.contains(cwd));
+        let mut shown: Vec<String> = Vec::new();
+        for idx in self.shown_workspace_indices(cx) {
+            for cwd in workspace_git_cwds(&self.workspaces[idx]) {
+                if !shown.contains(&cwd) {
+                    shown.push(cwd);
+                }
+            }
+        }
+        let hidden: Vec<String> = self
+            .git_probe_cwds()
+            .into_iter()
+            .filter(|cwd| !shown.contains(cwd))
+            .collect();
+        let due = plan_git_poll(
+            crate::agents::notifications::window_active(),
+            &shown,
+            &hidden,
+            &self.git_probed_at,
+            now,
+        );
+        for cwd in &due {
+            self.git_probed_at.insert(cwd.clone(), now);
+        }
+        due
+    }
+
+    pub(crate) fn probe_workspace_git_now(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        if !crate::agents::notifications::window_active() {
+            return;
+        }
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let cwds = workspace_git_cwds(workspace);
+        if cwds.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        for cwd in &cwds {
+            self.git_probed_at.insert(cwd.clone(), now);
+        }
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                        app.apply_git_probe(&results, cx);
+                    })
+                });
+            },
+        )
+        .detach();
+    }
+
+    pub(crate) fn probe_pane_workspace_git_now(
+        &mut self,
+        pane: &gpui::Entity<crate::pane::Pane>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.tab_index_containing_pane(pane).is_some())
+        {
+            self.probe_workspace_git_now(ws_idx, cx);
+        }
+    }
+
+    pub(crate) fn probe_workspace_git_if_shown_changed(
+        &mut self,
+        shown_before: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_workspace().map(|workspace| workspace.id) != shown_before {
+            self.probe_workspace_git_now(self.active_idx, cx);
+        }
+    }
+
     pub(in crate::app) fn rebind_git_dir(
         &mut self,
         ws_idx: usize,
@@ -191,17 +332,20 @@ impl PaneFlowApp {
         cx.spawn(
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 loop {
-                    smol::Timer::after(std::time::Duration::from_secs(30)).await;
+                    smol::Timer::after(SHOWN_GIT_POLL).await;
 
                     let cwds = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                            app.git_probe_cwds()
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.due_git_poll_cwds(std::time::Instant::now(), cx)
                         })
                     });
                     let cwds = match cwds {
                         Ok(c) => c,
                         Err(_) => break,
                     };
+                    if cwds.is_empty() {
+                        continue;
+                    }
 
                     let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
 
@@ -238,9 +382,13 @@ impl PaneFlowApp {
         results: &[(String, String, bool, crate::workspace::GitDiffStats)],
         cx: &mut Context<Self>,
     ) {
+        let live: std::collections::HashSet<String> = self.git_probe_cwds().into_iter().collect();
         let mut changed = false;
         let mut refreshed_diff = false;
         for (cwd, branch, is_repo, stats) in results {
+            if !live.contains(cwd) {
+                continue;
+            }
             if self.apply_git_state_for_cwd(cwd, branch.clone(), *is_repo, stats.clone()) {
                 changed = true;
                 refreshed_diff |= self.refresh_diff_dock_if_open_for_cwd(cwd, cx);
@@ -256,6 +404,94 @@ impl PaneFlowApp {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    fn cwds(prefix: &str, count: usize) -> Vec<String> {
+        (0..count)
+            .map(|index| format!("/{prefix}/{index:02}"))
+            .collect()
+    }
+
+    #[test]
+    fn no_active_window_plans_no_periodic_probe() {
+        let shown = cwds("shown", 1);
+        let hidden = cwds("hidden", 29);
+        assert!(
+            plan_git_poll(
+                false,
+                &shown,
+                &hidden,
+                &std::collections::HashMap::new(),
+                Instant::now()
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_poll_probes_the_shown_workspace_and_the_oldest_tenth_of_the_hidden_ones() {
+        let start = Instant::now();
+        let now = start + Duration::from_secs(600);
+        let shown = cwds("shown", 1);
+        let hidden = cwds("hidden", 29);
+        let mut probed_at = std::collections::HashMap::new();
+        probed_at.insert(hidden[0].clone(), now - Duration::from_secs(60));
+        probed_at.insert(hidden[1].clone(), start);
+        probed_at.insert(shown[0].clone(), now - Duration::from_secs(1));
+        let planned = plan_git_poll(true, &shown, &hidden, &probed_at, now);
+        assert_eq!(planned.len(), 4, "{planned:?}");
+        assert_eq!(planned[0], shown[0]);
+        assert!(!planned.contains(&hidden[0]), "probed a minute ago");
+        assert!(
+            !planned.contains(&hidden[1]),
+            "never-probed workspaces go first"
+        );
+        assert_eq!(&planned[1..], &hidden[2..5]);
+    }
+
+    #[test]
+    fn hidden_workspaces_cycle_every_five_minutes_within_thirty_probes_a_minute() {
+        let start = Instant::now();
+        let shown = cwds("shown", 1);
+        let hidden = cwds("hidden", 32);
+        let mut probed_at = std::collections::HashMap::new();
+        let mut probes: Vec<(u64, String)> = Vec::new();
+        for tick in 1..=40u64 {
+            let now = start + SHOWN_GIT_POLL * tick as u32;
+            for cwd in plan_git_poll(true, &shown, &hidden, &probed_at, now) {
+                probed_at.insert(cwd.clone(), now);
+                probes.push((tick, cwd));
+            }
+        }
+        for tick in 2..=40u64 {
+            let minute = probes
+                .iter()
+                .filter(|(at, _)| *at == tick || *at == tick - 1)
+                .count();
+            assert!(
+                minute * 3 <= 30,
+                "{minute} probes in the minute ending at tick {tick}"
+            );
+        }
+        for cwd in &hidden {
+            let ticks: Vec<u64> = probes
+                .iter()
+                .filter(|(_, probed)| probed == cwd)
+                .map(|(tick, _)| *tick)
+                .collect();
+            assert!(
+                ticks.first().is_some_and(|first| *first <= 10),
+                "{cwd}: {ticks:?}"
+            );
+            assert!(
+                ticks.windows(2).all(|pair| pair[1] - pair[0] >= 10),
+                "{cwd} probed twice within 5 min: {ticks:?}"
+            );
+        }
+        assert_eq!(
+            probes.iter().filter(|(_, cwd)| *cwd == shown[0]).count(),
+            40
+        );
+    }
 
     #[test]
     fn a_quiet_repository_refreshes_after_the_debounce() {

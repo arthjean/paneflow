@@ -107,8 +107,9 @@ host, worker and desktop through four scenarios: 8 idle sessions and 8
 the desktop idle with 4 panes and the cursor blink on, idle again once
 `xdotool` gives its window the X input focus (Xvfb runs no window manager, so
 the window is otherwise never active, and a terminal in an inactive window
-does not blink), with one agent thinking in that focused window, and on a
-workspace whose git repository does not change (35 s window, one 30 s git
+does not blink), with one agent thinking in that focused window, on a
+workspace whose git repository does not change, its window focused because
+the git poll only runs while a window is active (35 s window, one 30 s git
 poll). It
 reads the other suites' results from `target/perf-gates/` and judges every
 budget.

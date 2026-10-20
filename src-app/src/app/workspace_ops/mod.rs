@@ -527,6 +527,9 @@ impl PaneFlowApp {
         self.save_session(cx);
         self.acknowledge_visible_completions(cx);
         self.refresh_owned_sessions(cx);
+        if changed {
+            self.probe_workspace_git_now(idx, cx);
+        }
         cx.notify();
         changed
     }
@@ -548,6 +551,9 @@ impl PaneFlowApp {
             self.close_sessions_sidebar(cx);
         }
         self.save_session(cx);
+        if changed {
+            self.probe_workspace_git_now(idx, cx);
+        }
         cx.notify();
         changed
     }
@@ -594,6 +600,8 @@ impl PaneFlowApp {
         paths: &[std::path::PathBuf],
         cx: &mut Context<Self>,
     ) {
+        let shown_before = self.active_workspace().map(|workspace| workspace.id);
+        let existing = self.workspaces.len();
         let mut opened = false;
         for path in paths {
             if !path.is_dir() {
@@ -619,6 +627,9 @@ impl PaneFlowApp {
         }
         if !opened {
             return;
+        }
+        if self.active_idx < existing {
+            self.probe_workspace_git_if_shown_changed(shown_before, cx);
         }
         self.record_recent_workspaces(paths, cx);
         self.save_session(cx);
@@ -887,9 +898,11 @@ impl PaneFlowApp {
                     return;
                 }
             };
+        let shown_before = self.active_workspace().map(|workspace| workspace.id);
         self.dismiss_transient_surfaces();
         self.active_idx = ws_idx;
         self.workspaces[ws_idx].set_active_tab(tab_idx);
+        self.probe_workspace_git_if_shown_changed(shown_before, cx);
         let ws_id = self.workspaces[ws_idx].id;
         let worktree = self.workspaces[ws_idx].active_tab().worktree.clone();
         let ClosedPaneRecord {
@@ -1024,6 +1037,7 @@ impl PaneFlowApp {
         if idx >= self.workspaces.len() {
             return;
         }
+        let shown_before = self.active_workspace().map(|workspace| workspace.id);
         if let Some(dir) = self.workspaces[idx].git_dir.clone() {
             self.unwatch_git_dir(&dir);
         }
@@ -1050,6 +1064,7 @@ impl PaneFlowApp {
                 self.workspaces[self.active_idx].focus_first(window, cx);
             }
         }
+        self.probe_workspace_git_if_shown_changed(shown_before, cx);
         self.save_session(cx);
         cx.notify();
         self.refresh_composer_slot(cx);

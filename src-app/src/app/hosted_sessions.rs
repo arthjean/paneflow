@@ -751,7 +751,9 @@ impl PaneFlowApp {
         if ws_idx >= self.workspaces.len() {
             return;
         }
+        let shown_before = self.active_workspace().map(|workspace| workspace.id);
         self.active_idx = ws_idx;
+        self.probe_workspace_git_if_shown_changed(shown_before, cx);
         let ws_id = self.workspaces[ws_idx].id;
         let cwd = std::path::PathBuf::from(&listed.cwd);
         let terminal = cx.new(|cx| {

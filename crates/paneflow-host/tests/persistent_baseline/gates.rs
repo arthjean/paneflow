@@ -46,7 +46,7 @@ pub(super) const DESKTOP_THINKING: Scenario = Scenario {
 
 pub(super) const DESKTOP_DIFF_STAT: Scenario = Scenario {
     id: "desktop_diff_stat",
-    description: "desktop on one workspace whose git repository and config do not change, 35 s window covering a 30 s git poll",
+    description: "desktop on one workspace whose git repository and config do not change, window focused so the git poll runs, 35 s window covering a 30 s poll",
     reproduce: "scripts/perf-gates.sh",
 };
 

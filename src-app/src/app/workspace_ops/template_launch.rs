@@ -150,6 +150,7 @@ impl PaneFlowApp {
         if self.active_idx != target_idx {
             self.active_idx = target_idx;
             self.sync_files_sidebar_session(cx);
+            self.probe_workspace_git_now(target_idx, cx);
         }
         if let Some(pane) = focus_pane {
             self.pending_pane_focus = Some(pane);

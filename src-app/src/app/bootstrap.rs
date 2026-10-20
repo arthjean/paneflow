@@ -256,6 +256,7 @@ impl PaneFlowApp {
             git_watcher,
             git_event_rx,
             git_watch_counts,
+            git_probed_at: std::collections::HashMap::new(),
             settings_section: None,
             settings_scroll: gpui::ScrollHandle::new(),
             settings_drag: None,
