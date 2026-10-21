@@ -6,6 +6,8 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-20 | Arthur Jean | PRD initial : espaces à la Arc en release 1 (groupes nommés de workspaces, sélecteur en bas de la sidebar, attention entre espaces, IPC et CLI), puis environnement et comptes par espace en release 2 (env injectée au spawn, hooks installés dans les dossiers de config de l'espace, sous-processus de l'app sous le bon compte). Vérification Windows réel en dernier epic. |
+| 1.1 | 2026-10-21 | Arthur Jean | US-015 amendée : la preuve à deux comptes réels connectés en même temps est retirée, faute de second compte disponible. La story vérifie désormais que chaque variable déplace le login de sa CLI vers un dossier séparé, et note comment `gh` et git choisissent leurs identifiants. L'isolation entre deux comptes connectés repose sur la documentation des CLIs. |
+| 1.2 | 2026-10-21 | Arthur Jean | US-021 amendée comme US-015 : sur Windows, la vérification porte sur le déplacement du login de Claude Code et de Codex vers le dossier de l'espace, et non plus sur deux comptes claude.ai connectés en même temps. |
 
 ## Problem Statement
 
@@ -82,9 +84,9 @@ Key findings that informed this PRD:
 ## Assumptions & Constraints
 
 ### Assumptions (to validate)
-- `CLAUDE_CONFIG_DIR` isole deux connexions claude.ai dans la version courante de Claude Code, d'après la doc officielle ; des rapports plus anciens (miroir claudeissues.com, #20553, #70697, #47661) décrivaient des collisions. Validé sur Linux par US-015, sur Windows par US-021 ; macOS repose sur la doc tant qu'aucun Mac n'est disponible pour le vérifier.
-- `CODEX_HOME` isole la connexion Codex tant que `cli_auth_credentials_store` ne range pas l'auth dans le trousseau du système. Validé par US-015.
-- `GH_CONFIG_DIR` isole les comptes `gh` ; `git push` n'en profite que si le helper d'identifiants de git est `gh auth git-credential`. Validé par US-015 et documenté.
+- `CLAUDE_CONFIG_DIR` isole deux connexions claude.ai dans la version courante de Claude Code, d'après la doc officielle ; des rapports plus anciens (miroir claudeissues.com, #20553, #70697, #47661) décrivaient des collisions. US-015 vérifie sur Linux que la variable déplace le login et ses fichiers vers le dossier ; la coexistence de deux comptes connectés repose sur la doc, faute de second compte pour la vérifier (v1.1). Sur Windows, US-021 vérifie le même déplacement du login ; macOS repose sur la doc tant qu'aucun Mac n'est disponible.
+- `CODEX_HOME` isole la connexion Codex tant que `cli_auth_credentials_store` ne range pas l'auth dans le trousseau du système. US-015 vérifie le déplacement du login vers le dossier.
+- `GH_CONFIG_DIR` isole les comptes `gh`, sauf quand `GH_TOKEN` ou `GITHUB_TOKEN` est défini ; `git push` n'en profite que si le helper d'identifiants de git est `gh auth git-credential`. US-015 vérifie le déplacement du login et relève le helper configuré ; documenté.
 - `paneflow-ai-hook`, lancé par l'agent dans le pane, hérite de l'env du pane : une fois installés dans le dossier de l'espace, les hooks remontent comme aujourd'hui. `crates/paneflow-agent-config/src/io.rs:27-66` résout déjà `CLAUDE_CONFIG_DIR` et `CODEX_HOME`.
 - Les utilisateurs veulent l'env par espace, pas seulement le regroupement. La question est posée à Olivier ; la release 1 a une valeur seule.
 - Neuf espaces suffisent : chiffres 1 à 9, largeur de la sidebar.
@@ -368,21 +370,21 @@ Les scripts et les agents conducteurs voient et ciblent les espaces.
 
 Chaque espace porte une env appliquée à tout ce qui se lance pour ses workspaces, terminaux, agents et sous-processus de l'app, sans casser le statut des agents.
 
-**Definition of Done:** un espace définit son env dans Settings ; chaque terminal de ses workspaces la reçoit au spawn ; quand elle déplace `CLAUDE_CONFIG_DIR` ou `CODEX_HOME`, les hooks et le MCP de Paneflow y sont installés et leur état est visible ; badge PR, clone, git, auto-nommage, découverte et reprise des sessions tournent sous l'env de l'espace ; deux comptes réels sont vérifiés côte à côte sous Linux.
+**Definition of Done:** un espace définit son env dans Settings ; chaque terminal de ses workspaces la reçoit au spawn ; quand elle déplace `CLAUDE_CONFIG_DIR` ou `CODEX_HOME`, les hooks et le MCP de Paneflow y sont installés et leur état est visible ; badge PR, clone, git, auto-nommage, découverte et reprise des sessions tournent sous l'env de l'espace ; sous Linux, chaque variable de dossier déplace le login de sa CLI vers ce dossier (US-015).
 
 #### US-015: Valider l'hypothèse : une variable de dossier isole deux comptes par CLI
-**Description:** As a mainteneur, I want vérifier avec deux comptes réels que `CLAUDE_CONFIG_DIR`, `CODEX_HOME` et `GH_CONFIG_DIR` séparent les connexions so that la release 2 ne promette pas une isolation que les CLIs ne tiennent pas.
+**Description:** As a mainteneur, I want vérifier que `CLAUDE_CONFIG_DIR`, `CODEX_HOME` et `GH_CONFIG_DIR` déplacent chacune le login de leur CLI vers un dossier séparé so that la release 2 ne promette pas une isolation que les CLIs ne tiennent pas.
 
 **Priority:** P0
 **Size:** S (2 pts)
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Sous Linux, deux terminaux lancés avec deux `CLAUDE_CONFIG_DIR` montrent dans `/status` deux comptes claude.ai différents en même temps, et `/logout` dans l'un laisse l'autre connecté.
-- [ ] Même vérification avec deux `CODEX_HOME` (compte affiché par Codex) et deux `GH_CONFIG_DIR` (`gh auth status`), en notant la valeur de `cli_auth_credentials_store` utilisée par Codex.
-- [ ] Un `git push` lancé sous chaque `GH_CONFIG_DIR` est testé avec le helper d'identifiants par défaut, puis avec `gh auth git-credential`, et le résultat de chacun est noté.
-- [ ] Le rapport, preuve locale non versionnée sous `tasks/`, note les versions de Claude Code, Codex et gh, et la version minimale de Claude Code à documenter.
-- [ ] Échec : given une CLI qui partage la connexion entre deux dossiers, when le spike conclut, then le PRD passe en version 1.1 avec la limite documentée dans US-016 et l'avertissement correspondant dans Settings, au lieu de promettre l'isolation pour cette CLI.
+- [ ] Sous Linux, avec le compte par défaut connecté, `claude auth status` lancé sous un `CLAUDE_CONFIG_DIR` vide affiche `loggedIn: false` et un `configDirectory` et un `projectsDirectory` qui suivent la variable, et aucun `.credentials.json` n'apparaît dans ce dossier.
+- [ ] Même vérification avec un `CODEX_HOME` vide (`codex login status`, pas d'`auth.json`, en notant la valeur de `cli_auth_credentials_store`) et avec un `GH_CONFIG_DIR` vide (`gh auth status` avec `GH_TOKEN` et `GITHUB_TOKEN` retirés, pas de `hosts.yml`), plus le constat qu'un `GITHUB_TOKEN` défini passe devant `GH_CONFIG_DIR`.
+- [ ] Le helper d'identifiants de git configuré pour github.com est relevé, et la documentation dit quand `git push` suit `GH_CONFIG_DIR` (HTTPS avec `gh auth git-credential`) et quand il ne la suit pas (SSH, autre helper).
+- [ ] Le rapport, preuve locale non versionnée sous `tasks/`, note les versions de Claude Code, Codex et gh, la version de Claude Code vérifiée, et dit explicitement que la coexistence de deux comptes connectés n'est pas mesurée et repose sur la documentation des CLIs.
+- [ ] Échec : given une CLI dont le login reste visible sous un dossier vide, when le spike conclut, then le PRD passe en version suivante avec la limite documentée dans US-016 et l'avertissement correspondant dans Settings, au lieu de promettre l'isolation pour cette CLI.
 
 #### US-016: Injecter l'env de l'espace dans chaque terminal
 **Description:** As a développeur multi-contextes, I want définir une env par espace et que chaque terminal de ses workspaces la reçoive so that un agent lancé dans l'espace pro utilise mes comptes pro.
@@ -478,7 +480,7 @@ Vérifier sur Windows réel ce que Linux ne peut pas compiler ni exercer, releas
 **Dependencies:** Blocked by US-017, US-018, US-019
 
 **Acceptance Criteria:**
-- [ ] Deux espaces à `CLAUDE_CONFIG_DIR` différents montrent deux comptes claude.ai différents dans `/status`, chacun avec son `.credentials.json` sous son dossier.
+- [ ] Avec le compte par défaut connecté, un terminal d'un espace dont le `CLAUDE_CONFIG_DIR` pointe vers un dossier vide montre `loggedIn: false` dans `claude auth status`, avec un `configDirectory` qui suit la variable, et aucun `.credentials.json` n'apparaît dans ce dossier ; même vérification pour `CODEX_HOME` avec `codex login status` et `auth.json`. La coexistence de deux comptes connectés n'est pas mesurée et repose sur la documentation des CLIs.
 - [ ] Les hooks s'installent dans les dossiers des espaces, et l'état réflexion et attente s'affiche pour Claude Code et Codex dans chaque espace.
 - [ ] Les clés d'env saisies en minuscules arrivent en majuscules dans le terminal, et `CODEX_HOME` est créé avant le lancement de Codex.
 - [ ] La documentation indique que `SSH_AUTH_SOCK` n'a pas d'effet sous Windows, où l'agent OpenSSH passe par un pipe nommé.
