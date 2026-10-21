@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Environnement et comptes par espace",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-006",
@@ -255,70 +255,70 @@
       "id": "US-015",
       "title": "Valider l'hypothèse : une variable de dossier isole deux comptes par CLI",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-21",
+      "completed_at": "2026-10-21",
+      "reviewed_at": "2026-10-21"
     },
     {
       "id": "US-016",
       "title": "Injecter l'env de l'espace dans chaque terminal",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-010",
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-21",
+      "completed_at": "2026-10-21",
+      "reviewed_at": "2026-10-21"
     },
     {
       "id": "US-017",
       "title": "Installer les hooks et le MCP dans les dossiers de l'espace",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-21",
+      "completed_at": "2026-10-21",
+      "reviewed_at": "2026-10-21"
     },
     {
       "id": "US-018",
       "title": "Faire suivre l'env de l'espace aux sous-processus de l'app",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-21",
+      "completed_at": "2026-10-21",
+      "reviewed_at": "2026-10-21"
     },
     {
       "id": "US-019",
       "title": "Retrouver et reprendre les sessions sous le compte de l'espace",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-21",
+      "completed_at": "2026-10-21",
+      "reviewed_at": "2026-10-21"
     },
     {
       "id": "US-020",
