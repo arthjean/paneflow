@@ -418,6 +418,7 @@ pub(crate) fn run(
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
+    crate::space_env::apply_directory_env(&mut command);
     neutralize_repository_filters(&mut command)?;
     record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stderr_tail(command, deadline, stdout_cap)
@@ -428,6 +429,7 @@ pub(crate) fn run_keeping_stdout_head(
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<(paneflow_process::BoundedOutput, bool), paneflow_process::ProcError> {
+    crate::space_env::apply_directory_env(&mut command);
     neutralize_repository_filters(&mut command)?;
     record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stdout_head(command, deadline, stdout_cap)

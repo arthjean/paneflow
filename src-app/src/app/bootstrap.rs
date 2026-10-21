@@ -86,6 +86,7 @@ impl PaneFlowApp {
             None => (Vec::new(), 0, None, false),
         };
         crate::startup_trace::mark("workspaces_restored");
+        crate::app::spaces::publish_space_directories(&workspaces, &cached_config);
 
         let (git_watcher, git_event_rx, git_watch_counts) = Self::start_git_watcher(&workspaces);
 
@@ -294,6 +295,8 @@ impl PaneFlowApp {
             space_name_input,
             space_name_editor: None,
             space_delete_armed: None,
+            space_env_editor: None,
+            space_integrations: Default::default(),
             agent_profile_args_input,
             mcp_status: None,
             mcp_install: None,
@@ -473,6 +476,7 @@ impl PaneFlowApp {
         app.spawn_recents_prune(cx);
         app.refresh_pull_requests(cx);
         app.refresh_owned_sessions(cx);
+        app.refresh_space_integrations_at_launch(cx);
         app.start_host_agent_stream();
         app.start_write_approval_stream();
 

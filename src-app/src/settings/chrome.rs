@@ -614,6 +614,9 @@ impl PaneFlowApp {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);
         }
+        if section == SettingsSection::Spaces {
+            self.refresh_space_integration_status(cx);
+        }
         if section == SettingsSection::Workspaces {
             self.sync_workspace_template_inputs(cx);
         }

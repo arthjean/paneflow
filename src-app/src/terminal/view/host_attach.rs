@@ -66,6 +66,7 @@ impl TerminalView {
         let ghostty = self.terminal.ghostty_session();
         let ghostty_pending = pending.ghostty;
         let profile = params.profile;
+        let config_dirs = self.launch.space_config_dirs(&params.env);
         let request = AttachRequest {
             intent,
             session: self.terminal.session_id.clone(),
@@ -93,8 +94,9 @@ impl TerminalView {
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let outcome = executor
+                let (outcome, dir_errors) = executor
                     .spawn(async move {
+                        let dir_errors = crate::space_env::ensure_config_dirs(&config_dirs);
                         let mut request = request;
                         if spawn_rule.needs_resolving() {
                             let requested = request.params.cwd.clone();
@@ -105,7 +107,7 @@ impl TerminalView {
                             .resolve(crate::workspace::CONFINE_TIMEOUT)
                             .unwrap_or(requested);
                         }
-                        match host_link::resolve(request) {
+                        let outcome = match host_link::resolve(request) {
                             Ok(ResolveOutcome::Attached(hosted, snapshot)) => {
                                 match ghostty.start_attached(
                                     ghostty_pending,
@@ -130,10 +132,14 @@ impl TerminalView {
                                 );
                                 AttachOutcome::Unavailable(error.user_message())
                             }
-                        }
+                        };
+                        (outcome, dir_errors)
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
+                    for error in dir_errors {
+                        cx.emit(TerminalEvent::Notice(error));
+                    }
                     cx.emit(TerminalEvent::HostLinkResolved);
                     match outcome {
                         AttachOutcome::Attached(hosted) => {

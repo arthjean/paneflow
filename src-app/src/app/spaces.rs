@@ -113,7 +113,7 @@ pub(crate) fn release_undeclared_spaces(
     let mut released = 0;
     for workspace in workspaces.iter_mut() {
         if !declared(&workspace.space) {
-            workspace.space = None;
+            workspace.set_space(None);
             released += 1;
         }
     }
@@ -123,6 +123,51 @@ pub(crate) fn release_undeclared_spaces(
     }
     memory.retain(|space, _| declared(space));
     released
+}
+
+pub(crate) fn publish_space_directories(workspaces: &[Workspace], config: &PaneFlowConfig) {
+    let entries = workspaces
+        .iter()
+        .flat_map(|workspace| {
+            let env = crate::space_env::subprocess_env(config, workspace.space.as_ref());
+            workspace_directories(workspace)
+                .into_iter()
+                .map(move |dir| (dir, env.clone()))
+        })
+        .collect();
+    crate::space_env::publish_directory_envs(entries);
+}
+
+pub(crate) fn workspace_directories(workspace: &Workspace) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> =
+        std::iter::once(std::path::PathBuf::from(&workspace.cwd))
+            .chain(workspace.repo_root.clone())
+            .chain(std::iter::once(workspace.worktree_root.clone()))
+            .chain(
+                workspace
+                    .managed_worktrees
+                    .iter()
+                    .map(|worktree| worktree.path.clone()),
+            )
+            .chain(
+                workspace
+                    .bound_tab_worktrees()
+                    .into_iter()
+                    .map(std::path::PathBuf::from),
+            )
+            .filter(|dir| dir.is_absolute())
+            .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+pub(crate) fn environment_differs(
+    config: &PaneFlowConfig,
+    from: Option<&SpaceId>,
+    to: Option<&SpaceId>,
+) -> bool {
+    crate::space_env::space_env(config, from) != crate::space_env::space_env(config, to)
 }
 
 pub(crate) fn space_label<'a>(config: &'a PaneFlowConfig, space: Option<&SpaceId>) -> &'a str {
@@ -292,7 +337,7 @@ impl PaneFlowApp {
         mut workspace: Workspace,
         space: Option<SpaceId>,
     ) -> usize {
-        workspace.space = space;
+        workspace.set_space(space);
         self.workspaces.push(workspace);
         self.workspaces.len() - 1
     }
@@ -372,6 +417,7 @@ impl PaneFlowApp {
             id: id.clone(),
             name: next_space_name(&self.cached_config),
             color: None,
+            env: Default::default(),
         });
         self.persist_spaces(spaces, cx);
         self.cached_config.space(&id).map(|space| space.id.clone())
@@ -411,7 +457,13 @@ impl PaneFlowApp {
         let shown = self.shown_workspace_idx() == Some(idx);
         let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
         let neighbor = display_neighbor(&order, idx);
-        self.workspaces[idx].space = target.clone();
+        let keeps_environment = environment_differs(
+            &self.cached_config,
+            self.workspaces[idx].space.as_ref(),
+            target.as_ref(),
+        ) && self.workspaces[idx]
+            .any_pane(|pane| pane.read(cx).terminals().next().is_some());
+        self.workspaces[idx].set_space(target.clone());
         self.workspace_menu_open = None;
         if shown {
             match neighbor {
@@ -442,6 +494,9 @@ impl PaneFlowApp {
             crate::app::constants::TOAST_HOLD_MS * 3,
             cx,
         );
+        if keeps_environment {
+            self.show_toast(crate::space_env::KEPT_ENVIRONMENT_NOTICE, cx);
+        }
         self.save_session(cx);
         cx.notify();
     }
@@ -458,6 +513,10 @@ impl PaneFlowApp {
         self.move_workspace_to_space(idx, Some(id.clone()), window, cx);
         self.open_settings_at(crate::SettingsSection::Spaces, window, cx);
         self.edit_space_name(id, window, cx);
+    }
+
+    pub(crate) fn publish_space_directories(&self) {
+        publish_space_directories(&self.workspaces, &self.cached_config);
     }
 
     pub(crate) fn reconcile_spaces_with_config(&mut self, cx: &mut Context<Self>) {
@@ -479,6 +538,7 @@ impl PaneFlowApp {
             self.save_session(cx);
             cx.notify();
         }
+        self.publish_space_directories();
     }
 }
 
@@ -752,6 +812,7 @@ mod tests {
                 id: space(1),
                 name: "Work".to_string(),
                 color: None,
+                env: Default::default(),
             }],
             ..Default::default()
         };
@@ -821,12 +882,35 @@ mod tests {
     }
 
     #[test]
+    fn moving_between_spaces_changes_the_environment_only_when_their_env_differs() {
+        let mut config = config_with(&["Work", "Perso", "Client"]);
+        config.spaces[0].env.insert(
+            "GIT_AUTHOR_EMAIL".to_string(),
+            "me@work.example".to_string(),
+        );
+        config.spaces[2].env.insert(
+            "GIT_AUTHOR_EMAIL".to_string(),
+            "me@work.example".to_string(),
+        );
+        let (work, perso, client) = (
+            Some(&config.spaces[0].id),
+            Some(&config.spaces[1].id),
+            Some(&config.spaces[2].id),
+        );
+        assert!(environment_differs(&config, None, work));
+        assert!(environment_differs(&config, work, perso));
+        assert!(!environment_differs(&config, None, perso));
+        assert!(!environment_differs(&config, work, client));
+    }
+
+    #[test]
     fn the_default_space_is_named_default_and_others_by_their_config_name() {
         let mut config = PaneFlowConfig::default();
         config.spaces.push(paneflow_config::schema::SpaceConfig {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            env: Default::default(),
         });
         assert_eq!(space_label(&config, None), "Default");
         assert_eq!(space_label(&config, Some(&space(1))), "Work");
@@ -840,6 +924,7 @@ mod tests {
                 id: space(n as u8 + 1),
                 name: name.to_string(),
                 color: None,
+                env: Default::default(),
             });
         }
         config

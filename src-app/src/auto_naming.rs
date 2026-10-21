@@ -189,7 +189,10 @@ pub fn pick_summarizer(session_agent: TerminalAgent) -> Option<TerminalAgent> {
     summarizers().find(|agent| agent.is_installed())
 }
 
-fn summarizer_environment(agent: TerminalAgent) -> Vec<(String, String)> {
+fn summarizer_environment(
+    agent: TerminalAgent,
+    space_env: &[(String, String)],
+) -> Vec<(String, String)> {
     const CODEX_ALLOWED: [&str; 19] = [
         "HOME",
         "PATH",
@@ -211,17 +214,19 @@ fn summarizer_environment(agent: TerminalAgent) -> Vec<(String, String)> {
         "ALL_PROXY",
         "NO_PROXY",
     ];
-    std::env::vars()
+    let mut env: Vec<(String, String)> = std::env::vars()
         .filter(|(key, _)| {
             !key.starts_with("PANEFLOW_")
                 && key != "NODE_OPTIONS"
                 && !crate::terminal::INHERITED_AGENT_SESSION_ENV.contains(&key.as_str())
         })
-        .filter(|(key, _)| {
-            summarizer_reader(agent) != Some(RuntimeSessionReader::Codex)
-                || CODEX_ALLOWED.contains(&key.as_str())
-        })
-        .collect()
+        .filter(|(key, _)| !space_env.iter().any(|(space_key, _)| space_key == key))
+        .chain(space_env.iter().cloned())
+        .collect();
+    if summarizer_reader(agent) == Some(RuntimeSessionReader::Codex) {
+        env.retain(|(key, _)| CODEX_ALLOWED.contains(&key.as_str()));
+    }
+    env
 }
 
 fn claude_model() -> String {
@@ -266,11 +271,14 @@ pub fn summarize(
     agent: TerminalAgent,
     prompt: &str,
     current_title: Option<&str>,
+    space_env: &[(String, String)],
 ) -> Option<String> {
     let binary = which::which(agent.binary()).ok()?;
     let scratch = Scratch::create()?;
     let (mut command, output_file) = summarizer_command(agent, &binary, prompt, &scratch);
-    command.env_clear().envs(summarizer_environment(agent));
+    command
+        .env_clear()
+        .envs(summarizer_environment(agent, space_env));
     let out =
         paneflow_process::run_with_timeout(command, SUMMARIZER_DEADLINE, SUMMARIZER_STDOUT_CAP)
             .ok()?;
@@ -454,11 +462,63 @@ mod tests {
 
     #[test]
     fn the_summarizer_environment_never_leaks_paneflow_or_agent_session_markers() {
-        let env = summarizer_environment(TerminalAgent::ClaudeCode);
+        let env = summarizer_environment(TerminalAgent::ClaudeCode, &[]);
         assert!(env.iter().all(|(key, _)| !key.starts_with("PANEFLOW_")));
         assert!(env.iter().all(|(key, _)| key != "CLAUDECODE"));
-        let codex = summarizer_environment(TerminalAgent::Codex);
+        let codex = summarizer_environment(TerminalAgent::Codex, &[]);
         assert!(codex.iter().all(|(key, _)| key != "ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn the_summarizer_runs_under_the_space_allowlist_and_codex_keeps_its_closed_list() {
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        let work = paneflow_config::schema::SpaceId::new();
+        let claude_dir = std::env::temp_dir().join("summarizer-work-claude");
+        let codex_dir = std::env::temp_dir().join("summarizer-work-codex");
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: work.clone(),
+            name: "Work".to_string(),
+            color: None,
+            env: [
+                ("CLAUDE_CONFIG_DIR", claude_dir.display().to_string()),
+                ("CODEX_HOME", codex_dir.display().to_string()),
+                ("NOT_ALLOWLISTED", "leak".to_string()),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect(),
+        });
+        let space_env = crate::space_env::subprocess_env(&config, Some(&work));
+        let value = |env: &[(String, String)], key: &str| {
+            env.iter()
+                .filter(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>()
+        };
+        let claude = summarizer_environment(TerminalAgent::ClaudeCode, &space_env);
+        assert_eq!(
+            value(&claude, "CLAUDE_CONFIG_DIR"),
+            vec![claude_dir.display().to_string()],
+            "the space value replaces any inherited one"
+        );
+        assert!(value(&claude, "NOT_ALLOWLISTED").is_empty());
+        let codex = summarizer_environment(TerminalAgent::Codex, &space_env);
+        assert_eq!(
+            value(&codex, "CODEX_HOME"),
+            vec![codex_dir.display().to_string()]
+        );
+        assert!(
+            value(&codex, "CLAUDE_CONFIG_DIR").is_empty(),
+            "Codex keeps its closed list"
+        );
+        assert_eq!(
+            summarizer_environment(TerminalAgent::ClaudeCode, &[]),
+            summarizer_environment(
+                TerminalAgent::ClaudeCode,
+                &crate::space_env::subprocess_env(&config, None)
+            ),
+            "the default space summarizes with exactly today's env"
+        );
     }
 
     #[test]

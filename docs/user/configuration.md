@@ -65,6 +65,15 @@ optional `color`; up to 9 spaces are allowed next to the implicit `Default`
 space. Hand edits apply without a restart. See the
 [schema page](/docs/configuration/schema#spaces) for the limits.
 
+A space's `env` is set on every terminal of its workspaces, with this
+precedence, lowest first: `terminal.env`, the space's `env`, an agent
+profile's `env`, then the surface's own env. Paneflow's own `git`, `gh`,
+clone, and tab-naming processes for those workspaces receive a fixed
+subset of it, listed on the [schema page](/docs/configuration/schema#spaces).
+A terminal reads the environment when it starts: a change applies to the
+terminals opened after it, and a shell that exports the same variable from
+its rc file, for example `.zshrc`, overrides the space's value.
+
 ## What's next?
 
 - [Schema](/docs/configuration/schema): The full reference: every key, type, default, apply timing, and runtime notes.

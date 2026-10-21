@@ -30,6 +30,7 @@ const CODEX_RETIRED_EVENTS: &[&str] = &["PostToolUse"];
 const UNMARKED_HOOKS_ADOPTION: &str = "Paneflow hook entries without an integration marker";
 const LAUNCH_TIME_HOOKS_ADOPTION: &str = "pre-0.17 launch-time hook install";
 const LAUNCH_TIME_HOOKS_EVIDENCE: &str = "agent-config-leases";
+const SHARED_DIRECTORY_ADOPTION: &str = "a config directory shared with another space";
 pub(crate) const FORCE_FLAG: &str = "--force";
 const CONDUCTOR_SKILL: &str = "paneflow-conductor";
 const CONDUCTOR_SKILL_SOURCE: &str = include_str!("../../../skills/paneflow-conductor/SKILL.md");
@@ -78,9 +79,52 @@ pub struct IntegrationBinaries {
     pub bridge_binary: PathBuf,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntegrationTarget {
+    pub marker_dir: PathBuf,
+    pub claude: Option<paneflow_agent_config::ClaudePaths>,
+    pub codex_home: Option<PathBuf>,
+}
+
+impl IntegrationTarget {
+    #[must_use]
+    pub fn for_space(
+        home: &Path,
+        space: &str,
+        claude: Option<paneflow_agent_config::ClaudePaths>,
+        codex_home: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            marker_dir: home.join("integrations").join("spaces").join(space),
+            claude,
+            codex_home,
+        }
+    }
+
+    #[must_use]
+    pub fn moves_any_directory(&self) -> bool {
+        self.claude.is_some() || self.codex_home.is_some()
+    }
+
+    #[must_use]
+    pub fn same_directories(&self, other: &Self) -> bool {
+        self.claude == other.claude && self.codex_home == other.codex_home
+    }
+
+    fn covers(&self, runtime: &Runtime) -> bool {
+        match runtime.integration.hook_adapter {
+            RuntimeHookAdapter::Claude => self.claude.is_some(),
+            RuntimeHookAdapter::Codex => self.codex_home.is_some(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ConfigPaths {
     marker_home: PathBuf,
+    marker_dir: PathBuf,
+    launch_time_evidence: bool,
     claude_skills: PathBuf,
     claude_settings: PathBuf,
     claude_mcp: PathBuf,
@@ -101,14 +145,51 @@ impl ConfigPaths {
             .ok_or_else(|| anyhow!("cannot resolve the Claude config directory"))?;
         let codex_home = paneflow_agent_config::codex_home()
             .ok_or_else(|| anyhow!("cannot resolve the Codex home"))?;
-        Ok(Self {
+        Ok(Self::with_dirs(
+            marker_home.join("integrations"),
             marker_home,
+            claude,
+            &codex_home,
+        ))
+    }
+
+    fn for_target(target: &IntegrationTarget) -> Result<Self> {
+        let claude = match &target.claude {
+            Some(claude) => claude.clone(),
+            None => paneflow_agent_config::ClaudePaths::current()
+                .ok_or_else(|| anyhow!("cannot resolve the Claude config directory"))?,
+        };
+        let codex_home = match &target.codex_home {
+            Some(codex_home) => codex_home.clone(),
+            None => paneflow_agent_config::codex_home()
+                .ok_or_else(|| anyhow!("cannot resolve the Codex home"))?,
+        };
+        let mut paths = Self::with_dirs(
+            target.marker_dir.clone(),
+            target.marker_dir.clone(),
+            claude,
+            &codex_home,
+        );
+        paths.launch_time_evidence = false;
+        Ok(paths)
+    }
+
+    fn with_dirs(
+        marker_dir: PathBuf,
+        marker_home: PathBuf,
+        claude: paneflow_agent_config::ClaudePaths,
+        codex_home: &Path,
+    ) -> Self {
+        Self {
+            marker_home,
+            marker_dir,
+            launch_time_evidence: true,
             claude_skills: claude.config_dir.join("skills"),
             claude_settings: claude.settings(),
             claude_mcp: claude.global_config,
             codex_hooks: codex_home.join("hooks.json"),
             codex_config: codex_home.join("config.toml"),
-        })
+        }
     }
 
     fn mcp_writer(&self, runtime: &Runtime) -> Result<Box<dyn AgentConfigWriter>> {
@@ -135,15 +216,12 @@ impl ConfigPaths {
     }
 
     fn skill_record(&self, slug: &str) -> PathBuf {
-        self.marker_home
-            .join("integrations")
+        self.marker_dir
             .join(format!("{slug}.{CONDUCTOR_SKILL}.json"))
     }
 
     fn marker(&self, slug: &str) -> PathBuf {
-        self.marker_home
-            .join("integrations")
-            .join(format!("{slug}.json"))
+        self.marker_dir.join(format!("{slug}.json"))
     }
 
     fn launch_time_hooks_evidence(&self) -> PathBuf {
@@ -151,10 +229,88 @@ impl ConfigPaths {
     }
 
     fn launch_time_adoption_record(&self) -> PathBuf {
-        self.marker_home
-            .join("integrations")
-            .join("launch-time-adoption.json")
+        self.marker_dir.join("launch-time-adoption.json")
     }
+}
+
+pub fn list_target_integrations(target: &IntegrationTarget) -> Vec<IntegrationStatus> {
+    let paths = ConfigPaths::for_target(target).ok();
+    RUNTIMES
+        .iter()
+        .filter(|runtime| target.covers(runtime))
+        .map(|runtime| status_for(runtime, paths.as_ref()))
+        .collect()
+}
+
+pub fn install_target_integration(
+    target: &IntegrationTarget,
+    slug: &str,
+    binaries: &IntegrationBinaries,
+) -> Result<IntegrationStatus, String> {
+    let runtime = integration_runtime(slug).map_err(format_error)?;
+    if !target.covers(runtime) {
+        return Err(format!(
+            "{} keeps its default config directory in this space",
+            runtime.label
+        ));
+    }
+    let paths = ConfigPaths::for_target(target).map_err(format_error)?;
+    install_integration_at(
+        &paths,
+        slug,
+        binaries,
+        None,
+        InstallMode::for_this_build(false),
+    )
+    .map_err(format_error)
+}
+
+pub fn mirror_installed_integrations(
+    installed: &[IntegrationStatus],
+    target: &IntegrationTarget,
+    binaries: &IntegrationBinaries,
+) -> Vec<(String, Result<(), String>)> {
+    installed
+        .iter()
+        .filter(|status| status.state == IntegrationState::Installed)
+        .filter(|status| runtime_by_slug(status.slug).is_some_and(|runtime| target.covers(runtime)))
+        .map(|status| {
+            let result = install_target_integration(target, status.slug, binaries).map(|_| ());
+            (status.slug.to_string(), result)
+        })
+        .collect()
+}
+
+pub fn refresh_target_integrations(
+    sharing: &[IntegrationTarget],
+    binaries: &IntegrationBinaries,
+) -> Vec<(String, Result<(), String>)> {
+    let Some((first, rest)) = sharing.split_first() else {
+        return Vec::new();
+    };
+    let Ok(paths) = ConfigPaths::for_target(first) else {
+        return Vec::new();
+    };
+    let results = adopt_and_refresh_runtimes_at(
+        &paths,
+        binaries,
+        InstallMode::for_this_build(false),
+        |runtime| first.covers(runtime),
+    );
+    let mut recorded = results.clone();
+    for other in rest {
+        let Ok(other_paths) = ConfigPaths::for_target(other) else {
+            continue;
+        };
+        for (slug, result) in &results {
+            if result.is_ok() {
+                let written = write_marker(&other_paths, slug, Some(SHARED_DIRECTORY_ADOPTION))
+                    .map_err(|error| format!("{error:#}"));
+                recorded.push((slug.clone(), written));
+            }
+        }
+    }
+    recorded
 }
 
 pub fn list_integrations() -> Vec<IntegrationStatus> {
@@ -604,7 +760,7 @@ pub fn run_integrations_cli(args: &[String], binaries: Option<IntegrationBinarie
     }
 }
 
-pub(crate) fn state_label(state: IntegrationState) -> &'static str {
+pub fn state_label(state: IntegrationState) -> &'static str {
     match state {
         IntegrationState::Installed => "installed",
         IntegrationState::NotInstalled => "not installed",
@@ -669,10 +825,23 @@ fn adopt_and_refresh_installed_at(
     binaries: &IntegrationBinaries,
     mode: InstallMode,
 ) -> Vec<(String, Result<(), String>)> {
-    let launch_time_install = paths.launch_time_hooks_evidence().is_dir()
+    adopt_and_refresh_runtimes_at(paths, binaries, mode, |_| true)
+}
+
+fn adopt_and_refresh_runtimes_at(
+    paths: &ConfigPaths,
+    binaries: &IntegrationBinaries,
+    mode: InstallMode,
+    included: impl Fn(&Runtime) -> bool,
+) -> Vec<(String, Result<(), String>)> {
+    let launch_time_install = paths.launch_time_evidence
+        && paths.launch_time_hooks_evidence().is_dir()
         && !paths.launch_time_adoption_record().exists();
     let mut results = Vec::new();
-    for runtime in RUNTIMES.iter().filter(|runtime| has_installer(runtime)) {
+    for runtime in RUNTIMES
+        .iter()
+        .filter(|runtime| has_installer(runtime) && included(runtime))
+    {
         let marker = paths.marker(runtime.slug);
         let adoption = if marker.exists() {
             None
@@ -1106,6 +1275,8 @@ mod tests {
         std::fs::write(&bridge_binary, b"bridge").expect("bridge binary");
         let paths = ConfigPaths {
             marker_home: root.join("paneflow-home"),
+            marker_dir: root.join("paneflow-home").join("integrations"),
+            launch_time_evidence: true,
             claude_skills: root.join("claude").join("skills"),
             claude_settings: root.join("claude").join("settings.json"),
             claude_mcp: root.join(".claude.json"),
@@ -1660,6 +1831,7 @@ mod tests {
             .join("release-home");
         let release = ConfigPaths {
             marker_home: release_home.clone(),
+            marker_dir: release_home.join("integrations"),
             ..paths.clone()
         };
         let release_binaries = other_home(&paths, "release-home");
@@ -2106,5 +2278,234 @@ mod tests {
             remove_integration_at(&paths, "claude-code").expect("remove");
             assert_eq!(read_settings(&paths), user_stop_hook());
         }
+    }
+
+    fn space_target(paths: &ConfigPaths, space: &str) -> IntegrationTarget {
+        let root = paths.marker_home.parent().expect("root").join(space);
+        IntegrationTarget::for_space(
+            &paths.marker_home,
+            space,
+            Some(paneflow_agent_config::ClaudePaths {
+                config_dir: root.join(".claude"),
+                global_config: root.join(".claude").join(".claude.json"),
+            }),
+            Some(root.join(".codex")),
+        )
+    }
+
+    fn reporter_events(settings: &Path) -> Vec<String> {
+        let root: Value =
+            serde_json::from_slice(&std::fs::read(settings).expect("settings")).expect("json");
+        root["hooks"]
+            .as_object()
+            .expect("hooks")
+            .iter()
+            .filter(|(_, groups)| {
+                groups
+                    .as_array()
+                    .is_some_and(|groups| groups.iter().any(is_owned_group))
+            })
+            .map(|(event, _)| event.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_space_target_installs_into_its_own_directories_and_markers() {
+        let (_directory, paths, binaries) = fixture();
+        let target = space_target(&paths, "550e8400-e29b-41d4-a716-446655440001");
+        for slug in ["claude-code", "codex"] {
+            install_target_integration(&target, slug, &binaries).expect("space install");
+        }
+        let claude = target.claude.clone().expect("claude");
+        let events = reporter_events(&claude.settings());
+        for event in [
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+        ] {
+            assert!(
+                events.iter().any(|e| e == event),
+                "{event} reaches the reporter"
+            );
+        }
+        assert!(target
+            .codex_home
+            .as_ref()
+            .expect("codex")
+            .join("hooks.json")
+            .is_file());
+        assert!(target.marker_dir.join("claude-code.json").is_file());
+        assert!(target.marker_dir.join("codex.json").is_file());
+        assert!(
+            target.marker_dir.ends_with(Path::new(
+                "integrations/spaces/550e8400-e29b-41d4-a716-446655440001"
+            )),
+            "{}",
+            target.marker_dir.display()
+        );
+        assert!(
+            !paths.marker("claude-code").exists(),
+            "the default marker is untouched"
+        );
+        assert!(
+            !paths.claude_settings.exists(),
+            "the default directory is untouched"
+        );
+        let states: Vec<_> = list_target_integrations(&target)
+            .into_iter()
+            .map(|status| (status.slug, status.state))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("claude-code", IntegrationState::Installed),
+                ("codex", IntegrationState::Installed)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_space_lists_and_installs_only_the_runtimes_whose_directory_it_moves() {
+        let (_directory, paths, binaries) = fixture();
+        let mut target = space_target(&paths, "space-claude-only");
+        target.codex_home = None;
+        let slugs: Vec<_> = list_target_integrations(&target)
+            .into_iter()
+            .map(|status| status.slug)
+            .collect();
+        assert_eq!(slugs, vec!["claude-code"]);
+        let error = install_target_integration(&target, "codex", &binaries).unwrap_err();
+        assert!(
+            error.contains("keeps its default config directory"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn saving_a_space_mirrors_the_runtimes_installed_for_the_default_space() {
+        let (_directory, paths, binaries) = fixture();
+        let target = space_target(&paths, "space-mirror");
+        let mut installed = list_integrations_in(&paths);
+        for status in &mut installed {
+            if status.slug == "claude-code" {
+                status.state = IntegrationState::Installed;
+            }
+        }
+        let results = mirror_installed_integrations(&installed, &target, &binaries);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "claude-code");
+        assert!(results[0].1.is_ok(), "{:?}", results[0].1);
+        assert!(target.marker_dir.join("claude-code.json").is_file());
+        assert!(!target.marker_dir.join("codex.json").exists());
+    }
+
+    #[test]
+    fn spaces_sharing_a_directory_refresh_it_once_and_each_keep_a_marker() {
+        let (_directory, paths, binaries) = fixture();
+        let first = space_target(&paths, "space-a");
+        let second = IntegrationTarget {
+            marker_dir: paths
+                .marker_home
+                .join("integrations")
+                .join("spaces")
+                .join("space-b"),
+            ..first.clone()
+        };
+        assert!(first.same_directories(&second));
+        install_target_integration(&first, "claude-code", &binaries).expect("install");
+        let results = refresh_target_integrations(&[first.clone(), second.clone()], &binaries);
+        assert!(
+            results.iter().all(|(_, result)| result.is_ok()),
+            "{results:?}"
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|(slug, _)| slug == "claude-code")
+                .count(),
+            2,
+            "one refresh plus one marker for the space sharing the directory"
+        );
+        assert!(second.marker_dir.join("claude-code.json").is_file());
+        assert_eq!(
+            list_target_integrations(&second)[0].state,
+            IntegrationState::Installed
+        );
+    }
+
+    #[test]
+    fn a_space_refresh_leaves_the_runtimes_it_does_not_move_to_the_default_space() {
+        let (_directory, paths, binaries) = fixture();
+        install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
+            .expect("default codex install");
+        let mut target = space_target(&paths, "space-claude-only");
+        target.codex_home = None;
+        let claude = target.claude.clone().expect("claude");
+        let space_paths = ConfigPaths {
+            marker_dir: target.marker_dir.clone(),
+            marker_home: target.marker_dir.clone(),
+            launch_time_evidence: false,
+            claude_skills: claude.config_dir.join("skills"),
+            claude_settings: claude.settings(),
+            claude_mcp: claude.global_config.clone(),
+            ..paths.clone()
+        };
+        install_integration_at(
+            &space_paths,
+            "claude-code",
+            &binaries,
+            None,
+            InstallMode::default(),
+        )
+        .expect("space claude install");
+        let results = adopt_and_refresh_runtimes_at(
+            &space_paths,
+            &binaries,
+            InstallMode::default(),
+            |runtime| target.covers(runtime),
+        );
+        let slugs: Vec<_> = results.iter().map(|(slug, _)| slug.as_str()).collect();
+        assert_eq!(slugs, vec!["claude-code"]);
+        assert!(
+            !target.marker_dir.join("codex.json").exists(),
+            "the default Codex hooks are not adopted into the space"
+        );
+        remove_integration_at(&paths, "codex").expect("default codex removal");
+        adopt_and_refresh_runtimes_at(&space_paths, &binaries, InstallMode::default(), |runtime| {
+            target.covers(runtime)
+        });
+        assert!(
+            !owned_hooks_present(&paths, integration_runtime("codex").expect("codex")),
+            "a later space refresh does not reinstall a removed default integration"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_space_directory_reports_the_cause_and_installs_once_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_directory, paths, binaries) = fixture();
+        let target = space_target(&paths, "space-readonly");
+        let claude_dir = target.claude.clone().expect("claude").config_dir;
+        std::fs::create_dir_all(&claude_dir).expect("claude dir");
+        std::fs::set_permissions(&claude_dir, std::fs::Permissions::from_mode(0o500))
+            .expect("read only");
+        if std::fs::write(claude_dir.join("probe"), b"").is_ok() {
+            return;
+        }
+        let error = install_target_integration(&target, "claude-code", &binaries).unwrap_err();
+        assert!(
+            error.contains(&claude_dir.display().to_string()) || error.contains("ermission"),
+            "{error}"
+        );
+        assert_eq!(
+            list_target_integrations(&target)[0].state,
+            IntegrationState::NotInstalled
+        );
+        std::fs::set_permissions(&claude_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("writable");
+        install_target_integration(&target, "claude-code", &binaries).expect("retry");
     }
 }

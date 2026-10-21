@@ -156,6 +156,10 @@ mod tests {
                 id: SpaceId::new(),
                 name: "Work".to_string(),
                 color: Some(SpaceColor::Blue),
+                env: BTreeMap::from([(
+                    "CLAUDE_CONFIG_DIR".to_string(),
+                    "~/.claude-work".to_string(),
+                )]),
             }],
         };
 

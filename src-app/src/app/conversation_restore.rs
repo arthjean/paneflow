@@ -373,13 +373,13 @@ impl PaneFlowApp {
         let Some(terminal) = pane.read(cx).active_terminal_opt().cloned() else {
             return;
         };
-        let (agent, id) = {
+        let (agent, id, launch_env) = {
             let view = terminal.read(cx);
             let (Some(agent), Some(recorded)) = (view.conversation_agent(), view.agent_session())
             else {
                 return;
             };
-            (agent, recorded.id.clone())
+            (agent, recorded.id.clone(), view.launch_env())
         };
         let config = self.cached_config.clone();
         let Some(command) = crate::agent_resume::conversation_command(
@@ -396,7 +396,7 @@ impl PaneFlowApp {
             paneflow_config::schema::TerminalSurfaceProfile::Normal,
             SurfaceLaunch {
                 command: Some(command),
-                env: None,
+                env: launch_env,
             },
             window,
             cx,

@@ -61,11 +61,16 @@ impl PaneFlowApp {
         }
         let context = session.auto_naming.begin(now);
         let prompt = build_prompt(Some(&current_title), &context);
+        let space_env = crate::space_env::subprocess_env(
+            &self.cached_config,
+            self.workspaces[ws_idx].space.as_ref(),
+        );
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let title = smol::unblock(move || {
-                    pick_summarizer(tool)
-                        .and_then(|agent| summarize(agent, &prompt, Some(&current_title)))
+                    pick_summarizer(tool).and_then(|agent| {
+                        summarize(agent, &prompt, Some(&current_title), &space_env)
+                    })
                 })
                 .await;
                 cx.update(|cx| {

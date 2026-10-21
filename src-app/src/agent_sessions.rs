@@ -376,10 +376,11 @@ pub fn enabled_session_agents_from_config(
 pub(crate) fn read_sessions_for_cwd_with_omitted(
     agent: SessionAgent,
     cwd: &str,
+    claude: Option<&paneflow_agent_config::ClaudePaths>,
 ) -> (Vec<SessionMeta>, usize) {
     match agent.reader() {
         RuntimeSessionReader::Claude => {
-            crate::claude_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)
+            crate::claude_sessions::read_sessions_for_cwd_with_omitted(agent, cwd, claude)
         }
         RuntimeSessionReader::Codex => {
             crate::codex_sessions::read_sessions_for_cwd_with_omitted(agent, cwd)

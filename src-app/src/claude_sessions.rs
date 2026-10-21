@@ -35,10 +35,9 @@ pub fn slug_for_cwd(cwd: &str) -> String {
         .collect()
 }
 
-pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
-    let paths = paneflow_agent_config::ClaudePaths::current()?;
+pub fn project_dir_for_cwd(paths: &paneflow_agent_config::ClaudePaths, cwd: &str) -> PathBuf {
     let slug = slug_for_cwd(normalize_cwd_for_slug(cwd));
-    Some(paths.projects().join(slug))
+    paths.projects().join(slug)
 }
 
 fn normalize_cwd_for_slug(cwd: &str) -> &str {
@@ -80,14 +79,17 @@ fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Opti
 pub fn read_sessions_for_cwd_with_omitted(
     agent: SessionAgent,
     cwd: &str,
+    paths: Option<&paneflow_agent_config::ClaudePaths>,
 ) -> (Vec<SessionMeta>, usize) {
-    let Some(project_dir) = project_dir_for_cwd(cwd) else {
+    let Some(paths) = paths else {
         return (Vec::new(), 0);
     };
+    let project_dir = project_dir_for_cwd(paths, cwd);
+    let cache_key = project_dir.to_string_lossy().into_owned();
     let snapshot_mtime = project_snapshot_mtime(&project_dir);
     if let Some(snapshot_mtime) = snapshot_mtime
         && let Some(cached) =
-            crate::agent_sessions::cache::lookup_with_mtime(agent, cwd, snapshot_mtime)
+            crate::agent_sessions::cache::lookup_with_mtime(agent, &cache_key, snapshot_mtime)
     {
         return cached;
     }
@@ -95,7 +97,7 @@ pub fn read_sessions_for_cwd_with_omitted(
     if let Some(snapshot_mtime) = project_snapshot_mtime(&project_dir) {
         crate::agent_sessions::cache::store_result_with_mtime(
             agent,
-            cwd,
+            &cache_key,
             snapshot_mtime,
             &sessions,
             omitted,
@@ -343,19 +345,61 @@ mod tests {
         assert_eq!(slug_for_cwd("C:\\dev\\paneflow"), "C--dev-paneflow");
     }
 
+    fn claude_paths_at(dir: &std::path::Path) -> paneflow_agent_config::ClaudePaths {
+        paneflow_agent_config::ClaudePaths {
+            config_dir: dir.to_path_buf(),
+            global_config: dir.join(".claude.json"),
+        }
+    }
+
     #[test]
     fn trailing_separator_resolves_to_the_same_project_dir() {
+        let paths = claude_paths_at(std::path::Path::new("/home/alice/.claude"));
         assert_eq!(
-            project_dir_for_cwd("/home/alice/myapp/"),
-            project_dir_for_cwd("/home/alice/myapp")
+            project_dir_for_cwd(&paths, "/home/alice/myapp/"),
+            project_dir_for_cwd(&paths, "/home/alice/myapp")
         );
         assert_eq!(
-            project_dir_for_cwd("/home/alice/myapp///"),
-            project_dir_for_cwd("/home/alice/myapp")
+            project_dir_for_cwd(&paths, "/home/alice/myapp///"),
+            project_dir_for_cwd(&paths, "/home/alice/myapp")
         );
         assert_eq!(
-            project_dir_for_cwd("C:\\dev\\paneflow\\"),
-            project_dir_for_cwd("C:\\dev\\paneflow")
+            project_dir_for_cwd(&paths, "C:\\dev\\paneflow\\"),
+            project_dir_for_cwd(&paths, "C:\\dev\\paneflow")
+        );
+    }
+
+    #[test]
+    fn each_space_lists_only_the_sessions_of_its_own_claude_config_dir() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let cwd = "/tmp/shared-project";
+        let write_session = |config: &std::path::Path, id: &str, prompt: &str| {
+            let project = project_dir_for_cwd(&claude_paths_at(config), cwd);
+            std::fs::create_dir_all(&project).expect("project dir");
+            let line = format!(
+                r#"{{"parentUuid":null,"type":"user","message":{{"role":"user","content":"{prompt}"}},"uuid":"u","timestamp":"2026-10-21T09:00:00.000Z","cwd":"{cwd}","sessionId":"{id}"}}"#
+            );
+            std::fs::write(project.join(format!("{id}.jsonl")), format!("{line}\n"))
+                .expect("session");
+        };
+        let work = root.path().join("work");
+        let perso = root.path().join("perso");
+        write_session(&work, "11111111-1111-1111-1111-111111111111", "Work task");
+        write_session(&perso, "22222222-2222-2222-2222-222222222222", "Perso task");
+
+        let ids = |config: &std::path::Path| {
+            read_sessions_for_cwd_with_omitted(claude(), cwd, Some(&claude_paths_at(config)))
+                .0
+                .into_iter()
+                .map(|meta| meta.session_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&work), vec!["11111111-1111-1111-1111-111111111111"]);
+        assert_eq!(ids(&perso), vec!["22222222-2222-2222-2222-222222222222"]);
+        assert_eq!(
+            ids(&work),
+            vec!["11111111-1111-1111-1111-111111111111"],
+            "the cache is keyed by the config dir, not the folder alone"
         );
     }
 

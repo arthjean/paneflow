@@ -236,6 +236,7 @@ Which space holds each workspace, and which space is active, are kept in
 | `spaces.*.id` | string | required | Lowercase hyphenated UUID that `session.json` uses to refer to the space. Keep it when you rename the space. |
 | `spaces.*.name` | string | required | Name shown for the space, 1 to 32 characters after trimming, unique ignoring case. `Default` is reserved. |
 | `spaces.*.color` | string | none | `red`, `green`, `yellow`, `blue`, `magenta`, or `cyan`, drawn from the active theme's ANSI palette. Any other value leaves the space without a color. |
+| `spaces.*.env` | object | `{}` | Variables set on every terminal of the space's workspaces opened after the change. Precedence, lowest first: `terminal.env`, `spaces.*.env`, `agent_profiles.*.env`, the surface's env. `~/` expands to the home directory and `$NAME` to Paneflow's environment. |
 
 An entry with a missing or malformed `id`, an `id` already used, an empty,
 duplicate, reserved, or too long name, or any entry after the ninth valid one,
@@ -243,6 +244,54 @@ is skipped with a warning in the log; the other spaces still load. A `spaces`
 value that is not an array loads as an empty list. When an edit removes a
 space while Paneflow runs, its workspaces move to `Default`, which becomes the
 active space if the removed one was.
+
+A key in `env` that is not a variable name, starts with `PANEFLOW_`, is one
+Paneflow sets for every terminal (`TERM`, `COLORTERM`, `TERM_PROGRAM`,
+`TERM_PROGRAM_VERSION`, `SHLVL`, `ZDOTDIR`), or changes how programs load or
+run agents (`LD_*`, `DYLD_*`, inherited agent session markers such as
+`CLAUDECODE`) is ignored with a warning in the log, as is a non-string value.
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `GH_CONFIG_DIR` must be absolute;
+Paneflow creates a missing one, mode `0700` on Linux and macOS, before a
+terminal of the space starts. On Windows, names are upper-cased.
+
+Paneflow's own subprocesses for a workspace of the space (the pull request
+badge's `gh`, git, cloning while the space is active, and the `claude -p` or
+`codex exec` that names tabs) receive only these variables of the space:
+`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+`GIT_COMMITTER_EMAIL`, `GIT_CONFIG_GLOBAL`, `GIT_SSH_COMMAND`,
+`SSH_AUTH_SOCK`, `GH_CONFIG_DIR`, `GH_TOKEN`, `GITHUB_TOKEN`,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `ANTHROPIC_API_KEY`, and
+`OPENAI_API_KEY`. Git picks the space of the workspace whose folder, repository
+or worktree most closely contains the directory it runs in. The tab-naming
+Codex process keeps its own short list of variables. A workspace of `Default`
+runs these processes with Paneflow's environment, unchanged.
+
+`gh` gives `GH_TOKEN` and `GITHUB_TOKEN` precedence over the accounts stored
+in `GH_CONFIG_DIR`, and Claude Code gives `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN` precedence over the
+login stored in `CLAUDE_CONFIG_DIR`, so a space that relies on a config
+directory should redefine any of these that Paneflow's environment exports.
+A `git push` over HTTPS follows `GH_CONFIG_DIR` only when git's credential
+helper is `gh auth git-credential`; over SSH, set `GIT_SSH_COMMAND` instead.
+Values are stored in plain text: prefer a config directory over a token.
+
+```json
+{
+  "spaces": [
+    {
+      "id": "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+      "name": "Work",
+      "env": {
+        "CLAUDE_CONFIG_DIR": "~/.claude-work",
+        "CODEX_HOME": "~/.codex-work",
+        "GH_CONFIG_DIR": "~/.config/gh-work",
+        "GIT_AUTHOR_EMAIL": "me@work.example",
+        "GIT_COMMITTER_EMAIL": "me@work.example"
+      }
+    }
+  ]
+}
+```
 
 ```json
 {

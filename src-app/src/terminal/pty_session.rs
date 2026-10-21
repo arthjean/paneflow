@@ -43,6 +43,7 @@ mod spawn_env;
 
 pub use diagnostics::*;
 pub(crate) use session_backend::*;
+pub(crate) use spawn_env::PROTECTED_ENV_KEYS;
 pub(super) use spawn_env::*;
 
 #[cfg(test)]

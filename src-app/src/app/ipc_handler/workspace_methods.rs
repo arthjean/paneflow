@@ -390,7 +390,7 @@ impl PaneFlowApp {
             Ok(space) => space,
             Err(error) => return error.into_value(),
         };
-        let ws_id = next_workspace_id();
+        let ws_id = next_workspace_id_in(space.as_ref());
         let ws = if layout.is_some() {
             Workspace::empty_with_cwd_and_id(
                 ws_id,
@@ -464,7 +464,7 @@ impl PaneFlowApp {
             })
             .collect();
 
-        let ws_id = next_workspace_id();
+        let ws_id = next_workspace_id_in(space.as_ref());
         let mut panes: Vec<Entity<Pane>> = Vec::with_capacity(planned.len());
         let mut launches: Vec<(Entity<TerminalView>, Option<String>, Option<String>)> =
             Vec::with_capacity(planned.len());
@@ -1109,6 +1109,7 @@ mod tests {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            env: Default::default(),
         });
         config
     }
