@@ -54,6 +54,7 @@ mod runtime_paths;
 mod search;
 mod settings;
 mod sidebar_title;
+mod space_env;
 #[cfg(test)]
 mod startup_bench;
 mod startup_trace;
@@ -229,6 +230,8 @@ struct PaneFlowApp {
     space_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     space_name_editor: Option<crate::settings::tabs::spaces::SpaceNameEditor>,
     space_delete_armed: Option<paneflow_config::schema::SpaceId>,
+    space_env_editor: Option<crate::settings::tabs::spaces::SpaceEnvEditor>,
+    space_integrations: crate::settings::tabs::spaces::SpaceIntegrations,
     agent_profile_args_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     mcp_status: Option<Vec<paneflow_mcp_install::StatusReport>>,
     mcp_install: Option<Result<Vec<paneflow_mcp_install::InstallReport>, String>>,

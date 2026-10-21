@@ -16,7 +16,9 @@ pub use api::{
 pub use cli::run_cli;
 pub use hooks::run_hooks_cli;
 pub use integrations::{
-    adopt_and_refresh_installed, install_integration, list_integrations, remove_integration,
-    remove_legacy_project_hooks, run_integrations_cli, InstallMode, IntegrationBinaries,
-    IntegrationState, IntegrationStatus,
+    adopt_and_refresh_installed, install_integration, install_target_integration,
+    list_integrations, list_target_integrations, mirror_installed_integrations,
+    refresh_target_integrations, remove_integration, remove_legacy_project_hooks,
+    run_integrations_cli, state_label, InstallMode, IntegrationBinaries, IntegrationState,
+    IntegrationStatus, IntegrationTarget,
 };

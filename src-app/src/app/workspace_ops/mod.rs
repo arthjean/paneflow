@@ -18,7 +18,7 @@ use crate::app::hosted_sessions::StopTarget;
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{Workspace, next_workspace_id};
+use crate::workspace::{Workspace, next_workspace_id_in};
 use crate::{
     ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedSurfaceRecord, CopyWorkspacePath,
     HeldSession, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace, OpenWorkspaceInCursor,
@@ -615,7 +615,7 @@ impl PaneFlowApp {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| format!("Terminal {n}"));
-            let ws_id = next_workspace_id();
+            let ws_id = next_workspace_id_in(self.active_space.as_ref());
             let ws = Workspace::empty_with_cwd_and_id(ws_id, title, path.clone());
             Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
             target = Some(self.add_workspace(ws));

@@ -247,7 +247,12 @@ pub(crate) fn git_target_for(target: &str) -> String {
     }
 }
 
-fn clone_command(tool: CloneTool, target: &str, destination: &Path) -> std::process::Command {
+fn clone_command(
+    tool: CloneTool,
+    target: &str,
+    destination: &Path,
+    space_env: &[(String, String)],
+) -> std::process::Command {
     let mut command = match tool {
         CloneTool::GitHubCli => {
             let mut command = std::process::Command::new("gh");
@@ -273,6 +278,7 @@ fn clone_command(tool: CloneTool, target: &str, destination: &Path) -> std::proc
         }
     };
     command.env("GIT_TERMINAL_PROMPT", "0");
+    command.envs(space_env.iter().map(|(key, value)| (key, value)));
     command
 }
 
@@ -314,17 +320,18 @@ fn gh_is_unusable(
 fn run_clone(
     target: &str,
     destination: &Path,
+    space_env: &[(String, String)],
     on_progress: impl FnMut(CloneProgress) + Send + Clone + 'static,
 ) -> Result<(), String> {
     let tool = clone_tool_for(target);
     let mut result = run_clone_command(
-        clone_command(tool, target, destination),
+        clone_command(tool, target, destination, space_env),
         on_progress.clone(),
     );
     if tool == CloneTool::GitHubCli && gh_is_unusable(&result) {
         log::info!("gh is missing or signed out; cloning {target} with git");
         result = run_clone_command(
-            clone_command(CloneTool::Git, target, destination),
+            clone_command(CloneTool::Git, target, destination, space_env),
             on_progress,
         );
     }
@@ -360,9 +367,10 @@ pub(crate) fn clone_failure_message(stderr: &str) -> String {
         .to_string()
 }
 
-fn list_github_repos() -> Result<Vec<GitHubRepo>, String> {
+fn list_github_repos(space_env: &[(String, String)]) -> Result<Vec<GitHubRepo>, String> {
     let mut command = std::process::Command::new("gh");
     command
+        .envs(space_env.iter().map(|(key, value)| (key, value)))
         .args([
             "repo",
             "list",
@@ -599,8 +607,10 @@ impl PaneFlowApp {
         window.focus(&focus, cx);
         cx.notify();
 
+        let space_env =
+            crate::space_env::subprocess_env(&self.cached_config, self.active_space.as_ref());
         cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
-            let result = smol::unblock(list_github_repos).await;
+            let result = smol::unblock(move || list_github_repos(&space_env)).await;
             let _ = this.update(cx, |app, cx| {
                 let Some(clone) = app.clone_repo.as_mut() else {
                     return;
@@ -684,6 +694,8 @@ impl PaneFlowApp {
             clone.error = None;
         }
         cx.notify();
+        let space_env =
+            crate::space_env::subprocess_env(&self.cached_config, self.active_space.as_ref());
 
         cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
             let picked = match receiver.await {
@@ -718,9 +730,14 @@ impl PaneFlowApp {
             let clone_destination = destination.clone();
             let (progress_tx, progress_rx) = smol::channel::unbounded::<CloneProgress>();
             let clone_task = smol::unblock(move || {
-                run_clone(&clone_url, &clone_destination, move |progress| {
-                    let _ = progress_tx.try_send(progress);
-                })
+                run_clone(
+                    &clone_url,
+                    &clone_destination,
+                    &space_env,
+                    move |progress| {
+                        let _ = progress_tx.try_send(progress);
+                    },
+                )
             });
             while let Ok(progress) = progress_rx.recv().await {
                 let _ = this.update(cx, |app, cx| {
@@ -943,6 +960,60 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env_of(command: &std::process::Command, key: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    }
+
+    #[test]
+    fn a_clone_runs_under_the_active_space_allowlist_for_gh_and_git() {
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        let work = paneflow_config::schema::SpaceId::new();
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: work.clone(),
+            name: "Work".to_string(),
+            color: None,
+            env: [
+                ("GIT_SSH_COMMAND", "ssh -i ~/.ssh/work"),
+                ("GH_CONFIG_DIR", "/work/gh"),
+                ("NOT_ALLOWLISTED", "leak"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+        });
+        let space_env = crate::space_env::subprocess_env(&config, Some(&work));
+        let destination = std::path::Path::new("/tmp/clone-target");
+        for tool in [CloneTool::GitHubCli, CloneTool::Git] {
+            let command = clone_command(tool, "owner/repo", destination, &space_env);
+            assert_eq!(
+                env_of(&command, "GH_CONFIG_DIR").as_deref(),
+                Some("/work/gh")
+            );
+            assert_eq!(
+                env_of(&command, "GIT_SSH_COMMAND").as_deref(),
+                Some("ssh -i ~/.ssh/work")
+            );
+            assert_eq!(env_of(&command, "NOT_ALLOWLISTED"), None);
+            let default = clone_command(
+                tool,
+                "owner/repo",
+                destination,
+                &crate::space_env::subprocess_env(&config, None),
+            );
+            assert_eq!(env_of(&default, "GH_CONFIG_DIR"), None);
+            assert_eq!(
+                default.get_envs().count(),
+                clone_command(tool, "owner/repo", destination, &[])
+                    .get_envs()
+                    .count(),
+                "the default space clones with exactly today's env"
+            );
+        }
+    }
 
     #[test]
     fn the_reduced_motion_sweep_is_a_fixed_visible_segment() {

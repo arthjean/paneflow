@@ -52,6 +52,12 @@ impl PaneFlowApp {
         let scan_generation = self.agent_sessions.sessions_scan_generation;
         let enabled_agents =
             crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config);
+        let space = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.any_pane(|candidate| candidate == pane))
+            .and_then(|workspace| workspace.space.clone());
+        let claude = crate::space_env::claude_paths(&self.cached_config, space.as_ref());
         self.agent_sessions.sessions_scroll = gpui::ScrollHandle::new();
 
         if let Some(window) = focus_window {
@@ -60,7 +66,7 @@ impl PaneFlowApp {
 
         if let Some(cwd) = cwd_str {
             for agent in enabled_agents {
-                self.spawn_sessions_scan(agent, cwd.clone(), scan_generation, cx);
+                self.spawn_sessions_scan(agent, cwd.clone(), claude.clone(), scan_generation, cx);
             }
         }
         cx.notify();
@@ -70,6 +76,7 @@ impl PaneFlowApp {
         &mut self,
         agent: SessionAgent,
         cwd: String,
+        claude: Option<paneflow_agent_config::ClaudePaths>,
         generation: u64,
         cx: &mut Context<Self>,
     ) {
@@ -86,7 +93,11 @@ impl PaneFlowApp {
             let scan_cwd = cwd.clone();
             let started = std::time::Instant::now();
             let (sessions, omitted) = smol::unblock(move || {
-                crate::agent_sessions::read_sessions_for_cwd_with_omitted(agent, &scan_cwd)
+                crate::agent_sessions::read_sessions_for_cwd_with_omitted(
+                    agent,
+                    &scan_cwd,
+                    claude.as_ref(),
+                )
             })
             .await;
             let elapsed = started.elapsed();

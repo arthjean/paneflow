@@ -15,7 +15,7 @@ use crate::layout::{LayoutTree, SplitDirection};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
-use crate::workspace::{Tab, Workspace, next_workspace_id};
+use crate::workspace::{Tab, Workspace, next_workspace_id_in};
 use crate::{
     CLOSED_SESSION_GRACE_MS, HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions,
     SessionHold, StopSession,
@@ -709,7 +709,7 @@ impl PaneFlowApp {
             );
             return;
         };
-        let ws_id = next_workspace_id();
+        let ws_id = next_workspace_id_in(self.active_space.as_ref());
         let terminal = cx.new(|cx| {
             if restart {
                 TerminalView::attach_restarting(

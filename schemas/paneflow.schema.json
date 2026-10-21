@@ -521,6 +521,13 @@
           "type": "string",
           "enum": ["red", "green", "yellow", "blue", "magenta", "cyan"],
           "description": "Tint taken from the active theme's ANSI palette."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "not": { "pattern": "^PANEFLOW_" } },
+          "description": "Environment variables set on every terminal of the space's workspaces, and passed to Paneflow's own git, gh, clone and summary processes for those workspaces through a fixed allowlist. Precedence: terminal.env < space env < agent profile env < surface env. A value starting with ~/ expands to the home directory and $VAR to Paneflow's environment. CLAUDE_CONFIG_DIR, CODEX_HOME and GH_CONFIG_DIR must be absolute; Paneflow creates a missing directory before the first terminal starts. Stored in plain text: prefer a config directory over a token.",
+          "default": {}
         }
       }
     },

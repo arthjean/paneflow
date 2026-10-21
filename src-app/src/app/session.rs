@@ -15,7 +15,7 @@ use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_TABS_PER_WORKSPACE, Tab, Workspace, next_workspace_id};
+use crate::workspace::{MAX_TABS_PER_WORKSPACE, Tab, Workspace, next_workspace_id_in};
 
 const MAX_CORRUPTION_BACKUPS: usize = 5;
 
@@ -95,6 +95,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn save_session(&self, cx: &mut Context<Self>) {
+        self.publish_space_directories();
         let seq = self.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
         if self.session_restore_failed || self.session_exit_pending {
             return;
@@ -542,7 +543,7 @@ impl PaneFlowApp {
         for ws_session in &session.workspaces {
             let cwd = restored_workspace_cwd(&ws_session.cwd);
             let title = ws_session.title.clone();
-            let ws_id = next_workspace_id();
+            let ws_id = next_workspace_id_in(ws_session.space.as_ref());
 
             if ws_session.tabs.len() > MAX_TABS_PER_WORKSPACE {
                 log::warn!(
@@ -585,7 +586,7 @@ impl PaneFlowApp {
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
             workspace.muted = ws_session.muted;
-            workspace.space = ws_session.space.clone();
+            workspace.set_space(ws_session.space.clone());
             let unread_surfaces: Vec<u64> = ws_session
                 .tabs
                 .iter()
@@ -2561,6 +2562,7 @@ mod tests {
                     id: (*id).clone(),
                     name: format!("Space {n}"),
                     color: None,
+                    env: Default::default(),
                 })
                 .collect(),
             ..Default::default()

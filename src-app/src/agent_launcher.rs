@@ -443,7 +443,7 @@ impl AgentProfile {
     }
 }
 
-fn is_env_key(key: &str) -> bool {
+pub(crate) fn is_env_key(key: &str) -> bool {
     !key.is_empty()
         && !key.starts_with(|c: char| c.is_ascii_digit())
         && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')

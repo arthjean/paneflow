@@ -174,7 +174,32 @@ impl PrStates {
     }
 }
 
-fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullRequest>, ()> {
+type ProbeTarget = (std::path::PathBuf, String, Vec<(String, String)>);
+
+fn lookup(
+    repo_root: &std::path::Path,
+    branch: &str,
+    space_env: &[(String, String)],
+) -> Result<Option<PullRequest>, ()> {
+    let cmd = pr_list_command(repo_root, branch, space_env);
+    let out = paneflow_process::run_with_timeout(cmd, DEADLINE, STDOUT_CAP).map_err(|_| ())?;
+    if !out.status.success() {
+        log::debug!(
+            "gh pr list failed in {}: {}",
+            repo_root.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return Err(());
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| ())?;
+    Ok(pick(parsed.as_array().map_or(&[], Vec::as_slice)))
+}
+
+fn pr_list_command(
+    repo_root: &std::path::Path,
+    branch: &str,
+    space_env: &[(String, String)],
+) -> std::process::Command {
     let mut cmd = std::process::Command::new("gh");
     cmd.current_dir(repo_root)
         .args([
@@ -190,18 +215,9 @@ fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullReques
             "10",
         ])
         .env("GH_PAGER", "")
-        .env("NO_COLOR", "1");
-    let out = paneflow_process::run_with_timeout(cmd, DEADLINE, STDOUT_CAP).map_err(|_| ())?;
-    if !out.status.success() {
-        log::debug!(
-            "gh pr list failed in {}: {}",
-            repo_root.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-        return Err(());
-    }
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| ())?;
-    Ok(pick(parsed.as_array().map_or(&[], Vec::as_slice)))
+        .env("NO_COLOR", "1")
+        .envs(space_env.iter().map(|(key, value)| (key, value)));
+    cmd
 }
 
 fn pick(rows: &[serde_json::Value]) -> Option<PullRequest> {
@@ -230,19 +246,21 @@ impl PaneFlowApp {
         self.pr_states.get(&repo_root.to_string_lossy(), branch)
     }
 
-    fn pr_probe_targets(&self) -> Vec<(std::path::PathBuf, String)> {
+    fn pr_probe_targets(&self) -> Vec<ProbeTarget> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for ws in &self.workspaces {
             let Some(repo_root) = ws.repo_root.clone() else {
                 continue;
             };
+            let space_env =
+                crate::space_env::subprocess_env(&self.cached_config, ws.space.as_ref());
             let mut push = |branch: &str, out: &mut Vec<_>| {
                 if branch.is_empty() {
                     return;
                 }
                 if seen.insert((repo_root.clone(), branch.to_string())) {
-                    out.push((repo_root.clone(), branch.to_string()));
+                    out.push((repo_root.clone(), branch.to_string(), space_env.clone()));
                 }
             };
             if ws.is_git_repo {
@@ -261,15 +279,15 @@ impl PaneFlowApp {
         if !self.cached_config.sidebar_show.pr_enabled() {
             return;
         }
-        let stale: Vec<(std::path::PathBuf, String)> = self
+        let stale: Vec<ProbeTarget> = self
             .pr_probe_targets()
             .into_iter()
-            .filter(|(repo_root, branch)| {
+            .filter(|(repo_root, branch, _)| {
                 self.pr_states
                     .is_stale(&repo_root.to_string_lossy(), branch)
             })
             .collect();
-        for (repo_root, branch) in stale {
+        for (repo_root, branch, space_env) in stale {
             self.pr_states
                 .inflight
                 .insert(PrStates::key(&repo_root.to_string_lossy(), &branch));
@@ -278,7 +296,7 @@ impl PaneFlowApp {
                     let read = smol::unblock({
                         let repo_root = repo_root.clone();
                         let branch = branch.clone();
-                        move || lookup(&repo_root, &branch)
+                        move || lookup(&repo_root, &branch, &space_env)
                     })
                     .await;
                     let _ = cx.update(|cx| {
@@ -304,6 +322,55 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::{PrState, pick};
+
+    fn command_env(command: &std::process::Command) -> Vec<(String, Option<String>)> {
+        command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_pr_lookup_runs_gh_under_the_workspace_space_allowlist() {
+        let mut config = paneflow_config::schema::PaneFlowConfig::default();
+        let work = paneflow_config::schema::SpaceId::new();
+        config.spaces.push(paneflow_config::schema::SpaceConfig {
+            id: work.clone(),
+            name: "Work".to_string(),
+            color: None,
+            env: [("GH_CONFIG_DIR", "/work/gh"), ("NOT_ALLOWLISTED", "leak")]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        });
+        let space_env = crate::space_env::subprocess_env(&config, Some(&work));
+        let env = command_env(&super::pr_list_command(
+            std::path::Path::new("/repo"),
+            "main",
+            &space_env,
+        ));
+        assert!(env.contains(&("GH_CONFIG_DIR".to_string(), Some("/work/gh".to_string()))));
+        assert!(env.iter().all(|(key, _)| key != "NOT_ALLOWLISTED"));
+
+        let default_env = command_env(&super::pr_list_command(
+            std::path::Path::new("/repo"),
+            "main",
+            &crate::space_env::subprocess_env(&config, None),
+        ));
+        assert_eq!(
+            default_env,
+            vec![
+                ("GH_PAGER".to_string(), Some(String::new())),
+                ("NO_COLOR".to_string(), Some("1".to_string())),
+            ],
+            "the default space runs gh with exactly today's env"
+        );
+    }
 
     fn row(number: u64, state: &str, draft: bool) -> serde_json::Value {
         serde_json::json!({ "number": number, "state": state, "isDraft": draft })

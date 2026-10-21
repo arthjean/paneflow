@@ -1157,7 +1157,7 @@ impl PaneFlowApp {
     }
 }
 
-fn new_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowInputs {
+pub(crate) fn new_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowInputs {
     let key = cx
         .new(|cx| TextInput::new(key.to_string(), "KEY", cx).with_accessible_name("Variable name"));
     cx.observe(&key, |_, _, cx| cx.notify()).detach();
@@ -1168,7 +1168,7 @@ fn new_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowI
     EnvRowInputs { key, value }
 }
 
-fn validate_env_values(
+pub(crate) fn validate_env_values(
     env: &BTreeMap<String, String>,
     home: Option<&std::path::Path>,
 ) -> Result<(), String> {
@@ -1182,7 +1182,7 @@ fn validate_env_values(
     Ok(())
 }
 
-fn collect_env(rows: &[(String, String)]) -> Result<BTreeMap<String, String>, String> {
+pub(crate) fn collect_env(rows: &[(String, String)]) -> Result<BTreeMap<String, String>, String> {
     let mut env = BTreeMap::new();
     for (key, value) in rows {
         let key = key.trim();
@@ -1303,7 +1303,11 @@ fn mono_text(text: SharedString, color: Hsla) -> impl IntoElement {
         .child(text)
 }
 
-fn input_box(input: Entity<TextInput>, mono: bool, ui: crate::theme::UiColors) -> impl IntoElement {
+pub(crate) fn input_box(
+    input: Entity<TextInput>,
+    mono: bool,
+    ui: crate::theme::UiColors,
+) -> impl IntoElement {
     div()
         .w_full()
         .h(px(INPUT_HEIGHT))
@@ -1331,7 +1335,7 @@ fn chip(text: String, ui: crate::theme::UiColors) -> impl IntoElement {
         .child(text)
 }
 
-fn icon_button(
+pub(crate) fn icon_button(
     id: SharedString,
     icon: &'static str,
     resting: Hsla,

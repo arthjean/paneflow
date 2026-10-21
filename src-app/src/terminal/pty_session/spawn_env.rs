@@ -12,7 +12,7 @@ pub(in crate::terminal) struct SpawnParams {
     pub(in crate::terminal) profile: TerminalSurfaceProfile,
 }
 
-pub(in crate::terminal) const PROTECTED_ENV_KEYS: &[&str] = &[
+pub(crate) const PROTECTED_ENV_KEYS: &[&str] = &[
     "TERM",
     "COLORTERM",
     "TERM_PROGRAM",
@@ -308,6 +308,7 @@ impl TerminalState {
             workspace_id,
             surface_id,
             initial_size,
+            None,
             user_env,
             profile,
             SpawnHome::at(&test_spawn_home()),
@@ -315,12 +316,17 @@ impl TerminalState {
         .0
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the spawn request fields, each layer of the environment kept apart for its precedence"
+    )]
     pub(in crate::terminal) fn resolve_spawn_launch(
         config: &paneflow_config::schema::PaneFlowConfig,
         working_directory: Option<std::path::PathBuf>,
         workspace_id: u64,
         surface_id: u64,
         initial_size: Option<(usize, usize)>,
+        space_env: Option<&std::collections::HashMap<String, String>>,
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
     ) -> (SpawnParams, Option<String>) {
@@ -330,6 +336,7 @@ impl TerminalState {
             workspace_id,
             surface_id,
             initial_size,
+            space_env,
             user_env,
             profile,
             SpawnHome::installed(),
@@ -346,6 +353,7 @@ impl TerminalState {
         workspace_id: u64,
         surface_id: u64,
         initial_size: Option<(usize, usize)>,
+        space_env: Option<&std::collections::HashMap<String, String>>,
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
         home: SpawnHome,
@@ -365,15 +373,13 @@ impl TerminalState {
         };
         let shell_quoting = ShellQuoting::for_shell(&shell);
         let global_env = config.terminal.as_ref().and_then(|t| t.env.clone());
-        let merged_env = match (global_env, user_env) {
-            (None, None) => None,
-            (Some(g), None) => Some(g),
-            (None, Some(s)) => Some(s),
-            (Some(mut g), Some(s)) => {
-                g.extend(s);
-                Some(g)
-            }
-        };
+        let merged_env = [global_env, space_env.cloned(), user_env]
+            .into_iter()
+            .flatten()
+            .reduce(|mut lower, higher| {
+                lower.extend(higher);
+                lower
+            });
         let mut env = std::collections::HashMap::new();
         let extra_args = if config.shell_integration.unwrap_or(true) {
             setup_shell_integration(home.shell_integration_dir.as_deref(), &shell, &mut env)
@@ -444,6 +450,7 @@ mod tests {
                 2,
                 None,
                 None,
+                None,
                 TerminalSurfaceProfile::Normal,
                 SpawnHome::at(home.path()),
             )
@@ -460,6 +467,46 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(spawn(&enabled).get(key).map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn the_space_env_sits_between_terminal_env_and_the_surface_env() {
+        let home = tempfile::tempdir().expect("temporary Paneflow home");
+        let config = paneflow_config::schema::PaneFlowConfig {
+            terminal: Some(paneflow_config::schema::TerminalConfig {
+                env: Some(HashMap::from([
+                    ("LAYER_GLOBAL".to_owned(), "global".to_owned()),
+                    ("LAYER_SPACE".to_owned(), "global".to_owned()),
+                    ("LAYER_SURFACE".to_owned(), "global".to_owned()),
+                ])),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let space = HashMap::from([
+            ("LAYER_SPACE".to_owned(), "space".to_owned()),
+            ("LAYER_SURFACE".to_owned(), "space".to_owned()),
+            ("CLAUDE_CONFIG_DIR".to_owned(), "/work/.claude".to_owned()),
+        ]);
+        let surface = HashMap::from([("LAYER_SURFACE".to_owned(), "profile".to_owned())]);
+        let env = TerminalState::resolve_spawn_launch_in(
+            &config,
+            None,
+            1,
+            2,
+            None,
+            Some(&space),
+            Some(surface),
+            TerminalSurfaceProfile::Normal,
+            SpawnHome::at(home.path()),
+        )
+        .0
+        .env;
+        let get = |key: &str| env.get(key).map(String::as_str);
+        assert_eq!(get("LAYER_GLOBAL"), Some("global"));
+        assert_eq!(get("LAYER_SPACE"), Some("space"));
+        assert_eq!(get("LAYER_SURFACE"), Some("profile"));
+        assert_eq!(get("CLAUDE_CONFIG_DIR"), Some("/work/.claude"));
     }
 
     fn platform_sep() -> char {

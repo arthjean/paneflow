@@ -1620,6 +1620,7 @@ mod tests {
             id: work.clone(),
             name: "Work".to_string(),
             color: None,
+            env: Default::default(),
         });
         assert_eq!(
             palette_workspace_order(&workspaces, &config, Some(&work)),

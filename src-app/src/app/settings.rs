@@ -23,6 +23,7 @@ impl PaneFlowApp {
         self.agent_profile_editor = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
+        self.space_env_editor = None;
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
@@ -34,6 +35,9 @@ impl PaneFlowApp {
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);
+        }
+        if section == SettingsSection::Spaces {
+            self.refresh_space_integration_status(cx);
         }
         self.settings_focus.focus(window, cx);
         cx.notify();
@@ -74,6 +78,7 @@ impl PaneFlowApp {
         self.agent_profile_editor = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
+        self.space_env_editor = None;
         self.clear_settings_search(cx);
         if self.recording_shortcut.is_some() {
             self.cancel_shortcut_recording();

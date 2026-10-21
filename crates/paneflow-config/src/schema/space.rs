@@ -1,5 +1,6 @@
 use super::identity::SpaceId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const MAX_SPACES: usize = 9;
 
@@ -24,6 +25,8 @@ pub struct SpaceConfig {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<SpaceColor>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,5 +115,26 @@ fn parse_space(raw: &serde_json::Value, accepted: &[SpaceConfig]) -> Result<Spac
     let color = raw
         .get("color")
         .and_then(|color| serde_json::from_value::<SpaceColor>(color.clone()).ok());
-    Ok(SpaceConfig { id, name, color })
+    let env = raw
+        .get("env")
+        .and_then(serde_json::Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|(key, value)| match value.as_str() {
+                    Some(value) => Some((key.clone(), value.to_string())),
+                    None => {
+                        tracing::warn!("space {id}: ignoring env {key:?}: expected a string");
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(SpaceConfig {
+        id,
+        name,
+        color,
+        env,
+    })
 }

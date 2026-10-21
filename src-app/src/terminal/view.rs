@@ -446,6 +446,7 @@ impl TerminalView {
                 profile,
                 confine_to: None,
                 fallback_to: None,
+                space_env: None,
             },
             SessionIntent::Create,
             None,
@@ -469,6 +470,7 @@ impl TerminalView {
                 profile,
                 confine_to: spawn.confine_to,
                 fallback_to: spawn.fallback,
+                space_env: None,
             },
             SessionIntent::Create,
             None,
@@ -492,6 +494,7 @@ impl TerminalView {
                 profile: TerminalSurfaceProfile::Normal,
                 confine_to: None,
                 fallback_to: None,
+                space_env: None,
             },
             SessionIntent::Reattach,
             Some(session),
@@ -524,6 +527,7 @@ impl TerminalView {
                 profile: TerminalSurfaceProfile::Normal,
                 confine_to: None,
                 fallback_to: None,
+                space_env: None,
             },
             SessionIntent::Restart { expected },
             Some(session),
@@ -532,14 +536,15 @@ impl TerminalView {
     }
 
     fn open(
-        launch: HostedLaunch,
+        mut launch: HostedLaunch,
         intent: SessionIntent,
         session: Option<paneflow_config::schema::SessionId>,
         cx: &mut Context<Self>,
     ) -> Self {
         let surface_id = cx.entity_id().as_u64();
-        let (params, shell_notice) =
-            launch.spawn_params(surface_id, &crate::config_snapshot::current(cx));
+        let config = crate::config_snapshot::current(cx);
+        launch.space_env = crate::space_env::workspace_env(&config, launch.workspace_id);
+        let (params, shell_notice) = launch.spawn_params(surface_id, &config);
         let (mut terminal, pending) = TerminalState::new_pending_with_shell_quoting(
             params.cols,
             params.rows,
@@ -722,6 +727,10 @@ impl TerminalView {
         self.launch.workspace_id = workspace_id;
     }
 
+    pub(crate) fn launch_env(&self) -> Option<std::collections::HashMap<String, String>> {
+        self.launch.launch_env()
+    }
+
     #[cfg(test)]
     pub(crate) fn display_only_for_test(workspace_id: u64, cx: &mut Context<Self>) -> Self {
         let mut terminal = TerminalState::new_display_only(24, 80);
@@ -735,6 +744,7 @@ impl TerminalView {
                 profile: TerminalSurfaceProfile::Normal,
                 confine_to: None,
                 fallback_to: None,
+                space_env: None,
             },
             terminal,
             cx,
@@ -751,6 +761,7 @@ struct HostedLaunch {
     profile: TerminalSurfaceProfile,
     confine_to: Option<std::path::PathBuf>,
     fallback_to: Option<std::path::PathBuf>,
+    space_env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl HostedLaunch {
@@ -765,9 +776,30 @@ impl HostedLaunch {
             self.workspace_id,
             surface_id,
             self.initial_size,
+            self.space_env.as_ref(),
             self.user_env.clone(),
             self.profile,
         )
+    }
+
+    fn launch_env(&self) -> Option<std::collections::HashMap<String, String>> {
+        [self.space_env.clone(), self.user_env.clone()]
+            .into_iter()
+            .flatten()
+            .reduce(|mut lower, higher| {
+                lower.extend(higher);
+                lower
+            })
+    }
+
+    fn space_config_dirs(
+        &self,
+        launch_env: &std::collections::HashMap<String, String>,
+    ) -> Vec<std::path::PathBuf> {
+        self.space_env
+            .as_ref()
+            .map(|space_env| crate::space_env::config_dirs(space_env, launch_env))
+            .unwrap_or_default()
     }
 }
 
@@ -1859,6 +1891,44 @@ mod tests {
     use gpui::Entity;
 
     use super::*;
+
+    #[test]
+    fn a_fork_reuses_the_launch_env_of_its_source_with_the_profile_on_top() {
+        let launch = HostedLaunch {
+            workspace_id: 1,
+            cwd: None,
+            initial_size: None,
+            user_env: Some(std::collections::HashMap::from([(
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "/profile/.claude".to_string(),
+            )])),
+            profile: TerminalSurfaceProfile::Normal,
+            confine_to: None,
+            fallback_to: None,
+            space_env: Some(std::collections::HashMap::from([
+                (
+                    "CLAUDE_CONFIG_DIR".to_string(),
+                    "/space/.claude".to_string(),
+                ),
+                ("GIT_AUTHOR_NAME".to_string(), "Work Me".to_string()),
+            ])),
+        };
+        let env = launch.launch_env().expect("a launch env");
+        assert_eq!(
+            env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+            Some("/profile/.claude")
+        );
+        assert_eq!(
+            env.get("GIT_AUTHOR_NAME").map(String::as_str),
+            Some("Work Me")
+        );
+        let bare = HostedLaunch {
+            user_env: None,
+            space_env: None,
+            ..launch
+        };
+        assert_eq!(bare.launch_env(), None);
+    }
 
     fn a11y_node(element: &gpui::Stateful<gpui::Div>) -> gpui::accesskit::Node {
         use gpui::Element as _;

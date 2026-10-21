@@ -26,11 +26,13 @@ fn spaces_load_with_trimmed_names_and_known_colors() {
                 id: SpaceId::parse(WORK).unwrap(),
                 name: "Work".to_string(),
                 color: Some(SpaceColor::Blue),
+                env: Default::default(),
             },
             SpaceConfig {
                 id: SpaceId::parse(HOME).unwrap(),
                 name: "Home".to_string(),
                 color: None,
+                env: Default::default(),
             },
         ],
         "an unknown color clears the color and keeps the space"
@@ -147,5 +149,42 @@ fn space_names_are_validated_like_the_loader() {
     assert_eq!(
         validate_space_name(&"é".repeat(MAX_SPACE_NAME_CHARS + 1), []),
         Err(SpaceNameError::TooLong)
+    );
+}
+
+#[test]
+#[tracing_test::traced_test]
+fn a_space_env_keeps_its_string_values_and_round_trips() {
+    let config = parse_and_validate(&format!(
+        r#"{{"spaces": [{{"id": "{WORK}", "name": "Work", "env": {{
+            "CLAUDE_CONFIG_DIR": "~/.claude-work",
+            "GIT_AUTHOR_EMAIL": "me@work.example",
+            "RETRIES": 3
+        }}}}]}}"#
+    ));
+    let env = &config.spaces[0].env;
+    assert_eq!(
+        env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+        Some("~/.claude-work")
+    );
+    assert_eq!(
+        env.get("GIT_AUTHOR_EMAIL").map(String::as_str),
+        Some("me@work.example")
+    );
+    assert!(
+        !env.contains_key("RETRIES"),
+        "a non-string value is dropped"
+    );
+    assert!(logs_contain("ignoring env \"RETRIES\""));
+
+    let saved = serde_json::to_value(&config.spaces).unwrap();
+    assert_eq!(saved[0]["env"]["CLAUDE_CONFIG_DIR"], "~/.claude-work");
+    let bare = parse_and_validate(&format!(
+        r#"{{"spaces": [{{"id": "{HOME}", "name": "Home"}}]}}"#
+    ));
+    let saved = serde_json::to_value(&bare.spaces).unwrap();
+    assert!(
+        saved[0].get("env").is_none(),
+        "a space without env writes no env key"
     );
 }

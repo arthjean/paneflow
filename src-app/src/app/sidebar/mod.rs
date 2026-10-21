@@ -881,6 +881,7 @@ mod tests {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            env: Default::default(),
         });
         assert_eq!(
             super::sidebar_empty_state_message(&config, Some(&space(1))),

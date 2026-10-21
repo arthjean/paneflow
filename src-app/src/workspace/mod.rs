@@ -25,8 +25,14 @@ use crate::pane::Pane;
 
 static NEXT_WORKSPACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-pub fn next_workspace_id() -> u64 {
+fn next_workspace_id() -> u64 {
     NEXT_WORKSPACE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn next_workspace_id_in(space: Option<&paneflow_config::schema::SpaceId>) -> u64 {
+    let id = next_workspace_id();
+    record_workspace_space(id, space);
+    id
 }
 
 #[derive(Debug, Default)]
@@ -143,6 +149,28 @@ pub(crate) fn durable_workspace_id(id: u64) -> Option<paneflow_config::schema::W
         .cloned()
 }
 
+static WORKSPACE_SPACES: std::sync::Mutex<
+    std::collections::BTreeMap<u64, paneflow_config::schema::SpaceId>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn record_workspace_space(id: u64, space: Option<&paneflow_config::schema::SpaceId>) {
+    let mut spaces = WORKSPACE_SPACES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match space {
+        Some(space) => spaces.insert(id, space.clone()),
+        None => spaces.remove(&id),
+    };
+}
+
+pub(crate) fn workspace_space(id: u64) -> Option<paneflow_config::schema::SpaceId> {
+    WORKSPACE_SPACES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&id)
+        .cloned()
+}
+
 impl Workspace {
     fn build(id: u64, title: String, cwd: String, root: LayoutTree) -> Self {
         Self::build_with_tab(id, title, cwd, Tab::new(String::new(), Some(root)))
@@ -151,6 +179,11 @@ impl Workspace {
     pub(crate) fn set_durable_id(&mut self, durable: paneflow_config::schema::WorkspaceId) {
         register_durable_workspace_id(self.id, &durable);
         self.durable_id = durable;
+    }
+
+    pub(crate) fn set_space(&mut self, space: Option<paneflow_config::schema::SpaceId>) {
+        record_workspace_space(self.id, space.as_ref());
+        self.space = space;
     }
 
     fn build_with_tab(id: u64, title: String, cwd: String, tab: Tab) -> Self {
