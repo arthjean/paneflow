@@ -64,6 +64,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.18.0" date="2026-10-24">
+      <description>
+        <p>Spaces group workspaces into named contexts, such as work and personal projects. The sidebar shows one space at a time, a button beside the space name leads to an agent waiting in another space, and each space can run its terminals under its own environment and agent accounts.</p>
+        <ul>
+          <li>Switch spaces from the sidebar header, the command palette, or a keyboard shortcut</li>
+          <li>Give a space a color or an image, and move workspaces between spaces</li>
+          <li>Point a space at its own Claude Code, Codex, or GitHub CLI configuration directory</li>
+          <li>A new Comfortable density setting joins panes edge to edge when turned off</li>
+          <li>Background workspaces run far fewer git processes</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.7" date="2026-10-11">
       <description>
         <p>Agent turn status now comes only from OSC 7501, and Paneflow moves to Ghostty b699ea79. Any program, agent or not, can report its status: the pane header shows it, and a blocked or failed program enters the Attention queue. Paneflow no longer reads agent status off the screen, and six built-in agents are removed.</p>
