@@ -32,24 +32,36 @@ Use the four [layout presets](/docs/layouts) to arrange panes. Consult
 custom bindings.
 
 Group workspaces into **spaces**, for example one for work and one for
-personal projects. Once you create a space, a row of space buttons appears
-at the bottom of the sidebar: the sidebar, `Cmd/Ctrl+1` to `Cmd/Ctrl+9`,
-and Next workspace then only cover the active space, and each space
-remembers the workspace it last showed. Click a button to switch, or use
-`Cmd+Alt+Left` and `Cmd+Alt+Right` on macOS, `Ctrl+Alt+PageUp` and
-`Ctrl+Alt+PageDown` on Linux and Windows. Right-click a workspace and
-choose **Move to space** to file it elsewhere. Create, rename, color, and
-delete spaces in **Settings > Spaces**. A space organizes your workspaces;
-it does not isolate them, and without any space Paneflow looks exactly as
-before.
+personal projects. Once you create a space, the top of the sidebar shows
+the active space's circle and name in place of `Workspaces`. The circle
+holds the space's image, or else its color as a gradient that looks the
+same in every theme, or else an outline; `Default` has a gradient of its
+own. Click the name to open the space menu: `Default`, your spaces in
+their `paneflow.json` order, **New space…**, and **Manage spaces**. The
+sidebar, `Cmd/Ctrl+1` to `Cmd/Ctrl+9`, and Next workspace then only cover
+the active space, and each space remembers the workspace it last showed.
+Switch spaces from the menu, or with `Cmd+Alt+Left` and `Cmd+Alt+Right` on
+macOS, `Ctrl+Alt+PageUp` and `Ctrl+Alt+PageDown` on Linux and Windows.
+Right-click a workspace and choose **Move to space** to file it elsewhere;
+**Show**, in the toast that confirms the move, switches to that space.
+Rename spaces, give them an image, a color, or their own environment, and
+delete them in [Settings > Spaces](/docs/settings#spaces). A space organizes your
+workspaces; it does not isolate them, and without any space Paneflow looks
+exactly as before.
 
-A hidden space never hides an agent that needs you. Its button carries a dot
-in the sidebar's status color for its most urgent agent: amber when one waits
-for input or a write approval, red when one failed, blue when one finished
-while you were elsewhere, with the count once more than one does. Finished
-agents of a muted workspace are left out, as they are from notifications.
-The Attention queue and desktop notifications name the space of each agent,
-and choosing an entry in the queue switches to its space and focuses its pane.
+A hidden space never hides an agent that needs you. A button beside the
+space name then shows the most urgent state across the hidden spaces: an
+amber bell when an agent waits for input or a write approval, or a program
+declares `blocked`; a red crossed circle when a program without an agent
+declares an OSC 7501 `error`; a blue dot when an agent finished while you
+were elsewhere. The total appears once it exceeds 1, and the tooltip names
+the destination, for example `Go to Work: 2 agents waiting for input`.
+Clicking it opens the waiting or failed pane, or for an unseen finish, the
+workspace where it happened. The space menu marks each hidden space the same
+way. Finished agents of a muted workspace are left out, as they are from
+notifications. The Attention queue and desktop notifications name the
+space of each agent, and choosing an entry in the queue switches to its
+space and focuses its pane.
 
 ## Run and follow coding agents
 

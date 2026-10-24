@@ -61,8 +61,10 @@ pane. Search actions apply while the corresponding search is active.
 | Workspaces | `new_workspace` | `Cmd/Ctrl+Shift+N` |
 | Workspaces | `close_workspace` | `Cmd/Ctrl+Shift+Q` |
 | Workspaces | `next_workspace` | `Ctrl+Tab` |
-| Workspaces | `next_space` | `Cmd+Alt+Right` on macOS, `Ctrl+Alt+PageDown` on Linux and Windows |
-| Workspaces | `previous_space` | `Cmd+Alt+Left` on macOS, `Ctrl+Alt+PageUp` on Linux and Windows |
+| Workspaces | `next_space` | `Cmd+Alt+Right (macOS)` |
+| Workspaces | `next_space` | `Ctrl+Alt+PageDown (Linux, Windows)` |
+| Workspaces | `previous_space` | `Cmd+Alt+Left (macOS)` |
+| Workspaces | `previous_space` | `Ctrl+Alt+PageUp (Linux, Windows)` |
 | Workspaces | `jump_next_waiting` | `Cmd/Ctrl+Shift+J` |
 | Workspaces | `focus_workspaces_sidebar` | `Cmd/Ctrl+Alt+S` |
 | Workspaces | `select_workspace_1` | `Cmd/Ctrl+1` |
@@ -134,7 +136,7 @@ pane. Search actions apply while the corresponding search is active.
 | Scope | Action | Shortcut |
 | --- | --- | --- |
 | App views | `close_window` | Close the active window. |
-| Workspaces | `new_space` | Create a space and open its name in Settings > Spaces. |
+| Workspaces | `new_space` | Create a space and open its name for editing in Settings > Spaces. |
 | Workspaces | `move_workspace_to_space` | Pick another space for the shown workspace in the command palette. |
 | Terminal pane | `fork_conversation` | Fork the agent conversation into a split. |
 | Terminal pane | `accept_conversation_notice` | Run the action of the pane's conversation notice. |

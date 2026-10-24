@@ -61,8 +61,9 @@ you save. The runtime stays permissive on purpose.
 
 `spaces` groups workspaces into named contexts, for example work and personal
 projects. Each entry needs an `id` (a UUID) and a `name`, and takes an
-optional `color`; up to 9 spaces are allowed next to the implicit `Default`
-space. Hand edits apply without a restart. See the
+optional `color` and `env`; [Settings > Spaces](/docs/settings#spaces) also
+records the space's image as `avatar`. Up to 9 spaces are allowed next to the
+implicit `Default` space. Hand edits apply without a restart. See the
 [schema page](/docs/configuration/schema#spaces) for the limits.
 
 A space's `env` is set on every terminal of its workspaces, with this

@@ -60,7 +60,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `cell_width` | number/null | `1.0` | Hot reload cache | Multiplier of the font's advance, valid range `0.8` to `2.0`. The cell is rounded to whole device pixels. |
 | `unfocused_pane_opacity` | number/null | `1.0` | Hot reload | Opacity of panes that do not hold focus, when a workspace has more than one pane. Range `0.15` to `1.0`; `1.0` disables the dim. |
 | `reduce_motion` | boolean/null | `false` | Hot reload | Minimizes non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. Trackpad scrolling in a terminal moves by whole lines instead of following the gesture by the pixel. |
-| `comfortable_density` | boolean/null | `true` | Hot reload | Separates the panes of a workspace into rounded cards with a gutter between them. `false` joins them edge to edge with a 1 px divider, rounding only the outer corners of the grid and of the diff dock. Toggled from Settings > Appearance or the command palette. |
+| `comfortable_density` | boolean/null | `true` | Hot reload | Separates the panes of a workspace into rounded cards with a gutter between them. `false` joins them edge to edge with a 1 px divider that keeps a 7 px grab area, and rounds only the outer corners of the grid and of the diff dock. Toggled from Settings > Appearance or the command palette. |
 | `sidebar_show` | object/null | all off | Hot reload | What a session tab row shows beyond its name: `branch` adds its git branch, `diffstat` adds its insertion and deletion counts, `pr` turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
 | `worktrees` | object/null | see below | Hot reload | Where Paneflow keeps the git worktrees it creates for branches and how it cleans them up: `dir`, `auto_remove`, `keep_limit`, `for_new_branches`. Settings > Worktrees edits the same keys. |
 | `window_decorations` | string/null | `client` | Startup | `client` draws Paneflow chrome; `server` delegates to the OS compositor. |
@@ -225,17 +225,18 @@ with a warning; the other profiles still load.
 ## `spaces`
 
 `spaces` is a list of named groups of workspaces, like spaces in Arc. Each
-workspace belongs to one space, and the sidebar and `Ctrl+1` to `Ctrl+9` only
-cover the workspaces of the active space. A workspace with no space belongs to
-the implicit space named `Default`. With no `spaces` entry, nothing changes.
-Which space holds each workspace, and which space is active, are kept in
-`session.json`, not here.
+workspace belongs to one space, and the sidebar and `Cmd/Ctrl+1` to
+`Cmd/Ctrl+9` only cover the workspaces of the active space. A workspace with
+no space belongs to the implicit space named `Default`. With no `spaces`
+entry, nothing changes. Which space holds each workspace, and which space is
+active, are kept in `session.json`, not here.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `spaces.*.id` | string | required | Lowercase hyphenated UUID that `session.json` uses to refer to the space. Keep it when you rename the space. |
 | `spaces.*.name` | string | required | Name shown for the space, 1 to 32 characters after trimming, unique ignoring case. `Default` is reserved. |
-| `spaces.*.color` | string | none | `red`, `green`, `yellow`, `blue`, `magenta`, or `cyan`, drawn from the active theme's ANSI palette. Any other value leaves the space without a color. |
+| `spaces.*.color` | string | none | `red`, `green`, `yellow`, `blue`, `magenta`, or `cyan`: the gradient family drawn in the space's circle when it has no image, the same in every theme. Any other value leaves the space without a color. |
+| `spaces.*.avatar` | string | none | File name of the space's image in `avatars/` under the Paneflow home, a 96 pixel square PNG written by Settings > Spaces. The image replaces the color's gradient in the sidebar and in Settings. A value that does not match `^[A-Za-z0-9][A-Za-z0-9.-]{0,91}\.png$` is ignored with a warning in the log. |
 | `spaces.*.env` | object | `{}` | Variables set on every terminal of the space's workspaces opened after the change. Precedence, lowest first: `terminal.env`, `spaces.*.env`, `agent_profiles.*.env`, the surface's env. `~/` expands to the home directory and `$NAME` to Paneflow's environment. |
 
 An entry with a missing or malformed `id`, an `id` already used, an empty,
@@ -250,9 +251,13 @@ Paneflow sets for every terminal (`TERM`, `COLORTERM`, `TERM_PROGRAM`,
 `TERM_PROGRAM_VERSION`, `SHLVL`, `ZDOTDIR`), or changes how programs load or
 run agents (`LD_*`, `DYLD_*`, inherited agent session markers such as
 `CLAUDECODE`) is ignored with a warning in the log, as is a non-string value.
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `GH_CONFIG_DIR` must be absolute;
-Paneflow creates a missing one, mode `0700` on Linux and macOS, before a
-terminal of the space starts. On Windows, names are upper-cased.
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `GH_CONFIG_DIR` must be absolute after
+expansion, or they are ignored the same way; Paneflow creates a missing one,
+mode `0700` on Linux and macOS, before a terminal of the space starts. A
+`$NAME` that names a variable Paneflow's environment does not set leaves the
+value unexpanded, with a warning in the log. On Windows, terminals and
+subprocesses receive the names upper-cased; `paneflow.json` keeps the case you
+typed.
 
 Paneflow's own subprocesses for a workspace of the space (the pull request
 badge's `gh`, git, cloning while the space is active, and the `claude -p` or

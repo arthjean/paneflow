@@ -23,12 +23,12 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
 | General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
-| Appearance | Light, Dark, System, the theme preset, **Interface style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme and material changes hot-reload. |
+| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, and material changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
 | Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
-| Spaces | The spaces that group workspaces: the implicit Default space, then each space with its name, its color among six theme tints, its environment variables, the state of the Claude Code and Codex hooks in the config directories it sets, and a delete action that moves its workspaces to Default after a confirmation. Up to 9 spaces. | `spaces` | Names and colors hot-reload. An environment applies to terminals opened after the change. |
+| Spaces | The spaces that group workspaces: `Default` first, then each space with its name, image, color, environment variables, the state of the Claude Code and Codex hooks and MCP in the config directories it sets, and a delete action that moves its workspaces to `Default` after a confirmation. Up to 9 spaces. | `spaces`; images go to `avatars/` in the Paneflow home | Names, images, and colors hot-reload. An environment applies to terminals opened after the change. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
 | Agents | Which agents the launcher shows, with their installed version and hook state, an **Install hooks** button for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; **Install hooks** writes the agent's own hook config | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
@@ -81,41 +81,76 @@ everywhere, set `"minimum_contrast": 0` under `terminal` in
 
 ## Spaces
 
-**Spaces** lists `Default` first. It holds every workspace that has no
-space and cannot be renamed or deleted. Click a space's name to edit it,
-then press `Enter` to save or `Escape` to cancel. A name must be 1 to 32
-characters, cannot be `Default`, and cannot repeat another space's name,
-ignoring case; an invalid name shows the reason under the field and
-nothing is saved. Pick one of the six theme colors, or none, to tint the
-space's letter in the sidebar. **New space** adds `Space N` with the
-first free number and is unavailable once 9 spaces exist. Deleting a
-space asks for confirmation, moves its workspaces to `Default` without
-closing any terminal, and makes `Default` active if the deleted space was.
+**Spaces** opens with a **New space** button beside its introduction, then
+a card that lists `Default` first. `Default` holds every workspace that has
+no space, reads *Workspaces without a space* or its workspace count, and
+cannot be renamed or deleted. One row per space follows, with its circle,
+its name, and its workspace and variable counts; a collapsed row also flags
+*Agent setup failed* or its environment warnings. Click a row to expand it.
+Only one space is expanded at a time.
+
+| Field | What it does |
+| --- | --- |
+| Name | Click the name to edit it, then press `Enter` to save or `Escape` to cancel; clicking elsewhere also saves. A name must be 1 to 32 characters, cannot be `Default`, and cannot repeat another space's name, ignoring case. An invalid name shows the reason under the field, and nothing is saved. |
+| Image | **Upload image** opens a file picker, as does a click on the space's circle. Once an image is set, the buttons read **Replace image** and **Remove image**. See [Space image](#space-image). |
+| Color | No color, or one of Red, Green, Yellow, Blue, Magenta, and Cyan. A space without an image draws its color as a gradient in its circle, the same in every theme, and without a color an outline. |
+| Environment | A summary of the space's variables and an **Edit** button. See [Space environment](#space-environment). |
+| Agent setup | Shown when the space moves `CLAUDE_CONFIG_DIR` or `CODEX_HOME` away from the default: one line per agent, such as `Claude Code hooks and MCP`, with its state, **Retry** after an error, and **Install** when it is not installed. |
+
+**Delete space**, at the bottom of an expanded space, asks
+*Delete Work? Its 3 workspaces move to Default.* with **Cancel** and
+**Delete space**. Confirming moves the space's workspaces to `Default`
+without closing any terminal, makes `Default` active if the deleted space
+was, and removes the space's image.
+
+**New space** adds `Space N` with the first free number and opens its name
+for editing, as do **New space…** in the sidebar's space menu and
+**New space** in the command palette. With 9 spaces the button is disabled
+and *9 spaces maximum* appears beside it.
+
+### Space image
+
+An image replaces the color gradient in the space's circle, in the sidebar
+header, the space menu, and Settings. Choose a PNG, JPEG, WebP, GIF, BMP,
+or TIFF file of at most 25 MB and 12,000 pixels on each side. Paneflow
+applies the photo's EXIF orientation, crops it to a centered square, and
+stores a 96 pixel PNG in `avatars/` under the Paneflow home
+(`~/.paneflow/avatars/`, `%USERPROFILE%\.paneflow\avatars\` on Windows).
+The file name is recorded as `avatar` on the space's entry in
+`paneflow.json`. An image that cannot be read or is too large shows the
+reason under the Image field, and the space keeps its previous circle.
+Replacing or removing an image deletes the previous file.
 
 ### Space environment
 
-**Edit environment** under a space opens one row per variable. The values
-are set on every terminal opened from then on in that space's workspaces,
-above `terminal.env` and below an agent profile's env and a surface's own
-env. A leading `~` is your home, and `$NAME` takes the value from
-Paneflow's environment; the line under a row shows the expanded value.
-Point `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GH_CONFIG_DIR` at a separate
-directory to use a second Claude Code, Codex, or GitHub CLI account in
-that space. Those three must be absolute paths; Paneflow creates a missing
-one, private to you on Linux and macOS, before the first terminal starts,
-and a toast names the directory if it cannot.
+**Edit** under Environment opens one row per variable. The values are set
+on every terminal opened from then on in that space's workspaces, above
+`terminal.env` and below an agent profile's env and a surface's own env. A
+leading `~` is your home, and `$NAME` takes the value from Paneflow's
+environment; the line under a row shows the expanded value. Point
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GH_CONFIG_DIR` at a separate
+directory to use a second Claude Code, Codex, or GitHub CLI account in that
+space. Those three must be absolute paths; Paneflow creates a missing one,
+private to you on Linux and macOS, before the first terminal starts, and a
+toast names the directory if it cannot. Two accounts stay apart only as
+long as each CLI honors its directory variable, and `GH_CONFIG_DIR` does
+not isolate anything while `GH_TOKEN` or `GITHUB_TOKEN` is set.
 
-**Save** refuses a name that is not a variable name, a `PANEFLOW_` name, a
-variable Paneflow sets for every terminal such as `TERM`, and a variable
-that changes how programs load or run agents such as `LD_PRELOAD`, with
-the reason under the row. Names are upper-cased on Windows. A variable
-whose name contains `KEY`, `TOKEN`, `SECRET`, or `PASSWORD` shows *Stored
-in plain text in paneflow.json; prefer a config directory*. When
-Paneflow's own environment sets `ANTHROPIC_API_KEY`,
-`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`,
-`GH_TOKEN`, or `GITHUB_TOKEN` and the space does not redefine it, a
-warning says so: those variables take precedence over the account stored
-in a config directory.
+**Save** refuses, with the reason under the row or the form, a value
+without a name, a name listed twice, a name that is not a variable name, a
+`PANEFLOW_` name, a variable Paneflow sets for every terminal such as
+`TERM`, a variable that changes how programs load or run agents such as
+`LD_PRELOAD` or an agent session marker such as `CLAUDECODE`, a relative
+path for `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GH_CONFIG_DIR`, and a
+`$NAME` that names a variable Paneflow's environment does not set. On
+Windows, terminals receive the names upper-cased, while `paneflow.json`
+keeps the case you typed. A variable whose name contains `KEY`, `TOKEN`,
+`SECRET`, or `PASSWORD` shows *Stored in plain text in paneflow.json;
+prefer a config directory*. When Paneflow's own environment sets
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+`OPENAI_API_KEY`, `GH_TOKEN`, or `GITHUB_TOKEN` and the space does not
+redefine it, a warning says so: those variables take precedence over the
+account stored in a config directory.
 
 Open terminals keep the environment they started with: moving a workspace
 to a space with a different environment says *Open terminals keep their
@@ -125,23 +160,24 @@ value inside that terminal.
 
 When a space moves `CLAUDE_CONFIG_DIR` or `CODEX_HOME` away from the
 default, saving it installs Paneflow's hooks and MCP bridge in that
-directory for each agent already installed in **Settings > Agents**, so
-the sidebar still shows when the agent works and waits. Each launch of a
-release build refreshes them, once per distinct directory. The space lists
-each agent's state, with **Retry** after an error and **Install** when it
-is not installed.
+directory for each agent already installed in **Settings > Agents**, so the
+sidebar still shows when the agent works and waits. Each launch of a
+release build refreshes them, once per distinct pair of Claude Code and
+Codex directories. **Agent setup** lists each agent's state, with **Retry**
+after an error and **Install** when it is not installed.
 
 Deleting a space leaves its hooks in place. To remove them, delete the
 entries marked `"_paneflow_managed": true` from the `hooks` of
-`settings.json` in the space's `CLAUDE_CONFIG_DIR`, and the `paneflow`
-server from its `.claude.json`; for Codex, delete the same entries from
-`hooks.json` and the `[mcp_servers.paneflow]` table from `config.toml` in
-its `CODEX_HOME`. The space's records live under
-`~/.paneflow/integrations/spaces/<space id>/` and can be deleted too.
+`settings.json` in the space's `CLAUDE_CONFIG_DIR`, the `paneflow` server
+from its `.claude.json`, and its `skills/paneflow-conductor/SKILL.md`; for
+Codex, delete the same entries from `hooks.json` and the
+`[mcp_servers.paneflow]` table from `config.toml` in its `CODEX_HOME`. The
+space's records live under `~/.paneflow/integrations/spaces/<space id>/`
+and can be deleted too.
 
-A space organizes work; it is not a security boundary. Every terminal
-still runs as you, and a value in `paneflow.json` is readable by anything
-that can read your home directory.
+A space organizes work; it is not a security boundary. Every terminal still
+runs as you, and a value in `paneflow.json` is readable by anything that
+can read your home directory.
 
 ## AI access vs MCP
 

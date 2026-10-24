@@ -25,9 +25,9 @@ guide. On macOS, you can also install with Homebrew.
 
 ### Download links
 
-- [macOS Apple Silicon DMG](https://github.com/arthjean/paneflow/releases/download/v0.17.6/paneflow-0.17.6-aarch64-apple-darwin.dmg)
-- [Linux x86_64 AppImage](https://github.com/arthjean/paneflow/releases/download/v0.17.6/paneflow-0.17.6-x86_64.AppImage)
-- [Windows x86_64 MSI](https://github.com/arthjean/paneflow/releases/download/v0.17.6/paneflow-0.17.6-x86_64-pc-windows-msvc.msi)
+- [macOS Apple Silicon DMG](https://github.com/arthjean/paneflow/releases/download/v0.18.0/paneflow-0.18.0-aarch64-apple-darwin.dmg)
+- [Linux x86_64 AppImage](https://github.com/arthjean/paneflow/releases/download/v0.18.0/paneflow-0.18.0-x86_64.AppImage)
+- [Windows x86_64 MSI](https://github.com/arthjean/paneflow/releases/download/v0.18.0/paneflow-0.18.0-x86_64-pc-windows-msvc.msi)
 - [All release artifacts and Linux ARM64](https://paneflow.dev/download)
 
 Homebrew on macOS:
