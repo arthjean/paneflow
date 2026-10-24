@@ -1109,6 +1109,7 @@ mod tests {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         config

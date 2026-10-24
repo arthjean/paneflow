@@ -835,7 +835,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Switch space",
-        icon: Some("icons/folders.svg"),
+        icon: Some("icons/archive-02.svg"),
         keywords: "go to change context work personal",
         needs: Needs::Spaces,
         kind: Kind::Scope(Scope::Space),
@@ -1620,6 +1620,7 @@ mod tests {
             id: work.clone(),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         assert_eq!(

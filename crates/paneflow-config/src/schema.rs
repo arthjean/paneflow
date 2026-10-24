@@ -156,6 +156,7 @@ mod tests {
                 id: SpaceId::new(),
                 name: "Work".to_string(),
                 color: Some(SpaceColor::Blue),
+                avatar: Some("work-0123456789abcdef.png".to_string()),
                 env: BTreeMap::from([(
                     "CLAUDE_CONFIG_DIR".to_string(),
                     "~/.claude-work".to_string(),

@@ -479,6 +479,7 @@ mod tests {
             id: work.clone(),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: [
                 ("CLAUDE_CONFIG_DIR", claude_dir.display().to_string()),
                 ("CODEX_HOME", codex_dir.display().to_string()),

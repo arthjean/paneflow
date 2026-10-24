@@ -231,7 +231,7 @@ changes.
 Everything per-user lives under one directory, `~/.paneflow`
 (`%USERPROFILE%\.paneflow` on Windows, `~/.paneflow-dev` for debug builds,
 `PANEFLOW_HOME` overrides it): `paneflow.json`, `session.json`,
-`window-state.json`, `worktrees/`, `bin/`, `shell/`, `cache/`. The layout is
+`window-state.json`, `worktrees/`, `avatars/`, `bin/`, `shell/`, `cache/`. The layout is
 owned by `crates/paneflow-home`; `src-app/src/runtime_paths.rs` only adds the
 IPC socket, which stays in the runtime dir. Never resolve Paneflow's own state
 through `dirs::config_dir`, `dirs::cache_dir`, or `dirs::data_local_dir`; those

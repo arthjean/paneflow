@@ -71,7 +71,7 @@ pub(super) fn pull_request_tooltip(pr: PullRequest) -> SharedString {
     format!("Pull request #{} {state}", pr.number).into()
 }
 
-fn lane_visual(lane: Lane, ui: crate::theme::UiColors) -> (gpui::Hsla, AnyElement) {
+pub(super) fn lane_visual(lane: Lane, ui: crate::theme::UiColors) -> (gpui::Hsla, AnyElement) {
     let icon = |path: &'static str, color: gpui::Hsla| {
         svg()
             .size(px(SIDEBAR_LANE_GLYPH_SIZE))

@@ -41,7 +41,7 @@ pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
 
 const MOVE_TO_SPACE_SUBMENU_WIDTH: f32 = 180.;
 
-fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
+pub(super) fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
     div()
         .mx(px(6.))
         .my(px(4.))
@@ -1047,7 +1047,7 @@ impl PaneFlowApp {
         .into_any_element()
     }
 
-    fn render_disabled_select_menu_item(
+    pub(super) fn render_disabled_select_menu_item(
         id: SharedString,
         label: &str,
         ui: crate::theme::UiColors,

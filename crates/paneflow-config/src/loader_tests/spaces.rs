@@ -26,12 +26,14 @@ fn spaces_load_with_trimmed_names_and_known_colors() {
                 id: SpaceId::parse(WORK).unwrap(),
                 name: "Work".to_string(),
                 color: Some(SpaceColor::Blue),
+                avatar: None,
                 env: Default::default(),
             },
             SpaceConfig {
                 id: SpaceId::parse(HOME).unwrap(),
                 name: "Home".to_string(),
                 color: None,
+                avatar: None,
                 env: Default::default(),
             },
         ],
@@ -186,5 +188,43 @@ fn a_space_env_keeps_its_string_values_and_round_trips() {
     assert!(
         saved[0].get("env").is_none(),
         "a space without env writes no env key"
+    );
+}
+
+#[test]
+#[tracing_test::traced_test]
+fn a_space_avatar_keeps_only_a_plain_png_file_name() {
+    let config = parse_and_validate(&format!(
+        r#"{{"spaces": [
+            {{"id": "{WORK}", "name": "Work", "avatar": "{WORK}-00ff.png"}},
+            {{"id": "{HOME}", "name": "Home", "avatar": "../escape.png"}}
+        ]}}"#
+    ));
+    assert_eq!(
+        config.spaces[0].avatar.as_deref(),
+        Some(format!("{WORK}-00ff.png").as_str())
+    );
+    assert_eq!(config.spaces[1].avatar, None, "a path is never followed");
+    assert!(logs_contain("ignoring avatar \"../escape.png\""));
+    for rejected in [
+        "",
+        ".png",
+        "a/b.png",
+        "a\\b.png",
+        "/abs.png",
+        "photo.jpg",
+        "-x.png",
+    ] {
+        assert!(!is_valid_space_avatar(rejected), "{rejected:?}");
+    }
+    assert!(!is_valid_space_avatar(&format!(
+        "{}.png",
+        "a".repeat(MAX_SPACE_AVATAR_CHARS)
+    )));
+
+    let saved = serde_json::to_value(&config.spaces).unwrap();
+    assert!(
+        saved[1].get("avatar").is_none(),
+        "a space without an image writes no avatar key"
     );
 }

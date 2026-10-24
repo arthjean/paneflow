@@ -1003,6 +1003,7 @@ mod tests {
                 .expect("valid id"),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         assert!(check_space(&config, Some("WORK")).is_ok());

@@ -489,7 +489,22 @@ pane surfaces, and the diff dock. Each component retains its own radius.
 
 Header row `Workspaces` at label size with two 22 px icon buttons (the
 Customize sidebar menu behind a filter glyph, and new workspace behind a
-folder-plus glyph). A workspace is a folder row; its tabs are child rows with
+folder-plus glyph). Once a space is declared, the space picker replaces the
+`Workspaces` label: a 22 px trigger at radius 7 holding, in a 20 px slot on
+the folder column, the active space's 16 px mark (its image cropped to a
+circle, else the mesh gradient of its color, else a 1 px `muted` outline;
+Default shows its own mesh, five OKLab anchors in blue, pink, mint,
+violet, and pale yellow blended by inverse distance over a slight sine warp,
+each mesh rendered once into a 96 px PNG by `space_avatar`), then the name at 13 px Medium in `text`
+and a 12 px chevron. It takes the hover tint, and the active row tint while
+its menu is open. The menu (`menu_panel`, 240 wide) lists Default, then the
+declared spaces with their 16 px mark, a hidden space's attention mark and a
+check on the current one, then `New space…` and `Manage spaces`, whose 13 px
+glyphs sit centered in the same 16 px slot so every label starts on one edge. While a hidden
+space has an agent waiting, failed, or finished unseen, a 22 px button beside
+the trigger shows the most urgent row glyph (bell, circle-x, or dot) and the
+total above one; it goes to that agent, and its tooltip names the space. A
+space color fills a swatch and never tints text. A workspace is a folder row; its tabs are child rows with
 inline rename, hover actions, and reorder by drag. A tab row shows the tab
 title, the branch with its glyph, and the
 diffstat in `vc_added` and `vc_deleted`. Status sits at the trailing edge of
@@ -784,6 +799,29 @@ the confirmation swaps the row for the question, a `Cancel` menu row, and the
 red `Reset`. The scrollbar of the list sits at the panel edge, as in the
 panes and the docks, and the fixed heading, intro line, and filter keep a
 20 px gap above the scrolling rows.
+
+The Spaces page opens with one 11 px muted intro line and a `New space`
+button at its trailing edge, which shows the limit reason beside it once 9
+spaces exist. One card lists `Default`, then every space, as inset rows:
+squircle 14 inside the 6 px card padding, so they sit concentric in the 20
+radius card, with a 20 px mark, the mesh gradient for `Default`, the name at 13 Medium
+over a muted count of workspaces and variables, and a chevron. Hovering a
+space's mark lays a black scrim at 0.5 with a white 12 px pencil over it, and
+clicking it opens the system file picker; the chosen image is decoded off the
+render thread, oriented, cropped to its centered square, scaled to 96 px, and
+stored as a PNG in the home's `avatars/` directory, which the mark then draws
+in a circle with the color as its loading and fallback state. Clicking a row
+opens that space, and only that one, below it: Name, Image (`Upload image`, or
+`Replace image` and `Remove image`), Color, Environment, and Agent setup on a
+92 px label column, then `Delete space`, whose confirmation
+swaps the button for the question, `Cancel`, and the red `Delete space`. A
+closed row shows a failed agent setup in `vc_deleted`, or the count of
+environment warnings after the amber triangle. The color choice uses the same
+marks at 16 px in 24 px circular targets: an outline for no color, then one
+mesh per color, each five hues around its own (red leans coral and rose,
+blue leans azure and indigo), fixed across themes. Errors read
+in `vc_deleted` and warnings in `text` after an amber glyph, because the fixed
+red and `vc_modified` fall under 4.5:1 as text on the light card.
 
 ### 5.6 Menus, selects, tooltips
 

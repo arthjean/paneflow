@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
-    svg,
+    MouseButton, ParentElement, PathPromptOptions, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::{
     DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceConfig, SpaceId, validate_space_name,
@@ -13,23 +13,34 @@ use std::collections::BTreeMap;
 use crate::PaneFlowApp;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
-    CARD_PADDING_X, CARD_PADDING_Y, SETTINGS_CONTROL_CORNER_RADIUS, destructive_button,
-    destructive_color, hairline_inset, secondary_button, section_title, setting_card, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, destructive_color,
+    icon_button as labeled_icon_button, secondary_button, setting_card, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
     EnvRowInputs, collect_env, icon_button, input_box, new_env_row, validate_env_values,
 };
 use crate::ui_primitives::{
-    AccessibleControlExt, BODY, LABEL_SM, ROW_RADIUS, TooltipDelayExt, text_tooltip,
+    AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TooltipDelayExt,
+    squircle_skin, text_tooltip,
 };
 
-const NAME_WIDTH: f32 = 220.;
-const ENV_NAME_WIDTH: f32 = 200.;
-const ENV_INDENT: f32 = LETTER_SIZE + 12.;
+const NAME_MAX_WIDTH: f32 = 260.;
+const ENV_NAME_WIDTH: f32 = 180.;
 const INPUT_HEIGHT: f32 = 28.;
-const SWATCH_SIZE: f32 = 16.;
-const LETTER_SIZE: f32 = 22.;
+const LIST_INSET: f32 = 6.;
+const ITEM_PADDING_X: f32 = 10.;
+const ITEM_PADDING_Y: f32 = 8.;
+const ITEM_GAP: f32 = 12.;
+const AVATAR_SIZE: f32 = 20.;
+const AVATAR_ICON_SIZE: f32 = 12.;
+const AVATAR_SCRIM_ALPHA: f32 = 0.5;
+const DETAIL_INDENT: f32 = ITEM_PADDING_X + AVATAR_SIZE + ITEM_GAP;
+const FIELD_LABEL_WIDTH: f32 = 92.;
+const PICKER_TARGET: f32 = 24.;
+const PICKER_SWATCH: f32 = 16.;
+const SPACES_INTRO: &str = "Group workspaces into contexts, such as work and personal projects. \
+     A space can set its own environment variables, for example to use a separate agent account.";
 
 pub(crate) struct SpaceNameEditor {
     pub(crate) id: SpaceId,
@@ -131,6 +142,12 @@ pub(crate) fn space_env_warnings(
             .map(|key| format!("{key}: {}", crate::space_env::PLAIN_TEXT_WARNING)),
     );
     warnings
+}
+
+#[derive(Default)]
+pub(crate) struct SpaceAvatarImport {
+    pub(crate) busy: Option<SpaceId>,
+    pub(crate) error: Option<(SpaceId, String)>,
 }
 
 pub(crate) type IntegrationResults = Vec<(String, Result<(), String>)>;
@@ -301,6 +318,7 @@ pub(crate) fn space_color_name(color: SpaceColor) -> &'static str {
 
 pub(crate) fn space_delete_message(workspaces: usize) -> String {
     match workspaces {
+        0 => "It has no workspaces".to_string(),
         1 => "Its 1 workspace moves to Default".to_string(),
         n => format!("Its {n} workspaces move to Default"),
     }
@@ -344,6 +362,7 @@ impl PaneFlowApp {
         self.space_name_input.update(cx, |input, cx| {
             input.set_value(SharedString::from(name), cx)
         });
+        self.space_settings_expanded = Some(id.clone());
         self.space_name_editor = Some(SpaceNameEditor { id, error: None });
         self.space_delete_armed = None;
         let focus = self.space_name_input.read(cx).focus_handle.clone();
@@ -395,6 +414,9 @@ impl PaneFlowApp {
 
     fn delete_space(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
         self.space_delete_armed = None;
+        if self.space_settings_expanded.as_ref() == Some(id) {
+            self.space_settings_expanded = None;
+        }
         if self
             .space_env_editor
             .as_ref()
@@ -416,7 +438,79 @@ impl PaneFlowApp {
             .filter(|space| &space.id != id)
             .cloned()
             .collect();
+        let avatar = self
+            .cached_config
+            .space(id)
+            .and_then(|space| space.avatar.clone());
         self.persist_spaces(spaces, cx);
+        if let Some(avatar) = avatar {
+            discard_avatar_in_background(avatar, cx);
+        }
+    }
+
+    fn choose_space_avatar(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
+        if self.space_avatar_import.busy.is_some() {
+            return;
+        }
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose image".into()),
+        });
+        self.space_avatar_import = SpaceAvatarImport {
+            busy: Some(id.clone()),
+            error: None,
+        };
+        cx.notify();
+        let space = id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = match receiver.await {
+                Ok(Ok(Some(mut paths))) => match paths.pop() {
+                    Some(source) => {
+                        let target = space.clone();
+                        Some(
+                            smol::unblock(move || {
+                                crate::space_avatar::import_avatar(&source, &target)
+                            })
+                            .await,
+                        )
+                    }
+                    None => None,
+                },
+                Ok(Err(error)) => Some(Err(format!("Unable to open the file picker: {error}"))),
+                Ok(Ok(None)) | Err(_) => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.space_avatar_import.busy = None;
+                match result {
+                    Some(Ok(file_name)) => this.set_space_avatar(&space, Some(file_name), cx),
+                    Some(Err(error)) => this.space_avatar_import.error = Some((space, error)),
+                    None => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn set_space_avatar(&mut self, id: &SpaceId, avatar: Option<String>, cx: &mut Context<Self>) {
+        let mut spaces = self.cached_config.spaces.clone();
+        let Some(space) = spaces.iter_mut().find(|space| &space.id == id) else {
+            if let Some(orphan) = avatar {
+                discard_avatar_in_background(orphan, cx);
+            }
+            return;
+        };
+        if space.avatar == avatar {
+            return;
+        }
+        let previous = std::mem::replace(&mut space.avatar, avatar);
+        self.space_avatar_import.error = None;
+        self.persist_spaces(spaces, cx);
+        if let Some(previous) = previous {
+            discard_avatar_in_background(previous, cx);
+        }
     }
 
     pub(crate) fn refresh_space_integration_status(&self, cx: &mut Context<Self>) {
@@ -492,60 +586,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn render_space_integrations(
-        &self,
-        space: &SpaceConfig,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(statuses) = self.space_integrations.status.get(&space.id) else {
-            return div().into_any_element();
-        };
-        let mut column = div().flex().flex_col().gap(px(4.)).pt(px(2.));
-        for status in statuses {
-            let key = (space.id.clone(), status.slug.to_string());
-            let error = self.space_integrations.errors.get(&key);
-            let busy = self.space_integrations.busy.as_ref() == Some(&key);
-            let label = match (busy, error) {
-                (true, _) => "installing".to_string(),
-                (false, Some(error)) => format!("error: {error}"),
-                (false, None) => paneflow_mcp_install::state_label(status.state).to_string(),
-            };
-            let mut line = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .text_size(LABEL_SM)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(if error.is_some() {
-                            destructive_color()
-                        } else {
-                            ui.muted
-                        })
-                        .child(format!("{} hooks and MCP: {label}", status.label)),
-                );
-            if !busy && (error.is_some() || status.state == IntegrationState::NotInstalled) {
-                let id = space.id.clone();
-                let slug = status.slug;
-                line = line.child(secondary_button(
-                    SharedString::from(format!("space-integration-retry-{}-{slug}", space.id)),
-                    if error.is_some() { "Retry" } else { "Install" },
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.retry_space_integration(&id, slug, cx);
-                    }),
-                ));
-            }
-            column = column.child(line);
-        }
-        column.into_any_element()
-    }
-
     fn open_space_env_editor(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
         let env = self
             .cached_config
@@ -610,86 +650,359 @@ impl PaneFlowApp {
     pub(crate) fn render_spaces_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let spaces = &self.cached_config.spaces;
-        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
-        card = card.child(self.render_default_space_row(ui));
+        let mut list = setting_card(ui)
+            .p(px(LIST_INSET))
+            .gap(px(2.))
+            .child(self.render_default_space_item(ui));
         for space in spaces {
-            card = card.child(hairline_inset(ui));
-            card = card.child(self.render_space_row(space, ui, cx));
+            list = list.child(self.render_space_item(space, ui, cx));
         }
-        card = card.child(hairline_inset(ui));
-        card = card.child(render_new_space_row(spaces.len() >= MAX_SPACES, ui, cx));
 
         div().flex().flex_col().child(
             Block::new("Spaces")
-                .child(section_title(
-                    ui,
-                    "Spaces",
-                    Some(
-                        "Group workspaces into contexts, such as work and personal projects. \
-                         A space organizes your workspaces; it does not isolate them.",
-                    ),
-                ))
-                .child(card)
+                .child(render_spaces_intro(spaces.len() >= MAX_SPACES, ui, cx))
+                .child(list)
                 .finish(),
         )
     }
 
-    fn render_default_space_row(&self, ui: crate::theme::UiColors) -> AnyElement {
+    fn toggle_space_settings(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
+        self.space_settings_expanded = if self.space_settings_expanded.as_ref() == Some(id) {
+            None
+        } else {
+            Some(id.clone())
+        };
+        self.space_delete_armed = None;
+        cx.notify();
+    }
+
+    fn render_default_space_item(&self, ui: crate::theme::UiColors) -> AnyElement {
         let count = self.space_workspace_count(None);
-        space_row_shell()
-            .child(space_letter(DEFAULT_SPACE_NAME, None, ui))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.))
-                    .child(
-                        div()
-                            .text_size(BODY)
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(ui.text)
-                            .child(DEFAULT_SPACE_NAME),
-                    )
-                    .child(
-                        div()
-                            .text_size(LABEL_SM)
-                            .text_color(ui.muted)
-                            .child(workspace_count_label(count, "Workspaces without a space")),
-                    ),
-            )
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px(px(ITEM_PADDING_X))
+            .py(px(ITEM_PADDING_Y))
+            .child(space_summary(
+                crate::app::sidebar::default_space_mark(AVATAR_SIZE, ui),
+                DEFAULT_SPACE_NAME.into(),
+                workspace_count_label(count, "Workspaces without a space"),
+                ui,
+            ))
             .into_any_element()
     }
 
-    fn render_space_row(
+    fn render_space_item(
         &self,
         space: &SpaceConfig,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let expanded = self.space_settings_expanded.as_ref() == Some(&space.id);
         let count = self.space_workspace_count(Some(&space.id));
+        let key = space.id.to_string();
+        let id = space.id.clone();
+        let header = squircle_skin(
+            div()
+                .id(SharedString::from(format!("space-item-{key}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(ITEM_GAP))
+                .px(px(ITEM_PADDING_X))
+                .py(px(ITEM_PADDING_Y))
+                .cursor(CursorStyle::PointingHand),
+            format!("space-item-{key}"),
+            ROW_RADIUS,
+            None,
+            (!expanded).then(|| with_alpha(ui.text, 0.05)),
+        )
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(format!("Space {}", space.name))
+        .aria_expanded(expanded)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.toggle_space_settings(&id, cx);
+        }))
+        .child(space_summary(
+            self.render_space_avatar_button(space, ui, cx),
+            space.name.clone().into(),
+            space_meta_label(count, space.env.len()),
+            ui,
+        ))
+        .when(!expanded, |header| {
+            header.children(self.render_space_status(space, ui))
+        })
+        .child(
+            svg()
+                .size(px(12.))
+                .flex_none()
+                .path(if expanded {
+                    "icons/chevron-down.svg"
+                } else {
+                    "icons/chevron-right.svg"
+                })
+                .text_color(ui.muted),
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when(expanded, |item| {
+                item.child(self.render_space_details(space, count, ui, cx))
+            })
+            .into_any_element()
+    }
+
+    fn render_space_avatar_button(
+        &self,
+        space: &SpaceConfig,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let group = SharedString::from(format!("space-avatar-{}", space.id));
+        let busy = self.space_avatar_import.busy.as_ref() == Some(&space.id);
+        let action = if space.avatar.is_some() {
+            "Change image"
+        } else {
+            "Add image"
+        };
+        let id = space.id.clone();
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .relative()
+            .flex_none()
+            .size(px(AVATAR_SIZE))
+            .cursor(CursorStyle::PointingHand)
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(format!("{action} for space {}", space.name))
+            .delayed_tooltip(text_tooltip(action))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                cx.stop_propagation();
+                this.choose_space_avatar(&id, cx);
+            }))
+            .child(crate::app::sidebar::space_mark(
+                space.color,
+                space.avatar.as_deref(),
+                AVATAR_SIZE,
+                ui,
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(with_alpha(gpui::black(), AVATAR_SCRIM_ALPHA))
+                    .when(!busy, |overlay| {
+                        overlay
+                            .opacity(0.)
+                            .group_hover(group, |style| style.opacity(1.))
+                    })
+                    .child(if busy {
+                        crate::ui_primitives::comet_spinner(
+                            SharedString::from(format!("space-avatar-spinner-{}", space.id)),
+                            px(AVATAR_ICON_SIZE),
+                            gpui::white(),
+                        )
+                    } else {
+                        svg()
+                            .size(px(AVATAR_ICON_SIZE))
+                            .flex_none()
+                            .path("icons/pencil-edit-02.svg")
+                            .text_color(gpui::white())
+                            .into_any_element()
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_space_image_field(
+        &self,
+        space: &SpaceConfig,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let error = self
+            .space_avatar_import
+            .error
+            .as_ref()
+            .filter(|(id, _)| id == &space.id)
+            .map(|(_, error)| error.clone());
+        let controls = if self.space_avatar_import.busy.as_ref() == Some(&space.id) {
+            div()
+                .text_size(BODY)
+                .text_color(ui.muted)
+                .child("Choosing an image…")
+        } else {
+            let id = space.id.clone();
+            let mut row =
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(secondary_button(
+                        SharedString::from(format!("space-avatar-choose-{}", space.id)),
+                        if space.avatar.is_some() {
+                            "Replace image"
+                        } else {
+                            "Upload image"
+                        },
+                        ui,
+                        cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                            this.choose_space_avatar(&id, cx);
+                        }),
+                    ));
+            if space.avatar.is_some() {
+                let id = space.id.clone();
+                row = row.child(secondary_button(
+                    SharedString::from(format!("space-avatar-remove-{}", space.id)),
+                    "Remove image",
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.set_space_avatar(&id, None, cx);
+                    }),
+                ));
+            }
+            row
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(controls)
+            .when_some(error, |column, error| {
+                column.child(render_hint(error, HintTone::Error, ui))
+            })
+            .into_any_element()
+    }
+
+    fn render_space_status(
+        &self,
+        space: &SpaceConfig,
+        ui: crate::theme::UiColors,
+    ) -> Option<AnyElement> {
+        let failed = self
+            .space_integrations
+            .errors
+            .keys()
+            .any(|(id, _)| id == &space.id);
+        let (icon, icon_color, label, label_color) = if failed {
+            (
+                "icons/x_circle.svg",
+                ui.vc_deleted,
+                "Agent setup failed".to_string(),
+                ui.vc_deleted,
+            )
+        } else {
+            let warnings =
+                space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow).len();
+            if warnings == 0 {
+                return None;
+            }
+            (
+                "icons/triangle-alert.svg",
+                ui.vc_modified,
+                warning_count_label(warnings),
+                ui.muted,
+            )
+        };
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5.))
+                .text_size(LABEL_SM)
+                .text_color(label_color)
+                .child(
+                    svg()
+                        .size(px(12.))
+                        .flex_none()
+                        .path(icon)
+                        .text_color(icon_color),
+                )
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    fn render_space_details(
+        &self,
+        space: &SpaceConfig,
+        count: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .pl(px(DETAIL_INDENT))
+            .pr(px(ITEM_PADDING_X))
+            .pt(px(6.))
+            .pb(px(14.))
+            .child(field_row(
+                "Name",
+                self.render_space_name_field(space, ui, cx),
+                ui,
+            ))
+            .child(field_row(
+                "Image",
+                self.render_space_image_field(space, ui, cx),
+                ui,
+            ))
+            .child(field_row(
+                "Color",
+                self.render_space_colors(space, ui, cx),
+                ui,
+            ))
+            .child(field_row(
+                "Environment",
+                self.render_space_env(space, ui, cx),
+                ui,
+            ))
+            .when_some(
+                self.render_space_integrations(space, ui, cx),
+                |details, integrations| details.child(field_row("Agent setup", integrations, ui)),
+            )
+            .child(self.render_space_delete(space, count, ui, cx))
+            .into_any_element()
+    }
+
+    fn render_space_name_field(
+        &self,
+        space: &SpaceConfig,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let editing = self
             .space_name_editor
             .as_ref()
             .filter(|editor| editor.id == space.id);
-        let armed = self.space_delete_armed.as_ref() == Some(&space.id);
-        let key = space.id.to_string();
-
-        let name_field = match editing {
-            Some(_) => div()
-                .id(SharedString::from(format!("space-name-{key}")))
-                .w(px(NAME_WIDTH))
-                .h(px(INPUT_HEIGHT))
-                .flex()
-                .items_center()
-                .px(px(10.))
-                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                .bg(ui.subtle)
+        let field = div()
+            .id(SharedString::from(format!("space-name-{}", space.id)))
+            .w_full()
+            .max_w(px(NAME_MAX_WIDTH))
+            .h(px(INPUT_HEIGHT))
+            .flex()
+            .items_center()
+            .px(px(10.))
+            .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+            .bg(ui.subtle)
+            .text_size(BODY)
+            .text_color(ui.text);
+        let field = match editing {
+            Some(_) => field
                 .border_1()
                 .border_color(with_alpha(ui.text, 0.25))
-                .text_size(BODY)
-                .text_color(ui.text)
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     match event.keystroke.key.as_str() {
                         "enter" => {
@@ -708,22 +1021,11 @@ impl PaneFlowApp {
                         this.commit_space_name(window, cx);
                     }
                 }))
-                .child(self.space_name_input.clone())
-                .into_any_element(),
+                .child(self.space_name_input.clone()),
             None => {
                 let id = space.id.clone();
-                div()
-                    .id(SharedString::from(format!("space-name-{key}")))
-                    .w(px(NAME_WIDTH))
-                    .h(px(INPUT_HEIGHT))
-                    .flex()
-                    .items_center()
-                    .px(px(10.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .bg(ui.subtle)
+                field
                     .cursor(CursorStyle::IBeam)
-                    .text_size(BODY)
-                    .text_color(ui.text)
                     .accessible_control(
                         gpui::accesskit::Role::TextInput,
                         format!("Name of space {}", space.name),
@@ -732,108 +1034,70 @@ impl PaneFlowApp {
                         this.edit_space_name(id.clone(), window, cx);
                     }))
                     .child(div().truncate().child(space.name.clone()))
-                    .into_any_element()
             }
         };
-
-        let id = space.id.clone();
-        let mut row = space_row_shell()
-            .child(space_letter(&space.name, space.color, ui))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(name_field)
-                    .child(match editing.and_then(|editor| editor.error) {
-                        Some(error) => div()
-                            .text_size(LABEL_SM)
-                            .text_color(destructive_color())
-                            .child(error),
-                        None => div()
-                            .text_size(LABEL_SM)
-                            .text_color(ui.muted)
-                            .child(workspace_count_label(count, "No workspaces")),
-                    }),
-            )
-            .child(self.render_space_colors(space, ui, cx))
-            .child(
-                div()
-                    .id(SharedString::from(format!("space-delete-{key}")))
-                    .flex_none()
-                    .size(px(26.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(7.))
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(|style| style.bg(with_alpha(ui.text, 0.06)))
-                    .role(gpui::accesskit::Role::Button)
-                    .aria_label(format!("Delete space {}", space.name))
-                    .delayed_tooltip(text_tooltip("Delete space"))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.space_delete_armed = Some(id.clone());
-                        this.space_name_editor = None;
-                        cx.notify();
-                    }))
-                    .child(
-                        svg()
-                            .size(px(13.))
-                            .flex_none()
-                            .path("icons/trash.svg")
-                            .text_color(if armed { destructive_color() } else { ui.muted }),
-                    ),
-            );
-
-        if armed {
-            let id = space.id.clone();
-            row = row.flex_wrap();
-            let confirm = div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .pt(px(8.))
-                .child(
-                    div()
-                        .text_size(LABEL_SM)
-                        .text_color(ui.text)
-                        .child(space_delete_message(count)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(6.))
-                        .child(secondary_button(
-                            "space-delete-cancel",
-                            "Cancel",
-                            ui,
-                            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                                this.space_delete_armed = None;
-                                cx.notify();
-                            }),
-                        ))
-                        .child(
-                            destructive_button("space-delete-confirm", "Delete").on_click(
-                                cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                                    this.delete_space(&id, cx);
-                                }),
-                            ),
-                        ),
-                );
-            row = row.child(confirm);
-        }
         div()
             .flex()
             .flex_col()
-            .child(row)
-            .child(self.render_space_env(space, ui, cx))
+            .gap(px(4.))
+            .child(field)
+            .when_some(editing.and_then(|editor| editor.error), |column, error| {
+                column.child(render_hint(error, HintTone::Error, ui))
+            })
             .into_any_element()
+    }
+
+    fn render_space_colors(
+        &self,
+        space: &SpaceConfig,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = space.id.to_string();
+        let mut swatches = div().flex().flex_row().items_center().gap(px(4.));
+        let choices = std::iter::once(None).chain(SPACE_COLORS.into_iter().map(Some));
+        for choice in choices {
+            let selected = space.color == choice;
+            let id = space.id.clone();
+            let label = choice.map_or("No color", space_color_name);
+            swatches = swatches.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "space-color-{key}-{}",
+                        choice.map_or("none", space_color_name)
+                    )))
+                    .size(px(PICKER_TARGET))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor(CursorStyle::PointingHand)
+                    .when(selected, |target| {
+                        target.border_1().border_color(with_alpha(ui.text, 0.6))
+                    })
+                    .when(!selected, |target| {
+                        target.hover(|style| style.bg(with_alpha(ui.text, 0.06)))
+                    })
+                    .role(gpui::accesskit::Role::RadioButton)
+                    .aria_label(label)
+                    .aria_toggled(if selected {
+                        gpui::accesskit::Toggled::True
+                    } else {
+                        gpui::accesskit::Toggled::False
+                    })
+                    .delayed_tooltip(text_tooltip(label))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.set_space_color(&id, choice, cx);
+                    }))
+                    .child(crate::app::sidebar::space_mark(
+                        choice,
+                        None,
+                        PICKER_SWATCH,
+                        ui,
+                    )),
+            );
+        }
+        swatches.into_any_element()
     }
 
     fn render_space_env(
@@ -842,42 +1106,36 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let key = space.id.to_string();
-        let editing = self
+        if let Some(editor) = self
             .space_env_editor
             .as_ref()
-            .filter(|editor| editor.id == space.id);
-        let mut column = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .pl(px(CARD_PADDING_X + ENV_INDENT))
-            .pr(px(CARD_PADDING_X))
-            .pb(px(10.));
-        if let Some(editor) = editing {
-            return column
-                .child(self.render_space_env_editor(editor, ui, cx))
-                .into_any_element();
+            .filter(|editor| editor.id == space.id)
+        {
+            return self.render_space_env_editor(editor, ui, cx);
         }
         let id = space.id.clone();
-        column = column.child(
+        let mut column = div().flex().flex_col().gap(px(6.)).child(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.))
-                .text_size(LABEL_SM)
+                .gap(px(12.))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(ui.muted)
-                        .child(format!("Environment: {}", env_summary(&space.env))),
+                        .text_size(BODY)
+                        .text_color(if space.env.is_empty() {
+                            ui.muted
+                        } else {
+                            ui.text
+                        })
+                        .child(env_summary(&space.env)),
                 )
                 .child(secondary_button(
-                    SharedString::from(format!("space-env-edit-{key}")),
-                    "Edit environment",
+                    SharedString::from(format!("space-env-edit-{}", space.id)),
+                    "Edit",
                     ui,
                     cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.open_space_env_editor(&id, cx);
@@ -885,14 +1143,8 @@ impl PaneFlowApp {
                 )),
         );
         for warning in space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow) {
-            column = column.child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.vc_modified)
-                    .child(warning),
-            );
+            column = column.child(render_hint(warning, HintTone::Warning, ui));
         }
-        column = column.child(self.render_space_integrations(space, ui, cx));
         column.into_any_element()
     }
 
@@ -949,6 +1201,10 @@ impl PaneFlowApp {
                                         destructive_color(),
                                         ui,
                                     )
+                                    .accessible_control(
+                                        gpui::accesskit::Role::Button,
+                                        "Remove variable",
+                                    )
                                     .on_click(cx.listener(
                                         move |this, _: &ClickEvent, _w, cx| {
                                             if let Some(editor) = this.space_env_editor.as_mut()
@@ -966,14 +1222,7 @@ impl PaneFlowApp {
                         d.child(
                             div()
                                 .pl(px(ENV_NAME_WIDTH + 6.))
-                                .text_size(LABEL_SM)
-                                .truncate()
-                                .text_color(match tone {
-                                    HintTone::Error => destructive_color(),
-                                    HintTone::Warning => ui.vc_modified,
-                                    HintTone::Preview => ui.muted,
-                                })
-                                .child(text),
+                                .child(render_hint(text, tone, ui)),
                         )
                     }),
             );
@@ -989,6 +1238,10 @@ impl PaneFlowApp {
                 div()
                     .id("space-env-add")
                     .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5.))
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
@@ -1004,7 +1257,14 @@ impl PaneFlowApp {
                         }
                         cx.notify();
                     }))
-                    .child("+ Add variable"),
+                    .child(
+                        svg()
+                            .size(px(12.))
+                            .flex_none()
+                            .path("icons/plus.svg")
+                            .text_color(ui.muted),
+                    )
+                    .child("Add variable"),
             )
             .child(
                 div()
@@ -1029,104 +1289,318 @@ impl PaneFlowApp {
                         }),
                     )),
             );
-        let mut column = div().flex().flex_col().gap(px(6.)).child(rows);
-        if let Some(error) = editor.error.as_ref() {
-            column = column.child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(destructive_color())
-                    .child(error.clone()),
-            );
-        }
-        column.child(footer).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(rows)
+            .when_some(editor.error.clone(), |column, error| {
+                column.child(render_hint(error, HintTone::Error, ui))
+            })
+            .child(footer)
+            .into_any_element()
     }
 
-    fn render_space_colors(
+    fn render_space_integrations(
         &self,
         space: &SpaceConfig,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let statuses = self
+            .space_integrations
+            .status
+            .get(&space.id)
+            .filter(|statuses| !statuses.is_empty())?;
+        let mut column = div().flex().flex_col().gap(px(6.));
+        for status in statuses {
+            let key = (space.id.clone(), status.slug.to_string());
+            let error = self.space_integrations.errors.get(&key);
+            let busy = self.space_integrations.busy.as_ref() == Some(&key);
+            let mut line = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.))
+                .min_h(px(INPUT_HEIGHT))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(BODY)
+                                .text_color(ui.text)
+                                .child(format!("{} hooks and MCP", status.label)),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(LABEL_SM)
+                                .text_color(if error.is_some() {
+                                    ui.vc_deleted
+                                } else {
+                                    ui.muted
+                                })
+                                .child(integration_state_label(
+                                    busy,
+                                    error.is_some(),
+                                    status.state,
+                                )),
+                        ),
+                );
+            if !busy && (error.is_some() || status.state == IntegrationState::NotInstalled) {
+                let id = space.id.clone();
+                let slug = status.slug;
+                line = line.child(secondary_button(
+                    SharedString::from(format!("space-integration-retry-{}-{slug}", space.id)),
+                    if error.is_some() { "Retry" } else { "Install" },
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.retry_space_integration(&id, slug, cx);
+                    }),
+                ));
+            }
+            column = column.child(line);
+            if let Some(error) = error {
+                column = column.child(render_hint(error.clone(), HintTone::Error, ui));
+            }
+        }
+        Some(column.into_any_element())
+    }
+
+    fn render_space_delete(
+        &self,
+        space: &SpaceConfig,
+        count: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
-        let key = space.id.to_string();
-        let mut swatches = div()
-            .flex_none()
+        let id = space.id.clone();
+        let row = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.));
-        let choices = std::iter::once(None).chain(SPACE_COLORS.into_iter().map(Some));
-        for choice in choices {
-            let selected = space.color == choice;
-            let id = space.id.clone();
-            let label = choice.map_or("No color", space_color_name);
-            let tint = crate::app::sidebar::space_tint(choice, ui);
-            let swatch_id = format!(
-                "space-color-{key}-{}",
-                choice.map_or("none", |color| space_color_name(color))
-            );
-            swatches = swatches.child(
-                div()
-                    .id(SharedString::from(swatch_id))
-                    .size(px(SWATCH_SIZE + 6.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .cursor(CursorStyle::PointingHand)
-                    .when(selected, |swatch| {
-                        swatch.border_1().border_color(with_alpha(ui.text, 0.6))
-                    })
-                    .role(gpui::accesskit::Role::RadioButton)
-                    .aria_label(format!(
-                        "{label}{}",
-                        if selected { ", selected" } else { "" }
-                    ))
-                    .delayed_tooltip(text_tooltip(label))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.set_space_color(&id, choice, cx);
-                    }))
-                    .child(match choice {
-                        Some(_) => div()
-                            .size(px(SWATCH_SIZE))
-                            .rounded_full()
-                            .bg(tint)
-                            .into_any_element(),
-                        None => div()
-                            .size(px(SWATCH_SIZE))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(ui.muted)
-                            .into_any_element(),
+            .gap(px(12.))
+            .pt(px(4.));
+        if self.space_delete_armed.as_ref() != Some(&space.id) {
+            return row
+                .child(secondary_button(
+                    SharedString::from(format!("space-delete-{}", space.id)),
+                    "Delete space",
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.space_delete_armed = Some(id.clone());
+                        this.space_name_editor = None;
+                        cx.notify();
                     }),
-            );
+                ))
+                .into_any_element();
         }
-        swatches.into_any_element()
+        row.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(BODY)
+                .text_color(ui.text)
+                .child(format!(
+                    "Delete {}? {}.",
+                    space.name,
+                    space_delete_message(count)
+                )),
+        )
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .gap(px(6.))
+                .child(secondary_button(
+                    "space-delete-cancel",
+                    "Cancel",
+                    ui,
+                    cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        this.space_delete_armed = None;
+                        cx.notify();
+                    }),
+                ))
+                .child(
+                    destructive_button("space-delete-confirm", "Delete space").on_click(
+                        cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                            this.delete_space(&id, cx);
+                        }),
+                    ),
+                ),
+        )
+        .into_any_element()
     }
 }
 
-fn space_row_shell() -> gpui::Div {
+fn render_spaces_intro(
+    at_limit: bool,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let new_space = labeled_icon_button(
+        "space-new",
+        "New space",
+        "icons/plus.svg",
+        ui,
+        false,
+        !at_limit,
+    )
+    .when(!at_limit, |button| {
+        button.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            if let Some(id) = this.add_space(cx) {
+                this.edit_space_name(id, window, cx);
+            }
+        }))
+    });
     div()
         .flex()
         .flex_row()
-        .items_center()
-        .gap(px(12.))
-        .px(px(CARD_PADDING_X))
-        .py(px(10.))
+        .items_end()
+        .gap(px(16.))
+        .px(px(2.))
+        .pb(px(12.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .max_w(px(520.))
+                .text_size(LABEL_SM)
+                .text_color(ui.muted)
+                .child(SPACES_INTRO),
+        )
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(10.))
+                .when(at_limit, |action| {
+                    action.child(
+                        div()
+                            .text_size(LABEL_SM)
+                            .text_color(ui.muted)
+                            .child(SPACE_LIMIT_REASON),
+                    )
+                })
+                .child(new_space),
+        )
+        .into_any_element()
 }
 
-fn space_letter(name: &str, color: Option<SpaceColor>, ui: crate::theme::UiColors) -> AnyElement {
+fn space_summary(
+    mark: AnyElement,
+    name: SharedString,
+    meta: impl Into<SharedString>,
+    ui: crate::theme::UiColors,
+) -> gpui::Div {
     div()
-        .flex_none()
-        .size(px(LETTER_SIZE))
+        .flex_1()
+        .min_w_0()
         .flex()
+        .flex_row()
         .items_center()
-        .justify_center()
-        .rounded(ROW_RADIUS)
-        .bg(with_alpha(ui.text, 0.06))
+        .gap(px(ITEM_GAP))
+        .child(mark)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(BODY_EMPHASIS)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(ui.text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(LABEL_SM)
+                        .text_color(ui.muted)
+                        .child(meta.into()),
+                ),
+        )
+}
+
+fn discard_avatar_in_background(file_name: String, cx: &mut Context<PaneFlowApp>) {
+    cx.background_spawn(async move { crate::space_avatar::discard_avatar(&file_name) })
+        .detach();
+}
+
+fn field_row(
+    label: &'static str,
+    control: impl IntoElement,
+    ui: crate::theme::UiColors,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_start()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex_none()
+                .w(px(FIELD_LABEL_WIDTH))
+                .h(px(INPUT_HEIGHT))
+                .flex()
+                .items_center()
+                .text_size(BODY)
+                .text_color(ui.muted)
+                .child(label),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .min_h(px(INPUT_HEIGHT))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .child(control),
+        )
+}
+
+fn render_hint(
+    text: impl Into<SharedString>,
+    tone: HintTone,
+    ui: crate::theme::UiColors,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_start()
+        .gap(px(6.))
         .text_size(LABEL_SM)
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(crate::app::sidebar::space_tint(color, ui))
-        .child(crate::app::sidebar::space_initial(name))
+        .text_color(match tone {
+            HintTone::Error => ui.vc_deleted,
+            HintTone::Warning => ui.text,
+            HintTone::Preview => ui.muted,
+        })
+        .when(tone == HintTone::Warning, |hint| {
+            hint.child(
+                svg()
+                    .mt(px(1.))
+                    .size(px(12.))
+                    .flex_none()
+                    .path("icons/triangle-alert.svg")
+                    .text_color(ui.vc_modified),
+            )
+        })
+        .child(div().flex_1().min_w_0().child(text.into()))
         .into_any_element()
 }
 
@@ -1138,41 +1612,35 @@ fn workspace_count_label(count: usize, empty: &'static str) -> String {
     }
 }
 
-fn render_new_space_row(
-    at_limit: bool,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let row = div()
-        .id("space-new")
-        .h(px(36.))
-        .px(px(CARD_PADDING_X))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .text_size(BODY)
-        .text_color(ui.muted)
-        .child("+ New space");
-    if at_limit {
-        return row
-            .opacity(0.5)
-            .accessible_control(
-                gpui::accesskit::Role::Button,
-                format!("New space, unavailable: {SPACE_LIMIT_REASON}"),
-            )
-            .child(div().text_size(LABEL_SM).child(SPACE_LIMIT_REASON))
-            .into_any_element();
+fn space_meta_label(workspaces: usize, variables: usize) -> String {
+    let workspaces = workspace_count_label(workspaces, "No workspaces");
+    match variables {
+        0 => workspaces,
+        1 => format!("{workspaces} · 1 variable"),
+        n => format!("{workspaces} · {n} variables"),
     }
-    row.cursor(CursorStyle::PointingHand)
-        .accessible_control(gpui::accesskit::Role::Button, "New space")
-        .hover(move |style| style.text_color(ui.text).bg(with_alpha(ui.text, 0.05)))
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            if let Some(id) = this.add_space(cx) {
-                this.edit_space_name(id, window, cx);
-            }
-        }))
-        .into_any_element()
+}
+
+fn warning_count_label(count: usize) -> String {
+    match count {
+        1 => "1 warning".to_string(),
+        n => format!("{n} warnings"),
+    }
+}
+
+fn integration_state_label(busy: bool, failed: bool, state: IntegrationState) -> String {
+    if busy {
+        return "Installing…".to_string();
+    }
+    if failed {
+        return "Failed".to_string();
+    }
+    let label = paneflow_mcp_install::state_label(state);
+    let mut chars = label.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1184,6 +1652,7 @@ mod tests {
             id: SpaceId::parse(&format!("550e8400-e29b-41d4-a716-4466554400{n:02}")).unwrap(),
             name: name.to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         }
     }
@@ -1351,5 +1820,38 @@ mod tests {
     fn deleting_a_space_names_how_many_workspaces_move() {
         assert_eq!(space_delete_message(3), "Its 3 workspaces move to Default");
         assert_eq!(space_delete_message(1), "Its 1 workspace moves to Default");
+        assert_eq!(space_delete_message(0), "It has no workspaces");
+    }
+
+    #[test]
+    fn a_collapsed_space_summarizes_its_workspaces_and_variables() {
+        assert_eq!(space_meta_label(0, 0), "No workspaces");
+        assert_eq!(space_meta_label(1, 0), "1 workspace");
+        assert_eq!(space_meta_label(4, 1), "4 workspaces · 1 variable");
+        assert_eq!(space_meta_label(0, 3), "No workspaces · 3 variables");
+    }
+
+    #[test]
+    fn an_integration_state_reads_in_sentence_case() {
+        assert_eq!(
+            integration_state_label(false, false, IntegrationState::NotInstalled),
+            "Not installed"
+        );
+        assert_eq!(
+            integration_state_label(false, true, IntegrationState::Installed),
+            "Failed"
+        );
+        assert_eq!(
+            integration_state_label(true, true, IntegrationState::Installed),
+            "Installing…"
+        );
+    }
+
+    #[test]
+    fn the_space_rows_sit_concentric_in_the_settings_card() {
+        assert_eq!(
+            crate::app::constants::SETTINGS_CARD_RADIUS,
+            ROW_RADIUS + px(LIST_INSET)
+        );
     }
 }

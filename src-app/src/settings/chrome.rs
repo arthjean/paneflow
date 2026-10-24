@@ -96,7 +96,7 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Spaces,
                 label: "Spaces",
-                icon: "icons/folders.svg",
+                icon: "icons/archive-02.svg",
                 keywords: &["space", "spaces", "context", "work", "personal", "group"],
             },
             NavItem {

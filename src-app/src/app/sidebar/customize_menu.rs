@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, Role, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder,
-    px, svg,
+    ParentElement, Role, SharedString, StatefulInteractiveElement, Styled, deferred, div,
+    prelude::FluentBuilder, px, svg,
 };
 
 use crate::PaneFlowApp;
@@ -304,13 +304,15 @@ fn render_show_option(
         .into_any_element()
 }
 
-fn menu_label(label: &'static str, ui: crate::theme::UiColors) -> AnyElement {
+pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiColors) -> AnyElement {
     div()
         .flex_1()
         .min_w_0()
+        .overflow_x_hidden()
         .whitespace_nowrap()
+        .text_ellipsis()
         .text_size(crate::ui_primitives::BODY)
         .text_color(ui.text)
-        .child(label)
+        .child(Into::<SharedString>::into(label))
         .into_any_element()
 }
