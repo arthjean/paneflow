@@ -324,9 +324,49 @@ pub(crate) fn ensure_config_dirs(dirs: &[PathBuf]) -> Vec<String> {
         .collect()
 }
 
+pub(crate) fn layered_env(
+    layers: impl IntoIterator<Item = Option<HashMap<String, String>>>,
+) -> Option<HashMap<String, String>> {
+    layers
+        .into_iter()
+        .flatten()
+        .map(|layer| {
+            layer
+                .into_iter()
+                .map(|(key, value)| (platform_key(&key), value))
+                .collect::<HashMap<_, _>>()
+        })
+        .reduce(|mut lower, higher| {
+            lower.extend(higher);
+            lower
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_layered_env_lets_a_higher_layer_win_whatever_the_key_case() {
+        let layered = layered_env([
+            Some(HashMap::from([(
+                "CODEX_HOME".to_string(),
+                "/space".to_string(),
+            )])),
+            None,
+            Some(HashMap::from([(
+                "codex_home".to_string(),
+                "/profile".to_string(),
+            )])),
+        ])
+        .unwrap();
+        assert_eq!(
+            layered.get(&platform_key("codex_home")).map(String::as_str),
+            Some("/profile")
+        );
+        assert_eq!(layered.len(), if cfg!(windows) { 1 } else { 2 });
+        assert_eq!(layered_env([None, None]), None);
+    }
 
     fn work() -> SpaceId {
         SpaceId::parse("550e8400-e29b-41d4-a716-446655440001").unwrap()

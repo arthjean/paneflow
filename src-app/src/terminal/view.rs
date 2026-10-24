@@ -783,13 +783,7 @@ impl HostedLaunch {
     }
 
     fn launch_env(&self) -> Option<std::collections::HashMap<String, String>> {
-        [self.space_env.clone(), self.user_env.clone()]
-            .into_iter()
-            .flatten()
-            .reduce(|mut lower, higher| {
-                lower.extend(higher);
-                lower
-            })
+        crate::space_env::layered_env([self.space_env.clone(), self.user_env.clone()])
     }
 
     fn space_config_dirs(
