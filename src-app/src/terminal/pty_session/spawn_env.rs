@@ -373,13 +373,7 @@ impl TerminalState {
         };
         let shell_quoting = ShellQuoting::for_shell(&shell);
         let global_env = config.terminal.as_ref().and_then(|t| t.env.clone());
-        let merged_env = [global_env, space_env.cloned(), user_env]
-            .into_iter()
-            .flatten()
-            .reduce(|mut lower, higher| {
-                lower.extend(higher);
-                lower
-            });
+        let merged_env = crate::space_env::layered_env([global_env, space_env.cloned(), user_env]);
         let mut env = std::collections::HashMap::new();
         let extra_args = if config.shell_integration.unwrap_or(true) {
             setup_shell_integration(home.shell_integration_dir.as_deref(), &shell, &mut env)
