@@ -8,6 +8,7 @@
 | 1.0 | 2026-10-20 | Arthur Jean | PRD initial : espaces à la Arc en release 1 (groupes nommés de workspaces, sélecteur en bas de la sidebar, attention entre espaces, IPC et CLI), puis environnement et comptes par espace en release 2 (env injectée au spawn, hooks installés dans les dossiers de config de l'espace, sous-processus de l'app sous le bon compte). Vérification Windows réel en dernier epic. |
 | 1.1 | 2026-10-21 | Arthur Jean | US-015 amendée : la preuve à deux comptes réels connectés en même temps est retirée, faute de second compte disponible. La story vérifie désormais que chaque variable déplace le login de sa CLI vers un dossier séparé, et note comment `gh` et git choisissent leurs identifiants. L'isolation entre deux comptes connectés repose sur la documentation des CLIs. |
 | 1.2 | 2026-10-21 | Arthur Jean | US-021 amendée comme US-015 : sur Windows, la vérification porte sur le déplacement du login de Claude Code et de Codex vers le dossier de l'espace, et non plus sur deux comptes claude.ai connectés en même temps. |
+| 1.3 | 2026-10-24 | Arthur Jean | US-007 et US-011 amendées : le sélecteur quitte le bas de la sidebar pour l'en-tête, où il remplace le libellé « Workspaces » par le nom de l'espace actif et un menu. Les badges des espaces cachés deviennent un bouton d'attention unique à côté du sélecteur, avec les glyphes des lignes, qui mène à l'agent le plus urgent. |
 
 ## Problem Statement
 
@@ -23,7 +24,7 @@ Un utilisateur (Olivier M, Discord, 2026-10-20) demande de pouvoir « créer des
 
 Un espace est un groupe nommé de workspaces, avec une couleur, puis en release 2 un environnement. La liste des workspaces reste plate et indexée globalement : l'espace est une métadonnée de chaque workspace, et seuls la sidebar, le sélecteur et la navigation filtrent sur l'espace actif. L'IPC, la file d'attention, `find_pane_by_surface_id` et `DetachedPaneLocation` restent intacts. Les définitions vivent dans `paneflow.json` (`spaces`, sur le modèle d'`agent_profiles`), l'appartenance et l'espace actif dans `session.json`, en champs additifs qui gardent la version de schéma 3. Un workspace sans espace appartient à l'espace par défaut, implicite et nommé « Default » : tant qu'aucun espace n'est créé, rien ne change à l'écran.
 
-Le sélecteur se place en bas de la sidebar, au-dessus du pied de page, comme les icônes d'espaces d'Arc. Changer d'espace remplace la liste sans animation et ramène le dernier workspace affiché de cet espace ; un espace vide montre l'état vide existant. Arc n'a aucun signal entre Spaces ; ici chaque espace caché affiche un badge quand un agent y attend, a échoué ou a fini, et la file d'attention comme `workspace.select` basculent d'espace pour amener en un geste vers un agent caché.
+Le sélecteur prend la place du libellé « Workspaces » dans l'en-tête de la sidebar : le nom de l'espace actif ouvre un menu des espaces. Changer d'espace remplace la liste sans animation et ramène le dernier workspace affiché de cet espace ; un espace vide montre l'état vide existant. Arc n'a aucun signal entre Spaces ; ici un bouton d'attention à côté du sélecteur apparaît quand un agent d'un espace caché attend, a échoué ou a fini, et la file d'attention comme `workspace.select` basculent d'espace pour amener en un geste vers un agent caché.
 
 En release 2, chaque espace porte une env injectée au spawn de chaque terminal de ses workspaces, avec la précédence global < espace < profil d'agent < surface. Quand cette env définit `CLAUDE_CONFIG_DIR` ou `CODEX_HOME`, Paneflow crée le dossier, y installe ses hooks et son MCP, et affiche leur état par espace. Les sous-processus de l'app (badge PR, clone, git, auto-nommage, découverte et reprise des sessions) reçoivent une liste blanche de cette env. Un espace organise le travail ; ce n'est pas une frontière de sécurité, et la documentation le dit.
 
@@ -210,7 +211,7 @@ Donner à chaque workspace une appartenance à un espace, la persister, et garan
 
 Rendre les espaces visibles et manipulables : sidebar filtrée, sélecteur, déplacement d'un workspace, palette, raccourcis et réglages.
 
-**Definition of Done:** avec au moins un espace créé, le sélecteur apparaît en bas de la sidebar, la liste ne montre que l'espace actif, un workspace se déplace par menu ou palette, deux raccourcis par plateforme changent d'espace, et Settings > Spaces crée, renomme, colore et supprime un espace ; passe visuelle d'Arthur sous Linux.
+**Definition of Done:** avec au moins un espace créé, le sélecteur apparaît dans l'en-tête de la sidebar, la liste ne montre que l'espace actif, un workspace se déplace par menu ou palette, deux raccourcis par plateforme changent d'espace, et Settings > Spaces crée, renomme, colore et supprime un espace ; passe visuelle d'Arthur sous Linux.
 
 #### US-006: Filtrer la sidebar par espace
 **Description:** As a développeur multi-contextes, I want que la sidebar ne liste que les workspaces de l'espace actif so that je ne voie que le contexte sur lequel je travaille.
@@ -230,21 +231,21 @@ Rendre les espaces visibles et manipulables : sidebar filtrée, sélecteur, dép
 - [ ] Given le scénario `desktop_tui_30_workspaces` de `perf_gates` avec ses 30 workspaces répartis sur 3 espaces, when il mesure, then `sidebar_renders` reste dans son budget actuel.
 - [ ] Échec : given un filtre texte actif dans la sidebar, when l'utilisateur change d'espace, then le filtre s'applique au nouvel espace et le message « No workspaces or tabs match » s'affiche s'il ne trouve rien.
 
-#### US-007: Afficher le sélecteur d'espaces en bas de la sidebar
-**Description:** As a développeur multi-contextes, I want une rangée d'espaces en bas de la sidebar so that je voie l'espace actif et que j'en change d'un clic.
+#### US-007: Afficher le sélecteur d'espaces dans l'en-tête de la sidebar
+**Description:** As a développeur multi-contextes, I want le nom de l'espace actif en tête de la sidebar so that je voie l'espace actif et que j'en change depuis un menu.
 
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-001, US-003
 
 **Acceptance Criteria:**
-- [ ] `render_space_switcher` s'insère entre la liste et `render_sidebar_settings_footer` (`src-app/src/app/sidebar/mod.rs:390`), et ne s'affiche que si `paneflow.json` déclare au moins un espace.
-- [ ] La rangée montre « Default » en premier puis les espaces dans l'ordre de la config ; chaque bouton fait 22 px, porte la première lettre du nom en majuscule, teintée par sa couleur résolue sur la palette ANSI du thème, ou `muted` sans couleur.
-- [ ] Le bouton de l'espace actif porte `sidebar_tab_active_background` et les autres le survol de `sidebar_tab_hover_background` (DESIGN.md §4.3) ; une info-bulle donne le nom complet.
-- [ ] Cliquer un bouton appelle `activate_space` ; un bouton `+` en fin de rangée ouvre Settings > Spaces sur un nouvel espace dont le champ nom a le focus.
-- [ ] Chaque bouton expose le rôle bouton et le libellé accessible « Space {name} », suivi de « current » pour l'espace actif.
-- [ ] Échec : given neuf espaces déclarés, when la rangée se dessine, then le bouton `+` est désactivé avec l'info-bulle « 9 spaces maximum ».
-- [ ] Échec : given une sidebar à sa largeur minimale avec dix boutons, when la rangée se dessine, then elle tient sur une ligne sans chevauchement ni débordement du pied de page.
+- [ ] `render_space_header` remplace le libellé « Workspaces » de l'en-tête (`src-app/src/app/sidebar/mod.rs`) et ne s'affiche que si `paneflow.json` déclare au moins un espace ; sans espace, l'en-tête reste « Workspaces ».
+- [ ] Le déclencheur fait 22 px, rayon 7, et montre la pastille de l'espace actif (sa couleur résolue sur la palette ANSI du thème, ou un contour `muted` pour « Default ») dans la colonne des dossiers, puis son nom en `text` et un chevron ; la couleur d'un espace ne teinte jamais un texte.
+- [ ] Le déclencheur porte le survol de `sidebar_tab_hover_background`, et `sidebar_tab_active_background` tant que son menu est ouvert (DESIGN.md §4.3).
+- [ ] Le menu liste « Default » puis les espaces dans l'ordre de la config, avec pastille et coche sur l'espace actif ; cliquer une ligne appelle `activate_space`, puis `New space…` ouvre Settings > Spaces sur un nouvel espace dont le champ nom a le focus et `Manage spaces` ouvre Settings > Spaces.
+- [ ] Le déclencheur expose le rôle bouton, l'état déplié et le libellé accessible « Space {name} » ; chaque ligne du menu expose « Space {name} », suivi de « current » pour l'espace actif.
+- [ ] Échec : given neuf espaces déclarés, when le menu s'ouvre, then `New space…` est remplacé par la ligne inactive « 9 spaces maximum ».
+- [ ] Échec : given un nom d'espace de 32 caractères, when l'en-tête se dessine, then le nom se tronque avec une ellipse sans repousser les boutons de l'en-tête.
 
 #### US-008: Déplacer un workspace vers un autre espace
 **Description:** As a développeur multi-contextes, I want déplacer un workspace d'un espace à l'autre so that je range ce qui existait avant les espaces et corrige une erreur de classement.
@@ -309,10 +310,10 @@ Un agent qui attend, échoue ou finit dans un espace caché reste visible, et un
 
 **Acceptance Criteria:**
 - [ ] La classification par workspace d'`attention_queue_rows` (`src-app/src/app/attention_queue.rs:48`) est extraite en une fonction réutilisée par la file et par le sélecteur, qui compte par espace les approbations en attente, les agents en attente d'entrée, les statuts déclarés en erreur et les fins non vues.
-- [ ] Le bouton d'un espace caché affiche un point teinté de la couleur de l'état le plus urgent (entrée, puis erreur, puis fin), avec les couleurs de statut de la sidebar (DESIGN.md, lignes d'agent), et le nombre d'éléments quand il dépasse 1.
+- [ ] Un bouton d'attention à côté du sélecteur montre le glyphe de ligne de l'état le plus urgent des espaces cachés (cloche pour l'entrée, cercle barré pour l'erreur, point pour la fin) dans sa couleur de statut, et le total quand il dépasse 1 ; le menu montre la même marque sur la ligne de chaque espace caché concerné. Un clic mène à l'agent le plus urgent et bascule d'espace.
 - [ ] L'espace actif n'affiche pas de badge, ses lignes portant déjà leur état.
 - [ ] Le badge se met à jour sur la notification qui met à jour les lignes, sans minuterie ajoutée.
-- [ ] Le libellé accessible du bouton ajoute « {n} agents need attention » quand le badge est visible.
+- [ ] Le libellé accessible et l'info-bulle du bouton nomment l'espace visé et chaque type d'état, par exemple « Go to Work: 1 agent waiting for input, 2 more in other spaces » ; une ligne du menu ajoute à « Space {name} » les mêmes types d'état.
 - [ ] Échec : given un workspace caché en sourdine (`muted`), when un de ses agents finit, then le badge ne compte pas cette fin, comme la notification aujourd'hui (`src-app/src/app/host_agents.rs:855`).
 
 #### US-012: Nommer l'espace dans la file d'attention et les notifications

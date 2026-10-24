@@ -49,7 +49,7 @@
     {
       "id": "EP-006",
       "title": "Vérifier sur le matériel réel",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 2,
       "stories_done": 0
@@ -140,7 +140,7 @@
     },
     {
       "id": "US-007",
-      "title": "Afficher le sélecteur d'espaces en bas de la sidebar",
+      "title": "Afficher le sélecteur d'espaces dans l'en-tête de la sidebar",
       "epic": "EP-002",
       "status": "DONE",
       "priority": "P0",
@@ -324,7 +324,7 @@
       "id": "US-020",
       "title": "Vérifier les espaces sur Windows réel (release 1)",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -334,13 +334,14 @@
       ],
       "started_at": null,
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": null,
+      "notes": "Linux inspection done: shortcuts, palette, CLI --space forwarding are transport-agnostic. Needs Arthur on Windows 11 AZERTY (local checklist tasks/spaces-ep006/windows-checklist.md)."
     },
     {
       "id": "US-021",
       "title": "Vérifier l'env et les comptes sur Windows réel (release 2)",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
@@ -350,7 +351,8 @@
       ],
       "started_at": null,
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": null,
+      "notes": "Windows-only defect fixed by inspection: env layers merged before upper-casing, so a lowercase profile key did not override the space key (space_env::layered_env). SSH_AUTH_SOCK doc criterion contradicted by Win32-OpenSSH authfd.c (reads getenv(SSH_AUTH_SOCK)); wording needs Arthur. Needs Windows 11 proof (local checklist)."
     }
   ]
 }
