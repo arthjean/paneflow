@@ -337,6 +337,11 @@ mod tests {
 
     #[test]
     fn the_pr_lookup_runs_gh_under_the_workspace_space_allowlist() {
+        const GH_DIR: &str = if cfg!(windows) {
+            r"C:\work\gh"
+        } else {
+            "/work/gh"
+        };
         let mut config = paneflow_config::schema::PaneFlowConfig::default();
         let work = paneflow_config::schema::SpaceId::new();
         config.spaces.push(paneflow_config::schema::SpaceConfig {
@@ -344,7 +349,7 @@ mod tests {
             name: "Work".to_string(),
             color: None,
             avatar: None,
-            env: [("GH_CONFIG_DIR", "/work/gh"), ("NOT_ALLOWLISTED", "leak")]
+            env: [("GH_CONFIG_DIR", GH_DIR), ("NOT_ALLOWLISTED", "leak")]
                 .into_iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect(),
@@ -355,7 +360,7 @@ mod tests {
             "main",
             &space_env,
         ));
-        assert!(env.contains(&("GH_CONFIG_DIR".to_string(), Some("/work/gh".to_string()))));
+        assert!(env.contains(&("GH_CONFIG_DIR".to_string(), Some(GH_DIR.to_string()))));
         assert!(env.iter().all(|(key, _)| key != "NOT_ALLOWLISTED"));
 
         let default_env = command_env(&super::pr_list_command(

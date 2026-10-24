@@ -542,9 +542,14 @@ mod tests {
 
     #[test]
     fn only_allowlisted_space_variables_reach_paneflow_subprocesses() {
+        const GH_DIR: &str = if cfg!(windows) {
+            r"C:\work\gh"
+        } else {
+            "/work/gh"
+        };
         let config = config_with(&[
             ("GIT_AUTHOR_EMAIL", "me@work.example"),
-            ("GH_CONFIG_DIR", "/work/gh"),
+            ("GH_CONFIG_DIR", GH_DIR),
             ("FOO_TOKEN_FILE", "/work/foo"),
         ]);
         let env = subprocess_env(&config, Some(&work()));
@@ -555,7 +560,7 @@ mod tests {
                     "GIT_AUTHOR_EMAIL".to_string(),
                     "me@work.example".to_string()
                 ),
-                ("GH_CONFIG_DIR".to_string(), "/work/gh".to_string()),
+                ("GH_CONFIG_DIR".to_string(), GH_DIR.to_string()),
             ]
         );
         assert!(subprocess_env(&config, None).is_empty());

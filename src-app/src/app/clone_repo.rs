@@ -970,6 +970,11 @@ mod tests {
 
     #[test]
     fn a_clone_runs_under_the_active_space_allowlist_for_gh_and_git() {
+        const GH_DIR: &str = if cfg!(windows) {
+            r"C:\work\gh"
+        } else {
+            "/work/gh"
+        };
         let mut config = paneflow_config::schema::PaneFlowConfig::default();
         let work = paneflow_config::schema::SpaceId::new();
         config.spaces.push(paneflow_config::schema::SpaceConfig {
@@ -979,7 +984,7 @@ mod tests {
             avatar: None,
             env: [
                 ("GIT_SSH_COMMAND", "ssh -i ~/.ssh/work"),
-                ("GH_CONFIG_DIR", "/work/gh"),
+                ("GH_CONFIG_DIR", GH_DIR),
                 ("NOT_ALLOWLISTED", "leak"),
             ]
             .into_iter()
@@ -990,10 +995,7 @@ mod tests {
         let destination = std::path::Path::new("/tmp/clone-target");
         for tool in [CloneTool::GitHubCli, CloneTool::Git] {
             let command = clone_command(tool, "owner/repo", destination, &space_env);
-            assert_eq!(
-                env_of(&command, "GH_CONFIG_DIR").as_deref(),
-                Some("/work/gh")
-            );
+            assert_eq!(env_of(&command, "GH_CONFIG_DIR").as_deref(), Some(GH_DIR));
             assert_eq!(
                 env_of(&command, "GIT_SSH_COMMAND").as_deref(),
                 Some("ssh -i ~/.ssh/work")
