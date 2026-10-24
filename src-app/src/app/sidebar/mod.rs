@@ -23,7 +23,7 @@ use drop::*;
 pub(crate) use lane::SpinnerClock;
 use lane::{Lane, LaneSlot, infer_lane, render_lane_slot};
 use meta::*;
-pub(crate) use space_switcher::{space_initial, space_tint};
+pub(crate) use space_switcher::{default_space_mark, space_mark};
 pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
@@ -336,13 +336,15 @@ impl PaneFlowApp {
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .child(
+                .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                .child(self.render_space_header(ui, cx).unwrap_or_else(|| {
                     div()
                         .pl(px(SIDEBAR_ROW_PADDING_X))
                         .text_size(px(13.))
                         .text_color(ui.muted)
-                        .child("Workspaces"),
-                )
+                        .child("Workspaces")
+                        .into_any_element()
+                }))
                 .child(
                     div()
                         .flex_none()
@@ -429,9 +431,6 @@ impl PaneFlowApp {
         list = self.render_workspace_rows(list, ui, window, cx);
         list = self.render_fallback_session_group(list, ui, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-        if let Some(switcher) = self.render_space_switcher(ui, cx) {
-            sidebar = sidebar.child(switcher);
-        }
         sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar
     }
@@ -881,6 +880,7 @@ mod tests {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         assert_eq!(

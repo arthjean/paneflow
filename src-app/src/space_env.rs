@@ -378,6 +378,7 @@ mod tests {
             id: work(),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: env
                 .iter()
                 .map(|(key, value)| ((*key).to_string(), (*value).to_string()))

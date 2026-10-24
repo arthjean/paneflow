@@ -54,6 +54,7 @@ mod runtime_paths;
 mod search;
 mod settings;
 mod sidebar_title;
+mod space_avatar;
 mod space_env;
 #[cfg(test)]
 mod startup_bench;
@@ -230,8 +231,10 @@ struct PaneFlowApp {
     space_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     space_name_editor: Option<crate::settings::tabs::spaces::SpaceNameEditor>,
     space_delete_armed: Option<paneflow_config::schema::SpaceId>,
+    space_settings_expanded: Option<paneflow_config::schema::SpaceId>,
     space_env_editor: Option<crate::settings::tabs::spaces::SpaceEnvEditor>,
     space_integrations: crate::settings::tabs::spaces::SpaceIntegrations,
+    space_avatar_import: crate::settings::tabs::spaces::SpaceAvatarImport,
     agent_profile_args_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     mcp_status: Option<Vec<paneflow_mcp_install::StatusReport>>,
     mcp_install: Option<Result<Vec<paneflow_mcp_install::InstallReport>, String>>,
@@ -262,6 +265,7 @@ struct PaneFlowApp {
     pub(crate) pr_states: crate::app::pull_request::PrStates,
     pub(crate) sidebar_customize_menu_open: bool,
     pub(crate) sidebar_show_submenu_open: bool,
+    pub(crate) sidebar_space_menu_open: bool,
     tab_menu_open: Option<TabContextMenu>,
     pane_menu_open: Option<PaneContextMenu>,
     pending_pane_focus: Option<Entity<Pane>>,

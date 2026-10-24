@@ -8,6 +8,8 @@ pub const MAX_SPACE_NAME_CHARS: usize = 32;
 
 pub const DEFAULT_SPACE_NAME: &str = "Default";
 
+pub const MAX_SPACE_AVATAR_CHARS: usize = 96;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpaceColor {
@@ -25,6 +27,8 @@ pub struct SpaceConfig {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<SpaceColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
 }
@@ -72,6 +76,20 @@ pub fn validate_space_name<'a>(
     Ok(name.to_string())
 }
 
+pub fn is_valid_space_avatar(file_name: &str) -> bool {
+    let Some(stem) = file_name.strip_suffix(".png") else {
+        return false;
+    };
+    file_name.len() <= MAX_SPACE_AVATAR_CHARS
+        && stem
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphanumeric())
+        && stem
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
+}
+
 pub(super) fn lenient_spaces<'de, D>(d: D) -> Result<Vec<SpaceConfig>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -115,6 +133,17 @@ fn parse_space(raw: &serde_json::Value, accepted: &[SpaceConfig]) -> Result<Spac
     let color = raw
         .get("color")
         .and_then(|color| serde_json::from_value::<SpaceColor>(color.clone()).ok());
+    let avatar = raw
+        .get("avatar")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|avatar| {
+            if is_valid_space_avatar(avatar) {
+                Some(avatar.to_string())
+            } else {
+                tracing::warn!("space {id}: ignoring avatar {avatar:?}: expected a PNG file name");
+                None
+            }
+        });
     let env = raw
         .get("env")
         .and_then(serde_json::Value::as_object)
@@ -135,6 +164,7 @@ fn parse_space(raw: &serde_json::Value, accepted: &[SpaceConfig]) -> Result<Spac
         id,
         name,
         color,
+        avatar,
         env,
     })
 }

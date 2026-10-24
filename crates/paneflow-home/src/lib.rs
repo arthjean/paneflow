@@ -109,6 +109,10 @@ pub fn worktrees_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("worktrees"))
 }
 
+pub fn space_avatars_dir() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("avatars"))
+}
+
 pub const HOST_DIR_NAME: &str = "host";
 
 pub const HOST_SESSIONS_DIR_NAME: &str = "sessions";

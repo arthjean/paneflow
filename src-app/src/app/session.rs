@@ -2562,6 +2562,7 @@ mod tests {
                     id: (*id).clone(),
                     name: format!("Space {n}"),
                     color: None,
+                    avatar: None,
                     env: Default::default(),
                 })
                 .collect(),

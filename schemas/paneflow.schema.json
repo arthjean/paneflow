@@ -520,7 +520,12 @@
         "color": {
           "type": "string",
           "enum": ["red", "green", "yellow", "blue", "magenta", "cyan"],
-          "description": "Tint taken from the active theme's ANSI palette."
+          "description": "Mesh gradient family drawn in the space's circle when it has no image, the same in every theme."
+        },
+        "avatar": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,91}\\.png$",
+          "description": "File name of the space's image in the avatars directory of the Paneflow home, written by Settings > Spaces as a 96 pixel square PNG. The image replaces the color's mesh gradient in the sidebar and in Settings; a malformed name is ignored."
         },
         "env": {
           "type": "object",

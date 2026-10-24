@@ -417,6 +417,7 @@ impl PaneFlowApp {
             id: id.clone(),
             name: next_space_name(&self.cached_config),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         self.persist_spaces(spaces, cx);
@@ -812,6 +813,7 @@ mod tests {
                 id: space(1),
                 name: "Work".to_string(),
                 color: None,
+                avatar: None,
                 env: Default::default(),
             }],
             ..Default::default()
@@ -910,6 +912,7 @@ mod tests {
             id: space(1),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: Default::default(),
         });
         assert_eq!(space_label(&config, None), "Default");
@@ -924,6 +927,7 @@ mod tests {
                 id: space(n as u8 + 1),
                 name: name.to_string(),
                 color: None,
+                avatar: None,
                 env: Default::default(),
             });
         }

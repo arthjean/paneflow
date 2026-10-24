@@ -102,6 +102,32 @@ calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee
 [profile.dev.package.sha2]
 opt-level = 3
 
+# Turning a 12 MP photo into a space image takes ~5 s with unoptimized decoders
+# and ~0.2 s with these, so debug builds keep the image pipeline optimized.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.image-webp]
+opt-level = 3
+
+[profile.dev.package.gif]
+opt-level = 3
+
+[profile.dev.package.weezl]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -343,6 +343,7 @@ mod tests {
             id: work.clone(),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: [("GH_CONFIG_DIR", "/work/gh"), ("NOT_ALLOWLISTED", "leak")]
                 .into_iter()
                 .map(|(key, value)| (key.to_string(), value.to_string()))

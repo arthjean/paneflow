@@ -976,6 +976,7 @@ mod tests {
             id: work.clone(),
             name: "Work".to_string(),
             color: None,
+            avatar: None,
             env: [
                 ("GIT_SSH_COMMAND", "ssh -i ~/.ssh/work"),
                 ("GH_CONFIG_DIR", "/work/gh"),
