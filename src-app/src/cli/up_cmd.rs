@@ -975,6 +975,7 @@ mod tests {
     #[test]
     fn up_sends_the_spec_space_to_workspace_up() {
         let dir = tempfile::tempdir().expect("tempdir");
+        let _root = worktree::test_support::scoped_root(dir.path().join("worktrees"));
         let file = dir.path().join("paneflow.workspace.toml");
         let cwd = dir.path().to_string_lossy().replace('\\', "/");
         std::fs::write(

@@ -1124,6 +1124,7 @@ mod tests {
     #[test]
     fn submitting_flow_refused_when_gate_off() {
         let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
         let file = dir.path().join("flow.toml");
         std::fs::write(
             &file,
@@ -1144,6 +1145,7 @@ mod tests {
     #[test]
     fn flow_run_refused_when_orchestration_gate_off() {
         let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
         let file = dir.path().join("flow.toml");
         std::fs::write(
             &file,
@@ -1164,6 +1166,7 @@ mod tests {
     #[test]
     fn dry_run_makes_no_mutating_call() {
         let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
         let file = dir.path().join("flow.toml");
         std::fs::write(
             &file,
@@ -1201,6 +1204,7 @@ mod tests {
     #[test]
     fn two_step_flow_runs_to_ready() {
         let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
         let file = dir.path().join("flow.toml");
         std::fs::write(
             &file,
@@ -1229,6 +1233,7 @@ mod tests {
     #[test]
     fn timeout_fails_step_and_exits_4() {
         let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
         let file = dir.path().join("flow.toml");
         std::fs::write(
             &file,
