@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-14 | Arthur Jean | PRD initial : réparer le gate de réflexion aveugle depuis `328a8fe1` et mesurer le cas réel (TUI d'agent animée, 30 workspaces), puis supprimer les coûts mesurés le 2026-10-14 (sonde git sur tous les workspaces, paint du terminal hors layer, sidebar reconstruite à chaque frame), les frames d'animation inutiles, la rétention mémoire des arènes glibc, le travail du pipeline terminal au scroll et dans les panes cachés, et quatre boucles à intervalle fixe. Vérification Windows réel en dernier epic. |
 | 1.1 | 2026-10-26 | Arthur Jean | US-007 : le critère « au moins 15 % de CPU en moins au thread principal » devient « `BoundsTree::insert` absent du paint du terminal » et « au moins 10 % en moins, fenêtre maximisée ». Le profil du 2026-10-26 donne `BoundsTree::insert` à 12,5 % du thread sur `main` avec 18 workspaces : même supprimé en entier, il ne peut pas rendre 15 %. Les deux layers le ramènent à 0,5 %, sans appel depuis le terminal. |
+| 1.2 | 2026-10-26 | Arthur Jean | US-011 : la mesure de 4 h de `RssAnon` contre un desktop sans plafond et la comparaison CPU du thread principal sont retirées. Le critère devient le nombre d'arènes lu dans `/proc/<pid>/maps` (2 avec le plafond, 63 avec `MALLOC_ARENA_MAX=64`, mesuré le 2026-10-26) ; le RSS et le CPU du thread principal restent relevés sur matériel réel par US-019. |
 
 ## Problem Statement
 
@@ -87,7 +88,7 @@ Key findings that informed this PRD:
 
 ### Assumptions (to validate)
 - libghostty marque toutes les lignes du viewport comme sales quand le contenu défile d'une ligne, ce qui explique `layout_scroll_cached` égal à la version sans cache. Validé par US-012 avant US-013.
-- Un plafond de 2 arènes ne coûte pas plus de 3 % de CPU au thread principal sous la charge de référence, d'après l'expérience du host et le défaut de Heroku. Validé par US-011.
+- Un plafond de 2 arènes ne coûte pas plus de 3 % de CPU au thread principal sous la charge de référence, d'après l'expérience du host et le défaut de Heroku. Vérifié par US-019 sur matériel réel.
 - Le survol des éléments de la sidebar reste vivant dans une vue en cache, car GPUI notifie la vue courante quand l'état de survol change (`crates/gpui/src/elements/div.rs:2703` au rev épinglé). Vérifié par les critères d'US-008.
 - Des diffstats de workspaces inactifs vieilles d'au plus 5 min ne gênent pas l'utilisateur, puisque l'activation et les événements `.git` les rafraîchissent aussitôt.
 - Un shimmer à 90 ms reste lisible ; repli sur 45 ms si la passe visuelle le refuse (Open Questions).
@@ -251,7 +252,7 @@ Enlever l'ordonnancement par glyphe et la reconstruction de la sidebar, les deux
 
 Ramener les animations sur la grille de 90 ms, arrêter le curseur d'une fenêtre inactive et rendre au système la mémoire que les arènes glibc retiennent.
 
-**Definition of Done:** le budget de réflexion d'US-001 tient avec le shimmer visible ; une fenêtre inactive ne fait plus clignoter son curseur ; le RSS anonyme du desktop après 4 h du scénario d'US-002 est au moins 15 % sous la même mesure sans plafond.
+**Definition of Done:** le budget de réflexion d'US-001 tient avec le shimmer visible ; une fenêtre inactive ne fait plus clignoter son curseur ; le desktop lancé sous Linux gnu ne compte pas plus de 2 arènes glibc.
 
 #### US-009: Caler le shimmer sur la grille de 90 ms
 **Description:** As a utilisateur multi-agents, I want que le shimmer des agents en réflexion avance sur les pas du spinner so that il n'ajoute aucune frame aux 11,1 par seconde du spinner.
@@ -289,8 +290,8 @@ Ramener les animations sur la grille de 90 ms, arrêter le curseur d'une fenêtr
 **Acceptance Criteria:**
 - [ ] `src-app/src/main.rs` appelle, avant de créer le moindre thread, une copie de `cap_malloc_arenas` (`crates/paneflow-host/src/main.rs:176-186`) avec la même paire de `cfg` (`target_os = "linux"`, `target_env = "gnu"`), 2 arènes et un repli sans effet ailleurs.
 - [ ] Une variable `MALLOC_ARENA_MAX` fournie par l'utilisateur est respectée et n'est pas écrasée.
-- [ ] Given le scénario d'US-002 pendant 4 h sur Linux, when on compare `RssAnon` à la même mesure sans plafond, then il est au moins 15 % plus bas ; la PR joint les deux mesures et le nombre d'arènes lu dans `/proc/<pid>/smaps`.
-- [ ] Given le scénario d'US-002, when on compare le CPU du thread principal à la version sans plafond, then il ne monte pas de plus de 3 % ; au-delà, le plafond passe à 4 et la mesure est refaite.
+- [ ] Given le desktop lancé sous Linux gnu sans `MALLOC_ARENA_MAX`, when on compte les tas d'arène de 64 Mio dans `/proc/<pid>/maps` après le démarrage, then il en compte au plus 1 en plus de l'arène principale ; avec `MALLOC_ARENA_MAX=64`, le compte dépasse 2, ce qui prouve que la variable est respectée.
+- [ ] Le gain de `RssAnon` et l'absence de régression CPU du thread principal ne sont pas mesurés par cette story : US-019 les relève sur matériel réel. Si US-019 mesure une régression du thread principal imputable au plafond, le plafond passe à 4.
 - [ ] Échec : given un `mallopt` refusé, when le desktop démarre, then il continue et écrit un avertissement, comme le host.
 
 ---
@@ -464,7 +465,7 @@ Mesurer les gains sur la machine de référence et vérifier les changements de 
 - **Performance:** ≤ 30 processus git par minute au repos avec 33 workspaces et une fenêtre active, 0 sans fenêtre active hors événement `.git`.
 - **Performance:** au repos, ≤ 1 réveil par seconde pour le thread IPC, le thread de suivi du worker et chaque thread de session inactive.
 - **Performance:** ≤ 12 rendus racine par seconde avec un agent en réflexion et le shimmer visible ; ≤ 2 rendus de sidebar en 30 s de sortie terminal sans agent.
-- **Memory:** `RssAnon` du desktop au moins 15 % plus bas après 4 h du scénario d'US-002 qu'à uptime égale sans plafond d'arènes.
+- **Memory:** au plus 2 arènes glibc dans le desktop sous Linux gnu ; le RSS des trois processus est relevé par US-019.
 - **Reliability:** un pane qui redevient visible affiche un contenu à jour dans la frame suivante ; une session bloquée s'arrête en moins de 200 ms à la fermeture ; un abonné du worker reçoit son `end` en moins de 600 ms après l'arrêt.
 - **Freshness:** la diffstat d'un workspace devenu actif se met à jour en moins de 3 s ; celle d'un workspace inactif a au plus 5 min d'âge, sauf sans fenêtre active.
 - **Accessibility:** avec `reduce_motion`, aucun réveil de shimmer ou de spinner n'est programmé.
@@ -496,7 +497,7 @@ Mesurer les gains sur la machine de référence et vérifier les changements de 
 | 1 | La sidebar en cache affiche un état périmé, parce qu'une donnée vient d'une entité qu'elle n'observe pas | Med | High | Critère d'US-008 qui liste chaque `read(cx)` hors app ; compteur `sidebar_renders` ; passe visuelle par interaction ; edge case 8 |
 | 2 | Les deux layers changent l'ordre de dessin (images kitty, barré, curseur) | Med | Med | Découpage fixé dans US-007 d'après l'ordre de lots de GPUI ; fixture de z-order rendue sous Linux et Windows |
 | 3 | La réutilisation au scroll affiche du contenu faux | Med | High | Spike US-012 avant tout code ; un test par cas de scroll ; repli sur la reconversion complète en cas de doute |
-| 4 | Le plafond d'arènes crée de la contention sur le thread de rendu | Low | Med | Critère de non-régression à 3 % ; repli sur 4 arènes |
+| 4 | Le plafond d'arènes crée de la contention sur le thread de rendu | Low | Med | Mesure du thread principal par US-019 ; repli sur 4 arènes |
 | 5 | Le shimmer à 90 ms est jugé saccadé | Med | Low | Passe visuelle ; repli sur 45 ms avec mesure |
 | 6 | Un pane caché manque une publication et reste périmé à l'affichage | Low | High | Publication immédiate à la visibilité ; mode visible par défaut si `Visibility` échoue |
 | 7 | Les gains Linux ne se transposent pas sous Windows ou macOS | Med | Med | EP-006 sur Windows réel ; macOS par inspection, faute de machine (Open Questions) |
@@ -549,7 +550,7 @@ Frame as questions for engineering input, not mandates:
 | Rendus de sidebar, 30 s de sortie sans agent | ~750 | ≤ 2 | Month-1 | `sidebar_renders`, budget `perf_gates` |
 | Rendus racine par seconde, agent en réflexion | 1,866 mesuré, faux (gate aveugle) ; ~30 attendus avec le shimmer à 33 ms | entre 10 et 12 | Month-1 | `desktop.thinking.root_renders_per_s` |
 | Réveils par seconde au repos : IPC, worker, session | 105, 70, 10,6 | ≤ 1 chacun | Month-1 | Changements de contexte par thread sur 10 s ; `idle_wakeups_shell_per_s` |
-| `RssAnon` du desktop après 4 h du scénario d'US-002 | 124 Mo à 5,8 h, non plafonné | ≥ 15 % sous la mesure sans plafond | Month-1 | `/proc/<pid>/status`, nombre d'arènes dans `smaps` |
+| Arènes glibc du desktop, Linux gnu | 126 à 5,8 h, non plafonné | ≤ 2 | Month-1 | Tas d'arène de 64 Mio dans `/proc/<pid>/maps` |
 | `layout_scroll_cached_220x60` et `publish_scroll_220x60` | 552 µs et 359 µs | ≤ 150 µs et ≤ 100 µs | Month-1 | `scripts/bench-terminal.sh` |
 | Publications d'un pane caché par seconde, sortie continue | jusqu'à 125 | ≤ 1 | Month-1 | Compteur de publications du runtime, scénario d'US-014 |
 | Objectifs tenus sur matériel réel Linux et Windows | N/A (new) | tous, ou un ajout au PRD par écart | Month-6 | US-019, US-020 |

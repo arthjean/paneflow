@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Couper les frames d'animation inutiles et la rétention mémoire",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -166,39 +166,39 @@
       "id": "US-009",
       "title": "Caler le shimmer sur la grille de 90 ms",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-10-14",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-010",
       "title": "Arrêter le clignotement quand la fenêtre est inactive",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-011",
       "title": "Plafonner les arènes glibc du desktop",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-012",
