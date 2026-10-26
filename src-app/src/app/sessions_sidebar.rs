@@ -555,7 +555,7 @@ impl PaneFlowApp {
             return;
         };
         match self.send_command_to_sessions_surface(&command, cx) {
-            ResumeSendResult::Sent => {}
+            ResumeSendResult::Sent => cx.notify(),
             ResumeSendResult::Missing => {
                 self.show_toast("Could not resume session - target terminal is gone", cx);
             }

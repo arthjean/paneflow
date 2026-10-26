@@ -241,6 +241,13 @@ pub(super) const BUDGETS: &[Budget] = &[
         margin: "no margin: no window is active, so no periodic probe runs and nothing changes under .git (FR-02); measured 0, 180 when the poll ignored window activity",
     },
     Budget {
+        counter: "desktop.tui_30_workspaces.sidebar_renders",
+        limit: Limit::AtMost(2.0),
+        unit: "sidebar renders per window",
+        scenario: &DESKTOP_TUI_30_WORKSPACES,
+        margin: "the PRD bound (FR-05): no agent runs, so nothing the sidebar shows changes while the TUI pane draws, and 2 leaves room for the window activation; measured 0 against 627 root renders, 10 while each applied agent snapshot and each repeated session listing still notified the app, and one per root render before the sidebar became a cached view, since the root rebuilt it on every frame",
+    },
+    Budget {
         counter: "desktop.startup.stale_socket_ipc_server_started_p95_ms",
         limit: Limit::AtMost(5.0),
         unit: "ms",
@@ -710,7 +717,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 22 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 23 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -731,7 +738,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("22 budgets, 2 failed, 0 not measured."),
+            summary.contains("23 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(

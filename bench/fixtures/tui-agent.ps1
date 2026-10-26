@@ -25,6 +25,7 @@ $rows = [Math]::Max(4, [Console]::WindowHeight)
 $status = $rows - 2
 $tokens = $rows - 1
 $glyphs = @("|", "/", "-", "\")
+$titleGlyphs = @([char]0x280B, [char]0x2819, [char]0x2839, [char]0x2838)
 
 [Console]::Write("$esc[2J$esc[H")
 for ($line = 1; $line -le 40; $line++) {
@@ -37,7 +38,7 @@ for ($frame = 0; $frame -lt $frames; $frame++) {
     $elapsed = [Math]::Floor($frame / 20)
     [Console]::Write("$esc[?2026h$esc[$status;1H$esc[2K$glyph Thinking for ${elapsed}s (esc to interrupt)$esc[$tokens;1H$esc[2K  $($frame * 7) tokens$esc[$rows;1H$esc[2K> $esc[?2026l")
     if ($frame % 2 -eq 0) {
-        [Console]::Write("$esc]2;$glyph tui fixture $([Math]::Floor($frame / 2))$bel")
+        [Console]::Write("$esc]2;$($titleGlyphs[[Math]::Floor($frame / 2) % 4]) tui fixture$bel")
     }
     Start-Sleep -Milliseconds 50
 }

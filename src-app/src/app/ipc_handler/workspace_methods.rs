@@ -601,6 +601,7 @@ impl PaneFlowApp {
     ) {
         let prompt = prompt.filter(|p| !p.is_empty());
         terminal.update(cx, |view, _cx| view.declare_agent_from_command(&command));
+        cx.notify();
         let weak = terminal.downgrade();
         cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
             let Some(settled) = Self::wait_for_terminal_settle(

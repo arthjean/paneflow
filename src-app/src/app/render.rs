@@ -1,3 +1,4 @@
+use crate::app::sidebar::view::SidebarView;
 use crate::*;
 
 const PRIMARY_SIDEBAR_ANIMATION_MS: u64 = 280;
@@ -31,6 +32,16 @@ impl SidebarWidthAnimation {
 }
 
 impl PaneFlowApp {
+    fn sidebar_view(&mut self, cx: &mut Context<Self>) -> Entity<SidebarView> {
+        if let Some(view) = &self.sidebar_view {
+            return view.clone();
+        }
+        let app = cx.entity();
+        let view = cx.new(|cx| SidebarView::new(&app, cx));
+        self.sidebar_view = Some(view.clone());
+        view
+    }
+
     fn primary_sidebar_expanded_width(&self) -> f32 {
         if self.settings_section.is_some() {
             crate::settings::chrome::SETTINGS_NAV_WIDTH
@@ -110,6 +121,7 @@ impl Render for PaneFlowApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::work_counters::count(&crate::work_counters::ROOT_RENDERS);
         startup_trace::on_app_render(window);
+        let sidebar_view = self.sidebar_view(cx);
         self.acknowledge_seen_declared_errors(cx);
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
@@ -527,7 +539,7 @@ impl Render for PaneFlowApp {
                                 .overflow_hidden()
                                 .opacity(primary_sidebar_opacity)
                                 .pt(title_bar_h)
-                                .child(self.render_sidebar(window, cx)),
+                                .child(sidebar_view.clone().cached(SidebarView::cached_style())),
                         )
                     })
                     .child(
@@ -776,7 +788,6 @@ impl Render for PaneFlowApp {
             app_backdrop_bg,
             crate::app::constants::window_border_color(ui.border, terminal_material_visible),
         );
-        self.spinner_clock.sync(cx);
         startup_trace::on_app_render_built();
         shell
     }

@@ -591,6 +591,7 @@ impl TerminalView {
                     view.terminal
                         .write_to_pty(resume_input(view.terminal.shell_quoting, &command));
                     view.declare_launched_agent(agent);
+                    cx.emit(TerminalEvent::AgentDeclared);
                     view.conversation.live = true;
                     tracing::info!(
                         target: "paneflow_app::conversation",
@@ -763,6 +764,7 @@ impl TerminalView {
         self.terminal
             .write_to_pty(resume_input(self.terminal.shell_quoting, &command));
         self.declare_launched_agent(agent);
+        cx.emit(TerminalEvent::AgentDeclared);
     }
 
     pub(super) fn render_conversation_banner(
@@ -1256,6 +1258,39 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(changes.get(), 1);
+    }
+
+    #[gpui::test]
+    fn a_new_session_from_the_banner_announces_the_agent_it_declares(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        let declared = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let sink = declared.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &TerminalEvent, _| {
+                if matches!(event, TerminalEvent::AgentDeclared) {
+                    sink.set(sink.get() + 1);
+                }
+            })
+        });
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            view.conversation.watch = Some(FailureWatch::new(
+                Instant::now(),
+                0,
+                TerminalAgent::ClaudeCode,
+            ));
+            view.note_conversation_exit(1, cx);
+            view.terminal.detected_agent = None;
+            view.accept_conversation_banner(cx);
+            assert_eq!(
+                view.terminal.detected_agent,
+                Some(TerminalAgent::ClaudeCode)
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(declared.get(), 1);
     }
 
     const FX: &str = "sh.fx.cli";

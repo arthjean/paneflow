@@ -39,7 +39,13 @@ while [ "$frame" -lt "$frames" ]; do
   printf '\033[?2026h\033[%d;1H\033[2K%s Thinking for %ds (esc to interrupt)\033[%d;1H\033[2K  %d tokens\033[%d;1H\033[2K> \033[?2026l' \
     "$status" "$glyph" $((frame / 20)) "$tokens" $((frame * 7)) "$rows"
   if [ $((frame % 2)) -eq 0 ]; then
-    printf '\033]2;%s tui fixture %d\007' "$glyph" $((frame / 2))
+    case $((frame / 2 % 4)) in
+      0) title_glyph='\342\240\213' ;;
+      1) title_glyph='\342\240\231' ;;
+      2) title_glyph='\342\240\271' ;;
+      *) title_glyph='\342\240\270' ;;
+    esac
+    printf '\033]2;%b tui fixture\007' "$title_glyph"
   fi
   sleep 0.05
   frame=$((frame + 1))

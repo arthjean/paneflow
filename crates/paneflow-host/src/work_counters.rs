@@ -21,6 +21,7 @@ pub const WORKER_COUNTERS: &[&str] = &["snapshot_broadcasts", "projection_broadc
 
 pub const DESKTOP_COUNTERS: &[&str] = &[
     "root_renders",
+    "sidebar_renders",
     "host_agent_snapshots_applied",
     "session_list_calls",
     "git_spawns.total",

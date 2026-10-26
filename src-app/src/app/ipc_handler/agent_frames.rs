@@ -221,6 +221,7 @@ impl PaneFlowApp {
                         view.declare_agent(tool);
                         cx.notify();
                     });
+                    cx.notify();
                 }
             }
             METHOD_PROMPT_SUBMIT => {

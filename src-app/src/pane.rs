@@ -912,6 +912,7 @@ impl Pane {
             | TerminalEvent::FleetSearchRequested { .. }
             | TerminalEvent::ProgramNotification { .. }
             | TerminalEvent::AgentSessionChanged
+            | TerminalEvent::AgentDeclared
             | TerminalEvent::ConversationReady
             | TerminalEvent::ShellPromptReady => {}
         })

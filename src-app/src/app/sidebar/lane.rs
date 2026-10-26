@@ -369,6 +369,7 @@ fn comet_trail_matrix(loader: gpui::Div, head: usize, color: gpui::Hsla) -> gpui
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::AppContext;
 
     use crate::app::pull_request::{PrState, PullRequest};
 
@@ -565,6 +566,94 @@ mod tests {
         assert!(!view.read_with(cx, |view, _| view.clock.running()));
         run_for(cx, Duration::from_secs(1));
         assert_eq!(notifies.get(), 0);
+    }
+
+    struct BusyTerminal;
+
+    impl gpui::Render for BusyTerminal {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    struct CachedSidebarRoot {
+        sidebar: gpui::Entity<CountedSpinner>,
+        terminal: gpui::Entity<BusyTerminal>,
+        renders: usize,
+    }
+
+    impl gpui::Render for CachedSidebarRoot {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            self.renders += 1;
+            div()
+                .size_full()
+                .flex()
+                .child(
+                    self.sidebar
+                        .clone()
+                        .cached(gpui::StyleRefinement::default().w(px(200.)).h_full()),
+                )
+                .child(self.terminal.clone())
+        }
+    }
+
+    struct CountedSpinner {
+        renders: usize,
+        clock: SpinnerClock,
+    }
+
+    impl gpui::Render for CountedSpinner {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            self.renders += 1;
+            let root = div().child(comet_trail_loader(gpui::white(), true));
+            self.clock.sync(cx);
+            root
+        }
+    }
+
+    #[gpui::test]
+    fn a_cached_sidebar_keeps_its_spinner_moving_and_skips_terminal_frames(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (root, cx) = cx.add_window_view(|_, cx| CachedSidebarRoot {
+            sidebar: cx.new(|_| CountedSpinner {
+                renders: 0,
+                clock: SpinnerClock::default(),
+            }),
+            terminal: cx.new(|_| BusyTerminal),
+            renders: 0,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let (sidebar, terminal) =
+            root.read_with(cx, |root, _| (root.sidebar.clone(), root.terminal.clone()));
+        let sidebar_before = sidebar.read_with(cx, |view, _| view.renders);
+        let root_before = root.read_with(cx, |root, _| root.renders);
+        let step = Duration::from_millis(10);
+        for _ in 0..100 {
+            terminal.update(cx, |_, cx| cx.notify());
+            cx.executor().advance_clock(step);
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+        let root_renders = root.read_with(cx, |root, _| root.renders) - root_before;
+        let sidebar_renders = sidebar.read_with(cx, |view, _| view.renders) - sidebar_before;
+        assert!(root_renders >= 100, "{root_renders} root renders");
+        assert!(
+            (10..=12).contains(&sidebar_renders),
+            "{sidebar_renders} sidebar renders in one second of terminal frames"
+        );
     }
 
     #[gpui::test]

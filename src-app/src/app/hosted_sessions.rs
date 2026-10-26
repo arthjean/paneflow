@@ -42,6 +42,18 @@ pub(crate) struct OwnedSession {
 }
 
 impl OwnedSession {
+    fn shows_as(&self, other: &OwnedSession) -> bool {
+        let shown_age = |session: &OwnedSession| (!session.live).then_some(session.updated_at_ms);
+        self.session == other.session
+            && self.generation == other.generation
+            && self.workspace == other.workspace
+            && self.title == other.title
+            && self.cwd == other.cwd
+            && self.live == other.live
+            && self.lifecycle == other.lifecycle
+            && shown_age(self) == shown_age(other)
+    }
+
     pub(crate) fn label(&self) -> String {
         self.title
             .clone()
@@ -64,6 +76,27 @@ pub(crate) struct OwnedSessions {
     expanded: HashSet<WorkspaceId>,
     fallback_expanded: bool,
     refresh_generation: u64,
+}
+
+impl OwnedSessions {
+    fn apply_listing(&mut self, listed: Option<Vec<OwnedSession>>) -> bool {
+        let Some(mut rows) = listed else {
+            return !std::mem::replace(&mut self.stale, true);
+        };
+        order_session_rows(&mut rows);
+        let changed = self.rows.len() != rows.len()
+            || self
+                .rows
+                .iter()
+                .zip(&rows)
+                .any(|(shown, listed)| !shown.shows_as(listed))
+            || self.stale
+            || !self.unknown.is_empty();
+        self.rows = rows;
+        self.stale = false;
+        self.unknown.clear();
+        changed
+    }
 }
 
 pub(crate) fn pane_terminals(pane: &Entity<Pane>, cx: &App) -> Vec<Entity<TerminalView>> {
@@ -542,7 +575,10 @@ impl PaneFlowApp {
                             session: row.session,
                             generation: row.generation,
                             workspace: row.workspace,
-                            title: row.title,
+                            title: row
+                                .title
+                                .as_deref()
+                                .and_then(crate::sidebar_title::clean_sidebar_title),
                             cwd: row.cwd,
                             live: row.live,
                             lifecycle: row.lifecycle,
@@ -559,16 +595,9 @@ impl PaneFlowApp {
                 if app.owned_sessions.refresh_generation != generation {
                     return;
                 }
-                match rows {
-                    Some(mut rows) => {
-                        order_session_rows(&mut rows);
-                        app.owned_sessions.rows = rows;
-                        app.owned_sessions.stale = false;
-                        app.owned_sessions.unknown.clear();
-                    }
-                    None => app.owned_sessions.stale = true,
+                if app.owned_sessions.apply_listing(rows) {
+                    cx.notify();
                 }
-                cx.notify();
             });
         })
         .detach();
@@ -960,6 +989,41 @@ mod tests {
             },
             updated_at_ms,
         }
+    }
+
+    #[test]
+    fn a_listing_that_repeats_the_shown_sessions_changes_nothing() {
+        let mut sessions = OwnedSessions::default();
+        let listed = vec![row(true, 1), row(false, 2)];
+        assert!(sessions.apply_listing(Some(listed.clone())));
+        assert!(!sessions.apply_listing(Some(listed.clone())));
+        assert!(sessions.apply_listing(None));
+        assert!(!sessions.apply_listing(None));
+        assert!(sessions.apply_listing(Some(listed.clone())));
+        sessions.unknown.insert(listed[0].session.clone());
+        assert!(sessions.apply_listing(Some(listed.clone())));
+        assert!(sessions.unknown.is_empty());
+        let mut touched = listed.clone();
+        touched[0].updated_at_ms = 10;
+        assert!(
+            !sessions.apply_listing(Some(touched.clone())),
+            "a live session's age is not shown"
+        );
+        touched[1].updated_at_ms = 20;
+        assert!(
+            sessions.apply_listing(Some(touched.clone())),
+            "an ended session shows its age"
+        );
+        let mut reordered = vec![row(true, 30), touched[0].clone(), touched[1].clone()];
+        assert!(sessions.apply_listing(Some(reordered.clone())));
+        reordered[1].updated_at_ms = 40;
+        assert!(
+            sessions.apply_listing(Some(reordered)),
+            "a live session that moves ahead of another changes the order shown"
+        );
+        let mut retitled = listed;
+        retitled[0].title = Some("renamed".to_string());
+        assert!(sessions.apply_listing(Some(retitled)));
     }
 
     #[test]

@@ -100,6 +100,25 @@ impl HostAgentView {
         !redundant
     }
 
+    fn replace_snapshot(&mut self, entries: &[Value], capabilities: Vec<String>) -> bool {
+        let rows: BTreeMap<SessionId, HostAgentRow> = entries
+            .iter()
+            .filter_map(row_from_snapshot)
+            .map(|row| (row.session.clone(), row))
+            .collect();
+        let changed = self.rows != rows
+            || self.capabilities != capabilities
+            || !self.connected
+            || !self.bootstrapped
+            || self.disconnect_reason.is_some();
+        self.rows = rows;
+        self.capabilities = capabilities;
+        self.connected = true;
+        self.disconnect_reason = None;
+        self.bootstrapped = true;
+        changed
+    }
+
     pub(crate) fn live_session_with_provider_id(
         &self,
         tool: TerminalAgent,
@@ -574,20 +593,14 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         crate::work_counters::count(&crate::work_counters::HOST_AGENT_SNAPSHOTS_APPLIED);
-        self.host_agents.rows = entries
-            .iter()
-            .filter_map(row_from_snapshot)
-            .map(|row| (row.session.clone(), row))
-            .collect();
-        self.host_agents.capabilities = capabilities;
-        self.host_agents.connected = true;
-        self.host_agents.disconnect_reason = None;
-        self.host_agents.bootstrapped = true;
+        let changed = self.host_agents.replace_snapshot(&entries, capabilities);
         self.apply_host_observed_agents(cx);
         self.seed_attached_sessions_from_host(cx);
         self.refresh_declared_status(cx);
         self.refresh_owned_sessions(cx);
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     fn apply_host_observed_agents(&mut self, cx: &mut Context<Self>) {
@@ -956,6 +969,22 @@ mod tests {
             view.accept_snapshot(&changed, &["other".to_string()], false),
             "a snapshot after a disconnection is applied"
         );
+    }
+
+    #[test]
+    fn a_snapshot_that_changes_only_what_no_row_reads_changes_nothing_shown() {
+        let session = SessionId::new();
+        let capabilities = vec!["agent.follow".to_string()];
+        let entry = |title: &str, status: &str| json!({"session": session.to_string(), "live": true, "title": title, "status": status});
+        let mut view = HostAgentView::default();
+        assert!(view.replace_snapshot(&[entry("a", "busy")], capabilities.clone()));
+        assert!(!view.replace_snapshot(&[entry("b", "busy")], capabilities.clone()));
+        assert!(view.replace_snapshot(&[], capabilities.clone()));
+        assert!(view.replace_snapshot(&[entry("b", "busy")], vec![]));
+        view.connected = false;
+        view.disconnect_reason = Some("worker restarted".to_string());
+        assert!(view.replace_snapshot(&[entry("b", "busy")], vec![]));
+        assert!(view.connected && view.disconnect_reason.is_none());
     }
 
     #[test]

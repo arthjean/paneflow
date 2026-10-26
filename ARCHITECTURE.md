@@ -291,6 +291,14 @@ Decorations, kitty images above the text, the hyperlink underline, the
 cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
 painted after the second layer, in that order.
 
+The workspace sidebar is its own cached view, `SidebarView`
+(`src-app/src/app/sidebar/view.rs`). It observes the app entity and calls
+`PaneFlowApp::render_sidebar`, so a frame caused by a `TerminalView` alone
+replays the sidebar instead of rebuilding it; the app notifies whenever state
+the sidebar shows changes. The sidebar's spinner and shimmer clock
+(`SpinnerClock`) lives in that view and notifies only it.
+`sidebar_renders` in `system.counters` counts the rebuilds.
+
 The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
 the end of CPU painting. It does not identify the echoed character or observe
 GPU presentation, and therefore does not measure input-to-visible-pixel latency.

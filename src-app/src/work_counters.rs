@@ -3,6 +3,8 @@ use serde_json::{Map, Value, json};
 
 pub(crate) static ROOT_RENDERS: Counter = Counter::new();
 
+pub(crate) static SIDEBAR_RENDERS: Counter = Counter::new();
+
 pub(crate) static HOST_AGENT_SNAPSHOTS_APPLIED: Counter = Counter::new();
 
 pub(crate) static SESSION_LIST_CALLS: Counter = Counter::new();
@@ -96,6 +98,7 @@ pub(crate) fn counters() -> Value {
     let user_action = GIT_USER_ACTION_SPAWNS.get();
     let mut counters = Map::new();
     counters.insert("root_renders".to_string(), json!(ROOT_RENDERS.get()));
+    counters.insert("sidebar_renders".to_string(), json!(SIDEBAR_RENDERS.get()));
     counters.insert(
         "host_agent_snapshots_applied".to_string(),
         json!(HOST_AGENT_SNAPSHOTS_APPLIED.get()),

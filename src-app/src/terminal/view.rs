@@ -1075,6 +1075,7 @@ pub enum TerminalEvent {
         body: String,
     },
     AgentSessionChanged,
+    AgentDeclared,
     ConversationReady,
 }
 

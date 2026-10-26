@@ -472,11 +472,12 @@ const TUI_INACTIVE_WINDOW: Duration = Duration::from_secs(60);
 const TUI_FIXTURE_SECONDS: u64 = 300;
 const TUI_FIXTURE_MARKER: &str = "tui fixture line";
 
-pub(super) const TUI_NAMES: [&str; 4] = [
+pub(super) const TUI_NAMES: [&str; 5] = [
     "desktop.tui_30_workspaces.root_renders_per_s",
     "desktop.tui_30_workspaces.git_spawns",
     "desktop.tui_30_workspaces.git_spawns_per_min",
     "desktop.tui_30_workspaces_inactive.git_spawns_per_window",
+    "desktop.tui_30_workspaces.sidebar_renders",
 ];
 
 fn tui_fixture(cwd: &Path, seconds: u64) -> CreateSession {
@@ -560,6 +561,7 @@ pub(super) fn tui_measurements(windows: &TuiWindows) -> Vec<(&'static str, Measu
         (TUI_NAMES[1], spawns),
         (TUI_NAMES[2], minute),
         (TUI_NAMES[3], counter(windows.inactive, "git_spawns.total")),
+        (TUI_NAMES[4], counter(windows.first, "sidebar_renders")),
     ]
 }
 
@@ -844,7 +846,7 @@ mod tests {
     }
 
     fn tui_window(root_renders: u64, git_spawns: u64) -> Value {
-        json!({"root_renders": root_renders, "git_spawns.total": git_spawns})
+        json!({"root_renders": root_renders, "sidebar_renders": 1, "git_spawns.total": git_spawns})
     }
 
     #[test]
@@ -881,6 +883,7 @@ mod tests {
         assert_eq!(measured[TUI_NAMES[1]], Measurement::Value(9.0));
         assert_eq!(measured[TUI_NAMES[2]], Measurement::Value(18.0));
         assert_eq!(measured[TUI_NAMES[3]], Measurement::Value(0.0));
+        assert_eq!(measured[TUI_NAMES[4]], Measurement::Value(1.0));
     }
 
     #[test]

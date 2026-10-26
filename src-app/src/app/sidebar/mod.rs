@@ -9,6 +9,7 @@ mod session_rows;
 mod space_switcher;
 mod style;
 mod tab_row;
+pub(crate) mod view;
 mod workspace_row;
 
 use crate::ui_primitives::TooltipDelayExt;
@@ -305,6 +306,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        crate::work_counters::count(&crate::work_counters::SIDEBAR_RENDERS);
         let _render_canary = SidebarRenderTimeCanary::new(self.workspaces.len());
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();

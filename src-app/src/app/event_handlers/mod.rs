@@ -679,6 +679,9 @@ impl PaneFlowApp {
             terminal::TerminalEvent::AgentSessionChanged => {
                 self.save_session(cx);
             }
+            terminal::TerminalEvent::AgentDeclared => {
+                cx.notify();
+            }
             terminal::TerminalEvent::ConversationReady => {
                 self.conversation_ready(terminal.entity_id().as_u64(), cx);
             }

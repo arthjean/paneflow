@@ -200,13 +200,18 @@ many workspaces. The home holds 30 workspaces, each on its own committed git
 repository with one modified file that nothing touches during the run; the
 active one runs `bench/fixtures/tui-agent.sh` (`tui-agent.ps1` on Windows),
 which prints 40 lines and then rewrites three bottom lines every 50 ms inside
-a DEC 2026 synchronized output block and changes the OSC title every 100 ms,
-like Claude Code's status line. The other 29 run the idle fixture. After a
+a DEC 2026 synchronized output block and steps a braille spinner at the head
+of the OSC title every 100 ms, like Claude Code's status line and title. The
+tab title Paneflow keeps drops that leading glyph, so it stays `tui fixture`
+and the title animation alone notifies nothing; until 2026-10-20 the title also
+carried a frame counter, which renamed the tab ten times per second. The other 29 run the idle fixture. After a
 10 s settle the scenario measures 60 s while no window is active
 (`desktop.tui_30_workspaces_inactive.*`), then focuses the window with
 `xdotool` and measures two 30 s windows (`desktop.tui_30_workspaces.*`:
-root renders per second and git processes over the first window, git
-processes per minute over both). A fixture that never drew in a pane, a
+root renders per second, sidebar rebuilds and git processes over the first
+window, git processes per minute over both). No agent runs, so nothing the
+sidebar shows changes while the TUI pane draws, and every root render that
+rebuilds the sidebar is waste. A fixture that never drew in a pane, a
 window that never took the focus, or a pane that received no output (no more
 root renders than the blink alone) leaves every budget of the scenario
 missing with its reason.
@@ -224,6 +229,14 @@ root renders per second. On real hardware the same state costs the desktop
 main thread about 22 % of a core at 25 root renders per second, before and
 after EP-001, with git going from 180 to 24 processes per minute
 ([hardware-summary-2026-10-20.md](results/hardware-summary-2026-10-20.md)).
+
+On 2026-10-20, same setup, the sidebar became a cached view (EP-002): the
+first active window drew 627 root renders and rebuilt the sidebar 0 times,
+where the root used to rebuild it on every frame. Two app notifications had
+kept it at 10 per window in between: every applied agent snapshot, although
+the session it changed only differed by a title the rows do not read, and
+every `session.list` reply, although only the `updated_at_ms` of a live
+session had moved.
 
 Mutation proof for `worker.idle.snapshot_broadcasts`: with the unchanged
 snapshot check of `Worker::broadcast_snapshot_if_changed` disabled, the gate
@@ -855,6 +868,7 @@ Nested counters are addressed with dots, for example
 | worker, `worker.status` | `projection_broadcasts` | per-session projections broadcast | `AgentBus::broadcast` of type `event` |
 | worker, `worker.status` | `sweeps` | 2 s state sweeps | `worker::sweep` |
 | desktop, `system.counters` | `root_renders` | renders of the root view | `PaneFlowApp::render` |
+| desktop, `system.counters` | `sidebar_renders` | rebuilds of the workspace sidebar; a frame served from the sidebar view's cache does not count | `PaneFlowApp::render_sidebar` |
 | desktop, `system.counters` | `host_agent_snapshots_applied` | host agent snapshots applied; a snapshot identical to the last one applied is skipped unless it is the header of a new follow | `PaneFlowApp::apply_host_agent_snapshot` |
 | desktop, `system.counters` | `session_list_calls` | `session.list` calls to the host | `host_link::list_sessions` |
 | desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (16 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, the filter query, and the git clone |
