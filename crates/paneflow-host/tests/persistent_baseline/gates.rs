@@ -176,10 +176,10 @@ pub(super) const BUDGETS: &[Budget] = &[
     },
     Budget {
         counter: "desktop.idle.root_renders",
-        limit: Limit::AtMost(3.0),
+        limit: Limit::AtMost(1.0),
         unit: "renders per window",
         scenario: &DESKTOP_IDLE,
-        margin: "the PRD bound of 3 per 30 s; measured 0 in both runs after a 4 s settle",
+        margin: "no window is active, so the caret holds visible and the blink toggles nothing (FR-08); 1 per 30 s, one render left for a stray repaint; measured 0 in both runs after a 4 s settle",
     },
     Budget {
         counter: "desktop.idle.session_list_calls",
@@ -763,7 +763,7 @@ mod tests {
             "{report}"
         );
         assert!(
-            report.contains("desktop.idle.root_renders | missing | <= 3 renders per window | no measurement: scenario desktop_idle recorded no value |"),
+            report.contains("desktop.idle.root_renders | missing | <= 1 renders per window | no measurement: scenario desktop_idle recorded no value |"),
             "{report}"
         );
     }

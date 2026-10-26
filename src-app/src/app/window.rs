@@ -318,6 +318,7 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
                 window.window_handle().window_id(),
                 window.is_window_active(),
             );
+            crate::terminal::blink::show_cursor(cx);
             if window.is_window_active()
                 && let Some(idx) = this.shown_workspace_idx()
             {

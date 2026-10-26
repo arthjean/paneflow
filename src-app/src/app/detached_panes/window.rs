@@ -145,6 +145,7 @@ impl PaneFlowApp {
                                 window.window_handle().window_id(),
                                 window.is_window_active(),
                             );
+                            crate::terminal::blink::show_cursor(cx);
                             if window.is_window_active()
                                 && let Some(owner) = this.owner.upgrade()
                             {

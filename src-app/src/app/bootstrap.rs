@@ -1,7 +1,7 @@
 use gpui::{AppContext, Context};
 
 use crate::telemetry;
-use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, until_next_blink};
+use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, step_blink, until_next_blink};
 use crate::window_chrome::title_bar;
 use crate::{FocusReturn, PaneFlowApp, ipc, keybindings, update};
 
@@ -506,11 +506,7 @@ impl PaneFlowApp {
                     executor.timer(until_next_blink(executor.now())).await;
                     let result = cx.update(|cx| {
                         this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| {
-                            let phase = cx.global::<BlinkPhaseGlobal>().0.clone();
-                            phase.update(cx, |p, cx| {
-                                p.visible = !p.visible;
-                                cx.notify();
-                            });
+                            step_blink(crate::agents::notifications::window_active(), cx);
                         })
                     });
                     if result.is_err() {
