@@ -149,6 +149,21 @@ fn detach_lonely_windows_console_for_gui_launch(is_scriptable_invocation: bool) 
     }
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const DESKTOP_MALLOC_ARENAS: i32 = 2;
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn cap_malloc_arenas() {
+    if std::env::var_os("MALLOC_ARENA_MAX").is_none()
+        && unsafe { libc::mallopt(libc::M_ARENA_MAX, DESKTOP_MALLOC_ARENAS) } != 1
+    {
+        log::warn!("paneflow: the malloc arena count could not be capped");
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn cap_malloc_arenas() {}
+
 pub(crate) fn run() {
     if crate::tmux_compat::is_shim_invocation(std::env::args_os().next().as_deref()) {
         let argv: Vec<String> = std::env::args_os()
@@ -240,6 +255,7 @@ pub(crate) fn run() {
         "warn,wgpu_hal=off,naga=warn,gpui_macos::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn",
     ))
     .init();
+    cap_malloc_arenas();
 
     match agents::parent_guard::install_process_job() {
         Ok(agents::parent_guard::ParentGuardStatus::Installed) => {}
