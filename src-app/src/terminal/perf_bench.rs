@@ -164,7 +164,7 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
         };
         metrics.push(measure(
             name,
-            "one scrolled line fed, then snapshot plus conversion to the neutral Content (every row dirty)",
+            "one scrolled line fed, then snapshot plus conversion to the neutral Content (rows that only moved are reused)",
             20,
             300,
             || {

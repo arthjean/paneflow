@@ -3,7 +3,7 @@ use gpui::{App, Font, Pixels, Point, ShapedLine, SharedString, TextRun, Window, 
 use super::super::face_tables::{self, GlyphInk};
 use super::super::font::CellMetrics;
 use super::super::geometry::CellGeometry;
-use super::super::{LayoutState, RunCell, SymbolGlyph};
+use super::super::{LayoutState, Placed, RunCell, SymbolGlyph};
 
 pub fn paint_text_runs(
     layout: &LayoutState,
@@ -177,7 +177,7 @@ pub fn paint_symbols(
         {
             continue;
         }
-        paint_symbol(symbol, geom, font_size, window, cx);
+        paint_symbol(&symbol, geom, font_size, window, cx);
     }
 }
 
@@ -202,7 +202,7 @@ fn shape_symbol(
 }
 
 fn paint_symbol(
-    symbol: &SymbolGlyph,
+    symbol: &Placed<'_, SymbolGlyph>,
     geom: &CellGeometry,
     font_size: Pixels,
     window: &mut Window,

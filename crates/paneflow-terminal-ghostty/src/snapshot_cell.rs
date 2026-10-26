@@ -9,6 +9,7 @@ use crate::style::style_color;
 use crate::{Cell, CellFlags, Color, GhosttyError, Point, Result};
 
 impl DisplayTerminal {
+    #[inline(always)]
     pub(crate) fn copy_cell(
         &self,
         row_cells: sys::GhosttyRenderStateRowCells,

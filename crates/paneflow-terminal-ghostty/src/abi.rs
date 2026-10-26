@@ -1,4 +1,5 @@
 use std::ffi::CStr;
+use std::sync::OnceLock;
 
 use paneflow_libghostty_sys as sys;
 
@@ -79,6 +80,99 @@ fn layout_types(document: &serde_json::Value) -> Result<&serde_json::Value> {
     document
         .get("types")
         .ok_or_else(|| GhosttyError::AbiMismatch("layout JSON has no types map".into()))
+}
+
+const GRAPHEME_TAG: u64 = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME as u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RawCellLayout {
+    tag_shift: u32,
+    tag_bits: u64,
+    grapheme_bits: u64,
+    style_shift: u32,
+    style_bits: u64,
+}
+
+impl RawCellLayout {
+    pub(crate) fn is_plain(self, raw: sys::GhosttyCell) -> bool {
+        (raw & self.style_bits == 0) & (raw & self.tag_bits != self.grapheme_bits)
+    }
+
+    pub(crate) fn unchanged_and_plain(
+        self,
+        cached: &[sys::GhosttyCell],
+        fresh: &[sys::GhosttyCell],
+    ) -> bool {
+        cached.len() == fresh.len()
+            && cached
+                .iter()
+                .zip(fresh)
+                .fold(true, |same, (cached, fresh)| {
+                    same & (cached == fresh) & self.is_plain(*fresh)
+                })
+    }
+
+    fn from_types(types: &serde_json::Value) -> Option<Self> {
+        let cell = types.get("GhosttyCell")?;
+        if cell.get("underlying").and_then(serde_json::Value::as_str) != Some("u64") {
+            return None;
+        }
+        let field = |name: &str| -> Option<(u32, u64)> {
+            let field = cell.get("bits")?.get(name)?;
+            let lsb = u32::try_from(field.get("lsb")?.as_u64()?).ok()?;
+            let width = u32::try_from(field.get("width")?.as_u64()?).ok()?;
+            (width > 0 && lsb.checked_add(width)? <= u64::BITS)
+                .then(|| (lsb, u64::MAX >> (u64::BITS - width)))
+        };
+        let (tag_shift, tag_mask) = field("content_tag")?;
+        let (style_shift, style_mask) = field("style_id")?;
+        Some(Self {
+            tag_shift,
+            tag_bits: tag_mask << tag_shift,
+            grapheme_bits: (GRAPHEME_TAG & tag_mask) << tag_shift,
+            style_shift,
+            style_bits: style_mask << style_shift,
+        })
+        .filter(|layout| layout.agrees_with_the_library())
+    }
+
+    fn agrees_with_the_library(self) -> bool {
+        let styled = 1u64 << self.style_shift;
+        let grapheme = GRAPHEME_TAG << self.tag_shift;
+        cell_flag(0, sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_STYLING) == Some(false)
+            && cell_flag(styled, sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_STYLING) == Some(true)
+            && cell_content_tag(grapheme)
+                == Some(sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME)
+            && self.is_plain(0)
+            && !self.is_plain(styled)
+            && !self.is_plain(grapheme)
+    }
+}
+
+pub(crate) fn raw_cell_layout() -> Option<RawCellLayout> {
+    static LAYOUT: OnceLock<Option<RawCellLayout>> = OnceLock::new();
+    *LAYOUT.get_or_init(|| {
+        let document = type_json().ok()?;
+        RawCellLayout::from_types(layout_types(&document).ok()?)
+    })
+}
+
+fn cell_flag(cell: sys::GhosttyCell, data: sys::GhosttyCellData) -> Option<bool> {
+    let mut value = false;
+    let result = unsafe { sys::ghostty_cell_get(cell, data, (&mut value as *mut bool).cast()) };
+    (result == sys::GhosttyResult_GHOSTTY_SUCCESS).then_some(value)
+}
+
+fn cell_content_tag(cell: sys::GhosttyCell) -> Option<sys::GhosttyCellContentTag> {
+    let mut value = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
+            (&mut value as *mut sys::GhosttyCellContentTag).cast(),
+        )
+    };
+    (result == sys::GhosttyResult_GHOSTTY_SUCCESS).then_some(value)
 }
 
 fn validate_discriminants(types: &serde_json::Value, discriminants: &[(&str, i64)]) -> Result<()> {

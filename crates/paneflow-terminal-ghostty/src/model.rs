@@ -218,6 +218,8 @@ pub struct Content {
     pub history_size: usize,
     pub mouse_shape: MouseShape,
     pub row_identities: Arc<[RowIdentity]>,
+    pub row_shift: isize,
+    pub revision: u64,
     pub overscan: Overscan,
     pub overscan_rows: Arc<[OverscanRow]>,
 }

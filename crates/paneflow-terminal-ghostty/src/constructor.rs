@@ -136,7 +136,7 @@ impl DisplayTerminal {
             gesture: None,
             search: None,
             terminal,
-            snapshot_cache: Default::default(),
+            snapshot_cache: crate::snapshot::SnapshotCache::new(),
             callbacks,
             history_clear_pending: false,
             _not_send_or_sync: PhantomData,

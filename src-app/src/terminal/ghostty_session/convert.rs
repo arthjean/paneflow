@@ -196,11 +196,15 @@ fn cursor_from_ghostty(content: &ghostty::Content) -> RenderableCursor {
 pub(in crate::terminal) struct CellMirror {
     back: Arc<[Cell]>,
     back_stale: Vec<bool>,
+    back_shift: isize,
     back_valid: bool,
     last_dirty: Vec<bool>,
+    last_shift: isize,
     front_address: usize,
     published_address: usize,
     row_versions: Vec<u64>,
+    version_scratch: Vec<u64>,
+    revision: Option<u64>,
     cols: usize,
     overscan_source: Arc<[ghostty::OverscanRow]>,
     overscan_rows: Arc<[OverscanRow]>,
@@ -211,28 +215,63 @@ impl CellMirror {
         let cols = snapshot.cols;
         let rows = snapshot.rows;
         let generation = next_content_generation();
-        if self.cols != cols || self.row_versions.len() != rows {
-            self.row_versions = vec![generation; rows];
-            self.cols = cols;
-        } else {
-            for (row, version) in self.row_versions.iter_mut().enumerate() {
-                if snapshot.dirty_rows.get(row).copied().unwrap_or(true) {
-                    *version = generation;
-                }
-            }
-        }
-        let reusable = self.back_valid
-            && !self.back.is_empty()
-            && self.back.len() == snapshot.cells.len()
-            && self.back_stale.len() == rows
+        let continuous = self
+            .revision
+            .is_some_and(|revision| revision.wrapping_add(1) == snapshot.revision)
+            && self.cols == cols
+            && self.row_versions.len() == rows
             && snapshot.dirty_rows.len() == rows;
-        let cells = match reusable.then(|| Arc::get_mut(&mut self.back)).flatten() {
-            Some(buffer) => {
-                for row in 0..rows {
-                    if !(snapshot.dirty_rows[row] || self.back_stale[row]) {
+        self.revision = Some(snapshot.revision);
+        self.cols = cols;
+        let shift = if continuous { snapshot.row_shift } else { 0 };
+        let source_of = |row: usize| {
+            row.checked_add_signed(shift)
+                .filter(|source| *source < rows)
+        };
+        let mut dirty = std::mem::take(&mut self.last_dirty);
+        dirty.clear();
+        dirty.extend(
+            (0..rows)
+                .map(|row| !continuous || snapshot.dirty_rows[row] || source_of(row).is_none()),
+        );
+        self.version_scratch.clear();
+        for (row, stale) in dirty.iter().enumerate() {
+            let version = match source_of(row).filter(|_| !stale) {
+                Some(source) => self.row_versions[source],
+                None => next_content_generation(),
+            };
+            self.version_scratch.push(version);
+        }
+        std::mem::swap(&mut self.row_versions, &mut self.version_scratch);
+        let back_offset = shift.checked_add(self.back_shift).filter(|offset| {
+            offset.unsigned_abs() < rows
+                && self.back_valid
+                && continuous
+                && !self.back.is_empty()
+                && self.back.len() == snapshot.cells.len()
+                && self.back_stale.len() == rows
+        });
+        let cells = match back_offset
+            .and_then(|offset| Arc::get_mut(&mut self.back).map(|buffer| (offset, buffer)))
+        {
+            Some((offset, buffer)) => {
+                ghostty::rotate_cells(buffer, offset * cols as isize);
+                for (row, row_dirty) in dirty.iter().enumerate() {
+                    let range = row * cols..(row + 1) * cols;
+                    let reusable = !row_dirty
+                        && source_of(row).is_some_and(|source| !self.back_stale[source])
+                        && row
+                            .checked_add_signed(offset)
+                            .is_some_and(|back_row| back_row < rows);
+                    if reusable {
+                        if offset != 0 {
+                            let line = Line(row as i32);
+                            for cell in &mut buffer[range] {
+                                cell.point.line = line;
+                            }
+                        }
                         continue;
                     }
-                    let range = row * cols..(row + 1) * cols;
                     for (target, source) in
                         buffer[range.clone()].iter_mut().zip(&snapshot.cells[range])
                     {
@@ -244,8 +283,8 @@ impl CellMirror {
             None => cells_from_ghostty(&snapshot.cells),
         };
         self.back_valid = false;
-        self.last_dirty.clear();
-        self.last_dirty.extend_from_slice(&snapshot.dirty_rows);
+        self.last_dirty = dirty;
+        self.last_shift = shift;
         self.published_address = cells.as_ptr().addr();
         Content {
             generation,
@@ -280,6 +319,7 @@ impl CellMirror {
         self.back = previous.cells;
         self.back_valid = own;
         std::mem::swap(&mut self.back_stale, &mut self.last_dirty);
+        self.back_shift = self.last_shift;
         self.front_address = self.published_address;
     }
 }
@@ -495,6 +535,8 @@ mod tests {
             history_size: 0,
             mouse_shape: ghostty::MouseShape::Text,
             row_identities: Vec::new().into(),
+            row_shift: 0,
+            revision: 0,
             overscan: ghostty::Overscan::default(),
             overscan_rows: Vec::new().into(),
         });
@@ -598,6 +640,91 @@ mod tests {
         assert_eq!(addresses[2], addresses[0]);
         assert_eq!(addresses[3], addresses[1]);
         assert_eq!(addresses[6], addresses[4]);
+    }
+
+    fn row_text(content: &Content, row: usize) -> String {
+        content.cells[row * content.cols..(row + 1) * content.cols]
+            .iter()
+            .map(|cell| {
+                format!(
+                    "{:?}",
+                    (cell.c, cell.fg, cell.bg, cell.flags, &cell.zerowidth)
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_cell_mirror_reuses_shifted_rows_without_changing_what_is_shown() {
+        let size = ghostty::WindowSize::new(40, 8, 8, 16).expect("valid grid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("libghostty initializes");
+        for line in 0..30 {
+            terminal
+                .feed(format!("\x1b[3{}mrow {line:02}\x1b[0m words\r\n", line % 8).as_bytes())
+                .expect("history parses");
+        }
+        let mut mirror = CellMirror::default();
+        let mut front = mirror.publish(terminal.snapshot().expect("snapshot"));
+        let mut kept_versions = 0usize;
+        type Step<'a> = (&'a str, &'a dyn Fn(&mut ghostty::DisplayTerminal));
+        let cases: [Step<'_>; 9] = [
+            ("one line", &|t| t.feed(b"one more\r\n").expect("parses")),
+            ("several lines", &|t| {
+                t.feed(b"a\r\nb\r\nc\r\n").expect("parses")
+            }),
+            ("scroll back", &|t| t.scroll(ghostty::Scroll::Delta(-3))),
+            ("output while scrolled back", &|t| {
+                t.feed(b"behind\r\n").expect("parses")
+            }),
+            ("back to the bottom", &|t| t.scroll(ghostty::Scroll::Bottom)),
+            ("alternate screen", &|t| {
+                t.feed(b"\x1b[?1049hfull screen app\r\n").expect("parses")
+            }),
+            ("primary screen", &|t| {
+                t.feed(b"\x1b[?1049lback\r\n").expect("parses")
+            }),
+            ("clear", &|t| {
+                t.feed(b"\x1b[2J\x1b[Hcleared\r\nnext\r\n").expect("parses")
+            }),
+            ("resize during output", &|t| {
+                t.feed(b"before resize\r\n").expect("parses");
+                t.resize(ghostty::WindowSize::new(36, 7, 8, 16).expect("valid grid"))
+                    .expect("resize applies");
+                t.feed(b"after resize\r\n").expect("parses");
+            }),
+        ];
+        for (name, step) in cases {
+            step(&mut terminal);
+            let snapshot = terminal.snapshot().expect("snapshot");
+            let expected = content_from_ghostty(snapshot.clone());
+            let published = mirror.publish(snapshot);
+            assert_eq!(
+                format!("{:?}", published.cells),
+                format!("{:?}", expected.cells),
+                "{name}"
+            );
+            if published.rows == front.rows && published.cols == front.cols {
+                for row in 0..published.rows {
+                    if let Some(source) = front
+                        .row_versions
+                        .iter()
+                        .position(|version| *version == published.row_versions[row])
+                    {
+                        kept_versions += 1;
+                        assert_eq!(
+                            row_text(&published, row),
+                            row_text(&front, source),
+                            "{name} row {row}"
+                        );
+                    }
+                }
+            }
+            let previous = std::mem::replace(&mut front, published);
+            mirror.recycle(previous);
+        }
+        assert!(kept_versions > 0, "no row kept its version across a shift");
     }
 
     #[test]

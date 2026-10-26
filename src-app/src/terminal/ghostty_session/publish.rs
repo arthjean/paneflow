@@ -742,6 +742,8 @@ mod tests {
             history_size: 0,
             mouse_shape: ghostty::MouseShape::Text,
             row_identities: Vec::new().into(),
+            row_shift: 0,
+            revision: 0,
             overscan: ghostty::Overscan::default(),
             overscan_rows: Vec::new().into(),
         }
@@ -772,9 +774,11 @@ mod tests {
         let first = mirror.publish(empty_ghostty_content(20, 4));
         let mut second = empty_ghostty_content(20, 4);
         second.dirty_rows = [false, true, false, false].into();
+        second.revision = 1;
         let second = mirror.publish(second);
         let mut third = empty_ghostty_content(20, 4);
         third.dirty_rows = [false, false, true, false].into();
+        third.revision = 2;
         let third = mirror.publish(third);
         assert_eq!(first.row_versions[0], third.row_versions[0]);
         assert_eq!(second.row_versions[1], third.row_versions[1]);
@@ -788,6 +792,35 @@ mod tests {
                 .iter()
                 .zip(third.row_versions.iter())
                 .all(|(new, old)| new != old)
+        );
+    }
+
+    #[test]
+    fn row_versions_follow_a_shift_and_stay_unique() {
+        let mut mirror = CellMirror::default();
+        let first = mirror.publish(empty_ghostty_content(20, 4));
+        let mut shifted = empty_ghostty_content(20, 4);
+        shifted.dirty_rows = [false, false, true, true].into();
+        shifted.row_shift = 1;
+        shifted.revision = 1;
+        let shifted = mirror.publish(shifted);
+        assert_eq!(shifted.row_versions[..2], first.row_versions[1..3]);
+        let mut versions = shifted.row_versions.to_vec();
+        versions.extend_from_slice(&first.row_versions);
+        versions.sort_unstable();
+        versions.dedup();
+        assert_eq!(versions.len(), 6, "rows 2 and 3 got fresh versions");
+        let mut skipped = empty_ghostty_content(20, 4);
+        skipped.dirty_rows = [false; 4].into();
+        skipped.row_shift = 1;
+        skipped.revision = 3;
+        let skipped = mirror.publish(skipped);
+        assert!(
+            skipped
+                .row_versions
+                .iter()
+                .all(|version| !shifted.row_versions.contains(version)),
+            "a missed snapshot must not carry any version across"
         );
     }
 

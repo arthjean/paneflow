@@ -12,7 +12,8 @@ use paneflow_terminal_ghostty::{Content, DisplayTerminal, Scroll, TerminalAppear
 #[path = "../../../src-app/src/terminal/bench_corpus.rs"]
 mod bench_corpus;
 
-const PRE_OVERSCAN_DIGEST: u64 = 15_384_815_173_529_891_403;
+const PRE_OVERSCAN_DIGEST: u64 = 6_534_682_679_295_543_141;
+const PRE_ROW_REUSE_CONTENT_DIGEST: u64 = 11_315_952_540_898_940_023;
 
 fn fnv1a(digest: &mut u64, bytes: &[u8]) {
     for byte in bytes {
@@ -21,11 +22,13 @@ fn fnv1a(digest: &mut u64, bytes: &[u8]) {
     }
 }
 
-fn fold(digest: &mut u64, content: &Content) {
+fn fold(digest: &mut u64, content: &Content, with_dirty_rows: bool) {
+    if with_dirty_rows {
+        fnv1a(digest, format!("{:?}", content.dirty_rows).as_bytes());
+    }
     let published = format!(
-        "{:?}|{:?}|{:?}|{:?}|{}x{}|{}|{}",
+        "{:?}|{:?}|{:?}|{}x{}|{}|{}",
         content.cells,
-        content.dirty_rows,
         content.cursor,
         content.selection,
         content.cols,
@@ -40,7 +43,7 @@ fn fold(digest: &mut u64, content: &Content) {
     clippy::unwrap_used,
     reason = "test fixture setup must fail immediately"
 )]
-fn corpus_digest(configure: impl FnOnce(&mut DisplayTerminal)) -> u64 {
+fn corpus_digest(with_dirty_rows: bool, configure: impl FnOnce(&mut DisplayTerminal)) -> u64 {
     let mut terminal = DisplayTerminal::new(
         WindowSize::new(80, 24, 8, 16).unwrap(),
         10_000,
@@ -53,7 +56,7 @@ fn corpus_digest(configure: impl FnOnce(&mut DisplayTerminal)) -> u64 {
         terminal.feed(stream).unwrap();
         terminal.feed(b"\x1b[0m\r\n").unwrap();
         if index % 7 == 0 {
-            fold(&mut digest, &terminal.snapshot().unwrap());
+            fold(&mut digest, &terminal.snapshot().unwrap(), with_dirty_rows);
         }
     }
     for scroll in [
@@ -63,14 +66,14 @@ fn corpus_digest(configure: impl FnOnce(&mut DisplayTerminal)) -> u64 {
         Scroll::Bottom,
     ] {
         terminal.scroll(scroll);
-        fold(&mut digest, &terminal.snapshot().unwrap());
+        fold(&mut digest, &terminal.snapshot().unwrap(), with_dirty_rows);
     }
     digest
 }
 
 #[test]
 fn the_published_corpus_is_unchanged_without_overscan() {
-    assert_eq!(corpus_digest(|_| {}), PRE_OVERSCAN_DIGEST);
+    assert_eq!(corpus_digest(true, |_| {}), PRE_OVERSCAN_DIGEST);
 }
 
 #[allow(
@@ -80,7 +83,12 @@ fn the_published_corpus_is_unchanged_without_overscan() {
 #[test]
 fn an_explicit_zero_overscan_publishes_the_same_corpus() {
     assert_eq!(
-        corpus_digest(|terminal| terminal.set_overscan(0, 0).unwrap()),
+        corpus_digest(true, |terminal| terminal.set_overscan(0, 0).unwrap()),
         PRE_OVERSCAN_DIGEST
     );
+}
+
+#[test]
+fn reusing_shifted_rows_publishes_the_same_content_as_a_full_copy() {
+    assert_eq!(corpus_digest(false, |_| {}), PRE_ROW_REUSE_CONTENT_DIGEST);
 }

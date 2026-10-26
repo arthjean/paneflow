@@ -360,6 +360,67 @@ pub(crate) fn render_row_data(
     })
 }
 
+pub(crate) fn render_row_identity(
+    iterator: sys::GhosttyRenderStateRowIterator,
+) -> Result<RowIdentity> {
+    let mut viewport_y = 0i32;
+    let mut id = sys::GhosttyRenderStateRowId { bits: [0; 2] };
+    unsafe {
+        get_multi(
+            "render_state_row_get_multi",
+            iterator,
+            sys::ghostty_render_state_row_get_multi,
+            [
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y,
+                    &mut viewport_y,
+                ),
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_ID,
+                    &mut id,
+                ),
+            ],
+        )?;
+    }
+    Ok(RowIdentity {
+        viewport_y,
+        id: RowId::from_bits(id.bits),
+    })
+}
+
+pub(crate) fn render_row_raw_cells<'a>(
+    iterator: sys::GhosttyRenderStateRowIterator,
+) -> Result<&'a [sys::GhosttyCell]> {
+    let mut view = sys::GhosttyCellsView {
+        ptr: std::ptr::null(),
+        len: 0,
+    };
+    let result = unsafe {
+        sys::ghostty_render_state_row_get(
+            iterator,
+            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW,
+            (&mut view as *mut sys::GhosttyCellsView).cast(),
+        )
+    };
+    check("render_state_row_get_cells_raw", result)?;
+    if view.len == 0 {
+        return Ok(&[]);
+    }
+    if view.ptr.is_null() {
+        return Err(GhosttyError::AbiMismatch(
+            "render row returned a null raw cell view".into(),
+        ));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(view.ptr, view.len) })
+}
+
+pub(crate) fn select_row_cell(cells: sys::GhosttyRenderStateRowCells, column: usize) -> Result<()> {
+    let column = u16::try_from(column)
+        .map_err(|_| GhosttyError::AbiMismatch("render cell column overflow".into()))?;
+    let result = unsafe { sys::ghostty_render_state_row_cells_select(cells, column) };
+    check("render_state_row_cells_select", result)
+}
+
 pub(crate) fn render_overscan(
     render_state: sys::GhosttyRenderState,
     data: sys::GhosttyRenderStateData,

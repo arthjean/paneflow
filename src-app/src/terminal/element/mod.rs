@@ -229,7 +229,6 @@ struct BatchedTextRun {
     text: SharedString,
     font: Font,
     color: Hsla,
-    line: i32,
     col_start: usize,
     cells: Box<[RunCell]>,
 }
@@ -257,7 +256,6 @@ pub(super) enum DecorationKind {
 }
 
 pub(super) struct Decoration {
-    line: i32,
     col_start: usize,
     num_cols: usize,
     kind: DecorationKind,
@@ -265,7 +263,6 @@ pub(super) struct Decoration {
 }
 
 pub(super) struct SymbolGlyph {
-    line: i32,
     col: usize,
     span: usize,
     color: Hsla,
@@ -283,7 +280,6 @@ struct LayoutRect {
 }
 
 struct BlockQuad {
-    line: i32,
     col: usize,
     num_cols: usize,
     color: Hsla,
@@ -291,7 +287,6 @@ struct BlockQuad {
 }
 
 struct SpriteGlyph {
-    line: i32,
     col: usize,
     num_cols: usize,
     color: Hsla,
@@ -519,10 +514,25 @@ struct RowLayoutKey {
 pub(crate) struct RowLayoutCache {
     key: Option<RowLayoutKey>,
     rows: Vec<Option<(u64, Arc<RowLayout>)>>,
+    scratch: Vec<Option<(u64, Arc<RowLayout>)>>,
+}
+
+pub(super) struct Placed<'a, T> {
+    pub(super) line: i32,
+    item: &'a T,
+}
+
+impl<T> std::ops::Deref for Placed<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.item
+    }
 }
 
 pub struct LayoutState {
     rows: Vec<Arc<RowLayout>>,
+    first_row: i32,
     rects: Vec<LayoutRect>,
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
@@ -548,24 +558,34 @@ pub struct LayoutState {
 }
 
 impl LayoutState {
-    fn batched_runs(&self) -> impl Iterator<Item = &BatchedTextRun> {
-        self.rows.iter().flat_map(|row| row.batched_runs.iter())
+    fn placed<'a, T: 'a>(
+        &'a self,
+        items: fn(&'a RowLayout) -> &'a [T],
+    ) -> impl Iterator<Item = Placed<'a, T>> {
+        self.rows
+            .iter()
+            .zip(self.first_row..)
+            .flat_map(move |(row, line)| items(row).iter().map(move |item| Placed { line, item }))
     }
 
-    fn decorations(&self) -> impl Iterator<Item = &Decoration> {
-        self.rows.iter().flat_map(|row| row.decorations.iter())
+    fn batched_runs(&self) -> impl Iterator<Item = Placed<'_, BatchedTextRun>> {
+        self.placed(|row| &row.batched_runs)
     }
 
-    fn symbols(&self) -> impl Iterator<Item = &SymbolGlyph> {
-        self.rows.iter().flat_map(|row| row.symbols.iter())
+    fn decorations(&self) -> impl Iterator<Item = Placed<'_, Decoration>> {
+        self.placed(|row| &row.decorations)
     }
 
-    fn block_quads(&self) -> impl Iterator<Item = &BlockQuad> {
-        self.rows.iter().flat_map(|row| row.block_quads.iter())
+    fn symbols(&self) -> impl Iterator<Item = Placed<'_, SymbolGlyph>> {
+        self.placed(|row| &row.symbols)
     }
 
-    fn sprites(&self) -> impl Iterator<Item = &SpriteGlyph> {
-        self.rows.iter().flat_map(|row| row.sprites.iter())
+    fn block_quads(&self) -> impl Iterator<Item = Placed<'_, BlockQuad>> {
+        self.placed(|row| &row.block_quads)
+    }
+
+    fn sprites(&self) -> impl Iterator<Item = Placed<'_, SpriteGlyph>> {
+        self.placed(|row| &row.sprites)
     }
 }
 
@@ -1208,8 +1228,7 @@ pub(crate) fn layout_from_snapshot_cached(
             let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, colors);
             match &mut current_rect {
                 Some(rect)
-                    if rect.line == point.line.0
-                        && rect.color == cell_bg_color
+                    if rect.color == cell_bg_color
                         && rect.col + rect.num_cols == point.column.0 =>
                 {
                     rect.num_cols += cell_cols;
@@ -1219,7 +1238,7 @@ pub(crate) fn layout_from_snapshot_cached(
                         rects.push(rect);
                     }
                     current_rect = Some(LayoutRect {
-                        line: point.line.0,
+                        line: 0,
                         num_lines: 1,
                         col: point.column.0,
                         num_cols: cell_cols,
@@ -1245,7 +1264,6 @@ pub(crate) fn layout_from_snapshot_cached(
             if integrated_glyphs_enabled && let Some(sprite) = sprite_for(c) {
                 batch.flush();
                 sprites.push(SpriteGlyph {
-                    line: point.line.0,
                     col: point.column.0,
                     num_cols: cell_cols,
                     color: fg,
@@ -1259,7 +1277,6 @@ pub(crate) fn layout_from_snapshot_cached(
                 batch.flush();
                 for &coverage in coverages {
                     block_quads.push(BlockQuad {
-                        line: point.line.0,
                         col: point.column.0,
                         num_cols: cell_cols,
                         color: fg,
@@ -1286,7 +1303,6 @@ pub(crate) fn layout_from_snapshot_cached(
                     1
                 };
                 symbols.push(SymbolGlyph {
-                    line: point.line.0,
                     col: point.column.0,
                     span,
                     color: fg,
@@ -1320,11 +1336,11 @@ pub(crate) fn layout_from_snapshot_cached(
                 strikethrough: flags.contains(CellFlags::STRIKEOUT),
             };
 
-            if batch.can_append(style, point.line.0, point.column.0) {
+            if batch.can_append(style, point.column.0) {
                 batch.append(c, cell_cols);
             } else {
                 batch.flush();
-                batch.start(c, cell_cols, style, point.line.0, point.column.0);
+                batch.start(c, cell_cols, style, point.column.0);
             }
 
             if let Some(chars) = zw {
@@ -1351,38 +1367,62 @@ pub(crate) fn layout_from_snapshot_cached(
     let mut rows = Vec::with_capacity(visible_end.saturating_sub(visible_start));
     let mut rects = Vec::new();
     let versions_valid = row_versions.len() == desired_rows;
-    for (row, cached_row) in cache.rows.iter_mut().enumerate() {
-        if !versions_valid
-            || cached_row
-                .as_ref()
-                .is_some_and(|(version, _)| *version != row_versions[row])
-        {
-            *cached_row = None;
+    let movable = versions_valid && selection_range.is_none() && search_highlights.is_empty();
+    let mut previous = std::mem::take(&mut cache.rows);
+    let mut next = std::mem::take(&mut cache.scratch);
+    next.clear();
+    let mut offset = 0isize;
+    for row in 0..desired_rows {
+        let version = row_versions.get(row).copied().filter(|_| versions_valid);
+        let mut take_at = |source: usize| {
+            previous
+                .get_mut(source)
+                .filter(|cached| {
+                    cached
+                        .as_ref()
+                        .is_some_and(|(cached, _)| Some(*cached) == version)
+                })
+                .and_then(Option::take)
+                .map(|(_, layout)| layout)
+        };
+        let mut reused = take_at(row);
+        if reused.is_none() && movable {
+            reused = row
+                .checked_add_signed(offset)
+                .filter(|guess| *guess != row)
+                .and_then(&mut take_at);
+            if reused.is_none()
+                && let Some(source) = previous.iter().position(|cached| {
+                    cached
+                        .as_ref()
+                        .is_some_and(|(cached, _)| Some(*cached) == version)
+                })
+            {
+                offset = source as isize - row as isize;
+                reused = previous[source].take().map(|(_, layout)| layout);
+            }
         }
-    }
-    for (row, cached_row) in cache
-        .rows
-        .iter_mut()
-        .enumerate()
-        .take(visible_end)
-        .skip(visible_start)
-    {
-        let version = versions_valid.then(|| row_versions[row]);
-        let reused = cached_row
-            .as_ref()
-            .filter(|(cached_version, _)| version == Some(*cached_version));
-        let layout = if let Some((_, layout)) = reused {
-            Arc::clone(layout)
-        } else {
+        if !(visible_start..visible_end).contains(&row) {
+            next.push(
+                reused
+                    .zip(version)
+                    .map(|(layout, version)| (version, layout)),
+            );
+            continue;
+        }
+        let layout = reused.unwrap_or_else(|| {
             let start = cells.partition_point(|cell| cell.point.line.0 < row as i32);
             let end = cells.partition_point(|cell| cell.point.line.0 <= row as i32);
-            let layout = Arc::new(build_row(&cells[start..end]));
-            *cached_row = version.map(|version| (version, Arc::clone(&layout)));
-            layout
-        };
-        rects.extend_from_slice(&layout.rects);
-        rows.push(layout);
+            Arc::new(build_row(&cells[start..end]))
+        });
+        let line = row as i32;
+        rects.extend(layout.rects.iter().map(|rect| LayoutRect { line, ..*rect }));
+        rows.push(Arc::clone(&layout));
+        next.push(version.map(|version| (version, layout)));
     }
+    previous.clear();
+    cache.rows = next;
+    cache.scratch = previous;
     let rects = merge_background_regions(rects);
 
     let mut selection_rects = Vec::new();
@@ -1472,6 +1512,7 @@ pub(crate) fn layout_from_snapshot_cached(
 
     LayoutState {
         rows,
+        first_row: visible_start as i32,
         rects,
         selection_rects,
         search_rects,
@@ -1512,7 +1553,6 @@ struct BatchAccumulator {
     fg: Hsla,
     underline: UnderlineKind,
     strikethrough: bool,
-    line: i32,
     col_start: usize,
     col_end: usize,
 }
@@ -1531,15 +1571,14 @@ impl BatchAccumulator {
             fg: Hsla::default(),
             underline: UnderlineKind::None,
             strikethrough: false,
-            line: 0,
             col_start: 0,
             col_end: 0,
         }
     }
 
-    fn can_append(&self, style: CellStyle, line: i32, col: usize) -> bool {
+    fn can_append(&self, style: CellStyle, col: usize) -> bool {
         match &self.style {
-            Some(cs) => *cs == style && self.line == line && col == self.col_end,
+            Some(cs) => *cs == style && col == self.col_end,
             None => false,
         }
     }
@@ -1582,7 +1621,7 @@ impl BatchAccumulator {
         );
     }
 
-    fn start(&mut self, c: char, cell_cols: usize, style: CellStyle, line: i32, col_start: usize) {
+    fn start(&mut self, c: char, cell_cols: usize, style: CellStyle, col_start: usize) {
         self.uniform = cell_cols == 1;
         self.cells.clear();
         if !self.uniform {
@@ -1601,7 +1640,6 @@ impl BatchAccumulator {
         self.underline = style.underline;
         self.strikethrough = style.strikethrough;
         self.style = Some(style);
-        self.line = line;
         self.col_start = col_start;
         self.col_end = col_start + cell_cols;
     }
@@ -1614,7 +1652,6 @@ impl BatchAccumulator {
             text: SharedString::from(std::mem::take(&mut self.text)),
             font: self.font.clone(),
             color: self.fg,
-            line: self.line,
             col_start: self.col_start,
             cells: if self.uniform {
                 Box::default()
@@ -1625,7 +1662,6 @@ impl BatchAccumulator {
         let num_cols = self.col_end.saturating_sub(self.col_start);
         if self.underline != UnderlineKind::None {
             self.decorations.push(Decoration {
-                line: self.line,
                 col_start: self.col_start,
                 num_cols,
                 kind: DecorationKind::Underline(self.underline),
@@ -1634,7 +1670,6 @@ impl BatchAccumulator {
         }
         if self.strikethrough {
             self.decorations.push(Decoration {
-                line: self.line,
                 col_start: self.col_start,
                 num_cols,
                 kind: DecorationKind::Strikethrough,
@@ -2598,6 +2633,89 @@ mod golden_frame_tests {
         assert_eq!(second.golden_repr(), full.golden_repr());
         assert_eq!(Arc::strong_count(&cells), 1);
         assert_eq!(Arc::strong_count(&changed), 1);
+    }
+
+    fn shifted_rows(texts: [&str; ROWS]) -> Arc<[Cell]> {
+        texts
+            .iter()
+            .enumerate()
+            .flat_map(|(line, text)| {
+                text_row(line as i32, text, default_fg(), CellFlags::UNDERLINE)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn row_cache_follows_rows_that_moved_up_a_line() {
+        let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
+        let mut cache = RowLayoutCache::default();
+        let first = layout_from_snapshot_cached(
+            cached_inputs(
+                shifted_rows(["one", "two", "three", "four"]),
+                &theme,
+                &palette,
+            ),
+            &[11, 12, 13, 14],
+            1,
+            &mut cache,
+        );
+        let cells = shifted_rows(["two", "three", "four", "five"]);
+        let second = layout_from_snapshot_cached(
+            cached_inputs(cells.clone(), &theme, &palette),
+            &[12, 13, 14, 15],
+            1,
+            &mut cache,
+        );
+        for row in 0..ROWS - 1 {
+            assert!(
+                Arc::ptr_eq(&first.rows[row + 1], &second.rows[row]),
+                "row {row}"
+            );
+        }
+        assert!(
+            !first
+                .rows
+                .iter()
+                .any(|row| Arc::ptr_eq(row, &second.rows[ROWS - 1]))
+        );
+        let full = layout_from_snapshot(cached_inputs(cells, &theme, &palette));
+        assert_eq!(second.golden_repr(), full.golden_repr());
+    }
+
+    #[test]
+    fn row_cache_keeps_rows_in_place_while_a_selection_is_shown() {
+        let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
+        let selection = Some(SelectionRange {
+            start: GridPoint::new(0, 0),
+            end: GridPoint::new(1, 2),
+            is_block: false,
+        });
+        let mut cache = RowLayoutCache::default();
+        let mut inputs = cached_inputs(
+            shifted_rows(["one", "two", "three", "four"]),
+            &theme,
+            &palette,
+        );
+        inputs.selection_range = selection;
+        let first = layout_from_snapshot_cached(inputs, &[11, 12, 13, 14], 1, &mut cache);
+        let cells = shifted_rows(["two", "three", "four", "five"]);
+        let mut inputs = cached_inputs(cells.clone(), &theme, &palette);
+        inputs.selection_range = selection;
+        let second = layout_from_snapshot_cached(inputs, &[12, 13, 14, 15], 1, &mut cache);
+        assert!(
+            second
+                .rows
+                .iter()
+                .all(|row| !first.rows.iter().any(|old| Arc::ptr_eq(row, old)))
+        );
+        let mut inputs = cached_inputs(cells, &theme, &palette);
+        inputs.selection_range = selection;
+        assert_eq!(
+            second.golden_repr(),
+            layout_from_snapshot(inputs).golden_repr()
+        );
     }
 
     #[test]

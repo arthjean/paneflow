@@ -132,6 +132,8 @@ pub fn build_identity() -> BuildIdentity {
 
 #[cfg(ghostty_native)]
 pub use engine::DisplayTerminal;
+#[cfg(ghostty_native)]
+pub use snapshot::rotate_cells;
 
 #[cfg(all(test, ghostty_native))]
 mod identity_tests {
