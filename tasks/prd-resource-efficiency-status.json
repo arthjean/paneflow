@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Réduire le coût d'une frame",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-003",
@@ -126,41 +126,41 @@
       "id": "US-006",
       "title": "Compter les rendus de la sidebar",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-20",
+      "reviewed_at": "2026-10-20"
     },
     {
       "id": "US-007",
       "title": "Peindre la grille du terminal en deux layers homogènes",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-008",
       "title": "Rendre la sidebar par une vue en cache",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-20",
+      "completed_at": "2026-10-25",
+      "reviewed_at": "2026-10-25"
     },
     {
       "id": "US-009",

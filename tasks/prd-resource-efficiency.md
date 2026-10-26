@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-14 | Arthur Jean | PRD initial : réparer le gate de réflexion aveugle depuis `328a8fe1` et mesurer le cas réel (TUI d'agent animée, 30 workspaces), puis supprimer les coûts mesurés le 2026-10-14 (sonde git sur tous les workspaces, paint du terminal hors layer, sidebar reconstruite à chaque frame), les frames d'animation inutiles, la rétention mémoire des arènes glibc, le travail du pipeline terminal au scroll et dans les panes cachés, et quatre boucles à intervalle fixe. Vérification Windows réel en dernier epic. |
+| 1.1 | 2026-10-26 | Arthur Jean | US-007 : le critère « au moins 15 % de CPU en moins au thread principal » devient « `BoundsTree::insert` absent du paint du terminal » et « au moins 10 % en moins, fenêtre maximisée ». Le profil du 2026-10-26 donne `BoundsTree::insert` à 12,5 % du thread sur `main` avec 18 workspaces : même supprimé en entier, il ne peut pas rendre 15 %. Les deux layers le ramènent à 0,5 %, sans appel depuis le terminal. |
 
 ## Problem Statement
 
@@ -212,7 +213,7 @@ Enlever l'ordonnancement par glyphe et la reconstruction de la sidebar, les deux
 - [ ] Échec : given un scénario dont le script ne produit aucune frame, when il mesure, then le budget est manquant avec sa raison.
 
 #### US-007: Peindre la grille du terminal en deux layers homogènes
-**Description:** As a utilisateur multi-agents, I want que la grille du terminal se peigne sans ordonner chaque glyphe so that une frame coûte environ 22 % de CPU en moins au thread principal.
+**Description:** As a utilisateur multi-agents, I want que la grille du terminal se peigne sans ordonner chaque glyphe so that une frame ne paie plus `BoundsTree::insert` pour chaque primitive de la grille, environ 12 % du thread principal avec 18 workspaces.
 
 **Priority:** P0
 **Size:** S (2 pts)
@@ -223,7 +224,8 @@ Enlever l'ordonnancement par glyphe et la reconstruction de la sidebar, les deux
 - [ ] Un second `paint_layer` enveloppe les sprites, le texte et les symboles. Les images kitty sous le texte se peignent entre les deux layers, et les décorations, les images kitty au-dessus du texte, le soulignement d'hyperlien, le curseur, le curseur d'ancre, la scrollbar, les marques de recherche, l'IME et l'overlay de sortie se peignent après, dans cet ordre.
 - [ ] L'écriture de `scrollbar_metrics` dans son mutex reste hors des layers et inchangée.
 - [ ] Un script de fixture versionné affiche fonds colorés, sélection, texte barré et souligné, hyperlien, image kitty au-dessus et au-dessous du texte et curseur bloc ; la passe visuelle Linux confirme un rendu identique à `main` sur ce script.
-- [ ] Given le scénario d'US-002 sur la machine de référence, when on compare à `main`, then le CPU du thread principal baisse d'au moins 15 %, mesure jointe.
+- [ ] Given le scénario d'US-002 sur la machine de référence, when on profile le thread principal, then aucun appel à `BoundsTree::insert` ne part du paint du terminal et la fonction pèse moins de 1 % du thread (12,5 % sur `main`), profil joint.
+- [ ] Given le même scénario en fenêtre maximisée, when on compare à `main`, then le CPU du thread principal baisse d'au moins 10 %, mesure jointe.
 - [ ] Échec : given des bornes de layer vides (pane de taille nulle pendant un redimensionnement), when la frame se peint, then rien n'est poussé et aucune primitive ne fuit hors du masque de contenu.
 
 #### US-008: Rendre la sidebar par une vue en cache
