@@ -78,6 +78,7 @@ pub(super) struct PublishGate {
     render_hold: Option<ghostty::RenderHold>,
     published_hold: Option<u64>,
     mirror: CellMirror,
+    hidden: bool,
     pub(super) search_query: String,
     pub(super) search_error: Option<String>,
     pub(super) navigation_generation: u64,
@@ -103,6 +104,7 @@ impl PublishGate {
             render_hold: None,
             published_hold: None,
             mirror: CellMirror::default(),
+            hidden: false,
             search_query: String::new(),
             search_error: None,
             navigation_generation: 0,
@@ -137,6 +139,21 @@ impl PublishGate {
         self.poll_at(inner, terminal, now)
     }
 
+    pub(super) fn set_visible(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+        visible: bool,
+    ) -> Result<(), String> {
+        let revealed = visible && self.hidden;
+        self.hidden = !visible;
+        if !revealed {
+            return Ok(());
+        }
+        self.urgent |= self.pending;
+        self.poll(inner, terminal)
+    }
+
     pub(super) fn note_program_reset(&mut self) {
         self.urgent = true;
     }
@@ -163,6 +180,10 @@ impl PublishGate {
         terminal: &mut ghostty::DisplayTerminal,
         now: Instant,
     ) -> Result<(), String> {
+        if self.hidden && inner.visible.load(Ordering::Acquire) {
+            self.hidden = false;
+            self.urgent |= self.pending;
+        }
         if !self.pending {
             return Ok(());
         }
@@ -183,7 +204,11 @@ impl PublishGate {
         if !self.pending || self.showing_held_frame() {
             return false;
         }
-        self.urgent || now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
+        let elapsed = now.duration_since(self.last_publish);
+        if self.hidden {
+            return elapsed >= HIDDEN_PUBLISH_INTERVAL;
+        }
+        self.urgent || elapsed >= MIN_PUBLISH_INTERVAL
     }
 
     pub(super) fn next_wake(&self, now: Instant) -> Option<Duration> {
@@ -192,6 +217,11 @@ impl PublishGate {
         }
         if let Some(hold) = self.render_hold.filter(|_| self.showing_held_frame()) {
             return Some(SYNC_OUTPUT_MAX_HOLD.saturating_sub(now.duration_since(hold.started_at)));
+        }
+        if self.hidden {
+            return Some(
+                HIDDEN_PUBLISH_INTERVAL.saturating_sub(now.duration_since(self.last_publish)),
+            );
         }
         if self.urgent {
             return Some(Duration::ZERO);
@@ -218,6 +248,8 @@ impl PublishGate {
         let search = self.advance_search(terminal);
         let search_pending = !search.query.is_empty() && !search.complete && search.error.is_none();
         update_shared_state(inner, terminal, &mut self.mirror, Arc::new(search), live)?;
+        #[cfg(test)]
+        inner.published_frames.fetch_add(1, Ordering::Relaxed);
         self.last_publish = Instant::now();
         self.render_hold = terminal.render_hold();
         self.published_hold = self
@@ -553,6 +585,121 @@ mod tests {
         gate.last_publish = Instant::now() - MIN_PUBLISH_INTERVAL;
         gate.request(&session.inner, terminal)
             .expect("publication must succeed");
+    }
+
+    #[test]
+    fn a_hidden_gate_publishes_at_most_once_a_second_even_for_urgent_output() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.hidden = true;
+        gate.pending = true;
+        gate.urgent = true;
+        let midway = origin + HIDDEN_PUBLISH_INTERVAL / 2;
+
+        assert!(!gate.decide(midway));
+        assert_eq!(gate.next_wake(midway), Some(HIDDEN_PUBLISH_INTERVAL / 2));
+        assert!(gate.decide(origin + HIDDEN_PUBLISH_INTERVAL));
+    }
+
+    #[test]
+    fn a_pane_that_becomes_visible_publishes_its_pending_output_at_once() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+        feed_output(&mut gate, &session, &mut terminal, b"shown");
+        let visibility = |visible, gate: &mut PublishGate, terminal: &mut _| {
+            handle_terminal_command(
+                &session.inner,
+                terminal,
+                gate,
+                RuntimeMessage::Visibility(visible),
+            )
+        };
+
+        session.inner.visible.store(false, Ordering::Release);
+        assert!(matches!(
+            visibility(false, &mut gate, &mut terminal),
+            CommandOutcome::Handled
+        ));
+        terminal
+            .feed(b"\r\nwhile hidden")
+            .expect("output must parse");
+        gate.request(&session.inner, &mut terminal)
+            .expect("a hidden request must not fail");
+        assert_eq!(published_row(&session, 1), "");
+
+        session.inner.visible.store(true, Ordering::Release);
+        visibility(true, &mut gate, &mut terminal);
+        assert_eq!(published_row(&session, 1), "while hidden");
+        assert!(!gate.pending);
+    }
+
+    #[test]
+    fn a_pane_shown_in_the_middle_of_a_synchronized_frame_shows_the_captured_frame() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+        feed_output(&mut gate, &session, &mut terminal, b"first");
+        session.inner.visible.store(false, Ordering::Release);
+        gate.set_visible(&session.inner, &mut terminal, false)
+            .expect("hiding never publishes");
+        terminal
+            .feed(b"\r\nfinished\x1b[?2026h\x1b[H\x1b[2Jhalf")
+            .expect("output must parse");
+        gate.request(&session.inner, &mut terminal)
+            .expect("a hidden request must not fail");
+        assert_eq!(published_row(&session, 1), "");
+
+        session.inner.visible.store(true, Ordering::Release);
+        gate.set_visible(&session.inner, &mut terminal, true)
+            .expect("the captured frame must publish");
+        assert_eq!(published_row(&session, 0), "first");
+        assert_eq!(published_row(&session, 1), "finished");
+
+        feed_output(&mut gate, &session, &mut terminal, b" drawn\x1b[?2026l");
+        assert_eq!(published_row(&session, 0), "half drawn");
+    }
+
+    #[test]
+    fn a_hidden_gate_follows_the_session_back_to_visible_when_the_message_is_lost() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        let mut terminal = held_terminal(24, 3);
+        let mut gate = PublishGate::new();
+        feed_output(&mut gate, &session, &mut terminal, b"before");
+        session.inner.visible.store(false, Ordering::Release);
+        gate.set_visible(&session.inner, &mut terminal, false)
+            .expect("hiding never publishes");
+        terminal.feed(b" after").expect("output must parse");
+        gate.request(&session.inner, &mut terminal)
+            .expect("a hidden request must not fail");
+        assert_eq!(published_row(&session, 0), "before");
+
+        session.inner.visible.store(true, Ordering::Release);
+        gate.poll(&session.inner, &mut terminal)
+            .expect("the visible fallback must publish");
+        assert_eq!(published_row(&session, 0), "before after");
+    }
+
+    #[test]
+    fn a_pane_stays_visible_when_the_control_queue_cannot_take_the_change() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(24, 3, 8, 16));
+        for _ in 0..CONTROL_CAPACITY {
+            session
+                .inner
+                .mailbox
+                .try_send_control(RuntimeMessage::ClearSelection)
+                .expect("the queue has room");
+        }
+        session.set_visible(false);
+        assert!(session.inner.visible.load(Ordering::Acquire));
+
+        session.inner.mailbox.close();
+        session.set_visible(false);
+        assert!(session.inner.visible.load(Ordering::Acquire));
     }
 
     #[test]

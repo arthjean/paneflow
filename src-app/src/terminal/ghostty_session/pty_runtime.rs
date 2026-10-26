@@ -1701,6 +1701,105 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn posix_shell_session() -> (GhosttySession, UnboundedReceiver<GhosttyUiEvent>) {
+        let params = SpawnParams {
+            shell: "/bin/sh".into(),
+            shell_quoting: super::super::types::ShellQuoting::Posix,
+            extra_args: Vec::new(),
+            env: std::collections::HashMap::from([("TERM".into(), "xterm-256color".into())]),
+            cwd: std::env::current_dir().unwrap(),
+            cols: 80,
+            rows: 24,
+            profile: TerminalSurfaceProfile::Normal,
+        };
+        let (session, pending, events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        session
+            .start(pending, params, 1_000)
+            .expect("the runtime must spawn a POSIX shell");
+        session.promote();
+        (session, events_rx)
+    }
+
+    #[cfg(unix)]
+    fn animated_agent_publications(visible: bool, seconds: u64) -> usize {
+        let (session, _events_rx) = posix_shell_session();
+        session.set_visible(visible);
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../bench/fixtures/tui-agent.sh");
+        let command = format!("sh '{}' {}\n", fixture.display(), seconds + 2);
+        assert!(session.write(command.into_bytes()).is_sent());
+        std::thread::sleep(Duration::from_secs(1));
+        let before = session.inner.published_frames.load(Ordering::Relaxed);
+        std::thread::sleep(Duration::from_secs(seconds));
+        let published = session.inner.published_frames.load(Ordering::Relaxed) - before;
+        assert!(
+            session
+                .recent_output_lines()
+                .iter()
+                .any(|line| line.contains("tui fixture line")),
+            "the fixture never drew its transcript, so nothing was measured"
+        );
+        session.shutdown();
+        published
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hidden_pane_publishes_about_once_a_second_under_an_animated_agent() {
+        let published = animated_agent_publications(false, 3);
+        assert!(
+            published <= 4,
+            "a hidden pane published {published} frames in 3 s"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "ten second measurement for the PRD; run with --ignored --nocapture"]
+    fn hidden_and_visible_publications_over_ten_seconds() {
+        let hidden = animated_agent_publications(false, 10);
+        let visible = animated_agent_publications(true, 10);
+        eprintln!("PANEFLOW_MEASURE hidden={hidden} visible={visible} frames over 10 s");
+        assert!(hidden <= 10, "{hidden}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hidden_pane_reports_a_dev_server_url_within_a_second_and_a_half() {
+        let (session, mut events_rx) = posix_shell_session();
+        std::thread::sleep(Duration::from_millis(300));
+        session.set_visible(false);
+        while events_rx.try_recv().is_ok() {}
+        let printed = Instant::now();
+        assert!(
+            session
+                .write(b"printf '  Local:   http://local%s:5173/\\n' host\n".to_vec())
+                .is_sent()
+        );
+        let deadline = printed + Duration::from_millis(1_500);
+        let mut detected = None;
+        while Instant::now() < deadline && detected.is_none() {
+            while let Ok(event) = events_rx.try_recv() {
+                if matches!(
+                    event,
+                    GhosttyUiEvent::Wakeup(_) | GhosttyUiEvent::ServiceOutputReady(_)
+                ) && session
+                    .recent_output_lines()
+                    .iter()
+                    .any(|line| line.contains("http://localhost:5173/"))
+                {
+                    detected = Some(printed.elapsed());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        session.shutdown();
+        let detected = detected.expect("the URL never reached the service scan within 1.5 s");
+        assert!(detected < Duration::from_millis(1_500), "{detected:?}");
+    }
+
     #[test]
     fn stopping_input_discards_queued_bytes_and_rejects_new_input() {
         let mailbox = RuntimeMailbox::new();

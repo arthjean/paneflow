@@ -192,6 +192,10 @@ impl PaneFlowApp {
         self.acknowledge_visible_completions(cx);
     }
 
+    pub(crate) fn sync_terminal_visibility(&self, cx: &App) {
+        sync_terminal_visibility(&self.workspaces, self.shown_workspace_idx(), cx);
+    }
+
     pub(crate) fn acknowledge_visible_completions(&mut self, cx: &mut Context<Self>) {
         let Some(shown) = self.shown_workspace_idx() else {
             return;
@@ -743,9 +747,81 @@ fn move_panes_to_workspace(
     sessions
 }
 
+fn sync_terminal_visibility(
+    workspaces: &[crate::workspace::Workspace],
+    shown: Option<usize>,
+    cx: &App,
+) {
+    for (ws_idx, ws) in workspaces.iter().enumerate() {
+        let active_tab = ws.active_tab_idx();
+        for (tab_idx, tab) in ws.tabs().iter().enumerate() {
+            let tab_shown = shown == Some(ws_idx) && tab_idx == active_tab;
+            for pane_entity in tab.collect_panes() {
+                let pane = pane_entity.read(cx);
+                let pane_shown = pane.detached.is_some()
+                    || (tab_shown
+                        && tab
+                            .root
+                            .as_ref()
+                            .is_some_and(|root| root.contains_leaf(&pane_entity)));
+                let active = pane.active_surface_idx();
+                for (idx, surface) in pane.surfaces().iter().enumerate() {
+                    if let Some(terminal) = surface.as_terminal() {
+                        terminal.read(cx).set_shown(pane_shown && idx == active);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn only_the_front_surface_of_the_shown_tab_publishes_at_full_rate(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let terminal = |cx: &mut gpui::VisualTestContext| {
+            cx.new(|cx| TerminalView::display_only_for_test(1, cx))
+        };
+        let (front, behind, other_tab, other_workspace) =
+            (terminal(cx), terminal(cx), terminal(cx), terminal(cx));
+        let stacked = cx.new(|cx| Pane::new(behind.clone(), 1, cx));
+        stacked.update(cx, |pane, cx| {
+            pane.push_surface(crate::pane::PaneSurface::Terminal(front.clone()), cx);
+        });
+        let second_tab_pane = cx.new(|cx| Pane::new(other_tab.clone(), 1, cx));
+        let second_workspace_pane = cx.new(|cx| Pane::new(other_workspace.clone(), 2, cx));
+        let mut first = crate::workspace::Workspace::with_id(1, "first", stacked.clone());
+        assert!(first.open_tab(crate::workspace::Tab::new(
+            "second",
+            Some(LayoutTree::Leaf(second_tab_pane))
+        )));
+        first.set_active_tab(0);
+        let workspaces = vec![
+            first,
+            crate::workspace::Workspace::with_id(2, "second", second_workspace_pane),
+        ];
+        let shown = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                [&front, &behind, &other_tab, &other_workspace]
+                    .map(|terminal| terminal.read(cx).is_shown())
+            })
+        };
+
+        cx.update(|_, cx| sync_terminal_visibility(&workspaces, Some(0), cx));
+        assert_eq!(shown(cx), [true, false, false, false]);
+
+        cx.update(|_, cx| sync_terminal_visibility(&workspaces, Some(1), cx));
+        assert_eq!(shown(cx), [false, false, false, true]);
+
+        stacked.update(cx, |pane, cx| pane.activate_surface(0, cx));
+        cx.update(|_, cx| sync_terminal_visibility(&workspaces, Some(0), cx));
+        assert_eq!(shown(cx), [false, true, false, false]);
+    }
 
     #[gpui::test]
     fn moved_panes_name_every_stacked_session_and_relaunch_in_the_new_workspace(

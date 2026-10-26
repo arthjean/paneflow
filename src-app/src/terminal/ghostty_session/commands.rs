@@ -99,6 +99,14 @@ pub(super) fn handle_terminal_command(
     message: RuntimeMessage,
 ) -> CommandOutcome {
     match message {
+        RuntimeMessage::Visibility(visible) => {
+            if let Err(error) = gate.set_visible(inner, terminal, visible) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty could not publish a pane that became visible: {error}"
+                );
+            }
+        }
         RuntimeMessage::Scroll(scroll) => {
             terminal.scroll(scroll);
             if let Err(error) = gate.publish_now(inner, terminal) {

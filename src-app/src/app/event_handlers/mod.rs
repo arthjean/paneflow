@@ -152,6 +152,7 @@ impl PaneFlowApp {
                 self.save_session(cx);
                 cx.notify();
             }
+            pane::PaneEvent::ActiveSurfaceChanged => cx.notify(),
             pane::PaneEvent::CloseRequested => {
                 self.request_close(CloseTarget::Pane(pane), None, cx);
             }

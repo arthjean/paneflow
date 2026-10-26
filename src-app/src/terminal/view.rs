@@ -298,6 +298,15 @@ impl TerminalView {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    pub(crate) fn set_shown(&self, shown: bool) {
+        self.terminal.ghostty_session().set_visible(shown);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_shown(&self) -> bool {
+        self.terminal.ghostty_session().is_visible()
+    }
+
     pub(crate) fn apply_backend_wakeup(&mut self, cx: &mut Context<Self>) {
         self.terminal.process_backend_wakeup();
         self.process_dirty_terminal(cx);

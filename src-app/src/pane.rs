@@ -365,6 +365,7 @@ pub enum PaneEvent {
     OpenNewTabMenu,
     NewTabPreset(crate::app::pane_palette::Preset),
     SurfacesChanged,
+    ActiveSurfaceChanged,
     CloseRequested,
     CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
@@ -545,6 +546,7 @@ impl Pane {
         self.surfaces.push(surface);
         self.active_surface = self.surfaces.len() - 1;
         self.tab_scroll.scroll_to_item(self.active_surface);
+        cx.emit(PaneEvent::ActiveSurfaceChanged);
         cx.notify();
     }
 
@@ -552,6 +554,7 @@ impl Pane {
         if idx < self.surfaces.len() && idx != self.active_surface {
             self.active_surface = idx;
             self.tab_scroll.scroll_to_item(idx);
+            cx.emit(PaneEvent::ActiveSurfaceChanged);
             cx.notify();
         }
     }

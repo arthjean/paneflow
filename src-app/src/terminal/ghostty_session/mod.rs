@@ -75,6 +75,7 @@ const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
 const SEARCH_RAIL_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
+const HIDDEN_PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
 const INTERACTIVE_OUTPUT_WINDOW: Duration = Duration::from_millis(100);
 const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
@@ -227,8 +228,11 @@ struct SessionInner {
     exit_published: AtomicBool,
     option_as_alt: AtomicBool,
     smooth_scroll_overscan: AtomicBool,
+    visible: AtomicBool,
     #[cfg(test)]
     processed_output_bytes: AtomicUsize,
+    #[cfg(test)]
+    published_frames: AtomicUsize,
     #[cfg(test)]
     worker_crash_injected: AtomicBool,
     resize: Mutex<ResizeState>,
@@ -300,8 +304,11 @@ impl GhosttySession {
                 exit_published: AtomicBool::new(false),
                 option_as_alt: AtomicBool::new(false),
                 smooth_scroll_overscan: AtomicBool::new(false),
+                visible: AtomicBool::new(true),
                 #[cfg(test)]
                 processed_output_bytes: AtomicUsize::new(0),
+                #[cfg(test)]
+                published_frames: AtomicUsize::new(0),
                 #[cfg(test)]
                 worker_crash_injected: AtomicBool::new(false),
                 resize: Mutex::new(ResizeState {
@@ -919,6 +926,25 @@ impl GhosttySession {
                 .store(false, Ordering::Release);
         }
         sent
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_visible(&self) -> bool {
+        self.inner.visible.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_visible(&self, visible: bool) {
+        if self.inner.visible.swap(visible, Ordering::AcqRel) == visible {
+            return;
+        }
+        let sent = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::Visibility(visible))
+            .is_ok();
+        if !sent && !visible {
+            self.inner.visible.store(true, Ordering::Release);
+        }
     }
 
     pub(super) fn refresh_appearance(&self) -> bool {

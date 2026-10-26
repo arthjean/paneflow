@@ -135,6 +135,9 @@ impl PaneFlowApp {
 
         Self::schedule_release_toast(cx);
 
+        cx.observe_self(|this, cx| this.sync_terminal_visibility(cx))
+            .detach();
+
         let agents_filter_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
         cx.observe(&agents_filter_input, |_, _, cx| cx.notify())
