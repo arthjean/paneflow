@@ -8,6 +8,7 @@
 | 1.0 | 2026-10-14 | Arthur Jean | PRD initial : réparer le gate de réflexion aveugle depuis `328a8fe1` et mesurer le cas réel (TUI d'agent animée, 30 workspaces), puis supprimer les coûts mesurés le 2026-10-14 (sonde git sur tous les workspaces, paint du terminal hors layer, sidebar reconstruite à chaque frame), les frames d'animation inutiles, la rétention mémoire des arènes glibc, le travail du pipeline terminal au scroll et dans les panes cachés, et quatre boucles à intervalle fixe. Vérification Windows réel en dernier epic. |
 | 1.1 | 2026-10-26 | Arthur Jean | US-007 : le critère « au moins 15 % de CPU en moins au thread principal » devient « `BoundsTree::insert` absent du paint du terminal » et « au moins 10 % en moins, fenêtre maximisée ». Le profil du 2026-10-26 donne `BoundsTree::insert` à 12,5 % du thread sur `main` avec 18 workspaces : même supprimé en entier, il ne peut pas rendre 15 %. Les deux layers le ramènent à 0,5 %, sans appel depuis le terminal. |
 | 1.2 | 2026-10-26 | Arthur Jean | US-011 : la mesure de 4 h de `RssAnon` contre un desktop sans plafond et la comparaison CPU du thread principal sont retirées. Le critère devient le nombre d'arènes lu dans `/proc/<pid>/maps` (2 avec le plafond, 63 avec `MALLOC_ARENA_MAX=64`, mesuré le 2026-10-26) ; le RSS et le CPU du thread principal restent relevés sur matériel réel par US-019. |
+| 1.3 | 2026-10-26 | Arthur Jean | US-012 et US-013 : le spike montre que libghostty signale une frame entière au scroll d'une ligne (hypothèse validée), mais `history_size` ne porte pas le décalage : il passe de 141 à 142 sous la limite d'historique et retombe quand une page d'historique est libérée (de 144 à 8 après 500 lignes de plus, et d'un coup au scroll d'une ligne qui libère la page). Le décalage se déduit donc de l'identité des lignes (`RowIdentity.id`) dans le cache de snapshot de libghostty, publié dans `Content.row_shift`, et une ligne n'est réutilisée que si ses cellules brutes sont identiques ; un snapshot manqué (révision non consécutive) reconvertit tout. |
 
 ## Problem Statement
 
@@ -87,7 +88,7 @@ Key findings that informed this PRD:
 ## Assumptions & Constraints
 
 ### Assumptions (to validate)
-- libghostty marque toutes les lignes du viewport comme sales quand le contenu défile d'une ligne, ce qui explique `layout_scroll_cached` égal à la version sans cache. Validé par US-012 avant US-013.
+- libghostty marque toutes les lignes du viewport comme sales quand le contenu défile d'une ligne, ce qui explique `layout_scroll_cached` égal à la version sans cache. Validé par US-012 le 2026-10-26 : frame entière signalée au scroll d'une ligne.
 - Un plafond de 2 arènes ne coûte pas plus de 3 % de CPU au thread principal sous la charge de référence, d'après l'expérience du host et le défaut de Heroku. Vérifié par US-019 sur matériel réel.
 - Le survol des éléments de la sidebar reste vivant dans une vue en cache, car GPUI notifie la vue courante quand l'état de survol change (`crates/gpui/src/elements/div.rs:2703` au rev épinglé). Vérifié par les critères d'US-008.
 - Des diffstats de workspaces inactifs vieilles d'au plus 5 min ne gênent pas l'utilisateur, puisque l'activation et les événements `.git` les rafraîchissent aussitôt.
@@ -310,7 +311,7 @@ Réutiliser au scroll ce qui est déjà converti et mis en page, et ne plus conv
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Un test dans `src-app/src/terminal/ghostty_session/` alimente un terminal de 220x60 plein, ajoute une ligne en bas, et enregistre `dirty_rows`, `history_size` et `display_offset` du snapshot suivant.
+- [ ] Un test (`crates/paneflow-terminal-ghostty/src/snapshot.rs`, au plus près du snapshot) alimente un terminal de 220x60 plein, ajoute une ligne en bas, et enregistre `dirty_rows`, `history_size` et `display_offset` du snapshot suivant ; un second test fait défiler jusqu'à la libération d'une page d'historique.
 - [ ] Le résultat est consigné dans la PR : nombre de lignes marquées, et si le décalage se déduit de la variation de `history_size` et `display_offset`.
 - [ ] Échec : given un résultat où seules les nouvelles lignes sont marquées, when le spike conclut, then US-013 est annulée et la cause de `layout_scroll_cached` est recherchée ailleurs, dans un ajout au PRD.
 
@@ -322,11 +323,11 @@ Réutiliser au scroll ce qui est déjà converti et mis en page, et ne plus conv
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] `CellMirror::publish` (`convert.rs:209`) déduit le décalage du viewport de `history_size` et `display_offset`, fait pivoter `row_versions` et le buffer de cellules de ce décalage, et ne reconvertit que les lignes nouvelles ou réellement modifiées.
+- [ ] Le cache de snapshot de libghostty déduit le décalage du viewport de l'identité des lignes et le publie dans `Content.row_shift` (US-012 : `history_size` retombe quand une page d'historique est libérée) ; `CellMirror::publish` (`convert.rs:209`) fait pivoter `row_versions` et le buffer de cellules de ce décalage, et ne reconvertit que les lignes nouvelles ou réellement modifiées.
 - [ ] Le cache de lignes de l'élément (`element/mod.rs:1353`) pivote du même décalage, et `RowLayout` ne contient plus de position verticale absolue : elle s'ajoute au paint, comme le fait déjà `overscan_row_layout`.
 - [ ] Given `scripts/bench-terminal.sh`, when on compare à la baseline, then `layout_scroll_cached_220x60` vaut au plus 150 µs (552 µs avant) et `publish_scroll_220x60` au plus 100 µs (359 µs avant), et les allocations par passe de scroll baissent d'au moins 80 % dans le gate d'allocations.
 - [ ] Le contenu affiché reste identique à `main` pour un scroll d'une ligne, de plusieurs lignes, un scroll en arrière (`display_offset` non nul), l'écran alternatif, un effacement d'écran et un redimensionnement pendant la sortie ; un test couvre chaque cas.
-- [ ] Échec : given un décalage incohérent (variation de `history_size` au-delà du nombre de lignes, ou historique tronqué à sa limite), when la frame se publie, then toutes les lignes sont reconverties comme aujourd'hui.
+- [ ] Échec : given un décalage incohérent (aucune identité de ligne retrouvée, cellules brutes différentes, ou snapshot manqué entre deux publications), when la frame se publie, then les lignes concernées sont reconverties comme aujourd'hui, et toutes après un snapshot manqué.
 
 #### US-014: Limiter les panes cachés à une publication par seconde
 **Description:** As a utilisateur multi-agents, I want qu'un pane que personne ne voit ne convertisse plus ses frames à 125 par seconde so that des agents en arrière-plan ne coûtent plus de CPU de conversion ni de réveils du thread principal.

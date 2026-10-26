@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Moins de travail dans le pipeline terminal",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-005",
@@ -204,39 +204,39 @@
       "id": "US-012",
       "title": "Valider l'hypothèse : libghostty marque toutes les lignes au scroll d'une ligne",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-013",
       "title": "Réutiliser les lignes converties et mises en page après un scroll",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-014",
       "title": "Limiter les panes cachés à une publication par seconde",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-26",
+      "reviewed_at": "2026-10-26"
     },
     {
       "id": "US-015",
