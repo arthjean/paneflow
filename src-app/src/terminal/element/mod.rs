@@ -1776,43 +1776,51 @@ impl Element for TerminalElement {
         };
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            paint::background::paint_base_fill(&layout, bounds, window);
+            window.paint_layer(bounds, |window| {
+                paint::background::paint_base_fill(&layout, bounds, window);
 
-            if let Some(above) = layout.overscan_above.as_deref()
-                && smooth_scroll_offset > px(0.0)
-            {
-                let above_geom = CellGeometry::new(
-                    Point {
-                        x: origin.x,
-                        y: origin.y - line_height,
-                    },
-                    self.frame_metrics.metrics,
+                if let Some(above) = layout.overscan_above.as_deref()
+                    && smooth_scroll_offset > px(0.0)
+                {
+                    let above_geom = CellGeometry::new(
+                        Point {
+                            x: origin.x,
+                            y: origin.y - line_height,
+                        },
+                        self.frame_metrics.metrics,
+                    );
+                    paint_overscan_row(above, &above_geom, base_font, font_size, window, cx);
+                }
+
+                paint::background::paint_cell_backgrounds(
+                    &layout,
+                    Some(paint::background::GridEdges::inset_within(bounds)),
+                    &cell_x_bounds,
+                    &cell_y_bounds,
+                    window,
                 );
-                paint_overscan_row(above, &above_geom, base_font, font_size, window, cx);
-            }
 
-            paint::background::paint_cell_backgrounds(
-                &layout,
-                Some(paint::background::GridEdges::inset_within(bounds)),
-                &cell_x_bounds,
-                &cell_y_bounds,
-                window,
-            );
+                paint::selection::paint_selection(&layout, &geom, window);
 
-            paint::selection::paint_selection(&layout, &geom, window);
+                paint::overlay::paint_search_highlights(&layout, &geom, window);
 
-            paint::overlay::paint_search_highlights(&layout, &geom, window);
-
-            paint::background::paint_block_quads(&layout, &cell_x_bounds, &cell_y_bounds, window);
-
-            paint::sprites::paint_sprites(&layout, &geom, window);
+                paint::background::paint_block_quads(
+                    &layout,
+                    &cell_x_bounds,
+                    &cell_y_bounds,
+                    window,
+                );
+            });
 
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
 
-            paint::decorations::paint_decorations(&layout, &geom, window);
+            window.paint_layer(bounds, |window| {
+                paint::sprites::paint_sprites(&layout, &geom, window);
+                paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
+                paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
+            });
 
-            paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
-            paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
+            paint::decorations::paint_decorations(&layout, &geom, window);
 
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
 

@@ -281,6 +281,16 @@ divs: terminal rendering wants per-cell control over background quads, glyph
 runs, cursor shapes, underlines and hyperlink hitboxes. Everything else in the
 app (sidebar, tabs, settings, diff viewer) is regular GPUI flex layout.
 
+`TerminalElement::paint` draws the grid in two `paint_layer` calls, one for
+the base fill, overscan row, cell backgrounds, selection, search highlights
+and block quads, one for sprites, text and symbols, with kitty images below
+the text between them. A primitive inside a layer takes the layer's draw
+order instead of being inserted one by one into GPUI's `BoundsTree`, and
+GPUI draws a layer's quads before its glyphs, so the visible order is kept.
+Decorations, kitty images above the text, the hyperlink underline, the
+cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
+painted after the second layer, in that order.
+
 The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
 the end of CPU painting. It does not identify the echoed character or observe
 GPU presentation, and therefore does not measure input-to-visible-pixel latency.
