@@ -48,10 +48,18 @@
     },
     {
       "id": "EP-006",
-      "title": "Vérifier sur le matériel réel",
-      "status": "TODO",
+      "title": "Mesurer sur le matériel réel Linux et combler les écarts",
+      "status": "DONE",
       "priority": "P2",
-      "stories_total": 2,
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-007",
+      "title": "Vérifier sur Windows réel",
+      "status": "BLOCKED",
+      "priority": "P2",
+      "stories_total": 1,
       "stories_done": 0
     }
   ],
@@ -292,7 +300,7 @@
       "id": "US-019",
       "title": "Mesurer les gains sur matériel réel Linux",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
@@ -302,15 +310,39 @@
         "US-014",
         "US-018"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-27",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "id": "US-021",
+      "title": "Servir les sondes des workspaces cachés depuis le cache des filtres",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-27",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
+    },
+    {
+      "id": "US-022",
+      "title": "Réveiller le suivi et la pompe du worker à l'arrêt au lieu de les faire sonder",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-27",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
     },
     {
       "id": "US-020",
       "title": "Vérifier les changements sur Windows réel",
-      "epic": "EP-006",
-      "status": "TODO",
+      "epic": "EP-007",
+      "status": "BLOCKED",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -319,11 +351,14 @@
         "US-009",
         "US-010",
         "US-016",
-        "US-018"
+        "US-018",
+        "US-021",
+        "US-022"
       ],
       "started_at": null,
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": null,
+      "notes": "Needs Arthur on the Windows 11 dual boot: z-order fixture capture, cached sidebar, shimmer and blink stop, perf-hardware.ps1 -State tui-30-workspaces, worker follow and idle session wakeups via typeperf \\Thread(paneflow*)\\Context Switches/sec (the protocol reads per-thread context switches on Linux only). Local checklist, not tracked: tasks/resource-efficiency-ep006/windows-checklist.md."
     }
   ]
 }

@@ -9,6 +9,8 @@
 | 1.1 | 2026-10-26 | Arthur Jean | US-007 : le critère « au moins 15 % de CPU en moins au thread principal » devient « `BoundsTree::insert` absent du paint du terminal » et « au moins 10 % en moins, fenêtre maximisée ». Le profil du 2026-10-26 donne `BoundsTree::insert` à 12,5 % du thread sur `main` avec 18 workspaces : même supprimé en entier, il ne peut pas rendre 15 %. Les deux layers le ramènent à 0,5 %, sans appel depuis le terminal. |
 | 1.2 | 2026-10-26 | Arthur Jean | US-011 : la mesure de 4 h de `RssAnon` contre un desktop sans plafond et la comparaison CPU du thread principal sont retirées. Le critère devient le nombre d'arènes lu dans `/proc/<pid>/maps` (2 avec le plafond, 63 avec `MALLOC_ARENA_MAX=64`, mesuré le 2026-10-26) ; le RSS et le CPU du thread principal restent relevés sur matériel réel par US-019. |
 | 1.3 | 2026-10-26 | Arthur Jean | US-012 et US-013 : le spike montre que libghostty signale une frame entière au scroll d'une ligne (hypothèse validée), mais `history_size` ne porte pas le décalage : il passe de 141 à 142 sous la limite d'historique et retombe quand une page d'historique est libérée (de 144 à 8 après 500 lignes de plus, et d'un coup au scroll d'une ligne qui libère la page). Le décalage se déduit donc de l'identité des lignes (`RowIdentity.id`) dans le cache de snapshot de libghostty, publié dans `Content.row_shift`, et une ligne n'est réutilisée que si ses cellules brutes sont identiques ; un snapshot manqué (révision non consécutive) reconvertit tout. |
+| 1.4 | 2026-10-27 | Arthur Jean | US-019 : le protocole matériel du 2026-10-27 (`bench/results/hardware-summary-2026-10-27.md`) manque deux objectifs. À 33 workspaces, 31,8 processus git par minute sur 300 s, dont 33 `git config --get-regexp`, un par workspace caché ; le suivi du worker se réveille 2,0 fois par seconde et sa pompe 10 fois. Ils deviennent US-021 et US-022, ajoutées à EP-006 avant la passe Windows d'US-020, qui les couvre aussi. |
+| 1.5 | 2026-10-27 | Arthur Jean | US-020 passe dans un epic final, EP-007 « Vérifier sur Windows réel » : EP-006 devient « Mesurer sur le matériel réel Linux et combler les écarts » et se clôt sans attendre la passe Windows. |
 
 ## Problem Statement
 
@@ -409,11 +411,11 @@ Faire attendre les quatre boucles qui se réveillent sans rien avoir à faire su
 
 ---
 
-### EP-006: Vérifier sur le matériel réel
+### EP-006: Mesurer sur le matériel réel Linux et combler les écarts
 
-Mesurer les gains sur la machine de référence et vérifier les changements de rendu et de boucles sur Windows réel, en un seul passage à la fin.
+Mesurer les gains sur la machine de référence et combler les objectifs que cette mesure manque.
 
-**Definition of Done:** le protocole matériel Linux enregistre l'état `tui-30-workspaces` avant et après le PRD ; la passe Windows réel couvre chaque story d'EP-002 à EP-005 et corrige ce qu'elle trouve.
+**Definition of Done:** le protocole matériel Linux enregistre l'état `tui-30-workspaces` avant et après le PRD ; les objectifs git et réveils du worker manqués le 2026-10-27 sont tenus sur la machine de référence.
 
 #### US-019: Mesurer les gains sur matériel réel Linux
 **Description:** As a mainteneur, I want rejouer le protocole matériel sur le build qui contient EP-001 à EP-005 so that les gains publiés reposent sur une mesure réelle et pas sur l'A/B du 2026-10-14.
@@ -427,18 +429,53 @@ Mesurer les gains sur la machine de référence et vérifier les changements de 
 - [ ] Le résumé compare le CPU du thread principal, les processus git par minute, le RSS des trois processus et les réveils par thread aux objectifs de Goals, et marque chaque objectif tenu ou manqué.
 - [ ] Échec : given un objectif manqué, when le résumé est écrit, then il nomme la story concernée et propose un ajout au PRD au lieu d'arrondir la valeur.
 
+#### US-021: Servir les sondes des workspaces cachés depuis le cache des filtres
+**Description:** As a utilisateur multi-agents, I want qu'un workspace caché ne relance pas la requête des filtres git à chaque cycle de 5 min so that 33 workspaces ouverts restent sous 30 processus git par minute.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] La PR établit pourquoi `cached_filter_drivers` (`src-app/src/git_command.rs:362`) n'a pas servi les 33 `git config --get-regexp` du run `ws33-w300` du 2026-10-27, dont aucun fichier de configuration n'a changé pendant la fenêtre. Piste à vérifier d'abord : la première sonde suit de moins de `RACY_CONFIG_WINDOW` (2 s) l'écriture du `.git/config` par `git init`, `remember_filter_drivers` ne garde donc rien, et la sonde du cycle suivant refait la requête une fois ; le coût serait alors celui du premier cycle seulement.
+- [ ] Si la cause est autre, elle est corrigée sans toucher `PROBE_CONFIG`, `PROBE_ENV` ni `NEUTRALIZED_FILTER_SETTINGS`, et un test reproduit le raté de cache avant la correction.
+- [ ] Given 33 workspaces sur des dépôts immobiles et une fenêtre active, when on mesure 300 s après un premier cycle de 5 min complet, then `git_spawns.by_subcommand.config` n'augmente pas et les processus git restent à au plus 30 par minute ; le run est archivé sous `bench/results/` avec son résumé daté, et `bench/README.md` dit comment mesurer cet objectif sur un cycle établi.
+- [ ] Échec : given un `.git/config` modifié pendant la fenêtre (`git config` lancé dans le dépôt), when le workspace est sondé ensuite, then la requête des filtres est relancée une fois pour ce seul workspace, puis servie de nouveau par le cache ; un test le vérifie.
+
+#### US-022: Réveiller le suivi et la pompe du worker à l'arrêt au lieu de les faire sonder
+**Description:** As a utilisateur sur portable, I want que les threads du worker dorment jusqu'à une frame, une échéance ou l'arrêt so that un worker au repos ne se réveille plus 12 fois par seconde.
+
+**Priority:** P2
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] `stream_follow` (`crates/paneflow-serve/src/server.rs:416`) attend jusqu'à l'échéance du keepalive, sans `FOLLOW_SHUTDOWN_POLL` : `Worker::request_shutdown` (`server.rs:44`) et les écritures du drapeau d'arrêt de `ServerHandle::stop` et de son `Drop` (`server.rs:197`, `:213`) réveillent aussi chaque abonné du bus.
+- [ ] La pompe (`pump`, `crates/paneflow-serve/src/worker.rs:245`) attend jusqu'au prochain balayage ou rafraîchissement de santé au lieu de `FRAME_WAIT` (100 ms), et l'arrêt la réveille aussi.
+- [ ] Given un worker au repos avec un abonné, when on compte pendant 10 s les changements de contexte de chacun de ses threads, then aucun n'en a plus de 10 (suivi 20 et pompe 101 le 2026-10-27), et `controller_conformance.rs` passe sans modification.
+- [ ] Le keepalive part toujours au plus 2 s après la dernière frame, et une frame du core est toujours transmise à l'abonné sans attendre une échéance.
+- [ ] Échec : given un arrêt du worker pendant l'attente, when l'arrêt est demandé, then la connexion de suivi envoie son `end` avec la raison « the worker is stopping » en moins de 600 ms et la pompe se termine en moins de 600 ms ; un test le vérifie.
+
+---
+
+### EP-007: Vérifier sur Windows réel
+
+Vérifier les changements de rendu et de boucles sur le Windows du dual boot, en un seul passage à la fin, une fois toutes les stories Linux livrées.
+
+**Definition of Done:** la passe Windows réel couvre chaque story d'EP-002 à EP-005, US-021 et US-022, et corrige ce qu'elle trouve.
+
 #### US-020: Vérifier les changements sur Windows réel
 **Description:** As a mainteneur, I want une passe sur le Windows du dual boot so that le rendu en layers, la sidebar en cache, le shimmer, le curseur et les boucles se comportent sous Windows comme sous Linux.
 
 **Priority:** P2
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-007, US-008, US-009, US-010, US-016, US-018
+**Dependencies:** Blocked by US-007, US-008, US-009, US-010, US-016, US-018, US-021, US-022
 
 **Acceptance Criteria:**
 - [ ] La fixture de z-order d'US-007 rend sous Windows comme sous Linux, capture jointe.
 - [ ] La sidebar en cache, le shimmer et l'arrêt du clignotement à la désactivation de la fenêtre se comportent comme sous Linux.
 - [ ] `scripts/perf-hardware.ps1 --state tui-30-workspaces` enregistre le CPU, le RSS et les rendus racine du build Windows, archivés sous `bench/results/`.
-- [ ] Le suivi du worker (US-016) et la session au repos (US-018) gardent sous Windows leurs bornes de réveils, mesurées avec les outils Windows nommés dans la PR.
+- [ ] Le suivi et la pompe du worker (US-016, US-022) et la session au repos (US-018) gardent sous Windows leurs bornes de réveils, mesurées avec les outils Windows nommés dans la PR.
 - [ ] Échec : given un écart propre à Windows, when la passe le trouve, then il est corrigé dans cette story ou consigné comme nouvelle story, jamais laissé sans trace.
 
 ---
@@ -501,7 +538,7 @@ Mesurer les gains sur la machine de référence et vérifier les changements de 
 | 4 | Le plafond d'arènes crée de la contention sur le thread de rendu | Low | Med | Mesure du thread principal par US-019 ; repli sur 4 arènes |
 | 5 | Le shimmer à 90 ms est jugé saccadé | Med | Low | Passe visuelle ; repli sur 45 ms avec mesure |
 | 6 | Un pane caché manque une publication et reste périmé à l'affichage | Low | High | Publication immédiate à la visibilité ; mode visible par défaut si `Visibility` échoue |
-| 7 | Les gains Linux ne se transposent pas sous Windows ou macOS | Med | Med | EP-006 sur Windows réel ; macOS par inspection, faute de machine (Open Questions) |
+| 7 | Les gains Linux ne se transposent pas sous Windows ou macOS | Med | Med | EP-007 sur Windows réel ; macOS par inspection, faute de machine (Open Questions) |
 | 8 | Les nouveaux scénarios rendent `perf_gates` instable sur des runners partagés | Med | Med | Budgets en compteurs d'événements, pas en temps ; marges écrites ; mode consultatif avant d'être bloquant (US-006) |
 
 ## Non-Goals
@@ -559,7 +596,7 @@ Frame as questions for engineering input, not mandates:
 ## Open Questions
 
 - Le shimmer à 90 ms est-il acceptable visuellement, ou faut-il 45 ms ? Arthur, à la passe visuelle d'US-009 ; la borne de `desktop.thinking.root_renders_per_s` en dépend.
-- Une machine macOS est-elle disponible pour EP-006 ? Arthur, avant US-020 ; sinon macOS reste vérifié par inspection.
+- Une machine macOS est-elle disponible pour EP-007 ? Arthur, avant US-020 ; sinon macOS reste vérifié par inspection.
 - Le scrollback du miroir mérite-t-il un plafond plus bas que celui du host ? Arthur, après une mesure du RSS d'une session de 4 h à forte sortie ; décide d'un PRD de suivi.
 - Le budget `desktop.thinking.root_renders_per_s` a laissé passer 1,866 pendant quatre jours : faut-il une borne basse pour tous les budgets de frames existants (`desktop.focused_idle.root_renders_per_s` compris) ? Arthur, pendant US-001.
 [/PRD]
