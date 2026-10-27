@@ -833,6 +833,16 @@ fn hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero
         "x11"
     );
     assert_eq!(hardware::display_backend(b"HOME=/h\0"), "unknown");
+    assert_eq!(
+        metrics::context_switches(
+            "Name:\tpaneflow-ipc\nvoluntary_ctxt_switches:\t12\nnonvoluntary_ctxt_switches:\t3\n"
+        ),
+        Some(15)
+    );
+    assert_eq!(
+        metrics::context_switches("Name:\tpaneflow-ipc\nvoluntary_ctxt_switches:\t12\n"),
+        None
+    );
 }
 
 #[test]

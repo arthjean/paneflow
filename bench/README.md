@@ -1084,6 +1084,7 @@ over the window:
 | Field | Content |
 |---|---|
 | `processes.<desktop,host,worker>` | CPU percent of one core per process and per thread role, resident memory, threads and handles, and the delta of every work counter. |
+| `processes.<role>.cpu.wakeups_per_s_by_thread_name` | Context switches per second of each thread alive through the window, voluntary and involuntary, grouped by thread name (Linux procfs truncates it to 15 bytes) with each group's maximum. Linux only; elsewhere `not_measured`, and Windows reads them from `typeperf "\Thread(paneflow*)\Context Switches/sec"`. |
 | `root_renders` | Root renders of the desktop over the window, from `system.counters`. |
 | `gpu.<source>` | p50, p95 and max load in percent, one entry per source. |
 | `frame_time_ms` | p50 and p95 frame time from the log. |

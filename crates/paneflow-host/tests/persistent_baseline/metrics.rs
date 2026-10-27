@@ -2,8 +2,10 @@ use super::*;
 
 #[derive(Debug, Clone)]
 pub(super) struct ThreadCpu {
+    id: u64,
     name: String,
     cpu_ns: u64,
+    context_switches: Option<u64>,
 }
 
 pub(super) enum Attribution {
@@ -97,12 +99,14 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
                 }
                 if timed != 0 {
                     samples.push(ThreadCpu {
+                        id: u64::from(entry.th32ThreadID),
                         name: if name.is_empty() {
                             format!("unnamed-{}", entry.th32ThreadID)
                         } else {
                             name
                         },
                         cpu_ns: filetime_ns(kernel) + filetime_ns(user),
+                        context_switches: None,
                     });
                 } else {
                     unavailable += 1;
@@ -136,6 +140,9 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
     for task in tasks.flatten() {
         listed += 1;
         let dir = task.path();
+        let Some(id) = task.file_name().to_str().and_then(|tid| tid.parse().ok()) else {
+            continue;
+        };
         let name = std::fs::read_to_string(dir.join("comm"))
             .map(|comm| comm.trim().to_string())
             .unwrap_or_default();
@@ -145,7 +152,15 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
         else {
             continue;
         };
-        samples.push(ThreadCpu { name, cpu_ns });
+        let context_switches = std::fs::read_to_string(dir.join("status"))
+            .ok()
+            .and_then(|status| context_switches(&status));
+        samples.push(ThreadCpu {
+            id,
+            name,
+            cpu_ns,
+            context_switches,
+        });
     }
     if listed > 0 && samples.is_empty() {
         return Attribution::Pending(format!(
@@ -153,6 +168,18 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
         ));
     }
     Attribution::Prefix15(samples)
+}
+
+pub(super) fn context_switches(status: &str) -> Option<u64> {
+    let counts: Vec<u64> = status
+        .lines()
+        .filter(|line| {
+            line.starts_with("voluntary_ctxt_switches:")
+                || line.starts_with("nonvoluntary_ctxt_switches:")
+        })
+        .filter_map(|line| line.split_whitespace().nth(1)?.parse().ok())
+        .collect();
+    (counts.len() == 2).then(|| counts.iter().sum())
 }
 
 #[cfg(target_os = "macos")]
@@ -237,8 +264,10 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
             .map(|byte| *byte as u8)
             .collect();
         samples.push(ThreadCpu {
+            id: handle,
             name: String::from_utf8_lossy(&name).into_owned(),
             cpu_ns: info.pth_user_time + info.pth_system_time,
+            context_switches: None,
         });
     }
     if unavailable > 0 || samples.is_empty() {
@@ -437,6 +466,42 @@ pub(super) fn role_cpu_ms_per_s(
     Ok(by_role)
 }
 
+fn wakeups(before: &[ThreadCpu], after: &[ThreadCpu], window: Duration) -> Value {
+    let started: BTreeMap<u64, u64> = before
+        .iter()
+        .filter_map(|sample| Some((sample.id, sample.context_switches?)))
+        .collect();
+    if started.is_empty() {
+        return hardware::not_measured(
+            "per-thread context switches are read from /proc on Linux only; on Windows sample typeperf \\Thread(paneflow*)\\Context Switches/sec",
+        );
+    }
+    let seconds = window.as_secs_f64().max(f64::EPSILON);
+    let mut by_name = BTreeMap::<String, Vec<f64>>::new();
+    for sample in after {
+        let (Some(ended), Some(began)) = (sample.context_switches, started.get(&sample.id)) else {
+            continue;
+        };
+        by_name
+            .entry(sample.name.clone())
+            .or_default()
+            .push(ended.saturating_sub(*began) as f64 / seconds);
+    }
+    let by_name: BTreeMap<String, Value> = by_name
+        .into_iter()
+        .map(|(name, mut rates)| {
+            rates.sort_by(|left, right| right.total_cmp(left));
+            let summary = json!({
+                "threads": rates.len(),
+                "max_per_s": rates[0],
+                "per_thread_per_s": rates,
+            });
+            (name, summary)
+        })
+        .collect();
+    json!(by_name)
+}
+
 fn attribute(before: &[ThreadCpu], after: &[ThreadCpu], window: Duration) -> Value {
     let mut by_role: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut raw: BTreeMap<String, u64> = BTreeMap::new();
@@ -453,6 +518,7 @@ fn attribute(before: &[ThreadCpu], after: &[ThreadCpu], window: Duration) -> Val
         "by_role_cpu_percent": by_role.iter().map(|(role, ns)| (role.to_string(), percent(*ns))).collect::<BTreeMap<_, _>>(),
         "by_thread_cpu_ns": raw,
         "total_cpu_percent": percent(by_role.values().sum()),
+        "wakeups_per_s_by_thread_name": wakeups(before, after, window),
     })
 }
 
