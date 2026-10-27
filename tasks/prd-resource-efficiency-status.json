@@ -57,7 +57,7 @@
     {
       "id": "EP-007",
       "title": "Vérifier sur Windows réel",
-      "status": "BLOCKED",
+      "status": "IN_PROGRESS",
       "priority": "P2",
       "stories_total": 1,
       "stories_done": 0
@@ -342,7 +342,7 @@
       "id": "US-020",
       "title": "Vérifier les changements sur Windows réel",
       "epic": "EP-007",
-      "status": "BLOCKED",
+      "status": "IN_PROGRESS",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -355,7 +355,7 @@
         "US-021",
         "US-022"
       ],
-      "started_at": null,
+      "started_at": "2026-10-27",
       "completed_at": null,
       "reviewed_at": null,
       "notes": "Needs Arthur on the Windows 11 dual boot: z-order fixture capture, cached sidebar, shimmer and blink stop, perf-hardware.ps1 -State tui-30-workspaces, worker follow and idle session wakeups via typeperf \\Thread(paneflow*)\\Context Switches/sec (the protocol reads per-thread context switches on Linux only). Local checklist, not tracked: tasks/resource-efficiency-ep006/windows-checklist.md."
