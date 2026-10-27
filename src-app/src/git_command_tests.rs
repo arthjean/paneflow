@@ -863,3 +863,83 @@ fn a_repository_without_a_local_config_caches_its_absence_until_the_file_appears
         "creation invalidates"
     );
 }
+
+#[test]
+fn a_repository_created_just_before_its_first_probe_queries_its_filters_once_more_then_never_again()
+{
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    std::fs::write(tmp.path().join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
+    let cwd = tmp.path().to_str().expect("utf-8 test path");
+
+    let created = filter_queries_on_this_thread();
+    let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+    assert!(
+        cached_filter_drivers(tmp.path()).is_none(),
+        "a config written by git init less than RACY_CONFIG_WINDOW ago is not cached"
+    );
+    assert!(filter_queries_on_this_thread() > created);
+
+    backdate(&tmp.path().join(".git").join("config"), 300);
+    let next_cycle = filter_queries_on_this_thread();
+    let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+    assert_eq!(
+        filter_queries_on_this_thread() - next_cycle,
+        1,
+        "the next cycle queries once and caches the answer"
+    );
+
+    let settled = filter_queries_on_this_thread();
+    for _ in 0..3 {
+        let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+    }
+    assert_eq!(
+        filter_queries_on_this_thread(),
+        settled,
+        "every later cycle is served by the cache"
+    );
+}
+
+#[test]
+fn a_config_written_in_one_workspace_reruns_the_filter_query_for_that_workspace_only() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let changed = tmp.path().join("changed");
+    let untouched = tmp.path().join("untouched");
+    for root in [&changed, &untouched] {
+        committed_repo(root);
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
+        backdate(&root.join(".git").join("config"), 300);
+    }
+    let changed_cwd = changed.to_str().expect("utf-8 test path");
+    let untouched_cwd = untouched.to_str().expect("utf-8 test path");
+    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
+    let _ = crate::workspace::GitDiffStats::from_cwd(untouched_cwd);
+    assert!(cached_filter_drivers(&changed).is_some());
+    assert!(cached_filter_drivers(&untouched).is_some());
+
+    assert!(fixture::git_succeeds(
+        &changed,
+        &["config", "user.name", "someone else"]
+    ));
+    backdate(&changed.join(".git").join("config"), 30);
+
+    let queries = filter_queries_on_this_thread();
+    let _ = crate::workspace::GitDiffStats::from_cwd(untouched_cwd);
+    assert_eq!(
+        filter_queries_on_this_thread(),
+        queries,
+        "the untouched workspace is still served by the cache"
+    );
+    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
+    assert_eq!(
+        filter_queries_on_this_thread() - queries,
+        1,
+        "the written config reruns the query once"
+    );
+    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
+    assert_eq!(
+        filter_queries_on_this_thread() - queries,
+        1,
+        "the new answer is served by the cache"
+    );
+}

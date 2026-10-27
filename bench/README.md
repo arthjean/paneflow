@@ -1068,6 +1068,19 @@ for index in $(seq -w 1 30); do
 done
 ```
 
+The git goal of `tasks/prd-resource-efficiency.md` (at most 30 git processes per
+minute with 33 workspaces, window active) is read over an established cycle. A
+hidden workspace is probed every 5 min, and a repository whose `.git/config`
+`git init` wrote less than 2 s before its first probe (`RACY_CONFIG_WINDOW` in
+`src-app/src/git_command.rs`) is not served by the filter cache until its next
+probe, so the first cycle after the loop above counts one extra
+`git config --get-regexp` per workspace. Keep the window active for 5 min after
+the last workspace opens, then measure a full cycle:
+
+```bash
+scripts/perf-hardware.sh --state tui-30-workspaces --label main-<sha> --window 300
+```
+
 On Windows, capture the frame log in parallel with PresentMon 2.x:
 `PresentMon --process_id <desktop pid> --output_file C:\hw\presentmon.csv
 --timed 60 --terminate_after_timed`; the frame time is its
