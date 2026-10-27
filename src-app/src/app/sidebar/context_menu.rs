@@ -1,9 +1,11 @@
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ClipboardItem, Context, CursorStyle, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div,
-    point, prelude::*, px, svg,
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, InteractiveElement,
+    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString, Styled,
+    Window, canvas, deferred, div, point, prelude::*, px, svg,
 };
 
 use crate::app::close_policy::CloseTarget;
@@ -40,6 +42,23 @@ pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
 ];
 
 const MOVE_TO_SPACE_SUBMENU_WIDTH: f32 = 180.;
+
+type SubmenuBounds = Rc<Cell<Option<Bounds<Pixels>>>>;
+
+fn submenu_bounds_probe(bounds: SubmenuBounds) -> impl IntoElement {
+    canvas(
+        move |painted, _, _| bounds.set(Some(painted)),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+fn is_inside_submenu(bounds: &SubmenuBounds, position: Point<Pixels>) -> bool {
+    bounds
+        .get()
+        .is_some_and(|painted| painted.contains(&position))
+}
 
 pub(super) fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
     div()
@@ -207,13 +226,18 @@ impl PaneFlowApp {
         let menu_height = menu_height(menu_rows as f32, separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
+        let space_submenu_bounds = SubmenuBounds::default();
+        let dismiss_bounds = space_submenu_bounds.clone();
         let mut context_menu = select_menu("workspace-context-menu", ui)
             .occlude()
             .absolute()
             .left(menu_pos.x)
             .top(menu_pos.y)
             .w(px(248.))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                if is_inside_submenu(&dismiss_bounds, event.position) {
+                    return;
+                }
                 this.workspace_menu_open = None;
                 cx.notify();
             }))
@@ -355,8 +379,13 @@ impl PaneFlowApp {
         if space_rows > 0 {
             let opens_left = menu_pos.x + px(248. + MOVE_TO_SPACE_SUBMENU_WIDTH)
                 > window.window_bounds().get_bounds().size.width;
-            context_menu =
-                context_menu.child(self.render_move_to_space_row(&menu, opens_left, ui, cx));
+            context_menu = context_menu.child(self.render_move_to_space_row(
+                &menu,
+                opens_left,
+                space_submenu_bounds,
+                ui,
+                cx,
+            ));
         }
 
         context_menu = context_menu.child(context_menu_divider(ui));
@@ -429,6 +458,7 @@ impl PaneFlowApp {
         &self,
         menu: &WorkspaceContextMenu,
         opens_left: bool,
+        submenu_bounds: SubmenuBounds,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -479,7 +509,8 @@ impl PaneFlowApp {
             ui,
         )
         .w(px(MOVE_TO_SPACE_SUBMENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(submenu_bounds_probe(submenu_bounds));
         for (position, (space, name)) in targets.into_iter().enumerate() {
             submenu = submenu.child(self.render_select_menu_item(
                 SharedString::from(format!("workspace-context-space-{position}")),
@@ -1084,5 +1115,121 @@ impl PaneFlowApp {
                 .map(PathBuf::from),
             PaneSurface::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{
+        ClickEvent, Context, InteractiveElement, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, TestAppContext,
+        Window, deferred, div, point, px, size,
+    };
+
+    use super::{SubmenuBounds, is_inside_submenu, submenu_bounds_probe};
+    use crate::settings::components::{menu_panel, menu_row, select_menu};
+
+    struct SubmenuHarness {
+        open: bool,
+        picked: Rc<Cell<bool>>,
+    }
+
+    impl Render for SubmenuHarness {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            let root = div().size_full().relative();
+            if !self.open {
+                return root;
+            }
+            let bounds = SubmenuBounds::default();
+            let dismiss_bounds = bounds.clone();
+            let picked = self.picked.clone();
+            let submenu = menu_panel(div().id("submenu"), ui)
+                .w(px(super::MOVE_TO_SPACE_SUBMENU_WIDTH))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(submenu_bounds_probe(bounds))
+                .child(
+                    menu_row("submenu-target", false, ui)
+                        .debug_selector(|| "submenu-target".into())
+                        .on_click(move |_: &ClickEvent, _, _| picked.set(true))
+                        .child("Target"),
+                );
+            let row = menu_row("submenu-row", true, ui)
+                .relative()
+                .child("Move to space")
+                .child(
+                    deferred(
+                        div()
+                            .absolute()
+                            .top(px(-5.))
+                            .left(px(248. - 20.))
+                            .occlude()
+                            .child(submenu),
+                    )
+                    .priority(4),
+                );
+            root.child(
+                select_menu("menu", ui)
+                    .occlude()
+                    .absolute()
+                    .left(px(20.))
+                    .top(px(20.))
+                    .w(px(248.))
+                    .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        if is_inside_submenu(&dismiss_bounds, event.position) {
+                            return;
+                        }
+                        this.open = false;
+                        cx.notify();
+                    }))
+                    .child(row),
+            )
+        }
+    }
+
+    fn harness(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<SubmenuHarness>,
+        Rc<Cell<bool>>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let picked = Rc::new(Cell::new(false));
+        let harness_picked = picked.clone();
+        let (view, cx) = cx.add_window_view(move |_, _| SubmenuHarness {
+            open: true,
+            picked: harness_picked,
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        (view, picked, cx)
+    }
+
+    #[gpui::test]
+    fn test_submenu_item_click_outside_parent_menu_reaches_its_handler(cx: &mut TestAppContext) {
+        let (view, picked, cx) = harness(cx);
+        let target = cx
+            .debug_bounds("submenu-target")
+            .expect("submenu target is painted");
+        assert!(
+            target.center().x > px(20. + 248.),
+            "the click lands outside the parent menu"
+        );
+        cx.simulate_click(target.center(), Modifiers::default());
+        assert!(picked.get(), "clicking the submenu item runs its handler");
+        assert!(view.read_with(cx, |view, _| view.open));
+    }
+
+    #[gpui::test]
+    fn test_click_outside_menu_and_submenu_still_dismisses(cx: &mut TestAppContext) {
+        let (view, picked, cx) = harness(cx);
+        cx.simulate_click(point(px(700.), px(500.)), Modifiers::default());
+        assert!(!picked.get());
+        assert!(!view.read_with(cx, |view, _| view.open));
     }
 }
