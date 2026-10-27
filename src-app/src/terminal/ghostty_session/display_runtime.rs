@@ -56,7 +56,7 @@ pub(super) fn run_display_runtime(
     }
 
     loop {
-        count_runtime_loop_iteration();
+        count_runtime_loop_iteration(&inner);
         if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
             log::warn!(target: "paneflow::terminal::ghostty", "Ghostty display publication failed: {error}");
         }

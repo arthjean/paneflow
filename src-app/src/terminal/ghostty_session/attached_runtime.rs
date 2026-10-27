@@ -534,7 +534,7 @@ pub(super) fn run_attached_runtime(
     let mut recompression = super::recompression::HistoryRecompression::new(Instant::now());
 
     loop {
-        count_runtime_loop_iteration();
+        count_runtime_loop_iteration(&inner);
         advance_selection_autoscroll(
             &inner,
             &mut terminal,
@@ -545,21 +545,21 @@ pub(super) fn run_attached_runtime(
             break;
         }
         let wait = match publish_gate.next_wake(Instant::now()) {
-            Some(wake) => wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK),
+            Some(wake) => Some(wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK)),
             None => {
                 let recent_output = last_output_at.elapsed() < RUNTIME_QUIET_AFTER;
                 let drag_live = lock_gesture(&inner).applied.is_some();
-                if recent_output_pending || recent_output || drag_live {
-                    RUNTIME_IDLE_TICK
-                } else {
-                    RUNTIME_QUIET_TICK
-                }
+                (recent_output_pending || recent_output || drag_live).then_some(RUNTIME_IDLE_TICK)
             }
         };
-        let wait = recompression
-            .next_wake(Instant::now())
-            .map_or(wait, |idle| wait.min(idle.max(Duration::from_millis(1))));
-        let received = match mailbox.recv_timeout(wait) {
+        let wait = match recompression.next_wake(Instant::now()) {
+            Some(idle) => {
+                let idle = idle.max(Duration::from_millis(1));
+                Some(wait.map_or(idle, |wait| wait.min(idle)))
+            }
+            None => wait,
+        };
+        let received = match mailbox.recv(wait) {
             Ok(message) => {
                 if matches!(
                     &message,
@@ -2166,6 +2166,91 @@ mod tests {
         );
 
         second.shutdown();
+        host.stop(&session, Some(generation)).expect("stop");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
+    fn an_idle_attached_mirror_blocks_on_its_mailbox_and_a_close_ends_it_promptly() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::<String>::new());
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some(shell.to_string()),
+                args,
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+                appearance: None,
+                cell: None,
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+
+        let attachment = client
+            .attach(&session, Some(generation))
+            .expect("checkpoint");
+        let (mirror, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let test_attachment = test_attachment(&endpoint, &hello, &session, attachment);
+        mirror
+            .start_attached(pending, test_attachment.0.clone(), test_attachment.1, 1_000)
+            .expect("attached mirror");
+        mirror.promote();
+
+        let settle = super::super::recompression::RECOMPRESSION_IDLE + RUNTIME_QUIET_AFTER;
+        let give_up = Instant::now() + Duration::from_secs(20);
+        let mut last_change = Instant::now();
+        let mut last_bytes = mirror.processed_output_bytes_for_test();
+        while last_change.elapsed() < settle && Instant::now() < give_up {
+            std::thread::sleep(Duration::from_millis(100));
+            let bytes = mirror.processed_output_bytes_for_test();
+            if bytes != last_bytes {
+                last_bytes = bytes;
+                last_change = Instant::now();
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let before = mirror.runtime_iterations_for_test();
+        std::thread::sleep(Duration::from_secs(2));
+        let woke = mirror.runtime_iterations_for_test() - before;
+        assert!(
+            woke <= 2,
+            "an idle attached mirror wakes at most once a second, woke {woke} times in 2 s"
+        );
+
+        let closed = Instant::now();
+        mirror.shutdown();
+        while !mirror.runtime_finished_for_test() && closed.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let ended_in = closed.elapsed();
+        assert!(mirror.runtime_finished_for_test());
+        assert!(
+            ended_in < Duration::from_millis(200),
+            "closing the pane ends a blocked mirror within 200 ms, took {ended_in:?}"
+        );
+
+        drop(mirror);
         host.stop(&session, Some(generation)).expect("stop");
         server.stop().expect("server stop");
     }

@@ -1639,4 +1639,66 @@ mod tests {
             "the output after the flood reaches the screen: {screen:?}"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_idle_shell_blocks_on_its_mailbox_and_a_pane_close_ends_its_runtime_promptly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let params = SpawnParams {
+            shell: "/bin/sh".to_owned(),
+            shell_quoting: ShellQuoting::Posix,
+            extra_args: Vec::new(),
+            env: std::collections::HashMap::from([
+                ("TERM".into(), "xterm-256color".into()),
+                ("PS1".into(), "$ ".into()),
+            ]),
+            cwd: dir.path().to_path_buf(),
+            cols: 80,
+            rows: 24,
+            profile: TerminalSurfaceProfile::Normal,
+        };
+        let (mut state, pending) =
+            TerminalState::new_pending_with_shell_quoting(80, 24, ShellQuoting::Posix);
+        let spawned = state
+            .ghostty_session()
+            .start(pending.ghostty, params, 1_000)
+            .expect("spawn an idle shell");
+        state.promote_ghostty(spawned);
+        let session = state.ghostty_session();
+
+        let give_up = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut last_change = std::time::Instant::now();
+        let mut last_bytes = state.processed_output_bytes_for_test();
+        while last_change.elapsed() < std::time::Duration::from_millis(1_500)
+            && std::time::Instant::now() < give_up
+        {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let bytes = state.processed_output_bytes_for_test();
+            if bytes != last_bytes {
+                last_bytes = bytes;
+                last_change = std::time::Instant::now();
+            }
+        }
+        let before = session.runtime_iterations_for_test();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let woke = session.runtime_iterations_for_test() - before;
+        assert!(
+            woke <= 2,
+            "an idle shell wakes at most once a second, woke {woke} times in 2 s"
+        );
+
+        let closed = std::time::Instant::now();
+        drop(state);
+        while !session.runtime_finished_for_test()
+            && closed.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let ended_in = closed.elapsed();
+        assert!(session.runtime_finished_for_test());
+        assert!(
+            ended_in < std::time::Duration::from_millis(200),
+            "closing the pane ends a blocked runtime within 200 ms, took {ended_in:?}"
+        );
+    }
 }

@@ -275,7 +275,14 @@ impl RuntimeMailbox {
         &self,
         timeout: Duration,
     ) -> Result<RuntimeMessage, MailboxRecvError> {
-        let deadline = Instant::now() + timeout;
+        self.recv(Some(timeout))
+    }
+
+    pub(super) fn recv(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<RuntimeMessage, MailboxRecvError> {
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let mut state = self
             .state
             .lock()
@@ -287,6 +294,13 @@ impl RuntimeMailbox {
             if state.closed {
                 return Err(MailboxRecvError::Disconnected);
             }
+            let Some(deadline) = deadline else {
+                state = self
+                    .ready
+                    .wait(state)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                continue;
+            };
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(MailboxRecvError::Timeout);
@@ -384,6 +398,14 @@ impl RuntimeMailbox {
         } else {
             Err(std::sync::mpsc::TryRecvError::Empty)
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_closed(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .closed
     }
 
     #[cfg(test)]

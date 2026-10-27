@@ -81,7 +81,6 @@ const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 const SMOOTH_SCROLL_OVERSCAN: (u16, u16) = (1, 1);
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
-const RUNTIME_QUIET_TICK: Duration = Duration::from_millis(100);
 const RUNTIME_QUIET_AFTER: Duration = Duration::from_secs(1);
 const DISPLAY_RUNTIME_TICK: Duration = Duration::from_secs(1);
 
@@ -96,8 +95,9 @@ pub(super) static RUNTIME_LOOP_MESSAGES: AtomicU64 = AtomicU64::new(0);
 pub(super) static RUNTIME_LOOP_ATTENTIVE_REASONS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-fn count_runtime_loop_iteration() {
+fn count_runtime_loop_iteration(inner: &SessionInner) {
     RUNTIME_LOOP_ITERATIONS.fetch_add(1, Ordering::Relaxed);
+    inner.runtime_iterations.fetch_add(1, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -106,10 +106,10 @@ pub(super) static RUNTIME_LOOP_IDLE_WAITS: AtomicU64 = AtomicU64::new(0);
 pub(super) static RUNTIME_LOOP_GATE_WAITS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-fn count_runtime_loop_wait(wait: Duration, received_message: bool) {
-    if wait == RUNTIME_QUIET_TICK {
+fn count_runtime_loop_wait(wait: Option<Duration>, received_message: bool) {
+    if wait.is_none() {
         RUNTIME_LOOP_QUIET_WAITS.fetch_add(1, Ordering::Relaxed);
-    } else if wait == RUNTIME_IDLE_TICK {
+    } else if wait == Some(RUNTIME_IDLE_TICK) {
         RUNTIME_LOOP_IDLE_WAITS.fetch_add(1, Ordering::Relaxed);
     } else {
         RUNTIME_LOOP_GATE_WAITS.fetch_add(1, Ordering::Relaxed);
@@ -121,11 +121,11 @@ fn count_runtime_loop_wait(wait: Duration, received_message: bool) {
 
 #[cfg(not(test))]
 #[inline(always)]
-fn count_runtime_loop_wait(_wait: Duration, _received_message: bool) {}
+fn count_runtime_loop_wait(_wait: Option<Duration>, _received_message: bool) {}
 
 #[cfg(not(test))]
 #[inline(always)]
-fn count_runtime_loop_iteration() {}
+fn count_runtime_loop_iteration(_inner: &SessionInner) {}
 
 static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -234,6 +234,8 @@ struct SessionInner {
     #[cfg(test)]
     published_frames: AtomicUsize,
     #[cfg(test)]
+    runtime_iterations: AtomicUsize,
+    #[cfg(test)]
     worker_crash_injected: AtomicBool,
     resize: Mutex<ResizeState>,
     gesture: Mutex<GestureUpdateState>,
@@ -309,6 +311,8 @@ impl GhosttySession {
                 processed_output_bytes: AtomicUsize::new(0),
                 #[cfg(test)]
                 published_frames: AtomicUsize::new(0),
+                #[cfg(test)]
+                runtime_iterations: AtomicUsize::new(0),
                 #[cfg(test)]
                 worker_crash_injected: AtomicBool::new(false),
                 resize: Mutex::new(ResizeState {
@@ -732,6 +736,16 @@ impl GhosttySession {
     #[cfg(test)]
     pub(super) fn processed_output_bytes_for_test(&self) -> usize {
         self.inner.processed_output_bytes.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(super) fn runtime_iterations_for_test(&self) -> usize {
+        self.inner.runtime_iterations.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn runtime_finished_for_test(&self) -> bool {
+        self.inner.mailbox.is_closed()
     }
 
     pub(super) fn kitty_placements(&self) -> Arc<[crate::terminal::kitty::KittyPlacement]> {

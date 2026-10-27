@@ -525,9 +525,13 @@ pub(super) fn run_runtime(
     let mut last_autoscroll = Instant::now();
     let mut last_output_at = Instant::now();
     let mut paste_trace = BracketedPasteTrace::default();
+    #[cfg(unix)]
+    let quiet_wait = None;
+    #[cfg(target_os = "windows")]
+    let quiet_wait = Some(Duration::from_millis(100));
 
     loop {
-        count_runtime_loop_iteration();
+        count_runtime_loop_iteration(&inner);
         advance_selection_autoscroll(
             &inner,
             &mut terminal,
@@ -561,10 +565,10 @@ pub(super) fn run_runtime(
             );
         }
         let wait = match publish_gate.next_wake(Instant::now()) {
-            Some(wake) => wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK),
+            Some(wake) => Some(wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK)),
             None => {
                 #[cfg(unix)]
-                let winding_down = exit.is_some();
+                let winding_down = eof || exit.is_some();
                 #[cfg(target_os = "windows")]
                 let winding_down = shutdown_requested || !lifecycle.is_running();
                 let recent_output = last_output_at.elapsed() < RUNTIME_QUIET_AFTER;
@@ -579,13 +583,13 @@ pub(super) fn run_runtime(
                     Ordering::Relaxed,
                 );
                 if attentive {
-                    RUNTIME_IDLE_TICK
+                    Some(RUNTIME_IDLE_TICK)
                 } else {
-                    RUNTIME_QUIET_TICK
+                    quiet_wait
                 }
             }
         };
-        let received = match mailbox.recv_timeout(wait) {
+        let received = match mailbox.recv(wait) {
             Ok(message) => {
                 if matches!(
                     &message,
@@ -1720,6 +1724,29 @@ mod tests {
             .expect("the runtime must spawn a POSIX shell");
         session.promote();
         (session, events_rx)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_that_exits_while_a_background_job_holds_the_pty_still_reports_its_exit() {
+        let (session, mut events_rx) = posix_shell_session();
+        assert!(
+            session
+                .write(b"sleep 10 & sleep 2; exit 0\n".to_vec())
+                .is_sent()
+        );
+        let deadline = Instant::now() + FINAL_DRAIN_TIMEOUT + Duration::from_secs(6);
+        let mut exited = false;
+        while !exited && Instant::now() < deadline {
+            while let Ok(event) = events_rx.try_recv() {
+                exited |= matches!(event, GhosttyUiEvent::ChildExited { .. });
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            exited,
+            "the exit of a shell whose PTY stays open must be published without further input"
+        );
     }
 
     #[cfg(unix)]
