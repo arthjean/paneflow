@@ -23,7 +23,6 @@ use crate::state::WorkerState;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-const FOLLOW_SHUTDOWN_POLL: Duration = Duration::from_millis(500);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 
 pub struct Worker {
@@ -48,6 +47,7 @@ impl Worker {
             .unwrap_or_else(PoisonError::into_inner);
         self.shutdown.store(true, Ordering::Release);
         self.shutdown_requested.notify_all();
+        self.bus.disconnect_all();
     }
 
     pub fn wait_for_shutdown(&self) {
@@ -174,27 +174,27 @@ impl Worker {
 
 pub struct ServerHandle {
     endpoint: PathBuf,
-    shutdown: Arc<AtomicBool>,
+    worker: Arc<Worker>,
     thread: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl ServerHandle {
     pub fn spawn(worker: Arc<Worker>, endpoint: PathBuf) -> io::Result<Self> {
         let listener = bind_owner_only(&endpoint, "paneflow-serve")?;
-        let shutdown = Arc::clone(&worker.shutdown);
-        let flag = Arc::clone(&shutdown);
+        let flag = Arc::clone(&worker.shutdown);
+        let accepting = Arc::clone(&worker);
         let thread = std::thread::Builder::new()
             .name("paneflow-serve-accept".into())
-            .spawn(move || accept_loop(listener, worker, flag))?;
+            .spawn(move || accept_loop(listener, accepting, flag))?;
         Ok(Self {
             endpoint,
-            shutdown,
+            worker,
             thread: Some(thread),
         })
     }
 
     pub fn stop(mut self) -> io::Result<()> {
-        self.shutdown.store(true, Ordering::Release);
+        self.worker.request_shutdown();
         if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
             let _ = Stream::connect(name);
         }
@@ -210,7 +210,7 @@ impl ServerHandle {
 impl Drop for ServerHandle {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
-            self.shutdown.store(true, Ordering::Release);
+            self.worker.request_shutdown();
             if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
                 let _ = Stream::connect(name);
             }
@@ -431,10 +431,7 @@ fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &V
             return Flow::Close;
         }
         let until_keepalive = FOLLOW_KEEPALIVE.saturating_sub(last_frame_at.elapsed());
-        match subscription
-            .frames
-            .recv_timeout(until_keepalive.min(FOLLOW_SHUTDOWN_POLL))
-        {
+        match subscription.frames.recv_timeout(until_keepalive) {
             Ok(frame) => {
                 if wire.write_json(&frame).is_err() {
                     worker.bus.unsubscribe(subscription.id);
@@ -453,8 +450,12 @@ fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &V
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 worker.bus.unsubscribe(subscription.id);
-                let _ =
-                    wire.write_json(&json!({"type": "end", "reason": "the stream was dropped"}));
+                let reason = if shutdown.load(Ordering::Acquire) {
+                    "the worker is stopping"
+                } else {
+                    "the stream was dropped"
+                };
+                let _ = wire.write_json(&json!({"type": "end", "reason": reason}));
                 return Flow::Close;
             }
         }

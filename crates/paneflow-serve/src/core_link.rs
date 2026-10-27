@@ -19,6 +19,7 @@ pub enum CoreFrame {
     Event(Box<Value>),
     Disconnected(String),
     Refused(String),
+    Wake,
 }
 
 enum FollowEnd {
@@ -28,6 +29,15 @@ enum FollowEnd {
 
 pub struct CoreLink {
     frames: Receiver<CoreFrame>,
+    wake: SyncSender<CoreFrame>,
+}
+
+pub struct CoreWaker(SyncSender<CoreFrame>);
+
+impl CoreWaker {
+    pub fn wake(&self) {
+        let _ = self.0.try_send(CoreFrame::Wake);
+    }
 }
 
 impl CoreLink {
@@ -40,6 +50,7 @@ impl CoreLink {
         mut follow: impl FnMut(&SyncSender<CoreFrame>) -> FollowEnd + Send + 'static,
     ) -> std::io::Result<Self> {
         let (tx, frames) = sync_channel(FRAME_QUEUE_SLOTS);
+        let wake = tx.clone();
         std::thread::Builder::new()
             .name("paneflow-serve-core".into())
             .spawn(move || {
@@ -56,7 +67,11 @@ impl CoreLink {
                     std::thread::sleep(delay);
                 }
             })?;
-        Ok(Self { frames })
+        Ok(Self { frames, wake })
+    }
+
+    pub fn waker(&self) -> CoreWaker {
+        CoreWaker(self.wake.clone())
     }
 
     pub fn drain(&self, max: usize) -> Vec<CoreFrame> {

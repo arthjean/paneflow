@@ -8,7 +8,7 @@ use std::time::Duration;
 use paneflow_host::bootstrap::{OwnerLock, OwnerLockError};
 use serde_json::{Value, json};
 
-use crate::core_link::{CoreFrame, CoreLink};
+use crate::core_link::{CoreFrame, CoreLink, CoreWaker};
 use crate::protocol::{
     METHOD_AGENT_SNAPSHOT, REQUIRED_CORE_PROTOCOL, WORKER_PROTOCOL_VERSION, WorkerIdentity,
     advertised_capabilities,
@@ -19,7 +19,6 @@ use crate::state::{WorkerState, now_ms};
 const HEALTH_REFRESH: Duration = Duration::from_secs(30);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_FALLBACK: Duration = Duration::from_secs(2);
-const FRAME_WAIT: Duration = Duration::from_millis(100);
 const DRAIN_PER_TICK: usize = 256;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +38,7 @@ pub struct RunningWorker {
     worker: Arc<Worker>,
     server: Option<ServerHandle>,
     pump: Option<std::thread::JoinHandle<()>>,
+    pump_waker: Option<CoreWaker>,
     _owner: OwnerLock,
 }
 
@@ -51,13 +51,23 @@ impl RunningWorker {
         if self.pump.is_some() {
             return;
         }
+        let link = match CoreLink::follow(&self.worker.home) {
+            Ok(link) => link,
+            Err(error) => {
+                log::warn!("paneflow-serve: cannot follow the core: {error}");
+                return;
+            }
+        };
+        let waker = link.waker();
         let worker = Arc::clone(&self.worker);
-        let home = self.worker.home.clone();
         let spawned = std::thread::Builder::new()
             .name("paneflow-serve-pump".into())
-            .spawn(move || pump(&worker, &home));
+            .spawn(move || pump(&worker, &link));
         match spawned {
-            Ok(handle) => self.pump = Some(handle),
+            Ok(handle) => {
+                self.pump = Some(handle);
+                self.pump_waker = Some(waker);
+            }
             Err(error) => log::warn!("paneflow-serve: cannot start the core pump: {error}"),
         }
     }
@@ -68,6 +78,9 @@ impl RunningWorker {
 
     pub fn stop(mut self) {
         self.worker.request_shutdown();
+        if let Some(waker) = self.pump_waker.take() {
+            waker.wake();
+        }
         if let Some(pump) = self.pump.take() {
             let _ = pump.join();
         }
@@ -132,6 +145,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         worker,
         server: Some(server),
         pump: None,
+        pump_waker: None,
         _owner: owner,
     };
     running.spawn_core_pump();
@@ -242,19 +256,14 @@ pub fn run(home: &Path) -> Result<(), WorkerError> {
     Ok(())
 }
 
-fn pump(worker: &Arc<Worker>, home: &Path) {
-    let link = match CoreLink::follow(home) {
-        Ok(link) => link,
-        Err(error) => {
-            log::warn!("paneflow-serve: cannot follow the core: {error}");
-            return;
-        }
-    };
+fn pump(worker: &Arc<Worker>, link: &CoreLink) {
     let mut last_health = std::time::Instant::now();
     let mut last_sweep = std::time::Instant::now();
     let mut following = false;
     while !worker.shutdown.load(Ordering::Acquire) {
-        if let Some(frame) = link.wait(FRAME_WAIT) {
+        let until_health = core_poll_interval(following).saturating_sub(last_health.elapsed());
+        let until_sweep = SWEEP_INTERVAL.saturating_sub(last_sweep.elapsed());
+        if let Some(frame) = link.wait(until_health.min(until_sweep)) {
             following = apply(worker, frame, following);
             for frame in link.drain(DRAIN_PER_TICK) {
                 following = apply(worker, frame, following);
@@ -371,6 +380,7 @@ fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
             );
             return false;
         }
+        CoreFrame::Wake => {}
     }
     following
 }

@@ -260,6 +260,10 @@ impl AgentBus {
         self.lock().retain(|subscriber| subscriber.id != id);
     }
 
+    pub fn disconnect_all(&self) {
+        self.lock().clear();
+    }
+
     #[cfg(test)]
     pub fn subscriber_count(&self) -> usize {
         self.lock().len()
