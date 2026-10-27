@@ -70,7 +70,7 @@ implemented. It requires portable native drag support beyond the pinned GPUI API
 │   owns all Entity state, rendering, input dispatch      │
 └─────────────────────────────────────────────────────────┘
         ▲                    ▲                    ▲
-        │ Backend events     │ mpsc (50ms poll)   │ channel
+        │ Backend events     │ async channel      │ channel
 ┌───────┴────────┐  ┌────────┴───────┐  ┌─────────┴────────┐
 │ Terminal       │  │ IPC thread     │  │ Watcher threads  │
 │ workers        │  │ JSON-RPC 2.0   │  │ config, theme,   │
@@ -86,9 +86,11 @@ implemented. It requires portable native drag support beyond the pinned GPUI API
   drainage cannot block teardown. The worker publishes backend-neutral events
   to the view and owned render snapshots through `TerminalSessionBackend`.
 - **IPC thread**: accepts connections on a Unix socket (Linux/macOS) or named
-  pipe (Windows). Stateless methods reply in place; stateful methods are
-  dispatched to the main thread through a bounded channel and drained by the
-  50 ms app poll loop.
+  pipe (Windows). On Unix it sleeps in `poll` on the listener until a peer
+  connects, waking every 5 s to check that the socket file is still its own;
+  the Windows listener blocks in `accept`. Stateless methods reply in place;
+  stateful methods go to the main thread through a bounded async channel, and
+  `serve_ipc_requests` wakes on the first request and drains the queued batch.
 - Blocking work (git subprocesses, filesystem walks, fleet-wide search) is
   pushed to background executors - registering a recursive file watcher or
   scanning a monorepo on the render thread is how you get a

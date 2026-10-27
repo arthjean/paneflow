@@ -245,6 +245,17 @@ pub fn start_server() -> (
                         }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        #[cfg(unix)]
+                        if let Err(e) = wait_for_connection(
+                            &listener,
+                            SOCKET_HEALTH_CHECK_INTERVAL
+                                .saturating_sub(last_health_check.elapsed()),
+                        ) {
+                            thread_status.disable();
+                            log::error!("IPC accept error: {e}");
+                            break;
+                        }
+                        #[cfg(not(unix))]
                         std::thread::sleep(Duration::from_millis(10));
                     }
                     Err(e) => {
@@ -255,7 +266,7 @@ pub fn start_server() -> (
                 }
 
                 #[cfg(unix)]
-                if last_health_check.elapsed() >= Duration::from_secs(5) {
+                if last_health_check.elapsed() >= SOCKET_HEALTH_CHECK_INTERVAL {
                     last_health_check = std::time::Instant::now();
                     let current_ino = socket_inode(&socket_path).unwrap_or(0);
                     if current_ino != our_ino {
@@ -475,6 +486,28 @@ fn remove_socket_file_if_socket(path: &std::path::Path, context: &str) -> bool {
         return false;
     }
     true
+}
+
+#[cfg(unix)]
+const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+#[cfg(unix)]
+fn wait_for_connection(listener: &Listener, timeout: Duration) -> std::io::Result<()> {
+    use std::os::fd::{AsFd, AsRawFd};
+    let Listener::UdSocket(listener) = listener;
+    let mut pollfd = libc::pollfd {
+        fd: listener.as_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let timeout_ms = libc::c_int::try_from(timeout.as_millis()).unwrap_or(libc::c_int::MAX);
+    if unsafe { libc::poll(&mut pollfd, 1, timeout_ms) } >= 0 {
+        return Ok(());
+    }
+    match std::io::Error::last_os_error() {
+        e if e.kind() == std::io::ErrorKind::Interrupted => Ok(()),
+        e => Err(e),
+    }
 }
 
 #[cfg(unix)]
@@ -2164,5 +2197,82 @@ mod counters_tests {
         );
         drop(client);
         server.join().expect("the connection thread ends");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod accept_wait_tests {
+    use super::{Listener, bind_socket, wait_for_connection};
+    use interprocess::local_socket::prelude::*;
+    use interprocess::local_socket::{GenericFilePath, ListenerNonblockingMode, Stream};
+    use std::time::{Duration, Instant};
+
+    fn nonblocking_listener(dir: &tempfile::TempDir) -> (Listener, std::path::PathBuf) {
+        let path = dir.path().join("paneflow.sock");
+        let listener = bind_socket(&path).expect("bind");
+        listener
+            .set_nonblocking(ListenerNonblockingMode::Accept)
+            .expect("nonblocking accept");
+        (listener, path)
+    }
+
+    #[test]
+    fn an_idle_listener_sleeps_until_the_timeout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, _path) = nonblocking_listener(&dir);
+        let started = Instant::now();
+        wait_for_connection(&listener, Duration::from_millis(300)).expect("wait");
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert_eq!(
+            listener.accept().map(drop).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn a_connecting_peer_wakes_the_wait_before_the_timeout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = nonblocking_listener(&dir);
+        let peer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            Stream::connect(path.to_fs_name::<GenericFilePath>().expect("name")).expect("connect")
+        });
+        let started = Instant::now();
+        wait_for_connection(&listener, Duration::from_secs(5)).expect("wait");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        listener.accept().expect("the peer is ready to accept");
+        drop(peer.join().expect("peer thread"));
+    }
+
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    #[test]
+    fn an_interrupted_wait_returns_so_the_loop_waits_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, _path) = nonblocking_listener(&dir);
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as *const () as libc::sighandler_t;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        let (tid_tx, tid_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            tid_tx.send(unsafe { libc::pthread_self() }).expect("tid");
+            let started = Instant::now();
+            let outcome = wait_for_connection(&listener, Duration::from_secs(5));
+            (outcome.map_err(|e| e.kind()), started.elapsed())
+        });
+        let tid = tid_rx.recv().expect("tid");
+        while !waiter.is_finished() {
+            std::thread::sleep(Duration::from_millis(50));
+            unsafe { libc::pthread_kill(tid, libc::SIGUSR2) };
+        }
+        let (outcome, elapsed) = waiter.join().expect("waiter thread");
+        assert_eq!(outcome, Ok(()));
+        assert!(elapsed < Duration::from_secs(4));
     }
 }
