@@ -88,9 +88,9 @@ impl PaneFlowApp {
         crate::startup_trace::mark("workspaces_restored");
         crate::app::spaces::publish_space_directories(&workspaces, &cached_config);
 
-        let (git_watcher, git_event_rx, git_watch_counts) = Self::start_git_watcher(&workspaces);
+        let (git_watcher, git_events, git_watch_counts) = Self::start_git_watcher(&workspaces);
 
-        Self::spawn_git_event_refresh(cx);
+        Self::spawn_git_event_refresh(git_events, cx);
         Self::spawn_wake_dispatch(wake_rx, running_config_watcher, cx);
         Self::spawn_git_poll(cx);
         Self::spawn_stale_pid_sweep(cx);
@@ -267,7 +267,6 @@ impl PaneFlowApp {
             title_bar_files_menu_open: None,
             title_bar_help_menu_open: None,
             git_watcher,
-            git_event_rx,
             git_watch_counts,
             git_probed_at: std::collections::HashMap::new(),
             settings_section: None,

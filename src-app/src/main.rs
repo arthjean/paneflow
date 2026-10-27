@@ -200,7 +200,6 @@ struct PaneFlowApp {
     title_bar_files_menu_open: Option<Point<Pixels>>,
     title_bar_help_menu_open: Option<Point<Pixels>>,
     git_watcher: Option<notify::RecommendedWatcher>,
-    git_event_rx: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
     git_probed_at: std::collections::HashMap<String, std::time::Instant>,
     settings_section: Option<SettingsSection>,

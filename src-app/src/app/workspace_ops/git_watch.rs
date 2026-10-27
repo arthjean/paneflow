@@ -5,6 +5,8 @@ const GIT_EVENT_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis
 
 const GIT_EVENT_DEBOUNCE_CAP: std::time::Duration = std::time::Duration::from_secs(2);
 
+const GIT_EVENT_TICK: std::time::Duration = std::time::Duration::from_millis(200);
+
 const SHOWN_GIT_POLL: std::time::Duration = std::time::Duration::from_secs(30);
 
 const HIDDEN_GIT_PROBE_AGE: std::time::Duration = std::time::Duration::from_secs(300);
@@ -74,6 +76,54 @@ fn git_dirs_changed_by(event: &notify::Event) -> Vec<std::path::PathBuf> {
         })
         .filter_map(|path| path.parent().map(std::path::Path::to_path_buf))
         .collect()
+}
+
+type GitEvents = smol::channel::Receiver<notify::Result<notify::Event>>;
+
+fn collect_git_dirs(
+    event: notify::Result<notify::Event>,
+    dirs: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> bool {
+    match event {
+        Ok(event) => {
+            let changed = git_dirs_changed_by(&event);
+            let any = !changed.is_empty();
+            dirs.extend(changed);
+            any
+        }
+        Err(error) => {
+            log::warn!("git watcher: {error}");
+            false
+        }
+    }
+}
+
+async fn next_git_refresh(
+    events: &GitEvents,
+) -> Option<std::collections::HashSet<std::path::PathBuf>> {
+    let mut dirs = std::collections::HashSet::new();
+    let mut burst: Option<(std::time::Instant, std::time::Instant)> = None;
+    loop {
+        let mut changed = match burst {
+            None => collect_git_dirs(events.recv().await.ok()?, &mut dirs),
+            Some(_) => {
+                smol::Timer::after(GIT_EVENT_TICK).await;
+                false
+            }
+        };
+        while let Ok(event) = events.try_recv() {
+            changed |= collect_git_dirs(event, &mut dirs);
+        }
+        let now = std::time::Instant::now();
+        if changed {
+            burst = Some((burst.map_or(now, |(started, _)| started), now));
+        }
+        if let Some((started, last_event)) = burst
+            && git_refresh_due(started, last_event, now)
+        {
+            return Some(dirs);
+        }
+    }
 }
 
 impl PaneFlowApp {
@@ -217,17 +267,20 @@ impl PaneFlowApp {
         workspaces: &[crate::workspace::Workspace],
     ) -> (
         Option<notify::RecommendedWatcher>,
-        std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+        GitEvents,
         std::collections::HashMap<std::path::PathBuf, usize>,
     ) {
-        let (git_event_tx, git_event_rx) = std::sync::mpsc::channel();
-        let mut git_watcher = match notify::recommended_watcher(git_event_tx) {
-            Ok(w) => Some(w),
-            Err(e) => {
-                log::warn!("git file watcher unavailable: {e}. Falling back to polling.");
-                None
-            }
-        };
+        let (git_event_tx, git_event_rx) = smol::channel::unbounded();
+        let mut git_watcher =
+            match notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let _ = git_event_tx.try_send(event);
+            }) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    log::warn!("git file watcher unavailable: {e}. Falling back to polling.");
+                    None
+                }
+            };
         let mut git_watch_counts = std::collections::HashMap::new();
         if let Some(ref mut watcher) = git_watcher {
             for ws in workspaces {
@@ -243,87 +296,52 @@ impl PaneFlowApp {
         (git_watcher, git_event_rx, git_watch_counts)
     }
 
-    pub(in crate::app) fn spawn_git_event_refresh(cx: &mut Context<Self>) {
+    pub(in crate::app) fn spawn_git_event_refresh(events: GitEvents, cx: &mut Context<Self>) {
         cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let mut last_event = std::time::Instant::now();
-                let mut burst_started: Option<std::time::Instant> = None;
-                let mut pending_git_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                while let Some(affected_dirs) = next_git_refresh(&events).await {
+                    log::debug!(
+                        "git watcher: debounced event fired for {} dir(s)",
+                        affected_dirs.len()
+                    );
 
-                loop {
-                    smol::Timer::after(std::time::Duration::from_millis(200)).await;
-
-                    let new_dirs = cx.update(|cx| {
+                    let cwds = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                            let mut dirs = Vec::new();
-                            while let Ok(event) = app.git_event_rx.try_recv() {
-                                if let Ok(ref ev) = event {
-                                    dirs.extend(git_dirs_changed_by(ev));
-                                }
-                            }
-                            dirs
+                            app.workspaces
+                                .iter()
+                                .filter(|ws| {
+                                    ws.git_dir
+                                        .as_ref()
+                                        .is_some_and(|gd| affected_dirs.contains(gd))
+                                })
+                                .flat_map(|ws| {
+                                    std::iter::once(ws.cwd.clone()).chain(ws.bound_tab_worktrees())
+                                })
+                                .filter(|cwd| !cwd.is_empty())
+                                .collect::<std::collections::BTreeSet<String>>()
+                                .into_iter()
+                                .collect::<Vec<String>>()
                         })
                     });
 
-                    match new_dirs {
-                        Ok(dirs) if !dirs.is_empty() => {
-                            pending_git_dirs.extend(dirs);
-                            last_event = std::time::Instant::now();
-                            burst_started.get_or_insert(last_event);
-                        }
-                        Ok(_) => {}
+                    let cwds = match cwds {
+                        Ok(c) => c,
                         Err(_) => break,
+                    };
+
+                    if cwds.is_empty() {
+                        continue;
                     }
 
-                    if burst_started.is_some_and(|started| {
-                        git_refresh_due(started, last_event, std::time::Instant::now())
-                    }) {
-                        burst_started = None;
-                        let affected_dirs = std::mem::take(&mut pending_git_dirs);
-                        log::debug!(
-                            "git watcher: debounced event fired for {} dir(s)",
-                            affected_dirs.len()
-                        );
+                    let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
 
-                        let cwds = cx.update(|cx| {
-                            this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                                app.workspaces
-                                    .iter()
-                                    .filter(|ws| {
-                                        ws.git_dir
-                                            .as_ref()
-                                            .is_some_and(|gd| affected_dirs.contains(gd))
-                                    })
-                                    .flat_map(|ws| {
-                                        std::iter::once(ws.cwd.clone())
-                                            .chain(ws.bound_tab_worktrees())
-                                    })
-                                    .filter(|cwd| !cwd.is_empty())
-                                    .collect::<std::collections::BTreeSet<String>>()
-                                    .into_iter()
-                                    .collect::<Vec<String>>()
-                            })
-                        });
-
-                        let cwds = match cwds {
-                            Ok(c) => c,
-                            Err(_) => break,
-                        };
-
-                        if cwds.is_empty() {
-                            continue;
-                        }
-
-                        let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
-
-                        let apply = cx.update(|cx| {
-                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                app.apply_git_probe(&results, cx);
-                            })
-                        });
-                        if apply.is_err() {
-                            break;
-                        }
+                    let apply = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.apply_git_probe(&results, cx);
+                        })
+                    });
+                    if apply.is_err() {
+                        break;
                     }
                 }
             },
@@ -602,5 +620,65 @@ mod tests {
             last_event,
             now - Duration::from_millis(20)
         ));
+    }
+
+    struct CountingWaker(std::sync::atomic::AtomicUsize);
+
+    impl std::task::Wake for CountingWaker {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn git_event(path: &str) -> notify::Result<notify::Event> {
+        Ok(
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(std::path::PathBuf::from(path)),
+        )
+    }
+
+    #[test]
+    fn an_idle_git_event_wait_is_never_woken_until_an_event_arrives() {
+        let (tx, events) = smol::channel::unbounded();
+        let mut wait = Box::pin(next_git_refresh(&events));
+        let counter = std::sync::Arc::new(CountingWaker(std::sync::atomic::AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(std::sync::Arc::clone(&counter));
+        let mut task = std::task::Context::from_waker(&waker);
+        assert!(wait.as_mut().poll(&mut task).is_pending());
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        tx.try_send(git_event("/repo/.git/HEAD")).expect("send");
+        assert!(counter.0.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn a_git_event_burst_refreshes_once_it_goes_quiet() {
+        let (tx, events) = smol::channel::unbounded();
+        tx.try_send(git_event("/repo/.git/index")).expect("send");
+        tx.try_send(git_event("/repo/.git/index.lock"))
+            .expect("send");
+        let started = Instant::now();
+        let dirs = smol::block_on(next_git_refresh(&events)).expect("a refresh");
+        assert!(started.elapsed() >= GIT_EVENT_DEBOUNCE);
+        assert_eq!(
+            dirs,
+            std::collections::HashSet::from([std::path::PathBuf::from("/repo/.git")])
+        );
+        drop(tx);
+        assert_eq!(smol::block_on(next_git_refresh(&events)), None);
+    }
+
+    #[test]
+    fn a_watcher_error_keeps_the_wait_going() {
+        let (tx, events) = smol::channel::unbounded();
+        tx.try_send(Err(notify::Error::generic("inotify queue overflow")))
+            .expect("send");
+        let mut wait = Box::pin(next_git_refresh(&events));
+        let waker = std::task::Waker::noop();
+        let mut task = std::task::Context::from_waker(waker);
+        assert!(wait.as_mut().poll(&mut task).is_pending());
+        tx.try_send(git_event("/repo/.git/HEAD")).expect("send");
+        let dirs = smol::block_on(wait).expect("a refresh after the error");
+        assert!(dirs.contains(std::path::Path::new("/repo/.git")));
     }
 }
