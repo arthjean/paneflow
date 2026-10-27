@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Supprimer les réveils à intervalle fixe",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-006",
@@ -242,51 +242,51 @@
       "id": "US-015",
       "title": "Attendre les connexions IPC sans polling de 10 ms",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
     },
     {
       "id": "US-016",
       "title": "Faire attendre le suivi du worker jusqu'à l'échéance du keepalive",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "XS",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
     },
     {
       "id": "US-017",
       "title": "Remplacer le timer git de 200 ms par une attente sur canal",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
     },
     {
       "id": "US-018",
       "title": "Laisser une session au repos bloquer sur sa mailbox",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-26",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27"
     },
     {
       "id": "US-019",
