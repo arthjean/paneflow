@@ -1,0 +1,765 @@
+{
+  "frame_time_ms": {
+    "not_measured": "no frame log given: set PANEFLOW_HW_FRAME_LOG to a MangoHud (Linux) or PresentMon (Windows) CSV of the window"
+  },
+  "gpu": {
+    "amdgpu /sys/class/drm/card1/device/gpu_busy_percent": {
+      "max": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "samples": 300,
+      "unit": "percent busy"
+    },
+    "nvidia-smi gpu0": {
+      "max": 47.0,
+      "p50": 12.0,
+      "p95": 33.0,
+      "samples": 301,
+      "unit": "percent busy"
+    }
+  },
+  "label": "main-38e873f2-ep006-ws33-warm-w300",
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "hostname_hash": "1cf58166f5604e43",
+    "logical_cpus": 16,
+    "os": "linux",
+    "os_build": "Linux dune 7.2.11-200.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Thu Oct 15 15:58:58 UTC 2026 x86_64 GNU/Linux",
+    "total_ram_bytes": 32746283008
+  },
+  "note": "GPU percentages are device-wide except typeperf, which is the desktop process's 3D engines; a source that could not be read is recorded not_measured with its reason, never 0",
+  "platform": "linux-x86_64",
+  "processes": {
+    "desktop": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 171,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 143
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "merged_truncated_names": 0.14487576534372834,
+          "other": 1.8791824504605938
+        },
+        "by_thread_cpu_ns": {
+          "Clipboard": 0,
+          "Timer": 12344769,
+          "Worker-0": 844580,
+          "Worker-1": 1788436,
+          "Worker-10": 1473309,
+          "Worker-11": 1629836,
+          "Worker-12": 1241898,
+          "Worker-13": 1714779,
+          "Worker-14": 1104440,
+          "Worker-15": 875208,
+          "Worker-2": 1416725,
+          "Worker-3": 1418797,
+          "Worker-4": 1799198,
+          "Worker-5": 1378587,
+          "Worker-6": 1297459,
+          "Worker-7": 1325148,
+          "Worker-8": 979277,
+          "Worker-9": 1190566,
+          "[vkcf] Analysis": 19459100,
+          "[vkps] Update": 249334878,
+          "[vkrt] Analysis": 0,
+          "async-io": 105828490,
+          "blocking-1": 51973330,
+          "blocking-2": 63352276,
+          "blocking-3": 61031400,
+          "blocking-4": 62908489,
+          "notify-rs inoti": 4276558,
+          "paneflo:disk$0": 0,
+          "paneflow": 4970521116,
+          "paneflow-ghostt": 434782358,
+          "paneflow-host-r": 0,
+          "paneflow-ipc": 2302245,
+          "paneflow-worker": 12852526,
+          "paneflow-write-": 1895239,
+          "smol-1": 0,
+          "zbus::Connectio": 0
+        },
+        "total_cpu_percent": 2.0240582158043225,
+        "wakeups_per_s_by_thread_name": {
+          "Clipboard": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "Timer": {
+            "max_per_s": 3.712008999981397,
+            "per_thread_per_s": [
+              3.712008999981397
+            ],
+            "threads": 1
+          },
+          "Worker-0": {
+            "max_per_s": 0.25657512836496194,
+            "per_thread_per_s": [
+              0.25657512836496194
+            ],
+            "threads": 1
+          },
+          "Worker-1": {
+            "max_per_s": 0.3065572962282662,
+            "per_thread_per_s": [
+              0.3065572962282662
+            ],
+            "threads": 1
+          },
+          "Worker-10": {
+            "max_per_s": 0.2799001400345039,
+            "per_thread_per_s": [
+              0.2799001400345039
+            ],
+            "threads": 1
+          },
+          "Worker-11": {
+            "max_per_s": 0.29322871813138507,
+            "per_thread_per_s": [
+              0.29322871813138507
+            ],
+            "threads": 1
+          },
+          "Worker-12": {
+            "max_per_s": 0.26657156193762277,
+            "per_thread_per_s": [
+              0.26657156193762277
+            ],
+            "threads": 1
+          },
+          "Worker-13": {
+            "max_per_s": 0.29322871813138507,
+            "per_thread_per_s": [
+              0.29322871813138507
+            ],
+            "threads": 1
+          },
+          "Worker-14": {
+            "max_per_s": 0.26657156193762277,
+            "per_thread_per_s": [
+              0.26657156193762277
+            ],
+            "threads": 1
+          },
+          "Worker-15": {
+            "max_per_s": 0.2532429838407416,
+            "per_thread_per_s": [
+              0.2532429838407416
+            ],
+            "threads": 1
+          },
+          "Worker-2": {
+            "max_per_s": 0.2832322845587242,
+            "per_thread_per_s": [
+              0.2832322845587242
+            ],
+            "threads": 1
+          },
+          "Worker-3": {
+            "max_per_s": 0.2799001400345039,
+            "per_thread_per_s": [
+              0.2799001400345039
+            ],
+            "threads": 1
+          },
+          "Worker-4": {
+            "max_per_s": 0.29656086265560533,
+            "per_thread_per_s": [
+              0.29656086265560533
+            ],
+            "threads": 1
+          },
+          "Worker-5": {
+            "max_per_s": 0.2832322845587242,
+            "per_thread_per_s": [
+              0.2832322845587242
+            ],
+            "threads": 1
+          },
+          "Worker-6": {
+            "max_per_s": 0.27323585098606334,
+            "per_thread_per_s": [
+              0.27323585098606334
+            ],
+            "threads": 1
+          },
+          "Worker-7": {
+            "max_per_s": 0.2832322845587242,
+            "per_thread_per_s": [
+              0.2832322845587242
+            ],
+            "threads": 1
+          },
+          "Worker-8": {
+            "max_per_s": 0.25657512836496194,
+            "per_thread_per_s": [
+              0.25657512836496194
+            ],
+            "threads": 1
+          },
+          "Worker-9": {
+            "max_per_s": 0.27323585098606334,
+            "per_thread_per_s": [
+              0.27323585098606334
+            ],
+            "threads": 1
+          },
+          "[vkcf] Analysis": {
+            "max_per_s": 10.556233852729862,
+            "per_thread_per_s": [
+              10.556233852729862
+            ],
+            "threads": 1
+          },
+          "[vkps] Update": {
+            "max_per_s": 131.21985136379482,
+            "per_thread_per_s": [
+              131.21985136379482
+            ],
+            "threads": 1
+          },
+          "[vkrt] Analysis": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "async-io": {
+            "max_per_s": 51.621582969220654,
+            "per_thread_per_s": [
+              51.621582969220654
+            ],
+            "threads": 1
+          },
+          "blocking-1": {
+            "max_per_s": 2.272522565518234,
+            "per_thread_per_s": [
+              2.272522565518234
+            ],
+            "threads": 1
+          },
+          "blocking-2": {
+            "max_per_s": 2.4357976472050282,
+            "per_thread_per_s": [
+              2.4357976472050282
+            ],
+            "threads": 1
+          },
+          "blocking-3": {
+            "max_per_s": 2.1592296516947447,
+            "per_thread_per_s": [
+              2.1592296516947447
+            ],
+            "threads": 1
+          },
+          "blocking-4": {
+            "max_per_s": 2.2858511436151154,
+            "per_thread_per_s": [
+              2.2858511436151154
+            ],
+            "threads": 1
+          },
+          "notify-rs inoti": {
+            "max_per_s": 2.3958119129143847,
+            "per_thread_per_s": [
+              2.3958119129143847,
+              0.0
+            ],
+            "threads": 2
+          },
+          "paneflo:disk$0": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0
+            ],
+            "threads": 2
+          },
+          "paneflow": {
+            "max_per_s": 188.28949063011564,
+            "per_thread_per_s": [
+              188.28949063011564,
+              99.43452474725751,
+              0.4998216786330427,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 6
+          },
+          "paneflow-ghostt": {
+            "max_per_s": 105.2291240748766,
+            "per_thread_per_s": [
+              105.2291240748766,
+              17.633708822173748,
+              0.5131502567299239,
+              0.5098181122057036,
+              0.5098181122057036,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 99
+          },
+          "paneflow-host-r": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0
+            ],
+            "threads": 2
+          },
+          "paneflow-ipc": {
+            "max_per_s": 0.20326081597743736,
+            "per_thread_per_s": [
+              0.20326081597743736
+            ],
+            "threads": 1
+          },
+          "paneflow-worker": {
+            "max_per_s": 1.3395220987365544,
+            "per_thread_per_s": [
+              1.3395220987365544
+            ],
+            "threads": 1
+          },
+          "paneflow-write-": {
+            "max_per_s": 0.503153823157263,
+            "per_thread_per_s": [
+              0.503153823157263
+            ],
+            "threads": 1
+          },
+          "smol-1": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "zbus::Connectio": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0
+            ],
+            "threads": 2
+          }
+        }
+      },
+      "pid": 1341870,
+      "resident_bytes": 318533632,
+      "work_counters": {
+        "git_spawns.by_subcommand.config": 0,
+        "git_spawns.by_subcommand.diff": 42,
+        "git_spawns.by_subcommand.status": 0,
+        "git_spawns.probe": 126,
+        "git_spawns.total": 126,
+        "git_spawns.user_action": 0,
+        "host_agent_snapshots_applied": 43,
+        "process_spawns": 126,
+        "root_renders": 4232,
+        "session_list_calls": 43,
+        "sidebar_renders": 1
+      }
+    },
+    "host": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 178,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 174
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "host.ipc_connection": 0.07075735823252358,
+          "host.session": 0.1488671340099024,
+          "host.viewport_scan": 0.05051660052711039,
+          "merged_truncated_names": 1.0886558269563145,
+          "other": 0.0006455226968846464
+        },
+        "by_thread_cpu_ns": {
+          "paneflow-host": 1479019,
+          "paneflow-host-c": 212347807,
+          "paneflow-host-m": 458240,
+          "paneflow-host-p": 3267132680,
+          "paneflow-host-s": 446760736,
+          "paneflow-host-v": 151603870
+        },
+        "total_cpu_percent": 1.3594424424227354,
+        "wakeups_per_s_by_thread_name": {
+          "paneflow-host": {
+            "max_per_s": 0.1766036597836751,
+            "per_thread_per_s": [
+              0.1766036597836751
+            ],
+            "threads": 1
+          },
+          "paneflow-host-c": {
+            "max_per_s": 17.57039807621356,
+            "per_thread_per_s": [
+              17.57039807621356,
+              10.852794715385468,
+              0.5098181122057036,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.5064859676814832,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.503153823157263,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.4998216786330427,
+              0.036653589766423134,
+              0.033321445242202846,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 70
+          },
+          "paneflow-host-m": {
+            "max_per_s": 0.016660722621101423,
+            "per_thread_per_s": [
+              0.016660722621101423
+            ],
+            "threads": 1
+          },
+          "paneflow-host-p": {
+            "max_per_s": 18.083548332943487,
+            "per_thread_per_s": [
+              18.083548332943487,
+              11.179344878759055,
+              3.9785805619190198,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 68
+          },
+          "paneflow-host-s": {
+            "max_per_s": 22.525296983729124,
+            "per_thread_per_s": [
+              22.525296983729124,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 33
+          },
+          "paneflow-host-v": {
+            "max_per_s": 3.8319662028533275,
+            "per_thread_per_s": [
+              3.8319662028533275
+            ],
+            "threads": 1
+          }
+        }
+      },
+      "pid": 1342260,
+      "resident_bytes": 21180416,
+      "work_counters": {
+        "agent_bus_event_broadcasts": 0,
+        "agent_bus_session_broadcasts": 3143,
+        "agent_bus_session_removed_broadcasts": 0,
+        "agent_bus_snapshot_broadcasts": 10,
+        "foreground_observations": 531,
+        "process_listings": 523
+      }
+    },
+    "worker": {
+      "attribution": "thread names truncated to 15 bytes by procfs comm; prefixes may merge",
+      "counters": {
+        "handles_or_fds": 9,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 5
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "other": 0.0,
+          "worker.core_link": 0.1371550018803033
+        },
+        "by_thread_cpu_ns": {
+          "paneflow": 0,
+          "paneflow-serve-": 411611804
+        },
+        "total_cpu_percent": 0.1371550018803033,
+        "wakeups_per_s_by_thread_name": {
+          "paneflow": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-serve-": {
+            "max_per_s": 11.58586651071393,
+            "per_thread_per_s": [
+              11.58586651071393,
+              10.632873176786928,
+              0.549803846496347,
+              0.0
+            ],
+            "threads": 4
+          }
+        }
+      },
+      "pid": 1342296,
+      "resident_bytes": 15683584,
+      "work_counters": {
+        "projection_broadcasts": 0,
+        "snapshot_broadcasts": 43,
+        "sweeps": 150
+      }
+    }
+  },
+  "root_renders": 4232,
+  "schema_version": 1,
+  "session": "x11",
+  "stamp": "20261027T110551Z",
+  "state": "tui-30-workspaces",
+  "suite": "paneflow-hardware-protocol",
+  "version": "paneflow 0.18.0",
+  "window_s": 300.107030992
+}
