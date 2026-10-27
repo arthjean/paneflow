@@ -955,17 +955,16 @@ impl PaneFlowApp {
                     .child(label.to_string()),
             )
             .child(
-                div()
-                    .px(px(10.))
-                    .py(px(7.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(ui.border)
-                    .bg(ui.surface)
-                    .text_size(px(12.))
-                    .text_color(ui.text)
-                    .font_family("monospace")
-                    .child(input),
+                crate::settings::components::input_frame(
+                    div().px(px(10.)).py(px(7.)),
+                    &input,
+                    false,
+                    ui,
+                )
+                .text_size(px(12.))
+                .text_color(ui.text)
+                .font_family("monospace")
+                .child(input),
             )
     }
 }

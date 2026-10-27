@@ -940,41 +940,48 @@ fn project_path_picker(
     } else {
         ui.text
     };
-    let hover_background = with_alpha(ui.text, 0.08);
+    let picker = crate::settings::components::input_surface(
+        div()
+            .id("workspace-project-path-picker")
+            .flex_1()
+            .min_w(px(180.))
+            .max_w(px(320.))
+            .px(px(10.))
+            .py(px(6.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .cursor(CursorStyle::PointingHand),
+        ui,
+    );
 
-    div()
-        .id("workspace-project-path-picker")
-        .flex_1()
-        .min_w(px(180.))
-        .max_w(px(320.))
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .animated_hover_bg(ui.subtle, hover_background)
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.pick_workspace_template_project_path(cx);
-        }))
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path("icons/folder-open.svg")
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(px(12.))
-                .text_color(label_color)
-                .child(label),
-        )
+    crate::ui_primitives::squircle_skin(
+        picker,
+        "workspace-project-path-picker",
+        SETTINGS_CONTROL_CORNER_RADIUS,
+        None,
+        Some(with_alpha(ui.text, 0.05)),
+    )
+    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+        this.pick_workspace_template_project_path(cx);
+    }))
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path("icons/folder-open.svg")
+            .text_color(ui.muted),
+    )
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(px(12.))
+            .text_color(label_color)
+            .child(label),
+    )
 }
 
 fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> AnimatedHover {

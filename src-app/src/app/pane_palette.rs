@@ -982,31 +982,34 @@ impl PaneFlowApp {
         let worktree = draft.worktree;
         let branches: Vec<String> = self.workspace_branches(ws_idx).to_vec();
 
-        let branch_field = div()
-            .h(px(28.))
-            .w(px(PICKER_WIDTH))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .rounded(px(6.))
-            .bg(ui.subtle)
-            .child(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/git-branch-sidebar.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(11.))
-                    .text_color(ui.text)
-                    .child(draft.name.clone()),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        let branch_field = crate::settings::components::input_frame(
+            div()
+                .h(px(28.))
+                .w(px(PICKER_WIDTH))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(6.)),
+            &draft.name,
+            false,
+            ui,
+        )
+        .child(
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path("icons/git-branch-sidebar.svg")
+                .text_color(ui.muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(11.))
+                .text_color(ui.text)
+                .child(draft.name.clone()),
+        )
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
         let mut base_trigger = div()
             .id("palette-new-branch-base")

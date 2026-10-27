@@ -1,15 +1,21 @@
 use gpui::{
-    AnyElement, ClickEvent, CursorStyle, Div, ElementId, FontWeight, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    deferred, div, img, prelude::*, px, rgb, svg,
+    AnyElement, Bounds, ClickEvent, CursorStyle, Div, ElementId, FontWeight, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Pixels, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, canvas, deferred, div, img, prelude::*, px, rgb, svg,
 };
 
+use std::time::Duration;
+
 use crate::ui_primitives::{
-    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, highlight_matches,
-    lerp_color, squircle, squircle_skin,
+    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, ease_out_cubic,
+    highlight_matches, lerp_color, reduce_motion, squircle,
+    squircle::{squircle_border, squircle_fill},
+    squircle_skin,
 };
 
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
+const INPUT_FOCUS_RING_WIDTH: f32 = 3.;
+const INPUT_FOCUS_DURATION: Duration = Duration::from_millis(160);
 
 pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
     Hsla { a: alpha, ..color }
@@ -278,21 +284,118 @@ pub fn setting_text(
         )
 }
 
+pub(crate) fn input_surface<E: ParentElement + Styled>(
+    element: E,
+    ui: crate::theme::UiColors,
+) -> E {
+    element
+        .relative()
+        .child(squircle_fill(
+            SETTINGS_CONTROL_CORNER_RADIUS,
+            with_alpha(ui.text, 0.03),
+        ))
+        .child(squircle_border(
+            SETTINGS_CONTROL_CORNER_RADIUS,
+            px(1.),
+            with_alpha(ui.text, 0.14),
+        ))
+}
+
+pub(crate) fn input_frame<E: ParentElement + Styled>(
+    element: E,
+    input: &gpui::Entity<crate::widgets::text_input::TextInput>,
+    invalid: bool,
+    ui: crate::theme::UiColors,
+) -> E {
+    let input = input.clone();
+    let ring = px(INPUT_FOCUS_RING_WIDTH);
+    input_surface(element, ui).child(
+        div()
+            .absolute()
+            .top(-ring)
+            .right(-ring)
+            .bottom(-ring)
+            .left(-ring)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, cx| {
+                        paint_input_focus(bounds, &input, invalid, ui, window, cx);
+                    },
+                )
+                .size_full(),
+            ),
+    )
+}
+
+fn paint_input_focus(
+    bounds: Bounds<Pixels>,
+    input: &gpui::Entity<crate::widgets::text_input::TextInput>,
+    invalid: bool,
+    ui: crate::theme::UiColors,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    let input = input.read(cx);
+    let Some(since) = input.focused_since() else {
+        return;
+    };
+    if !input.focus_handle.is_focused(window) {
+        return;
+    }
+    let linear = if reduce_motion() {
+        1.
+    } else {
+        (since.elapsed().as_secs_f32() / INPUT_FOCUS_DURATION.as_secs_f32()).min(1.)
+    };
+    if linear < 1. {
+        window.request_animation_frame();
+    }
+    let progress = ease_out_cubic(linear);
+    let (border, ring) = if invalid {
+        (
+            with_alpha(ui.agent_error, 0.64),
+            with_alpha(ui.agent_error, 0.2),
+        )
+    } else {
+        (ui.accent, with_alpha(ui.accent, 0.24))
+    };
+    let full = px(INPUT_FOCUS_RING_WIDTH);
+    let width = full * progress;
+    if width > px(0.)
+        && let Some(path) = squircle::squircle_stroke_path(
+            bounds.inset(full - width),
+            SETTINGS_CONTROL_CORNER_RADIUS + width,
+            width,
+        )
+    {
+        window.paint_path(path, ring.opacity(progress));
+    }
+    if let Some(path) =
+        squircle::squircle_stroke_path(bounds.inset(full), SETTINGS_CONTROL_CORNER_RADIUS, px(1.))
+    {
+        window.paint_path(path, border.opacity(progress));
+    }
+}
+
 pub fn text_field(
     input: gpui::Entity<crate::widgets::text_input::TextInput>,
     ui: crate::theme::UiColors,
 ) -> impl IntoElement {
-    div()
-        .flex_1()
-        .min_w(px(180.))
-        .max_w(px(320.))
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
-        .text_size(px(12.))
-        .text_color(ui.text)
-        .child(input)
+    input_frame(
+        div()
+            .flex_1()
+            .min_w(px(180.))
+            .max_w(px(320.))
+            .px(px(10.))
+            .py(px(6.)),
+        &input,
+        false,
+        ui,
+    )
+    .text_size(px(12.))
+    .text_color(ui.text)
+    .child(input)
 }
 
 pub fn secondary_button(

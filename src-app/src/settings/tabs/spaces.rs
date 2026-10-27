@@ -14,7 +14,7 @@ use crate::PaneFlowApp;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, destructive_color,
-    icon_button as labeled_icon_button, secondary_button, setting_card, with_alpha,
+    icon_button as labeled_icon_button, input_frame, secondary_button, setting_card, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
@@ -1018,53 +1018,50 @@ impl PaneFlowApp {
                 .update(cx, |input, cx| input.set_value(name, cx));
         }
         let id = space.id.clone();
-        let field = div()
-            .id(SharedString::from(format!("space-name-{}", space.id)))
-            .w_full()
-            .max_w(px(NAME_MAX_WIDTH))
-            .h(px(INPUT_HEIGHT))
-            .flex()
-            .items_center()
-            .px(px(10.))
-            .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-            .bg(ui.subtle)
-            .border_1()
-            .border_color(if editing.is_some() {
-                with_alpha(ui.text, 0.25)
-            } else {
-                gpui::transparent_black()
-            })
-            .text_size(BODY)
-            .text_color(ui.text)
-            .cursor(CursorStyle::IBeam)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
-                    this.begin_space_name_edit(id.clone(), window, cx);
-                }),
-            )
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.space_name_editor.is_none() {
-                    return;
-                }
-                match event.keystroke.key.as_str() {
-                    "enter" => {
-                        this.commit_space_name(window, cx);
-                        cx.stop_propagation();
-                    }
-                    "escape" => {
-                        this.cancel_space_name(window, cx);
-                        cx.stop_propagation();
-                    }
-                    _ => {}
-                }
-            }))
-            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
-                if this.space_name_editor.is_some() {
+        let field = input_frame(
+            div()
+                .id(SharedString::from(format!("space-name-{}", space.id)))
+                .w_full()
+                .max_w(px(NAME_MAX_WIDTH))
+                .h(px(INPUT_HEIGHT))
+                .flex()
+                .items_center()
+                .px(px(10.)),
+            &self.space_name_input,
+            editing.is_some_and(|editor| editor.error.is_some()),
+            ui,
+        )
+        .text_size(BODY)
+        .text_color(ui.text)
+        .cursor(CursorStyle::IBeam)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                this.begin_space_name_edit(id.clone(), window, cx);
+            }),
+        )
+        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+            if this.space_name_editor.is_none() {
+                return;
+            }
+            match event.keystroke.key.as_str() {
+                "enter" => {
                     this.commit_space_name(window, cx);
+                    cx.stop_propagation();
                 }
-            }))
-            .child(self.space_name_input.clone());
+                "escape" => {
+                    this.cancel_space_name(window, cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
+        }))
+        .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+            if this.space_name_editor.is_some() {
+                this.commit_space_name(window, cx);
+            }
+        }))
+        .child(self.space_name_input.clone());
         div()
             .flex()
             .flex_col()

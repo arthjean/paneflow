@@ -139,13 +139,13 @@ impl PaneFlowApp {
                     ))),
             )
             .child(
-                div()
-                    .border_1()
-                    .border_color(ui.border)
-                    .rounded(px(6.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .child(prompt.input.clone()),
+                crate::settings::components::input_frame(
+                    div().h(px(28.)).flex().items_center().px(px(10.)),
+                    &prompt.input,
+                    prompt.error.is_some(),
+                    ui,
+                )
+                .child(prompt.input.clone()),
             );
         if let Some(err) = &prompt.error {
             body = body.child(

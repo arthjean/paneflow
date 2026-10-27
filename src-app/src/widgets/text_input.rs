@@ -44,7 +44,7 @@ actions!(
 );
 
 const CARET_BLINK_MS: u64 = 500;
-const CARET_WIDTH: f32 = 2.;
+const CARET_WIDTH: f32 = 1.;
 const UNDO_COALESCE: Duration = Duration::from_millis(700);
 const UNDO_LIMIT: usize = 200;
 
@@ -132,6 +132,7 @@ pub struct TextInput {
     last_edit: Option<(EditKind, usize, Instant)>,
     blink_anchor: Instant,
     blink_task: Option<Task<()>>,
+    focused_since: Option<Instant>,
 }
 
 impl TextInput {
@@ -160,6 +161,7 @@ impl TextInput {
             last_edit: None,
             blink_anchor: Instant::now(),
             blink_task: None,
+            focused_since: None,
         }
     }
 
@@ -550,6 +552,10 @@ impl TextInput {
         }
         self.reset_blink();
         cx.notify()
+    }
+
+    pub(crate) fn focused_since(&self) -> Option<Instant> {
+        self.focused_since
     }
 
     fn reset_blink(&mut self) {
@@ -1003,9 +1009,12 @@ impl Element for TextElement {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let selection = hsla(ui.accent.h, ui.accent.s, ui.accent.l, 0.28);
+        if self.focus_handle.is_focused(window) != self.focused_since.is_some() {
+            self.focused_since = self.focus_handle.is_focused(window).then(Instant::now);
+        }
 
         div()
             .id(("paneflow-text-input", cx.entity_id().as_u64()))
@@ -1047,7 +1056,7 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(TextElement {
                 input: cx.entity(),
-                caret_color: gpui::rgb(crate::ui_primitives::FOCUS_BLUE).into(),
+                caret_color: ui.text,
                 selection_color: selection,
                 placeholder_color: ui.muted,
             })

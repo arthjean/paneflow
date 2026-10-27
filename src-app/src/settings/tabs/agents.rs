@@ -1308,18 +1308,21 @@ pub(crate) fn input_box(
     mono: bool,
     ui: crate::theme::UiColors,
 ) -> impl IntoElement {
-    div()
-        .w_full()
-        .h(px(INPUT_HEIGHT))
-        .flex()
-        .items_center()
-        .px(px(10.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
-        .when(mono, |d| d.font_family(mono_family()))
-        .text_size(if mono { LABEL_SM } else { BODY })
-        .text_color(ui.text)
-        .child(input)
+    crate::settings::components::input_frame(
+        div()
+            .w_full()
+            .h(px(INPUT_HEIGHT))
+            .flex()
+            .items_center()
+            .px(px(10.)),
+        &input,
+        false,
+        ui,
+    )
+    .when(mono, |d| d.font_family(mono_family()))
+    .text_size(if mono { LABEL_SM } else { BODY })
+    .text_color(ui.text)
+    .child(input)
 }
 
 fn chip(text: String, ui: crate::theme::UiColors) -> impl IntoElement {

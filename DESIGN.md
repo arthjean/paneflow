@@ -215,7 +215,7 @@ inside `theme/builtin.rs`.
 | `card` | Settings cards and modal cards, one step above `base`; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
 | `border` | Hairlines, card outlines, pane card border | `#252525` | `#e6e6e6` |
-| `subtle` | Pills, inputs, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
+| `subtle` | Pills, search fields, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
 | `muted` | Secondary text, icons at rest, eyebrows | `#a0a0a0` | `#636363` |
 | `text` | Primary text, icons on hover | `#dddddd` | `#262626` |
 | `accent` | Links, selected metadata, the one primary action | `#57d5c4` | `#4c6fff` |
@@ -790,7 +790,7 @@ the action at 12 px, and the chord as keycaps (20 px, radius 5, `subtle` with
 a 1 px edge lifted 8 percent toward `text`, 11 Medium, gap 3), or a dashed
 `Unassigned` cap. Hovering a changed row reveals a 24 px reset glyph before
 the caps. While recording, the caps give way to one solid `Press keys…` cap
-in the caret blue of 6.3 with a white label, and nothing else on the row
+in the system blue `#007aff` of 4.3 with a white label, and nothing else on the row
 changes. A chord another action owns is held rather than saved, drawn in
 `vc_conflict` with `Also <action> · press again to take it`, and a second
 press of the same chord takes it. The list ends with one more menu panel that
@@ -856,7 +856,7 @@ a `not installed` marker at 10 px where the binary is missing, and an inline
 error in `vc_deleted` at 11 px. The branch row's menu opens with a
 `New branch…` item above a hairline; picking it retitles the column `New
 branch` with a 20 px back chevron at its left edge and replaces the row with
-an unlabeled form: a 28 px `subtle` field on radius 6 with an 11 px branch
+an unlabeled form: a 28 px framed input (6.3) with an 11 px branch
 mark and the `Branch name (optional)` input, under it a 28 px quiet row
 `from <branch>` with a chevron (filled at `text` 0.05 on hover or while its
 select of the repository's branches is open, defaulting to the project's
@@ -869,7 +869,7 @@ destination path of the worktree to be created while the toggle is on
 creates the branch and its worktree, then opens there. An empty name starts
 a detached checkout at the base. The `Create branch
 here…` prompt that names it is a 420 wide card on the overlay surface, radius
-10: a title, one line of context, the name field, a `Create branch` button
+10: a title, one line of context, the name field as a framed input, a `Create branch` button
 filled with `accent` at 0.15, and the hint `Enter creates · Esc cancels`. The
 `Clone repository` modal is the menu surface of 5.6, 544 wide, docked 96 from
 the top of the window over a 0.4 black scrim. The command palette docks at the
@@ -1003,9 +1003,18 @@ allowed large shadow.
 
 ### 6.3 Focus and attention
 
-Shared text inputs use a blue (`#007AFF`) insertion caret, 2 px wide and
+Shared text inputs use a `text` colored insertion caret, 1 px wide and
 vertically centered. Its height is the font size plus 2 px, capped at the
 line height, so it does not span the full input row.
+
+Form fields use the framed input of `settings::components::input_frame`: a
+squircle of radius 8 filled with `text` at 0.03 and outlined at 1 px in
+`text` at 0.14. Focus fades in an `accent` outline with a 3 px outer ring of
+`accent` at 0.24, the ring growing from 0 over 160 ms with a cubic ease-out
+(instant under reduced motion); a rejected value swaps both for
+`agent_error` at 0.64 and 0.2. Search and filter bars, palettes, and inline
+renames keep their quieter fields. A clickable field that is not editable,
+such as a folder picker, takes the same surface without the ring.
 
 Focus is shown by the pane border and the title bar, not by dimming: every
 pane keeps full contrast by default, and `unfocused_pane_opacity` below 1.0
