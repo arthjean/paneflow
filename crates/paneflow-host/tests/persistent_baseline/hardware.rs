@@ -124,9 +124,9 @@ fn run_for(program: &str, args: &[String], window: Duration) -> Result<String, S
         .map_err(|error| format!("{program} is unavailable: {error}"))?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        text
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).into_owned()
     });
     let deadline = Instant::now() + window;
     let mut status = None;

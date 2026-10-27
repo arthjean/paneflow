@@ -48,6 +48,71 @@ impl Attribution {
 }
 
 #[cfg(windows)]
+pub(super) fn context_switches_by_thread(pid: u32) -> BTreeMap<u32, u64> {
+    use windows_sys::Wdk::System::SystemInformation::{
+        NtQuerySystemInformation, SystemProcessInformation,
+    };
+    use windows_sys::Win32::Foundation::STATUS_INFO_LENGTH_MISMATCH;
+    use windows_sys::Win32::System::WindowsProgramming::{
+        SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION,
+    };
+
+    let mut buffer: Vec<u64> = Vec::new();
+    let mut needed: u32 = 1 << 20;
+    loop {
+        buffer.resize((needed as usize).div_ceil(8), 0);
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessInformation,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+                &mut needed,
+            )
+        };
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            needed = needed.saturating_add(1 << 16);
+            continue;
+        }
+        if status < 0 {
+            return BTreeMap::new();
+        }
+        break;
+    }
+    let base = buffer.as_ptr().cast::<u8>();
+    let mut offset = 0usize;
+    loop {
+        let process = unsafe { &*base.add(offset).cast::<SYSTEM_PROCESS_INFORMATION>() };
+        if process.UniqueProcessId as usize == pid as usize {
+            let threads = unsafe {
+                std::slice::from_raw_parts(
+                    base.add(offset + std::mem::size_of::<SYSTEM_PROCESS_INFORMATION>())
+                        .cast::<SYSTEM_THREAD_INFORMATION>(),
+                    process.NumberOfThreads as usize,
+                )
+            };
+            return threads
+                .iter()
+                .map(|thread| {
+                    let SYSTEM_THREAD_INFORMATION {
+                        ClientId,
+                        Reserved3: context_switches,
+                        ..
+                    } = *thread;
+                    (
+                        ClientId.UniqueThread as usize as u32,
+                        u64::from(context_switches),
+                    )
+                })
+                .collect();
+        }
+        if process.NextEntryOffset == 0 {
+            return BTreeMap::new();
+        }
+        offset += process.NextEntryOffset as usize;
+    }
+}
+
+#[cfg(windows)]
 pub(super) fn thread_cpu(pid: u32) -> Attribution {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE, LocalFree};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -61,6 +126,7 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
         ((u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)) * 100
     }
 
+    let switches = context_switches_by_thread(pid);
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Attribution::Pending("CreateToolhelp32Snapshot failed".to_string());
@@ -106,7 +172,7 @@ pub(super) fn thread_cpu(pid: u32) -> Attribution {
                             name
                         },
                         cpu_ns: filetime_ns(kernel) + filetime_ns(user),
-                        context_switches: None,
+                        context_switches: switches.get(&entry.th32ThreadID).copied(),
                     });
                 } else {
                     unavailable += 1;
@@ -473,7 +539,7 @@ fn wakeups(before: &[ThreadCpu], after: &[ThreadCpu], window: Duration) -> Value
         .collect();
     if started.is_empty() {
         return hardware::not_measured(
-            "per-thread context switches are read from /proc on Linux only; on Windows sample typeperf \\Thread(paneflow*)\\Context Switches/sec",
+            "per-thread context switches are read from /proc on Linux and NtQuerySystemInformation on Windows; macOS has no source",
         );
     }
     let seconds = window.as_secs_f64().max(f64::EPSILON);

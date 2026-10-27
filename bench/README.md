@@ -1023,6 +1023,10 @@ before a run.
 3. Install the build under test into a scratch directory: a published release
    from `gh release download v<version> -p "paneflow-<version>-x86_64.tar.gz"`
    (`.msi` on Windows), or `cargo build --release` of the commit for `main`.
+   On Windows, copy `paneflow.exe` and `paneflow-host.exe` of a `main` build
+   out of the Cargo target directory before launching them: the script builds
+   its harness with `cargo test --release`, which relinks `paneflow-host.exe`,
+   and Windows cannot replace an executable that is running.
 4. In a terminal outside Paneflow, export an isolated home for that build
    and launch it from the same terminal, so the script finds its endpoints:
 
@@ -1097,7 +1101,7 @@ over the window:
 | Field | Content |
 |---|---|
 | `processes.<desktop,host,worker>` | CPU percent of one core per process and per thread role, resident memory, threads and handles, and the delta of every work counter. |
-| `processes.<role>.cpu.wakeups_per_s_by_thread_name` | Context switches per second of each thread alive through the window, voluntary and involuntary, grouped by thread name (Linux procfs truncates it to 15 bytes) with each group's maximum. Linux only; elsewhere `not_measured`, and Windows reads them from `typeperf "\Thread(paneflow*)\Context Switches/sec"`. |
+| `processes.<role>.cpu.wakeups_per_s_by_thread_name` | Context switches per second of each thread alive through the window, voluntary and involuntary, grouped by thread name (Linux procfs truncates it to 15 bytes) with each group's maximum. Linux reads them from `/proc/<pid>/task/*/status`, Windows from the per-thread context switch count of `NtQuerySystemInformation(SystemProcessInformation)`, the count Process Explorer shows; macOS records `not_measured`. |
 | `root_renders` | Root renders of the desktop over the window, from `system.counters`. |
 | `gpu.<source>` | p50, p95 and max load in percent, one entry per source. |
 | `frame_time_ms` | p50 and p95 frame time from the log. |
@@ -1112,8 +1116,13 @@ process was running"), or no frame log. The non-ignored test
 `hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero`
 pins every parser and that rule. The Linux sources were exercised on a real
 machine when the protocol was written (Fedora 44, RTX 4070 Ti SUPER and Radeon
-610M, against v0.17.5); the Windows `typeperf` and PresentMon parsing is
-covered by those tests on recorded output only, until its first run.
+610M, against v0.17.5). The Windows sources first ran on 2026-10-27 (Windows
+11 in French, RTX 4070 Ti SUPER, see
+[hardware-summary-2026-10-27-windows.md](results/hardware-summary-2026-10-27-windows.md)):
+`typeperf` and the per-thread context switches were read from a real
+instance; the PresentMon parsing is still covered by recorded output only.
+`typeperf` prints its closing message in the system's code page, so the
+script reads tool output as lossy UTF-8.
 
 ### Summary and verdicts
 

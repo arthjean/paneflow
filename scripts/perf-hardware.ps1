@@ -41,8 +41,9 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 $paneflow = @(Get-CimInstance Win32_Process -Filter "Name = 'paneflow.exe'")
-$workers = @($paneflow | Where-Object { $_.CommandLine -match " serve run" })
-$desktops = @($paneflow | Where-Object { $_.CommandLine -notmatch " serve run" })
+$workerArgs = '\s"?serve"?\s+"?run"?(\s|$)'
+$workers = @($paneflow | Where-Object { $_.CommandLine -match $workerArgs })
+$desktops = @($paneflow | Where-Object { $_.CommandLine -notmatch $workerArgs })
 $hosts = @(Get-CimInstance Win32_Process -Filter "Name = 'paneflow-host.exe'")
 if ($desktops.Count -ne 1) {
     Write-Error "expected exactly one running paneflow desktop, found $($desktops.Count): quit every other Paneflow instance and run this script from a terminal outside Paneflow"

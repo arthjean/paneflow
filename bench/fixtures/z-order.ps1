@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $esc = [char]27
 $st = "$esc\"

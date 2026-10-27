@@ -19,6 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $esc = [char]27
 $bel = [char]7
 $rows = [Math]::Max(4, [Console]::WindowHeight)

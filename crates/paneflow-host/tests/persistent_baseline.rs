@@ -845,6 +845,15 @@ fn hardware_sources_parse_their_tools_and_never_turn_a_missing_reading_into_zero
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_thread_samples_read_the_context_switches_of_every_live_thread() {
+    let current = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+    let switches = metrics::context_switches_by_thread(std::process::id());
+    assert!(switches.contains_key(&current), "{switches:?}");
+    assert!(metrics::context_switches_by_thread(u32::MAX).is_empty());
+}
+
 #[test]
 #[ignore = "US-003 headless desktop spike; run through .github/workflows/perf-desktop-spike.yml"]
 fn desktop_headless_spike() {
