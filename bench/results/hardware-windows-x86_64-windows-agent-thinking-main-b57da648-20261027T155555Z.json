@@ -1,0 +1,924 @@
+{
+  "frame_time_ms": {
+    "not_measured": "no frame log given: set PANEFLOW_HW_FRAME_LOG to a MangoHud (Linux) or PresentMon (Windows) CSV of the window"
+  },
+  "gpu": {
+    "typeperf GPU Engine 3D (desktop process)": {
+      "max": 0.339785,
+      "p50": 0.308983,
+      "p95": 0.335052,
+      "samples": 60,
+      "unit": "percent busy"
+    }
+  },
+  "label": "main-b57da648",
+  "machine": {
+    "arch": "x86_64",
+    "cpu_model": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+    "hostname_hash": "27c35a214898caba",
+    "logical_cpus": 16,
+    "os": "windows",
+    "os_build": "Microsoft Windows [version 10.0.26300.9711]",
+    "total_ram_bytes": 33459585024
+  },
+  "note": "GPU percentages are device-wide except typeperf, which is the desktop process's 3D engines; a source that could not be read is recorded not_measured with its reason, never 0",
+  "platform": "windows-x86_64",
+  "processes": {
+    "desktop": {
+      "attribution": "exact thread names",
+      "counters": {
+        "handles_or_fds": 748,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 89
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "desktop.attached_runtime": 0.0,
+          "desktop.follower": 0.0,
+          "main": 3.6599882402528245,
+          "other": 1.1358584193888077
+        },
+        "by_thread_cpu_ns": {
+          "DManip Delegate Thread": 0,
+          "VSyncProvider": 359375000,
+          "async-io": 0,
+          "blocking-1": 0,
+          "blocking-2": 0,
+          "blocking-3": 0,
+          "blocking-4": 0,
+          "blocking-5": 15625000,
+          "blocking-6": 0,
+          "linger pool (persist.)": 0,
+          "main": 2265625000,
+          "notify-rs windows loop": 15625000,
+          "paneflow-ghostty-attached": 0,
+          "paneflow-ghostty-control": 0,
+          "paneflow-ghostty-follower": 0,
+          "paneflow-ipc": 0,
+          "paneflow-worker-agents": 0,
+          "paneflow-write-approvals": 0,
+          "unnamed-10364": 0,
+          "unnamed-10488": 0,
+          "unnamed-11372": 0,
+          "unnamed-11392": 0,
+          "unnamed-14436": 0,
+          "unnamed-16348": 0,
+          "unnamed-16504": 0,
+          "unnamed-16516": 0,
+          "unnamed-18744": 0,
+          "unnamed-1888": 0,
+          "unnamed-20928": 0,
+          "unnamed-2120": 0,
+          "unnamed-21652": 0,
+          "unnamed-21756": 0,
+          "unnamed-21824": 31250000,
+          "unnamed-22368": 0,
+          "unnamed-23228": 0,
+          "unnamed-23612": 0,
+          "unnamed-24104": 15625000,
+          "unnamed-24332": 0,
+          "unnamed-25340": 0,
+          "unnamed-25432": 0,
+          "unnamed-25804": 0,
+          "unnamed-26352": 0,
+          "unnamed-26564": 0,
+          "unnamed-26620": 0,
+          "unnamed-26980": 0,
+          "unnamed-27248": 0,
+          "unnamed-27296": 0,
+          "unnamed-27504": 0,
+          "unnamed-27684": 0,
+          "unnamed-27908": 0,
+          "unnamed-2820": 0,
+          "unnamed-28616": 31250000,
+          "unnamed-28716": 0,
+          "unnamed-29112": 15625000,
+          "unnamed-29672": 0,
+          "unnamed-30456": 0,
+          "unnamed-30472": 0,
+          "unnamed-30796": 0,
+          "unnamed-31500": 0,
+          "unnamed-31572": 0,
+          "unnamed-3168": 0,
+          "unnamed-3172": 0,
+          "unnamed-31936": 0,
+          "unnamed-32360": 0,
+          "unnamed-32500": 0,
+          "unnamed-32600": 0,
+          "unnamed-32940": 0,
+          "unnamed-33228": 0,
+          "unnamed-33252": 218750000,
+          "unnamed-33436": 0,
+          "unnamed-33668": 0,
+          "unnamed-33844": 0,
+          "unnamed-34248": 0,
+          "unnamed-34300": 0,
+          "unnamed-35552": 0,
+          "unnamed-35640": 0,
+          "unnamed-4420": 0,
+          "unnamed-5808": 0,
+          "unnamed-5864": 0
+        },
+        "total_cpu_percent": 4.795846659641632,
+        "wakeups_per_s_by_thread_name": {
+          "DManip Delegate Thread": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "VSyncProvider": {
+            "max_per_s": 262.54181023156485,
+            "per_thread_per_s": [
+              262.54181023156485
+            ],
+            "threads": 1
+          },
+          "async-io": {
+            "max_per_s": 0.5330962181664805,
+            "per_thread_per_s": [
+              0.5330962181664805
+            ],
+            "threads": 1
+          },
+          "blocking-1": {
+            "max_per_s": 2.2293114577871,
+            "per_thread_per_s": [
+              2.2293114577871
+            ],
+            "threads": 1
+          },
+          "blocking-2": {
+            "max_per_s": 2.24546588864063,
+            "per_thread_per_s": [
+              2.24546588864063
+            ],
+            "threads": 1
+          },
+          "blocking-3": {
+            "max_per_s": 2.180848165226511,
+            "per_thread_per_s": [
+              2.180848165226511
+            ],
+            "threads": 1
+          },
+          "blocking-4": {
+            "max_per_s": 2.2293114577871,
+            "per_thread_per_s": [
+              2.2293114577871
+            ],
+            "threads": 1
+          },
+          "blocking-5": {
+            "max_per_s": 2.5847089365647538,
+            "per_thread_per_s": [
+              2.5847089365647538
+            ],
+            "threads": 1
+          },
+          "blocking-6": {
+            "max_per_s": 2.2293114577871,
+            "per_thread_per_s": [
+              2.2293114577871
+            ],
+            "threads": 1
+          },
+          "linger pool (persist.)": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "main": {
+            "max_per_s": 1053.3981270969653,
+            "per_thread_per_s": [
+              1053.3981270969653
+            ],
+            "threads": 1
+          },
+          "notify-rs windows loop": {
+            "max_per_s": 9.96728383662783,
+            "per_thread_per_s": [
+              9.96728383662783,
+              9.96728383662783
+            ],
+            "threads": 2
+          },
+          "paneflow-ghostty-attached": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-ghostty-control": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-ghostty-follower": {
+            "max_per_s": 0.500787356459421,
+            "per_thread_per_s": [
+              0.500787356459421,
+              0.500787356459421,
+              0.500787356459421,
+              0.500787356459421
+            ],
+            "threads": 4
+          },
+          "paneflow-ipc": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-worker-agents": {
+            "max_per_s": 0.4846329256058913,
+            "per_thread_per_s": [
+              0.4846329256058913
+            ],
+            "threads": 1
+          },
+          "paneflow-write-approvals": {
+            "max_per_s": 0.4846329256058913,
+            "per_thread_per_s": [
+              0.4846329256058913
+            ],
+            "threads": 1
+          },
+          "unnamed-10364": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-10488": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-11372": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-11392": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-14436": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-16348": {
+            "max_per_s": 0.9531114203582529,
+            "per_thread_per_s": [
+              0.9531114203582529
+            ],
+            "threads": 1
+          },
+          "unnamed-16504": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-16516": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-18744": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-1888": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-20928": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-2120": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-21652": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-21756": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-21824": {
+            "max_per_s": 13.795883948914373,
+            "per_thread_per_s": [
+              13.795883948914373
+            ],
+            "threads": 1
+          },
+          "unnamed-22368": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-23228": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-23612": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-24104": {
+            "max_per_s": 12.762000374288471,
+            "per_thread_per_s": [
+              12.762000374288471
+            ],
+            "threads": 1
+          },
+          "unnamed-24332": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-25340": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-25432": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-25804": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-26352": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-26564": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-26620": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-26980": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-27248": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-27296": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-27504": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-27684": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-27908": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-2820": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-28616": {
+            "max_per_s": 11.808888953930218,
+            "per_thread_per_s": [
+              11.808888953930218
+            ],
+            "threads": 1
+          },
+          "unnamed-28716": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-29112": {
+            "max_per_s": 96.16732687106236,
+            "per_thread_per_s": [
+              96.16732687106236
+            ],
+            "threads": 1
+          },
+          "unnamed-29672": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-30456": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-30472": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-30796": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-31500": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-31572": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-3168": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-3172": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-31936": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-32360": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-32500": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-32600": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-32940": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-33228": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-33252": {
+            "max_per_s": 22.777747503476892,
+            "per_thread_per_s": [
+              22.777747503476892
+            ],
+            "threads": 1
+          },
+          "unnamed-33436": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-33668": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-33844": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-34248": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-34300": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-35552": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-35640": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-4420": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-5808": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "unnamed-5864": {
+            "max_per_s": 0.19385317024235652,
+            "per_thread_per_s": [
+              0.19385317024235652
+            ],
+            "threads": 1
+          }
+        }
+      },
+      "pid": 22780,
+      "resident_bytes": 167505920,
+      "work_counters": {
+        "git_spawns.by_subcommand.config": 0,
+        "git_spawns.by_subcommand.diff": 2,
+        "git_spawns.by_subcommand.status": 0,
+        "git_spawns.probe": 6,
+        "git_spawns.total": 6,
+        "git_spawns.user_action": 0,
+        "host_agent_snapshots_applied": 0,
+        "process_spawns": 6,
+        "root_renders": 689,
+        "session_list_calls": 0,
+        "sidebar_renders": 689
+      }
+    },
+    "host": {
+      "attribution": "exact thread names",
+      "counters": {
+        "handles_or_fds": 207,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 31
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "host.ipc_connection": 0.0,
+          "host.pty_reader": 0.0,
+          "host.pty_writer": 0.0,
+          "host.session": 0.0,
+          "host.viewport_scan": 0.0,
+          "main": 0.0,
+          "other": 0.0
+        },
+        "by_thread_cpu_ns": {
+          "main": 0,
+          "paneflow-host-child-waiter": 0,
+          "paneflow-host-conn": 0,
+          "paneflow-host-maintenance": 0,
+          "paneflow-host-persist": 0,
+          "paneflow-host-process-listing": 0,
+          "paneflow-host-pty-reader": 0,
+          "paneflow-host-pty-writer": 0,
+          "paneflow-host-session": 0,
+          "paneflow-host-viewport": 0
+        },
+        "total_cpu_percent": 0.0,
+        "wakeups_per_s_by_thread_name": {
+          "main": {
+            "max_per_s": 0.03230886170705942,
+            "per_thread_per_s": [
+              0.03230886170705942
+            ],
+            "threads": 1
+          },
+          "paneflow-host-child-waiter": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-host-conn": {
+            "max_per_s": 0.5330962181664805,
+            "per_thread_per_s": [
+              0.5330962181664805,
+              0.5169417873129507,
+              0.5169417873129507,
+              0.5169417873129507,
+              0.5169417873129507,
+              0.5169417873129507,
+              0.03230886170705942,
+              0.03230886170705942,
+              0.03230886170705942,
+              0.03230886170705942
+            ],
+            "threads": 10
+          },
+          "paneflow-host-maintenance": {
+            "max_per_s": 0.01615443085352971,
+            "per_thread_per_s": [
+              0.01615443085352971
+            ],
+            "threads": 1
+          },
+          "paneflow-host-persist": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-host-process-listing": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-host-pty-reader": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-host-pty-writer": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-host-session": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "threads": 4
+          },
+          "paneflow-host-viewport": {
+            "max_per_s": 2.003149425837684,
+            "per_thread_per_s": [
+              2.003149425837684
+            ],
+            "threads": 1
+          }
+        }
+      },
+      "pid": 35356,
+      "resident_bytes": 16904192,
+      "work_counters": {
+        "agent_bus_event_broadcasts": 0,
+        "agent_bus_session_broadcasts": 0,
+        "agent_bus_session_removed_broadcasts": 0,
+        "agent_bus_snapshot_broadcasts": 2,
+        "foreground_observations": 0,
+        "process_listings": 0
+      }
+    },
+    "worker": {
+      "attribution": "exact thread names",
+      "counters": {
+        "handles_or_fds": 186,
+        "note": "Windows handles, or Linux and macOS descriptors, plus thread count",
+        "threads": 6
+      },
+      "cpu": {
+        "by_role_cpu_percent": {
+          "main": 0.0,
+          "other": 0.05048259641728034,
+          "worker.core_link": 0.0
+        },
+        "by_thread_cpu_ns": {
+          "main": 0,
+          "paneflow-serve-accept": 0,
+          "paneflow-serve-conn": 0,
+          "paneflow-serve-core": 0,
+          "paneflow-serve-pump": 31250000,
+          "unnamed-20028": 0
+        },
+        "total_cpu_percent": 0.05048259641728034,
+        "wakeups_per_s_by_thread_name": {
+          "main": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-serve-accept": {
+            "max_per_s": 0.0,
+            "per_thread_per_s": [
+              0.0
+            ],
+            "threads": 1
+          },
+          "paneflow-serve-conn": {
+            "max_per_s": 0.5169417873129507,
+            "per_thread_per_s": [
+              0.5169417873129507
+            ],
+            "threads": 1
+          },
+          "paneflow-serve-core": {
+            "max_per_s": 0.500787356459421,
+            "per_thread_per_s": [
+              0.500787356459421
+            ],
+            "threads": 1
+          },
+          "paneflow-serve-pump": {
+            "max_per_s": 0.7431038192623667,
+            "per_thread_per_s": [
+              0.7431038192623667
+            ],
+            "threads": 1
+          },
+          "unnamed-20028": {
+            "max_per_s": 0.5169417873129507,
+            "per_thread_per_s": [
+              0.5169417873129507
+            ],
+            "threads": 1
+          }
+        }
+      },
+      "pid": 31244,
+      "resident_bytes": 17104896,
+      "work_counters": {
+        "projection_broadcasts": 0,
+        "snapshot_broadcasts": 0,
+        "sweeps": 30
+      }
+    }
+  },
+  "root_renders": 689,
+  "schema_version": 1,
+  "session": "windows",
+  "stamp": "20261027T155555Z",
+  "state": "agent-thinking",
+  "suite": "paneflow-hardware-protocol",
+  "version": "paneflow 0.18.0",
+  "window_s": 61.9025213
+}

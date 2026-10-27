@@ -11,6 +11,7 @@
 | 1.3 | 2026-10-26 | Arthur Jean | US-012 et US-013 : le spike montre que libghostty signale une frame entière au scroll d'une ligne (hypothèse validée), mais `history_size` ne porte pas le décalage : il passe de 141 à 142 sous la limite d'historique et retombe quand une page d'historique est libérée (de 144 à 8 après 500 lignes de plus, et d'un coup au scroll d'une ligne qui libère la page). Le décalage se déduit donc de l'identité des lignes (`RowIdentity.id`) dans le cache de snapshot de libghostty, publié dans `Content.row_shift`, et une ligne n'est réutilisée que si ses cellules brutes sont identiques ; un snapshot manqué (révision non consécutive) reconvertit tout. |
 | 1.4 | 2026-10-27 | Arthur Jean | US-019 : le protocole matériel du 2026-10-27 (`bench/results/hardware-summary-2026-10-27.md`) manque deux objectifs. À 33 workspaces, 31,8 processus git par minute sur 300 s, dont 33 `git config --get-regexp`, un par workspace caché ; le suivi du worker se réveille 2,0 fois par seconde et sa pompe 10 fois. Ils deviennent US-021 et US-022, ajoutées à EP-006 avant la passe Windows d'US-020, qui les couvre aussi. |
 | 1.5 | 2026-10-27 | Arthur Jean | US-020 passe dans un epic final, EP-007 « Vérifier sur Windows réel » : EP-006 devient « Mesurer sur le matériel réel Linux et combler les écarts » et se clôt sans attendre la passe Windows. |
+| 1.6 | 2026-10-27 | Arthur Jean | US-020 : la passe Windows réel (`bench/results/hardware-summary-2026-10-27-windows.md`) tient tous les objectifs mesurables et trouve un écart propre à Windows, la boucle du backend Windows de `notify` qui se réveille 10 fois par seconde par watcher. Il devient US-023, dans un nouvel epic EP-008, parce que sa correction est une décision de dépendance. Le curseur masqué fenêtre inactive rejoint les Open Questions. |
 
 ## Problem Statement
 
@@ -480,6 +481,27 @@ Vérifier les changements de rendu et de boucles sur le Windows du dual boot, en
 
 ---
 
+### EP-008: Faire dormir les watchers de fichiers sous Windows
+
+Supprimer le dernier réveil à intervalle fixe trouvé par la passe Windows réel d'US-020 : la boucle du backend Windows de `notify`.
+
+**Definition of Done:** au repos sous Windows, aucun thread de watcher de fichiers ne se réveille plus d'une fois par seconde, sans perdre d'événement git ni de configuration.
+
+#### US-023: Ne plus réveiller les watchers de fichiers sans événement sous Windows
+**Description:** As a utilisateur sur portable Windows, I want que les watchers de fichiers dorment jusqu'à un événement so that un desktop au repos ne se réveille plus 20 fois par seconde pour rien.
+
+**Priority:** P2
+**Size:** M (3 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] La boucle Windows des watchers n'attend plus avec un délai fixe : `notify` 7.0.0 (`Cargo.lock`) et 8.2.0 attendent leur sémaphore de réveil 100 ms à la fois (`WaitForSingleObjectEx(self.wakeup_sem, 100, 1)`, `src/windows.rs`), soit 9,97 réveils par seconde par thread `notify-rs windows loop` mesurés le 2026-10-27 (`bench/results/hardware-summary-2026-10-27-windows.md`). Le moyen (version amont corrigée, patch du crate, ou backend Windows propre derrière la même API) est décidé par Arthur avant le code : c'est une décision de dépendance.
+- [ ] Given le desktop au repos (`idle-4-panes`, fenêtre active puis inactive), when `scripts/perf-hardware.ps1` mesure 60 s, then aucun thread de watcher ne dépasse 1 réveil par seconde.
+- [ ] Le rafraîchissement git sur événements `HEAD` et `index` (FR-03) et le rechargement de `paneflow.json` restent déclenchés moins de 1 s après l'écriture ; un test le vérifie sous Windows.
+- [ ] Échec : given un watcher retiré (workspace fermé, fichier de configuration supprimé), when il est libéré, then son thread se termine en moins de 600 ms.
+
+---
+
 ## Functional Requirements
 
 - FR-01: Le desktop ne doit sonder périodiquement que le workspace actif de chaque fenêtre active, toutes les 30 s ; les autres workspaces au plus toutes les 5 min, et dès leur activation.
@@ -597,6 +619,7 @@ Frame as questions for engineering input, not mandates:
 
 - Le shimmer à 90 ms est-il acceptable visuellement, ou faut-il 45 ms ? Arthur, à la passe visuelle d'US-009 ; la borne de `desktop.thinking.root_renders_per_s` en dépend.
 - Une machine macOS est-elle disponible pour EP-007 ? Arthur, avant US-020 ; sinon macOS reste vérifié par inspection.
+- FR-08 et l'edge case 4 disent que le curseur « doit rester visible » fenêtre inactive, mais un terminal non focalisé ne peint aucun curseur depuis juillet (`unfocused_terminal_hides_live_cursor`), et `TerminalView::render` le tient pour non focalisé dès que la fenêtre est inactive : constaté sous Windows par US-020, même code sous Linux. Faut-il un curseur visible, plein ou creux, fenêtre inactive ? Arthur ; une réponse oui ouvre une story.
 - Le scrollback du miroir mérite-t-il un plafond plus bas que celui du host ? Arthur, après une mesure du RSS d'une session de 4 h à forte sortie ; décide d'un PRD de suivi.
 - Le budget `desktop.thinking.root_renders_per_s` a laissé passer 1,866 pendant quatre jours : faut-il une borne basse pour tous les budgets de frames existants (`desktop.focused_idle.root_renders_per_s` compris) ? Arthur, pendant US-001.
 [/PRD]

@@ -57,7 +57,15 @@
     {
       "id": "EP-007",
       "title": "Vérifier sur Windows réel",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
+      "priority": "P2",
+      "stories_total": 1,
+      "stories_done": 1
+    },
+    {
+      "id": "EP-008",
+      "title": "Faire dormir les watchers de fichiers sous Windows",
+      "status": "TODO",
       "priority": "P2",
       "stories_total": 1,
       "stories_done": 0
@@ -342,7 +350,7 @@
       "id": "US-020",
       "title": "Vérifier les changements sur Windows réel",
       "epic": "EP-007",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
@@ -356,9 +364,22 @@
         "US-022"
       ],
       "started_at": "2026-10-27",
+      "completed_at": "2026-10-27",
+      "reviewed_at": "2026-10-27",
+      "notes": "Review 2026-10-27: criteria 2 to 5 PASS; criterion 1 MANUAL_PROVEN (Arthur's visual pass on Windows on 2026-10-27, z-order fixture, hyperlink hover and selection included). The review added the EP-004, US-011, US-014 and US-017 Windows coverage to the summary (bench-terminal.ps1: layout_scroll_cached 95.9 us, publish_scroll 86.8 us) and recorded a second Windows gap: the test-only in-process runtime keeps its 100 ms quiet tick, so idle_wakeups_shell_per_s reads 10 per s on Windows; Arthur accepted it on 2026-10-27 as a bench limit, no story, since every real pane runs the attached runtime (0.00 per s). Pass notes: Windows 11 real-hardware pass on 2026-10-27, main b57da648: bench/results/hardware-summary-2026-10-27-windows.md and five hardware-windows-*-main-b57da648-* results. Every measurable goal met. Repairs made here: perf-hardware.ps1 worker filter (quoted args), lossy UTF-8 tool output (typeperf in the French code page), Windows per-thread context switches via NtQuerySystemInformation, UTF-8 console output in both PowerShell fixtures. Gap recorded as US-023: notify's Windows loop wakes 10/s per watcher. Captures are local evidence under tasks/resource-efficiency-ep007/; hyperlink hover and selection on the z-order fixture were not checked (synthesized mouse input ignored) and need Arthur's visual pass."
+    },
+    {
+      "id": "US-023",
+      "title": "Ne plus réveiller les watchers de fichiers sans événement sous Windows",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
       "completed_at": null,
       "reviewed_at": null,
-      "notes": "Needs Arthur on the Windows 11 dual boot: z-order fixture capture, cached sidebar, shimmer and blink stop, perf-hardware.ps1 -State tui-30-workspaces, worker follow and idle session wakeups via typeperf \\Thread(paneflow*)\\Context Switches/sec (the protocol reads per-thread context switches on Linux only). Local checklist, not tracked: tasks/resource-efficiency-ep006/windows-checklist.md."
+      "notes": "Needs Arthur's dependency decision first: upstream fix, patched notify, or an own Windows backend."
     }
   ]
 }
