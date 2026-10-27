@@ -370,6 +370,21 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    fn begin_space_name_edit(&mut self, id: SpaceId, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .space_name_editor
+            .as_ref()
+            .is_some_and(|editor| editor.id == id)
+        {
+            return;
+        }
+        self.space_name_editor = Some(SpaceNameEditor { id, error: None });
+        self.space_delete_armed = None;
+        let focus = self.space_name_input.read(cx).focus_handle.clone();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     fn cancel_space_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.space_name_editor = None;
         self.settings_focus.focus(window, cx);
@@ -394,7 +409,14 @@ impl PaneFlowApp {
                 if let Some(spaces) = next {
                     self.persist_spaces(spaces, cx);
                 }
-                self.settings_focus.focus(window, cx);
+                if self
+                    .space_name_input
+                    .read(cx)
+                    .focus_handle
+                    .is_focused(window)
+                {
+                    self.settings_focus.focus(window, cx);
+                }
                 cx.notify();
             }
         }
@@ -666,13 +688,16 @@ impl PaneFlowApp {
         )
     }
 
-    fn toggle_space_settings(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
+    fn toggle_space_settings(&mut self, id: &SpaceId, window: &mut Window, cx: &mut Context<Self>) {
         self.space_settings_expanded = if self.space_settings_expanded.as_ref() == Some(id) {
             None
         } else {
             Some(id.clone())
         };
         self.space_delete_armed = None;
+        if self.space_name_editor.take().is_some() {
+            self.settings_focus.focus(window, cx);
+        }
         cx.notify();
     }
 
@@ -721,8 +746,8 @@ impl PaneFlowApp {
         .role(gpui::accesskit::Role::Button)
         .aria_label(format!("Space {}", space.name))
         .aria_expanded(expanded)
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.toggle_space_settings(&id, cx);
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.toggle_space_settings(&id, window, cx);
         }))
         .child(space_summary(
             self.render_space_avatar_button(space, ui, cx),
@@ -987,6 +1012,12 @@ impl PaneFlowApp {
             .space_name_editor
             .as_ref()
             .filter(|editor| editor.id == space.id);
+        if editing.is_none() && self.space_name_input.read(cx).value() != space.name {
+            let name = SharedString::from(space.name.clone());
+            self.space_name_input
+                .update(cx, |input, cx| input.set_value(name, cx));
+        }
+        let id = space.id.clone();
         let field = div()
             .id(SharedString::from(format!("space-name-{}", space.id)))
             .w_full()
@@ -997,45 +1028,43 @@ impl PaneFlowApp {
             .px(px(10.))
             .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
             .bg(ui.subtle)
+            .border_1()
+            .border_color(if editing.is_some() {
+                with_alpha(ui.text, 0.25)
+            } else {
+                gpui::transparent_black()
+            })
             .text_size(BODY)
-            .text_color(ui.text);
-        let field = match editing {
-            Some(_) => field
-                .border_1()
-                .border_color(with_alpha(ui.text, 0.25))
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    match event.keystroke.key.as_str() {
-                        "enter" => {
-                            this.commit_space_name(window, cx);
-                            cx.stop_propagation();
-                        }
-                        "escape" => {
-                            this.cancel_space_name(window, cx);
-                            cx.stop_propagation();
-                        }
-                        _ => {}
-                    }
-                }))
-                .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
-                    if this.space_name_editor.is_some() {
+            .text_color(ui.text)
+            .cursor(CursorStyle::IBeam)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                    this.begin_space_name_edit(id.clone(), window, cx);
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.space_name_editor.is_none() {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "enter" => {
                         this.commit_space_name(window, cx);
+                        cx.stop_propagation();
                     }
-                }))
-                .child(self.space_name_input.clone()),
-            None => {
-                let id = space.id.clone();
-                field
-                    .cursor(CursorStyle::IBeam)
-                    .accessible_control(
-                        gpui::accesskit::Role::TextInput,
-                        format!("Name of space {}", space.name),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.edit_space_name(id.clone(), window, cx);
-                    }))
-                    .child(div().truncate().child(space.name.clone()))
-            }
-        };
+                    "escape" => {
+                        this.cancel_space_name(window, cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
+            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+                if this.space_name_editor.is_some() {
+                    this.commit_space_name(window, cx);
+                }
+            }))
+            .child(self.space_name_input.clone());
         div()
             .flex()
             .flex_col()
