@@ -26,6 +26,7 @@ if ($Release) {
 }
 cargo build -p paneflow-app -p paneflow-host --locked @profileArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-$targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root 'target' }
+$targetDir = (cargo metadata --format-version 1 --no-deps --locked | ConvertFrom-Json).target_directory
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & (Join-Path $targetDir "$profileDir\paneflow.exe") @AppArgs
 exit $LASTEXITCODE

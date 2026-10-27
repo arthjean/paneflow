@@ -33,4 +33,5 @@ if [ -n "$tag" ]; then
     echo "dev.sh: tag '$tag' runs on its own state home $PANEFLOW_HOME" >&2
 fi
 cargo build -p paneflow-app -p paneflow-host --locked ${profile[@]+"${profile[@]}"}
-exec "${CARGO_TARGET_DIR:-target}/$profile_dir/paneflow" "$@"
+target_dir=$(cargo metadata --format-version 1 --no-deps --locked | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+exec "$target_dir/$profile_dir/paneflow" "$@"
