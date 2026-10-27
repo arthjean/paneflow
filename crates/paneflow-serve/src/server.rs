@@ -23,7 +23,7 @@ use crate::state::WorkerState;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-const FOLLOW_POLL: Duration = Duration::from_millis(15);
+const FOLLOW_SHUTDOWN_POLL: Duration = Duration::from_millis(500);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 
 pub struct Worker {
@@ -430,7 +430,11 @@ fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &V
             let _ = wire.write_json(&json!({"type": "end", "reason": "the worker is stopping"}));
             return Flow::Close;
         }
-        match subscription.frames.recv_timeout(FOLLOW_POLL) {
+        let until_keepalive = FOLLOW_KEEPALIVE.saturating_sub(last_frame_at.elapsed());
+        match subscription
+            .frames
+            .recv_timeout(until_keepalive.min(FOLLOW_SHUTDOWN_POLL))
+        {
             Ok(frame) => {
                 if wire.write_json(&frame).is_err() {
                     worker.bus.unsubscribe(subscription.id);
