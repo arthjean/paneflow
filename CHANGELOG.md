@@ -5,6 +5,37 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-28
+
+Paneflow 0.18.1 cuts the work the desktop does while an agent animates in one pane and the rest sits still. With 30 workspaces open and a TUI agent animating in the shown one, the desktop's main thread drops from 22.35 % to 1.69 % of a core on Linux, and 5.17 % on Windows. At rest, the threads that woke on fixed timers now sleep until there is work: the IPC thread goes from 99.6 to 0.2 wakeups a second on Linux, and an idle terminal session from 10 to 0.5. Text fields gain word navigation, undo and redo, and a blinking caret, Settings frames its form inputs with a focus ring, and the Move to space submenu works again.
+
+### Added
+
+- **Text fields edit like a text editor.** Every single-line field (search and filter bars, the command palette, renames, Settings forms, the branch prompt, the clone dialog, custom buttons, in-view search, the path picker) gains:
+  - Word motion and deletion: `Ctrl+Left`/`Ctrl+Right` to move by word, with `Shift` to select, `Ctrl+Backspace` and `Ctrl+Delete` to delete a word on Linux and Windows; `Option+Left`/`Option+Right`, `Shift+Option+Left`/`Right`, `Option+Backspace`, and `Option+Delete` on macOS, where `Cmd+Left`/`Cmd+Right` jump to the start or end of the field and `Cmd+Backspace` deletes to its start. Punctuation such as `/`, `-`, and `.` counts as a word stop, so a path is walked one segment at a time. `Shift+Home` and `Shift+End` select to either end on every platform.
+  - Undo and redo: `Ctrl+Z`, then `Ctrl+Shift+Z` or `Ctrl+Y` on Linux and Windows, `Cmd+Z` and `Cmd+Shift+Z` on macOS. Typing undoes a word at a time (keystrokes less than 700 ms apart merge, a space starts a new step), a paste or a word deletion is its own step, undo restores the selection, and each field keeps up to 200 steps.
+  - A caret that blinks at 500 ms on, 500 ms off, stays solid for half a second after any key or click, and disappears while the window is inactive.
+  - Double-click selects a word, triple-click selects everything, and dragging after a double-click extends the selection by words. Clicking a field focuses it.
+  - Text longer than the field scrolls to keep the caret in view instead of overflowing the field.
+  - On macOS, `Option+Left` and `Option+Right` inside a focused text field now move by word rather than moving focus to the neighboring pane; outside text fields they still move focus.
+- **A focus ring for Settings form inputs.** The fields of Settings (space names, environment rows, agent profiles, workspace templates), the **Create branch here…** prompt, the pane palette's branch name, and the custom buttons dialog sit in a framed input: a faint fill and a 1 px outline at rest, and on focus an accent outline with a 3 px accent ring that grows in over 160 ms. A rejected value draws the ring in the error color while the field has focus. `reduce_motion` shows the ring at once, without the animation. Search bars, palettes, and inline renames keep their quieter style. The caret of every text field is now 1 px wide in the text color, instead of 2 px in blue.
+
+### Changed
+
+- **The space name in Settings > Spaces is always an editable field.** Click it to place the caret where you clicked, `Enter` or a click outside saves, `Escape` restores the stored name. Long names scroll instead of being cut with an ellipsis.
+- **The terminal paints its grid in two batched layers**, and the sidebar is redrawn from a cached view when only a terminal changed. On Linux, with 18 workspaces and an animated agent in a maximized window, this alone took the main thread from 12.95 % to 3.82 % of a core, from 5.27 ms to 1.56 ms a frame ([measurement](https://github.com/arthjean/paneflow/blob/v0.18.1/bench/results/hardware-summary-2026-10-25.md)). Strikethrough and underlines are now drawn over the glyphs rather than under them.
+- **Hidden panes refresh at most once a second.** A pane that is not on screen (another tab, another workspace) publishes its output at most once a second and catches up immediately when it is shown again; detached panes always count as shown. Under the animated agent fixture, a hidden pane publishes 10 frames in 10 s where a shown one publishes 195. A dev server URL printed in a hidden pane still reaches the services list within 1.5 s.
+- **Scrolling reuses rows that only moved.** When output scrolls the screen by a line, the rows that only shifted are kept instead of being rebuilt: on a 220x60 pane, laying out a scrolled frame goes from 552 µs to 95 µs and publishing it from 359 µs to 88 µs.
+- **Background windows no longer blink the terminal cursor.** While no Paneflow window is active, the cursor stays visible and still, instead of redrawing 1.85 times a second; it resumes blinking when a window becomes active. A focused detached window keeps blinking while the main window is in the background.
+- **Fewer wakeups at rest.** An idle terminal session now sleeps until it has something to do instead of waking every 100 ms. The IPC server waits for connections in `poll` on Linux and macOS instead of sleeping 10 ms at a time. The git watcher wakes on its events instead of a 200 ms timer, with the same 300 ms debounce. The background worker's stream follower and frame pump sleep until a frame or a deadline is due and are woken on shutdown: at rest, its threads go from 10.1, 2.0, 0.5, and 0 wakeups a second to 0.72, 0.5, 0.5, and 0 on Linux.
+- **The desktop uses at most 2 malloc arenas on Linux** (glibc builds), as the session host already did, unless `MALLOC_ARENA_MAX` is set. A long-running desktop had grown to 126 arenas after 5.8 hours. With 30 workspaces open, the desktop's resident memory is 12 MiB lower than on 0.18.0.
+- When the background worker stops while a script follows its agent stream (`agent.follow`), the final `end` frame now gives the reason `the worker is stopping` instead of `the stream was dropped`.
+
+### Fixed
+
+- **Move to space** in a workspace's context menu works again: clicking a space or **New space…** in its submenu closed the whole menu without moving the workspace.
+- Session titles listed in the sessions sidebar from the session host no longer carry the spinners and decoration characters of agent CLIs.
+
 ## [0.18.0] - 2026-10-24
 
 Paneflow 0.18.0 adds spaces: named contexts, such as work and personal projects, that each hold their own workspaces. The sidebar shows one space at a time, a button beside the space name leads to an agent waiting in another space, and scripts can create and list workspaces by space. A space can set environment variables for every terminal it opens, so it can run Claude Code, Codex, and the GitHub CLI under its own configuration directories, with Paneflow's hooks and status following them. With no space declared, Paneflow behaves as before. The release also adds a Comfortable density setting and cuts the git processes of background workspaces.

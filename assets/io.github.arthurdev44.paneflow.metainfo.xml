@@ -64,6 +64,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.18.1" date="2026-10-28">
+      <description>
+        <p>Paneflow uses far less CPU while an agent animates in one pane and the rest sits still, and wakes far less often at rest. Text fields edit like a text editor, and Settings frames its form inputs with a focus ring.</p>
+        <ul>
+          <li>The desktop main thread drops from 22 % to under 2 % of a core with an animated agent among 30 workspaces on Linux</li>
+          <li>Hidden panes refresh at most once a second and catch up when shown</li>
+          <li>Text fields gain word navigation, undo and redo, and a blinking caret</li>
+          <li>The space name in Settings is always editable in place</li>
+          <li>Move to space in a workspace's context menu works again</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.18.0" date="2026-10-24">
       <description>
         <p>Spaces group workspaces into named contexts, such as work and personal projects. The sidebar shows one space at a time, a button beside the space name leads to an agent waiting in another space, and each space can run its terminals under its own environment and agent accounts.</p>
