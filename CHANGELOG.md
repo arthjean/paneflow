@@ -5,14 +5,18 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Listing `Noto Color Emoji` in `font_fallbacks` no longer brings emoji back on Linux.** Distributions such as Fedora 43 and later ship that font only in the COLRv1 format, which the Linux renderer cannot draw, so emoji cells stay blank. The setting used to help by accident: it removed the font from the font database, which let a monochrome emoji font such as Noto Emoji draw the emoji instead. The font now stays loaded, as with the default settings. With Noto Emoji installed, uninstalling the COLRv1 font or hiding it from fontconfig brings monochrome emoji back.
+
 ### Changed
 
 - **Shortcuts on Windows follow the active keyboard layout.** Default and custom shortcuts are now resolved through the Windows keyboard mapper, so a chord on a shifted symbol is matched against the layout in use (AZERTY as well as US) instead of a fixed US mapping.
-- **Animations run at up to 30 frames per second in power-saving mode.** When the operating system reports a power-saving state, GPUI caps animation frames, such as an agent's spinner, at 30 per second.
+- **Animations run at up to 30 frames per second in power-saving mode.** When the operating system reports a power-saving state, GPUI caps frame-by-frame animations, such as hover and sidebar transitions, at 30 per second. The agent spinner and keystroke echo keep their usual rate; a keystroke typed while such an animation runs can wait one 33 ms frame instead of a 16.7 ms one.
 
 ### Fixed
 
-- **Fallback fonts stay available on Linux.** A fallback font without an `m` glyph, such as an emoji font or a Nerd Font symbols font, no longer disappears for the rest of the session after it is first used.
+- **Fallback fonts stay available on Linux.** A fallback font without an `m` glyph, such as a Nerd Font symbols font, is no longer removed from the font database for the rest of the session after it is first used.
 - **No more Vulkan panic when a surface is destroyed on Linux** ("SwapchainAcquireSemaphore still in use").
 - **No more crash on Windows when text contains U+2028 or U+2029**, the Unicode line and paragraph separators.
 - **A memory leak in the text system is fixed**: line wrappers no longer keep a text system alive after it is dropped.
