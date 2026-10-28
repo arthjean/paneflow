@@ -1,6 +1,6 @@
 use gpui::{
     ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px, svg,
+    SharedString, Styled, div, prelude::*, px,
 };
 
 use paneflow_config::schema::{InterfaceStyle, PaneFlowConfig};
@@ -8,8 +8,9 @@ use paneflow_config::schema::{InterfaceStyle, PaneFlowConfig};
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    deferred_select_menu, menu_row, secondary_button, section_header, section_header_with_action,
-    select_chevron, select_menu, select_trigger, setting_text, toggle_switch, with_alpha,
+    deferred_select_menu, section_header, section_header_with_action, select_chevron,
+    select_option, select_popup, select_trigger, setting_text, soft_button, toggle_switch,
+    with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
@@ -35,7 +36,7 @@ enum MockupHalf {
 impl PaneFlowApp {
     pub(crate) fn render_appearance_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
-        let reset_btn = secondary_button(
+        let reset_btn = soft_button(
             "reset-theme",
             "Reset to default",
             ui,
@@ -424,7 +425,7 @@ impl PaneFlowApp {
             .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_menu("theme-preset-list", ui).on_mouse_down_out(cx.listener(
+            let mut menu = select_popup("theme-preset-list", ui).on_mouse_down_out(cx.listener(
                 |this, _, _w, cx| {
                     if this.theme_dropdown_open {
                         this.theme_dropdown_open = false;
@@ -435,7 +436,7 @@ impl PaneFlowApp {
             for (idx, preset) in crate::theme::PRESETS.iter().enumerate() {
                 let is_current = preset.name == current_name;
                 menu = menu.child(
-                    menu_row(("theme-preset", idx), is_current, ui)
+                    select_option(("theme-preset", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.theme_dropdown_open = false;
@@ -449,17 +450,6 @@ impl PaneFlowApp {
                                 .truncate()
                                 .text_color(ui.text)
                                 .child(preset.name),
-                        )
-                        .child(
-                            svg()
-                                .size(px(13.))
-                                .flex_none()
-                                .path("icons/check.svg")
-                                .text_color(if is_current {
-                                    ui.text
-                                } else {
-                                    with_alpha(ui.text, 0.0)
-                                }),
                         ),
                 );
             }
@@ -514,7 +504,7 @@ impl PaneFlowApp {
             .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_menu("interface-style-list", ui).on_mouse_down_out(cx.listener(
+            let mut menu = select_popup("interface-style-list", ui).on_mouse_down_out(cx.listener(
                 |this, _, _w, cx| {
                     if this.general_dropdown == Some(GeneralDropdown::InterfaceStyle) {
                         this.general_dropdown = None;
@@ -525,7 +515,7 @@ impl PaneFlowApp {
             for (idx, style) in InterfaceStyle::ALL.into_iter().enumerate() {
                 let is_current = current == Some(style);
                 menu = menu.child(
-                    menu_row(("interface-style", idx), is_current, ui)
+                    select_option(("interface-style", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             this.general_dropdown = None;
@@ -538,17 +528,6 @@ impl PaneFlowApp {
                                 .truncate()
                                 .text_color(ui.text)
                                 .child(style.label()),
-                        )
-                        .child(
-                            svg()
-                                .size(px(13.))
-                                .flex_none()
-                                .path("icons/check.svg")
-                                .text_color(if is_current {
-                                    ui.text
-                                } else {
-                                    with_alpha(ui.text, 0.0)
-                                }),
                         ),
                 );
             }

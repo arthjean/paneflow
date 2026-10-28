@@ -196,6 +196,35 @@ pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> AnyElement {
         .into_any_element()
 }
 
+pub(crate) fn squircle_fill_blend(
+    radius: Pixels,
+    from: Hsla,
+    to: Hsla,
+    progress: std::rc::Rc<std::cell::Cell<f32>>,
+) -> AnyElement {
+    div()
+        .absolute()
+        .inset_0()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let color = crate::ui_primitives::lerp_color(from, to, progress.get());
+                    if color.a <= f32::EPSILON {
+                        return;
+                    }
+                    if translucent_over_transparent_window(color) {
+                        window.paint_quad(gpui::fill(bounds, color).corner_radii(radius));
+                    } else if let Some(path) = squircle_path(bounds, radius) {
+                        window.paint_path(path, color);
+                    }
+                },
+            )
+            .size_full(),
+        )
+        .into_any_element()
+}
+
 fn translucent_over_transparent_window(color: Hsla) -> bool {
     #[cfg(target_os = "linux")]
     {

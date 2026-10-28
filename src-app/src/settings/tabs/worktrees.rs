@@ -6,10 +6,11 @@ use paneflow_config::schema::{WORKTREES_KEEP_LIMIT_MAX, WorktreesConfig};
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    hairline, secondary_button, section_header, setting_card, toggle_row_with, toggle_switch,
-    with_alpha,
+    destructive_color, hairline, inverse_fill, raised_button, raised_skin, section_header,
+    setting_card, soft_button, toggle_row_with, toggle_switch,
 };
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt;
 use crate::workspace::worktree;
 
 impl PaneFlowApp {
@@ -42,16 +43,16 @@ impl PaneFlowApp {
                     .text_color(ui.muted)
                     .child(shown_dir),
             )
-            .child(secondary_button(
-                "worktrees-dir-change",
-                "Change…",
-                ui,
-                cx.listener(|this, _: &ClickEvent, _window, cx| {
-                    this.choose_worktrees_dir(cx);
-                }),
-            ));
+            .child({
+                let (fill, ink) = inverse_fill(ui);
+                raised_button("worktrees-dir-change", "Change…", fill, ink).on_click(cx.listener(
+                    |this, _: &ClickEvent, _window, cx| {
+                        this.choose_worktrees_dir(cx);
+                    },
+                ))
+            });
         if custom_dir.is_some() {
-            dir_control = dir_control.child(secondary_button(
+            dir_control = dir_control.child(soft_button(
                 "worktrees-dir-default",
                 "Default",
                 ui,
@@ -94,7 +95,7 @@ impl PaneFlowApp {
             .items_center()
             .gap(px(6.))
             .flex_shrink_0()
-            .child(secondary_button(
+            .child(soft_button(
                 "worktrees-keep-limit-dec",
                 "−",
                 ui,
@@ -113,7 +114,7 @@ impl PaneFlowApp {
                     .text_color(ui.text)
                     .child(SharedString::from(format!("{keep_limit}"))),
             )
-            .child(secondary_button(
+            .child(soft_button(
                 "worktrees-keep-limit-inc",
                 "+",
                 ui,
@@ -195,22 +196,25 @@ impl PaneFlowApp {
                             ),
                     )
                     .child(
-                        div()
-                            .id(remove_id)
-                            .flex_shrink_0()
-                            .px(px(10.))
-                            .py(px(4.))
-                            .rounded(px(7.))
-                            .bg(ui.subtle)
-                            .hover(|style| style.bg(with_alpha(ui.text, 0.12)))
-                            .cursor_pointer()
-                            .text_size(px(12.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(ui.text)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                this.request_worktree_removal(ws_id, path.clone(), cx);
-                            }))
-                            .child("Remove"),
+                        raised_skin(
+                            div()
+                                .id(remove_id.clone())
+                                .flex_shrink_0()
+                                .px(px(10.))
+                                .py(px(4.))
+                                .text_size(px(12.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(gpui::white()),
+                            format!("{remove_id}-squircle"),
+                            px(7.),
+                            destructive_color(),
+                            true,
+                        )
+                        .accessible_control(gpui::accesskit::Role::Button, "Remove")
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.request_worktree_removal(ws_id, path.clone(), cx);
+                        }))
+                        .child("Remove"),
                     ),
             );
         }
@@ -290,7 +294,7 @@ impl PaneFlowApp {
                             .items_center()
                             .gap(px(6.))
                             .flex_shrink_0()
-                            .child(secondary_button(
+                            .child(soft_button(
                                 restore_id,
                                 "Restore",
                                 ui,
@@ -302,18 +306,23 @@ impl PaneFlowApp {
                                     );
                                 }),
                             ))
-                            .child(secondary_button(
-                                delete_id,
-                                "Delete",
-                                ui,
-                                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                    this.delete_worktree_snapshot(
-                                        ws_id,
-                                        delete_snapshot.clone(),
-                                        cx,
-                                    );
-                                }),
-                            )),
+                            .child(
+                                raised_button(
+                                    delete_id,
+                                    "Delete",
+                                    destructive_color(),
+                                    gpui::white(),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _window, cx| {
+                                        this.delete_worktree_snapshot(
+                                            ws_id,
+                                            delete_snapshot.clone(),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            ),
                     ),
             );
         }

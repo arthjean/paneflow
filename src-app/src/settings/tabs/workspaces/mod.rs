@@ -1,10 +1,8 @@
 mod editor;
 
-use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, PathPromptOptions, SharedString, Styled, div, prelude::*, px, rgb,
-    svg,
+    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, PathPromptOptions, SharedString, Styled, div, prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::{
     CommandDefinition, CommandTarget, SurfaceDefinition, WorkspaceDefinition,
@@ -13,10 +11,10 @@ use paneflow_config::schema::{
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::templates::*;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, apple_red, card_tint, deferred_select_menu,
-    destructive_icon_button, hairline, icon_button, menu_row, quiet_card, save_icon_button,
-    section_header_with_action, select_chevron, select_menu, select_trigger, setting_card,
-    settings_label, switch_blue, text_field, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, apple_red, card_tint, deferred_select_menu, ghost_skin,
+    hairline, inverse_fill, quiet_card, raised_icon_button, section_header_with_action,
+    select_chevron, select_option, select_popup, select_trigger, setting_card, settings_label,
+    soft_icon_button, switch_blue, text_field, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
@@ -32,12 +30,12 @@ impl PaneFlowApp {
         }
 
         let templates = self.workspace_template_indices();
-        let create = icon_button(
+        let create = raised_icon_button(
             "workspace-template-create",
             "Create workspace",
             "icons/plus.svg",
-            ui,
-            true,
+            switch_blue(),
+            gpui::white(),
             true,
         )
         .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
@@ -97,13 +95,11 @@ impl PaneFlowApp {
             .gap(px(16.))
             .child(
                 div().flex().flex_row().items_center().child(
-                    icon_button(
+                    soft_icon_button(
                         "workspace-template-back",
                         "Back",
                         "icons/arrow_left.svg",
                         ui,
-                        false,
-                        true,
                     )
                     .on_click(cx.listener(
                         |this, _: &ClickEvent, _window, cx| {
@@ -152,12 +148,12 @@ impl PaneFlowApp {
                             .flex_row()
                             .gap(px(8.))
                             .child(
-                                icon_button(
+                                raised_icon_button(
                                     ("workspace-template-run", idx),
                                     "Run",
                                     "icons/player-play.svg",
-                                    ui,
-                                    true,
+                                    switch_blue(),
+                                    gpui::white(),
                                     pane_count > 0,
                                 )
                                 .when(pane_count > 0, |b| {
@@ -169,13 +165,11 @@ impl PaneFlowApp {
                                 }),
                             )
                             .child(
-                                icon_button(
+                                soft_icon_button(
                                     ("workspace-template-duplicate", idx),
                                     "Duplicate",
                                     "icons/file-text.svg",
                                     ui,
-                                    false,
-                                    true,
                                 )
                                 .on_click(cx.listener(
                                     move |this, _: &ClickEvent, _window, cx| {
@@ -184,11 +178,12 @@ impl PaneFlowApp {
                                 )),
                             )
                             .child(
-                                destructive_icon_button(
+                                raised_icon_button(
                                     ("workspace-template-delete", idx),
                                     "Delete",
                                     "icons/trash.svg",
-                                    ui,
+                                    apple_red(),
+                                    gpui::white(),
                                     true,
                                 )
                                 .on_click(cx.listener(

@@ -11,15 +11,14 @@ use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, destructive_color, hairline,
-    hairline_inset, menu_row, secondary_button, section_header_with_action, section_title,
-    select_chevron, select_menu, select_trigger, setting_card, setting_text, toggle_row,
-    toggle_switch, with_alpha,
+    deferred_select_menu, destructive_color, ghost_icon_button, ghost_skin, hairline,
+    hairline_inset, raised_button, section_header_with_action, section_title, select_chevron,
+    select_option, select_popup, select_trigger, setting_card, setting_text, soft_button,
+    toggle_row, toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{
-    AccessibleControlExt, AnimatedHoverExt, BODY, BODY_EMPHASIS, LABEL_SM, LABEL_XS, ROW_RADIUS,
-    TooltipDelayExt, text_tooltip,
+    AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, LABEL_XS, TooltipDelayExt, text_tooltip,
 };
 use crate::widgets::text_input::TextInput;
 
@@ -256,36 +255,37 @@ impl PaneFlowApp {
             } else {
                 format!("Show {folded} more").into()
             };
-            let hover_bg = with_alpha(ui.text, 0.05);
-            let more_button = div()
-                .id("agents-show-more")
-                .h(px(28.))
-                .px(px(10.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .rounded_full()
-                .hover(move |style| style.bg(hover_bg))
-                .cursor(CursorStyle::PointingHand)
-                .text_size(LABEL_SM)
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(ui.muted)
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                    this.toggle_agents_list(cx);
-                }))
-                .child(more_label)
-                .child(
-                    svg()
-                        .size(px(10.))
-                        .flex_none()
-                        .path(if expanded {
-                            "icons/chevron_up.svg"
-                        } else {
-                            "icons/chevron-down.svg"
-                        })
-                        .text_color(ui.muted),
-                );
+            let more_button = ghost_skin(
+                div()
+                    .id("agents-show-more")
+                    .h(px(28.))
+                    .px(px(10.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(LABEL_SM)
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(ui.text),
+                "agents-show-more-squircle",
+                px(14.),
+                ui,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                this.toggle_agents_list(cx);
+            }))
+            .child(more_label)
+            .child(
+                svg()
+                    .size(px(10.))
+                    .flex_none()
+                    .path(if expanded {
+                        "icons/chevron_up.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    })
+                    .text_color(with_alpha(ui.text, 0.8)),
+            );
             card = card.child(hairline(ui)).child(
                 div()
                     .py(px(6.))
@@ -401,7 +401,7 @@ impl PaneFlowApp {
         }
         let owned = slug.to_string();
         match status.state {
-            IntegrationState::NotInstalled => secondary_button(
+            IntegrationState::NotInstalled => soft_button(
                 format!("integration-install-{slug}"),
                 "Install hooks",
                 ui,
@@ -605,7 +605,7 @@ impl PaneFlowApp {
                 icon_button(
                     SharedString::from(format!("agent-profile-edit-{idx}")),
                     "icons/edit.svg",
-                    ui.muted,
+                    with_alpha(ui.text, 0.8),
                     ui.text,
                     ui,
                 )
@@ -617,7 +617,7 @@ impl PaneFlowApp {
                 icon_button(
                     SharedString::from(format!("agent-profile-delete-{idx}")),
                     "icons/trash.svg",
-                    ui.muted,
+                    with_alpha(ui.text, 0.8),
                     destructive_color(),
                     ui,
                 )
@@ -707,7 +707,7 @@ impl PaneFlowApp {
                                             "agent-profile-env-remove-{row_idx}"
                                         )),
                                         "icons/trash.svg",
-                                        ui.muted,
+                                        with_alpha(ui.text, 0.8),
                                         destructive_color(),
                                         ui,
                                     )
@@ -729,20 +729,15 @@ impl PaneFlowApp {
         }
         env_column = env_column.child(
             div().flex().flex_row().child(
-                div()
-                    .id("agent-profile-env-add")
-                    .flex_none()
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .cursor(CursorStyle::PointingHand)
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                        this.add_agent_profile_env_row(cx);
-                    }))
-                    .child("+ Add variable"),
+                ghost_icon_button(
+                    "agent-profile-env-add",
+                    "Add variable",
+                    "icons/plus.svg",
+                    ui,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    this.add_agent_profile_env_row(cx);
+                })),
             ),
         );
 
@@ -773,23 +768,11 @@ impl PaneFlowApp {
             }
         };
 
-        let save = div()
-            .id("agent-profile-save")
-            .px(px(10.))
-            .py(px(4.))
-            .rounded(ROW_RADIUS)
-            .cursor(CursorStyle::PointingHand)
-            .text_size(BODY)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .bg(ui.text)
-            .text_color(ui.base)
-            .animated_hover(|style, delta| {
-                style.opacity(1.0 - 0.15 * delta);
-            })
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+        let save = raised_button("agent-profile-save", "Save", ui.text, ui.base).on_click(
+            cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.save_agent_profile(cx);
-            }))
-            .child("Save");
+            }),
+        );
 
         div()
             .flex()
@@ -848,7 +831,7 @@ impl PaneFlowApp {
                             .flex_row()
                             .gap(px(6.))
                             .flex_shrink_0()
-                            .child(secondary_button(
+                            .child(soft_button(
                                 "agent-profile-cancel",
                                 "Cancel",
                                 ui,
@@ -908,7 +891,7 @@ impl PaneFlowApp {
         )
         .child(select_chevron(ui));
         if is_open {
-            let mut menu = select_menu(SharedString::from("agent-profile-agent-list"), ui)
+            let mut menu = select_popup(SharedString::from("agent-profile-agent-list"), ui)
                 .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
                     if let Some(editor) = this.agent_profile_editor.as_mut() {
                         editor.agent_menu_open = false;
@@ -916,7 +899,7 @@ impl PaneFlowApp {
                     }
                 }));
             for agent in TerminalAgent::for_this_platform() {
-                let item = menu_row(
+                let item = select_option(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
                     agent == current,
                     ui,
@@ -1345,29 +1328,28 @@ pub(crate) fn icon_button(
     hovered: Hsla,
     ui: crate::theme::UiColors,
 ) -> crate::ui_primitives::AnimatedHover {
-    div()
-        .id(id)
-        .flex_none()
-        .w(px(ICON_BUTTON_SIZE))
-        .h(px(ICON_BUTTON_SIZE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(7.))
-        .cursor(CursorStyle::PointingHand)
-        .text_color(resting)
-        .animated_hover(move |style, delta| {
-            style
-                .bg(with_alpha(ui.text, 0.06 * delta))
-                .text_color(crate::ui_primitives::lerp_color(resting, hovered, delta));
-        })
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(resting),
-        )
+    let group = SharedString::from(format!("{id}-squircle"));
+    ghost_skin(
+        div()
+            .id(id)
+            .flex_none()
+            .w(px(ICON_BUTTON_SIZE))
+            .h(px(ICON_BUTTON_SIZE))
+            .flex()
+            .items_center()
+            .justify_center(),
+        group.clone(),
+        px(7.),
+        ui,
+    )
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path(icon)
+            .text_color(resting)
+            .group_hover(group, |style| style.text_color(hovered)),
+    )
 }
 
 fn agent_icon_el(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement {

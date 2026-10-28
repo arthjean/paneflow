@@ -9,11 +9,11 @@ use std::collections::HashMap;
 use crate::keybindings::ShortcutGroup;
 use crate::settings::chrome::{SETTINGS_COLUMN_PADDING, settings_column};
 use crate::settings::components::{
-    MENU_ROW_HEIGHT, destructive_button, menu_panel, menu_row, select_item, with_alpha,
+    MENU_ROW_HEIGHT, destructive_color, ghost_skin, menu_panel, menu_row, raised_button, with_alpha,
 };
 use crate::ui_primitives::{
     BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt, lerp_color,
-    squircle_skin, text_tooltip,
+    text_tooltip,
 };
 use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
@@ -466,19 +466,17 @@ impl PaneFlowApp {
             recording_field()
         } else {
             let reset = entry.customized.then(|| {
-                squircle_skin(
+                ghost_skin(
                     div()
                         .id(("shortcut-reset", idx))
                         .size(px(24.))
                         .flex_none()
                         .flex()
                         .items_center()
-                        .justify_center()
-                        .cursor(CursorStyle::PointingHand),
+                        .justify_center(),
                     format!("shortcut-reset-{idx}-squircle"),
                     ROW_RADIUS,
-                    None,
-                    Some(with_alpha(ui.text, 0.10)),
+                    ui,
                 )
                 .invisible()
                 .group_hover(row_group.clone(), |style| style.visible())
@@ -495,7 +493,7 @@ impl PaneFlowApp {
                     svg()
                         .size(px(13.))
                         .path("icons/refresh.svg")
-                        .text_color(ui.muted),
+                        .text_color(with_alpha(ui.text, 0.8)),
                 )
             });
             div()
@@ -575,8 +573,7 @@ impl PaneFlowApp {
                     .items_center()
                     .gap(px(4.))
                     .child(
-                        select_item("reset-shortcuts-cancel", false, ui)
-                            .text_color(ui.text)
+                        ghost_pill("reset-shortcuts-cancel", ui)
                             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                 this.shortcut_reset_armed_at = None;
                                 cx.notify();
@@ -584,11 +581,17 @@ impl PaneFlowApp {
                             .child("Cancel"),
                     )
                     .child(
-                        destructive_button("reset-shortcuts-confirm", "Reset").on_click(
-                            cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        raised_button(
+                            "reset-shortcuts-confirm",
+                            "Reset",
+                            destructive_color(),
+                            gpui::white(),
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _w, cx| {
                                 this.confirm_shortcut_reset(cx);
-                            }),
-                        ),
+                            },
+                        )),
                     ),
             )
         } else {
@@ -599,8 +602,7 @@ impl PaneFlowApp {
             };
             row.child(div().text_size(BODY).text_color(ui.muted).child(summary))
                 .child(
-                    select_item("reset-shortcuts", false, ui)
-                        .text_color(ui.text)
+                    ghost_pill("reset-shortcuts", ui)
                         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                             this.arm_shortcut_reset();
                             cx.notify();
@@ -634,6 +636,25 @@ fn list_column(inner: impl IntoElement) -> Div {
         .flex_col()
         .items_start()
         .child(settings_column().child(inner))
+}
+
+fn ghost_pill(id: &'static str, ui: crate::theme::UiColors) -> crate::ui_primitives::AnimatedHover {
+    ghost_skin(
+        div()
+            .id(id)
+            .flex_none()
+            .h(px(28.))
+            .px(px(8.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .text_size(px(12.))
+            .text_color(ui.text),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        ui,
+    )
 }
 
 fn filter_mode_button(

@@ -7,10 +7,11 @@ use serde_json::{Value, json};
 use paneflow_config::schema::{CursorShapeConfig, MinimumContrast, TerminalConfig};
 
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, menu_row, section_header,
-    select_chevron, select_menu, select_trigger_with_hover, setting_text, toggle_switch,
+    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, section_header, select_chevron,
+    select_option, select_popup, select_trigger, setting_text, soft_skin, toggle_switch,
 };
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt};
 
 use crate::{PaneFlowApp, TerminalDropdown};
@@ -453,13 +454,11 @@ impl PaneFlowApp {
         };
 
         let font_open = self.font_dropdown_open;
-        let trigger_hover_bg = lighter_control_hover(ui.subtle);
-        let mut trigger = select_trigger_with_hover(
+        let mut trigger = select_trigger(
             "terminal-font-family-trigger",
             search::FONT_FAMILY.title,
             font_open,
             ui,
-            trigger_hover_bg,
         )
         .on_press(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
@@ -497,7 +496,7 @@ impl PaneFlowApp {
                 names: filtered,
             } = FontMatches::new(&self.mono_font_names, &default_font, &self.font_search);
 
-            let mut menu = select_menu("terminal-font-dropdown", ui).on_mouse_down_out(
+            let mut menu = select_popup("terminal-font-dropdown", ui).on_mouse_down_out(
                 cx.listener(|this, _, _w, cx| {
                     if this.font_dropdown_open {
                         this.font_dropdown_open = false;
@@ -509,7 +508,7 @@ impl PaneFlowApp {
 
             if default_matches {
                 menu = menu.child(
-                    menu_row(
+                    select_option(
                         ("terminal-font-default", 0usize),
                         current_font == default_font,
                         ui,
@@ -535,7 +534,7 @@ impl PaneFlowApp {
                 let name_owned = (*name).to_string();
                 let is_current = *name == current_font;
                 menu = menu.child(
-                    menu_row(("terminal-font", i), is_current, ui)
+                    select_option(("terminal-font", i), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.font_dropdown_open = false;
@@ -751,13 +750,11 @@ impl PaneFlowApp {
     ) -> gpui::AnyElement {
         let is_open = self.terminal_dropdown == Some(which);
 
-        let trigger_hover_bg = lighter_control_hover(ui.subtle);
-        let mut trigger = select_trigger_with_hover(
+        let mut trigger = select_trigger(
             SharedString::from(format!("term-dd-{config_key}")),
             title,
             is_open,
             ui,
-            trigger_hover_bg,
         )
         .on_press(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
@@ -780,7 +777,7 @@ impl PaneFlowApp {
 
         if is_open {
             let mut menu =
-                select_menu(SharedString::from(format!("term-dd-list-{config_key}")), ui)
+                select_popup(SharedString::from(format!("term-dd-list-{config_key}")), ui)
                     .on_mouse_down_out(cx.listener(move |this, _, _w, cx| {
                         if this.terminal_dropdown == Some(which) {
                             this.terminal_dropdown = None;
@@ -789,7 +786,7 @@ impl PaneFlowApp {
                     }));
             for (i, (label, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let item = menu_row((config_key, i), selected, ui)
+                let item = select_option((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.terminal_dropdown = None;
@@ -934,24 +931,30 @@ fn stepper_button(
     disabled: bool,
     ui: crate::theme::UiColors,
 ) -> crate::ui_primitives::AnimatedHover {
-    let hover_bg = if disabled {
-        ui.subtle
-    } else {
-        lighter_control_hover(ui.subtle)
-    };
-    div()
-        .id(SharedString::from(id))
+    let frame = div()
+        .id(SharedString::from(id.clone()))
+        .relative()
         .flex()
         .items_center()
         .justify_center()
         .w(px(24.))
         .h(px(24.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
         .text_size(px(15.))
-        .text_color(if disabled { ui.muted } else { ui.text })
-        .animated_hover_bg(ui.subtle, hover_bg)
-        .child(glyph)
+        .text_color(ui.text);
+    let button = if disabled {
+        frame
+            .opacity(0.64)
+            .child(squircle_fill(SETTINGS_CONTROL_CORNER_RADIUS, ui.subtle))
+            .animated_hover(|_, _| {})
+    } else {
+        soft_skin(
+            frame,
+            format!("{id}-squircle"),
+            SETTINGS_CONTROL_CORNER_RADIUS,
+            ui,
+        )
+    };
+    button.child(glyph)
 }
 
 fn stepper_frame(

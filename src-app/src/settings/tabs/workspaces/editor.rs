@@ -46,13 +46,17 @@ impl PaneFlowApp {
             .child(hairline(ui))
             .child(
                 div().px(px(12.)).py(px(10.)).flex().justify_end().child(
-                    save_icon_button(
-                        "workspace-template-save-details",
-                        "Save details",
-                        "icons/check.svg",
-                        ui,
-                        true,
-                    )
+                    {
+                        let (fill, ink) = inverse_fill(ui);
+                        raised_icon_button(
+                            "workspace-template-save-details",
+                            "Save details",
+                            "icons/check.svg",
+                            fill,
+                            ink,
+                            true,
+                        )
+                    }
                     .on_click(cx.listener(
                         move |this, _: &ClickEvent, _window, cx| {
                             this.save_workspace_template_details(cx);
@@ -133,19 +137,19 @@ impl PaneFlowApp {
             .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_menu("workspace-layout-menu", ui).on_mouse_down_out(cx.listener(
-                |this, _, _w, cx| {
+            let mut menu = select_popup("workspace-layout-menu", ui).on_mouse_down_out(
+                cx.listener(|this, _, _w, cx| {
                     if this.workspace_template_dropdown == Some(WorkspaceTemplateDropdown::Layout) {
                         this.workspace_template_dropdown = None;
                         cx.notify();
                     }
-                },
-            ));
+                }),
+            );
             for (i, (value, label)) in LAYOUT_PRESETS.iter().enumerate() {
                 let selected = preset == *value;
                 let next = (*value).to_string();
                 menu = menu.child(
-                    menu_row(("workspace-layout", i), selected, ui)
+                    select_option(("workspace-layout", i), selected, ui)
                         .cursor(CursorStyle::Arrow)
                         .h(px(44.))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -277,19 +281,10 @@ impl PaneFlowApp {
                     .flex_row()
                     .gap(px(8.))
                     .child(
-                        icon_button(
-                            "workspace-pane-add",
-                            "Add pane",
-                            "icons/plus.svg",
-                            ui,
-                            false,
-                            true,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, _window, cx| {
+                        soft_icon_button("workspace-pane-add", "Add pane", "icons/plus.svg", ui)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                                 this.add_workspace_template_pane(idx, cx);
-                            },
-                        )),
+                            })),
                     ),
             )
             .into_any_element()
@@ -437,13 +432,17 @@ impl PaneFlowApp {
 
         card = card.child(hairline(ui)).child(
             div().px(px(12.)).py(px(10.)).flex().justify_end().child(
-                save_icon_button(
-                    "workspace-pane-save",
-                    "Save pane",
-                    "icons/check.svg",
-                    ui,
-                    true,
-                )
+                {
+                    let (fill, ink) = inverse_fill(ui);
+                    raised_icon_button(
+                        "workspace-pane-save",
+                        "Save pane",
+                        "icons/check.svg",
+                        fill,
+                        ink,
+                        true,
+                    )
+                }
                 .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                     this.save_workspace_template_pane(cx);
                 })),
@@ -984,30 +983,28 @@ fn project_path_picker(
     )
 }
 
-fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> AnimatedHover {
-    let icon_color = ui.muted;
-    let resting_background = with_alpha(ui.text, 0.0);
-    let hover_bg = with_alpha(ui.text, 0.06);
-
-    div()
-        .id(id)
-        .flex_none()
-        .w(px(26.))
-        .h(px(26.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(7.))
-        .text_color(icon_color)
-        .animated_hover_bg(resting_background, hover_bg)
-        .delayed_tooltip(crate::ui_primitives::text_tooltip("Delete pane"))
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path("icons/trash.svg")
-                .text_color(icon_color),
-        )
+fn pane_delete_button(id: SharedString, ui: crate::theme::UiColors) -> AnimatedHover {
+    ghost_skin(
+        div()
+            .id(id.clone())
+            .flex_none()
+            .w(px(26.))
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .justify_center(),
+        format!("{id}-squircle"),
+        px(7.),
+        ui,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, "Delete pane")
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path("icons/trash.svg")
+            .text_color(with_alpha(ui.text, 0.8)),
+    )
 }
 
 fn pane_kind_chip(
@@ -1103,4 +1100,14 @@ fn input_value(
     cx: &mut Context<PaneFlowApp>,
 ) -> String {
     input.read(cx).value()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pane_delete_button_builds_with_a_single_tooltip() {
+        let _ = pane_delete_button("pane-delete".into(), crate::theme::ui_colors());
+    }
 }

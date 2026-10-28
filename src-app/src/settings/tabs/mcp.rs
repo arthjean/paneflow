@@ -7,10 +7,10 @@ use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
 
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, accent_button_colors, section_header, setting_text,
+    SETTINGS_CONTROL_CORNER_RADIUS, raised_skin, section_header, setting_text, switch_blue,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt};
+use crate::ui_primitives::AccessibleControlExt;
 
 impl PaneFlowApp {
     pub(crate) fn render_mcp_servers_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -33,30 +33,27 @@ impl PaneFlowApp {
             }
         };
 
-        let accent_button = accent_button_colors(ui.accent);
-        let (button_bg, button_hover_bg, button_ink) = if enabled {
-            (accent_button.rest, accent_button.hover, accent_button.ink)
-        } else {
-            (ui.subtle, ui.subtle, ui.muted)
-        };
-        let button = div()
-            .id("mcp-install-btn")
-            .accessible_control(gpui::accesskit::Role::Button, label.clone())
-            .flex_shrink_0()
-            .px(px(12.))
-            .py(px(6.))
-            .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .bg(button_bg)
-            .text_color(button_ink)
-            .animated_hover_bg(button_bg, button_hover_bg)
-            .child(label)
-            .when(enabled, |button| {
-                button.on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                    this.start_mcp_install(cx);
-                }))
-            });
+        let button = raised_skin(
+            div()
+                .id("mcp-install-btn")
+                .flex_shrink_0()
+                .px(px(12.))
+                .py(px(6.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(gpui::white()),
+            "mcp-install-btn-squircle",
+            SETTINGS_CONTROL_CORNER_RADIUS,
+            switch_blue(),
+            enabled,
+        )
+        .accessible_control(gpui::accesskit::Role::Button, label.clone())
+        .child(label)
+        .when(enabled, |button| {
+            button.on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.start_mcp_install(cx);
+            }))
+        });
 
         let header_row = div()
             .flex()

@@ -399,7 +399,8 @@ to `icons/languages/`.
 
 | Motion | Duration | Easing | Notes |
 | --- | --- | --- | --- |
-| Hover on any control | 120 ms, scaled by the distance left to travel | ease-out quint | `animated_hover`, retargets mid-flight, pauses during a drag |
+| Hover on any control | 120 ms, scaled by the distance left to travel | ease-out quint | `animated_hover`, retargets mid-flight, pauses during a drag; the settings button skins (`raised_skin`, `soft_skin`, `ghost_skin`) blend their squircle fill through `animated_squircle_skin`. Press feedback stays instant. Menu and select rows keep an instant highlight |
+| Toggle switch | 180 ms, scaled by the distance left to travel | ease-out quint | `animated_toggle`: the knob slides and the track crossfades between off and `switch_blue`; retargets mid-flight, and a switch seen for the first time rests |
 | Pane header buttons | 120 ms | ease-out quint | Tint of the action buttons and the close glyph; the close slot itself toggles with the header hover |
 | Unfocused pane dim | 130 ms, scaled by distance | ease-out quint | Overlay of the terminal background |
 | Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width |
@@ -1113,6 +1114,6 @@ already need the same behavior.
 - The Linux sidebar cannot reveal a native material. The translucent shell is
   opt-in and requests no compositor blur, so without an external blur it
   shows the raw wallpaper through the veil.
-- `reduce_motion` stops hover interpolation, the sidebar slide, the Workspaces
+- `reduce_motion` stops hover interpolation, the toggle slide, the sidebar slide, the Workspaces
   row motion, menu reveals, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.

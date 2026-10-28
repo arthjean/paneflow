@@ -7,9 +7,9 @@ use gpui::{
 use std::time::Duration;
 
 use crate::ui_primitives::{
-    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, ease_out_cubic,
-    highlight_matches, lerp_color, reduce_motion, squircle,
-    squircle::{squircle_border, squircle_fill},
+    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, animated_squircle_skin,
+    ease_out_cubic, highlight_matches, lerp_color, reduce_motion, squircle,
+    squircle::{squircle_border, squircle_fill, squircle_fill_blend},
     squircle_skin,
 };
 
@@ -24,11 +24,8 @@ pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccentButtonColors {
     pub(crate) rest: Hsla,
-    pub(crate) hover: Hsla,
     pub(crate) ink: Hsla,
 }
-
-const ACCENT_BUTTON_HOVER_SHIFT: f32 = 0.06;
 
 pub(crate) fn wcag_contrast(foreground: Hsla, background: Hsla) -> f32 {
     fn luminance(color: Hsla) -> f32 {
@@ -59,16 +56,7 @@ pub(crate) fn readable_ink(background: Hsla) -> Hsla {
 pub(crate) fn accent_button_colors(accent: Hsla) -> AccentButtonColors {
     let rest = Hsla { a: 1.0, ..accent };
     let ink = readable_ink(rest);
-    let shift = if ink.l > 0.5 {
-        -ACCENT_BUTTON_HOVER_SHIFT
-    } else {
-        ACCENT_BUTTON_HOVER_SHIFT
-    };
-    let hover = Hsla {
-        l: (rest.l + shift).clamp(0.0, 1.0),
-        ..rest
-    };
-    AccentButtonColors { rest, hover, ink }
+    AccentButtonColors { rest, ink }
 }
 
 pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
@@ -210,8 +198,9 @@ pub fn toggle_switch(
     on: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
+    let id: ElementId = id.into();
     div()
-        .id(id)
+        .id(id.clone())
         .flex_shrink_0()
         .focusable()
         .accessible_control(gpui::accesskit::Role::Switch, label)
@@ -220,7 +209,7 @@ pub fn toggle_switch(
         } else {
             gpui::accesskit::Toggled::False
         })
-        .child(toggle_pill(on, ui))
+        .child(toggle_pill((id, "pill").into(), on, ui))
 }
 
 pub fn toggle_row_with(
@@ -242,25 +231,33 @@ pub fn toggle_row_with(
         .child(control)
 }
 
-fn toggle_pill(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
-    let track_bg = if on {
-        Hsla::from(gpui::rgb(0x339cff))
-    } else {
-        with_alpha(ui.muted, 0.30)
-    };
+const TOGGLE_TRACK_WIDTH: f32 = 36.;
+const TOGGLE_TRACK_HEIGHT: f32 = 22.;
+const TOGGLE_KNOB_SIZE: f32 = 18.;
+const TOGGLE_KNOB_INSET: f32 = 2.;
+
+fn toggle_pill(id: ElementId, on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
+    let track_on = switch_blue();
+    let track_off = with_alpha(ui.muted, 0.30);
+    let travel = TOGGLE_TRACK_WIDTH - TOGGLE_KNOB_SIZE - 2. * TOGGLE_KNOB_INSET;
 
     let track = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .w(px(36.))
-        .h(px(22.))
+        .id(id)
+        .relative()
+        .w(px(TOGGLE_TRACK_WIDTH))
+        .h(px(TOGGLE_TRACK_HEIGHT))
         .rounded_full()
-        .px(px(2.))
-        .bg(track_bg)
-        .when(on, |s| s.justify_end())
-        .when(!on, |s| s.justify_start())
-        .child(div().w(px(18.)).h(px(18.)).rounded_full().bg(gpui::white()));
+        .animated_toggle(on, move |track, delta| {
+            track.style().bg(lerp_color(track_off, track_on, delta));
+            track.extend([div()
+                .absolute()
+                .top(px(TOGGLE_KNOB_INSET))
+                .left(px(TOGGLE_KNOB_INSET + travel * delta))
+                .size(px(TOGGLE_KNOB_SIZE))
+                .rounded_full()
+                .bg(gpui::white())
+                .into_any_element()]);
+        });
 
     div().flex_shrink_0().child(track)
 }
@@ -432,6 +429,282 @@ pub fn secondary_button(
     .accessible_control(gpui::accesskit::Role::Button, label)
     .child(label)
     .on_click(on_click)
+}
+
+pub fn primary_button(
+    id: impl Into<SharedString>,
+    label: &'static str,
+    on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> AnimatedHover {
+    raised_button(id, label, switch_blue(), gpui::white()).on_click(on_click)
+}
+
+pub fn raised_button(
+    id: impl Into<SharedString>,
+    label: &'static str,
+    fill: Hsla,
+    ink: Hsla,
+) -> AnimatedHover {
+    let id: SharedString = id.into();
+    raised_skin(
+        div()
+            .id(id.clone())
+            .px(px(10.))
+            .py(px(4.))
+            .text_size(px(12.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(ink),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        fill,
+        true,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label)
+    .child(label)
+}
+
+pub(crate) fn inverse_fill(ui: crate::theme::UiColors) -> (Hsla, Hsla) {
+    if ui.surface.l > 0.5 {
+        (gpui::black(), gpui::white())
+    } else {
+        (gpui::white(), gpui::black())
+    }
+}
+
+pub(crate) fn raised_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    fill: Hsla,
+    enabled: bool,
+) -> AnimatedHover {
+    let group: SharedString = group.into();
+    let element = element.relative().rounded(radius);
+    if !enabled {
+        return element
+            .opacity(0.64)
+            .child(raised_layer(
+                radius,
+                fill,
+                lerp_color(fill, gpui::white(), 0.16),
+            ))
+            .animated_hover(|_, _| {});
+    }
+    let hovered = lerp_color(fill, card_color(), 0.1);
+    let lift = gpui::BoxShadow::new(px(0.), px(1.), fill.opacity(0.24)).blur_radius(px(2.));
+    let progress = std::rc::Rc::new(std::cell::Cell::new(0.));
+    element
+        .group(group.clone())
+        .shadow(vec![lift])
+        .active(|style| style.shadow(Vec::new()))
+        .cursor(CursorStyle::PointingHand)
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(squircle_fill_blend(
+                    radius,
+                    lerp_color(fill, gpui::white(), 0.16),
+                    lerp_color(hovered, gpui::white(), 0.16),
+                    progress.clone(),
+                ))
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(1.))
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(squircle_fill_blend(radius, fill, hovered, progress.clone())),
+                ),
+        )
+        .child(pressed_layer(
+            &group,
+            raised_layer(radius, hovered, lerp_color(hovered, gpui::black(), 0.08)),
+        ))
+        .animated_hover(move |_, delta| progress.set(delta))
+}
+
+fn raised_layer(radius: Pixels, fill: Hsla, top_edge: Hsla) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .child(squircle_fill(radius, top_edge))
+        .child(
+            div()
+                .absolute()
+                .top(px(1.))
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .child(squircle_fill(radius, fill)),
+        )
+}
+
+fn pressed_layer(group: &SharedString, layer: impl IntoElement) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(format!("{group}-pressed")))
+        .absolute()
+        .inset_0()
+        .opacity(0.)
+        .group_active(group.clone(), |style| style.opacity(1.))
+        .child(layer)
+}
+
+pub fn soft_button(
+    id: impl Into<SharedString>,
+    label: &'static str,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> AnimatedHover {
+    let id: SharedString = id.into();
+    soft_skin(
+        div()
+            .id(id.clone())
+            .px(px(10.))
+            .py(px(4.))
+            .text_size(px(12.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(ui.text),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        ui,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label)
+    .child(label)
+    .on_click(on_click)
+}
+
+pub(crate) fn soft_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    let group: SharedString = group.into();
+    animated_squircle_skin(
+        element.cursor(CursorStyle::PointingHand),
+        group.clone(),
+        radius,
+        ui.subtle,
+        lerp_color(ui.subtle, card_color(), 0.1),
+    )
+    .child(pressed_layer(
+        &group,
+        squircle_fill(radius, lerp_color(ui.subtle, card_color(), 0.2)),
+    ))
+}
+
+pub(crate) fn raised_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    fill: Hsla,
+    ink: Hsla,
+    enabled: bool,
+) -> AnimatedHover {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    raised_skin(
+        icon_button_frame(id.clone(), ink),
+        format!("{id}-squircle"),
+        SETTINGS_CONTROL_CORNER_RADIUS,
+        fill,
+        enabled,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .child(svg().size(px(13.)).flex_none().path(icon).text_color(ink))
+    .child(label)
+}
+
+pub(crate) fn soft_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    soft_skin(
+        icon_button_frame(id.clone(), ui.text),
+        format!("{id}-squircle"),
+        SETTINGS_CONTROL_CORNER_RADIUS,
+        ui,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path(icon)
+            .text_color(ui.text),
+    )
+    .child(label)
+}
+
+fn icon_button_frame(id: ElementId, ink: Hsla) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(10.))
+        .py(px(5.))
+        .text_size(px(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink)
+}
+
+pub(crate) fn ghost_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    animated_squircle_skin(
+        element.cursor(CursorStyle::PointingHand),
+        group,
+        radius,
+        with_alpha(ui.subtle, 0.),
+        ui.subtle,
+    )
+}
+
+pub(crate) fn ghost_icon_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    let id: ElementId = id.into();
+    let label: SharedString = label.into();
+    ghost_skin(
+        div()
+            .id(id.clone())
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .px(px(10.))
+            .py(px(4.))
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(ui.text),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        ui,
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path(icon)
+            .text_color(with_alpha(ui.text, 0.8)),
+    )
+    .child(label)
 }
 
 pub fn destructive_color() -> Hsla {
@@ -668,7 +941,7 @@ pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
         .size(px(12.))
         .flex_none()
         .path("icons/selector.svg")
-        .text_color(with_alpha(ui.muted, 0.7))
+        .text_color(with_alpha(ui.text, 0.8))
 }
 
 pub fn select_trigger(
@@ -676,23 +949,20 @@ pub fn select_trigger(
     label: impl Into<SharedString>,
     expanded: bool,
     ui: crate::theme::UiColors,
-) -> AnimatedHover {
-    select_trigger_with_hover(
-        id,
-        label,
-        expanded,
-        ui,
-        lerp_color(ui.subtle, ui.text, 0.06),
-    )
-}
-
-pub fn select_trigger_with_hover(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    expanded: bool,
-    ui: crate::theme::UiColors,
-    hover_bg: Hsla,
-) -> AnimatedHover {
+) -> Stateful<Div> {
+    let light_theme = ui.surface.l > 0.5;
+    let fill = if light_theme {
+        ui.card
+    } else {
+        with_alpha(ui.border, 0.32)
+    };
+    let lift =
+        gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.05)).blur_radius(px(2.));
+    let edge = if light_theme {
+        gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.04))
+    } else {
+        gpui::BoxShadow::new(px(0.), px(-1.), gpui::white().opacity(0.06))
+    };
     div()
         .id(id.into())
         .accessible_control(gpui::accesskit::Role::ComboBox, label)
@@ -703,13 +973,20 @@ pub fn select_trigger_with_hover(
         .items_center()
         .justify_between()
         .gap(px(8.))
-        .px(px(10.))
-        .py(px(6.))
+        .px(px(9.))
+        .py(px(5.))
         .min_w(px(190.))
         .max_w(px(260.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(ui.subtle)
-        .animated_hover_bg(ui.subtle, hover_bg)
+        .border_1()
+        .border_color(ui.border)
+        .bg(fill)
+        .shadow(if expanded {
+            Vec::new()
+        } else {
+            vec![lift, edge]
+        })
+        .active(|style| style.shadow(Vec::new()))
 }
 
 pub fn select_menu_surface(ui: crate::theme::UiColors) -> Hsla {
@@ -770,12 +1047,19 @@ pub fn menu_height(rows: f32, extra: f32) -> Pixels {
 }
 
 pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
-    let id: ElementId = id.into();
+    build_select_menu(id.into(), ui, |shell| shell)
+}
+
+fn build_select_menu(
+    id: ElementId,
+    ui: crate::theme::UiColors,
+    underlay: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+) -> SelectMenu {
     let list_id: ElementId = (id.clone(), "list").into();
     let reveal_id: ElementId = (id.clone(), "reveal").into();
     SelectMenu {
         reveal_id,
-        shell: menu_surface(div().id(id), ui)
+        shell: menu_surface(underlay(div().id(id)), ui)
             .flex()
             .flex_col()
             .min_w(px(200.))
@@ -791,6 +1075,78 @@ pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Sele
             .min_h_0()
             .overflow_y_scroll(),
     }
+}
+
+pub fn select_popup(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
+    let id: ElementId = id.into();
+    let light_theme = ui.surface.l > 0.5;
+    let (edge_color, edge_offset) = if light_theme {
+        (gpui::black().opacity(0.04), px(1.))
+    } else {
+        (gpui::white().opacity(0.06), px(-1.))
+    };
+    let shadow = vec![
+        gpui::BoxShadow::new(px(0.), px(10.), gpui::black().opacity(0.05))
+            .blur_radius(px(15.))
+            .spread_radius(px(-3.)),
+        gpui::BoxShadow::new(px(0.), px(4.), gpui::black().opacity(0.05))
+            .blur_radius(px(6.))
+            .spread_radius(px(-4.)),
+    ];
+    build_select_menu(id, ui, |shell| {
+        shell.rounded(MENU_RADIUS).shadow(shadow).child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(edge_offset)
+                .bottom(-edge_offset)
+                .child(squircle::squircle_fill(MENU_RADIUS, edge_color)),
+        )
+    })
+}
+
+pub fn select_option(
+    id: impl Into<ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    let id: ElementId = id.into();
+    squircle_skin(
+        div()
+            .id(id.clone())
+            .flex_none()
+            .h(MENU_ROW_HEIGHT)
+            .pl(px(8.))
+            .pr(px(32.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .cursor(CursorStyle::PointingHand)
+            .text_size(px(12.)),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        None,
+        Some(with_alpha(ui.text, 0.05)),
+    )
+    .when(selected, |row| {
+        row.child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(10.))
+                .flex()
+                .items_center()
+                .child(
+                    svg()
+                        .size(px(14.))
+                        .path("icons/check.svg")
+                        .text_color(ui.text),
+                ),
+        )
+    })
 }
 
 pub struct SelectMenu {
@@ -942,148 +1298,6 @@ pub(crate) fn quiet_card() -> gpui::Div {
         .overflow_hidden()
 }
 
-pub(crate) fn icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    ui: crate::theme::UiColors,
-    primary: bool,
-    enabled: bool,
-) -> AnimatedHover {
-    let bg = if primary { switch_blue() } else { ui.subtle };
-    let fg = if primary { gpui::white() } else { ui.text };
-    let disabled_bg = ui.subtle;
-    let disabled_fg = ui.muted;
-    let resting_background = if enabled { bg } else { disabled_bg };
-    let hover_background = if !enabled {
-        resting_background
-    } else if primary {
-        with_alpha(bg, 0.86)
-    } else {
-        with_alpha(ui.text, 0.06)
-    };
-    let label: SharedString = label.into();
-    div()
-        .id(id)
-        .accessible_control(gpui::accesskit::Role::Button, label.clone())
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(5.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(resting_background)
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(if enabled { fg } else { disabled_fg })
-        .animated_hover_bg(resting_background, hover_background)
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(if enabled { fg } else { disabled_fg }),
-        )
-        .child(label)
-}
-
-pub(crate) fn destructive_icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    ui: crate::theme::UiColors,
-    enabled: bool,
-) -> AnimatedHover {
-    let bg = apple_red();
-    let enabled_hover_background = Hsla {
-        l: (bg.l - 0.05).max(0.0),
-        ..bg
-    };
-    let fg = gpui::white();
-    let resting_background = if enabled { bg } else { ui.subtle };
-    let hover_background = if enabled {
-        enabled_hover_background
-    } else {
-        resting_background
-    };
-    let label: SharedString = label.into();
-    div()
-        .id(id)
-        .accessible_control(gpui::accesskit::Role::Button, label.clone())
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(5.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(resting_background)
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(if enabled { fg } else { ui.muted })
-        .animated_hover_bg(resting_background, hover_background)
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(if enabled { fg } else { ui.muted }),
-        )
-        .child(label)
-}
-
-pub(crate) fn save_icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    ui: crate::theme::UiColors,
-    enabled: bool,
-) -> AnimatedHover {
-    let light_theme = ui.surface.l > 0.5;
-    let bg: Hsla = if light_theme {
-        rgb(0x000000).into()
-    } else {
-        gpui::white()
-    };
-    let fg: Hsla = if light_theme {
-        gpui::white()
-    } else {
-        rgb(0x000000).into()
-    };
-    let resting_background = if enabled { bg } else { ui.subtle };
-    let hover_background = if enabled {
-        Hsla { a: 0.86, ..bg }
-    } else {
-        resting_background
-    };
-
-    let label: SharedString = label.into();
-    div()
-        .id(id)
-        .accessible_control(gpui::accesskit::Role::Button, label.clone())
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(5.))
-        .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(resting_background)
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(if enabled { fg } else { ui.muted })
-        .animated_hover_bg(resting_background, hover_background)
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(if enabled { fg } else { ui.muted }),
-        )
-        .child(label)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1102,9 +1316,7 @@ mod tests {
         for (name, ui) in themes {
             let colors = accent_button_colors(ui.accent);
             let rest = wcag_contrast(colors.ink, colors.rest);
-            let hover = wcag_contrast(colors.ink, colors.hover);
             assert!(rest >= 4.5, "{name}: {rest:.2}:1 at rest");
-            assert!(hover >= 4.5, "{name}: {hover:.2}:1 on hover");
         }
     }
 

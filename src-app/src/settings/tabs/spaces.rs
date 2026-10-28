@@ -13,12 +13,12 @@ use std::collections::BTreeMap;
 use crate::PaneFlowApp;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, destructive_color,
-    icon_button as labeled_icon_button, input_frame, secondary_button, setting_card, with_alpha,
+    destructive_color, ghost_icon_button, ghost_skin, input_frame, inverse_fill, primary_button,
+    raised_button, raised_icon_button, setting_card, soft_button, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
-    EnvRowInputs, collect_env, icon_button, input_box, new_env_row, validate_env_values,
+    EnvRowInputs, collect_env, input_box, new_env_row, validate_env_values,
 };
 use crate::ui_primitives::{
     AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TooltipDelayExt,
@@ -28,6 +28,7 @@ use crate::ui_primitives::{
 const NAME_MAX_WIDTH: f32 = 260.;
 const ENV_NAME_WIDTH: f32 = 180.;
 const INPUT_HEIGHT: f32 = 28.;
+const ENV_REMOVE_SIZE: f32 = 26.;
 const LIST_INSET: f32 = 6.;
 const ITEM_PADDING_X: f32 = 10.;
 const ITEM_PADDING_Y: f32 = 8.;
@@ -866,27 +867,26 @@ impl PaneFlowApp {
                 .child("Choosing an image…")
         } else {
             let id = space.id.clone();
-            let mut row =
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(secondary_button(
-                        SharedString::from(format!("space-avatar-choose-{}", space.id)),
-                        if space.avatar.is_some() {
-                            "Replace image"
-                        } else {
-                            "Upload image"
-                        },
-                        ui,
-                        cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                            this.choose_space_avatar(&id, cx);
-                        }),
-                    ));
+            let mut row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .child(soft_button(
+                    SharedString::from(format!("space-avatar-choose-{}", space.id)),
+                    if space.avatar.is_some() {
+                        "Replace image"
+                    } else {
+                        "Upload image"
+                    },
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.choose_space_avatar(&id, cx);
+                    }),
+                ));
             if space.avatar.is_some() {
                 let id = space.id.clone();
-                row = row.child(secondary_button(
+                row = row.child(soft_button(
                     SharedString::from(format!("space-avatar-remove-{}", space.id)),
                     "Remove image",
                     ui,
@@ -1159,7 +1159,7 @@ impl PaneFlowApp {
                         })
                         .child(env_summary(&space.env)),
                 )
-                .child(secondary_button(
+                .child(soft_button(
                     SharedString::from(format!("space-env-edit-{}", space.id)),
                     "Edit",
                     ui,
@@ -1219,13 +1219,31 @@ impl PaneFlowApp {
                                 ui,
                             )))
                             .when(removable, |d| {
+                                let group = format!("space-env-remove-{row_idx}-squircle");
                                 d.child(
-                                    icon_button(
-                                        SharedString::from(format!("space-env-remove-{row_idx}")),
-                                        "icons/trash.svg",
-                                        ui.muted,
-                                        destructive_color(),
+                                    ghost_skin(
+                                        div()
+                                            .id(SharedString::from(format!(
+                                                "space-env-remove-{row_idx}"
+                                            )))
+                                            .flex_none()
+                                            .size(px(ENV_REMOVE_SIZE))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center(),
+                                        group.clone(),
+                                        px(7.),
                                         ui,
+                                    )
+                                    .child(
+                                        svg()
+                                            .size(px(13.))
+                                            .flex_none()
+                                            .path("icons/trash.svg")
+                                            .text_color(with_alpha(ui.text, 0.8))
+                                            .group_hover(group, |style| {
+                                                style.text_color(destructive_color())
+                                            }),
                                     )
                                     .accessible_control(
                                         gpui::accesskit::Role::Button,
@@ -1261,43 +1279,22 @@ impl PaneFlowApp {
             .gap(px(12.))
             .pt(px(4.))
             .child(
-                div()
-                    .id("space-env-add")
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(5.))
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .cursor(CursorStyle::PointingHand)
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .hover(move |style| style.bg(with_alpha(ui.text, 0.05)))
-                    .accessible_control(gpui::accesskit::Role::Button, "Add variable")
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                ghost_icon_button("space-env-add", "Add variable", "icons/plus.svg", ui).on_click(
+                    cx.listener(|this, _: &ClickEvent, _w, cx| {
                         let row = new_env_row("", "", cx);
                         if let Some(editor) = this.space_env_editor.as_mut() {
                             editor.rows.push(row);
                         }
                         cx.notify();
-                    }))
-                    .child(
-                        svg()
-                            .size(px(12.))
-                            .flex_none()
-                            .path("icons/plus.svg")
-                            .text_color(ui.muted),
-                    )
-                    .child("Add variable"),
+                    }),
+                ),
             )
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .gap(px(6.))
-                    .child(secondary_button(
+                    .child(soft_button(
                         "space-env-cancel",
                         "Cancel",
                         ui,
@@ -1306,10 +1303,9 @@ impl PaneFlowApp {
                             cx.notify();
                         }),
                     ))
-                    .child(secondary_button(
+                    .child(primary_button(
                         "space-env-save",
                         "Save",
-                        ui,
                         cx.listener(|this, _: &ClickEvent, _w, cx| {
                             this.save_space_env(cx);
                         }),
@@ -1383,7 +1379,7 @@ impl PaneFlowApp {
             if !busy && (error.is_some() || status.state == IntegrationState::NotInstalled) {
                 let id = space.id.clone();
                 let slug = status.slug;
-                line = line.child(secondary_button(
+                line = line.child(soft_button(
                     SharedString::from(format!("space-integration-retry-{}-{slug}", space.id)),
                     if error.is_some() { "Retry" } else { "Install" },
                     ui,
@@ -1416,16 +1412,21 @@ impl PaneFlowApp {
             .pt(px(4.));
         if self.space_delete_armed.as_ref() != Some(&space.id) {
             return row
-                .child(secondary_button(
-                    SharedString::from(format!("space-delete-{}", space.id)),
-                    "Delete space",
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.space_delete_armed = Some(id.clone());
-                        this.space_name_editor = None;
-                        cx.notify();
-                    }),
-                ))
+                .child(
+                    raised_button(
+                        SharedString::from(format!("space-delete-{}", space.id)),
+                        "Delete space",
+                        destructive_color(),
+                        gpui::white(),
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _w, cx| {
+                            this.space_delete_armed = Some(id.clone());
+                            this.space_name_editor = None;
+                            cx.notify();
+                        },
+                    )),
+                )
                 .into_any_element();
         }
         row.child(
@@ -1446,7 +1447,7 @@ impl PaneFlowApp {
                 .flex()
                 .flex_row()
                 .gap(px(6.))
-                .child(secondary_button(
+                .child(soft_button(
                     "space-delete-cancel",
                     "Cancel",
                     ui,
@@ -1456,11 +1457,17 @@ impl PaneFlowApp {
                     }),
                 ))
                 .child(
-                    destructive_button("space-delete-confirm", "Delete space").on_click(
-                        cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    raised_button(
+                        "space-delete-confirm",
+                        "Delete space",
+                        destructive_color(),
+                        gpui::white(),
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _w, cx| {
                             this.delete_space(&id, cx);
-                        }),
-                    ),
+                        },
+                    )),
                 ),
         )
         .into_any_element()
@@ -1472,12 +1479,13 @@ fn render_spaces_intro(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let new_space = labeled_icon_button(
+    let (fill, ink) = inverse_fill(ui);
+    let new_space = raised_icon_button(
         "space-new",
         "New space",
         "icons/plus.svg",
-        ui,
-        false,
+        fill,
+        ink,
         !at_limit,
     )
     .when(!at_limit, |button| {

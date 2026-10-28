@@ -15,6 +15,7 @@ use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
 
 const HOVER_ANIMATION_DURATION: Duration = Duration::from_millis(120);
+pub(crate) const TOGGLE_ANIMATION_DURATION: Duration = Duration::from_millis(180);
 
 #[derive(Clone, Debug)]
 struct HoverAnimationState {
@@ -26,10 +27,11 @@ struct HoverAnimationState {
 }
 
 impl HoverAnimationState {
-    fn new() -> Self {
+    fn resting_at(on: bool) -> Self {
+        let rest = if on { 1.0 } else { 0.0 };
         Self {
-            from: 0.0,
-            target: 0.0,
+            from: rest,
+            target: rest,
             started_at: Instant::now(),
             duration: Duration::ZERO,
             hitbox: None,
@@ -46,7 +48,7 @@ impl HoverAnimationState {
         self.from + (self.target - self.from) * ease_out_quint(linear)
     }
 
-    fn retarget(&mut self, hovered: bool, now: Instant) -> bool {
+    fn retarget(&mut self, hovered: bool, now: Instant, span: Duration) -> bool {
         let target = if hovered { 1.0 } else { 0.0 };
         if target == self.target {
             return false;
@@ -56,7 +58,7 @@ impl HoverAnimationState {
         self.from = current;
         self.target = target;
         self.started_at = now;
-        self.duration = HOVER_ANIMATION_DURATION.mul_f32((target - current).abs());
+        self.duration = span.mul_f32((target - current).abs());
         true
     }
 
@@ -126,6 +128,8 @@ pub(crate) struct AnimatedHover {
     element: Stateful<Div>,
     style_animator: Option<Box<StyleAnimator>>,
     element_animator: Option<Box<ElementAnimator>>,
+    driven_by: Option<bool>,
+    span: Duration,
 }
 
 pub(crate) struct AnimatedStyle<'a>(&'a mut StyleRefinement);
@@ -178,6 +182,12 @@ pub(crate) trait AnimatedHoverExt {
     fn animated_hover_bg(self, resting: Hsla, hovered: Hsla) -> AnimatedHover
     where
         Self: Sized;
+
+    fn animated_toggle(
+        self,
+        on: bool,
+        animator: impl for<'a> FnOnce(&mut AnimatedElement<'a>, f32) + 'static,
+    ) -> AnimatedHover;
 }
 
 impl AnimatedHoverExt for Stateful<Div> {
@@ -189,6 +199,8 @@ impl AnimatedHoverExt for Stateful<Div> {
             element: self.hover(|style| style),
             style_animator: Some(Box::new(animator)),
             element_animator: None,
+            driven_by: None,
+            span: HOVER_ANIMATION_DURATION,
         }
     }
 
@@ -200,6 +212,22 @@ impl AnimatedHoverExt for Stateful<Div> {
             element: self.hover(|style| style),
             style_animator: None,
             element_animator: Some(Box::new(animator)),
+            driven_by: None,
+            span: HOVER_ANIMATION_DURATION,
+        }
+    }
+
+    fn animated_toggle(
+        self,
+        on: bool,
+        animator: impl for<'a> FnOnce(&mut AnimatedElement<'a>, f32) + 'static,
+    ) -> AnimatedHover {
+        AnimatedHover {
+            element: self,
+            style_animator: None,
+            element_animator: Some(Box::new(animator)),
+            driven_by: Some(on),
+            span: TOGGLE_ANIMATION_DURATION,
         }
     }
 
@@ -270,15 +298,20 @@ impl Element for AnimatedHover {
         };
         let now = Instant::now();
         let reduce_motion = reduce_motion();
+        let driven_by = self.driven_by;
+        let span = self.span;
         let (progress, is_animating) =
             window.with_element_state(global_id, |state: Option<HoverAnimationState>, window| {
-                let mut state = state.unwrap_or_else(HoverAnimationState::new);
-                let hovered = !cx.has_active_drag()
-                    && state
-                        .hitbox
-                        .as_ref()
-                        .is_some_and(|hitbox| hitbox.is_hovered(window));
-                state.retarget(hovered, now);
+                let mut state = state
+                    .unwrap_or_else(|| HoverAnimationState::resting_at(driven_by.unwrap_or(false)));
+                let hovered = driven_by.unwrap_or_else(|| {
+                    !cx.has_active_drag()
+                        && state
+                            .hitbox
+                            .as_ref()
+                            .is_some_and(|hitbox| hitbox.is_hovered(window))
+                });
+                state.retarget(hovered, now, span);
                 let (progress, is_animating) = if reduce_motion {
                     (if hovered { 1.0 } else { 0.0 }, false)
                 } else {
@@ -326,7 +359,7 @@ impl Element for AnimatedHover {
 
         let hitbox = prepaint.clone();
         window.with_element_state(global_id, |state: Option<HoverAnimationState>, _window| {
-            let mut state = state.unwrap_or_else(HoverAnimationState::new);
+            let mut state = state.unwrap_or_else(|| HoverAnimationState::resting_at(false));
             state.hitbox = hitbox;
             ((), state)
         });
@@ -397,6 +430,22 @@ pub(crate) fn squircle_skin(
         );
     }
     element
+}
+
+pub(crate) fn animated_squircle_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    resting: Hsla,
+    hovered: Hsla,
+) -> AnimatedHover {
+    let progress = std::rc::Rc::new(std::cell::Cell::new(0.));
+    let fill = squircle::squircle_fill_blend(radius, resting, hovered, progress.clone());
+    element
+        .relative()
+        .group(group.into())
+        .child(fill)
+        .animated_hover(move |_, delta| progress.set(delta))
 }
 
 const COMET_TURN: Duration = Duration::from_millis(700);
@@ -911,6 +960,27 @@ pub(crate) fn panel_empty_state(
 mod tests {
     use std::{cell::Cell, rc::Rc, thread};
 
+    #[test]
+    fn a_toggle_mounted_on_rests_without_animating() {
+        let now = Instant::now();
+        let mut state = HoverAnimationState::resting_at(true);
+        assert!(!state.retarget(true, now, TOGGLE_ANIMATION_DURATION));
+        assert_eq!(state.progress_at(now), 1.0);
+        assert!(!state.is_animating(now));
+    }
+
+    #[test]
+    fn a_retarget_midway_spans_only_the_distance_left() {
+        let start = Instant::now();
+        let mut state = HoverAnimationState::resting_at(false);
+        assert!(state.retarget(true, start, TOGGLE_ANIMATION_DURATION));
+        let midway = start + TOGGLE_ANIMATION_DURATION / 2;
+        let reached = state.progress_at(midway);
+        assert!(state.retarget(false, midway, TOGGLE_ANIMATION_DURATION));
+        assert_eq!(state.duration, TOGGLE_ANIMATION_DURATION.mul_f32(reached));
+        assert_eq!(state.progress_at(midway), reached);
+    }
+
     use gpui::{InputEvent, Modifiers, MouseMoveEvent, TestAppContext, point, size};
 
     use super::*;
@@ -1003,38 +1073,41 @@ mod tests {
                     crate::theme::ui_colors(),
                 ))
             }),
-            ("select_trigger_with_hover", |label| {
-                let ui = crate::theme::ui_colors();
-                labeled_control(&c::select_trigger_with_hover(
-                    "s", label, true, ui, ui.subtle,
-                ))
-            }),
-            ("icon_button", |label| {
-                labeled_control(&c::icon_button(
+            ("raised_icon_button", |label| {
+                labeled_control(&c::raised_icon_button(
                     "i",
                     label,
                     "icons/plus.svg",
-                    crate::theme::ui_colors(),
-                    true,
-                    true,
-                ))
-            }),
-            ("destructive_icon_button", |label| {
-                labeled_control(&c::destructive_icon_button(
-                    "d",
-                    label,
-                    "icons/trash.svg",
-                    crate::theme::ui_colors(),
+                    gpui::black(),
+                    gpui::white(),
                     true,
                 ))
             }),
-            ("save_icon_button", |label| {
-                labeled_control(&c::save_icon_button(
+            ("soft_icon_button", |label| {
+                labeled_control(&c::soft_icon_button(
                     "v",
                     label,
                     "icons/check.svg",
                     crate::theme::ui_colors(),
-                    true,
+                ))
+            }),
+            ("ghost_icon_button", |label| {
+                labeled_control(&c::ghost_icon_button(
+                    "g",
+                    label,
+                    "icons/plus.svg",
+                    crate::theme::ui_colors(),
+                ))
+            }),
+            ("raised_button", |label| {
+                labeled_control(&c::raised_button("p", label, gpui::black(), gpui::white()))
+            }),
+            ("soft_button", |label| {
+                labeled_control(&c::soft_button(
+                    "t",
+                    label,
+                    crate::theme::ui_colors(),
+                    |_, _, _| {},
                 ))
             }),
             ("secondary_button", |label| {
