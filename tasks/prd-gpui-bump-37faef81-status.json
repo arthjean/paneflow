@@ -1,0 +1,247 @@
+{
+  "prd": {
+    "file": "tasks/prd-gpui-bump-37faef81.md",
+    "title": "Bump de GPUI vers zed@37faef81",
+    "created_at": "2026-10-28",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Basculer Paneflow sur zed@37faef81",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 6
+    },
+    {
+      "id": "EP-002",
+      "title": "Requalifier performances et comportements sur Linux et macOS",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Valider Windows sur matériel réel",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Aligner manifestes, lockfile et sources autorisées",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-002",
+      "title": "Migrer l'analyse des raccourcis vers l'API clavier OS-aware",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-003",
+      "title": "Lier les raccourcis secondaires des widgets par plateforme",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-004",
+      "title": "Migrer le défilement vers ScrollEvent",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-005",
+      "title": "Remplacer le shaping par hash de l'éditeur de code",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-006",
+      "title": "Aligner les références à gpui_apple et consigner le bump",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "XS",
+      "blocked_by": [
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-005"
+      ],
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
+    },
+    {
+      "id": "US-007",
+      "title": "Re-baseliner les suites de performance Linux",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Valider l'hypothèse que le plafond à 30 fps ne dégrade pas l'écho clavier",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Valider l'hypothèse que le repli OpenGL démarre toujours sous Linux",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Passe visuelle Linux sur la translucidité, Taffy 0.15 et les polices de repli",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Vérifier le cycle de fermeture des fenêtres",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Qualifier macOS via la CI",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Faire passer le leg Windows de la CI",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Valider les raccourcis avec le mapper clavier Windows",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Passe matérielle Windows sur Mica, l'économiseur de batterie, U+2028 et la fermeture",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
