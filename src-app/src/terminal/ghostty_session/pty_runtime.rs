@@ -481,6 +481,8 @@ pub(super) fn run_runtime(
     let mut reader_worker = Some(reader_worker);
     #[cfg(unix)]
     drop(reader_worker);
+    #[cfg(unix)]
+    spawn_child_exit_waker(child_pid, mailbox.clone());
 
     drop(pair.slave);
     startup_state.mark_runtime_started();
@@ -1102,6 +1104,35 @@ pub(super) fn process_output_batch(
         mailbox.recycle_output_buffer(bytes);
     }
     result
+}
+
+#[cfg(all(test, unix))]
+fn spawn_child_exit_waker(child_pid: u32, mailbox: Arc<RuntimeMailbox>) {
+    let Some(pid) = libc::id_t::try_from(child_pid).ok().filter(|pid| *pid > 0) else {
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("paneflow-ghostty-exit-waker".into())
+        .spawn(move || {
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+            while unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    info.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            } != 0
+                && std::io::Error::last_os_error().kind() == ErrorKind::Interrupted
+            {}
+            let _ = mailbox.try_send_control(RuntimeMessage::ChildExited);
+        });
+    if let Err(error) = spawned {
+        log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "the child exit waker could not start: {error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1732,7 +1763,7 @@ mod tests {
         let (session, mut events_rx) = posix_shell_session();
         assert!(
             session
-                .write(b"sleep 10 & sleep 2; exit 0\n".to_vec())
+                .write(b"exec 2>/dev/null; sleep 10 & sleep 2; exit 0\n".to_vec())
                 .is_sent()
         );
         let deadline = Instant::now() + FINAL_DRAIN_TIMEOUT + Duration::from_secs(6);

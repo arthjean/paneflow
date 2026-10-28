@@ -84,6 +84,8 @@ pub(super) enum RuntimeMessage {
     SimulateWorkerCrash,
     #[cfg(test)]
     StallForTest(Duration),
+    #[cfg(all(test, unix))]
+    ChildExited,
     Shutdown,
 }
 
