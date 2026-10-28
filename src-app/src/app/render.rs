@@ -182,7 +182,7 @@ impl Render for PaneFlowApp {
         let app_backdrop_bg =
             crate::app::constants::cockpit_shell_background(shell_color, native_material_active);
         let panel_bg = if settings_open {
-            ui.base
+            crate::settings::components::settings_page_color(ui)
         } else {
             gpui::transparent_black()
         };

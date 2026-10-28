@@ -105,6 +105,14 @@ pub fn section_header_with_action(
         .child(action)
 }
 
+pub fn settings_page_color(ui: crate::theme::UiColors) -> Hsla {
+    if ui.surface.l > 0.5 {
+        lerp_color(ui.card, ui.text, 0.05)
+    } else {
+        ui.base
+    }
+}
+
 pub fn card_color() -> Hsla {
     crate::theme::ui_colors().card
 }

@@ -210,7 +210,7 @@ inside `theme/builtin.rs`.
 
 | Role | Use | Paneflow Dark | Paneflow Light |
 | --- | --- | --- | --- |
-| `base` | Panel and settings background, the work surface | `#181818` | `#ffffff` |
+| `base` | Panel background, the work surface; the Settings page paints `settings_page_color` instead, which is `base` in dark and `card` blended 5% toward `text` in light, so cards keep their step above the page | `#181818` | `#ffffff` |
 | `surface` | Cards inside a panel, menu surfaces in dark | `#212121` | `#f7f7f7` |
 | `card` | Settings cards and modal cards, one step above `base`; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
