@@ -348,7 +348,7 @@ pub(crate) const EDITOR_PRESETS: &[(&str, &str)] = &[
 
 pub(crate) fn editor_icon(value: &str) -> Option<Logo> {
     match value {
-        "zed" => Some(("icons/editor-zed.png", true)),
+        "zed" => Some(("icons/editor-zed.svg", false)),
         "code" => Some(("icons/editor-vscode.png", true)),
         "visual_studio" => Some(("icons/editor-visual-studio.png", true)),
         "cursor" => Some(("icons/editor-cursor.svg", false)),
