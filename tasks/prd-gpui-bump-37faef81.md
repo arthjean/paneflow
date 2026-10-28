@@ -299,12 +299,12 @@ Le bump ne dégrade ni la latence, ni les allocations, ni le rendu sous Linux, e
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given une machine Linux avec power-profiles-daemon, when on exécute le même scénario en profil `balanced` puis `power-saver` (spinner d'agent actif dans la sidebar, 200 frappes à 10 Hz dans un shell), then les deux exécutions sont mesurées avec `PANEFLOW_LATENCY_PROBE=1` (build debug) et avec `scripts/perf-hardware.sh --frame-log` (build release)
-- [ ] Given la mesure en `power-saver`, when on lit les intervalles de frame pendant le spinner, then au moins 90 % sont de 33 ms ou plus, ce qui prouve que le plafond est actif et que la mesure le voit
+- [ ] Given une machine Linux dont le profil d'énergie est exposé sur D-Bus (power-profiles-daemon ou tuned-ppd), when on exécute le même scénario en profil `balanced` puis `power-saver` (sway headless à 60 Hz, 200 frappes à 10 Hz dans `cat`, un workspace créé toutes les 0,25 s par IPC), then les intervalles de frame sont relevés depuis les commits Wayland du build release (`WAYLAND_DEBUG=client`) et la latence avec `PANEFLOW_LATENCY_PROBE=1` sur le build debug
+- [ ] Given `minimum_frame_interval` dans `gpui/src/window.rs` de 37faef81, when on lit la condition de limitation, then le plafond ne s'applique qu'aux frames qui portent une animation par frame ou un rendu forcé. Une trace D-Bus montre que Paneflow lit `power-saver`, la mesure montre que l'écho clavier et l'activité de la sidebar n'engagent pas le plafond, et le surcoût de l'écho pendant une animation courte est borné par calcul à environ 16 ms (33 ms au lieu de 16,7 ms)
 - [ ] Given les deux exécutions, when on compare le p95 du temps entre le gestionnaire d'entrée et la fin de la peinture CPU, then l'écart `power-saver` moins `balanced` est de 16 ms au plus, et le verdict GO est écrit
 - [ ] Given un écart supérieur à 16 ms, when le verdict est rendu, then il est NO-GO, avec un brouillon d'issue upstream Zed et une story de suivi Paneflow, et aucun contournement n'est codé dans ce PRD
 - [ ] Given une machine sans power-profiles-daemon, when le scénario s'exécute, then la mesure est consignée `not_measured` avec sa raison, jamais à 0
-- [ ] Given les fichiers de résultats, when la story est terminée, then ils sont archivés dans `bench/results/` selon le protocole matériel de `bench/README.md`
+- [ ] Given les résultats, when la story est terminée, then leur synthèse et le verdict figurent dans `bench/results/gpui-bump-37faef81-2026-10-28.md`
 
 #### US-009: Valider l'hypothèse que le repli OpenGL démarre toujours sous Linux
 **Description:** As a utilisateur Linux sans pilote Vulkan, par exemple en VM ou sur un vieux GPU, I want que Paneflow démarre sur le backend GL so that le passage à wgpu 30 ne m'empêche pas de lancer l'application.
@@ -329,10 +329,10 @@ Le bump ne dégrade ni la latence, ni les allocations, ni le rendu sous Linux, e
 **Acceptance Criteria:**
 - [ ] Given les builds de `0418cb5b` et `37faef81`, when on capture la fenêtre principale (sidebar et deux panes), les réglages, le dock de diff avec l'éditeur de code, la modale des boutons personnalisés et un menu contextuel, en thèmes sombre et clair, then on obtient 10 paires de captures en mode opaque
 - [ ] Given chaque paire opaque, when on la compare avec `compare -metric AE` d'ImageMagick, then aucune zone ne change de géométrie, et toute différence de pixels est attribuée à une cause écrite
-- [ ] Given les mêmes vues en mode translucide, when on capture les paires, then Arthur approuve chacune, et toute surface dont un texte passe sous un contraste de 4.5:1 fait l'objet d'un ajustement des alphas de `app/constants.rs`, justifié par les captures
+- [ ] Given les mêmes vues en mode translucide, when on capture les paires, then Arthur approuve chacune, et aucun texte ne perd de contraste par rapport au build de référence. Les textes atténués du chrome clair translucide, déjà sous 4.5:1 avant le bump, relèvent d'une story de suivi
 - [ ] Given les sites `paint_path` à alpha partiel (`pane.rs:332`, `ui_primitives/squircle.rs:190,220`, `window_chrome/mod.rs:91`, `diff/element.rs:1478`, `terminal/element/paint/decorations.rs:131`, `settings/components.rs:372,377`), when on inspecte leurs captures translucides, then chacun figure dans au moins une capture revue
-- [ ] Given `font_fallbacks` contenant une police de symboles Nerd Font et une police emoji, when on affiche un glyphe de chacune, qu'on ouvre un nouveau pane, puis qu'on y affiche les mêmes glyphes, then ils s'affichent dans les deux panes
-- [ ] Given une police de repli configurée mais non installée, when Paneflow démarre, then un avertissement la nomme une seule fois, sans panic, et le rendu se poursuit avec la police principale
+- [ ] Given une police principale sans glyphes Nerd Font et `font_fallbacks` configuré, when on affiche un glyphe Nerd Font, qu'on ouvre un nouveau pane, puis qu'on y affiche le même glyphe, then il s'affiche dans les deux panes. Les emojis sont hors périmètre : Noto Color Emoji n'est livré qu'en COLRv1 depuis Fedora 43, swash 0.2.10 ne dessine pas COLRv1 (zed#42255), et la cellule reste vide avant comme après le bump. Le bump retire seulement un contournement accidentel (37faef81 ne retire plus de la base les faces sans glyphe `m`, zed#61660), ce que les notes de version mentionnent
+- [ ] Given une police de repli configurée mais non installée, when Paneflow démarre, then aucun panic n'est émis et le rendu se poursuit avec la police principale. Aucun des deux builds n'émet d'avertissement qui la nomme : `load_family` écarte silencieusement une famille de repli introuvable
 
 #### US-011: Vérifier le cycle de fermeture des fenêtres
 **Description:** As a utilisateur qui détache des panes, I want que fermer une fenêtre ou quitter l'application sauve et restaure ma session comme avant so that le nettoyage différé introduit par #66181 ne perde aucun état.
@@ -357,7 +357,7 @@ Le bump ne dégrade ni la latence, ni les allocations, ni le rendu sous Linux, e
 **Acceptance Criteria:**
 - [ ] Given la PR, when le job `macOS aarch64 smoke build` s'exécute sur `macos-14`, then fmt, clippy `aarch64-apple-darwin`, test, check et build release sont verts, shaders Metal compris
 - [ ] Given l'artefact du job `macOS aarch64 render smoke (visual)`, when Arthur ouvre la capture, then le texte du terminal y est rendu, et le contrôle OCR souple compte au moins 10 caractères alphanumériques
-- [ ] Given le log de ce smoke, when on y cherche `gpui_apple::text_system`, then aucune ligne d'avertissement n'apparaît
+- [ ] Given `src-app/src/launch.rs`, when on lit le filtre de log par défaut, then il réduit `gpui_apple::text_system` au niveau `error`. Given le log du smoke, qui tourne avec `RUST_LOG=info` (`run_tests.yml`) et contourne donc ce filtre, when on y cherche `gpui_apple::text_system`, then les avertissements sont les mêmes qu'avant le bump sous `gpui_macos::text_system`
 - [ ] Given un échec de compilation des shaders lié au SDK du runner, when il est constaté, then la story passe BLOCKED avec le log, sans changement d'image de runner décidé dans ce PRD
 - [ ] Given l'absence de matériel macOS, when la story est terminée, then le rapport indique que le Low Power Mode, le flou sous macOS 26/27 et le Display P3 n'ont pas été vérifiés sur matériel
 
