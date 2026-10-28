@@ -77,6 +77,17 @@ passed both thresholds. No `windows-x86_64` or `macos-aarch64` baseline exists
 yet; the Windows ones are recorded on the dual boot machine with the `.ps1`
 scripts.
 
+Since 2026-10-28, `terminal`, `editor` and `startup` point at `92a5c29d`, the
+GPUI bump to `zed@37faef81`, on the same machine (CPU share 0.99 and 1.00).
+The same suites on `3eaaafb6`, the commit before the bump, give identical
+allocation columns, and every timing moves within run-to-run noise except
+`textdiff_5k_lines_one_word_each`, about 15 % faster for an unidentified
+reason, and `prepaint_60_rows_warm`, about 3.5 us slower: the code editor's own shape
+cache now copies, hashes and compares each visible line where GPUI's
+`shape_line_by_hash` trusted a caller hash
+([summary](results/gpui-bump-37faef81-2026-10-28.md)). The allocation
+baselines stay on `880d1d18`, which the bump matches within 1 %.
+
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
