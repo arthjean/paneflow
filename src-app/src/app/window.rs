@@ -337,12 +337,7 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
         window.window_handle().window_id(),
         window.is_window_active(),
     );
-    let owner = view.downgrade();
-    cx.on_window_closed(move |cx, id| {
-        crate::agents::notifications::remove_window(id);
-        let _ = owner.update(cx, |owner, cx| owner.detached_window_closed(id, cx));
-    })
-    .detach();
+    observe_closed_windows(view.downgrade(), PaneFlowApp::detached_window_closed, cx);
 
     view.update(cx, |app, cx| {
         app.sync_system_theme_from_window(window, cx);
@@ -364,4 +359,64 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
     });
     startup_trace::mark("app_mounted");
     view
+}
+
+pub(crate) fn observe_closed_windows<T: 'static>(
+    owner: gpui::WeakEntity<T>,
+    on_closed: fn(&mut T, gpui::WindowId, &mut Context<T>),
+    cx: &mut App,
+) {
+    cx.on_window_closed(move |cx, id| {
+        crate::agents::notifications::remove_window(id);
+        let _ = owner.update(cx, |owner, cx| on_closed(owner, id, cx));
+    })
+    .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ClosedWindows(Vec<gpui::WindowId>);
+
+    impl ClosedWindows {
+        fn record(&mut self, id: gpui::WindowId, _: &mut Context<Self>) {
+            self.0.push(id);
+        }
+    }
+
+    struct DetachedStandIn;
+
+    impl Render for DetachedStandIn {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+        }
+    }
+
+    #[gpui::test]
+    fn a_native_close_reaches_the_owner_and_the_notification_registry_once_pending_tasks_run(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let owner = cx.new(|_| ClosedWindows(Vec::new()));
+        cx.update(|cx| observe_closed_windows(owner.downgrade(), ClosedWindows::record, cx));
+        let detached = cx.add_window(|_, _| DetachedStandIn);
+        let id = detached.window_id();
+        crate::agents::notifications::set_window_active(id, true);
+
+        cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                cx.update(|cx| detached.update(cx, |_, window, _| window.remove_window()))
+            })
+            .detach();
+        });
+        assert!(
+            owner.read_with(cx, |owner, _| owner.0.is_empty()),
+            "a native close is scheduled on a task, so nothing has run yet"
+        );
+
+        cx.run_until_parked();
+        assert_eq!(owner.read_with(cx, |owner, _| owner.0.clone()), vec![id]);
+        assert!(!crate::agents::notifications::is_window_active(id));
+        assert!(cx.update(|cx| cx.windows().iter().all(|window| window.window_id() != id)));
+    }
 }
