@@ -116,8 +116,9 @@ second host reveals the drift, which is exactly the failure mode a committed
 The fix extends the canonical-prefix idea to the toolchain. `zig env` resolves
 `.zig_exe` and `.lib_dir`, the script stages both at
 `macos_canonical_zig_path`, and the build runs
-`<canonical-zig>/zig build --zig-lib-dir <canonical-zig>/lib`, mirroring the
-`--zig-lib-dir` the Windows recipe already passes. The staged copy is removed
+`<canonical-zig>/zig build` with `ZIG_LIB_DIR=<canonical-zig>/lib`, mirroring
+the source library the Windows recipe already points `ZIG_LIB_DIR` at. Zig
+0.17.0 removed the `--zig-lib-dir` option that earlier pins passed instead. The staged copy is removed
 on success and on failure alike. The recipe token becomes
 `fixed-zig-source-cache-prefix`, and no host layout can shift a single address.
 
@@ -295,10 +296,10 @@ read in application order:
    and `lib/` tree are staged at `macos_canonical_zig_path`, and the build runs
    there with `ZIG_GLOBAL_CACHE_DIR` and `ZIG_LOCAL_CACHE_DIR` under
    `<canonical>/.paneflow-zig-cache`, `--prefix
-   <canonical>/.paneflow-zig-output`, and `--zig-lib-dir
-   <canonical-zig>/lib`. Every path that reaches debug info is therefore a
+   <canonical>/.paneflow-zig-output`, and `ZIG_LIB_DIR` at
+   `<canonical-zig>/lib`. Every path that reaches debug info is therefore a
    constant, including the toolchain's own.
-2. `zig build -Demit-lib-vt=true -Dtarget=aarch64-macos -Doptimize=ReleaseFast --seed 0 -j1`,
+2. `zig build -Demit-lib-vt=true -Dtarget=aarch64-macos -Doptimize=ReleaseFast --seed=0 -j1`,
    from `macos_build_seed` and `macos_build_jobs`, with the whole `zig build`
    pinned to one CPU by `taskset` so the `zig build-lib` child compiles
    single-threaded (`cpu1`).

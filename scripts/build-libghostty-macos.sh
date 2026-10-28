@@ -303,12 +303,12 @@ build_one() {
   (
     cd "$CANONICAL_ROOT"
     ZIG_GLOBAL_CACHE_DIR="$CANONICAL_CACHE/global" ZIG_LOCAL_CACHE_DIR="$CANONICAL_CACHE/local" \
+      ZIG_LIB_DIR="$CANONICAL_ZIG_ROOT/lib" \
       taskset -c "$BUILD_CPU" "$CANONICAL_ZIG_ROOT/zig" build \
-      --zig-lib-dir "$CANONICAL_ZIG_ROOT/lib" \
       -Demit-lib-vt=true \
       -Dtarget="$target" \
       -Doptimize="$BUILD_MODE" \
-      --seed "$BUILD_SEED" \
+      --seed="$BUILD_SEED" \
       -j"$BUILD_JOBS" \
       --prefix "$CANONICAL_PREFIX"
   )

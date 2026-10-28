@@ -68,6 +68,7 @@ jobs:
       current_sha: ${{ steps.target.outputs.current_sha }}
       release_tag: ${{ steps.target.outputs.release_tag }}
       bump_id: ${{ steps.target.outputs.bump_id }}
+      zig_version: ${{ steps.target.outputs.zig_version }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -83,6 +84,12 @@ jobs:
             sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
           }
           current="$(manifest_string source_sha)"
+          zig_version="$(manifest_string zig_version)"
+          if [ -z "$zig_version" ]; then
+            echo "::error::could not read zig_version from the manifest"
+            exit 1
+          fi
+          echo "zig_version=$zig_version" >> "$GITHUB_OUTPUT"
           if [ -n "$REQUESTED_SHA" ]; then
             case "$REQUESTED_SHA" in
               *[!0-9a-f]*) echo "::error::source_sha must be a full lowercase hex commit id"; exit 1 ;;
@@ -309,7 +316,7 @@ jobs:
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: "0.16.0"
+          version: ${{ needs.resolve.outputs.zig_version }}
 
       - uses: ./.github/actions/linux-build-deps
         with:
@@ -361,7 +368,7 @@ jobs:
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: "0.16.0"
+          version: ${{ needs.resolve.outputs.zig_version }}
 
       # llvm-strip and llvm-ar have to be exactly the ones that normalized the
       # committed archive: the recipe is LLVM-version-sensitive and the build
