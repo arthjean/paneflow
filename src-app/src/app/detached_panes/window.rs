@@ -262,10 +262,13 @@ impl Render for DetachedPaneWindow {
             window.defer(cx, |window, _| window.remove_window());
             return div().into_any_element();
         }
-        let _ = self.owner.update(cx, |owner, cx| {
-            if owner.acknowledge_seen_declared_errors(cx) {
-                cx.notify();
-            }
+        let owner = self.owner.clone();
+        cx.defer(move |cx| {
+            let _ = owner.update(cx, |owner, cx| {
+                if owner.acknowledge_seen_declared_errors(cx) {
+                    cx.notify();
+                }
+            });
         });
         if self.initial_focus {
             self.initial_focus = false;
