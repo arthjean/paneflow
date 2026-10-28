@@ -603,15 +603,17 @@ function Invoke-NativeBuild {
     $oldLocal = $env:ZIG_LOCAL_CACHE_DIR
     $oldEpoch = $env:SOURCE_DATE_EPOCH
     $oldNoColor = $env:NO_COLOR
+    $oldZigLibDir = $env:ZIG_LIB_DIR
     $env:ZIG_GLOBAL_CACHE_DIR = $globalCache
     $env:ZIG_LOCAL_CACHE_DIR = $localCache
     $env:SOURCE_DATE_EPOCH = $SourceDateEpoch
     $env:NO_COLOR = "1"
+    $env:ZIG_LIB_DIR = $ZigLibDir
     Push-Location $buildSource
     $buildTimer = [Diagnostics.Stopwatch]::StartNew()
     Write-Phase "$Label clean build starting"
     try {
-        $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
+        $zigOutput = @(& $ZigPath build --verbose "--seed=$BuildSeed" "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
         if ($zigExitCode -ne 0) {
             throw "SIMD libghostty build failed with exit code $zigExitCode; raw reproducer is $buildRoot`n$($zigOutput -join "`n")"
@@ -625,6 +627,7 @@ function Invoke-NativeBuild {
         $env:ZIG_LOCAL_CACHE_DIR = $oldLocal
         $env:SOURCE_DATE_EPOCH = $oldEpoch
         $env:NO_COLOR = $oldNoColor
+        $env:ZIG_LIB_DIR = $oldZigLibDir
     }
 
     if (-not (Test-Path -LiteralPath $zigPrefix -PathType Container)) {
