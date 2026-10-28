@@ -609,8 +609,10 @@ A detached pane has one 44px caption and surface-tab row, modeled on the supplie
 Superlogical reference. Closing the native window returns the pane to its
 workspace; there is no separate return button. Tabs are 32px high, up to 208px wide, with ellipsis and
 horizontal overflow. Only the active tab has a capsule background and a small
-elevation shadow. Its outline follows the light-theme accent but stays neutral
-in dark themes. The caption has no bottom divider. The unified new-tab button
+elevation shadow: the `text` tint of the sidebar rail in dark themes, the `card`
+fill in light ones so the tab reads raised instead of greyed, with a `text`
+0.05 hover on the inactive tabs. Its outline follows the light-theme accent but
+stays neutral in dark themes. The caption has no bottom divider. The unified new-tab button
 has a 32px square hover surface, 7px horizontal margins, and a 20px icon. This
 capsule is a reference-specific exception to the standard squircle row skin.
 Terminal tab icons use a fixed dark terminal tile with a green prompt,

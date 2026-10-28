@@ -1630,6 +1630,11 @@ impl Pane {
             } else {
                 ui.text.opacity(0.12)
             };
+            let (unified_active_bg, unified_hover_bg) = if ui.base.l > 0.5 {
+                (ui.card, ui.text.opacity(0.05))
+            } else {
+                (rail_active, rail_hover)
+            };
             let unified_active_shadow = if ui.base.l > 0.5 {
                 gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.10))
                     .blur_radius(px(3.))
@@ -1661,11 +1666,13 @@ impl Pane {
                     .pr(px(8.))
                     .gap(px(10.))
                     .when(active, |chip| {
-                        chip.bg(rail_active)
+                        chip.bg(unified_active_bg)
                             .border_color(unified_active_border)
                             .shadow(vec![unified_active_shadow])
                     })
-                    .when(!active, |chip| chip.hover(|style| style.bg(rail_hover)))
+                    .when(!active, |chip| {
+                        chip.hover(|style| style.bg(unified_hover_bg))
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             } else {
                 squircle_skin(
