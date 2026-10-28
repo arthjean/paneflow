@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Requalifier performances et comportements sur Linux et macOS",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-003",
@@ -121,85 +121,85 @@
       "id": "US-007",
       "title": "Re-baseliner les suites de performance Linux",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-008",
       "title": "Valider l'hypothèse que le plafond à 30 fps ne dégrade pas l'écho clavier",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-009",
       "title": "Valider l'hypothèse que le repli OpenGL démarre toujours sous Linux",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-010",
       "title": "Passe visuelle Linux sur la translucidité, Taffy 0.15 et les polices de repli",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-011",
       "title": "Vérifier le cycle de fermeture des fenêtres",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-012",
       "title": "Qualifier macOS via la CI",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-10-28",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-10-28",
+      "reviewed_at": "2026-10-28"
     },
     {
       "id": "US-013",
