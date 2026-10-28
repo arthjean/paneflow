@@ -27,11 +27,11 @@ pub(crate) const DEFAULT_SHELL: SettingCopy = SettingCopy {
 };
 pub(crate) const ON_QUIT: SettingCopy = SettingCopy {
     title: "When quitting with sessions running",
-    description: "Keep sessions running so they are back next time, or stop everything and end                   their processes.",
+    description: "Keep sessions running so they are back next time, or stop everything and end their processes.",
 };
 pub(crate) const ENDED_SESSIONS: SettingCopy = SettingCopy {
     title: "Ended sessions listed per workspace",
-    description: "How many ended sessions the sidebar previews before the rest collapse under one                   row. Nothing is ever pruned.",
+    description: "How many ended sessions the sidebar previews before the rest collapse under one row. Nothing is ever pruned.",
 };
 pub(crate) const NATIVE_NOTIFICATIONS: SettingCopy = SettingCopy {
     title: "Native OS notifications",
