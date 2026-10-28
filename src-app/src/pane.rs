@@ -273,13 +273,10 @@ fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement 
                 } else {
                     gpui::white()
                 };
+                let (background, ring) = tinted_badge_colors(tint);
                 (
-                    gpui::linear_gradient(
-                        180.,
-                        gpui::linear_color_stop(lift_rgb(tint, TAB_BADGE_TINT_SHEEN), 0.),
-                        gpui::linear_color_stop(scale_rgb(tint, TAB_BADGE_TINT_SHADE), 1.),
-                    ),
-                    scale_rgb(tint, TAB_BADGE_RING_SHADE).into(),
+                    background,
+                    ring,
                     crate::settings::components::render_logo(
                         agent.icon_path(),
                         false,
@@ -300,6 +297,25 @@ fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement 
             ),
         },
     };
+    badge_tile(background, ring, glyph)
+}
+
+pub(crate) fn tinted_badge_colors(tint: gpui::Rgba) -> (gpui::Background, Hsla) {
+    (
+        gpui::linear_gradient(
+            180.,
+            gpui::linear_color_stop(lift_rgb(tint, TAB_BADGE_TINT_SHEEN), 0.),
+            gpui::linear_color_stop(scale_rgb(tint, TAB_BADGE_TINT_SHADE), 1.),
+        ),
+        scale_rgb(tint, TAB_BADGE_RING_SHADE).into(),
+    )
+}
+
+pub(crate) fn badge_tile(
+    background: gpui::Background,
+    ring: Hsla,
+    glyph: AnyElement,
+) -> AnyElement {
     let radius = px(TAB_BADGE_RADIUS);
     let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
     let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);

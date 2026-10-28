@@ -609,23 +609,34 @@ fn theme_preview_palette(name: &str) -> ThemePreview {
     }
 }
 
+const SWATCH_STROKE: f32 = 2.;
+
 fn theme_swatch(name: &str) -> impl IntoElement {
-    let p = theme_preview_palette(name);
-    div()
-        .w(px(20.))
-        .h(px(20.))
-        .flex_none()
+    let theme = crate::theme::theme_by_name(name).unwrap_or_else(crate::theme::paneflow_dark);
+    let base = gpui::Rgba::from(crate::theme::ui_colors_with(&theme).base);
+    let code = theme.syntax;
+    let line = |indent: f32, tokens: &[(f32, Hsla)]| {
+        div()
+            .flex()
+            .flex_row()
+            .gap(px(SWATCH_STROKE))
+            .pl(px(indent))
+            .children(
+                tokens
+                    .iter()
+                    .map(|&(width, color)| mock_bar(width, SWATCH_STROKE, color)),
+            )
+    };
+    let glyph = div()
         .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .bg(p.base)
-        .border_1()
-        .border_color(with_alpha(p.text, 0.16))
-        .text_size(px(10.))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(p.accent)
-        .child("Aa")
+        .flex_col()
+        .gap(px(SWATCH_STROKE))
+        .child(line(0., &[(4., code.keyword), (6., code.function)]))
+        .child(line(2., &[(4., code.property), (5., code.string)]))
+        .child(line(0., &[(9., code.comment)]))
+        .into_any_element();
+    let (background, ring) = crate::pane::tinted_badge_colors(base);
+    crate::pane::badge_tile(background, ring, glyph)
 }
 
 fn mock_bar(width: f32, height: f32, color: Hsla) -> gpui::Div {
