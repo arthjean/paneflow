@@ -252,7 +252,7 @@ pub(crate) fn run() {
     unsafe { agents::parent_guard::scrub_claudecode_env_before_threads() };
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "warn,wgpu_hal=off,naga=warn,gpui_macos::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn",
+        "warn,wgpu_hal=off,naga=warn,gpui_apple::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn",
     ))
     .init();
     cap_malloc_arenas();

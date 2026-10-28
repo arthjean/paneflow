@@ -527,22 +527,56 @@ mod tests {
 
     #[test]
     fn every_default_chord_round_trips_through_parse() {
-        for d in DEFAULTS.iter().chain(PLATFORM_DEFAULTS.iter()) {
-            let parsed = Keystroke::parse(d.key)
-                .unwrap_or_else(|_| panic!("default chord {} does not parse", d.key));
-            let round_tripped = Keystroke::parse(&parsed.unparse())
-                .unwrap_or_else(|_| panic!("unparse of {} does not re-parse", d.key));
-            assert_eq!(
-                round_tripped.key, parsed.key,
-                "{} lost its key through unparse",
-                d.key
-            );
-            assert_eq!(
-                round_tripped.modifiers, parsed.modifiers,
-                "{} lost its modifiers through unparse",
-                d.key
-            );
+        use gpui::OperatingSystem;
+
+        let host = super::super::apply::host_os();
+        let tables = [
+            (OperatingSystem::Mac, DEFAULTS),
+            (OperatingSystem::Windows, DEFAULTS),
+            (OperatingSystem::Linux, DEFAULTS),
+            (host, PLATFORM_DEFAULTS),
+        ];
+        let mut secondary_chords = 0;
+        for (os, table) in tables {
+            for d in table {
+                let parsed = Keystroke::parse_with_os(d.key, os)
+                    .unwrap_or_else(|_| panic!("default chord {} does not parse on {os:?}", d.key));
+                let round_tripped = Keystroke::parse_with_os(&parsed.unparse(os), os)
+                    .unwrap_or_else(|_| panic!("unparse of {} does not re-parse on {os:?}", d.key));
+                assert_eq!(
+                    round_tripped.key, parsed.key,
+                    "{} lost its key through unparse on {os:?}",
+                    d.key
+                );
+                assert_eq!(
+                    round_tripped.modifiers, parsed.modifiers,
+                    "{} lost its modifiers through unparse on {os:?}",
+                    d.key
+                );
+                if d.key.starts_with("secondary-") {
+                    secondary_chords += 1;
+                    let mac = os == OperatingSystem::Mac;
+                    assert_eq!(
+                        (parsed.modifiers.platform, parsed.modifiers.control),
+                        (mac, !mac),
+                        "{} must resolve secondary for {os:?}",
+                        d.key
+                    );
+                }
+            }
         }
+        assert!(secondary_chords > 0, "the defaults carry secondary chords");
+    }
+
+    #[test]
+    fn diff_dock_new_tab_menu_hints_format_for_the_host() {
+        let (file, terminal) = if cfg!(target_os = "macos") {
+            ("\u{2318}G", "\u{2318}J")
+        } else {
+            ("Ctrl+G", "Ctrl+J")
+        };
+        assert_eq!(format_keystroke("secondary-g"), file);
+        assert_eq!(format_keystroke("secondary-j"), terminal);
     }
 
     #[test]

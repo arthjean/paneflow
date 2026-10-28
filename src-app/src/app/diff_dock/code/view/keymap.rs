@@ -64,18 +64,11 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("pagedown", CePageDown, ctx),
         KeyBinding::new("shift-pageup", CeSelectPageUp, ctx),
         KeyBinding::new("shift-pagedown", CeSelectPageDown, ctx),
-        KeyBinding::new("secondary-a", CeSelectAll, ctx),
         KeyBinding::new("backspace", CeBackspace, ctx),
         KeyBinding::new("delete", CeDelete, ctx),
         KeyBinding::new("enter", CeNewline, ctx),
         KeyBinding::new("tab", CeIndent, ctx),
         KeyBinding::new("shift-tab", CeOutdent, ctx),
-        KeyBinding::new("secondary-z", CeUndo, ctx),
-        KeyBinding::new("secondary-shift-z", CeRedo, ctx),
-        KeyBinding::new("secondary-c", CeCopy, ctx),
-        KeyBinding::new("secondary-x", CeCut, ctx),
-        KeyBinding::new("secondary-v", CePaste, ctx),
-        KeyBinding::new("secondary-s", CeSave, ctx),
         KeyBinding::new("escape", CeEscape, ctx),
     ]);
     #[cfg(target_os = "macos")]
@@ -88,6 +81,13 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-down", CeDocEnd, ctx),
         KeyBinding::new("cmd-shift-up", CeSelectDocStart, ctx),
         KeyBinding::new("cmd-shift-down", CeSelectDocEnd, ctx),
+        KeyBinding::new("cmd-a", CeSelectAll, ctx),
+        KeyBinding::new("cmd-z", CeUndo, ctx),
+        KeyBinding::new("cmd-shift-z", CeRedo, ctx),
+        KeyBinding::new("cmd-c", CeCopy, ctx),
+        KeyBinding::new("cmd-x", CeCut, ctx),
+        KeyBinding::new("cmd-v", CePaste, ctx),
+        KeyBinding::new("cmd-s", CeSave, ctx),
     ]);
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
@@ -100,5 +100,12 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-shift-home", CeSelectDocStart, ctx),
         KeyBinding::new("ctrl-shift-end", CeSelectDocEnd, ctx),
         KeyBinding::new("ctrl-y", CeRedo, ctx),
+        KeyBinding::new("ctrl-a", CeSelectAll, ctx),
+        KeyBinding::new("ctrl-z", CeUndo, ctx),
+        KeyBinding::new("ctrl-shift-z", CeRedo, ctx),
+        KeyBinding::new("ctrl-c", CeCopy, ctx),
+        KeyBinding::new("ctrl-x", CeCut, ctx),
+        KeyBinding::new("ctrl-v", CePaste, ctx),
+        KeyBinding::new("ctrl-s", CeSave, ctx),
     ]);
 }

@@ -2318,6 +2318,36 @@ mod tests {
     }
 
     #[gpui::test]
+    fn send_keystroke_resolves_secondary_for_the_host_and_names_an_invalid_chord(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let terminal = display_terminal(cx);
+        cx.update(|_, cx| {
+            let view = terminal.read(cx);
+            assert_eq!(
+                view.send_keystroke("ctrl-"),
+                Err("invalid keystroke: ctrl-".to_owned())
+            );
+            assert!(view.terminal.queued_raw_input_for_test().is_empty());
+
+            let sent = view.send_keystroke("secondary-c");
+            let queued = view.terminal.queued_raw_input_for_test();
+            if cfg!(target_os = "macos") {
+                assert!(
+                    !queued.contains(&b"\x03".to_vec()),
+                    "secondary-c is cmd-c on macOS and must not send ETX"
+                );
+            } else {
+                assert_eq!(sent, Ok(()));
+                assert_eq!(queued, [b"\x03".to_vec()]);
+            }
+        });
+        let invalid = JsonRpcError::invalid_params("invalid keystroke: ctrl-");
+        assert_eq!(invalid.code, JsonRpcError::INVALID_PARAMS);
+    }
+
+    #[gpui::test]
     fn ipc_writes_reach_the_host_as_program_input_and_the_composer_as_typed(
         cx: &mut gpui::TestAppContext,
     ) {

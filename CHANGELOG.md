@@ -5,6 +5,18 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- **Shortcuts on Windows follow the active keyboard layout.** Default and custom shortcuts are now resolved through the Windows keyboard mapper, so a chord on a shifted symbol is matched against the layout in use (AZERTY as well as US) instead of a fixed US mapping.
+- **Animations run at up to 30 frames per second in power-saving mode.** When the operating system reports a power-saving state, GPUI caps animation frames, such as an agent's spinner, at 30 per second.
+
+### Fixed
+
+- **Fallback fonts stay available on Linux.** A fallback font without an `m` glyph, such as an emoji font or a Nerd Font symbols font, no longer disappears for the rest of the session after it is first used.
+- **No more Vulkan panic when a surface is destroyed on Linux** ("SwapchainAcquireSemaphore still in use").
+- **No more crash on Windows when text contains U+2028 or U+2029**, the Unicode line and paragraph separators.
+- **A memory leak in the text system is fixed**: line wrappers no longer keep a text system alive after it is dropped.
+
 ## [0.18.1] - 2026-10-28
 
 Paneflow 0.18.1 cuts the work the desktop does while an agent animates in one pane and the rest sits still. With 30 workspaces open and a TUI agent animating in the shown one, the desktop's main thread drops from 22.35 % to 1.69 % of a core on Linux, and 5.17 % on Windows. At rest, the threads that woke on fixed timers now sleep until there is work: the IPC thread goes from 99.6 to 0.2 wakeups a second on Linux, and an idle terminal session from 10 to 0.5. Text fields gain word navigation, undo and redo, and a blinking caret, Settings frames its form inputs with a focus ring, and the Move to space submenu works again.

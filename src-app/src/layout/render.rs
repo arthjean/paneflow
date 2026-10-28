@@ -349,8 +349,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use gpui::{
-        AppContext, Entity, Focusable, Modifiers, Render, ScrollDelta, ScrollWheelEvent,
-        TestAppContext, TouchPhase, point,
+        AppContext, Entity, Focusable, Modifiers, Render, ScrollDelta, ScrollEvent, TestAppContext,
+        TouchPhase, point,
         profiler::{self, FrameEvent, FrameTimingCollector},
         px, size,
     };
@@ -932,11 +932,12 @@ mod tests {
         let frame_trace = FrameTraceGuard::enable();
         let mut frame_collector = FrameTimingCollector::new();
         for notch in 0..SCROLL_NOTCHES {
-            cx.simulate_event(ScrollWheelEvent {
+            cx.simulate_event(ScrollEvent {
                 position: wheel_at,
                 delta: ScrollDelta::Lines(point(0.0, -SCROLL_LINES_PER_NOTCH)),
                 modifiers: Modifiers::default(),
                 touch_phase: TouchPhase::Moved,
+                ..Default::default()
             });
             if notch + 1 < SCROLL_NOTCHES {
                 std::thread::sleep(SCROLL_INTERVAL);
@@ -1039,11 +1040,12 @@ mod tests {
 
         start_render_content_timing_probe();
         for _ in 0..CACHE_PROBE_NOTCHES {
-            cx.simulate_event(ScrollWheelEvent {
+            cx.simulate_event(ScrollEvent {
                 position: wheel_at,
                 delta: ScrollDelta::Lines(point(0.0, -SCROLL_LINES_PER_NOTCH)),
                 modifiers: Modifiers::default(),
                 touch_phase: TouchPhase::Moved,
+                ..Default::default()
             });
             cx.run_until_parked();
         }

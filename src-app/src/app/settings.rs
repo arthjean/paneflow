@@ -441,7 +441,7 @@ impl PaneFlowApp {
             return true;
         }
 
-        let formatted = keybindings::format_keystroke(&keystroke.unparse());
+        let formatted = keybindings::format_keystroke(&keystroke.unparse(keybindings::host_os()));
         self.shortcut_search_input.update(cx, |input, cx| {
             input.set_value(formatted, cx);
         });
@@ -486,7 +486,7 @@ impl PaneFlowApp {
             return;
         }
 
-        let new_key = keystroke.unparse();
+        let new_key = keystroke.unparse(keybindings::host_os());
         let confirmed = self
             .shortcut_conflict
             .as_ref()

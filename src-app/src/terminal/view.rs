@@ -913,7 +913,7 @@ impl TerminalView {
     }
 
     pub fn send_keystroke(&self, keystroke_str: &str) -> Result<(), String> {
-        let keystroke = gpui::Keystroke::parse(keystroke_str).map_err(|e| format!("{e}"))?;
+        let keystroke = crate::keybindings::parse_keystroke(keystroke_str)?;
         let mode = self.terminal.session_backend().modes();
         if let Some(seq) = crate::keys::to_esc_str(&keystroke, &mode, self.option_as_meta) {
             if sequence_would_submit(&seq) {
@@ -1759,7 +1759,7 @@ impl Render for TerminalView {
                     this.handle_select_all(window, cx);
                 }),
             )
-            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+            .on_scroll(cx.listener(Self::handle_scroll_wheel))
             .on_action(cx.listener(|this, _: &crate::ScrollPageUp, window, cx| {
                 this.handle_scroll_page_up(window, cx);
             }))
@@ -2398,11 +2398,12 @@ mod tests {
 
     fn precise_scroll(view: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext, lines: f32) {
         let line_height = view.read_with(cx, |view, _| view.line_height);
-        let event = gpui::ScrollWheelEvent {
+        let event = gpui::ScrollEvent {
             position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
             delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), line_height * lines)),
             modifiers: gpui::Modifiers::default(),
             touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
         };
         cx.update(|window, cx| {
             view.update(cx, |view, cx| view.handle_scroll_wheel(&event, window, cx));
@@ -2498,11 +2499,12 @@ mod tests {
         eventually(cx, 0, display_offset);
         assert_eq!(offset(cx), gpui::px(0.0), "no bounce below the last line");
 
-        let event = gpui::ScrollWheelEvent {
+        let event = gpui::ScrollEvent {
             position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
             delta: gpui::ScrollDelta::Lines(gpui::point(0.0, 3.0)),
             modifiers: gpui::Modifiers::default(),
             touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
         };
         cx.update(|window, cx| {
             terminal.update(cx, |view, cx| view.handle_scroll_wheel(&event, window, cx));
@@ -2513,6 +2515,46 @@ mod tests {
             gpui::px(0.0),
             "wheel lines never shift by pixels"
         );
+    }
+
+    #[gpui::test]
+    fn a_touch_sourced_scroll_moves_the_grid_exactly_like_a_pointer_scroll(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{ScrollDelta, ScrollSource};
+
+        let (terminal, cx) = scrolled_history_terminal(cx);
+        let line_height = terminal.read_with(cx, |view, _| view.line_height);
+        let display_offset = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .grid_metrics()
+                    .display_offset
+            })
+        };
+        let notch = ScrollDelta::Lines(gpui::point(0.0, 3.0));
+        let pixels = ScrollDelta::Pixels(gpui::point(gpui::px(0.0), line_height * 2.0));
+        let mut expected = 0;
+        for (source, delta, lines) in [
+            (ScrollSource::Pointer, notch, 3),
+            (ScrollSource::Touch, notch, 3),
+            (ScrollSource::Pointer, pixels, 2),
+            (ScrollSource::Touch, pixels, 2),
+        ] {
+            let event = gpui::ScrollEvent {
+                position: gpui::point(gpui::px(40.0), gpui::px(40.0)),
+                delta,
+                touch_phase: gpui::TouchPhase::Moved,
+                source,
+                ..Default::default()
+            };
+            cx.update(|window, cx| {
+                terminal.update(cx, |view, cx| view.handle_scroll_wheel(&event, window, cx));
+            });
+            expected += lines;
+            eventually(cx, expected, display_offset);
+        }
     }
 
     fn scrolled_history_terminal(

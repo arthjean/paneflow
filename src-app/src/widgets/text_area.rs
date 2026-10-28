@@ -62,11 +62,6 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("enter", TaSubmit, Some("PaneflowTextArea")),
         KeyBinding::new("shift-enter", TaInsertNewline, Some("PaneflowTextArea")),
         KeyBinding::new("escape", TaEscape, Some("PaneflowTextArea")),
-        KeyBinding::new(
-            "secondary-enter",
-            TaSubmitImmediate,
-            Some("PaneflowTextArea"),
-        ),
     ]);
     #[cfg(target_os = "macos")]
     cx.bind_keys([
@@ -74,6 +69,7 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-c", TaCopy, Some("PaneflowTextArea")),
         KeyBinding::new("cmd-v", TaPaste, Some("PaneflowTextArea")),
         KeyBinding::new("cmd-x", TaCut, Some("PaneflowTextArea")),
+        KeyBinding::new("cmd-enter", TaSubmitImmediate, Some("PaneflowTextArea")),
         KeyBinding::new(
             "cmd-shift-enter",
             TaSubmitImmediate,
@@ -87,6 +83,7 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-v", TaPaste, Some("PaneflowTextArea")),
         KeyBinding::new("ctrl-shift-v", TaPaste, Some("PaneflowTextArea")),
         KeyBinding::new("ctrl-x", TaCut, Some("PaneflowTextArea")),
+        KeyBinding::new("ctrl-enter", TaSubmitImmediate, Some("PaneflowTextArea")),
         KeyBinding::new(
             "ctrl-shift-enter",
             TaSubmitImmediate,

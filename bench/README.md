@@ -1234,7 +1234,7 @@ platform shaper.
 | `theme_switch` | ns | A theme change on 300 KB of Rust, rebuilding capture color tables without reparsing or requerying the trees. |
 | `shape_cold_60_rows` | ns | Sixty never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport. |
 | `shape_warm_60_rows` | ns | The same sixty rows shaped again, the warm-cache cost the line-layout cache serves on a second frame. |
-| `prepaint_60_rows_warm` | ns | The same sixty rows re-shaped the way `CodeElement::prepaint` does it since US-025: keyed by content hash through `shape_line_by_hash`, with one reused `Vec<TextRun>`. Its `allocs_per_iter` is the per-viewport allocation count US-025 caps at one per row. |
+| `prepaint_60_rows_warm` | ns | The same sixty rows re-shaped the way `CodeElement::prepaint` does it: through the content-keyed `ShapeCache` that keeps each visible row's `ShapedLine` across frames, with one reused `Vec<TextRun>`. Its `allocs_per_iter` is the per-viewport allocation count US-025 caps at one per row. |
 | `reload_200_retained_bytes` | bytes | Live allocated bytes a colored 2 MB tab still holds after 200 external reloads: document, per-row runs, and undo history. Tree-sitter trees allocate through the C allocator, so they are outside this number and the tree memory probe below counts them instead. |
 | `pagedown_stale_rows` | rows | Median rows of a 60-row viewport still uncolored after one 2 ms fill, over 20 pseudo-random jumps on a freshly opened 300 KB Rust file. |
 | `pagedown_stale_rows_max` | rows | The worst of those 20 jumps: rows the first frame after a PageDown leaves in plain text. |
@@ -1274,10 +1274,12 @@ asks for no follow-up frame.
 ### The shaping probe and the US-013 threshold
 
 `prepaint_60_rows_warm` measures the same sixty rows through the path the
-editor actually takes since US-025. `shape_warm_60_rows` passes a
-`SharedString` per row, so `layout_line` allocates one more copy of the text on
-every hit; the prepaint probe passes a content hash instead and materializes
-nothing when the layout is already cached. The two are not a like-for-like
+editor actually takes. `shape_warm_60_rows` passes a `SharedString` per row, so
+`layout_line` allocates one more copy of any text longer than 23 bytes on every
+hit; the prepaint probe looks each row up in the editor's `ShapeCache`, keyed by
+content hash and checked against the cached text and runs, and calls the text
+system only on a miss. GPUI removed `shape_line_by_hash` at `zed@37faef81`
+(#66152), which is why the cache now lives in Paneflow. The two are not a like-for-like
 timing pair, because the prepaint probe also walks the rope and hashes every
 line before it reaches the cache, so compare them on allocations rather than
 on nanoseconds. That count is the number US-025 caps at sixty for sixty rows.
@@ -1390,7 +1392,7 @@ cargo test -p paneflow-app --release -- --ignored layout::render
 It opens the 300 KB Rust corpus in a `CodeView` docked to the right of the pane
 grid, fills every terminal pane with `deterministic_streams()` and lets them go
 idle, places the caret at the top and scrolls away from it, then dispatches 120
-`ScrollWheelEvent` notches of `Lines(3)` spaced 8 ms apart. It repeats that for
+`ScrollEvent` notches of `Lines(3)` spaced 8 ms apart. It repeats that for
 0, 2 and 6 terminal panes and prints one JSON line carrying
 `scroll_frame_p50_us_panes_N` and `scroll_frame_p95_us_panes_N` for each N,
 computed from GPUI's `dirty_to_draw_duration` over at least 100 frames per

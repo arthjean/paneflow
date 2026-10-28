@@ -141,13 +141,20 @@ allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 # unactivated optional feature. They are locked because Cargo resolves every
 # target, and they are listed here so a future bump that starts compiling them
 # still lands on a reviewed repository.
+# The 2026-10-28 bump to `37faef81` added `gfx-rs/wgpu` (wgpu 30 is a git pin
+# until wgpu#10230 reaches a crates.io release), `zed-industries/oo7`, and the
+# Zed forks of `async-task` and `khronos-egl` mirrored in the root
+# `[patch.crates-io]`. It dropped `proptest-rs/proptest` (now a crates.io dep of
+# gpui) and `smol-rs/async-task`.
 allow-git = [
+    "https://github.com/gfx-rs/wgpu",
     "https://github.com/tree-sitter/tree-sitter-cpp",
-    "https://github.com/proptest-rs/proptest",
-    "https://github.com/smol-rs/async-task.git",
     "https://github.com/zed-industries/async-process.git",
+    "https://github.com/zed-industries/async-task.git",
     "https://github.com/zed-industries/calloop",
     "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/khronos-egl",
+    "https://github.com/zed-industries/oo7",
     "https://github.com/zed-industries/scap",
     "https://github.com/zed-industries/wasm_thread",
     "https://github.com/zed-industries/xim-rs.git",

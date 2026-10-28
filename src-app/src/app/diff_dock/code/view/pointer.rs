@@ -14,7 +14,7 @@ const DRAG_SCROLL_ROWS: f32 = 1.0;
 const DRAG_SCROLL_COLUMNS: f32 = 3.0;
 
 impl CodeView {
-    pub(super) fn apply_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+    pub(super) fn apply_wheel(&mut self, ev: &ScrollEvent, cx: &mut Context<Self>) {
         let bounds = self.scroll.bounds();
         if !bounds.contains(&ev.position) {
             return;
@@ -228,12 +228,13 @@ mod tests {
     use super::super::tests::*;
     use super::*;
 
-    fn wheel(delta: ScrollDelta) -> ScrollWheelEvent {
-        ScrollWheelEvent {
+    fn wheel(delta: ScrollDelta) -> ScrollEvent {
+        ScrollEvent {
             position: point(VIEWPORT.x / 2., VIEWPORT.y / 2.),
             delta,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            ..Default::default()
         }
     }
 
@@ -319,7 +320,7 @@ mod tests {
         cx.update(|window, cx| {
             for _ in 0..3 {
                 window.dispatch_event(
-                    gpui::PlatformInput::ScrollWheel(wheel(ScrollDelta::Lines(point(0.0, -3.0)))),
+                    gpui::PlatformInput::Scroll(wheel(ScrollDelta::Lines(point(0.0, -3.0)))),
                     cx,
                 );
             }

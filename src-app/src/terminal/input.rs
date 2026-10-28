@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 use gpui::{
     ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, KeyUpEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, TouchPhase,
-    Window,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollEvent, TouchPhase, Window,
 };
 
 use paneflow_host::InputOrigin;
@@ -1304,7 +1303,7 @@ impl TerminalView {
 
     pub(super) fn handle_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1416,7 +1415,7 @@ impl TerminalView {
         }
     }
 
-    fn take_app_scroll_lines(&mut self, event: &ScrollWheelEvent) -> Option<i32> {
+    fn take_app_scroll_lines(&mut self, event: &ScrollEvent) -> Option<i32> {
         let delta_y = event.delta.pixel_delta(self.line_height).y;
         self.app_scroll_remainder =
             (self.app_scroll_remainder + delta_y / self.line_height).clamp(-500.0, 500.0);

@@ -210,7 +210,7 @@ impl Render for CodeView {
                     }
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _window, cx| {
+            .on_scroll(cx.listener(|this, ev: &ScrollEvent, _window, cx| {
                 this.apply_wheel(ev, cx);
             }))
             .child(element);
@@ -382,6 +382,50 @@ mod tests {
             view.read_with(cx, |view, _| view.materialized_lines()),
             1,
             "only the edited row may miss the layout cache"
+        );
+    }
+
+    #[gpui::test]
+    fn a_wider_gutter_reshapes_each_visible_number_once(cx: &mut TestAppContext) {
+        let text = (0..999)
+            .map(|row| format!("row {row} of plain text"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (view, cx) = scrolled(cx, "/nonexistent/gutter.txt", &text);
+        scroll_to(&view, cx, 960.0);
+        frame(&view, cx);
+        assert_eq!(view.read_with(cx, |view, _| view.materialized_numbers()), 0);
+        let shaped_before = view.read_with(cx, |view, _| view.numbers_shaped_total());
+
+        view.update_in(cx, |view, window, cx| {
+            let end = view.document().map(CodeDocument::len_bytes).unwrap_or(0);
+            view.selection = CodeSelection {
+                anchor: end,
+                head: end,
+            };
+            view.replace_text_in_range(None, "\nrow 999 of plain text", window, cx);
+        });
+        cx.run_until_parked();
+
+        let (line_count, shaped_rows, rematerialized) = view.read_with(cx, |view, _| {
+            (
+                view.document().map(CodeDocument::line_count),
+                view.hits.borrow().lines.len(),
+                view.numbers_shaped_total() - shaped_before,
+            )
+        });
+        assert_eq!(line_count, Some(1000));
+        assert!(shaped_rows > 0, "the probe needs visible rows");
+        assert_eq!(
+            rematerialized, shaped_rows,
+            "every visible number is shaped once for the wider gutter, across every frame the edit drew"
+        );
+
+        frame(&view, cx);
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_numbers()),
+            0,
+            "a warm frame after the widening shapes no number"
         );
     }
 

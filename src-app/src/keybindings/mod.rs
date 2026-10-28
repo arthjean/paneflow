@@ -3,7 +3,7 @@ mod defaults;
 mod display;
 mod registry;
 
-pub use apply::{apply_keybindings, keystrokes_conflict};
+pub use apply::{apply_keybindings, host_os, keystrokes_conflict, parse_keystroke};
 pub use display::{
     ShortcutEntry, default_keys, effective_shortcuts, format_keystroke, is_bare_modifier,
     keystroke_caps,

@@ -21,7 +21,7 @@ use gpui::{
     Anchor, AnyElement, App, AppContext, AsyncApp, Bounds, ClickEvent, ClipboardItem, Context,
     CursorStyle, EntityInputHandler, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollEvent, SharedString,
     StatefulInteractiveElement, Styled, StyledText, UTF16Selection, WeakEntity, Window, actions,
     anchored, deferred, div, point, px, size,
 };
@@ -332,6 +332,11 @@ impl CodeView {
     #[cfg(test)]
     pub(crate) fn materialized_numbers(&self) -> usize {
         self.hits.borrow().materialized_numbers
+    }
+
+    #[cfg(test)]
+    pub(crate) fn numbers_shaped_total(&self) -> usize {
+        self.hits.borrow().shapes.numbers_shaped
     }
 
     #[cfg(test)]

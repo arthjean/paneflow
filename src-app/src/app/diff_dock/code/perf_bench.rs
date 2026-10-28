@@ -32,7 +32,7 @@ use super::bench_corpus::{
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
-use super::element::{CODE_FONT_SIZE, line_content_hash};
+use super::element::{CODE_FONT_SIZE, ShapeCache};
 use super::highlight::{
     CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
 };
@@ -564,7 +564,7 @@ fn ascii_row(salt: usize, row: usize) -> SharedString {
     text.into()
 }
 
-fn platform_text_system() -> Option<(Rc<dyn Platform>, Arc<WindowTextSystem>)> {
+fn platform_text_system() -> Option<(Rc<dyn Platform>, Rc<WindowTextSystem>)> {
     let (platform, text_system) = std::panic::catch_unwind(|| {
         let platform = gpui_platform::current_platform(true);
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -577,7 +577,7 @@ fn platform_text_system() -> Option<(Rc<dyn Platform>, Arc<WindowTextSystem>)> {
     text_system.add_fonts(fonts).expect(
         "the platform text system registers the embedded fonts, as the app does at startup",
     );
-    Some((platform, Arc::new(WindowTextSystem::new(text_system))))
+    Some((platform, Rc::new(WindowTextSystem::new(text_system))))
 }
 
 fn ascii_rows(salt: usize) -> Vec<SharedString> {
@@ -616,6 +616,7 @@ fn prepaint_rows(
     font: &Font,
     doc: &CodeDocument,
     runs: &mut Vec<TextRun>,
+    shapes: &mut ShapeCache,
 ) -> f32 {
     let mut width = 0.0f32;
     for row in 0..VIEWPORT_ROWS {
@@ -635,16 +636,10 @@ fn prepaint_rows(
             underline: None,
             strikethrough: None,
         });
-        let shaped = text_system.shape_line_by_hash(
-            line_content_hash(slice),
-            len,
-            px(CODE_FONT_SIZE),
-            runs,
-            None,
-            || slice.to_string().into(),
-        );
+        let (shaped, _) = shapes.shape_rope_line(slice, px(CODE_FONT_SIZE), runs, text_system);
         width += f32::from(shaped.width());
     }
+    shapes.end_frame();
     width
 }
 
@@ -701,15 +696,22 @@ fn shape_scenarios(metrics: &mut Vec<Metric>) {
     ));
     let warm_doc = ascii_document(0);
     let mut runs = Vec::with_capacity(64);
-    prepaint_rows(&text_system, &font, &warm_doc, &mut runs);
+    let mut shapes = ShapeCache::default();
+    prepaint_rows(&text_system, &font, &warm_doc, &mut runs, &mut shapes);
     metrics.push(measure_segments(
         "prepaint_60_rows_warm",
-        "the same 60 rows re-shaped the way the editor prepaint does it, by content hash with a reused run buffer: the warm-cache cost of one scrolled viewport",
+        "the same 60 rows re-shaped the way the editor prepaint does it, through the content-keyed shape cache with a reused run buffer: the warm-cache cost of one scrolled viewport",
         1,
         20,
         |timer| {
             timer.time(|| {
-                std::hint::black_box(prepaint_rows(&text_system, &font, &warm_doc, &mut runs))
+                std::hint::black_box(prepaint_rows(
+                    &text_system,
+                    &font,
+                    &warm_doc,
+                    &mut runs,
+                    &mut shapes,
+                ))
             });
         },
     ));
@@ -1355,11 +1357,12 @@ mod tests {
 
         let doc = ascii_document(0);
         let mut runs = Vec::with_capacity(64);
-        let cold = prepaint_rows(&text_system, &font, &doc, &mut runs);
-        let warm = prepaint_rows(&text_system, &font, &doc, &mut runs);
+        let mut shapes = ShapeCache::default();
+        let cold = prepaint_rows(&text_system, &font, &doc, &mut runs, &mut shapes);
+        let warm = prepaint_rows(&text_system, &font, &doc, &mut runs, &mut shapes);
         assert_eq!(
             cold, warm,
-            "the by-hash path must return the same layout it cached"
+            "the shape cache must return the same layout it cached"
         );
         assert_eq!(
             runs.len(),

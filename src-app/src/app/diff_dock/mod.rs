@@ -20,8 +20,8 @@ pub(crate) use model::{
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder, px,
+    ParentElement, Pixels, Point, ScrollEvent, ScrollHandle, StatefulInteractiveElement, Styled,
+    Window, div, prelude::FluentBuilder, px,
 };
 
 use self::branch::render_diff_branch_chip;
@@ -692,7 +692,7 @@ impl PaneFlowApp {
                     }
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
+            .on_scroll(cx.listener(|this, ev: &ScrollEvent, window, cx| {
                 this.apply_diff_dock_wheel(ev, window, cx);
             }))
             .child(
@@ -723,7 +723,7 @@ impl PaneFlowApp {
 
     fn apply_diff_dock_wheel(
         &mut self,
-        ev: &ScrollWheelEvent,
+        ev: &ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

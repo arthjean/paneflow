@@ -713,7 +713,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+            .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
             .child(list)
             .when_some(bar, |d, sb| d.child(sb));
 
@@ -924,7 +924,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+            .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
             .child(body)
             .when_some(bar, |d, sb| d.child(sb));
 

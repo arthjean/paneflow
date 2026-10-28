@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::ops::Range;
@@ -9,7 +10,7 @@ use gpui::{
     ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window,
-    fill, point, px, quad, relative, size,
+    WindowTextSystem, fill, point, px, quad, relative, size,
 };
 use paneflow_textdiff::BlockKind;
 use ropey::RopeSlice;
@@ -164,20 +165,9 @@ pub(crate) fn cursor_line_wash(base: Hsla, focused: bool) -> Hsla {
     }
 }
 
-pub(crate) fn line_content_hash(line: RopeSlice<'_>) -> u64 {
+pub(crate) fn line_content_hash(line: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
-    for chunk in line.chunks() {
-        hasher.write(chunk.as_bytes());
-    }
-    hasher.finish()
-}
-
-pub(crate) fn line_number_hash(number: usize, color: Hsla) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    hasher.write_usize(number);
-    for channel in [color.h, color.s, color.l, color.a] {
-        hasher.write_u32(channel.to_bits());
-    }
+    hasher.write(line.as_bytes());
     hasher.finish()
 }
 
@@ -362,6 +352,111 @@ pub(crate) struct CodeHitMap {
     pub(crate) materialized_lines: usize,
     pub(crate) materialized_numbers: usize,
     pub(crate) lines: Vec<Option<ShapedLine>>,
+    pub(crate) shapes: CodeShapes,
+}
+
+struct CachedShape {
+    font_size: Pixels,
+    runs: Vec<TextRun>,
+    line: ShapedLine,
+    seen: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct ShapeCache {
+    entries: HashMap<u64, Vec<CachedShape>>,
+    text: String,
+}
+
+impl ShapeCache {
+    pub(crate) fn shape_rope_line(
+        &mut self,
+        line: RopeSlice<'_>,
+        font_size: Pixels,
+        runs: &[TextRun],
+        text_system: &WindowTextSystem,
+    ) -> (ShapedLine, bool) {
+        let Self { entries, text } = self;
+        text.clear();
+        for chunk in line.chunks() {
+            text.push_str(chunk);
+        }
+        let text = text.as_str();
+        Self::shape_in(
+            entries,
+            line_content_hash(text),
+            |cached| cached == text,
+            font_size,
+            runs,
+            text_system,
+            || text.into(),
+        )
+    }
+
+    pub(crate) fn shape(
+        &mut self,
+        key: u64,
+        holds: impl Fn(&str) -> bool,
+        font_size: Pixels,
+        runs: &[TextRun],
+        text_system: &WindowTextSystem,
+        materialize: impl FnOnce() -> SharedString,
+    ) -> (ShapedLine, bool) {
+        Self::shape_in(
+            &mut self.entries,
+            key,
+            holds,
+            font_size,
+            runs,
+            text_system,
+            materialize,
+        )
+    }
+
+    fn shape_in(
+        entries: &mut HashMap<u64, Vec<CachedShape>>,
+        key: u64,
+        holds: impl Fn(&str) -> bool,
+        font_size: Pixels,
+        runs: &[TextRun],
+        text_system: &WindowTextSystem,
+        materialize: impl FnOnce() -> SharedString,
+    ) -> (ShapedLine, bool) {
+        let bucket = entries.entry(key).or_default();
+        if let Some(cached) = bucket.iter_mut().find(|cached| {
+            cached.font_size == font_size && cached.runs == runs && holds(&cached.line.text)
+        }) {
+            cached.seen = true;
+            return (cached.line.clone(), false);
+        }
+        let line = text_system.shape_line(materialize(), font_size, runs, None);
+        bucket.push(CachedShape {
+            font_size,
+            runs: runs.to_vec(),
+            line: line.clone(),
+            seen: true,
+        });
+        (line, true)
+    }
+
+    pub(crate) fn end_frame(&mut self) {
+        self.entries.retain(|_, bucket| {
+            bucket.retain_mut(|cached| std::mem::take(&mut cached.seen));
+            !bucket.is_empty()
+        });
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct CodeShapes {
+    pub(crate) numbers_shaped: usize,
+    gutter_digits: usize,
+    lines: ShapeCache,
+    numbers: ShapeCache,
 }
 
 impl CodeHitMap {
@@ -715,6 +810,11 @@ impl Element for CodeElement {
         }
 
         let column_x = left + px(MARKER_INSET_L);
+        let mut shapes = std::mem::take(&mut self.hits.borrow_mut().shapes);
+        if shapes.gutter_digits != memo.digits {
+            shapes.numbers.clear();
+            shapes.gutter_digits = memo.digits;
+        }
         let mut hits = CodeHitMap {
             first_row: rows.start,
             top_y: f32::from(row_y(rows.start)),
@@ -724,6 +824,7 @@ impl Element for CodeElement {
             materialized_lines: 0,
             materialized_numbers: 0,
             lines: Vec::with_capacity(visible),
+            shapes: CodeShapes::default(),
         };
 
         let mut markers = Vec::new();
@@ -795,19 +896,16 @@ impl Element for CodeElement {
                 underline: None,
                 strikethrough: None,
             });
-            let mut number_materialized = false;
-            let num_line = window.text_system().shape_line_by_hash(
-                line_number_hash(number, num_color),
-                digits,
+            let (num_line, number_materialized) = shapes.numbers.shape(
+                number as u64,
+                |text| text.parse() == Ok(number),
                 self.font_size,
                 &self.runs,
-                None,
-                || {
-                    number_materialized = true;
-                    number.to_string().into()
-                },
+                window.text_system(),
+                || number.to_string().into(),
             );
             if number_materialized {
+                shapes.numbers_shaped += 1;
                 hits.materialized_numbers += 1;
             }
             let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
@@ -854,17 +952,11 @@ impl Element for CodeElement {
                             run.underline = Some(underline)
                         });
                     }
-                    let mut materialized = false;
-                    let shaped = window.text_system().shape_line_by_hash(
-                        line_content_hash(slice),
-                        len,
+                    let (shaped, materialized) = shapes.lines.shape_rope_line(
+                        slice,
                         self.font_size,
                         &self.runs,
-                        None,
-                        || {
-                            materialized = true;
-                            slice.to_string().into()
-                        },
+                        window.text_system(),
                     );
                     if materialized {
                         hits.materialized_lines += 1;
@@ -924,6 +1016,9 @@ impl Element for CodeElement {
                 hits.lines.push(None);
             }
         }
+        shapes.lines.end_frame();
+        shapes.numbers.end_frame();
+        hits.shapes = shapes;
         *self.hits.borrow_mut() = hits;
 
         Some(CodePrepaint {
@@ -1363,9 +1458,9 @@ mod tests {
     #[test]
     fn identical_lines_at_different_rows_share_a_content_hash() {
         let rope = ropey::Rope::from_str("let a = 1;\nlet b = 2;\nlet a = 1;\n");
-        let first = line_content_hash(rope.byte_slice(0..10));
-        let third = line_content_hash(rope.byte_slice(22..32));
-        let second = line_content_hash(rope.byte_slice(11..21));
+        let first = line_content_hash(&rope.byte_slice(0..10).to_string());
+        let third = line_content_hash(&rope.byte_slice(22..32).to_string());
+        let second = line_content_hash(&rope.byte_slice(11..21).to_string());
         assert_eq!(first, third, "same content must reuse one layout");
         assert_ne!(first, second, "different content must not collide here");
     }
@@ -1391,9 +1486,8 @@ mod tests {
             if end == start {
                 continue;
             }
-            let slice = rope.byte_slice(start..end);
-            let key = (line_content_hash(slice), end - start);
-            let text = slice.to_string();
+            let text = rope.byte_slice(start..end).to_string();
+            let key = (line_content_hash(&text), end - start);
             if let Some(previous) = seen.insert(key, text.clone()) {
                 assert_eq!(previous, text, "row {row} shares a key with another text");
             }
@@ -1409,10 +1503,10 @@ mod tests {
             let at = rope.len_bytes();
             rope.insert(rope.byte_to_char(at), chunk);
         }
-        let contiguous = ropey::Rope::from_str("abcdefghijklmnopqr");
+        let read: String = rope.byte_slice(..).chunks().collect();
         assert_eq!(
-            line_content_hash(rope.byte_slice(..)),
-            line_content_hash(contiguous.byte_slice(..))
+            line_content_hash(&read),
+            line_content_hash("abcdefghijklmnopqr")
         );
     }
 
