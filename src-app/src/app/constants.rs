@@ -19,7 +19,7 @@ const SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.10;
 #[cfg(target_os = "linux")]
 const LINUX_DARK_SHELL_OPACITY: f32 = 0.72;
 #[cfg(target_os = "linux")]
-const LINUX_LIGHT_SHELL_OPACITY: f32 = 0.62;
+const LINUX_LIGHT_SHELL_OPACITY: f32 = 0.80;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
