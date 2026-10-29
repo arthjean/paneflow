@@ -166,7 +166,7 @@ jobs:
             exit 1
           fi
           if [ "$pinned_zig" != "$upstream_zig" ]; then
-            echo "::error::this commit needs Zig $upstream_zig but the manifest pins $pinned_zig. A Zig bump also moves windows_zig_archive_url, its checksums, windows_zig_image_base, and windows_zig_dll_characteristics, so re-pin Zig by hand first."
+            echo "::error::this commit needs Zig $upstream_zig but the manifest pins $pinned_zig. A Zig bump also moves windows_zig_archive_url, its checksums, windows_zig_image_base, and windows_zig_dll_characteristics, so re-pin Zig on a branch and dispatch the bump from it, as native/libghostty/README.md describes under Bumping Zig."
             exit 1
           fi
           echo "Zig $pinned_zig still applies"

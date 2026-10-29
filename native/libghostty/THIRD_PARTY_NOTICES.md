@@ -7,21 +7,21 @@ dataset, and generated template distributed through that archive. It is
 included in the tar, AppImage, deb, rpm, and MSI packages.
 
 Pinned Ghostty source:
-`b699ea79f4b881421b4b3055abc16a0957d76beb`.
+`83fb95624b0439ee660c2679b43b38c8b63769cd`.
 
 Reviewed archive fingerprints:
 
-- `x86_64-unknown-linux-gnu`: `4ddf1fd32d26073fd5ea478c2255abfa699fad96b4d3a21228cc9b62627cfa8e`
-- `aarch64-unknown-linux-gnu`: `6eac80d043ef191ea5bfae60afe0e13b07df51734f5c97ae4dc1ee041c94efa9`
-- `aarch64-apple-darwin`: `7861b063981ed1070964e99ebc7dd54992ba76141d074776b3471deb1dcb623a`
-- `x86_64-pc-windows-msvc`: `6e77fdf4a4cb525735c0e1fc2acd611a0d66c2babb47c16efb990ce4a405e001`
+- `x86_64-unknown-linux-gnu`: `0ddbfbe65e50f78b607c8579eec1f8460cc0325f8f96f97122624f1af93ff352`
+- `aarch64-unknown-linux-gnu`: `e0785699148612d9443c5584f9b5f390450dcd56420dde74c8c3ad2ba4897d91`
+- `aarch64-apple-darwin`: `816da087126fd024107e9a7b4202ff9b68b768f7e416926119ba6ee4649d2ce3`
+- `x86_64-pc-windows-msvc`: `c949db7da4f272f5fc2990a205b35a118f111732cd99e9b2ba6f9713c3fbcc9b`
 
 ## Artifact member inventory
 
 The reviewed archives contain equivalent compiled components. Linux and macOS
 use `.o` members while the normalized MSVC archive uses `.obj`; the
-Zig-generated Highway member is named `libhighway_zcu.o` on Linux and macOS and
-`highway_zcu.obj` on Windows.
+Zig-generated Ghostty and Highway members are named `ghostty-vt-static_zcu` and
+`highway_zcu` on every target.
 Ghostty modifications and generated glue remain covered by Ghostty's MIT
 license in addition to the upstream components identified below.
 
@@ -31,22 +31,22 @@ license in addition to the upstream components identified below.
 | `codepoint_width.o` / `codepoint_width.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `index_of.o` / `index_of.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `vt.o` / `vt.obj` | Ghostty, Highway, simdutf, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `libghostty-vt-static_zcu.o` / `ghostty-vt-static_zcu.obj` | Ghostty, Zig, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
+| `ghostty-vt-static_zcu.o` / `ghostty-vt-static_zcu.obj` | Ghostty, Zig, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
 | `compiler_rt.o` / `compiler_rt.obj` | Zig compiler runtime | MIT |
 | `simdutf.o` / `simdutf.obj` | simdutf, LLVM libc++ headers | (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `abort.o` / `abort.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
 | `per_target.o` / `per_target.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
 | `targets.o` / `targets.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
-| `libhighway_zcu.o` / `highway_zcu.obj` | Ghostty, Zig, Highway | MIT; Apache-2.0 OR BSD-3-Clause |
+| `highway_zcu.o` / `highway_zcu.obj` | Ghostty, Zig, Highway | MIT; Apache-2.0 OR BSD-3-Clause |
 | `wuffs-v0.4.o` / `wuffs-v0.4.obj` | wuffs | Apache-2.0 OR MIT |
 
 ## Component license inventory
 
 | Component | Pinned version or provenance | Upstream license expression |
 |---|---|---|
-| Ghostty / libghostty-vt | `b699ea79f4b881421b4b3055abc16a0957d76beb` | MIT |
-| Zig compiler runtime and generated Zig code | `0.16.0` | MIT |
-| uucode | `0.2.0@9d55524551411b493cca41ca06363625d90aff1e` | MIT |
+| Ghostty / libghostty-vt | `83fb95624b0439ee660c2679b43b38c8b63769cd` | MIT |
+| Zig compiler runtime and generated Zig code | `0.17.0` | MIT |
+| uucode | `0.2.0@ea62149739404a73c202b48a33bf6dd2af4bd9b0` | MIT |
 | Unicode Character Database | `18.0.0`, bundled through uucode | Unicode-3.0 |
 | Bjoern Hoehrmann UTF-8 DFA | bundled through uucode `0.2.0` | MIT |
 | X.Org rgb data | `rgb-1.1.1@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e` | MIT |
@@ -54,7 +54,7 @@ license in addition to the upstream components identified below.
 | simdutf | compiled amalgamation reports `9.0.0` | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | Highway | `1.2.0@66486a10623fa0d72fe91260f96c892e41aceb06` | Apache-2.0 OR BSD-3-Clause |
 | wuffs | `0.4.0-alpha.9+3837.20240914@7411f488fe2e2c205c3d3b3d28638b7356522930` | Apache-2.0 OR MIT |
-| LLVM libc++ headers bundled with Zig | Zig `0.16.0` toolchain snapshot | Apache-2.0 WITH LLVM-exception |
+| LLVM libc++ headers bundled with Zig | Zig `0.17.0` toolchain snapshot | Apache-2.0 WITH LLVM-exception |
 
 For wuffs, this distribution exercises the MIT option; the Apache License
 2.0 alternative is reproduced under Highway below. For simdutf, this
@@ -66,7 +66,7 @@ ISA detection code. Both upstream Highway alternatives are reproduced.
 
 ### Ghostty / libghostty-vt
 
-Source: <https://github.com/ghostty-org/ghostty/tree/b699ea79f4b881421b4b3055abc16a0957d76beb>
+Source: <https://github.com/ghostty-org/ghostty/tree/83fb95624b0439ee660c2679b43b38c8b63769cd>
 
 ```text
 MIT License
@@ -94,7 +94,7 @@ SOFTWARE.
 
 ### Zig compiler runtime and generated Zig code
 
-Source: <https://github.com/ziglang/zig/tree/0.16.0>
+Source: <https://github.com/ziglang/zig/tree/0.17.0>
 
 Ghostty enables `bundle_compiler_rt`, which places `compiler_rt.o` or
 `compiler_rt.obj` in each distributed archive.
@@ -125,7 +125,7 @@ THE SOFTWARE.
 
 ### uucode
 
-Source: <https://github.com/jacobsandlund/uucode/tree/9d55524551411b493cca41ca06363625d90aff1e>
+Source: <https://github.com/jacobsandlund/uucode/tree/ea62149739404a73c202b48a33bf6dd2af4bd9b0>
 
 ```text
 # uucode license
@@ -162,7 +162,7 @@ See [./licenses](./licenses) for licenses of code being used in the repo:
 
 ### Unicode Character Database
 
-Source: Unicode Character Database 18.0.0, bundled through uucode 0.2.0 at `9d555245`.
+Source: Unicode Character Database 18.0.0, bundled through uucode 0.2.0 at `ea621497`.
 
 ```text
 https://www.unicode.org/license.txt
@@ -210,7 +210,7 @@ authorization of the copyright holder.
 
 ### Bjoern Hoehrmann UTF-8 DFA
 
-Source: <https://github.com/jacobsandlund/uucode/blob/9d55524551411b493cca41ca06363625d90aff1e/licenses/LICENSE_Bjoern_Hoehrmann>
+Source: <https://github.com/jacobsandlund/uucode/blob/ea62149739404a73c202b48a33bf6dd2af4bd9b0/licenses/LICENSE_Bjoern_Hoehrmann>
 
 ```text
 From https://bjoern.hoehrmann.de/utf-8/decoder/dfa/
@@ -672,7 +672,7 @@ above.
 
 ### LLVM libc++ headers
 
-Source: libc++ headers distributed with Zig 0.16.0.
+Source: libc++ headers distributed with Zig 0.17.0.
 
 The complete upstream `LICENSE.TXT` follows. It includes the Apache License
 2.0, the LLVM exception, and the legacy third-party license notices carried

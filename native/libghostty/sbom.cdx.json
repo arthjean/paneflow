@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:4d5095de-df50-4d58-bda5-7102569eca0a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-07T00:00:00Z",
+    "timestamp": "2026-10-28T00:00:00Z",
     "authors": [
       {
         "name": "Strivex"
@@ -14,7 +14,7 @@
       "type": "application",
       "bom-ref": "paneflow-libghostty-windows",
       "name": "Paneflow libghostty Windows integration",
-      "version": "0.1.0-dev+b699ea79f",
+      "version": "0.1.0-dev+83fb95624",
       "properties": [
         {
           "name": "paneflow:rust-target",
@@ -26,7 +26,7 @@
         },
         {
           "name": "paneflow:zig-version",
-          "value": "0.16.0"
+          "value": "0.17.0"
         }
       ]
     }
@@ -34,14 +34,14 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "libghostty-vt@b699ea79f4b881421b4b3055abc16a0957d76beb",
+      "bom-ref": "libghostty-vt@83fb95624b0439ee660c2679b43b38c8b63769cd",
       "name": "libghostty-vt",
-      "version": "0.1.0-dev+b699ea79f",
-      "purl": "pkg:github/ghostty-org/ghostty@b699ea79f4b881421b4b3055abc16a0957d76beb",
+      "version": "0.1.0-dev+83fb95624",
+      "purl": "pkg:github/ghostty-org/ghostty@83fb95624b0439ee660c2679b43b38c8b63769cd",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "6e77fdf4a4cb525735c0e1fc2acd611a0d66c2babb47c16efb990ce4a405e001"
+          "content": "c949db7da4f272f5fc2990a205b35a118f111732cd99e9b2ba6f9713c3fbcc9b"
         }
       ],
       "licenses": [
@@ -66,9 +66,9 @@
     },
     {
       "type": "framework",
-      "bom-ref": "zig-runtime@0.16.0",
+      "bom-ref": "zig-runtime@0.17.0",
       "name": "Zig compiler runtime",
-      "version": "0.16.0",
+      "version": "0.17.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -77,9 +77,9 @@
     },
     {
       "type": "library",
-      "bom-ref": "uucode@9d55524551411b493cca41ca06363625d90aff1e",
+      "bom-ref": "uucode@ea62149739404a73c202b48a33bf6dd2af4bd9b0",
       "name": "uucode",
-      "version": "0.2.0+9d555245",
+      "version": "0.2.0+ea621497",
       "licenses": [
         {
           "expression": "MIT"
@@ -166,9 +166,9 @@
     },
     {
       "type": "framework",
-      "bom-ref": "llvm-libcxx-headers@zig-0.16.0",
+      "bom-ref": "llvm-libcxx-headers@zig-0.17.0",
       "name": "LLVM libc++ headers",
-      "version": "zig-0.16.0-bundled",
+      "version": "zig-0.17.0-bundled",
       "licenses": [
         {
           "expression": "Apache-2.0 WITH LLVM-exception"
@@ -180,9 +180,9 @@
     {
       "ref": "paneflow-libghostty-windows",
       "dependsOn": [
-        "libghostty-vt@b699ea79f4b881421b4b3055abc16a0957d76beb",
-        "zig-runtime@0.16.0",
-        "uucode@9d55524551411b493cca41ca06363625d90aff1e",
+        "libghostty-vt@83fb95624b0439ee660c2679b43b38c8b63769cd",
+        "zig-runtime@0.17.0",
+        "uucode@ea62149739404a73c202b48a33bf6dd2af4bd9b0",
         "unicode-character-database@18.0.0",
         "bjoern-hoehmann-utf8-dfa@uucode-0.2.0",
         "xorg-rgb@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e",
@@ -190,7 +190,7 @@
         "simdutf@9.0.0",
         "highway@66486a10623fa0d72fe91260f96c892e41aceb06",
         "wuffs@7411f488fe2e2c205c3d3b3d28638b7356522930",
-        "llvm-libcxx-headers@zig-0.16.0"
+        "llvm-libcxx-headers@zig-0.17.0"
       ]
     }
   ]
