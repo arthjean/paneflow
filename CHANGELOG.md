@@ -7,10 +7,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Upgrade notes
 
+- **Sessions that outlive the update end as `Incompatible`.** The session host embeds the terminal engine, and a host started by the previous version cannot serve a desktop built on the new engine. Updating from inside Paneflow stops the host before restarting, so this only happens after an update made outside the app (a system package, Homebrew, or an MSI installed by hand) or when you choose **Keep sessions running** before updating. Each such session ends with `Retry` and `Stop host and restart`; choose `Stop host and restart` to start the new host, or let the sessions finish first.
 - **Listing `Noto Color Emoji` in `font_fallbacks` no longer brings emoji back on Linux.** Distributions such as Fedora 43 and later ship that font only in the COLRv1 format, which the Linux renderer cannot draw, so emoji cells stay blank. The setting used to help by accident: it removed the font from the font database, which let a monochrome emoji font such as Noto Emoji draw the emoji instead. The font now stays loaded, as with the default settings. With Noto Emoji installed, uninstalling the COLRv1 font or hiding it from fontconfig brings monochrome emoji back.
 
 ### Changed
 
+- **The terminal engine moves to Ghostty 1.4.0.** The pinned `libghostty-vt` archive moves from Ghostty `b699ea79` to the `v1.4.0` tag (`83fb9562`), built with Zig 0.17.0.
+- **A soft reset (DECSTR, `CSI ! p`) now resets the terminal state a program left behind**, where it used to be ignored: cursor and keyboard modes, origin and insert modes, line wrap, the scroll region and margins, text attributes, the cursor shape, and the 256-color palette, which returns to your theme's colors. The screen content and the cursor position stay.
+- **`CSI 19 t` is answered** with the screen size in characters (`CSI 9 ; rows ; columns t`).
+- **DECRQM answers `4` (permanently reset) for the twelve ANSI modes that xterm reports that way**, such as SRTM (mode 5) and GATM (mode 1), instead of `0` (not recognized).
+- **The OSC 7501 support query lists what Paneflow accepts.** `OSC 7501 ; ?` is now answered with `?:states=idle,working,done,blocked,error:kinds=permission,question,auth`, as revision 0.4 of the program status protocol specifies, instead of a bare `?`.
 - **Shortcuts on Windows follow the active keyboard layout.** Default and custom shortcuts are now resolved through the Windows keyboard mapper, so a chord on a shifted symbol is matched against the layout in use (AZERTY as well as US) instead of a fixed US mapping.
 - **Animations run at up to 30 frames per second in power-saving mode.** When the operating system reports a power-saving state, GPUI caps frame-by-frame animations, such as hover and sidebar transitions, at 30 per second. The agent spinner and keystroke echo keep their usual rate; a keystroke typed while such an animation runs can wait one 33 ms frame instead of a 16.7 ms one.
 
@@ -20,6 +26,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - **No more Vulkan panic when a surface is destroyed on Linux** ("SwapchainAcquireSemaphore still in use").
 - **No more crash on Windows when text contains U+2028 or U+2029**, the Unicode line and paragraph separators.
 - **A memory leak in the text system is fixed**: line wrappers no longer keep a text system alive after it is dropped.
+
+### Security
+
+- The terminal engine fixes three memory safety defects that Ghostty published on 2026-10-27:
+  - [GHSA-qjfx-r533-6vx3](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-qjfx-r533-6vx3): a use-after-free when the scrollback limit prunes the page that holds the cursor, which Paneflow's bounded scrollback could trigger on ordinary output.
+  - [GHSA-w9q4-5jvv-mcv4](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-w9q4-5jvv-mcv4): an invalid cursor style and hyperlink after a scrollback clear prunes the cursor's page, reachable with `CSI 22 J` or `CSI 2 J` at a shell prompt.
+  - [GHSA-jqr7-69mm-v35h](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-jqr7-69mm-v35h): a row count truncated to 16 bits when a very wide page is narrowed.
 
 ## [0.18.1] - 2026-10-28
 

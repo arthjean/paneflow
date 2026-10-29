@@ -34,7 +34,7 @@ manifest pins the reviewed archive hash for each target.
 ## CI and release
 
 The libghostty Linux workflow regenerates the static archive from the pinned
-Ghostty SHA with Zig 0.16.0, exports its directory through
+Ghostty SHA (`83fb9562`, the `v1.4.0` tag) with Zig 0.17.0, exports its directory through
 `PANEFLOW_LIBGHOSTTY_DIR`, and runs the native ABI, test, corpus, fuzz, stress,
 package, notice, and static-link checks. These are normal regression and
 supply-chain checks, not a separate product approval process.

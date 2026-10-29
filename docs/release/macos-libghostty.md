@@ -226,8 +226,8 @@ table is stale.
 
 | Input | Manifest key | Value |
 |---|---|---|
-| Ghostty source revision | `source_sha` | `b699ea79f4b881421b4b3055abc16a0957d76beb` |
-| Zig | `zig_version` | `0.16.0` |
+| Ghostty source revision | `source_sha` | `83fb95624b0439ee660c2679b43b38c8b63769cd` (`v1.4.0`) |
+| Zig | `zig_version` | `0.17.0` |
 | LLVM binutils | `macos_llvm_version` | `22.1.2-rust-1.96.1-stable` |
 | Rust target | `[targets."aarch64-apple-darwin"]` | `aarch64-apple-darwin` |
 | Zig target | `zig_target` | `aarch64-macos` |
@@ -235,12 +235,12 @@ table is stale.
 | Build seed | `macos_build_seed` | `0` |
 | Build jobs | `macos_build_jobs` | `1` |
 | Compiler CPUs | build flag (`taskset -c <first allowed CPU>`) | `1` |
-| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-b699ea79` |
-| Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.16.0` |
+| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-83fb9562` |
+| Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.17.0` |
 | Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
-| Archive digest | `archive_sha256` | `7861b063981ed1070964e99ebc7dd54992ba76141d074776b3471deb1dcb623a` |
+| Archive digest | `archive_sha256` | `816da087126fd024107e9a7b4202ff9b68b768f7e416926119ba6ee4649d2ce3` |
 | Header digest | `header_sha256` | `014813d7dba136ae6faecb515d23e7d7dc675672094174f91e2d84ab2bb55732` |
-| Bindings digest | `bindings_sha256` | `93a2e6832c794d15b0bc34f55336c9c56266d7834bc4472cf80c53277a56e7ea` |
+| Bindings digest | `bindings_sha256` | `1a4e44af5d9d647b12ec1cc5f680b0955560c820ccd34b7ea406a7f670a0f85a` |
 | Link name | `link_name` | `ghostty-vt` |
 | System libraries | `system_libraries` | none |
 | Build-info symbol | `build_info_symbol` | `ghostty_build_info` |
@@ -249,7 +249,7 @@ Required on the build host, all checked by preflight:
 
 | Tool | Required version | Source |
 |---|---|---|
-| `zig` | exactly `0.16.0` | ziglang.org release tarball, or any pinned install on `PATH` |
+| `zig` | exactly `0.17.0` | ziglang.org release tarball, or any pinned install on `PATH` |
 | `llvm-strip`, `llvm-ar`, `llvm-nm`, `llvm-objdump` | exactly `22.1.2-rust-1.96.1-stable` | `rustup component add llvm-tools`, or `PANEFLOW_LLVM_BIN` |
 | `git` | any | the Ghostty checkout must be a clean tree at `source_sha` |
 | `sha256sum`, `file`, `tar` | any | coreutils, file, tar |

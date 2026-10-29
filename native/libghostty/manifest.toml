@@ -18,9 +18,9 @@ header_sha256 = "014813d7dba136ae6faecb515d23e7d7dc675672094174f91e2d84ab2bb5573
 bindings_path = "native/libghostty/bindings.rs"
 bindings_sha256 = "1a4e44af5d9d647b12ec1cc5f680b0955560c820ccd34b7ea406a7f670a0f85a"
 notice_path = "native/libghostty/THIRD_PARTY_NOTICES.md"
-notice_sha256 = "87ebdad7422e888a8afb6657c4a51914b5202439c33e03c3a46da39cf399a36a"
+notice_sha256 = "c0f7ffd1cf83f44bd94a0fed28dfd315447f5d1aedcbcc5b50fa2f30d17c025f"
 sbom_path = "native/libghostty/sbom.cdx.json"
-sbom_sha256 = "bc1a3090b9ce18b9f3bf7c12cde1d32f63bf77163af72bc604dd033202f64818"
+sbom_sha256 = "7d4f80166de38bf24321f9b366fd97416be94b05f18d306105e328e0f7120973"
 api_version = "0.1.0"
 build_mode = "ReleaseFast"
 simd_profile = "upstream-default"
@@ -99,9 +99,9 @@ notice = "compiler_rt.o and generated Zig code bundled by the pinned Ghostty bui
 
 [[licenses]]
 component = "uucode"
-version = "0.2.0@9d55524551411b493cca41ca06363625d90aff1e"
+version = "0.2.0@ea62149739404a73c202b48a33bf6dd2af4bd9b0"
 license = "MIT"
-notice = "Copyright (c) 2026 Jacob Sandlund; statically compiled into libghostty-vt-static_zcu.o"
+notice = "Copyright (c) 2026 Jacob Sandlund; statically compiled into ghostty-vt-static_zcu.o"
 
 [[licenses]]
 component = "Unicode Character Database"

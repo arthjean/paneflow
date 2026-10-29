@@ -28,7 +28,7 @@ gh attestation verify prebuilt/<rust-target>/lib/<archive> --repo arthjean/panef
 ```
 
 The pinned source is Ghostty
-`b699ea79f4b881421b4b3055abc16a0957d76beb` built with Zig 0.16.0 in
+`83fb95624b0439ee660c2679b43b38c8b63769cd` (the `v1.4.0` tag) built with Zig 0.17.0 in
 `ReleaseFast`. `bindings.rs` is pregenerated from the pinned C header. Its
 normalized UTF-8 checksum is verified both in the workspace and in every
 prepared artifact. Regenerate bindings only from that exact header, then
@@ -191,7 +191,7 @@ ordinally sorted members with deterministic `llvm-ar rcD` mode. It deliberately
 does not replay the emitted `build-lib` command.
 Header and symbol inventories use the same ordinal, case-sensitive ordering,
 so hashes do not depend on the Windows locale. The build starts from empty
-caches at the fixed `C:\Users\Public\paneflow-libghostty-b699ea79` source
+caches at the fixed `C:\Users\Public\paneflow-libghostty-83fb9562` source
 path, which `build-info.txt` records; the build aborts if that path is
 unavailable or already occupied.
 
@@ -226,8 +226,9 @@ static plus reviewed system link directives.
 
 ## Bumping the pinned source
 
-`.github/workflows/libghostty-bump.yml` performs the re-pin. It runs weekly and
-on demand (`workflow_dispatch` accepts an explicit `source_sha`; `dry_run`
+`.github/workflows/libghostty-bump.yml` performs the re-pin. It runs on demand
+only, since `ae27f5ed` removed its weekly schedule (`workflow_dispatch`
+accepts an explicit `source_sha`; `dry_run`
 builds everything without publishing; `recipe_repin` rebuilds and republishes
 the archives at the current pin after a build recipe change, under a
 `libghostty-vt-<sha>-recipe-<paneflow sha>` tag that cannot collide with the
@@ -245,10 +246,34 @@ request: a pull request lane only checks a published archive against its
 manifest hash, and a bump commit writes that hash, so the pull request alone
 would be circular evidence.
 
+### Bumping Zig
+
 One pin the workflow deliberately refuses to move, checked in seconds before
-any build starts: **Zig.** A commit whose `minimum_zig_version` moved also
-needs a new distribution URL, its checksums, `windows_zig_image_base`, and
-`windows_zig_dll_characteristics`. Re-pin Zig by hand first.
+any build starts: **Zig.** A target commit whose `build.zig.zon`
+`minimum_zig_version` differs from the manifest's `zig_version` fails the
+`resolve` job. A Zig bump also moves the Windows distribution URL, its
+checksums, `windows_zig_image_base`, and `windows_zig_dll_characteristics`,
+which have to be measured on the official archives rather than trusted. The
+procedure is:
+
+1. On a feature branch, re-pin with `scripts/repin-libghostty-manifest.sh`:
+   `zig_version`, every `windows_zig_*` value (`sha256sum` on the downloaded
+   ZIP, source archive and `zig.exe`; `objdump -p` on `zig.exe` for the image
+   base and DLL characteristics), `macos_canonical_zig_path`, and the Zig
+   compiler runtime and libc++ header license versions.
+2. Set `ZIG_VERSION` in `libghostty-linux.yml`, `libghostty-macos.yml` and
+   `release.yml`, and the expected version in the
+   `paneflow-terminal-ghostty` toolchain identity test. The bump workflow
+   itself has no Zig literal: both `setup-zig` steps read `zig_version` from
+   the manifest through the `resolve` job.
+3. Adapt the three build recipes to any `zig build` CLI change, and prove the
+   Linux recipe locally with `--verify-reproducible --allow-hash-drift` in a
+   throwaway worktree.
+4. Push the branch and dispatch the bump from it, first as a dry run, then
+   for real:
+   `gh workflow run libghostty-bump.yml --ref <branch> -f source_sha=<sha> -f dry_run=true`.
+   The bot branch then sits on top of the feature branch, so the feature
+   branch fast-forwards onto it.
 
 `scripts/repin-libghostty-manifest.sh` performs the manifest edits and is the
 supported way to re-pin a field by hand. Every edit requires the key to already
