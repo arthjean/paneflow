@@ -134,7 +134,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING = 22,
   GHOSTTY_OSC_COMMAND_KITTY_CLIPBOARD_PROTOCOL = 23,
   GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL = 24,
-  GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL = 25,
+  GHOSTTY_OSC_COMMAND_HIERARCHICAL_CONTEXT = 25,
   GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION = 26,
 
   /**
@@ -272,7 +272,7 @@ typedef enum GHOSTTY_ENUM_TYPED {
  * Create a new OSC parser instance.
  *
  * Creates a new OSC (Operating System Command) parser using the provided
- * allocator. The parser must be freed using ghostty_vt_osc_free() when
+ * allocator. The parser must be freed using ghostty_osc_free() when
  * no longer needed.
  *
  * @param allocator Pointer to the allocator to use for memory management, or NULL to use the default allocator

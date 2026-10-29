@@ -256,6 +256,7 @@ pub(crate) const READ_DISCRIMINANTS: &[(&str, i64)] = discriminants![
     GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE,
     GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB,
     GhosttySysOption_GHOSTTY_SYS_OPT_DECODE_PNG,
+    GhosttyTerminalBoundary_GHOSTTY_TERMINAL_BOUNDARY_GROUND,
     GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
     GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE,
     GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING,

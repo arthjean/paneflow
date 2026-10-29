@@ -62,15 +62,7 @@ impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         let mut rest = bytes;
         if self.history_clear_pending {
-            let mut consumed = 0usize;
-            let result = unsafe {
-                sys::ghostty_terminal_vt_write_until_ground(
-                    self.terminal.raw(),
-                    rest.as_ptr(),
-                    rest.len(),
-                    &mut consumed,
-                )
-            };
+            let (result, consumed) = write_until_ground(self.terminal.raw(), rest);
             match result {
                 sys::GhosttyResult_GHOSTTY_SUCCESS => {
                     rest = rest.get(consumed..).unwrap_or_default();
@@ -78,7 +70,7 @@ impl DisplayTerminal {
                     self.write_history_clear()?;
                 }
                 sys::GhosttyResult_GHOSTTY_NO_VALUE => rest = &[],
-                other => check("terminal_vt_write_until_ground", other)?,
+                other => check("terminal_vt_write_until", other)?,
             }
         }
         unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), rest.as_ptr(), rest.len()) };
@@ -111,19 +103,11 @@ impl DisplayTerminal {
     }
 
     fn at_ground(&self) -> Result<bool> {
-        let mut consumed = 0usize;
-        let result = unsafe {
-            sys::ghostty_terminal_vt_write_until_ground(
-                self.terminal.raw(),
-                std::ptr::null(),
-                0,
-                &mut consumed,
-            )
-        };
+        let (result, _) = write_until_ground(self.terminal.raw(), &[]);
         if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
             return Ok(false);
         }
-        check("terminal_vt_write_until_ground", result)?;
+        check("terminal_vt_write_until", result)?;
         Ok(true)
     }
 
@@ -334,6 +318,28 @@ pub(crate) fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) 
     Ok(())
 }
 
+fn write_until_ground(terminal: sys::GhosttyTerminal, bytes: &[u8]) -> (sys::GhosttyResult, usize) {
+    let mut stop = sys::GhosttyTerminalWriteStop {
+        size: std::mem::size_of::<sys::GhosttyTerminalWriteStop>(),
+        consumed: 0,
+        reached: 0,
+        kind: 0,
+        introducer: 0,
+        end: 0,
+        byte: 0,
+    };
+    let result = unsafe {
+        sys::ghostty_terminal_vt_write_until(
+            terminal,
+            bytes.as_ptr(),
+            bytes.len(),
+            sys::GhosttyTerminalBoundary_GHOSTTY_TERMINAL_BOUNDARY_GROUND as u32,
+            &raw mut stop,
+        )
+    };
+    (result, stop.consumed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +437,20 @@ mod tests {
             .find(|cell| cell.character == 'R')
             .expect("the R cell");
         assert_eq!(red.foreground, crate::Color::Palette(1));
+    }
+
+    #[test]
+    fn at_ground_is_false_inside_an_unterminated_osc_and_true_after_its_terminator() {
+        let size = WindowSize::new(20, 3, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+        assert!(terminal.at_ground().expect("probe at start"));
+
+        terminal.feed(b"\x1b]0;half a title").expect("OSC prefix");
+        assert!(!terminal.at_ground().expect("probe inside the OSC"));
+
+        terminal.feed(b"\x1b\\").expect("ST terminator");
+        assert!(terminal.at_ground().expect("probe after ST"));
     }
 
     #[test]

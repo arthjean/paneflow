@@ -95,9 +95,9 @@ renumbering the addresses that followed, so path *length* leaks into the
 stripped object. The recipe therefore pins every path that reaches debug info:
 the pinned tree is exported to `macos_canonical_source_path`, the Zig
 executable and `lib/` tree are staged at `macos_canonical_zig_path` and invoked
-through `--zig-lib-dir`, and the Zig cache and install prefix are nested under
+with `ZIG_LIB_DIR` pointing at the staged `lib/`, and the Zig cache and install prefix are nested under
 the canonical source root. Both staged roots are removed on success and on
-failure. `--seed 0 -j1` pins Zig's build order, `taskset` pins the compiler to
+failure. `--seed=0 -j1` pins Zig's build order, `taskset` pins the compiler to
 one CPU (see the Linux section), `llvm-strip -S` strips each member, and
 `llvm-ar crsD --format=darwin` repacks them in `LC_ALL=C` basename order.
 
@@ -117,8 +117,8 @@ clean pinned checkout in an x64 Visual Studio environment:
 ```powershell
 .\scripts\build-libghostty-windows.ps1 `
   -SourceDir C:\path\to\ghostty `
-  -Zig C:\path\to\zig-0.16.0\zig.exe `
-  -ZigSourceArchive C:\path\to\zig-0.16.0.tar.xz
+  -Zig C:\path\to\zig-0.17.0\zig.exe `
+  -ZigSourceArchive C:\path\to\zig-0.17.0.tar.xz
 ```
 
 The reviewed recipe requires:
@@ -127,10 +127,10 @@ The reviewed recipe requires:
 |---|---|
 | Rust target | `x86_64-pc-windows-msvc` |
 | Zig target | `x86_64-windows-msvc` |
-| Zig | `0.16.0` |
-| Zig distribution | official x64 Windows ZIP, SHA-256 `68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e` |
-| Zig executable SHA-256 | `086ce9d47ba42f33a514e1a6e04eb1d4a8fa1d75e0868e0213caad447c91e864` |
-| Zig source library | official source archive, SHA-256 `43186959edc87d5c7a1be7b7d2a25efffd22ce5807c7af99067f86f99641bfdf` |
+| Zig | `0.17.0` |
+| Zig distribution | official x64 Windows ZIP, SHA-256 `b5663f69581dcf391293fbf16c06cb80d81d806545ce618b4d0bab7f0eb8c428` |
+| Zig executable SHA-256 | `f54b14f02a4d7d8ac62a94a0663486eb166bba3745d85b466238c1b93e723d46` |
+| Zig source library | official source archive, SHA-256 `b6c7f1728f043700d6529bac980800792f824256a9d2f1839b3d62beed0b8abd` |
 | Zig codegen image base | `0x0000000140000000` |
 | Zig PE DLL characteristics | `0x8160` |
 | MSVC toolset | `14.38.33130` |
@@ -138,21 +138,31 @@ The reviewed recipe requires:
 | Visual Studio LLVM tools | `19.1.5` |
 | Optimization | `ReleaseFast` |
 | SIMD | `true` |
-| Build seed and jobs | `--seed 0 -j1` |
+| Build seed and jobs | `--seed=0 -j1` |
 
 The upstream preparation command is:
 
-```text
-zig.exe build --zig-lib-dir <official-source-lib> --verbose --seed 0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
+```powershell
+$env:ZIG_LIB_DIR = '<official-source-lib>'
+zig.exe build --verbose --seed=0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
 ```
+
+Zig 0.17.0 removed the `--zig-lib-dir` option from `zig build` and accepts
+`--seed` only in its `--seed=N` form, so the recipe sets `ZIG_LIB_DIR` for the
+single `zig build` call and restores its previous value afterwards, including
+when the build fails. The variable reaches both the build configurator and
+the build maker that `zig build` now spawns.
 
 The CI downloads the manifest-pinned official Zig ZIP and source archive, then
 verifies both archives, the executable, and its PE metadata. The source archive
-provides the complete Zig library used by `--zig-lib-dir`; the Windows ZIP omits
-library test files that Zig 0.16.0 analyzes.
+provides the complete Zig library that `ZIG_LIB_DIR` points at, because the
+Windows ZIP is not a complete library tree: Zig 0.16.0 failed on library test
+files the ZIP omits, and the 0.17.0 ZIP still omits 119 files of the source
+archive's `lib/`, among them the test data of the new build maker under
+`lib/compiler/Maker/Fetch/git/testdata/`.
 
 Clean upstream builds are not bit-for-bit reproducible on Windows with
-`--seed 0 -j1`: the drift sits in the generated `ghostty-vt-static_zcu.obj`
+`--seed=0 -j1`: the drift sits in the generated `ghostty-vt-static_zcu.obj`
 code for `PageFormatter.formatWithState`. That drift is not Windows-specific:
 it comes from the Zig compiler's thread pool, which `zig build -j1` does not
 limit, and the Linux and macOS recipes remove it by pinning the compiler to

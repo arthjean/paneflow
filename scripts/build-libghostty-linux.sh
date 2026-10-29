@@ -196,7 +196,7 @@ build_one() {
   (
     cd "$SOURCE_DIR"
     ZIG_GLOBAL_CACHE_DIR="$cache/global" ZIG_LOCAL_CACHE_DIR="$cache/local" taskset -c "$BUILD_CPU" zig build \
-      --seed "$BUILD_SEED" \
+      --seed="$BUILD_SEED" \
       -j"$BUILD_JOBS" \
       -Demit-lib-vt=true \
       -Dtarget="$target" \

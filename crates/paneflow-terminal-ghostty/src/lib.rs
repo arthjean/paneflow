@@ -142,7 +142,7 @@ mod identity_tests {
         let identity = super::build_identity();
         assert_eq!(identity.source_sha.len(), 40);
         assert_eq!(identity.api_version, "0.1.0");
-        assert_eq!(identity.zig_version, "0.16.0");
+        assert_eq!(identity.zig_version, "0.17.0");
         assert_eq!(identity.optimization, "ReleaseFast");
         assert_eq!(identity.simd, "upstream-default");
     }

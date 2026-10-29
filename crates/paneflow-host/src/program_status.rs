@@ -411,6 +411,15 @@ mod tests {
     }
 
     #[test]
+    fn the_revision_0_4_example_shows_us_east_with_the_root_app_deploy() {
+        let mut records = ProgramStatusRecords::default();
+        records.apply(build_with_app("", "deploy"));
+        records.apply(report("us-east", ProgramStatusState::Working));
+
+        assert_eq!(records.inherited_app("us-east").as_deref(), Some("deploy"));
+    }
+
+    #[test]
     fn an_own_app_is_never_replaced_by_an_ancestor() {
         let mut records = ProgramStatusRecords::default();
         records.apply(build_with_app("build", "cargo"));
