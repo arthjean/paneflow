@@ -110,6 +110,10 @@ fn engine_axis(offset: f32, measured_cell: f32, cells: usize) -> (f32, u32) {
     (scaled, extent)
 }
 
+fn paste_needs_confirmation(text: &str, bracketed: bool) -> bool {
+    !bracketed && text.contains('\n')
+}
+
 fn multiline_paste_prompt(lines: usize) -> String {
     if lines == 1 {
         "Paste a line that runs immediately?".to_owned()
@@ -1238,7 +1242,7 @@ impl TerminalView {
             .session_backend()
             .modes()
             .contains(Modes::BRACKETED_PASTE);
-        if bracketed || !text.contains('\n') {
+        if !paste_needs_confirmation(&text, bracketed) {
             self.terminal.write_ghostty_paste(text, false, location);
             return;
         }
@@ -1514,8 +1518,8 @@ impl TerminalView {
 #[cfg(test)]
 mod tests {
     use super::{
-        engine_pointer, normalize_paste_text, paths_to_pty_text, pixel_scroll_allowed,
-        pixel_scroll_offset, smooth_scroll_applies, smooth_scroll_step,
+        engine_pointer, normalize_paste_text, paste_needs_confirmation, paths_to_pty_text,
+        pixel_scroll_allowed, pixel_scroll_offset, smooth_scroll_applies, smooth_scroll_step,
     };
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
@@ -1690,6 +1694,22 @@ mod tests {
             normalize_paste_text("line one\r\nline two\rline three\nline four"),
             "line one\nline two\nline three\nline four"
         );
+    }
+
+    #[test]
+    fn a_lone_carriage_return_paste_becomes_a_confirmed_line_break() {
+        for text in ["a\rb", "\r", "a\r", "\r\r\n", "a\r\rb\r\n"] {
+            let normalized = normalize_paste_text(text);
+            assert!(
+                !normalized.contains('\r'),
+                "{text:?} kept a carriage return"
+            );
+        }
+        let normalized = normalize_paste_text("a\rb");
+        assert_eq!(normalized, "a\nb");
+        assert!(paste_needs_confirmation(&normalized, false));
+        assert!(!paste_needs_confirmation(&normalized, true));
+        assert!(!paste_needs_confirmation("ab", false));
     }
 
     #[test]
