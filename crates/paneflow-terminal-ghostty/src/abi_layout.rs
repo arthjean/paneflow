@@ -150,6 +150,15 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         tag: sys::GhosttyTerminalUnknownSequenceTag,
         value: sys::GhosttyTerminalUnknownSequenceValue
     });
+    check!(layouts, sys::GhosttyTerminalWriteStop, "GhosttyTerminalWriteStop", {
+        size: usize,
+        consumed: usize,
+        reached: u32,
+        kind: sys::GhosttyTerminalStringKind,
+        introducer: sys::GhosttyTerminalStringIntroducer,
+        end: sys::GhosttyTerminalStringEnd,
+        byte: u8
+    });
     check!(layouts, sys::GhosttyTerminalModeConfig, "GhosttyTerminalModeConfig", {
         mode: sys::GhosttyMode,
         value: bool
@@ -249,11 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn a_shifted_apc_arm_or_mode_config_field_is_named_in_the_mismatch() {
+    fn a_shifted_apc_arm_mode_config_or_write_stop_field_is_named_in_the_mismatch() {
         for (layout, field) in [
             ("GhosttyTerminalUnknownStringSequence", "content"),
             ("GhosttyTerminalUnknownSequenceValue", "apc"),
             ("GhosttyTerminalModeConfig", "value"),
+            ("GhosttyTerminalWriteStop", "consumed"),
         ] {
             let mut layouts = pinned_layouts();
             let offset = &mut layouts[layout]["fields"][field]["offset"];
