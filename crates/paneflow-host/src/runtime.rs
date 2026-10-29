@@ -2610,8 +2610,33 @@ mod tests {
 
         assert_eq!(
             replies.try_iter().collect::<Vec<_>>(),
-            [b"\x1b]7501;?\x1b\\".to_vec()]
+            [b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\".to_vec()]
         );
+    }
+
+    #[test]
+    fn a_working_or_blocked_record_without_a_percentage_is_indeterminate() {
+        let (mut session, _messages, _replies) = status_session();
+
+        for (sequence, state) in [
+            (
+                &b"\x1b]7501;state=working\x1b\\"[..],
+                ghostty::ProgramStatusState::Working,
+            ),
+            (
+                &b"\x1b]7501;state=blocked:kind=question\x1b\\"[..],
+                ghostty::ProgramStatusState::Blocked,
+            ),
+        ] {
+            session.feed(sequence);
+            let status = session
+                .viewport_scan()
+                .expect("scan")
+                .program_status
+                .expect("root record");
+            assert_eq!(status.state, state);
+            assert_eq!(status.progress, None);
+        }
     }
 
     #[test]

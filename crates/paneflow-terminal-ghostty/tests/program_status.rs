@@ -12,6 +12,8 @@ use paneflow_terminal_ghostty::{
 };
 
 const STATUS_QUERY: &[u8] = b"\x1b]7501;?\x1b\\";
+const STATUS_SUPPORT_REPLY: &[u8] =
+    b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\";
 
 #[allow(
     clippy::unwrap_used,
@@ -130,7 +132,7 @@ fn only_a_terminal_with_program_status_answers_the_support_query() {
 
     let mut host = terminal(true);
     let events = feed(&mut host, STATUS_QUERY);
-    assert_eq!(replies(&events), [STATUS_QUERY.to_vec()]);
+    assert_eq!(replies(&events), [STATUS_SUPPORT_REPLY.to_vec()]);
 }
 
 #[test]
