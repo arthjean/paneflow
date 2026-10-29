@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Prouver les correctifs traversés et requalifier Linux et macOS",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 3
+      "stories_done": 5
     },
     {
       "id": "EP-004",
@@ -140,14 +140,14 @@
       "id": "US-008",
       "title": "Tester les trois correctifs de sécurité traversés",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
       "started_at": "2026-10-29",
-      "completed_at": null,
+      "completed_at": "2026-10-29",
       "reviewed_at": "2026-10-29"
     },
     {
@@ -196,14 +196,14 @@
       "id": "US-012",
       "title": "Passe visuelle Linux sur le nouveau moteur",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-010"
       ],
       "started_at": "2026-10-29",
-      "completed_at": null,
+      "completed_at": "2026-10-29",
       "reviewed_at": "2026-10-29"
     },
     {
