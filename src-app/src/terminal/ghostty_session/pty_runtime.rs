@@ -1823,6 +1823,7 @@ mod tests {
         assert!(hidden <= 10, "{hidden}");
     }
 
+    #[cfg(unix)]
     fn acknowledge(event: &GhosttyUiEvent) -> bool {
         match event {
             GhosttyUiEvent::Wakeup(_) => event.is_wakeup(),
