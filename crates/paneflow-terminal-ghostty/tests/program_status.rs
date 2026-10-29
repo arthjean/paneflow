@@ -153,6 +153,24 @@ fn a_full_reset_supersedes_pending_status_events_and_is_reported_last() {
 }
 
 #[test]
+fn a_soft_reset_keeps_program_status_and_raises_no_reset() {
+    let mut terminal = terminal(true);
+    let events = feed(
+        &mut terminal,
+        b"\x1b]7501;state=working:app=cargo\x1b\\\x1b[!p",
+    );
+
+    assert!(
+        !events.contains(&BackendEvent::Reset),
+        "DECSTR must not reach the reset callback: {events:?}"
+    );
+    let reports = reports(&events);
+    assert_eq!(reports.len(), 1, "{events:?}");
+    assert_eq!(reports[0].state, ProgramStatusState::Working);
+    assert_eq!(reports[0].app, "cargo");
+}
+
+#[test]
 fn a_full_reset_is_reported_without_program_status() {
     let mut terminal = terminal(false);
     let events = feed(&mut terminal, b"\x1bc");
