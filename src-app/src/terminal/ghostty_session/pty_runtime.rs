@@ -1271,6 +1271,7 @@ fn observe_windows_child_exit(
 fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildTerminationTarget) {
     if let Some(pid) = process_group_id {
         unsafe {
+            libc::kill(-pid, libc::SIGHUP);
             libc::kill(-pid, libc::SIGTERM);
         }
         let deadline = Instant::now() + SHUTDOWN_GRACE;
@@ -1285,7 +1286,6 @@ fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildT
         unsafe {
             libc::kill(-pid, libc::SIGKILL);
         }
-        let _ = child.kill();
         let _ = child.wait();
         return;
     }
@@ -2129,7 +2129,7 @@ mod tests {
     #[test]
     fn shutdown_escalates_to_sigkill_for_a_child_that_ignores_sigterm() {
         let (_master, mut child, pid) =
-            spawn_posix_lifecycle_probe("trap '' TERM; while :; do sleep 0.05; done");
+            spawn_posix_lifecycle_probe("trap '' HUP TERM; while :; do sleep 0.05; done");
         let group = verified_process_group(pid).expect("probe must lead its own process group");
         let started = Instant::now();
         terminate_child(child.as_mut(), Some(group));
