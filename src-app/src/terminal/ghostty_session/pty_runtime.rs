@@ -1823,13 +1823,46 @@ mod tests {
         assert!(hidden <= 10, "{hidden}");
     }
 
+    fn acknowledge(event: &GhosttyUiEvent) -> bool {
+        match event {
+            GhosttyUiEvent::Wakeup(_) => event.is_wakeup(),
+            GhosttyUiEvent::ServiceOutputReady(events) => {
+                events.acknowledge_service_output();
+                true
+            }
+            _ => false,
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_hidden_pane_reports_a_dev_server_url_within_a_second_and_a_half() {
         let (session, mut events_rx) = posix_shell_session();
-        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session
+                .write(b"printf 'shell%s\\n' -ready\n".to_vec())
+                .is_sent()
+        );
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < ready_deadline
+            && !session
+                .recent_output_lines()
+                .iter()
+                .any(|line| line.contains("shell-ready"))
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            session
+                .recent_output_lines()
+                .iter()
+                .any(|line| line.contains("shell-ready")),
+            "the shell never answered its readiness probe within 10 s"
+        );
         session.set_visible(false);
-        while events_rx.try_recv().is_ok() {}
+        while let Ok(event) = events_rx.try_recv() {
+            acknowledge(&event);
+        }
         let printed = Instant::now();
         assert!(
             session
@@ -1840,13 +1873,11 @@ mod tests {
         let mut detected = None;
         while Instant::now() < deadline && detected.is_none() {
             while let Ok(event) = events_rx.try_recv() {
-                if matches!(
-                    event,
-                    GhosttyUiEvent::Wakeup(_) | GhosttyUiEvent::ServiceOutputReady(_)
-                ) && session
-                    .recent_output_lines()
-                    .iter()
-                    .any(|line| line.contains("http://localhost:5173/"))
+                if acknowledge(&event)
+                    && session
+                        .recent_output_lines()
+                        .iter()
+                        .any(|line| line.contains("http://localhost:5173/"))
                 {
                     detected = Some(printed.elapsed());
                 }
