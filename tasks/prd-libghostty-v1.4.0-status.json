@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Re-pin libghostty-vt sur Ghostty v1.4.0 et porter le wrapper",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -84,57 +84,57 @@
       "id": "US-004",
       "title": "Publier les archives v1.4.0 par le workflow de bump",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-29",
+      "reviewed_at": "2026-10-29"
     },
     {
       "id": "US-005",
       "title": "Porter le wrapper sur ghostty_terminal_vt_write_until et étendre la validation ABI",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-29",
+      "reviewed_at": "2026-10-29"
     },
     {
       "id": "US-006",
       "title": "Aligner Paneflow sur le protocole OSC 7501 révision 0.4",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-29",
+      "reviewed_at": "2026-10-29"
     },
     {
       "id": "US-007",
       "title": "Aligner lanes, licences, notices, SBOM et documentation sur v1.4.0",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-28",
+      "completed_at": "2026-10-29",
+      "reviewed_at": "2026-10-29"
     },
     {
       "id": "US-008",

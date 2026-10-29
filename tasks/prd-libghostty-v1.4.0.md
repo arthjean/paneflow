@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-28 | Arthur Jean | PRD initial : re-pin de libghostty-vt de `b699ea79` (1.3.2-dev, Zig 0.16.0) vers le tag Ghostty `v1.4.0` (`83fb9562`, Zig 0.17.0). Adaptation des recettes à la CLI de Zig 0.17, portage de `vt_write_until_ground`, tests des trois correctifs de sécurité traversés, requalification Linux et macOS, Windows sur matériel réel en dernier epic. 4 epics, 14 stories. |
 | 1.1 | 2026-10-28 | Arthur Jean | Tout le travail Windows passe dans EP-004 : analyse de l'archive et de la recette Windows, jobs Windows de la CI, passe matérielle. Hors d'EP-004, il ne reste que les deux prérequis du run de bump (valeurs Zig Windows du manifeste, options de la recette PowerShell), faits depuis Fedora et vérifiés par la CI. EP-001 à EP-003 se réalisent entièrement sous Fedora. 4 epics, 15 stories. |
+| 1.2 | 2026-10-29 | Arthur Jean | Revue d'EP-002 : le critère de squash quitte US-005 pour la règle « Fusion et release », puisque la fusion attend EP-003, US-013 et US-014. La definition of done d'EP-002 n'exige plus que les jobs Linux et macOS de `run_tests.yml`, un échec Windows y étant consigné pour EP-004. La moitié « avant » du critère d'échec d'US-007 se prouve en rejouant le contrôle de pin, car la PR bot ne déclenche aucune lane. |
 
 ## Problem Statement
 
@@ -163,7 +164,7 @@ Key findings that informed this PRD:
 - **Pré-releases :** les anciennes ne sont jamais supprimées. `macos_qualification_package.yml:22-24,134` récupère encore celle de `0c2a290d`.
 - **Baselines :** une baseline refuse un arbre sale (`scripts/perf-gates.sh:61`). On commite d'abord, on enregistre ensuite, dans un commit séparé.
 - **OS de travail :** EP-001 à EP-003 se font sous Fedora. Tout le travail Windows est dans EP-004, et seule US-015 demande de démarrer Windows.
-- **Fusion et release :** le commit atomique n'est fusionné sur `main` qu'une fois les stories P0 d'EP-001 à EP-003, US-013 et US-014 en `IN_REVIEW` ou `DONE`, pour que `main` reste vert sur les quatre legs. Aucun tag de release avant la certification d'US-015.
+- **Fusion et release :** le commit atomique n'est fusionné sur `main` qu'une fois les stories P0 d'EP-001 à EP-003, US-013 et US-014 en `IN_REVIEW` ou `DONE`, pour que `main` reste vert sur les quatre legs. À la fusion, les commits d'US-001 à US-006 et le commit bot ne forment qu'un seul commit, `chore(libghostty): re-pin libghostty-vt to Ghostty v1.4.0 on Zig 0.17.0`, qui compile seul ; les stories suivantes restent des commits séparés. Aucun tag de release avant la certification d'US-015.
 
 ## Quality Gates
 
@@ -261,7 +262,7 @@ Publier les archives `v1.4.0`, porter le wrapper sur la nouvelle API d'écriture
 - `native/libghostty/manifest.toml` fige `83fb95624b0439ee660c2679b43b38c8b63769cd`.
 - La pré-release `libghostty-vt-83fb9562…` porte quatre archives attestées.
 - Le commit atomique compile et passe les quatre gates sous Linux.
-- Les lanes `libghostty-linux.yml`, `libghostty-macos.yml` et `run_tests.yml` sont vertes sur la PR.
+- Les lanes `libghostty-linux.yml` et `libghostty-macos.yml`, et les jobs Linux et macOS de `run_tests.yml`, sont verts sur la PR. Un job Windows en échec y est consigné et relève d'US-013 ou US-014.
 - `git grep b699ea79` ne renvoie plus que de l'historique.
 
 #### US-004: Publier les archives v1.4.0 par le workflow de bump
@@ -304,7 +305,6 @@ Publier les archives `v1.4.0`, porter le wrapper sur la nouvelle API d'écriture
 - [ ] Given un terminal à qui on envoie la moitié d'une séquence `OSC 0` (sans terminateur), when on appelle `at_ground`, then il renvoie faux. Une fois le terminateur `ST` envoyé, il renvoie vrai. Le test vit dans les tests du wrapper.
 - [ ] Given un effacement d'historique différé (`CSI 3 J`) au milieu d'un lot qui finit dans une séquence, when le lot est consommé, then l'historique n'est effacé qu'après le retour au sol. Les tests existants du chemin différé restent verts.
 - [ ] Échec : given un JSON de layout altéré qui décale `GhosttyTerminalWriteStop.consumed`, when la validation tourne, then elle renvoie `AbiMismatch` en nommant la struct et le champ. Testé sur une copie altérée, selon le motif existant.
-- [ ] Given la fusion sur `main`, when la PR est fusionnée, then les commits d'US-001 à US-006 et le commit bot ne forment qu'un seul commit, `chore(libghostty): re-pin libghostty-vt to Ghostty v1.4.0 on Zig 0.17.0`, qui compile seul.
 
 #### US-006: Aligner Paneflow sur le protocole OSC 7501 révision 0.4
 **Description:** As a utilisateur qui lance des programmes compatibles OSC 7501, I want que le host réponde à la requête de support avec la liste des états et des genres de la révision 0.4 so that un programme sache exactement ce que Paneflow accepte, et que les tests de Paneflow décrivent le moteur réellement embarqué.
@@ -346,7 +346,7 @@ Publier les archives `v1.4.0`, porter le wrapper sur la nouvelle API d'écriture
   - sous « Changed », DECSTR, CSI 19 t, DECRQM pour les modes ANSI non pris en charge et la réponse OSC 7501 révision 0.4 ;
   - sous « Upgrade notes », la puce existante « Sessions that outlive the update end as `Incompatible` » (modèle : section 0.17.7).
 - [ ] Échec : given une notice ou un SBOM modifié sans hash à jour, when `cargo build` s'exécute, then `build.rs` refuse en nommant le fichier (test existant gardé vert).
-- [ ] Échec : given la lane Linux avant la mise à jour de `GHOSTTY_SHA`, when elle s'exécute sur la PR, then son contrôle de pin (`libghostty-linux.yml:121-135`) échoue. Après la mise à jour, il passe.
+- [ ] Échec : given le contrôle de pin de la lane Linux (`libghostty-linux.yml:121-135`) rejoué localement avec l'ancien `GHOSTTY_SHA` contre le manifeste du commit bot, when il s'exécute, then il échoue en nommant `source_sha`. La PR bot ne déclenche aucune lane, d'où ce rejeu. Sur la PR de la feature, après la mise à jour, la lane passe ce contrôle.
 
 ---
 
