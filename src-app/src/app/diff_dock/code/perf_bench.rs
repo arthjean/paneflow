@@ -1373,6 +1373,24 @@ mod tests {
     }
 
     #[test]
+    fn the_platform_text_system_shapes_unicode_line_and_paragraph_separators() {
+        let Some((platform, text_system)) = platform_text_system() else {
+            return;
+        };
+        let font = editor_font();
+        let rows: Vec<SharedString> = ["a\u{2028}b", "\u{2029}", "agent \u{2028}\u{2029} output"]
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
+        let width = shape_rows(&text_system, &font, &rows);
+        assert!(
+            width.is_finite() && width >= 0.0,
+            "a line holding U+2028 or U+2029 must shape to a finite width, got {width}"
+        );
+        drop(platform);
+    }
+
+    #[test]
     fn ascii_rows_are_distinct_and_the_advertised_width() {
         let first = ascii_row(1, 0);
         let second = ascii_row(1, 1);
