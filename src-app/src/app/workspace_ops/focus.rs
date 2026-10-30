@@ -1,6 +1,5 @@
 use gpui::{Context, Focusable, Window};
 
-use super::WorkspaceFocusTarget;
 use crate::PaneFlowApp;
 use crate::layout::{FocusDirection, FocusNav, LayoutTree};
 use crate::{FocusDown, FocusLeft, FocusReturn, FocusRight, FocusUp, JumpNextWaiting};
@@ -145,48 +144,21 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.jump_next_session_where(
-            |s| *s == crate::ai_types::AgentState::WaitingForInput,
-            window,
+        let ids: Vec<u64> = crate::app::sidebar::agents::awaiting_agent_surfaces(
+            &self.workspaces,
+            self.active_space.as_ref(),
             cx,
-        );
-    }
-
-    pub(crate) fn jump_next_session_where(
-        &mut self,
-        state_matches: impl Fn(&crate::ai_types::AgentState) -> bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mut order: Vec<(usize, gpui::Entity<crate::pane::Pane>, u64)> = Vec::new();
-        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            let matching: std::collections::HashSet<u64> = ws
-                .agent_sessions
-                .values()
-                .filter(|s| state_matches(&s.state))
-                .filter_map(|s| s.surface_id)
-                .collect();
-            if matching.is_empty() {
-                continue;
-            }
-            for pane in ws.collect_panes() {
-                if let Some(t) = pane.read(cx).active_terminal_opt() {
-                    let sid = t.entity_id().as_u64();
-                    if matching.contains(&sid) {
-                        order.push((ws_idx, pane.clone(), sid));
-                    }
-                }
-            }
-        }
-        let ids: Vec<u64> = order.iter().map(|(_, _, sid)| *sid).collect();
+        )
+        .into_iter()
+        .filter(|&surface_id| {
+            crate::app::ipc_handler::find_pane_by_surface_id(&self.workspaces, surface_id, cx)
+                .is_some()
+        })
+        .collect();
         let Some(next) = next_in_cycle(&ids, self.jump_cursor) else {
             return;
         };
-        let Some((ws_idx, pane, sid)) = order.into_iter().find(|(_, _, s)| *s == next) else {
-            return;
-        };
-        self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
-        self.jump_cursor = Some(sid);
+        self.activate_attention_surface(next, window, cx);
     }
 }
 

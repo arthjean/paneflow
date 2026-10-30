@@ -1,3 +1,4 @@
+pub(crate) mod agents;
 pub(crate) mod context_menu;
 pub(crate) mod customize_menu;
 mod drop;

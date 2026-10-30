@@ -70,6 +70,10 @@ impl AgentCompletionNotification {
         self.unread_count_for(surfaces) > 0
     }
 
+    pub(crate) fn is_unread_surface(&self, surface_id: u64) -> bool {
+        self.unread.contains(&Some(surface_id))
+    }
+
     pub(crate) fn unread_count(&self) -> usize {
         self.unread.len()
     }
