@@ -182,6 +182,7 @@ struct PaneFlowApp {
     sidebar_filter_hovered: bool,
     sidebar_row_motion: std::cell::RefCell<app::sidebar::SidebarRowMotion>,
     agents_section: std::cell::RefCell<app::sidebar::AgentsSection>,
+    agents_resize_focus: FocusHandle,
     rename_focus_live: bool,
     pending_config:
         std::sync::Arc<std::sync::Mutex<Option<paneflow_config::schema::PaneFlowConfig>>>,

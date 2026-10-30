@@ -1388,20 +1388,23 @@ pub(crate) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        label: "Show the Agents section in the sidebar",
+        icon: None,
+        keywords: "agents attention appearance hide",
+        needs: Needs::Always,
+        kind: Kind::Toggle {
+            read: |app| app.cached_config.sidebar_show.agents_enabled(),
+            write: |app, next, cx| sidebar_show_toggle(app, "agents", next, cx),
+        },
+    },
+    Command {
         label: "Expand the Agents section in the sidebar",
         icon: None,
         keywords: "agents collapse fold attention",
         needs: Needs::Always,
         kind: Kind::Toggle {
             read: |app| !app.agents_section.borrow().collapsed(),
-            write: |app, next, cx| {
-                app.agents_section.borrow_mut().set_collapsed(
-                    !next,
-                    std::time::Instant::now(),
-                    !crate::ui_primitives::reduce_motion(),
-                );
-                cx.notify();
-            },
+            write: |app, next, cx| app.set_agents_section_collapsed(!next, cx),
         },
     },
     Command {

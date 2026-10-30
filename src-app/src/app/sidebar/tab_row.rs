@@ -472,6 +472,7 @@ mod tests {
             diffstat: Some(diffstat),
             pr: Some(false),
             indent_guide: Some(false),
+            agents: None,
         }
     }
 

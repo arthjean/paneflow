@@ -1,18 +1,29 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui::{App, MouseDownEvent, MouseMoveEvent, Point, ScrollHandle, Task, rgb};
+use gpui::{
+    App, CursorStyle, DispatchPhase, FocusHandle, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Orientation, Point, ScrollHandle, Task, canvas, rgb,
+};
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
 use super::lane::{mark_shimmer_drawn, render_lane};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::window_state::AgentsSectionState;
 
 pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
 pub(super) const AGENTS_TREE_MIN_HEIGHT: f32 = 120.;
 const AGENTS_LIST_BOTTOM_PADDING: f32 = 4.;
 const AGENTS_HEIGHT_CAP: f32 = 330.;
+const AGENTS_RESIZE_FLOOR: f32 =
+    AGENTS_HEADER_HEIGHT + AGENT_ROW_HEIGHT + AGENTS_LIST_BOTTOM_PADDING;
+const AGENTS_RESIZE_MAX: f32 = 620.;
+const AGENTS_RESIZE_HIT_HEIGHT: f32 = 9.;
+const AGENTS_RESIZE_STEP: f32 = 16.;
+const AGENTS_RESIZE_FOCUS_ALPHA: f32 = 0.35;
+const AGENTS_RESIZE_GROUP: &str = "agents-resize-group";
 const AGENTS_EMPTY_HEIGHT: f32 = 32.;
 const AGENTS_EMPTY_INSET: f32 = 15.;
 const AGENT_ROW_HEIGHT: f32 =
@@ -26,10 +37,32 @@ const NO_STATUS_GRACE: Duration = Duration::from_secs(3);
 const AGENTS_TOGGLE_GROUP: &str = "agents-section-toggle-group";
 
 type PickAgent = Rc<dyn Fn(u64, &mut Window, &mut App)>;
+type ResizeAgents = Rc<dyn Fn(AgentsResizeInput, &mut Window, &mut App)>;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum AgentsResizeInput {
+    Press(f32),
+    Drag(f32),
+    Release,
+    Fit,
+    Step(f32),
+    Floor,
+    Ceiling,
+    Leave,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AgentsResizeDrag {
+    anchor_y: f32,
+    anchor_height: f32,
+    ceiling: f32,
+}
 
 #[derive(Default)]
 pub(crate) struct AgentsSection {
     collapsed: bool,
+    height: Option<f32>,
+    resize_drag: Option<AgentsResizeDrag>,
     turn_from: f32,
     turn_started: Option<Instant>,
     grace_wake: Option<(Instant, Task<()>)>,
@@ -39,6 +72,83 @@ pub(crate) struct AgentsSection {
 }
 
 impl AgentsSection {
+    pub(crate) fn restored(state: AgentsSectionState) -> Self {
+        Self {
+            collapsed: state.collapsed,
+            height: state.height,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn persisted(&self) -> AgentsSectionState {
+        AgentsSectionState {
+            height: self.height,
+            collapsed: self.collapsed,
+        }
+    }
+
+    fn shown_height(&self) -> f32 {
+        AGENTS_HEADER_HEIGHT + f32::from(self.scroll.bounds().size.height)
+    }
+
+    fn available_height(&self, tree: &ScrollHandle) -> f32 {
+        self.shown_height() + f32::from(tree.bounds().size.height)
+    }
+
+    fn resize_within(
+        &mut self,
+        input: AgentsResizeInput,
+        natural: f32,
+        tree: &ScrollHandle,
+    ) -> bool {
+        let ceiling = agents_resize_ceiling(natural, self.available_height(tree));
+        self.resize(input, self.shown_height(), ceiling)
+    }
+
+    fn resize(&mut self, input: AgentsResizeInput, shown: f32, ceiling: f32) -> bool {
+        let bounded =
+            |height: f32| height.clamp(AGENTS_RESIZE_FLOOR, ceiling.max(AGENTS_RESIZE_FLOOR));
+        match input {
+            AgentsResizeInput::Press(y) => {
+                self.resize_drag = Some(AgentsResizeDrag {
+                    anchor_y: y,
+                    anchor_height: shown,
+                    ceiling,
+                });
+                false
+            }
+            AgentsResizeInput::Drag(y) => {
+                let Some(drag) = self.resize_drag else {
+                    return false;
+                };
+                self.height = Some(
+                    (drag.anchor_height + drag.anchor_y - y)
+                        .clamp(AGENTS_RESIZE_FLOOR, drag.ceiling.max(AGENTS_RESIZE_FLOOR)),
+                );
+                false
+            }
+            AgentsResizeInput::Release => self.resize_drag.take().is_some(),
+            AgentsResizeInput::Fit => {
+                self.resize_drag = None;
+                self.height = None;
+                true
+            }
+            AgentsResizeInput::Step(delta) => {
+                self.height = Some(bounded(shown + delta));
+                true
+            }
+            AgentsResizeInput::Floor => {
+                self.height = Some(AGENTS_RESIZE_FLOOR);
+                true
+            }
+            AgentsResizeInput::Ceiling => {
+                self.height = Some(bounded(ceiling));
+                true
+            }
+            AgentsResizeInput::Leave => false,
+        }
+    }
+
     fn chevron_turn_at(&self, now: Instant) -> f32 {
         let to = if self.collapsed { 1. } else { 0. };
         let Some(started) = self.turn_started else {
@@ -180,12 +290,32 @@ pub(super) fn agents_content_height(rows: &[AgentRow]) -> f32 {
         .sum()
 }
 
-pub(super) fn agents_section_height(rows: &[AgentRow], collapsed: bool) -> f32 {
+fn agents_natural_height(rows: &[AgentRow]) -> f32 {
+    AGENTS_HEADER_HEIGHT + agents_content_height(rows) + AGENTS_LIST_BOTTOM_PADDING
+}
+
+pub(super) fn agents_section_height(
+    rows: &[AgentRow],
+    collapsed: bool,
+    chosen: Option<f32>,
+) -> f32 {
     if collapsed {
         return AGENTS_HEADER_HEIGHT;
     }
-    (AGENTS_HEADER_HEIGHT + agents_content_height(rows) + AGENTS_LIST_BOTTOM_PADDING)
-        .min(AGENTS_HEIGHT_CAP)
+    let natural = agents_natural_height(rows);
+    match chosen.filter(|_| !rows.is_empty()) {
+        Some(height) => height.clamp(
+            AGENTS_RESIZE_FLOOR,
+            natural.clamp(AGENTS_RESIZE_FLOOR, AGENTS_RESIZE_MAX),
+        ),
+        None => natural.min(AGENTS_HEIGHT_CAP),
+    }
+}
+
+fn agents_resize_ceiling(natural: f32, available: f32) -> f32 {
+    AGENTS_RESIZE_MAX
+        .min(natural)
+        .min(available - AGENTS_TREE_MIN_HEIGHT)
 }
 
 pub(super) fn no_status_tooltip(tool: TerminalAgent) -> String {
@@ -437,12 +567,142 @@ fn render_agent_row(row: &AgentRow, ui: crate::theme::UiColors, on_pick: PickAge
         .into_any_element()
 }
 
+fn agents_resize_key(event: &KeyDownEvent) -> Option<AgentsResizeInput> {
+    let keystroke = &event.keystroke;
+    let key = keystroke.key.as_str();
+    if key == "tab" && keystroke.modifiers == gpui::Modifiers::shift() {
+        return Some(AgentsResizeInput::Leave);
+    }
+    if keystroke.modifiers.modified() {
+        return None;
+    }
+    match key {
+        "up" => Some(AgentsResizeInput::Step(AGENTS_RESIZE_STEP)),
+        "down" => Some(AgentsResizeInput::Step(-AGENTS_RESIZE_STEP)),
+        "home" => Some(AgentsResizeInput::Floor),
+        "end" => Some(AgentsResizeInput::Ceiling),
+        "enter" => Some(AgentsResizeInput::Fit),
+        "escape" => Some(AgentsResizeInput::Leave),
+        _ => None,
+    }
+}
+
+pub(super) struct AgentsResizeFrame<'a> {
+    pub(super) focus: &'a FocusHandle,
+    pub(super) focused: bool,
+    pub(super) dragging: bool,
+    pub(super) height: f32,
+    pub(super) ceiling: f32,
+}
+
+pub(super) fn render_agents_resize_handle(
+    frame: AgentsResizeFrame,
+    ui: crate::theme::UiColors,
+    on_resize: ResizeAgents,
+) -> AnyElement {
+    let AgentsResizeFrame {
+        focus,
+        focused,
+        dragging,
+        height,
+        ceiling,
+    } = frame;
+    let rule = with_alpha(ui.text, 0.16);
+    let line = div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top(px((AGENTS_RESIZE_HIT_HEIGHT - 1.) / 2.))
+        .h(px(1.))
+        .debug_selector(|| "agents-resize-line".into());
+    let line = if focused {
+        line.bg(with_alpha(ui.text, AGENTS_RESIZE_FOCUS_ALPHA))
+    } else {
+        line.when(dragging, |line| line.bg(rule))
+            .group_hover(AGENTS_RESIZE_GROUP, move |style| style.bg(rule))
+    };
+    let press = on_resize.clone();
+    let press_focus = focus.clone();
+    let lift = on_resize.clone();
+    let key = on_resize.clone();
+    div()
+        .id("agents-resize")
+        .group(AGENTS_RESIZE_GROUP)
+        .absolute()
+        .top(px(-((AGENTS_RESIZE_HIT_HEIGHT - 1.) / 2.)))
+        .left_0()
+        .right_0()
+        .h(px(AGENTS_RESIZE_HIT_HEIGHT))
+        .cursor(CursorStyle::ResizeUpDown)
+        .track_focus(focus)
+        .role(Role::Splitter)
+        .aria_label("Resize the Agents section")
+        .aria_orientation(Orientation::Horizontal)
+        .aria_numeric_value(f64::from(height))
+        .aria_min_numeric_value(f64::from(AGENTS_RESIZE_FLOOR))
+        .aria_max_numeric_value(f64::from(ceiling.max(AGENTS_RESIZE_FLOOR)))
+        .debug_selector(|| "agents-resize".into())
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            cx.stop_propagation();
+            press_focus.focus(window, cx);
+            let input = if event.click_count >= 2 {
+                AgentsResizeInput::Fit
+            } else {
+                AgentsResizeInput::Press(f32::from(event.position.y))
+            };
+            press(input, window, cx);
+        })
+        .on_mouse_up(MouseButton::Left, move |_, window, cx| {
+            lift(AgentsResizeInput::Release, window, cx);
+        })
+        .on_key_down(move |event, window, cx| {
+            if let Some(input) = agents_resize_key(event) {
+                cx.stop_propagation();
+                key(input, window, cx);
+            }
+        })
+        .child(line)
+        .when(dragging, |handle| {
+            handle.child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let moved = on_resize.clone();
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                            if phase != DispatchPhase::Capture {
+                                return;
+                            }
+                            let input = if event.pressed_button == Some(MouseButton::Left) {
+                                AgentsResizeInput::Drag(f32::from(event.position.y))
+                            } else {
+                                AgentsResizeInput::Release
+                            };
+                            moved(input, window, cx);
+                        });
+                        let released = on_resize.clone();
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                            if phase == DispatchPhase::Capture && event.button == MouseButton::Left
+                            {
+                                released(AgentsResizeInput::Release, window, cx);
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+        })
+        .into_any_element()
+}
+
 pub(super) struct AgentsSectionFrame<'a> {
     pub(super) rows: &'a [AgentRow],
     pub(super) collapsed: bool,
+    pub(super) chosen_height: Option<f32>,
     pub(super) chevron_turn: f32,
     pub(super) scroll: &'a ScrollHandle,
     pub(super) scrollbar: Option<AnyElement>,
+    pub(super) resize_handle: Option<AnyElement>,
 }
 
 pub(super) fn render_agents_section(
@@ -454,12 +714,15 @@ pub(super) fn render_agents_section(
     let AgentsSectionFrame {
         rows,
         collapsed,
+        chosen_height,
         chevron_turn,
         scroll,
         scrollbar,
+        resize_handle,
     } = frame;
     let section = div()
-        .h(px(agents_section_height(rows, collapsed)))
+        .relative()
+        .h(px(agents_section_height(rows, collapsed, chosen_height)))
         .min_h(px(AGENTS_HEADER_HEIGHT))
         .flex_shrink_1()
         .flex()
@@ -469,6 +732,7 @@ pub(super) fn render_agents_section(
     if collapsed {
         return section;
     }
+    let resize_handle = resize_handle.filter(|_| !rows.is_empty());
     let mut list = div()
         .id("agents-section-list")
         .flex_1()
@@ -505,16 +769,18 @@ pub(super) fn render_agents_section(
         }
         list = list.child(render_agent_row(row, ui, on_pick.clone()));
     }
-    section.child(
-        div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(list)
-            .children(scrollbar),
-    )
+    section
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(list)
+                .children(scrollbar),
+        )
+        .children(resize_handle)
 }
 
 impl PaneFlowApp {
@@ -535,13 +801,15 @@ impl PaneFlowApp {
             cx,
         );
         self.schedule_no_status_wake(grace_deadline, cx);
-        let (collapsed, chevron_turn, turning, scroll) = {
+        let (collapsed, chosen_height, dragging, chevron_turn, turning, scroll) = {
             let mut section = self.agents_section.borrow_mut();
             if section.follow_top_row(rows.first().map(|row| row.surface_id)) {
                 section.scroll.set_offset(Point::default());
             }
             (
                 section.collapsed,
+                section.height,
+                section.resize_drag.is_some(),
                 section.chevron_turn_at(now),
                 section.chevron_turning(now),
                 section.scroll.clone(),
@@ -551,6 +819,23 @@ impl PaneFlowApp {
             window.request_animation_frame();
         }
         let ui = crate::theme::ui_colors();
+        let natural = agents_natural_height(&rows);
+        let resize_app = cx.weak_entity();
+        let resize_handle = render_agents_resize_handle(
+            AgentsResizeFrame {
+                focus: &self.agents_resize_focus,
+                focused: self.agents_resize_focus.is_focused(window),
+                dragging,
+                height: agents_section_height(&rows, collapsed, chosen_height),
+                ceiling: agents_resize_ceiling(natural, self.agents_available_height()),
+            },
+            ui,
+            Rc::new(move |input, window, cx| {
+                let _ = resize_app.update(cx, |this, cx| {
+                    this.resize_agents_section(input, natural, window, cx);
+                });
+            }),
+        );
         let scrollbar = crate::widgets::scrollbar::render(
             &scroll,
             ui,
@@ -579,17 +864,17 @@ impl PaneFlowApp {
             AgentsSectionFrame {
                 rows: &rows,
                 collapsed,
+                chosen_height,
                 chevron_turn,
                 scroll: &scroll,
                 scrollbar,
+                resize_handle: Some(resize_handle),
             },
             ui,
             move |_, cx| {
                 let _ = toggle_app.update(cx, |this, cx| {
-                    this.agents_section
-                        .borrow_mut()
-                        .toggle(Instant::now(), !crate::ui_primitives::reduce_motion());
-                    cx.notify();
+                    let collapsed = this.agents_section.borrow().collapsed;
+                    this.set_agents_section_collapsed(!collapsed, cx);
                 });
             },
             Rc::new(move |surface_id, window, cx| {
@@ -623,6 +908,75 @@ impl PaneFlowApp {
                 }
             }),
         )
+    }
+
+    fn agents_available_height(&self) -> f32 {
+        self.agents_section
+            .borrow()
+            .available_height(&self.sidebar_scroll)
+    }
+
+    fn resize_agents_section(
+        &mut self,
+        input: AgentsResizeInput,
+        natural: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if input == AgentsResizeInput::Leave {
+            self.sidebar_focus.focus(window, cx);
+            cx.notify();
+            return;
+        }
+        let persist =
+            self.agents_section
+                .borrow_mut()
+                .resize_within(input, natural, &self.sidebar_scroll);
+        if persist {
+            self.persist_agents_section(cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn focus_agents_resize_handle(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.cached_config.sidebar_show.agents_enabled()
+            || self.agents_section.borrow().collapsed
+        {
+            return false;
+        }
+        let shown = agent_rows(
+            &self.workspaces,
+            self.active_space.as_ref(),
+            self.shown_workspace_idx(),
+            Instant::now(),
+            cx,
+        );
+        if shown.rows.is_empty() {
+            return false;
+        }
+        self.agents_resize_focus.focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn set_agents_section_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        self.agents_section.borrow_mut().set_collapsed(
+            collapsed,
+            Instant::now(),
+            !crate::ui_primitives::reduce_motion(),
+        );
+        self.persist_agents_section(cx);
+        cx.notify();
+    }
+
+    fn persist_agents_section(&self, cx: &mut Context<Self>) {
+        crate::window_state::record_agents_section(self.agents_section.borrow().persisted());
+        cx.background_spawn(async { crate::window_state::save() })
+            .detach();
     }
 
     fn schedule_no_status_wake(&self, deadline: Option<Instant>, cx: &mut Context<Self>) {
@@ -713,17 +1067,17 @@ mod tests {
         let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Blocked, AgentRank::Done]);
         assert_eq!(AGENT_ROW_HEIGHT, 55.);
         assert_eq!(agents_content_height(&rows), 55. + (2. + 55.) + (10. + 55.));
-        assert_eq!(agents_section_height(&rows, false), 36. + 177. + 4.);
-        assert_eq!(agents_section_height(&rows[..1], false), 95.);
-        assert_eq!(agents_section_height(&[], false), 36. + 32. + 4.);
+        assert_eq!(agents_section_height(&rows, false, None), 36. + 177. + 4.);
+        assert_eq!(agents_section_height(&rows[..1], false, None), 95.);
+        assert_eq!(agents_section_height(&[], false, None), 36. + 32. + 4.);
     }
 
     #[test]
     fn the_section_height_is_capped_and_a_collapsed_section_keeps_only_its_header() {
         let rows = ranked_rows(&[AgentRank::Working; 10]);
         assert!(36. + agents_content_height(&rows) + 4. > 330.);
-        assert_eq!(agents_section_height(&rows, false), 330.);
-        assert_eq!(agents_section_height(&rows, true), 36.);
+        assert_eq!(agents_section_height(&rows, false, None), 330.);
+        assert_eq!(agents_section_height(&rows, true, None), 36.);
     }
 
     #[test]
@@ -782,6 +1136,371 @@ mod tests {
         assert!(!section.follow_top_row(Some(7)));
         assert!(section.follow_top_row(Some(3)));
         assert!(section.follow_top_row(None));
+    }
+
+    #[test]
+    fn a_chosen_height_is_bounded_by_one_row_620_px_and_the_content() {
+        let ten = ranked_rows(&[AgentRank::Working; 10]);
+        let natural = agents_natural_height(&ten);
+        assert_eq!(natural, 36. + 10. * 55. + 9. * 2. + 4.);
+        assert_eq!(agents_section_height(&ten, false, Some(450.)), 450.);
+        assert_eq!(agents_section_height(&ten, false, Some(10.)), 95.);
+        assert_eq!(agents_section_height(&ten, false, Some(900.)), natural);
+        let twelve = ranked_rows(&[AgentRank::Working; 12]);
+        assert_eq!(agents_section_height(&twelve, false, Some(900.)), 620.);
+        assert_eq!(agents_section_height(&ten, true, Some(450.)), 36.);
+        assert_eq!(
+            agents_section_height(&[], false, Some(450.)),
+            36. + 32. + 4.,
+            "an empty section ignores the chosen height"
+        );
+    }
+
+    #[test]
+    fn the_resize_ceiling_leaves_120_px_to_the_tree() {
+        assert_eq!(agents_resize_ceiling(608., 900.), 608.);
+        assert_eq!(agents_resize_ceiling(700., 1000.), 620.);
+        assert_eq!(agents_resize_ceiling(608., 500.), 380.);
+    }
+
+    #[test]
+    fn a_drag_follows_the_pointer_within_its_bounds_and_persists_only_on_release() {
+        let mut section = AgentsSection::default();
+        assert!(!section.resize(AgentsResizeInput::Press(500.), 330., 589.));
+        assert!(!section.resize(AgentsResizeInput::Drag(400.), 330., 589.));
+        assert_eq!(section.height, Some(430.));
+        assert!(!section.resize(AgentsResizeInput::Drag(-500.), 330., 589.));
+        assert_eq!(section.height, Some(589.));
+        assert!(!section.resize(AgentsResizeInput::Drag(2000.), 330., 589.));
+        assert_eq!(section.height, Some(95.));
+        assert!(section.resize(AgentsResizeInput::Release, 95., 589.));
+        assert!(!section.resize(AgentsResizeInput::Release, 95., 589.));
+        assert!(!section.resize(AgentsResizeInput::Drag(0.), 95., 589.));
+        assert_eq!(section.height, Some(95.), "a move after release is ignored");
+    }
+
+    #[test]
+    fn keys_step_by_16_px_jump_to_the_bounds_and_enter_fits_the_content() {
+        let mut section = AgentsSection::default();
+        assert!(section.resize(AgentsResizeInput::Step(16.), 330., 589.));
+        assert_eq!(section.height, Some(346.));
+        assert!(section.resize(AgentsResizeInput::Step(-16.), 346., 589.));
+        assert_eq!(section.height, Some(330.));
+        assert!(section.resize(AgentsResizeInput::Floor, 330., 589.));
+        assert_eq!(section.height, Some(95.));
+        assert!(section.resize(AgentsResizeInput::Step(-16.), 95., 589.));
+        assert_eq!(section.height, Some(95.));
+        assert!(section.resize(AgentsResizeInput::Ceiling, 95., 589.));
+        assert_eq!(section.height, Some(589.));
+        assert!(section.resize(AgentsResizeInput::Fit, 589., 589.));
+        assert_eq!(section.height, None);
+    }
+
+    #[test]
+    fn the_key_map_ignores_modified_keys() {
+        fn key(text: &'static str) -> Option<AgentsResizeInput> {
+            agents_resize_key(&KeyDownEvent {
+                keystroke: gpui::Keystroke::parse(text).expect("keystroke"),
+                is_held: false,
+                prefer_character_input: false,
+            })
+        }
+        assert_eq!(key("up"), Some(AgentsResizeInput::Step(16.)));
+        assert_eq!(key("down"), Some(AgentsResizeInput::Step(-16.)));
+        assert_eq!(key("home"), Some(AgentsResizeInput::Floor));
+        assert_eq!(key("end"), Some(AgentsResizeInput::Ceiling));
+        assert_eq!(key("enter"), Some(AgentsResizeInput::Fit));
+        assert_eq!(key("escape"), Some(AgentsResizeInput::Leave));
+        assert_eq!(key("shift-tab"), Some(AgentsResizeInput::Leave));
+        assert_eq!(key("tab"), None);
+        assert_eq!(key("shift-up"), None);
+        assert_eq!(key("a"), None);
+    }
+
+    #[test]
+    fn a_restored_section_reports_the_state_it_was_given() {
+        let state = AgentsSectionState {
+            height: Some(240.),
+            collapsed: true,
+        };
+        let section = AgentsSection::restored(state);
+        assert!(section.collapsed());
+        assert_eq!(section.persisted(), state);
+        assert_eq!(
+            AgentsSection::default().persisted(),
+            AgentsSectionState::default()
+        );
+    }
+
+    struct ResizeHarness {
+        rows: Vec<AgentRow>,
+        section: AgentsSection,
+        tree: ScrollHandle,
+        focus: FocusHandle,
+        height: f32,
+        persists: usize,
+        leaves: usize,
+    }
+
+    impl gpui::Render for ResizeHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let natural = agents_natural_height(&self.rows);
+            let dragging = self.section.resize_drag.is_some();
+            let chosen = self.section.height;
+            let this = cx.weak_entity();
+            let handle = render_agents_resize_handle(
+                AgentsResizeFrame {
+                    focus: &self.focus,
+                    focused: self.focus.is_focused(window),
+                    dragging,
+                    height: agents_section_height(&self.rows, self.section.collapsed, chosen),
+                    ceiling: agents_resize_ceiling(
+                        natural,
+                        self.section.available_height(&self.tree),
+                    ),
+                },
+                crate::theme::ui_colors(),
+                Rc::new(move |input, _, cx| {
+                    let _ = this.update(cx, |harness, cx| {
+                        if input == AgentsResizeInput::Leave {
+                            harness.leaves += 1;
+                        }
+                        if harness.section.resize_within(input, natural, &harness.tree) {
+                            harness.persists += 1;
+                        }
+                        cx.notify();
+                    });
+                }),
+            );
+            div()
+                .w(px(SIDEBAR_WIDTH))
+                .h(px(self.height))
+                .flex()
+                .flex_col()
+                .child(div().h(px(AGENTS_HEADER_HEIGHT)).flex_none())
+                .child(
+                    div()
+                        .id("tree")
+                        .flex_1()
+                        .min_h(px(AGENTS_TREE_MIN_HEIGHT))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.tree)
+                        .debug_selector(|| "tree".into()),
+                )
+                .child(render_agents_section(
+                    AgentsSectionFrame {
+                        rows: &self.rows,
+                        collapsed: self.section.collapsed,
+                        chosen_height: chosen,
+                        chevron_turn: if self.section.collapsed { 1. } else { 0. },
+                        scroll: &self.section.scroll,
+                        scrollbar: None,
+                        resize_handle: Some(handle),
+                    },
+                    crate::theme::ui_colors(),
+                    |_, _| {},
+                    Rc::new(|_, _, _| {}),
+                ))
+                .child(div().h(px(55.)).flex_none())
+        }
+    }
+
+    fn resize_harness(
+        cx: &mut TestAppContext,
+        rows: Vec<AgentRow>,
+        section: AgentsSection,
+        height: f32,
+    ) -> (gpui::Entity<ResizeHarness>, &mut gpui::VisualTestContext) {
+        let (view, cx) = cx.add_window_view(move |_, cx| ResizeHarness {
+            rows,
+            section,
+            tree: ScrollHandle::new(),
+            focus: cx.focus_handle(),
+            height,
+            persists: 0,
+            leaves: 0,
+        });
+        redraw(cx);
+        redraw(cx);
+        (view, cx)
+    }
+
+    fn redraw(cx: &mut gpui::VisualTestContext) {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    fn section_height(cx: &mut gpui::VisualTestContext) -> gpui::Pixels {
+        cx.debug_bounds("agents-section")
+            .expect("section")
+            .size
+            .height
+    }
+
+    #[gpui::test]
+    fn the_handle_is_a_9_px_zone_on_the_section_top_edge_with_a_1_px_rule(cx: &mut TestAppContext) {
+        let (_, cx) = resize_harness(
+            cx,
+            ranked_rows(&[AgentRank::Working; 3]),
+            AgentsSection::default(),
+            800.,
+        );
+        let section = cx.debug_bounds("agents-section").expect("section");
+        let handle = cx.debug_bounds("agents-resize").expect("handle");
+        let rule = cx.debug_bounds("agents-resize-line").expect("rule");
+        assert_eq!(handle.size.height, px(9.));
+        assert_eq!(handle.top(), section.top() - px(4.));
+        assert_eq!(handle.size.width, section.size.width);
+        assert_eq!(rule.size.height, px(1.));
+        assert_eq!(rule.top(), section.top());
+    }
+
+    #[gpui::test]
+    fn a_collapsed_section_has_no_handle(cx: &mut TestAppContext) {
+        let collapsed = AgentsSection::restored(AgentsSectionState {
+            height: Some(300.),
+            collapsed: true,
+        });
+        let (_, cx) = resize_harness(cx, ranked_rows(&[AgentRank::Working; 3]), collapsed, 800.);
+        assert!(cx.debug_bounds("agents-resize").is_none());
+        assert_eq!(section_height(cx), px(36.));
+    }
+
+    #[gpui::test]
+    fn an_empty_section_has_no_handle(cx: &mut TestAppContext) {
+        let (_, cx) = resize_harness(cx, Vec::new(), AgentsSection::default(), 800.);
+        assert!(cx.debug_bounds("agents-resize").is_none());
+        assert!(cx.debug_bounds("agents-empty").is_some());
+    }
+
+    #[gpui::test]
+    fn dragging_the_handle_resizes_within_bounds_and_double_click_fits_the_content(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = resize_harness(
+            cx,
+            ranked_rows(&[AgentRank::Working; 10]),
+            AgentsSection::default(),
+            800.,
+        );
+        assert_eq!(section_height(cx), px(330.));
+        let grip = cx.debug_bounds("agents-resize").expect("handle").center();
+
+        cx.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
+        redraw(cx);
+        cx.simulate_mouse_move(
+            grip - Point::new(px(0.), px(100.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        redraw(cx);
+        assert_eq!(section_height(cx), px(430.));
+        assert_eq!(view.read_with(cx, |harness, _| harness.persists), 0);
+
+        cx.simulate_mouse_move(
+            Point::new(grip.x + px(400.), px(0.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        redraw(cx);
+        let available = 800. - 36. - 55.;
+        assert_eq!(
+            section_height(cx),
+            px(available - 120.),
+            "the tree keeps 120 px even when the pointer leaves the sidebar"
+        );
+        cx.simulate_mouse_up(
+            Point::new(grip.x + px(400.), px(0.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        redraw(cx);
+        assert_eq!(view.read_with(cx, |harness, _| harness.persists), 1);
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.section.height),
+            Some(available - 120.)
+        );
+
+        let grip = cx.debug_bounds("agents-resize").expect("handle").center();
+        cx.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
+        redraw(cx);
+        cx.simulate_mouse_move(
+            grip + Point::new(px(0.), px(2000.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        redraw(cx);
+        assert_eq!(section_height(cx), px(95.));
+        cx.simulate_mouse_up(grip, MouseButton::Left, Modifiers::default());
+        redraw(cx);
+
+        let grip = cx.debug_bounds("agents-resize").expect("handle").center();
+        cx.simulate_event(MouseDownEvent {
+            position: grip,
+            modifiers: Modifiers::default(),
+            button: MouseButton::Left,
+            click_count: 2,
+            first_mouse: false,
+        });
+        redraw(cx);
+        cx.simulate_mouse_up(grip, MouseButton::Left, Modifiers::default());
+        redraw(cx);
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.section.height),
+            None
+        );
+        assert_eq!(section_height(cx), px(330.));
+    }
+
+    #[gpui::test]
+    fn the_focused_handle_answers_arrows_home_end_and_enter(cx: &mut TestAppContext) {
+        let (view, cx) = resize_harness(
+            cx,
+            ranked_rows(&[AgentRank::Working; 10]),
+            AgentsSection::default(),
+            800.,
+        );
+        let grip = cx.debug_bounds("agents-resize").expect("handle").center();
+        cx.simulate_click(grip, Modifiers::default());
+        redraw(cx);
+        assert!(cx.update(|window, cx| view.read(cx).focus.is_focused(window)));
+        let persists_after_click = view.read_with(cx, |harness, _| harness.persists);
+
+        fn press(cx: &mut gpui::VisualTestContext, key: &str) -> gpui::Pixels {
+            cx.simulate_keystrokes(key);
+            redraw(cx);
+            section_height(cx)
+        }
+        assert_eq!(press(cx, "up"), px(346.));
+        assert_eq!(press(cx, "down"), px(330.));
+        assert_eq!(press(cx, "home"), px(95.));
+        assert_eq!(press(cx, "end"), px(800. - 36. - 55. - 120.));
+        assert_eq!(press(cx, "enter"), px(330.));
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.persists),
+            persists_after_click + 5
+        );
+        press(cx, "escape");
+        assert_eq!(view.read_with(cx, |harness, _| harness.leaves), 1);
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.persists),
+            persists_after_click + 5
+        );
+    }
+
+    #[gpui::test]
+    fn a_persisted_height_taller_than_the_window_is_bounded_but_kept(cx: &mut TestAppContext) {
+        let chosen = AgentsSection::restored(AgentsSectionState {
+            height: Some(500.),
+            collapsed: false,
+        });
+        let short = 36. + 120. + 55. + 200.;
+        let (view, cx) = resize_harness(cx, ranked_rows(&[AgentRank::Working; 10]), chosen, short);
+        assert_eq!(section_height(cx), px(200.));
+        assert_eq!(cx.debug_bounds("tree").expect("tree").size.height, px(120.));
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.section.height),
+            Some(500.)
+        );
     }
 
     #[test]
@@ -1025,9 +1744,11 @@ mod tests {
                     AgentsSectionFrame {
                         rows: &self.rows,
                         collapsed: self.collapsed,
+                        chosen_height: None,
                         chevron_turn: if self.collapsed { 1. } else { 0. },
                         scroll: &ScrollHandle::new(),
                         scrollbar: None,
+                        resize_handle: None,
                     },
                     crate::theme::ui_colors(),
                     move |_, _| toggles.set(toggles.get() + 1),
@@ -1214,9 +1935,11 @@ mod tests {
             AgentsSectionFrame {
                 rows: &rows,
                 collapsed: false,
+                chosen_height: None,
                 chevron_turn: 0.,
                 scroll: &ScrollHandle::new(),
                 scrollbar: None,
+                resize_handle: None,
             },
             crate::theme::ui_colors(),
             |_, _| {},

@@ -111,7 +111,7 @@
     },
     "sidebar_show": {
       "type": ["object", "null"],
-      "description": "What the workspaces rail shows beyond a row's name. Everything off is the default rail.",
+      "description": "What the sidebar shows beyond a row's name. The row details are off and the Agents section is on by default.",
       "additionalProperties": false,
       "properties": {
         "branch": {
@@ -133,6 +133,11 @@
           "type": ["boolean", "null"],
           "description": "Draw a hairline under a workspace's folder icon, running down its tab rows. Default false.",
           "default": false
+        },
+        "agents": {
+          "type": ["boolean", "null"],
+          "description": "Show the Agents section at the bottom of the sidebar: the active space's agent sessions, most urgent first. Default true.",
+          "default": true
         }
       }
     },

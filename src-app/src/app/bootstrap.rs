@@ -263,7 +263,10 @@ impl PaneFlowApp {
             sidebar_filter_input,
             sidebar_filter_hovered: false,
             sidebar_row_motion: std::cell::RefCell::new(Default::default()),
-            agents_section: std::cell::RefCell::new(Default::default()),
+            agents_section: std::cell::RefCell::new(crate::app::sidebar::AgentsSection::restored(
+                crate::window_state::agents_section(),
+            )),
+            agents_resize_focus: cx.focus_handle(),
             rename_focus_live: false,
             pending_config,
             save_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),

@@ -43,17 +43,23 @@ impl PaneFlowApp {
             SidebarShowLine::IndentGuide => {
                 show.indent_guide = Some(!show.indent_guide_enabled());
             }
+            SidebarShowLine::Agents => show.agents = Some(!show.agents_enabled()),
         }
-        let value = serde_json::json!({
-            "branch": show.branch_enabled(),
-            "diffstat": show.diffstat_enabled(),
-            "pr": show.pr_enabled(),
-            "indent_guide": show.indent_guide_enabled(),
-        });
+        let value = sidebar_show_value(show);
         self.persist_setting(false, "sidebar_show", value, cx);
         self.refresh_pull_requests(cx);
         cx.notify();
     }
+}
+
+fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
+    serde_json::json!({
+        "branch": show.branch_enabled(),
+        "diffstat": show.diffstat_enabled(),
+        "pr": show.pr_enabled(),
+        "indent_guide": show.indent_guide_enabled(),
+        "agents": show.agents_enabled(),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -62,6 +68,7 @@ enum SidebarShowLine {
     Diffstat,
     Pr,
     IndentGuide,
+    Agents,
 }
 
 pub(super) fn render_customize_sidebar_button(
@@ -125,14 +132,8 @@ fn render_menu(
         )
         .child(render_show_row(state, ui, cx))
         .when_some(state.all_expanded, |menu, all_expanded| {
-            menu.child(
-                div()
-                    .mx(px(6.))
-                    .my(px(4.))
-                    .h(px(1.))
-                    .bg(crate::settings::components::menu_divider_color(ui)),
-            )
-            .child(render_expand_all_row(all_expanded, ui, cx))
+            menu.child(menu_divider(ui))
+                .child(render_expand_all_row(all_expanded, ui, cx))
         });
 
     deferred(crate::ui_primitives::menu_reveal(
@@ -250,6 +251,15 @@ fn render_show_submenu(
             show.indent_guide_enabled(),
             ui,
             cx,
+        ))
+        .child(menu_divider(ui))
+        .child(render_show_option(
+            "Agents",
+            "icons/sparkles.svg",
+            SidebarShowLine::Agents,
+            show.agents_enabled(),
+            ui,
+            cx,
         ));
 
     deferred(crate::ui_primitives::menu_reveal(
@@ -278,9 +288,17 @@ fn render_show_option(
         SidebarShowLine::Diffstat => "sidebar-show-diffstat",
         SidebarShowLine::Pr => "sidebar-show-pr",
         SidebarShowLine::IndentGuide => "sidebar-show-indent-guide",
+        SidebarShowLine::Agents => "sidebar-show-agents",
     };
 
     menu_row(id, false, ui)
+        .role(Role::MenuItemCheckBox)
+        .aria_label(label)
+        .aria_toggled(if checked {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.toggle_sidebar_show(line, cx);
         }))
@@ -304,6 +322,14 @@ fn render_show_option(
         .into_any_element()
 }
 
+fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
+    div()
+        .mx(px(6.))
+        .my(px(4.))
+        .h(px(1.))
+        .bg(crate::settings::components::menu_divider_color(ui))
+}
+
 pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiColors) -> AnyElement {
     div()
         .flex_1()
@@ -315,4 +341,44 @@ pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiCol
         .text_color(ui.text)
         .child(Into::<SharedString>::into(label))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use paneflow_config::schema::PaneFlowConfig;
+
+    #[test]
+    fn the_show_object_carries_every_line_including_agents() {
+        let value = sidebar_show_value(SidebarShow::default());
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "branch": false,
+                "diffstat": false,
+                "pr": false,
+                "indent_guide": false,
+                "agents": true,
+            })
+        );
+    }
+
+    #[test]
+    fn hiding_the_agents_section_round_trips_through_the_config_writer() {
+        let config = PaneFlowConfig::default();
+        assert!(config.sidebar_show.agents_enabled());
+        let mut show = config.sidebar_show;
+        show.agents = Some(!show.agents_enabled());
+
+        let next = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(show),
+        )
+        .expect("written");
+
+        assert!(!next.sidebar_show.agents_enabled());
+        assert_eq!(next.sidebar_show.indent_guide, Some(false));
+    }
 }

@@ -70,6 +70,7 @@ mod tests {
                 diffstat: Some(true),
                 pr: Some(true),
                 indent_guide: Some(true),
+                agents: Some(false),
             },
             editor: EditorDisplayConfig {
                 minimap: Some(true),
@@ -619,6 +620,16 @@ mod tests {
         assert!(!cfg.sidebar_show.pr_enabled());
         assert!(!cfg.sidebar_show.indent_guide_enabled());
         assert!(!cfg.sidebar_show.any_enabled());
+        assert!(cfg.sidebar_show.agents_enabled());
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"agents": false}}"#).unwrap();
+        assert!(!cfg.sidebar_show.agents_enabled());
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"agents": "hidden", "pr": true}}"#).unwrap();
+        assert!(cfg.sidebar_show.agents_enabled());
+        assert!(cfg.sidebar_show.pr_enabled());
 
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"branch": true}}"#).unwrap();

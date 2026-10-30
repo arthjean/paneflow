@@ -18,14 +18,62 @@ struct PersistedWindowSize {
     height: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct AgentsSectionState {
+    pub(crate) height: Option<f32>,
+    pub(crate) collapsed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+struct PersistedWindowState {
+    #[serde(flatten)]
+    size: PersistedWindowSize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agents_section_height: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agents_section_collapsed: Option<bool>,
+}
+
+impl PersistedWindowState {
+    fn new(size: PersistedWindowSize, agents: AgentsSectionState) -> Self {
+        Self {
+            size,
+            agents_section_height: agents
+                .height
+                .filter(|height| is_valid_section_height(*height)),
+            agents_section_collapsed: agents.collapsed.then_some(true),
+        }
+    }
+
+    fn agents_section(&self) -> AgentsSectionState {
+        AgentsSectionState {
+            height: self
+                .agents_section_height
+                .filter(|height| is_valid_section_height(*height)),
+            collapsed: self.agents_section_collapsed.unwrap_or(false),
+        }
+    }
+}
+
 static LAST_WINDOWED_SIZE: Mutex<Option<PersistedWindowSize>> = Mutex::new(None);
+static AGENTS_SECTION: Mutex<AgentsSectionState> = Mutex::new(AgentsSectionState {
+    height: None,
+    collapsed: false,
+});
 
 pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
-    let persisted = load().unwrap_or(PersistedWindowSize {
-        width: DEFAULT_WINDOW_WIDTH,
-        height: DEFAULT_WINDOW_HEIGHT,
-    });
+    let loaded = load();
+    let persisted = loaded.map_or(
+        PersistedWindowSize {
+            width: DEFAULT_WINDOW_WIDTH,
+            height: DEFAULT_WINDOW_HEIGHT,
+        },
+        |state| state.size,
+    );
     *last_windowed_size_guard() = Some(persisted);
+    *agents_section_guard() = loaded
+        .map(|state| state.agents_section())
+        .unwrap_or_default();
     let visible_bounds = cx.primary_display().map(|display| display.visible_bounds());
     let display_size = visible_bounds.map(|bounds| bounds.size).unwrap_or_else(|| {
         size(
@@ -69,10 +117,19 @@ pub(crate) fn record_windowed_size(window: &Window) {
     *last_windowed_size_guard() = Some(state);
 }
 
+pub(crate) fn agents_section() -> AgentsSectionState {
+    *agents_section_guard()
+}
+
+pub(crate) fn record_agents_section(state: AgentsSectionState) {
+    *agents_section_guard() = state;
+}
+
 pub(crate) fn save() {
-    let Some(state) = *last_windowed_size_guard() else {
+    let Some(size) = *last_windowed_size_guard() else {
         return;
     };
+    let state = PersistedWindowState::new(size, *agents_section_guard());
 
     let Some(path) = state_path() else {
         return;
@@ -82,17 +139,17 @@ pub(crate) fn save() {
     }
 }
 
-fn write_state(path: &std::path::Path, state: &PersistedWindowSize) -> std::io::Result<()> {
+fn write_state(path: &std::path::Path, state: &PersistedWindowState) -> std::io::Result<()> {
     let mut json = serde_json::to_vec_pretty(state)?;
     json.push(b'\n');
     paneflow_home::write_atomically(path, &json)
 }
 
-fn load() -> Option<PersistedWindowSize> {
+fn load() -> Option<PersistedWindowState> {
     load_from(&state_path()?)
 }
 
-fn load_from(path: &std::path::Path) -> Option<PersistedWindowSize> {
+fn load_from(path: &std::path::Path) -> Option<PersistedWindowState> {
     let contents = match paneflow_home::read_regular_string_capped(path, MAX_WINDOW_STATE_BYTES) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -101,8 +158,8 @@ fn load_from(path: &std::path::Path) -> Option<PersistedWindowSize> {
             return None;
         }
     };
-    match serde_json::from_str::<PersistedWindowSize>(&contents) {
-        Ok(state) if state.width.is_finite() && state.height.is_finite() => Some(state),
+    match serde_json::from_str::<PersistedWindowState>(&contents) {
+        Ok(state) if state.size.width.is_finite() && state.size.height.is_finite() => Some(state),
         Ok(_) => {
             log::warn!(
                 "window state: rejected non-finite size at {}",
@@ -128,8 +185,18 @@ fn is_valid_size(state: PersistedWindowSize) -> bool {
         && state.height >= MIN_WINDOW_HEIGHT
 }
 
+fn is_valid_section_height(height: f32) -> bool {
+    height.is_finite() && height > 0.
+}
+
 fn last_windowed_size_guard() -> MutexGuard<'static, Option<PersistedWindowSize>> {
     LAST_WINDOWED_SIZE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+fn agents_section_guard() -> MutexGuard<'static, AgentsSectionState> {
+    AGENTS_SECTION
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
 }
@@ -179,10 +246,7 @@ mod tests {
 
         write_state(
             &link,
-            &PersistedWindowSize {
-                width: 1300.,
-                height: 900.,
-            },
+            &PersistedWindowState::new(size(), AgentsSectionState::default()),
         )
         .expect("write");
 
@@ -190,5 +254,97 @@ mod tests {
         let written: PersistedWindowSize =
             serde_json::from_str(&std::fs::read_to_string(&target).expect("read")).expect("json");
         assert_eq!((written.width, written.height), (1300., 900.));
+    }
+
+    fn size() -> PersistedWindowSize {
+        PersistedWindowSize {
+            width: 1300.,
+            height: 900.,
+        }
+    }
+
+    fn read_json(path: &std::path::Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read")).expect("json")
+    }
+
+    #[test]
+    fn the_agents_section_height_and_fold_round_trip_through_the_window_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        let chosen = AgentsSectionState {
+            height: Some(240.),
+            collapsed: true,
+        };
+
+        write_state(&path, &PersistedWindowState::new(size(), chosen)).expect("write");
+
+        let raw = read_json(&path);
+        assert_eq!(raw["agents_section_height"], 240.);
+        assert_eq!(raw["agents_section_collapsed"], true);
+        let loaded = load_from(&path).expect("loaded");
+        assert_eq!(loaded.agents_section(), chosen);
+        assert_eq!((loaded.size.width, loaded.size.height), (1300., 900.));
+    }
+
+    #[test]
+    fn the_default_agents_section_writes_neither_optional_field() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+
+        write_state(
+            &path,
+            &PersistedWindowState::new(size(), AgentsSectionState::default()),
+        )
+        .expect("write");
+
+        let raw = read_json(&path);
+        assert_eq!(raw.as_object().map(|object| object.len()), Some(2), "{raw}");
+    }
+
+    #[test]
+    fn an_older_window_state_loads_with_the_agents_section_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        std::fs::write(&path, r#"{"width": 1400.0, "height": 950.0}"#).expect("seed");
+
+        let loaded = load_from(&path).expect("loaded");
+
+        assert_eq!((loaded.size.width, loaded.size.height), (1400., 950.));
+        assert_eq!(loaded.agents_section(), AgentsSectionState::default());
+    }
+
+    #[test]
+    fn an_unusable_section_height_falls_back_to_the_content_height() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        std::fs::write(
+            &path,
+            r#"{"width": 1400.0, "height": 950.0, "agents_section_height": -3.0}"#,
+        )
+        .expect("seed");
+
+        assert_eq!(
+            load_from(&path).expect("loaded").agents_section(),
+            AgentsSectionState::default()
+        );
+    }
+
+    #[test]
+    fn a_corrupt_or_oversized_window_state_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let corrupt = dir.path().join("corrupt.json");
+        std::fs::write(&corrupt, r#"{"width": 1400.0, "agents_section_height": "#).expect("seed");
+        assert!(load_from(&corrupt).is_none());
+
+        let oversized = dir.path().join("oversized.json");
+        let padding = " ".repeat(MAX_WINDOW_STATE_BYTES as usize);
+        std::fs::write(
+            &oversized,
+            format!(
+                r#"{{"width": 1400.0, "height": 950.0, "agents_section_height": 200.0{padding}}}"#
+            ),
+        )
+        .expect("seed");
+        assert!(load_from(&oversized).is_none());
     }
 }

@@ -210,6 +210,10 @@ impl PaneFlowApp {
             cx.stop_propagation();
             return;
         }
+        if key == "tab" && !modifiers.shift && self.focus_agents_resize_handle(window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let step = match key {
             "up" => Some(CursorMove::Previous),
             "down" => Some(CursorMove::Next),
