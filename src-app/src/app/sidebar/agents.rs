@@ -36,6 +36,9 @@ impl AgentRank {
 pub(crate) struct AgentCandidate {
     pub(crate) surface_id: u64,
     pub(crate) rank: AgentRank,
+    pub(crate) workspace_idx: usize,
+    pub(crate) tab_idx: usize,
+    pub(crate) session_key: u32,
     pub(crate) in_active_space: bool,
     pub(crate) workspace_order: usize,
     pub(crate) surface_order: usize,
@@ -90,30 +93,39 @@ pub(crate) fn agent_candidates(
             .iter()
             .position(|&shown| shown == workspace_idx)
             .unwrap_or(workspaces.len() + workspace_idx);
-        let surfaces: Vec<u64> = workspace
+        let surfaces: Vec<(u64, usize)> = workspace
             .tabs()
             .iter()
-            .flat_map(|tab| tab.collect_panes())
-            .flat_map(|pane| {
+            .enumerate()
+            .flat_map(|(tab_idx, tab)| {
+                tab.collect_panes()
+                    .into_iter()
+                    .map(move |pane| (tab_idx, pane))
+            })
+            .flat_map(|(tab_idx, pane)| {
                 pane.read(cx)
                     .terminals()
-                    .map(|terminal| terminal.entity_id().as_u64())
+                    .map(|terminal| (terminal.entity_id().as_u64(), tab_idx))
                     .collect::<Vec<_>>()
             })
             .collect();
-        for session in workspace.agent_sessions.values() {
+        for (&session_key, session) in &workspace.agent_sessions {
             let Some(surface_id) = session.surface_id else {
                 continue;
             };
-            let Some(surface_order) = surfaces.iter().position(|&id| id == surface_id) else {
+            let Some(surface_order) = surfaces.iter().position(|&(id, _)| id == surface_id) else {
                 continue;
             };
+            let tab_idx = surfaces[surface_order].1;
             let unread = workspace
                 .agent_completion_notification
                 .is_unread_surface(surface_id);
             candidates.push(AgentCandidate {
                 surface_id,
                 rank: AgentRank::of(session, unread),
+                workspace_idx,
+                tab_idx,
+                session_key,
                 in_active_space,
                 workspace_order,
                 surface_order,
@@ -152,6 +164,9 @@ mod tests {
         AgentCandidate {
             surface_id,
             rank,
+            workspace_idx: 0,
+            tab_idx: 0,
+            session_key: 0,
             in_active_space: true,
             workspace_order: 0,
             surface_order: surface_id as usize,

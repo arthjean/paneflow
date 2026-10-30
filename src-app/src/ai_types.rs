@@ -18,6 +18,7 @@ pub struct AgentSession {
     pub last_event_at_ms: Option<u64>,
     pub state_seq: u64,
     pub program_status_capable: bool,
+    pub started_at: std::time::Instant,
     pub pending_tab_title: Option<String>,
     pub auto_naming: crate::auto_naming::SessionNaming,
 }
@@ -59,6 +60,7 @@ impl AgentSession {
             last_event_at_ms: None,
             state_seq: 0,
             program_status_capable: false,
+            started_at: std::time::Instant::now(),
             pending_tab_title: None,
             auto_naming: crate::auto_naming::SessionNaming::default(),
         }

@@ -343,6 +343,9 @@ fn projected_session(
     let mut session = previous
         .cloned()
         .unwrap_or_else(|| AgentSession::new(tool, state));
+    if session.tool != tool || (session.program_status_capable && !row.program_status_capable) {
+        session.started_at = std::time::Instant::now();
+    }
     session.tool = tool;
     session.state = state;
     session.source = if row.hooked {
@@ -1262,6 +1265,35 @@ mod tests {
         }))
         .expect("event row");
         assert!(event_row.program_status_capable);
+    }
+
+    #[test]
+    fn the_no_status_grace_restarts_only_with_a_new_runtime_generation() {
+        let row = |capable: bool| {
+            row_from_snapshot(&json!({
+                "session": SessionId::new().to_string(),
+                "live": true,
+                "activity": {"tool": "claude", "state": "finished"},
+                "program_status_capable": capable,
+            }))
+            .expect("row")
+        };
+        let mut held = projected_session(&row(true), 3, None).expect("session");
+        let long_ago = std::time::Instant::now() - Duration::from_secs(60);
+        held.started_at = long_ago;
+
+        let same = projected_session(&row(true), 3, Some(&held)).expect("session");
+        assert_eq!(same.started_at, long_ago, "a later record keeps the start");
+
+        let restarted = projected_session(&row(false), 3, Some(&held)).expect("session");
+        assert!(
+            restarted.started_at > long_ago,
+            "a capability reset marks a new agent process"
+        );
+
+        held.program_status_capable = false;
+        let still_silent = projected_session(&row(false), 3, Some(&held)).expect("session");
+        assert_eq!(still_silent.started_at, long_ago);
     }
 
     #[test]

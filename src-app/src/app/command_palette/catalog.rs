@@ -1388,6 +1388,23 @@ pub(crate) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        label: "Expand the Agents section in the sidebar",
+        icon: None,
+        keywords: "agents collapse fold attention",
+        needs: Needs::Always,
+        kind: Kind::Toggle {
+            read: |app| !app.agents_section.borrow().collapsed(),
+            write: |app, next, cx| {
+                app.agents_section.borrow_mut().set_collapsed(
+                    !next,
+                    std::time::Instant::now(),
+                    !crate::ui_primitives::reduce_motion(),
+                );
+                cx.notify();
+            },
+        },
+    },
+    Command {
         label: "Default editor",
         icon: Some("icons/code.svg"),
         keywords: "external open zed cursor vscode",
