@@ -1,0 +1,176 @@
+{
+  "prd": {
+    "file": "tasks/prd-pane-self-recovery.md",
+    "title": "Panes qui se relancent seules au redémarrage",
+    "created_at": "2026-10-30",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Le host met les lancements en file au lieu de les refuser",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "Le desktop traite un refus de capacité comme passager",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "La restauration rétablit seule les panes perdues ou inconnues",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Valider sur Windows réel",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 1,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Mettre l'admission des lancements en file avec une deadline",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Rendre le code -32000 strictement passager",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "XS",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Verrouiller la restauration en rafale par un test à host réel",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "Réessayer un Busy au premier attachement, avec backoff jitté",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Attendre une session encore en démarrage",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-004"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Reconnecter le lien de sortie sur un Busy",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Faire rejouer à Retry l'intention d'origine",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Relancer une fois les panes Lost et HostReplaced à la restauration",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-005"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Créer un shell neuf pour une pane Missing à la restauration",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-008"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Documenter le contrat de restauration",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "XS",
+      "blocked_by": ["US-001", "US-004", "US-008", "US-009"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Passe Windows sur la mise à jour, l'arrêt complet et le reboot",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-003", "US-007", "US-009"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
