@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-28 | Arthur Jean | PRD initial : bump de GPUI de `0418cb5b` vers `37faef81`, migration des API clavier, défilement et shaping, requalification Linux et macOS, validation Windows sur matériel réel en dernier epic. |
+| 1.1 | 2026-10-30 | Arthur Jean | Revue d'EP-003 : US-014 juge chaque chord contre le build de référence `0418cb5b` plutôt que dans l'absolu, couvre par lecture du mapper Windows les chords à lettre ou à touche nommée non lancés, et renvoie à une story de suivi les chords qui échouaient déjà avant le bump. US-015 constate que GPUI n'entre pas en mode basse consommation sur un poste fixe Windows et laisse le cas d'un portable sur batterie en question ouverte. |
 
 ## Problem Statement
 
@@ -394,11 +395,11 @@ Le leg Windows compile et linte le code `cfg(windows)` sur la nouvelle révision
 **Dependencies:** Blocked by US-013
 
 **Acceptance Criteria:**
-- [ ] Given Windows 11 sur matériel réel en disposition US, when on déclenche chaque chord de `DEFAULTS` et `OTHER_PLATFORM_DEFAULTS`, then chaque action attendue s'exécute, et le rapport liste les chords testés
-- [ ] Given la disposition AZERTY (France), when on refait le même parcours, then chaque action s'exécute. Tout chord dont la touche physique diffère de la disposition US est listé avec la combinaison effective.
+- [ ] Given Windows 11 sur matériel réel en disposition US, when on déclenche chaque chord de `DEFAULTS` et `PLATFORM_DEFAULTS` sur le build du bump et sur le build de référence `0418cb5b`, then chaque chord a au moins l'effet qu'il avait avant le bump, et le rapport liste les chords testés. `WindowsKeyboardMapper` ne traduit que les chiffres et les touches OEM (`CANDIDATE_VKEYS`, `gpui_windows/src/keyboard.rs` de 37faef81) et rend inchangé tout autre chord, comme le `DummyKeyboardMapper`. Un chord à lettre ou à touche nommée qui lancerait un outil externe (`ctrl-alt-z`, `ctrl-alt-v`) ou exige un état indisponible sur le banc (`ctrl-shift-j`, vue markdown) est donc couvert par cette lecture
+- [ ] Given la disposition AZERTY (France), when on refait le même parcours sur les deux builds, then chaque chord a au moins l'effet qu'il avait avant le bump. Tout chord dont la touche physique diffère de la disposition US est listé avec la combinaison effective.
 - [ ] Given une surcharge `"ctrl-shift-d": "close_pane"` dans `paneflow.json`, when on l'utilise dans les deux dispositions, then le pane se ferme
 - [ ] Given Paneflow en cours d'exécution, when on passe de US à AZERTY avec Win+Espace puis qu'on déclenche un chord à symbole shifté, then l'action suit la nouvelle disposition sans redémarrage
-- [ ] Given un chord par défaut qui ne peut plus être produit dans une disposition, when il est constaté, then il est consigné comme finding avec la disposition et la touche, et la story passe IN_REVIEW et non DONE tant qu'il n'est pas résolu
+- [ ] Given un chord par défaut que le bump rend impossible à produire ou inopérant dans une disposition alors qu'il fonctionnait sur `0418cb5b`, when il est constaté, then il est consigné comme finding avec la disposition et la touche, et la story passe IN_REVIEW et non DONE tant qu'il n'est pas résolu. Un chord qui échoue déjà sur `0418cb5b` (`ctrl-[`, `ctrl-]` et `ctrl-0` en AZERTY, `ctrl-alt-t`, `ctrl-shift-x`, la fermeture par `alt-f`, `ctrl-j` et `ctrl-g`) est consigné avec sa disposition et relève d'une story de suivi, puisque `defaults.rs` est hors périmètre
 - [ ] Given les raccourcis de l'éditeur de code et de la zone de texte (US-003), when on les utilise dans les deux dispositions, then copier, coller, annuler, rétablir, tout sélectionner, enregistrer et envoyer immédiatement fonctionnent avec Ctrl
 
 #### US-015: Passe matérielle Windows sur Mica, l'économiseur de batterie, U+2028 et la fermeture
@@ -411,7 +412,7 @@ Le leg Windows compile et linte le code `cfg(windows)` sur la nouvelle révision
 **Acceptance Criteria:**
 - [ ] Given les backdrops `mica`, `blurred` et `acrylic` (`app/constants.rs:46,59-60`), when on capture la fenêtre principale et les réglages avant et après le bump, then Arthur approuve chaque paire, et toute surface dont un texte passe sous un contraste de 4.5:1 est corrigée par ses alphas
 - [ ] Given un terminal qui affiche `printf '  '` puis la sortie d'un agent qui contient ces caractères, when ils sont rendus, then Paneflow ne plante pas et le texte suivant s'affiche
-- [ ] Given l'économiseur de batterie activé et un spinner d'agent actif, when on reprend le scénario de saisie de US-008, then l'écart de p95 avec l'économiseur désactivé est de 16 ms au plus, ou un verdict NO-GO est écrit avec ses mesures
+- [ ] Given l'économiseur d'énergie activé et un spinner d'agent actif, when on reprend le scénario de saisie de US-008, then l'écart de p95 avec l'économiseur désactivé est de 16 ms au plus, ou un verdict NO-GO est écrit avec ses mesures. Le rapport établit aussi si GPUI entre en mode basse consommation sur la machine : GPUI 37faef81 ne lit que `GUID_POWER_SAVING_STATUS` (`gpui_windows/src/platform.rs`), alors que l'économiseur d'énergie de Windows 11 sur un poste fixe ne lève que `GUID_ENERGY_SAVER_STATUS`. Sur un poste fixe, le plafond à 30 fps ne peut donc pas s'engager ; son effet sur l'écho est borné par US-008 sous Linux, et le cas d'un portable sur batterie reste une question ouverte
 - [ ] Given une fenêtre de pane détachée, when on la ferme puis qu'on quitte et relance, then la session est restaurée sans panic
 - [ ] Given la fermeture de session Windows (WM_ENDSESSION) avec Paneflow ouvert, when on se reconnecte et relance, then `session.json` est valide et restaure les fenêtres
 
@@ -526,7 +527,7 @@ Le leg Windows compile et linte le code `cfg(windows)` sur la nouvelle révision
 | `prepaint_60_rows_warm` | 6 allocations, 384 octets par itération | ≤ baseline à 1 % près | Avant la fusion | `scripts/perf-gates.sh` |
 | Écart de p95 de latence en économie d'énergie | N/A (nouveau) | ≤ 16 ms | Month-1 | US-008 et US-015, `PANEFLOW_LATENCY_PROBE` |
 | Démarrage sans Vulkan | Mesuré en US-009 sur `0418cb5b` | Fenêtre en moins de 10 s sur GL | Month-1 | US-009 |
-| Chords par défaut fonctionnels sous Windows | Non mesuré en AZERTY | 100 % en US et AZERTY | Month-1 | US-014 |
+| Chords par défaut fonctionnels sous Windows | Non mesuré en AZERTY | 0 chord dégradé par rapport à `0418cb5b`, en US et AZERTY | Month-1 | US-014 |
 | Correctifs upstream vérifiés | 0 sur 3 | 3 sur 3 | Month-1 | US-010 (polices), US-015 (U+2028), US-009 et US-011 (surfaces Vulkan/GL) |
 | Rapports de crash attribués au bump | N/A | 0 | Month-6 | Issues GitHub étiquetées après la release |
 
@@ -535,5 +536,6 @@ Le leg Windows compile et linte le code `cfg(windows)` sur la nouvelle révision
 - **Recalage de la cible :** faut-il viser une révision plus récente si Zed #65960 (repli GL) est fusionnée avant le début de US-001 ? À trancher par Arthur avant US-001. Le choix conditionne la validité de l'analyse d'API de ce PRD.
 - **Matériel macOS :** une machine macOS est-elle disponible pour le Low Power Mode, le flou sous macOS 26/27 et l'apparence du lien avec un SDK antérieur ? À confirmer par Arthur avant US-012. Sans machine, ces points restent non vérifiés et sont mentionnés comme tels dans la release.
 - **Suite d'un NO-GO en latence :** si US-008 ou US-015 rend un NO-GO, faut-il une issue upstream seule ou aussi une story Paneflow qui suspend les animations décoratives en économie d'énergie ? À décider par Arthur à la clôture de US-008.
+- **Économiseur sur portable Windows :** sur un portable sur batterie, l'économiseur d'énergie lève-t-il `GUID_POWER_SAVING_STATUS`, et donc le plafond à 30 fps de GPUI ? Non vérifié faute de portable Windows (US-015). À mesurer sur la première machine disponible, avec le scénario de US-008.
 - **Source de GPUI :** faut-il, à terme, passer à `gpui-pre` comme gpui-component ? C'est une décision stratégique séparée, à instruire avant le prochain bump.
 [/PRD]

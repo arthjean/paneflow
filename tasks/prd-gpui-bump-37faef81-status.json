@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Valider Windows sur matériel réel",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     }
   ],
   "stories": [
@@ -205,43 +205,43 @@
       "id": "US-013",
       "title": "Faire passer le leg Windows de la CI",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-29",
+      "completed_at": "2026-10-30",
+      "reviewed_at": "2026-10-30"
     },
     {
       "id": "US-014",
       "title": "Valider les raccourcis avec le mapper clavier Windows",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-013"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-29",
+      "completed_at": "2026-10-30",
+      "reviewed_at": "2026-10-30"
     },
     {
       "id": "US-015",
       "title": "Passe matérielle Windows sur Mica, l'économiseur de batterie, U+2028 et la fermeture",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-013"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-29",
+      "completed_at": "2026-10-30",
+      "reviewed_at": "2026-10-30"
     }
   ]
 }
