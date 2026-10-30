@@ -136,6 +136,15 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     crate::app::diff_dock::code::view::register_keybindings(cx);
 }
 
+pub fn keyboard_layout_changed(last_layout_id: &mut String, cx: &App) -> bool {
+    let layout_id = cx.keyboard_layout().id();
+    if layout_id == last_layout_id {
+        return false;
+    }
+    *last_layout_id = layout_id.to_string();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +203,16 @@ mod tests {
     #[gpui::test]
     fn host_os_agrees_with_the_gpui_platform(cx: &mut gpui::TestAppContext) {
         assert_eq!(cx.update(|cx| cx.platform_info().os), host_os());
+    }
+
+    #[gpui::test]
+    fn keyboard_layout_changed_fires_once_per_new_layout(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut last_layout_id = String::from("layout-before-the-switch");
+            assert!(keyboard_layout_changed(&mut last_layout_id, cx));
+            assert_eq!(last_layout_id, cx.keyboard_layout().id());
+            assert!(!keyboard_layout_changed(&mut last_layout_id, cx));
+        });
     }
 
     #[test]

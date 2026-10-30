@@ -17,7 +17,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - **`CSI 19 t` is answered** with the screen size in characters (`CSI 9 ; rows ; columns t`).
 - **DECRQM answers `4` (permanently reset) for the twelve ANSI modes that xterm reports that way**, such as SRTM (mode 5) and GATM (mode 1), instead of `0` (not recognized).
 - **The OSC 7501 support query lists what Paneflow accepts.** `OSC 7501 ; ?` is now answered with `?:states=idle,working,done,blocked,error:kinds=permission,question,auth`, as revision 0.4 of the program status protocol specifies, instead of a bare `?`.
-- **Shortcuts on Windows follow the active keyboard layout.** Default and custom shortcuts are now resolved through the Windows keyboard mapper, so a chord on a shifted symbol is matched against the layout in use (AZERTY as well as US) instead of a fixed US mapping.
+- **Shortcuts on Windows follow the active keyboard layout.** Default and custom shortcuts are now resolved through the Windows keyboard mapper, so a chord on a shifted symbol is matched against the layout in use (AZERTY as well as US) instead of a fixed US mapping, and switching layouts with Win+Space takes effect without a restart.
 - **Animations run at up to 30 frames per second in power-saving mode.** When the operating system reports a power-saving state, GPUI caps frame-by-frame animations, such as hover and sidebar transitions, at 30 per second. The agent spinner and keystroke echo keep their usual rate; a keystroke typed while such an animation runs can wait one 33 ms frame instead of a 16.7 ms one.
 
 ### Fixed

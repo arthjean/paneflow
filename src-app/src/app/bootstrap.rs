@@ -25,6 +25,19 @@ impl PaneFlowApp {
         .detach();
     }
 
+    fn follow_keyboard_layout(cx: &mut Context<Self>) {
+        let mut layout_id = cx.keyboard_layout().id().to_string();
+        let this = cx.weak_entity();
+        cx.on_keyboard_layout_change(move |cx| {
+            if keybindings::keyboard_layout_changed(&mut layout_id, cx) {
+                let _ = this.update(cx, |app, cx| {
+                    keybindings::apply_keybindings(cx, &app.cached_config.shortcuts);
+                });
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(title_bar::TitleBar::new);
         cx.subscribe(&title_bar, Self::handle_title_bar_event)
@@ -134,6 +147,7 @@ impl PaneFlowApp {
         Self::schedule_coexistence_toast(&install_method, cx);
 
         Self::schedule_release_toast(cx);
+        Self::follow_keyboard_layout(cx);
 
         cx.observe_self(|this, cx| this.sync_terminal_visibility(cx))
             .detach();
