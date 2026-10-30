@@ -116,8 +116,8 @@ Nerd Font as the default.
    Nothing animates for decoration except the startup splash shimmer, the
    update banner shimmer, and status spinners. Any new animation MUST read
    `reduce_motion`; section 4.8 lists which existing ones do.
-6. Color carries meaning first: added, modified, deleted, conflict, error,
-   and the eight broadcast groups keep their hues across presets.
+6. Color carries meaning first: added, modified, deleted, conflict, and
+   error keep their hues across presets.
 7. Density over decoration. Body text is 12 px, labels are 11 px, micro
    chips are 9 to 10 px. Whitespace is spent on the grid, not on padding.
 8. Every surface holds with the native material on and off, in light and
@@ -174,7 +174,6 @@ hides the workspace name while Settings is open.
 | --- | --- | --- | --- |
 | Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 24 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
 | Diff dock surface picker | Fills a fresh dock | Three cards 122 by 98, gap 12, radius 10, grid padding 16 | `src-app/src/app/diff_dock/surface_picker.rs` |
-| Composer | Scrim over the whole pane, panel docked at its bottom | Black scrim at 0.25 on the 20 px squircle; panel with margin 8, padding 8, gap 6, 1 px border, radius 8; header chips 10 px; input max height 180 | `src-app/src/pane.rs` |
 | Menus and selects | Deferred, anchored under the trigger | Squircle 18, list padding 4, item height 28 | `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
@@ -222,7 +221,6 @@ inside `theme/builtin.rs`.
 | `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#29681c`, `#df8e1d`, `#a00b2b`, `#fe640b` |
 | `vc_added_background`, `vc_deleted_background` | Row washes in the diff | added, deleted at 0.12 | `#40a02b`, `#d20f39` at 0.16 |
 | `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | `#40a02b`, `#d20f39` at 0.40 |
-| `group_1` to `group_8` | Broadcast group stripe and picker | blue, green, yellow, red, violet, teal, orange, periwinkle | Catppuccin Latte hues |
 | `agent_error` | Failed agent state | `#ff6f6a` | `#a00b2b` |
 
 The dark work surface is `#181818` and the dark chrome is `#141414`: the
@@ -299,12 +297,12 @@ to the surfaces named:
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
-| Composer, drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
+| Drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Theme mockup inner frame | 7 | round | none |
 | Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner | squircle | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
 | Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
-| Icon button, composer chip | 4 | round | none |
+| Icon button | 4 | round | none |
 | Scrollbar thumb, header chip, filter clear | 3 | round | none |
 
 Squircle means `squircle_fill` and `squircle_border` from
@@ -344,7 +342,7 @@ small circular controls and the explicitly round surfaces in the table.
 | --- | --- | --- | --- |
 | Interface | Geist, bundled, set on the root element | 12 Normal for body, Medium for titles in rows | Everything that is not a terminal or code |
 | Labels | Geist | 11 Normal muted for eyebrows and descriptions, Semibold for `section_eyebrow` | Settings, rails, pills |
-| Micro | Geist | 9 to 10 | Header chips, composer chips, hints |
+| Micro | Geist | 9 to 10 | Header chips, hints |
 | Emphasis | Geist | 13 Medium | Row titles that need to outrank body |
 | Title | Geist | 14 Semibold | Pane header, empty-state titles, callout titles |
 | Page heading | Geist | 26 | Settings page title |
@@ -597,8 +595,7 @@ opening a terminal directly. Closing the last tab closes the pane. Diff
 panes have no tab bar.
 
 State layers, painted in this order: card fill, content, dim layer, drag
-overlay, broadcast stripe (3 px of the group color, inset by the radius top
-and bottom), border, composer. Unfocused panes in a multi-pane workspace fade
+overlay, border. Unfocused panes in a multi-pane workspace fade
 under a 0.3 overlay by default. The drop overlay is blue at 0.10 with a 2 px
 blue border, radius 8, margin 8, and a swap variant with its own tint.
 
@@ -844,15 +841,9 @@ theme picker, the clone dialog and the Welcome rows, keep the 28 px
 bar color, padding 8 by 6, small text, shown after 800 ms through
 `delayed_tooltip`.
 
-### 5.7 Composer, palette
+### 5.7 Palettes
 
-The Composer dims the whole pane under a 0.25 black scrim and docks a
-bordered panel at the bottom: a `Composer` label at 11 px Medium, then 10 px
-chips on radius 4 for the broadcast toggle (`Single pane` on `subtle`, or
-`Broadcast: group` on `accent` at 0.15), `agent generating - Enter queues`
-on `vc_modified` at
-0.15 while the agent is busy, and a cancel chip when prompts are queued;
-Enter submits, Escape closes. The pane palette fills an empty tab named
+The pane palette fills an empty tab named
 `New pane` with a centered 260 px column: a 13 px Semibold title, an
 optional branch row, one 34 px row per preset with its 14 px agent mark and
 a `not installed` marker at 10 px where the binary is missing, and an inline
@@ -981,9 +972,7 @@ every modal answers Enter and Escape.
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
 | Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move; enter opens; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; escape returns to the pane |
 | File tree in the dock | `secondary-alt-f` |
-| Composer | `secondary-shift-space` |
 | Attention queue | `secondary-shift-a` |
-| Broadcast groups, toggle member | `secondary-shift-m`, `secondary-shift-b` |
 | Jump to next waiting agent | `secondary-shift-j` |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
 | Command palette | `secondary-shift-p` |

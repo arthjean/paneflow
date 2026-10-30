@@ -84,9 +84,6 @@ pane. Search actions apply while the corresponding search is active.
 | Workspaces | `open_workspace_in_windsurf` | `Ctrl+Alt+W` |
 | App views | `toggle_files_sidebar` | `Cmd/Ctrl+Alt+F` |
 | App views | `toggle_diff_dock_maximize` | `Cmd/Ctrl+Alt+M` |
-| App views | `open_composer` | `Cmd/Ctrl+Shift+Space` |
-| App views | `toggle_broadcast_member` | `Cmd/Ctrl+Shift+B` |
-| App views | `open_broadcast_groups` | `Cmd/Ctrl+Shift+M` |
 | App views | `open_attention_queue` | `Cmd/Ctrl+Shift+U` |
 | App views | `open_command_palette` | `Cmd/Ctrl+Shift+P` |
 | App views | `open_settings` | `Cmd/Ctrl+,` |

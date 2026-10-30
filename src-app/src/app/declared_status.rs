@@ -946,8 +946,6 @@ mod tests {
             .next()
             .expect("the module has a production part");
         for writer in [
-            "inject_text",
-            "write_injected_text",
             "write_program_injected_text",
             "send_text",
             "write_text",

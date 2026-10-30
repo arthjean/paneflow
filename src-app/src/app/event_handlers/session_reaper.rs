@@ -121,7 +121,6 @@ impl PaneFlowApp {
         }
         if changed {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
             cx.notify();
         }
         changed
@@ -152,7 +151,6 @@ impl PaneFlowApp {
         }
         if changed {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
             cx.notify();
         }
     }
@@ -172,7 +170,6 @@ impl PaneFlowApp {
         }
         if changed {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
             cx.notify();
         }
     }
@@ -205,7 +202,6 @@ impl PaneFlowApp {
         }
         if changed {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
             cx.notify();
         }
     }

@@ -455,14 +455,6 @@ pub struct UiColors {
     pub vc_deleted_background: Hsla,
     pub vc_word_added: Hsla,
     pub vc_word_deleted: Hsla,
-    pub group_1: Hsla,
-    pub group_2: Hsla,
-    pub group_3: Hsla,
-    pub group_4: Hsla,
-    pub group_5: Hsla,
-    pub group_6: Hsla,
-    pub group_7: Hsla,
-    pub group_8: Hsla,
     pub agent_error: Hsla,
 }
 
@@ -495,19 +487,6 @@ impl UiColors {
             deleted_background: h(0x402425),
             added_gutter_background: h(0x16281f),
             deleted_gutter_background: h(0x2c1718),
-        }
-    }
-
-    pub fn group_color(&self, idx: usize) -> Hsla {
-        match idx % 8 {
-            0 => self.group_1,
-            1 => self.group_2,
-            2 => self.group_3,
-            3 => self.group_4,
-            4 => self.group_5,
-            5 => self.group_6,
-            6 => self.group_7,
-            _ => self.group_8,
         }
     }
 }
@@ -543,14 +522,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             vc_deleted_background: ha(0xd20f39, 0.16),
             vc_word_added: ha(0x40a02b, 0.40),
             vc_word_deleted: ha(0xd20f39, 0.40),
-            group_1: h(0x1e66f5),
-            group_2: h(0x40a02b),
-            group_3: h(0xdf8e1d),
-            group_4: h(0xd20f39),
-            group_5: h(0x8839ef),
-            group_6: h(0x179299),
-            group_7: h(0xfe640b),
-            group_8: h(0x7287fd),
             agent_error: h(0xa00b2b),
         }
     } else {
@@ -573,14 +544,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             vc_deleted_background: ha(0xff6f6a, 0.12),
             vc_word_added: ha(0x57d992, 0.40),
             vc_word_deleted: ha(0xff6f6a, 0.40),
-            group_1: h(0x7eb6ff),
-            group_2: h(0x57d992),
-            group_3: h(0xffd166),
-            group_4: h(0xff6f6a),
-            group_5: h(0xc79bff),
-            group_6: h(0x57d5c4),
-            group_7: h(0xffa657),
-            group_8: h(0x9ea7ff),
             agent_error: h(0xff6f6a),
         }
     }
@@ -907,7 +870,6 @@ mod tests {
 
     const UI_TEXT_TIER: f32 = 60.0;
     const UI_SUPPORT_TIER: f32 = 45.0;
-    const UI_DECORATIVE_TIER: f32 = 30.0;
 
     struct RoleRow {
         role: &'static str,
@@ -992,62 +954,6 @@ mod tests {
                 ui.agent_error,
                 ui.surface,
                 UI_SUPPORT_TIER,
-            ),
-            role_row(
-                "group_1",
-                "surface",
-                ui.group_1,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_2",
-                "surface",
-                ui.group_2,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_3",
-                "surface",
-                ui.group_3,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_4",
-                "surface",
-                ui.group_4,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_5",
-                "surface",
-                ui.group_5,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_6",
-                "surface",
-                ui.group_6,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_7",
-                "surface",
-                ui.group_7,
-                ui.surface,
-                UI_DECORATIVE_TIER,
-            ),
-            role_row(
-                "group_8",
-                "surface",
-                ui.group_8,
-                ui.surface,
-                UI_DECORATIVE_TIER,
             ),
             role_row(
                 "text",
@@ -1168,7 +1074,7 @@ mod tests {
             crate::theme::PRESETS.len()
         );
         for (_, theme) in &variants {
-            assert_eq!(ui_role_rows(theme).len(), 24);
+            assert_eq!(ui_role_rows(theme).len(), 16);
             assert_eq!(ansi_slots(theme).len(), 16);
             assert_eq!(
                 ansi_role_rows(theme).len() + ansi_background_endpoint_slots(theme).len(),

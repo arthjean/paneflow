@@ -2305,7 +2305,7 @@ mod tests {
                 Err(crate::terminal::view::INPUT_REJECTED)
             );
             assert_eq!(
-                view.write_injected_text("lost\nlines"),
+                view.write_program_injected_text("lost\nlines"),
                 Err(crate::terminal::view::INPUT_REJECTED)
             );
             assert_eq!(
@@ -2348,7 +2348,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn ipc_writes_reach_the_host_as_program_input_and_the_composer_as_typed(
+    fn ipc_writes_reach_the_host_as_program_input_and_keyboard_text_as_typed(
         cx: &mut gpui::TestAppContext,
     ) {
         use paneflow_host::InputOrigin;
@@ -2356,7 +2356,7 @@ mod tests {
         let terminal = display_terminal(cx);
         cx.update(|_, cx| {
             let view = terminal.read(cx);
-            view.inject_text("composer");
+            assert_eq!(view.write_text("typed"), Ok(()));
             assert_eq!(view.write_program_text("sent"), Ok(()));
             assert_eq!(view.write_program_injected_text("pasted"), Ok(()));
             assert_eq!(view.send_keystroke("ctrl-c"), Ok(()));

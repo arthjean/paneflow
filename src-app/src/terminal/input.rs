@@ -1268,36 +1268,17 @@ impl TerminalView {
         .detach();
     }
 
-    pub fn inject_text(&self, text: &str) {
-        let _ = self.write_injected_text(text);
-    }
-
-    pub(crate) fn write_injected_text(&self, text: &str) -> Result<(), &'static str> {
-        self.write_injected_text_from(text, InputOrigin::Typed)
-    }
-
     pub(crate) fn write_program_injected_text(&self, text: &str) -> Result<(), &'static str> {
-        self.write_injected_text_from(text, InputOrigin::Program)
-    }
-
-    fn write_injected_text_from(
-        &self,
-        text: &str,
-        origin: InputOrigin,
-    ) -> Result<(), &'static str> {
         let mode = self.terminal.session_backend().modes();
         if mode.contains(Modes::BRACKETED_PASTE) {
             super::view::input_outcome(self.terminal.write_ghostty_paste_from(
                 normalize_paste_text(text),
                 false,
                 ghostty::ClipboardLocation::Standard,
-                origin,
+                InputOrigin::Program,
             ))
         } else {
-            match origin {
-                InputOrigin::Typed => self.write_text(text),
-                InputOrigin::Program => self.write_program_text(text),
-            }
+            self.write_program_text(text)
         }
     }
 

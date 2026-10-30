@@ -34,6 +34,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   - [GHSA-w9q4-5jvv-mcv4](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-w9q4-5jvv-mcv4): an invalid cursor style and hyperlink after a scrollback clear prunes the cursor's page, reachable with `CSI 22 J` or `CSI 2 J` at a shell prompt.
   - [GHSA-jqr7-69mm-v35h](https://github.com/ghostty-org/ghostty/security/advisories/GHSA-jqr7-69mm-v35h): a row count truncated to 16 bits when a very wide page is narrowed.
 
+### Removed
+
+- **The Composer and broadcast groups are gone.** `Cmd/Ctrl+Shift+Space` no longer opens a prompt input over the pane, `Cmd/Ctrl+Shift+B` and `Cmd/Ctrl+Shift+M` no longer manage broadcast groups, panes lose their colored group stripe, and the matching command palette entries are removed. Prompts are no longer queued for a busy agent, so the `1 queued` chip and the pane menu's **Cancel queued prompt** item are gone too. A custom shortcut bound to `open_composer`, `toggle_broadcast_member`, or `open_broadcast_groups` is skipped with a warning. To send one prompt to several agents, use `paneflow send <selector> "..." --broadcast`.
+
 ## [0.18.1] - 2026-10-28
 
 Paneflow 0.18.1 cuts the work the desktop does while an agent animates in one pane and the rest sits still. With 30 workspaces open and a TUI agent animating in the shown one, the desktop's main thread drops from 22.35 % to 1.69 % of a core on Linux, and 5.17 % on Windows. At rest, the threads that woke on fixed timers now sleep until there is work: the IPC thread goes from 99.6 to 0.2 wakeups a second on Linux, and an idle terminal session from 10 to 0.5. Text fields gain word navigation, undo and redo, and a blinking caret, Settings frames its form inputs with a focus ring, and the Move to space submenu works again.

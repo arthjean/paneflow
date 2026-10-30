@@ -670,7 +670,6 @@ impl PaneFlowApp {
         }
         if seeded > 0 {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
         }
     }
 
@@ -705,7 +704,6 @@ impl PaneFlowApp {
         };
         if self.seed_session_surface(&row, workspace_id, surface_id) {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
         }
         self.refresh_declared_status(cx);
     }
@@ -774,7 +772,6 @@ impl PaneFlowApp {
         }
         let Some(kind) = frame.get("kind").and_then(Value::as_str).map(str::to_owned) else {
             self.sync_attention(cx);
-            self.agent_sessions_changed(cx);
             cx.notify();
             return;
         };
@@ -808,7 +805,6 @@ impl PaneFlowApp {
             );
         }
         self.sync_attention(cx);
-        self.agent_sessions_changed(cx);
         if let Some(params) = legacy_ai_params(frame, workspace_id, surface_id) {
             self.broadcast_ai_frame(&kind, &params);
         }

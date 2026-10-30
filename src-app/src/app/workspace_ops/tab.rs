@@ -268,10 +268,6 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
         cx.notify();
-        self.refresh_composer_slot(cx);
-        self.sync_broadcast_stripes(cx);
-        self.flush_pending_prefill(cx);
-        self.sync_pending_chips(cx);
         self.prune_parked_diff_docks(cx);
         self.prune_worktree_states();
         if let Some(record) = record {

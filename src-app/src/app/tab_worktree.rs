@@ -307,7 +307,7 @@ impl PaneFlowApp {
         let busy_surfaces: std::collections::HashSet<u64> = ws
             .agent_sessions
             .values()
-            .filter(|session| crate::app::broadcast::state_blocks_delivery(&session.state))
+            .filter(|session| matches!(session.state, crate::ai_types::AgentState::Thinking))
             .filter_map(|session| session.surface_id)
             .collect();
         if busy_surfaces.is_empty() {

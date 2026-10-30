@@ -467,6 +467,15 @@ impl PaneFlowApp {
         self.workspaces.get(self.shown_workspace_idx()?)
     }
 
+    pub(crate) fn focused_or_first_pane(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<Entity<Pane>> {
+        let root = self.active_workspace()?.active_tab().root.as_ref()?;
+        root.focused_pane(window, cx).or_else(|| root.first_leaf())
+    }
+
     pub(crate) fn active_workspace_mut(&mut self) -> Option<&mut Workspace> {
         let idx = self.shown_workspace_idx()?;
         self.workspaces.get_mut(idx)
@@ -1078,10 +1087,6 @@ impl PaneFlowApp {
         self.probe_workspace_git_if_shown_changed(shown_before, cx);
         self.save_session(cx);
         cx.notify();
-        self.refresh_composer_slot(cx);
-        self.sync_broadcast_stripes(cx);
-        self.flush_pending_prefill(cx);
-        self.sync_pending_chips(cx);
     }
 
     pub(crate) fn reorder_workspace(

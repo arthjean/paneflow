@@ -953,32 +953,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, false, cx)),
     },
     Command {
-        label: "Prompt composer…",
-        icon: Some("icons/edit.svg"),
-        keywords: "agent write send",
-        needs: Needs::Workspace,
-        kind: Kind::Action("open_composer"),
-    },
-    Command {
         label: "Attention queue…",
         icon: Some("icons/list-details.svg"),
         keywords: "agent waiting review",
         needs: Needs::Always,
         kind: Kind::Action("open_attention_queue"),
-    },
-    Command {
-        label: "Broadcast groups…",
-        icon: None,
-        keywords: "agent fanout send many",
-        needs: Needs::Always,
-        kind: Kind::Action("open_broadcast_groups"),
-    },
-    Command {
-        label: "Toggle pane in broadcast group",
-        icon: None,
-        keywords: "agent fanout member",
-        needs: Needs::Workspace,
-        kind: Kind::Action("toggle_broadcast_member"),
     },
     Command {
         label: "Jump to the next waiting agent",

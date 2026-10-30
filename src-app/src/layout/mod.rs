@@ -9,8 +9,7 @@ mod serde;
 mod tree;
 
 pub(crate) use density::{
-    CardFrame, PaneDensity, flush_border, flush_corner_radius, flush_corners, flush_fill,
-    flush_outline, grid_edges,
+    CardFrame, PaneDensity, flush_border, flush_corners, flush_fill, flush_outline, grid_edges,
 };
 pub use navigation::{FocusDirection, FocusNav};
 pub(crate) use render::SplitPreview;

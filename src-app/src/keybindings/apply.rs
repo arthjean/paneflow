@@ -132,7 +132,6 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     }
 
     crate::widgets::text_input::register_keybindings(cx);
-    crate::widgets::text_area::register_keybindings(cx);
     crate::app::diff_dock::code::view::register_keybindings(cx);
 }
 
@@ -315,14 +314,13 @@ mod tests {
         use crate::app::diff_dock::code::view::{
             CeCopy, CeCut, CePaste, CeRedo, CeSave, CeSelectAll, CeUndo,
         };
-        use crate::widgets::text_area::TaSubmitImmediate;
 
         let native = if cfg!(target_os = "macos") {
             "cmd"
         } else {
             "ctrl"
         };
-        let expected: [(&dyn Action, String); 8] = [
+        let expected: [(&dyn Action, String); 7] = [
             (&CeSelectAll, format!("{native}-a")),
             (&CeUndo, format!("{native}-z")),
             (&CeRedo, format!("{native}-shift-z")),
@@ -330,7 +328,6 @@ mod tests {
             (&CeCut, format!("{native}-x")),
             (&CePaste, format!("{native}-v")),
             (&CeSave, format!("{native}-s")),
-            (&TaSubmitImmediate, format!("{native}-enter")),
         ];
 
         cx.update(|cx| {
@@ -460,7 +457,6 @@ mod tests {
             for excluded in [
                 "Terminal",
                 "TextInput",
-                "PaneflowTextArea",
                 crate::app::diff_dock::code::view::CODE_KEY_CONTEXT,
             ] {
                 assert!(

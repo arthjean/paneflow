@@ -98,10 +98,7 @@ notify = "7"
 # gpui; making it explicit lets us reference it directly.
 parking_lot = "0.12"
 
-# TOML reader/writer for the Codex CLI's `~/.codex/config.toml`. Used by the
-# composer to mirror the model + reasoning-effort fields into the live pill
-# selectors (same bridge pattern as the JSON one for Claude Code's
-# `~/.claude/settings.json`).
+# TOML reader for the CLI's flow and workspace spec files.
 toml = "0.8"
 
 # Standard deps
@@ -206,12 +203,8 @@ interprocess.workspace = true
 # deduplicates - the direct declaration is only needed to `use` the trait.
 unicode-segmentation = "1"
 
-# Composer extensions.
-#
 # `ignore` is the gitignore-respecting walker used by ripgrep. Powers the
-# `@`-mention file completion popup (recursive, gitignore-respecting,
-# debounced 200ms). Pulled in directly so the composer does not have
-# to reimplement .gitignore / .ignore / hidden-file filtering by hand.
+# path picker index and the file tree's gitignore filtering.
 ignore = "0.4"
 
 # Cross-platform desktop notifications fired by the agents runtime when a

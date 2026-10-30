@@ -227,14 +227,6 @@ fn vercel_dark_ui() -> UiColors {
         vc_deleted_background: ha(0xff5a5f, 0.16),
         vc_word_added: ha(0x00d084, 0.42),
         vc_word_deleted: ha(0xff5a5f, 0.42),
-        group_1: h(0xffffff),
-        group_2: h(0x3291ff),
-        group_3: h(0x00d084),
-        group_4: h(0xf5a623),
-        group_5: h(0xbf5af2),
-        group_6: h(0x50e3c2),
-        group_7: h(0xff5a5f),
-        group_8: h(0x999999),
         agent_error: h(0xff5a5f),
     }
 }
@@ -297,14 +289,6 @@ fn vercel_light_ui() -> UiColors {
         vc_deleted_background: ha(0xcd2b31, 0.16),
         vc_word_added: ha(0x0f7b0f, 0.42),
         vc_word_deleted: ha(0xcd2b31, 0.42),
-        group_1: h(0x000000),
-        group_2: h(0x0068d6),
-        group_3: h(0x0f7b0f),
-        group_4: h(0xa35200),
-        group_5: h(0x7820bc),
-        group_6: h(0x067f6f),
-        group_7: h(0xcd2b31),
-        group_8: h(0x666666),
         agent_error: h(0xa32227),
     }
 }
@@ -367,14 +351,6 @@ fn claude_dark_ui() -> UiColors {
         vc_deleted_background: ha(0xff6f6a, 0.12),
         vc_word_added: ha(0x57d992, 0.40),
         vc_word_deleted: ha(0xff6f6a, 0.40),
-        group_1: h(0xd97757),
-        group_2: h(0x8fa4b8),
-        group_3: h(0x9ab38a),
-        group_4: h(0xc3a45f),
-        group_5: h(0xb8a1c8),
-        group_6: h(0x95b8b2),
-        group_7: h(0xe68a6d),
-        group_8: h(0xc3c2b7),
         agent_error: h(0xe78363),
     }
 }
@@ -437,14 +413,6 @@ fn claude_light_ui() -> UiColors {
         vc_deleted_background: ha(0xd20f39, 0.16),
         vc_word_added: ha(0x40a02b, 0.40),
         vc_word_deleted: ha(0xd20f39, 0.40),
-        group_1: h(0xd97757),
-        group_2: h(0x4a6fa5),
-        group_3: h(0x4f7a3f),
-        group_4: h(0x9a6b1f),
-        group_5: h(0x7a5ea8),
-        group_6: h(0x2f7d72),
-        group_7: h(0xc2552f),
-        group_8: h(0x83827d),
         agent_error: h(0xa00b2b),
     }
 }
@@ -507,14 +475,6 @@ fn cursor_dark_ui() -> UiColors {
         vc_deleted_background: ha(0xff6f6a, 0.12),
         vc_word_added: ha(0x57d992, 0.40),
         vc_word_deleted: ha(0xff6f6a, 0.40),
-        group_1: h(0xa0d0f0),
-        group_2: h(0x4074e0),
-        group_3: h(0x57d992),
-        group_4: h(0xffd166),
-        group_5: h(0xc79bff),
-        group_6: h(0x7dd3fc),
-        group_7: h(0xff6f6a),
-        group_8: h(0xf0f0f0),
         agent_error: h(0xff6f6a),
     }
 }
@@ -577,14 +537,6 @@ fn cursor_light_ui() -> UiColors {
         vc_deleted_background: ha(0xd20f39, 0.16),
         vc_word_added: ha(0x40a02b, 0.40),
         vc_word_deleted: ha(0xd20f39, 0.40),
-        group_1: h(0x0f6fc5),
-        group_2: h(0x0451a5),
-        group_3: h(0x40a02b),
-        group_4: h(0xdf8e1d),
-        group_5: h(0x8839ef),
-        group_6: h(0x0598bc),
-        group_7: h(0xd20f39),
-        group_8: h(0x555555),
         agent_error: h(0xa00b2b),
     }
 }
@@ -656,14 +608,6 @@ fn tailwind_dark_ui() -> UiColors {
         vc_deleted_background: ha(0xef4444, 0.16),
         vc_word_added: ha(0x22c55e, 0.40),
         vc_word_deleted: ha(0xef4444, 0.40),
-        group_1: h(0x60a5fa),
-        group_2: h(0x4ade80),
-        group_3: h(0xfacc15),
-        group_4: h(0xf87171),
-        group_5: h(0xc084fc),
-        group_6: h(0x22d3ee),
-        group_7: h(0xfb923c),
-        group_8: h(0xa1a1aa),
         agent_error: h(0xf87171),
     }
 }
@@ -726,14 +670,6 @@ fn tailwind_light_ui() -> UiColors {
         vc_deleted_background: ha(0xdc2626, 0.16),
         vc_word_added: ha(0x16a34a, 0.40),
         vc_word_deleted: ha(0xdc2626, 0.40),
-        group_1: h(0x2563eb),
-        group_2: h(0x16a34a),
-        group_3: h(0xca8a04),
-        group_4: h(0xdc2626),
-        group_5: h(0x9333ea),
-        group_6: h(0x0891b2),
-        group_7: h(0xea580c),
-        group_8: h(0x71717a),
         agent_error: h(0x991b1b),
     }
 }

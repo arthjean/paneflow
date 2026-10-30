@@ -908,20 +908,13 @@ impl PaneFlowApp {
                 .unwrap_or_else(|| path.to_string_lossy().into_owned())
         });
 
-        let pending_sid = source
-            .read(cx)
-            .surface()
-            .as_terminal()
-            .map(|t| t.entity_id().as_u64())
-            .filter(|sid| self.broadcast.pending.contains_key(sid));
-
         let fork_source = source
             .read(cx)
             .surface()
             .as_terminal()
             .is_some_and(|terminal| terminal.read(cx).can_fork_conversation())
             .then(|| source.clone());
-        let rows = 2 + usize::from(pending_sid.is_some()) + usize::from(fork_source.is_some()) + 2;
+        let rows = 2 + usize::from(fork_source.is_some()) + 2;
         let menu_height = menu_height(rows as f32, 18.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -976,21 +969,6 @@ impl PaneFlowApp {
                 "pane-context-copy-relative-path-disabled".into(),
                 "Copy relative path unavailable",
                 ui,
-            ));
-        }
-
-        if let Some(sid) = pending_sid {
-            context_menu = context_menu.child(self.render_select_menu_item(
-                SharedString::from("pane-cancel-queued"),
-                "Cancel queued prompt",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.pane_menu_open = None;
-                    this.cancel_pending_for(sid, cx);
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
             ));
         }
 

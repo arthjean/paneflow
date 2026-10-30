@@ -378,27 +378,12 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "secondary-g",
         action_name: "diff_new_file_tab",
-        context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
+        context: Some("!Terminal && !TextInput && !CodeEditor"),
     },
     DefaultBinding {
         key: "secondary-j",
         action_name: "diff_new_terminal_tab",
-        context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
-    },
-    DefaultBinding {
-        key: "secondary-shift-space",
-        action_name: "open_composer",
-        context: None,
-    },
-    DefaultBinding {
-        key: "secondary-shift-b",
-        action_name: "toggle_broadcast_member",
-        context: None,
-    },
-    DefaultBinding {
-        key: "secondary-shift-m",
-        action_name: "open_broadcast_groups",
-        context: None,
+        context: Some("!Terminal && !TextInput && !CodeEditor"),
     },
     DefaultBinding {
         key: "secondary-shift-u",

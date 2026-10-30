@@ -871,6 +871,7 @@ impl TerminalView {
         let _ = self.write_program_text(text);
     }
 
+    #[cfg(test)]
     pub(crate) fn write_text(&self, text: &str) -> Result<(), &'static str> {
         input_outcome(self.terminal.write_to_pty(text.as_bytes().to_vec()))
     }

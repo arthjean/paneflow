@@ -1,4 +1,4 @@
-use gpui::{Div, Edges, Hsla, Pixels, Styled, div, px};
+use gpui::{Div, Edges, Hsla, Styled, div, px};
 use paneflow_config::schema::PaneFlowConfig;
 
 use super::tree::{DIVIDER_PX, SplitDirection};
@@ -92,15 +92,6 @@ pub(crate) fn flush_corners(div: Div, outer: Edges<bool>) -> Div {
         .rounded_tr(corner(outer.top, outer.right))
         .rounded_br(corner(outer.bottom, outer.right))
         .rounded_bl(corner(outer.bottom, outer.left))
-}
-
-pub(crate) fn flush_corner_radius(outer: Edges<bool>, top: bool) -> Pixels {
-    let vertical = if top { outer.top } else { outer.bottom };
-    if vertical && outer.left {
-        crate::app::constants::PANEL_CORNER_RADIUS
-    } else {
-        px(0.)
-    }
 }
 
 pub(crate) fn flush_fill(outer: Edges<bool>, color: Hsla) -> Div {
@@ -197,16 +188,5 @@ mod tests {
     fn a_grid_beside_the_dock_has_no_outer_right_edge() {
         let edges = grid_edges(false);
         assert!(edges.top && edges.bottom && edges.left && !edges.right);
-    }
-
-    #[test]
-    fn only_corners_between_two_outer_edges_are_rounded() {
-        let left_column = child_edges(all(), SplitDirection::Vertical, true, false);
-        let top_left = child_edges(left_column, SplitDirection::Horizontal, true, false);
-        assert_eq!(
-            flush_corner_radius(top_left, true),
-            crate::app::constants::PANEL_CORNER_RADIUS
-        );
-        assert_eq!(flush_corner_radius(top_left, false), px(0.));
     }
 }

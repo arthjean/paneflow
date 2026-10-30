@@ -143,7 +143,6 @@ impl PaneFlowApp {
                             false
                         };
                         if filled {
-                            app.agent_sessions_changed(cx);
                             cx.notify();
                         }
                     });
