@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-30 | Arthur Jean | PRD initial : section « Agents » repliable et redimensionnable sous l'arbre des workspaces, triée par urgence, alimentée uniquement par OSC 7501, avec détection de la capacité OSC 7501 par session, ⌘⇧J aligné sur le même ordre et préférence `sidebar_show.agents`. 4 epics, 16 stories. |
+| 1.1 | 2026-10-30 | Arthur Jean | Les stories d'UX/UI passent par le skill `/better-interface` avant leur passage en IN_REVIEW. |
 
 ## Problem Statement
 
@@ -95,7 +96,8 @@ These commands must pass for every user story:
 Gates additionnels :
 - Stories qui modifient le catalogue des runtimes (US-005) : `cargo test -p paneflow-agent-config --locked`.
 - Stories qui touchent du code `#[cfg(windows)]` : relecture de l'ordre des items par inspection, la lane `Windows x86_64 libghostty check` faisant foi après le push.
-- Stories d'interface (EP-002, EP-003, US-015) : passe visuelle manuelle par Arthur sur macOS et Windows, comparée à la maquette validée. L'agent d'implémentation ne lance pas l'application et ne fait pas de capture.
+- Stories d'UX/UI (US-006, US-007, US-008, US-009, US-010, US-011, US-013, US-014) : revue par le skill `/better-interface` sur la surface modifiée, menée en appliquant les skills `better-*` à DESIGN.md et à la maquette validée. La story ne passe en IN_REVIEW qu'avec un verdict `Approve`, sans finding `HIGH` restant. Les vérifications qui exigent l'app rendue sont marquées `Not verified` dans le rapport et couvertes par la passe visuelle ci-dessous.
+- Stories d'interface (EP-002, EP-003, US-014) : passe visuelle manuelle par Arthur sur macOS et Windows, comparée à la maquette validée. L'agent d'implémentation ne lance pas l'application et ne fait pas de capture.
 
 ## Epics & User Stories
 
