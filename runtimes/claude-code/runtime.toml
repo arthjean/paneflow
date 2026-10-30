@@ -10,6 +10,7 @@ tint = "#D97757"
 icon_asset_path = "icons/claude-color.svg"
 icon_multicolor = false
 visibility_config_key = "claude_code_button_visible"
+status_since = "2.1.295"
 
 [detection]
 command_aliases = ["claude"]

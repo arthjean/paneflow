@@ -38,6 +38,7 @@ pub struct Display {
     pub icon_asset_path: String,
     pub icon_multicolor: bool,
     pub visibility_config_key: String,
+    pub status_since: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -445,6 +446,17 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 path.display()
             ));
         }
+        if runtime
+            .display
+            .status_since
+            .as_deref()
+            .is_some_and(|version| !is_release_version(version))
+        {
+            errors.push(format!(
+                "{}: display.status_since must be a X.Y.Z version or omitted",
+                path.display()
+            ));
+        }
         if !runtime.display.icon_asset_path.starts_with("icons/")
             && !runtime.display.icon_asset_path.starts_with("agents/")
         {
@@ -616,6 +628,14 @@ fn is_alias(value: &str) -> bool {
         })
 }
 
+fn is_release_version(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 fn parse_tint(value: Option<&str>) -> Result<Option<u32>, ()> {
     let Some(value) = value else {
         return Ok(None);
@@ -645,11 +665,12 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         ));
         output.push_str(&format!("platforms: &{},\n", platforms(&runtime.platforms)));
         output.push_str(&format!(
-            "display: RuntimeDisplay {{ order: {}, tint: {tint}, icon_asset_path: {:?}, icon_multicolor: {}, visibility_config_key: {:?} }},\n",
+            "display: RuntimeDisplay {{ order: {}, tint: {tint}, icon_asset_path: {:?}, icon_multicolor: {}, visibility_config_key: {:?}, status_since: {} }},\n",
             runtime.display.order,
             runtime.display.icon_asset_path,
             runtime.display.icon_multicolor,
-            runtime.display.visibility_config_key
+            runtime.display.visibility_config_key,
+            option_string(runtime.display.status_since.as_deref())
         ));
         output.push_str(&format!(
             "detection: RuntimeDetection {{ command_aliases: &{}, process_aliases: &{}, script_path_signatures: &{}, title_prefix: {} }},\n",
@@ -1100,6 +1121,48 @@ command = "{alias}"
             generated.contains("continue_argv: Some(&[\"alpha\", \"--continue\"])"),
             "{generated}"
         );
+    }
+
+    #[test]
+    fn a_status_since_version_is_generated_only_when_declared() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let declared = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "visibility_config_key = \"alpha_button_visible\"",
+            "visibility_config_key = \"alpha_button_visible\"\nstatus_since = \"2.1.295\"",
+        );
+        let silent =
+            descriptor("beta", "com.example.beta", "beta").replace("order = 0", "order = 1");
+        write_runtime(temp.path(), "alpha", &declared);
+        write_runtime(temp.path(), "beta", &silent);
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(
+            generated.contains(
+                "visibility_config_key: \"alpha_button_visible\", status_since: Some(\"2.1.295\")"
+            ),
+            "{generated}"
+        );
+        assert!(
+            generated
+                .contains("visibility_config_key: \"beta_button_visible\", status_since: None"),
+            "{generated}"
+        );
+    }
+
+    #[test]
+    fn a_status_since_that_is_not_a_release_version_fails_naming_the_descriptor() {
+        for invalid in ["2.1", "v2.1.295", "2.1.295-beta", "2..1", "latest"] {
+            let temp = tempfile::TempDir::new().unwrap();
+            let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+                "visibility_config_key = \"alpha_button_visible\"",
+                &format!("visibility_config_key = \"alpha_button_visible\"\nstatus_since = \"{invalid}\""),
+            );
+            write_runtime(temp.path(), "alpha", &text);
+            let error = discover_and_validate(temp.path()).unwrap_err();
+            assert!(error.contains("alpha"), "{invalid}: {error}");
+            assert!(error.contains("runtime.toml"), "{invalid}: {error}");
+            assert!(error.contains("display.status_since"), "{invalid}: {error}");
+        }
     }
 
     #[test]

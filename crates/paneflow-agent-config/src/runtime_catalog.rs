@@ -19,6 +19,7 @@ pub struct RuntimeDisplay {
     pub icon_asset_path: &'static str,
     pub icon_multicolor: bool,
     pub visibility_config_key: &'static str,
+    pub status_since: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -286,6 +287,14 @@ mod tests {
         let codex = runtime_by_slug("codex").expect("codex");
         assert!(codex.title_confirms_identity(None));
         assert!(codex.has_launch_shim());
+    }
+
+    #[test]
+    fn claude_code_names_the_version_that_reports_osc_7501_and_no_version_is_invented() {
+        let claude = runtime_by_slug("claude-code").expect("claude");
+        assert_eq!(claude.display.status_since, Some("2.1.295"));
+        let codex = runtime_by_slug("codex").expect("codex");
+        assert_eq!(codex.display.status_since, None);
     }
 
     #[test]
