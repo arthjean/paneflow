@@ -37,6 +37,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Removed
 
 - **The Composer and broadcast groups are gone.** `Cmd/Ctrl+Shift+Space` no longer opens a prompt input over the pane, `Cmd/Ctrl+Shift+B` and `Cmd/Ctrl+Shift+M` no longer manage broadcast groups, panes lose their colored group stripe, and the matching command palette entries are removed. Prompts are no longer queued for a busy agent, so the `1 queued` chip and the pane menu's **Cancel queued prompt** item are gone too. A custom shortcut bound to `open_composer`, `toggle_broadcast_member`, or `open_broadcast_groups` is skipped with a warning. To send one prompt to several agents, use `paneflow send <selector> "..." --broadcast`.
+- **The Attention queue is gone.** `Cmd/Ctrl+Shift+U` and the **Attention queue…** command palette entry no longer open the overlay that listed waiting agents, failed programs, and write requests. The button beside the space name still points to agents that need you in a hidden space, `Cmd/Ctrl+Shift+J` still jumps to the next waiting agent, and write requests are still answered in the target pane or from the command palette. A custom shortcut bound to `open_attention_queue` is skipped with a warning.
 
 ## [0.18.1] - 2026-10-28
 

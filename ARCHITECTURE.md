@@ -341,7 +341,7 @@ agent CLI (claude, codex, opencode, …)
                                                                       │
             ┌─────────────────────────────────────────────────────────┘
             └─ one write choke point, ordered by source
-                 └─ GUI: tab dots, sidebar spinners, attention queue,
+                 └─ GUI: tab dots, sidebar spinners, space attention mark,
                     desktop notifications carrying the actual question
 ```
 
@@ -512,10 +512,10 @@ stale code.
   screen text is never classified. The worker carries
   `declared_status` on each snapshot entry, so a program without an agent
   reaches the app too: its state shows in the pane header's progress chip,
-  `blocked` and `error` enter the Attention Queue labeled by the declared app
-  or the pane, and `blocked` and `error` notify, naming the pane and sharing
+  `blocked` and `error` count toward the hidden-space attention mark, and
+  `blocked` and `error` notify, naming the pane and sharing
   one notification per pane every 10 s (`src-app/src/app/declared_status.rs`).
-  An `error` entry leaves the queue once its pane has been on screen: the app
+  An `error` stops counting once its pane has been on screen: the app
   acknowledges it per surface on render, and the acknowledgment falls when the
   declared state changes, while the host record and the chip keep `error`
   until the first keystroke. Text shown outside
@@ -542,7 +542,7 @@ stale code.
   that set once and never discovers a feature by trying it. A capability the
   file does not list is refused by the client before a frame leaves, with
   `capability not advertised: <name>`.
-- **One attention queue.** A session carries `unread`, raised by the worker
+- **One unread state.** A session carries `unread`, raised by the worker
   when it publishes a `finished` notification and lowered by
   `agent.acknowledge`. The desktop reads that flag off the projection and
   acknowledges the sessions the user has actually looked at, whatever its own

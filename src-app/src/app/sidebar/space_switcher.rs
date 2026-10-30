@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use gpui::{ImageSource, MouseUpEvent, ObjectFit, StyledImage, deferred, img};
 use paneflow_config::schema::{DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceId};
 
-use crate::app::attention_queue::{AttentionLevel, SpaceAttention};
+use crate::app::attention::{AttentionLevel, SpaceAttention};
 use crate::app::spaces::{SPACE_LIMIT_REASON, space_label, space_order};
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::settings::components::{menu_panel, menu_row};
@@ -386,17 +386,17 @@ impl PaneFlowApp {
             }
         } else {
             let errored = level == AttentionLevel::Error;
-            let surface = self.attention_queue_rows(cx).into_iter().find_map(|row| {
-                let in_space = row
+            let surface = self.attention_items(cx).into_iter().find_map(|item| {
+                let in_space = item
                     .workspace_idx
                     .and_then(|idx| self.workspaces.get(idx))
                     .is_some_and(|ws| ws.space == space);
-                (in_space && row.errored == errored)
-                    .then_some(row.surface_id)
+                (in_space && item.errored == errored)
+                    .then_some(item.surface_id)
                     .flatten()
             });
             if let Some(surface_id) = surface {
-                self.attention_queue_activate(surface_id, window, cx);
+                self.activate_attention_surface(surface_id, window, cx);
                 return;
             }
         }

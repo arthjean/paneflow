@@ -172,15 +172,6 @@ impl PaneFlowApp {
             terminal.update(cx, |view, cx| view.show_write_request(request, cx));
         }
     }
-
-    pub(crate) fn decide_write_request(&mut self, id: u64, allow: bool, cx: &mut Context<Self>) {
-        self.write_approvals
-            .pending
-            .retain(|pending| pending.id != id);
-        self.show_write_requests(cx);
-        decide(id, allow);
-        cx.notify();
-    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use gpui::{AppContext, Context};
 use crate::telemetry;
 use crate::terminal::blink::{BlinkPhase, BlinkPhaseGlobal, step_blink, until_next_blink};
 use crate::window_chrome::title_bar;
-use crate::{FocusReturn, PaneFlowApp, ipc, keybindings, update};
+use crate::{PaneFlowApp, ipc, keybindings, update};
 
 const SURFACE_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
@@ -395,10 +395,6 @@ impl PaneFlowApp {
             system_info_dialog: None,
             quit_dialog: None,
             quit_dialog_focus: cx.focus_handle(),
-            attention_queue_open: false,
-            attention_queue_selected: 0,
-            attention_queue_focus: cx.focus_handle(),
-            attention_queue_return: FocusReturn::default(),
             fleet_search: None,
             fleet_search_generation: 0,
             fleet_search_focus: cx.focus_handle(),

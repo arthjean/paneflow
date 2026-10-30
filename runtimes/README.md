@@ -36,7 +36,7 @@ Each `[[suggested_presets]]` entry defines `id` and `command`. The first preset 
 
 ## Turn status
 
-Paneflow takes a runtime's turn status only from the OSC 7501 program status the agent reports (https://www.superlogical.com/rex/docs/build/program-status). A descriptor declares nothing for it: a recognized runtime that reports `working`, `blocked`, `idle`, `done` or `error` gets its sidebar state, its Attention entry and its notifications, and one that reports nothing shows no turn status. Paneflow reads no screen text, no keystroke and no terminal bell to guess a state.
+Paneflow takes a runtime's turn status only from the OSC 7501 program status the agent reports (https://www.superlogical.com/rex/docs/build/program-status). A descriptor declares nothing for it: a recognized runtime that reports `working`, `blocked`, `idle`, `done` or `error` gets its sidebar state and its notifications, and one that reports nothing shows no turn status. Paneflow reads no screen text, no keystroke and no terminal bell to guess a state.
 
 The captures under `runtimes/claude-code/fixtures/screens/` and `runtimes/codex/fixtures/screens/` stay as the normal screens that keep each `[resume] failure_markers` entry free of false positives.
 

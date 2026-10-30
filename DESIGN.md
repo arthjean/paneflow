@@ -972,7 +972,6 @@ every modal answers Enter and Escape.
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
 | Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move; enter opens; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; escape returns to the pane |
 | File tree in the dock | `secondary-alt-f` |
-| Attention queue | `secondary-shift-a` |
 | Jump to next waiting agent | `secondary-shift-j` |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
 | Command palette | `secondary-shift-p` |
@@ -1012,8 +1011,8 @@ Focus is shown by the pane border and the title bar, not by dimming: every
 pane keeps full contrast by default, and `unfocused_pane_opacity` below 1.0
 opts back into fading the siblings. An agent that needs the user gets the
 `vc_conflict` border at 0.7 and a sidebar dot; clicking anywhere in the panel
-acknowledges visible completions. The attention queue lists those panes and
-`secondary-shift-j` jumps through them. Native OS notifications fire only
+acknowledges visible completions. `secondary-shift-j` jumps through those
+panes. Native OS notifications fire only
 while the window is unfocused.
 
 ## 7. Platform Materials

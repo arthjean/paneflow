@@ -467,7 +467,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
             .on_action(cx.listener(Self::handle_focus_workspaces_sidebar))
             .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
-            .on_action(cx.listener(Self::handle_open_attention_queue))
             .on_action(cx.listener(Self::handle_open_command_palette))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
@@ -690,9 +689,6 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_title_bar_help_menu(anchor, window, cx));
         }
 
-        if self.attention_queue_open {
-            app_content = app_content.child(self.render_attention_queue(cx));
-        }
         if self.branch_prompt.is_some() {
             app_content = app_content.child(self.render_branch_prompt(cx));
         }

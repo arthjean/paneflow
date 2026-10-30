@@ -662,13 +662,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Diff,
     },
     ActionMeta {
-        name: "open_attention_queue",
-        factory: || Box::new(crate::OpenAttentionQueue),
-        context: "",
-        description: "Attention queue",
-        group: ShortcutGroup::Agents,
-    },
-    ActionMeta {
         name: "open_command_palette",
         factory: || Box::new(crate::OpenCommandPalette),
         context: "",

@@ -953,13 +953,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, false, cx)),
     },
     Command {
-        label: "Attention queue…",
-        icon: Some("icons/list-details.svg"),
-        keywords: "agent waiting review",
-        needs: Needs::Always,
-        kind: Kind::Action("open_attention_queue"),
-    },
-    Command {
         label: "Jump to the next waiting agent",
         icon: None,
         keywords: "attention review",

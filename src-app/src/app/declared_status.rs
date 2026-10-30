@@ -5,6 +5,7 @@ use gpui::{App, Context, Entity, SharedString};
 use paneflow_host::program_status::DeclaredStatus;
 
 use crate::PaneFlowApp;
+use crate::app::attention::AttentionLevel;
 use crate::app::host_agents::{HostAgentRow, host_observed_agent};
 use crate::terminal::TerminalView;
 use crate::workspace::Workspace;
@@ -42,8 +43,12 @@ impl DeclaredState {
         }
     }
 
-    fn queues(self) -> bool {
-        matches!(self, Self::Blocked | Self::Error)
+    fn attention(self) -> Option<AttentionLevel> {
+        match self {
+            Self::Blocked => Some(AttentionLevel::Input),
+            Self::Error => Some(AttentionLevel::Error),
+            Self::Idle | Self::Working | Self::Done => None,
+        }
     }
 }
 
@@ -133,26 +138,8 @@ fn truncate_chars(text: &str, max: usize) -> String {
     kept
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeclaredQueueEntry {
-    pub(crate) label: String,
-    pub(crate) message: Option<String>,
-    pub(crate) errored: bool,
-}
-
-pub(crate) fn queue_entry(
-    status: Option<&DeclaredStatus>,
-    pane_title: &str,
-) -> Option<DeclaredQueueEntry> {
-    let status = status?;
-    let state = DeclaredState::of(status).filter(|state| state.queues())?;
-    Some(DeclaredQueueEntry {
-        label: one_line(&status.app)
-            .or_else(|| one_line(pane_title))
-            .unwrap_or_else(|| UNNAMED_PROGRAM.to_string()),
-        message: one_line(&status.message),
-        errored: state == DeclaredState::Error,
-    })
+pub(crate) fn declared_attention(status: Option<&DeclaredStatus>) -> Option<AttentionLevel> {
+    DeclaredState::of(status?)?.attention()
 }
 
 pub(crate) fn blocked_notification_text(
@@ -244,7 +231,7 @@ impl DeclaredWatch {
             watched.since = now;
             watched.acknowledged = false;
         }
-        if !(entered && notifiable && state.is_some_and(DeclaredState::queues)) {
+        if !(entered && notifiable && state.and_then(DeclaredState::attention).is_some()) {
             return false;
         }
         if watched
@@ -264,14 +251,13 @@ impl DeclaredWatch {
             .map(|watched| watched.since)
     }
 
-    pub(crate) fn queue_entry(
+    pub(crate) fn attention(
         &self,
         surface_id: u64,
         status: Option<&DeclaredStatus>,
-        pane_title: &str,
-    ) -> Option<DeclaredQueueEntry> {
-        queue_entry(status, pane_title)
-            .filter(|entry| !(entry.errored && self.acknowledged(surface_id)))
+    ) -> Option<AttentionLevel> {
+        declared_attention(status)
+            .filter(|level| !(*level == AttentionLevel::Error && self.acknowledged(surface_id)))
     }
 
     fn acknowledged(&self, surface_id: u64) -> bool {
@@ -566,51 +552,18 @@ mod tests {
     }
 
     #[test]
-    fn only_blocked_and_error_enter_the_attention_queue() {
-        for (wire, queued) in [
-            ("working", false),
-            ("idle", false),
-            ("done", false),
-            ("blocked", true),
-            ("error", true),
-            ("bogus", false),
+    fn only_blocked_and_error_raise_attention() {
+        for (wire, level) in [
+            ("working", None),
+            ("idle", None),
+            ("done", None),
+            ("blocked", Some(AttentionLevel::Input)),
+            ("error", Some(AttentionLevel::Error)),
+            ("bogus", None),
         ] {
-            assert_eq!(
-                queue_entry(Some(&status(wire)), "build").is_some(),
-                queued,
-                "{wire}"
-            );
+            assert_eq!(declared_attention(Some(&status(wire))), level, "{wire}");
         }
-        assert_eq!(queue_entry(None, "build"), None);
-    }
-
-    #[test]
-    fn a_queue_entry_is_labelled_by_the_app_then_the_pane_with_a_clean_message() {
-        let mut blocked = status("blocked");
-        blocked.app = "terra\u{202E}form".to_string();
-        blocked.message = "Apply\u{2066} the plan?\nyes/no".to_string();
-        assert_eq!(
-            queue_entry(Some(&blocked), "infra"),
-            Some(DeclaredQueueEntry {
-                label: "terraform".to_string(),
-                message: Some("Apply the plan?".to_string()),
-                errored: false,
-            })
-        );
-
-        let failed = status("error");
-        assert_eq!(
-            queue_entry(Some(&failed), "backend"),
-            Some(DeclaredQueueEntry {
-                label: "backend".to_string(),
-                message: None,
-                errored: true,
-            })
-        );
-        assert_eq!(
-            queue_entry(Some(&failed), "").map(|entry| entry.label),
-            Some(UNNAMED_PROGRAM.to_string())
-        );
+        assert_eq!(declared_attention(None), None);
     }
 
     #[test]
@@ -649,7 +602,11 @@ mod tests {
 
         let later = start + Duration::from_secs(1);
         assert!(!watch.observe(7, None, true, later));
-        assert_eq!(watch.since(7), None, "a removed record leaves the queue");
+        assert_eq!(
+            watch.since(7),
+            None,
+            "a removed record no longer raises attention"
+        );
     }
 
     #[test]
@@ -693,11 +650,11 @@ mod tests {
         assert_eq!(
             watch.surfaces.get(&3).and_then(|watched| watched.state),
             last,
-            "the queue reads the final state"
+            "attention reads the final state"
         );
         let mut working = status("working");
         working.app = "terraform".to_string();
-        assert_eq!(queue_entry(Some(&working), "infra"), None);
+        assert_eq!(declared_attention(Some(&working)), None);
     }
 
     #[test]
@@ -827,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn fifty_errors_in_one_second_send_one_notification_and_queue_the_last_message() {
+    fn fifty_errors_in_one_second_send_one_notification_and_keep_the_error() {
         let mut watch = DeclaredWatch::default();
         let start = Instant::now();
         let mut sent = 0;
@@ -841,23 +798,18 @@ mod tests {
             sent += usize::from(watch.observe(6, state, true, now));
         }
         assert_eq!(sent, 1);
-        assert_eq!(
-            watch
-                .queue_entry(6, Some(&last), "build")
-                .and_then(|entry| entry.message),
-            Some("failure 49".to_string())
-        );
+        assert_eq!(watch.attention(6, Some(&last)), Some(AttentionLevel::Error));
     }
 
     #[test]
-    fn a_seen_error_leaves_the_queue_without_a_new_host_event() {
+    fn a_seen_error_stops_raising_attention_without_a_new_host_event() {
         let mut watch = DeclaredWatch::default();
         let failed = status("error");
         watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
-        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
+        assert!(watch.attention(7, Some(&failed)).is_some());
 
         assert!(watch.acknowledge_seen(&HashSet::from([7])));
-        assert_eq!(watch.queue_entry(7, Some(&failed), "build"), None);
+        assert_eq!(watch.attention(7, Some(&failed)), None);
         assert!(
             !watch.acknowledge_seen(&HashSet::from([7])),
             "an acknowledged entry is not acknowledged twice"
@@ -871,7 +823,7 @@ mod tests {
         let blocked = status("blocked");
         watch.observe(7, Some(DeclaredState::Blocked), true, Instant::now());
         assert!(!watch.acknowledge_seen(&HashSet::from([7])));
-        assert!(watch.queue_entry(7, Some(&blocked), "infra").is_some());
+        assert!(watch.attention(7, Some(&blocked)).is_some());
     }
 
     #[test]
@@ -881,13 +833,13 @@ mod tests {
         let start = Instant::now();
         watch.observe(7, Some(DeclaredState::Error), true, start);
         watch.acknowledge_seen(&HashSet::from([7]));
-        assert_eq!(watch.queue_entry(7, Some(&failed), "build"), None);
+        assert_eq!(watch.attention(7, Some(&failed)), None);
 
         watch.observe(7, Some(DeclaredState::Working), true, start);
         watch.observe(7, Some(DeclaredState::Error), true, start);
         assert!(
-            watch.queue_entry(7, Some(&failed), "build").is_some(),
-            "a new error after a working comes back to the queue"
+            watch.attention(7, Some(&failed)).is_some(),
+            "a new error after a working raises attention again"
         );
     }
 
@@ -910,18 +862,18 @@ mod tests {
     }
 
     #[test]
-    fn an_error_never_on_screen_stays_queued() {
+    fn an_error_never_on_screen_keeps_raising_attention() {
         let mut watch = DeclaredWatch::default();
         let failed = status("error");
         watch.observe(7, Some(DeclaredState::Error), true, Instant::now());
         assert!(!watch.acknowledge_seen(&HashSet::from([8])));
         assert!(!watch.acknowledge_seen(&HashSet::new()));
         assert!(watch.awaits_acknowledgment());
-        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
+        assert!(watch.attention(7, Some(&failed)).is_some());
     }
 
     #[test]
-    fn an_error_in_a_detached_pane_stays_queued_while_the_main_window_has_focus() {
+    fn an_error_in_a_detached_pane_keeps_raising_attention_while_the_main_window_has_focus() {
         use crate::app::agent_status::pane_on_screen;
 
         let mut watch = DeclaredWatch::default();
@@ -935,7 +887,7 @@ mod tests {
             .collect();
         assert_eq!(visible, HashSet::from([8]));
         assert!(!watch.acknowledge_seen(&visible));
-        assert!(watch.queue_entry(7, Some(&failed), "build").is_some());
+        assert!(watch.attention(7, Some(&failed)).is_some());
     }
 
     #[test]

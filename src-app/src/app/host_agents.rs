@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_declaration_from_an_agent_without_hooks_reaches_the_attention_queue() {
+    fn a_blocked_declaration_from_an_agent_without_hooks_waits_for_input() {
         let home = tempfile::tempdir().expect("home");
         let session = SessionId::new();
         let mut worker = paneflow_serve::state::WorkerState::new(home.path());
@@ -1193,9 +1193,8 @@ mod tests {
             }
         );
         assert_eq!(
-            crate::app::declared_status::queue_entry(row.declared_status.as_ref(), "infra")
-                .map(|entry| entry.label),
-            Some("terraform".to_string())
+            crate::app::declared_status::declared_attention(row.declared_status.as_ref()),
+            Some(crate::app::attention::AttentionLevel::Input)
         );
     }
 

@@ -59,9 +59,7 @@ the destination, for example `Go to Work: 2 agents waiting for input`.
 Clicking it opens the waiting or failed pane, or for an unseen finish, the
 workspace where it happened. The space menu marks each hidden space the same
 way. Finished agents of a muted workspace are left out, as they are from
-notifications. The Attention queue and desktop notifications name the
-space of each agent, and choosing an entry in the queue switches to its
-space and focuses its pane.
+notifications. Desktop notifications name the space of each agent.
 
 ## Run and follow coding agents
 
@@ -104,10 +102,10 @@ teammates run inside the lead's pane.
 Any program can also declare its own status with an OSC 7501 sequence,
 agent or not: a build, a deploy script, a long test run. The pane header shows
 the declared state. A program without an agent that reports `blocked` or
-`error` enters the **Attention queue** and sends a desktop notification that
+`error` counts toward that space button and sends a desktop notification that
 names the pane, at most once every 10 seconds per pane, when
-`agent_panel.notify_when_agent_waiting` allows it. An `error` entry leaves the
-queue once you have looked at the pane, while the header keeps `error` until
+`agent_panel.notify_when_agent_waiting` allows it. An `error` stops counting
+once you have looked at the pane, while the header keeps `error` until
 you type. For an agent, the declared status is its turn state: `blocked` and
 `error` notify that it needs you, `done` after a turn notifies that it
 finished, and a declared `error` marks it as errored.

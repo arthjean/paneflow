@@ -265,7 +265,7 @@ to another agent's pane under human control. It cannot send keystrokes
 or control a pane in any other way.
 
 - The first write from one agent session to another raises a request in
-  the target pane and in the Attention Queue: "*source* wants to write
+  the target pane: "*source* wants to write
   into this pane", with **Allow for this agent session** and **Deny**.
   The command palette offers both, so the decision never needs a mouse.
   Until a human decides, the tool answers `approval_pending` and writes

@@ -90,7 +90,6 @@ actions!(
         ToggleFilesSidebar,
         FocusWorkspacesSidebar,
         ToggleDiffDockMaximize,
-        OpenAttentionQueue,
         DiffNewFileTab,
         DiffNewTerminalTab,
         OpenCommandPalette,

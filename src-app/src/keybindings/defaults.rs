@@ -386,11 +386,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("!Terminal && !TextInput && !CodeEditor"),
     },
     DefaultBinding {
-        key: "secondary-shift-u",
-        action_name: "open_attention_queue",
-        context: None,
-    },
-    DefaultBinding {
         key: "secondary-shift-p",
         action_name: "open_command_palette",
         context: None,

@@ -1,7 +1,7 @@
 pub mod about_dialog;
 pub mod actions;
 pub mod agent_status;
-pub mod attention_queue;
+pub mod attention;
 pub mod auto_naming;
 pub mod bootstrap;
 pub mod branch_prompt;
