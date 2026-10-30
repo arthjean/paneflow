@@ -314,6 +314,7 @@ fn finished_manifest(
         generation_started_at_ms: None,
         screen_changed_at_ms: None,
         declared_status: None,
+        program_status_capable: false,
         runtime: None,
         final_output: None,
         host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -358,6 +359,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
             declared_status: None,
+            program_status_capable: false,
             runtime: None,
             final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -637,6 +639,65 @@ const DECLARE_BLOCKED_COMMAND: &[u8] =
 
 #[cfg(windows)]
 const DECLARE_BLOCKED_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state=blocked:kind=question:app=terraform' + [char]7)\"\r\n";
+
+#[cfg(unix)]
+const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"printf '\\033]7501;?\\007'; sleep 30\r\n";
+
+#[cfg(windows)]
+const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;?' + [char]7); Start-Sleep 30\"\r\n";
+
+#[test]
+fn an_answered_support_query_is_published_and_a_new_generation_starts_without_it() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("program-status-capability")).unwrap();
+    let session = host
+        .create(shell_request(120, 24))
+        .unwrap()
+        .manifest
+        .session;
+    let capable_in_snapshot = |host: &SessionHost| {
+        host.agent_snapshot()
+            .into_iter()
+            .find(|entry| entry.session == session)
+            .is_some_and(|entry| entry.program_status_capable)
+    };
+    assert!(
+        !host
+            .inspect(&session)
+            .unwrap()
+            .manifest
+            .program_status_capable
+    );
+
+    host.input(&session, None, QUERY_PROGRAM_STATUS_COMMAND.to_vec())
+        .unwrap();
+
+    assert!(
+        wait_until(Duration::from_secs(20), || capable_in_snapshot(&host)),
+        "the scan publishes the capability once the engine has answered"
+    );
+    assert!(
+        host.inspect(&session)
+            .unwrap()
+            .manifest
+            .program_status_capable
+    );
+    assert_eq!(
+        host.inspect(&session).unwrap().manifest.declared_status,
+        None,
+        "a capability is not a declared status"
+    );
+
+    host.stop(&session, None).unwrap();
+    let restarted = host.restart(&session, None).unwrap();
+    assert_eq!(
+        restarted.manifest.generation,
+        SessionGeneration::FIRST.next()
+    );
+    assert!(!restarted.manifest.program_status_capable);
+    assert!(!capable_in_snapshot(&host));
+    host.stop(&session, None).unwrap();
+}
 
 #[test]
 fn the_viewport_scan_stamps_the_screen_and_publishes_a_declared_status() {
@@ -1298,6 +1359,7 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
         generation_started_at_ms: None,
         screen_changed_at_ms: None,
         declared_status: None,
+        program_status_capable: false,
         runtime: None,
         final_output: None,
         host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -1627,6 +1689,7 @@ fn admission_stops_at_eight_unresolved_launches() {
                 generation_started_at_ms: None,
                 screen_changed_at_ms: None,
                 declared_status: None,
+                program_status_capable: false,
                 runtime: None,
                 final_output: None,
                 host_protocol_version: HOST_PROTOCOL_VERSION,

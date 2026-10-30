@@ -119,6 +119,7 @@ pub struct ViewportScan {
     pub title: Option<String>,
     pub progress: Option<&'static str>,
     pub program_status: Option<ghostty::ProgramStatusReport>,
+    pub program_status_capable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -817,6 +818,7 @@ struct Session {
     title: Option<String>,
     progress: Option<&'static str>,
     program_status: crate::program_status::ProgramStatusRecords,
+    program_status_capable: bool,
     pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
@@ -1103,6 +1105,7 @@ fn start(
         title: None,
         progress: None,
         program_status: crate::program_status::ProgramStatusRecords::default(),
+        program_status_capable: false,
         pty_wired: false,
         reader_eof: false,
         exit: None,
@@ -1326,6 +1329,9 @@ impl Session {
         for event in terminal.drain_events() {
             match event {
                 ghostty::BackendEvent::WritePty(bytes) => {
+                    if answers_program_status_query(&bytes) {
+                        self.program_status_capable = true;
+                    }
                     if let Err(error) = write_pty(&mut self.writer, &self.shared, bytes) {
                         log::debug!("paneflow-host: terminal reply to the PTY failed: {error}");
                     }
@@ -1345,10 +1351,12 @@ impl Session {
                 }
                 ghostty::BackendEvent::ProgramStatus(report) => {
                     self.program_status.apply(report);
+                    self.program_status_capable = true;
                 }
                 ghostty::BackendEvent::SemanticPrompt { kind, .. } => {
                     if kind == ghostty::SemanticPromptKind::PromptStart {
                         self.program_status.release_finished_program();
+                        self.program_status_capable = false;
                     }
                 }
                 ghostty::BackendEvent::Reset => {
@@ -1503,6 +1511,7 @@ impl Session {
             title: self.title.clone(),
             progress: self.progress,
             program_status: self.program_status.published(),
+            program_status_capable: self.program_status_capable,
         })
     }
 
@@ -2041,6 +2050,12 @@ fn note_bell(rang_at: &AtomicU64, now_ms: u64) -> bool {
 
 fn is_user_input(bytes: &[u8]) -> bool {
     !matches!(bytes, b"\x1b[I" | b"\x1b[O")
+}
+
+const PROGRAM_STATUS_QUERY_ANSWER: &[u8] = b"\x1b]7501;?";
+
+fn answers_program_status_query(bytes: &[u8]) -> bool {
+    bytes.starts_with(PROGRAM_STATUS_QUERY_ANSWER)
 }
 
 #[cfg(test)]
@@ -2611,6 +2626,84 @@ mod tests {
         assert_eq!(
             replies.try_iter().collect::<Vec<_>>(),
             [b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\".to_vec()]
+        );
+    }
+
+    fn scanned_capability(session: &mut Session) -> bool {
+        session
+            .viewport_scan()
+            .expect("scan")
+            .program_status_capable
+    }
+
+    #[test]
+    fn the_only_reply_to_a_support_query_is_recognized_and_marks_the_session_capable() {
+        let (mut session, _messages, replies) = status_session();
+        assert!(!scanned_capability(&mut session));
+
+        session.feed(b"\x1b]7501;?\x1b\\");
+
+        let answers: Vec<Vec<u8>> = replies.try_iter().collect();
+        assert_eq!(answers.len(), 1, "{answers:?}");
+        assert!(answers[0].starts_with(b"\x1b]7501;?:states="));
+        assert!(answers_program_status_query(&answers[0]));
+        assert!(scanned_capability(&mut session));
+    }
+
+    #[test]
+    fn text_that_mentions_7501_outside_an_osc_is_never_answered() {
+        let (mut session, _messages, replies) = status_session();
+
+        session.feed(b"echo 7501\r\n7501;?\r\n]7501;?\r\n\x1b]7502;?\x1b\\");
+
+        assert_eq!(
+            replies.try_iter().collect::<Vec<_>>(),
+            Vec::<Vec<u8>>::new()
+        );
+        assert!(!scanned_capability(&mut session));
+        assert!(!answers_program_status_query(b"echo 7501"));
+        assert!(!answers_program_status_query(b"\x1b[6n"));
+    }
+
+    #[test]
+    fn a_first_record_marks_the_session_capable_without_a_query() {
+        let (mut session, _messages, replies) = status_session();
+
+        session.feed(b"\x1b]7501;state=working\x1b\\");
+
+        assert!(replies.try_iter().next().is_none());
+        assert!(scanned_capability(&mut session));
+    }
+
+    #[test]
+    fn the_capability_survives_emptied_records_and_ends_with_the_program() {
+        let (mut session, _messages, _replies) = status_session();
+        session.feed(b"\x1b]7501;?\x1b\\\x1b]7501;state=working\x1b\\");
+
+        session.feed(b"\x1bc");
+        assert!(session.program_status.is_empty());
+        assert!(scanned_capability(&mut session), "RIS keeps the capability");
+
+        session.feed(b"\x1b]7501;state=working\x1b\\");
+        let (reply, reset) = sync_channel(1);
+        session.handle(Command::Reset(reply));
+        assert_eq!(reset.recv().expect("reply"), Ok(()));
+        assert!(session.program_status.is_empty());
+        assert!(scanned_capability(&mut session), "a manual reset keeps it");
+
+        session.feed(b"\x1b[H\x1b[2J\x1b[3J\x1b]7501;state=clear\x1b\\");
+        assert!(scanned_capability(&mut session), "clear keeps it");
+
+        session.feed(b"\x1b]133;A\x1b\\");
+        assert!(
+            !scanned_capability(&mut session),
+            "the shell prompt ends the program that answered"
+        );
+
+        session.feed(b"\x1b]7501;?\x1b\\");
+        assert!(
+            scanned_capability(&mut session),
+            "the next agent's own query"
         );
     }
 

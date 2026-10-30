@@ -135,6 +135,8 @@ pub struct SessionManifest {
     pub screen_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub program_status_capable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<HostedSessionRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -422,6 +424,7 @@ mod tests {
             generation_started_at_ms: None,
             screen_changed_at_ms: None,
             declared_status: None,
+            program_status_capable: false,
             runtime: None,
             final_output: None,
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,

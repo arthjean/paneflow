@@ -57,6 +57,7 @@ impl ScreenChangeTracker {
 pub struct ViewportTracker {
     screen: ScreenChangeTracker,
     declared_status: Option<DeclaredStatus>,
+    program_status_capable: bool,
     scanned_input_at_ms: Option<u64>,
     scanned_resets: u64,
     observation: Option<RuntimeObservation>,
@@ -71,6 +72,7 @@ pub struct ScreenView<'a> {
     pub screen: &'a str,
     pub title: Option<&'a str>,
     pub program_status: Option<&'a ProgramStatusReport>,
+    pub program_status_capable: bool,
 }
 
 impl<'a> ScreenView<'a> {
@@ -79,6 +81,7 @@ impl<'a> ScreenView<'a> {
             screen: &scan.screen,
             title: scan.title.as_deref(),
             program_status: scan.program_status.as_ref(),
+            program_status_capable: scan.program_status_capable,
         }
     }
 }
@@ -87,6 +90,7 @@ impl<'a> ScreenView<'a> {
 pub struct ViewportEdges {
     pub screen_changed_at_ms: Option<u64>,
     pub declared_status: Option<DeclaredStatus>,
+    pub program_status_capable: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub write_due: bool,
 }
@@ -155,14 +159,17 @@ impl ViewportTracker {
 
         let write_due = screen_changed_at_ms.is_some()
             || declared_status != self.declared_status
+            || view.program_status_capable != self.program_status_capable
             || observation != self.observation;
 
         self.declared_status.clone_from(&declared_status);
+        self.program_status_capable = view.program_status_capable;
         self.observation.clone_from(&observation);
 
         ViewportEdges {
             screen_changed_at_ms,
             declared_status,
+            program_status_capable: view.program_status_capable,
             observed_runtime: observation,
             write_due,
         }
@@ -259,6 +266,7 @@ fn scan_target(
             record.screen_changed_at_ms = Some(stamp);
         }
         record.declared_status = edges.declared_status;
+        record.program_status_capable = edges.program_status_capable;
         let launch_binding = record
             .runtime
             .as_ref()
@@ -362,6 +370,39 @@ mod tests {
         let edges = observe_declared(&mut tracker, "$ terraform apply", None, 1_600);
         assert_eq!(edges.declared_status, None);
         assert!(edges.write_due, "a removed record is written");
+    }
+
+    #[test]
+    fn a_capability_change_alone_is_published_and_written_once() {
+        let mut tracker = ViewportTracker::default();
+        let observe_capable = |tracker: &mut ViewportTracker, capable: bool, now_ms: u64| {
+            tracker.observe(
+                ScreenView {
+                    screen: "$ claude",
+                    program_status_capable: capable,
+                    ..ScreenView::default()
+                },
+                None,
+                now_ms,
+            )
+        };
+        observe_capable(&mut tracker, false, 1_000);
+
+        let edges = observe_capable(&mut tracker, true, 1_200);
+        assert!(edges.program_status_capable);
+        assert_eq!(edges.declared_status, None);
+        assert!(edges.write_due, "the answered query alone is written");
+
+        let edges = observe_capable(&mut tracker, true, 1_400);
+        assert!(edges.program_status_capable);
+        assert!(
+            !edges.write_due,
+            "an unchanged capability is not written again"
+        );
+
+        let edges = observe_capable(&mut tracker, false, 1_600);
+        assert!(!edges.program_status_capable);
+        assert!(edges.write_due, "losing it at the next program is written");
     }
 
     #[test]
@@ -506,6 +547,7 @@ mod tests {
                     screen: viewer,
                     title,
                     program_status: None,
+                    program_status_capable: false,
                 },
                 Some(fx_observation()),
                 1_000,
@@ -518,6 +560,7 @@ mod tests {
                 screen: "𝒇x v0.0.12 · Run /help for commands\n\n┃ hello\n\n• Thinking",
                 title: Some("fx v0.0.12 | paneflow"),
                 program_status: None,
+                program_status_capable: false,
             },
             Some(fx_observation()),
             2_000,

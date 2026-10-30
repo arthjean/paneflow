@@ -177,6 +177,8 @@ pub struct AgentSnapshotEntry {
     pub screen_changed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
+    #[serde(default)]
+    pub program_status_capable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_runtime: Option<crate::runtime_observer::RuntimeObservation>,
     #[serde(default)]

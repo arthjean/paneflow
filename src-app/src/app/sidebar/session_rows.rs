@@ -356,6 +356,7 @@ mod tests {
             state_seq: 0,
             provider_session_id: None,
             declared_status: None,
+            program_status_capable: false,
         }
     }
 

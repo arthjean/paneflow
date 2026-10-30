@@ -874,6 +874,7 @@ impl SessionHost {
                     generation_started_at_ms: summary.manifest.generation_started_at_ms,
                     screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                     declared_status: summary.manifest.declared_status,
+                    program_status_capable: summary.manifest.program_status_capable,
                     observed_runtime: summary
                         .manifest
                         .runtime
@@ -1172,6 +1173,7 @@ impl SessionHost {
             generation_started_at_ms: Some(created),
             screen_changed_at_ms: None,
             declared_status: None,
+            program_status_capable: false,
             runtime: None,
             final_output: None,
             host_protocol_version: HOST_PROTOCOL_VERSION,
@@ -1361,6 +1363,7 @@ impl SessionHost {
             guard.generation_started_at_ms = Some(now_ms());
             guard.screen_changed_at_ms = None;
             guard.declared_status = None;
+            guard.program_status_capable = false;
             guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
             guard.host_build_id = crate::protocol::host_build_id();

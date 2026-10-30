@@ -143,6 +143,7 @@ impl Worker {
             "runtime_id": session["runtime_id"],
             "unread": session["unread"],
             "declared_status": session["declared_status"],
+            "program_status_capable": session["program_status_capable"],
             "updated_at_ms": session["updated_at_ms"],
             "notify": projection
                 .notification

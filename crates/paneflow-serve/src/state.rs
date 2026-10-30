@@ -107,6 +107,7 @@ pub struct SessionEntry {
     pub outcome: Option<String>,
     pub health: Health,
     pub declared_status: Option<DeclaredStatus>,
+    pub program_status_capable: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
     pub state_seq: u64,
@@ -140,6 +141,7 @@ impl SessionEntry {
             outcome: None,
             health: Health::NonResumable,
             declared_status: manifest.declared_status,
+            program_status_capable: manifest.program_status_capable,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
             state_seq: 0,
@@ -271,6 +273,7 @@ impl SessionEntry {
             "runtime_id": self.runtime().map(|runtime| runtime.id),
             "foreground_runtime_id": self.foreground_runtime,
             "declared_status": self.declared_status,
+            "program_status_capable": self.program_status_capable,
             "unread": self.unread,
             "core_protocol": self.core_protocol,
             "core_build_id": self.core_build_id,
@@ -442,7 +445,7 @@ impl WorkerState {
         let mut discovered = BTreeSet::new();
         let mut recovered = BTreeMap::new();
         let mut foreground_moved = BTreeSet::new();
-        let mut declared_moved = BTreeSet::new();
+        let mut program_status_moved = BTreeSet::new();
         for raw in entries {
             let Some(session) = raw["session"]
                 .as_str()
@@ -466,9 +469,14 @@ impl WorkerState {
             let declared_before = held
                 .as_ref()
                 .and_then(|entry| entry.declared_status.clone());
+            let capable_before = held
+                .as_ref()
+                .is_some_and(|entry| entry.program_status_capable);
             let mut entry = merge_core_row(session.clone(), raw, held);
-            if entry.declared_status != declared_before {
-                declared_moved.insert(session.clone());
+            if entry.declared_status != declared_before
+                || entry.program_status_capable != capable_before
+            {
+                program_status_moved.insert(session.clone());
             }
             entry.refresh_health();
             self.sessions.insert(entry.session.clone(), entry);
@@ -504,7 +512,7 @@ impl WorkerState {
                     && (recovered_event || !discovered.contains(&session)))
                     || projection.notification.is_some()
                     || foreground_moved.contains(&session)
-                    || declared_moved.contains(&session);
+                    || program_status_moved.contains(&session);
                 announce.then_some(projection)
             })
             .collect()
@@ -739,6 +747,7 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         declared_status: serde_json::from_value(raw["declared_status"].clone())
             .ok()
             .flatten(),
+        program_status_capable: raw["program_status_capable"].as_bool().unwrap_or(false),
         foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
         observed_runtime: current_observation.or_else(|| {
             held.as_ref()
@@ -815,6 +824,7 @@ mod tests {
             generation_started_at_ms: Some(LAUNCHED_AT),
             screen_changed_at_ms: None,
             declared_status: None,
+            program_status_capable: false,
             runtime: None,
             final_output: None,
             host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
@@ -911,6 +921,56 @@ mod tests {
             .filter_map(|projection| projection.notification.as_ref())
             .map(|notification| notification.kind)
             .collect()
+    }
+
+    #[test]
+    fn the_program_status_capability_is_serialized_from_the_manifest_and_the_core_row() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut record = manifest(session.clone(), None);
+        record.program_status_capable = true;
+        write_manifest(home.path(), &record).unwrap();
+        let mut state = WorkerState::new(home.path());
+        state.rebuild_from_home(home.path());
+        assert_eq!(state.snapshot()[0]["program_status_capable"], true);
+
+        let older_core = json!({
+            "session": session,
+            "generation": 1,
+            "lifecycle": SessionLifecycle::Running,
+        });
+        let announced = state.apply_core_snapshot(std::slice::from_ref(&older_core));
+        assert_eq!(
+            state.snapshot()[0]["program_status_capable"],
+            false,
+            "a host row without the field reads as not capable"
+        );
+        assert_eq!(
+            announced
+                .iter()
+                .map(|projection| projection.session["program_status_capable"].clone())
+                .collect::<Vec<_>>(),
+            [json!(false)],
+            "losing the capability alone reaches the desktop"
+        );
+
+        let mut capable_core = older_core;
+        capable_core["program_status_capable"] = json!(true);
+        let announced = state.apply_core_snapshot(std::slice::from_ref(&capable_core));
+        assert_eq!(state.snapshot()[0]["program_status_capable"], true);
+        assert_eq!(
+            announced
+                .iter()
+                .map(|projection| projection.session["program_status_capable"].clone())
+                .collect::<Vec<_>>(),
+            [json!(true)],
+            "an answered query without any record reaches the desktop"
+        );
+
+        assert!(
+            state.apply_core_snapshot(&[capable_core]).is_empty(),
+            "an unchanged capability is not announced again"
+        );
     }
 
     #[test]

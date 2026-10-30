@@ -65,6 +65,7 @@ pub(crate) struct HostAgentRow {
     pub(crate) state_seq: u64,
     pub(crate) provider_session_id: Option<String>,
     pub(crate) declared_status: Option<paneflow_host::program_status::DeclaredStatus>,
+    pub(crate) program_status_capable: bool,
 }
 
 #[derive(Default)]
@@ -282,6 +283,10 @@ pub(crate) fn row_from_snapshot(entry: &Value) -> Option<HostAgentRow> {
             .get("declared_status")
             .cloned()
             .and_then(|declared| serde_json::from_value(declared).ok()),
+        program_status_capable: entry
+            .get("program_status_capable")
+            .and_then(Value::as_bool)
+            .unwrap_or_default(),
     })
 }
 
@@ -350,6 +355,7 @@ fn projected_session(
     session.last_result = row.last_result.clone();
     session.last_event_at_ms = row.last_event_at_ms;
     session.state_seq = row.state_seq;
+    session.program_status_capable = row.program_status_capable;
     session.surface_id = Some(surface_id);
     session.waiting_since =
         (state == AgentState::WaitingForInput).then(|| waiting_since_instant(row.waiting_since_ms));
@@ -738,6 +744,7 @@ impl PaneFlowApp {
             "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
             "unread": frame.get("unread").cloned().unwrap_or(Value::Null),
             "declared_status": frame.get("declared_status").cloned().unwrap_or(Value::Null),
+            "program_status_capable": frame.get("program_status_capable").cloned().unwrap_or(Value::Null),
         }));
         if let Some(row) = row.as_ref() {
             if event_keeps_row(frame) {
@@ -1148,6 +1155,113 @@ mod tests {
         assert_eq!(session.source, AgentStateSource::Terminal);
         assert!(session.state_seq > 0);
         assert!(session.waiting_since.is_some());
+    }
+
+    #[cfg(unix)]
+    const QUERY_THEN_WORKING_COMMAND: &[u8] =
+        b"printf '\\033]7501;?\\033\\\\\\033]7501;state=working\\033\\\\'; sleep 30\r\n";
+
+    #[cfg(windows)]
+    const QUERY_THEN_WORKING_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;?' + [char]7 + [char]27 + ']7501;state=working' + [char]7); Start-Sleep 30\"\r\n";
+
+    #[test]
+    fn a_support_query_then_working_reaches_the_agent_session_as_capable_and_thinking() {
+        let home = tempfile::tempdir().expect("home");
+        let host = paneflow_host::host::SessionHost::open(
+            home.path(),
+            std::path::Path::new("program-status-capability"),
+        )
+        .expect("session host");
+        #[cfg(windows)]
+        let (shell, args) = ("cmd.exe", vec!["/Q".to_string(), "/D".to_string()]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", Vec::<String>::new());
+        let session = host
+            .create(paneflow_host::host::CreateSession {
+                shell: Some(shell.to_string()),
+                args,
+                cwd: Some(home.path().display().to_string()),
+                cols: Some(120),
+                rows: Some(24),
+                ..Default::default()
+            })
+            .expect("hosted session")
+            .manifest
+            .session;
+        let host_entry = |host: &paneflow_host::host::SessionHost| {
+            host.agent_snapshot()
+                .into_iter()
+                .find(|entry| entry.session == session)
+                .expect("snapshot entry")
+        };
+        assert!(!host_entry(&host).program_status_capable);
+
+        host.input(&session, None, QUERY_THEN_WORKING_COMMAND.to_vec())
+            .expect("input");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let entry = loop {
+            let entry = host_entry(&host);
+            let working = entry
+                .declared_status
+                .as_ref()
+                .is_some_and(|declared| declared.state == "working");
+            if entry.program_status_capable && working {
+                break entry;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host never published the capability: {entry:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let capable_manifest = host
+            .inspect(&session)
+            .expect("manifest")
+            .manifest
+            .program_status_capable;
+        let _ = host.stop(&session, None);
+        assert!(capable_manifest, "the manifest carries the capability");
+
+        let mut core_row = serde_json::to_value(&entry).expect("snapshot entry json");
+        core_row["observed_runtime"] = json!(paneflow_host::runtime_observer::RuntimeObservation {
+            id: "com.sourcegraph.amp".to_string(),
+            pid: 40,
+            pid_started_at: Some(7),
+            process_group: 40,
+            process_name: "amp".to_string(),
+            argv: None,
+        });
+        let mut worker = paneflow_serve::state::WorkerState::new(home.path());
+        worker.apply_core_snapshot(&[core_row]);
+        let follow_header = worker.snapshot();
+        assert_eq!(follow_header[0]["program_status_capable"], true);
+
+        let row = row_from_snapshot(&follow_header[0]).expect("row");
+        assert!(row.program_status_capable);
+        let agent = projected_session(&row, 9, None).expect("agent session");
+        assert!(agent.program_status_capable);
+        assert_eq!(agent.state, AgentState::Thinking);
+    }
+
+    #[test]
+    fn a_row_from_a_host_without_the_capability_field_is_not_capable() {
+        let row = row_from_snapshot(&json!({
+            "session": SessionId::new().to_string(),
+            "live": true,
+            "activity": {"tool": "claude", "state": "idle"},
+        }))
+        .expect("row");
+        assert!(!row.program_status_capable);
+        assert!(
+            !projected_session(&row, 3, None).is_some_and(|session| session.program_status_capable)
+        );
+        let event_row = row_from_snapshot(&json!({
+            "session": SessionId::new().to_string(),
+            "live": true,
+            "program_status_capable": true,
+        }))
+        .expect("event row");
+        assert!(event_row.program_status_capable);
     }
 
     #[test]
