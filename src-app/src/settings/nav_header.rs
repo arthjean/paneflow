@@ -54,7 +54,7 @@ impl PaneFlowApp {
                         .flex_none()
                         .relative()
                         .top(px(SETTINGS_NAV_ICON_BASELINE_NUDGE))
-                        .path("icons/arrow_left.svg")
+                        .path("icons/settings/arrow-left-02.svg")
                         .text_color(ui.muted),
                 )
                 .child(

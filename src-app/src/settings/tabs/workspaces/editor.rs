@@ -51,7 +51,7 @@ impl PaneFlowApp {
                         raised_icon_button(
                             "workspace-template-save-details",
                             "Save details",
-                            "icons/check.svg",
+                            "icons/settings/tick-02.svg",
                             fill,
                             ink,
                             true,
@@ -281,10 +281,17 @@ impl PaneFlowApp {
                     .flex_row()
                     .gap(px(8.))
                     .child(
-                        soft_icon_button("workspace-pane-add", "Add pane", "icons/plus.svg", ui)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        soft_icon_button(
+                            "workspace-pane-add",
+                            "Add pane",
+                            "icons/settings/add-01.svg",
+                            ui,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, _window, cx| {
                                 this.add_workspace_template_pane(idx, cx);
-                            })),
+                            },
+                        )),
                     ),
             )
             .into_any_element()
@@ -437,7 +444,7 @@ impl PaneFlowApp {
                     raised_icon_button(
                         "workspace-pane-save",
                         "Save pane",
-                        "icons/check.svg",
+                        "icons/settings/tick-02.svg",
                         fill,
                         ink,
                         true,
@@ -969,7 +976,7 @@ fn project_path_picker(
         svg()
             .size(px(13.))
             .flex_none()
-            .path("icons/folder-open.svg")
+            .path("icons/settings/folder-open.svg")
             .text_color(ui.muted),
     )
     .child(
@@ -1002,7 +1009,7 @@ fn pane_delete_button(id: SharedString, ui: crate::theme::UiColors) -> AnimatedH
         svg()
             .size(px(13.))
             .flex_none()
-            .path("icons/trash.svg")
+            .path("icons/settings/delete-02.svg")
             .text_color(with_alpha(ui.text, 0.8)),
     )
 }
@@ -1014,9 +1021,9 @@ fn pane_kind_chip(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let (label, icon) = match kind {
-        PaneKind::Agent => ("Agent", "icons/sparkles.svg"),
-        PaneKind::Command => ("Command", "icons/terminal.svg"),
-        PaneKind::Empty => ("Shell", "icons/plus.svg"),
+        PaneKind::Agent => ("Agent", "icons/settings/ai-magic.svg"),
+        PaneKind::Command => ("Command", "icons/settings/command-line.svg"),
+        PaneKind::Empty => ("Shell", "icons/settings/terminal.svg"),
     };
     let selected = kind == current;
     let resting_background = if selected {
@@ -1057,9 +1064,9 @@ fn agent_icon(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement {
 
 fn pane_kind_icon(kind: PaneKind, ui: crate::theme::UiColors) -> AnyElement {
     let icon = match kind {
-        PaneKind::Agent => "icons/sparkles.svg",
-        PaneKind::Command => "icons/terminal.svg",
-        PaneKind::Empty => "icons/plus.svg",
+        PaneKind::Agent => "icons/settings/ai-magic.svg",
+        PaneKind::Command => "icons/settings/command-line.svg",
+        PaneKind::Empty => "icons/settings/terminal.svg",
     };
     svg()
         .size(px(15.))

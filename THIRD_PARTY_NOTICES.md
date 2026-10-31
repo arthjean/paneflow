@@ -96,6 +96,8 @@ the GPUI asset loader expects.
 - `tool_search.svg`
 - every file under `palette/`, the command palette glyphs, taken from
   `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
+- every file under `settings/`, the Settings sidebar and page glyphs, taken
+  from `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
 
 ```
 MIT License

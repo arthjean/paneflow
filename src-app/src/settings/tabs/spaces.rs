@@ -764,9 +764,9 @@ impl PaneFlowApp {
                 .size(px(12.))
                 .flex_none()
                 .path(if expanded {
-                    "icons/chevron-down.svg"
+                    "icons/settings/arrow-down-01.svg"
                 } else {
-                    "icons/chevron-right.svg"
+                    "icons/settings/arrow-right-01.svg"
                 })
                 .text_color(ui.muted),
         );
@@ -840,7 +840,7 @@ impl PaneFlowApp {
                         svg()
                             .size(px(AVATAR_ICON_SIZE))
                             .flex_none()
-                            .path("icons/pencil-edit-02.svg")
+                            .path("icons/settings/pencil-edit-02.svg")
                             .text_color(gpui::white())
                             .into_any_element()
                     }),
@@ -920,7 +920,7 @@ impl PaneFlowApp {
             .any(|(id, _)| id == &space.id);
         let (icon, icon_color, label, label_color) = if failed {
             (
-                "icons/x_circle.svg",
+                "icons/settings/cancel-circle.svg",
                 ui.vc_deleted,
                 "Agent setup failed".to_string(),
                 ui.vc_deleted,
@@ -932,7 +932,7 @@ impl PaneFlowApp {
                 return None;
             }
             (
-                "icons/triangle-alert.svg",
+                "icons/settings/alert-02.svg",
                 ui.vc_modified,
                 warning_count_label(warnings),
                 ui.muted,
@@ -1239,7 +1239,7 @@ impl PaneFlowApp {
                                         svg()
                                             .size(px(13.))
                                             .flex_none()
-                                            .path("icons/trash.svg")
+                                            .path("icons/settings/delete-02.svg")
                                             .text_color(with_alpha(ui.text, 0.8))
                                             .group_hover(group, |style| {
                                                 style.text_color(destructive_color())
@@ -1279,15 +1279,19 @@ impl PaneFlowApp {
             .gap(px(12.))
             .pt(px(4.))
             .child(
-                ghost_icon_button("space-env-add", "Add variable", "icons/plus.svg", ui).on_click(
-                    cx.listener(|this, _: &ClickEvent, _w, cx| {
-                        let row = new_env_row("", "", cx);
-                        if let Some(editor) = this.space_env_editor.as_mut() {
-                            editor.rows.push(row);
-                        }
-                        cx.notify();
-                    }),
-                ),
+                ghost_icon_button(
+                    "space-env-add",
+                    "Add variable",
+                    "icons/settings/add-01.svg",
+                    ui,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    let row = new_env_row("", "", cx);
+                    if let Some(editor) = this.space_env_editor.as_mut() {
+                        editor.rows.push(row);
+                    }
+                    cx.notify();
+                })),
             )
             .child(
                 div()
@@ -1483,7 +1487,7 @@ fn render_spaces_intro(
     let new_space = raised_icon_button(
         "space-new",
         "New space",
-        "icons/plus.svg",
+        "icons/settings/add-01.svg",
         fill,
         ink,
         !at_limit,
@@ -1630,7 +1634,7 @@ fn render_hint(
                     .mt(px(1.))
                     .size(px(12.))
                     .flex_none()
-                    .path("icons/triangle-alert.svg")
+                    .path("icons/settings/alert-02.svg")
                     .text_color(ui.vc_modified),
             )
         })

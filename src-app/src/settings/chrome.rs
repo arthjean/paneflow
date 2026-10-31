@@ -35,7 +35,7 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::General,
                 label: "General",
-                icon: "icons/settings.svg",
+                icon: "icons/settings/settings-02.svg",
                 keywords: &[
                     "window",
                     "decorations",
@@ -56,13 +56,13 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Appearance,
                 label: "Appearance",
-                icon: "icons/shadow.svg",
+                icon: "icons/settings/paint-board.svg",
                 keywords: &["theme", "themes", "colors", "appearance"],
             },
             NavItem {
                 section: SettingsSection::Shortcuts,
                 label: "Keyboard Shortcuts",
-                icon: "icons/square-slash.svg",
+                icon: "icons/settings/keyboard.svg",
                 keywords: &["keyboard", "shortcuts", "keys", "bindings", "hotkey"],
             },
         ],
@@ -73,13 +73,13 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Terminal,
                 label: "Terminal",
-                icon: "icons/terminal.svg",
+                icon: "icons/settings/computer-terminal-02.svg",
                 keywords: &["cursor", "font", "font family", "font size"],
             },
             NavItem {
                 section: SettingsSection::Workspaces,
                 label: "Workspaces",
-                icon: "icons/layout-grid.svg",
+                icon: "icons/settings/dashboard-square-01.svg",
                 keywords: &[
                     "workspace",
                     "workspaces",
@@ -96,13 +96,13 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Spaces,
                 label: "Spaces",
-                icon: "icons/archive-02.svg",
+                icon: "icons/settings/layers-01.svg",
                 keywords: &["space", "spaces", "context", "work", "personal", "group"],
             },
             NavItem {
                 section: SettingsSection::Worktrees,
                 label: "Worktrees",
-                icon: "icons/git-branch-sidebar.svg",
+                icon: "icons/settings/git-branch.svg",
                 keywords: &[
                     "worktree",
                     "worktrees",
@@ -121,7 +121,7 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::Agents,
                 label: "Agents",
-                icon: "icons/pointer-2.svg",
+                icon: "icons/settings/ai-magic.svg",
                 keywords: &[
                     "ai",
                     "agent",
@@ -137,7 +137,7 @@ const NAV_GROUPS: &[NavGroup] = &[
             NavItem {
                 section: SettingsSection::McpServers,
                 label: "Plugins",
-                icon: "icons/at-sign.svg",
+                icon: "icons/settings/puzzle.svg",
                 keywords: &[
                     "mcp",
                     "bridge",
@@ -621,5 +621,22 @@ impl PaneFlowApp {
             self.sync_workspace_template_inputs(cx);
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NAV_GROUPS;
+
+    #[test]
+    fn every_nav_item_has_an_embedded_icon() {
+        for item in NAV_GROUPS.iter().flat_map(|group| group.items) {
+            assert!(
+                crate::assets::Assets::get(item.icon).is_some(),
+                "{} points at the missing icon {}",
+                item.label,
+                item.icon
+            );
+        }
     }
 }

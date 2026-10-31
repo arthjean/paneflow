@@ -280,9 +280,9 @@ impl PaneFlowApp {
                     .size(px(10.))
                     .flex_none()
                     .path(if expanded {
-                        "icons/chevron_up.svg"
+                        "icons/settings/arrow-up-01.svg"
                     } else {
-                        "icons/chevron-down.svg"
+                        "icons/settings/arrow-down-01.svg"
                     })
                     .text_color(with_alpha(ui.text, 0.8)),
             );
@@ -432,7 +432,7 @@ impl PaneFlowApp {
                             .child(
                                 svg()
                                     .size(px(9.))
-                                    .path("icons/check.svg")
+                                    .path("icons/settings/tick-02.svg")
                                     .text_color(ui.vc_added),
                             )
                             .into_any_element(),
@@ -604,7 +604,7 @@ impl PaneFlowApp {
             .child(
                 icon_button(
                     SharedString::from(format!("agent-profile-edit-{idx}")),
-                    "icons/edit.svg",
+                    "icons/settings/pencil-edit-02.svg",
                     with_alpha(ui.text, 0.8),
                     ui.text,
                     ui,
@@ -616,7 +616,7 @@ impl PaneFlowApp {
             .child(
                 icon_button(
                     SharedString::from(format!("agent-profile-delete-{idx}")),
-                    "icons/trash.svg",
+                    "icons/settings/delete-02.svg",
                     with_alpha(ui.text, 0.8),
                     destructive_color(),
                     ui,
@@ -706,7 +706,7 @@ impl PaneFlowApp {
                                         SharedString::from(format!(
                                             "agent-profile-env-remove-{row_idx}"
                                         )),
-                                        "icons/trash.svg",
+                                        "icons/settings/delete-02.svg",
                                         with_alpha(ui.text, 0.8),
                                         destructive_color(),
                                         ui,
@@ -732,7 +732,7 @@ impl PaneFlowApp {
                 ghost_icon_button(
                     "agent-profile-env-add",
                     "Add variable",
-                    "icons/plus.svg",
+                    "icons/settings/add-01.svg",
                     ui,
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {

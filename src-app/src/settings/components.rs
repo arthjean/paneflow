@@ -940,7 +940,7 @@ pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
     svg()
         .size(px(12.))
         .flex_none()
-        .path("icons/selector.svg")
+        .path("icons/settings/unfold-more.svg")
         .text_color(with_alpha(ui.text, 0.8))
 }
 
@@ -1142,7 +1142,7 @@ pub fn select_option(
                 .child(
                     svg()
                         .size(px(14.))
-                        .path("icons/check.svg")
+                        .path("icons/settings/tick-02.svg")
                         .text_color(ui.text),
                 ),
         )

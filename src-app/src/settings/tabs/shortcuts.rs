@@ -307,7 +307,7 @@ impl PaneFlowApp {
                 .child(
                     svg()
                         .size(px(12.))
-                        .path("icons/close.svg")
+                        .path("icons/settings/cancel-01.svg")
                         .text_color(ui.text),
                 )
         });
@@ -362,9 +362,9 @@ impl PaneFlowApp {
                     .size(px(16.))
                     .flex_none()
                     .path(if capture {
-                        "icons/keyboard.svg"
+                        "icons/settings/keyboard.svg"
                     } else {
-                        "icons/tool_search.svg"
+                        "icons/settings/search-01.svg"
                     })
                     .text_color(if capture { ui.accent } else { ui.muted }),
             )
@@ -456,7 +456,7 @@ impl PaneFlowApp {
                             svg()
                                 .size(px(12.))
                                 .flex_none()
-                                .path("icons/triangle-alert.svg")
+                                .path("icons/settings/alert-02.svg")
                                 .text_color(ui.vc_conflict),
                         )
                         .child(format!("Also {} · press again to take it", conflict.owner)),
@@ -492,7 +492,7 @@ impl PaneFlowApp {
                 .child(
                     svg()
                         .size(px(13.))
-                        .path("icons/refresh.svg")
+                        .path("icons/settings/undo.svg")
                         .text_color(with_alpha(ui.text, 0.8)),
                 )
             });

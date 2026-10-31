@@ -33,7 +33,7 @@ impl PaneFlowApp {
         let create = raised_icon_button(
             "workspace-template-create",
             "Create workspace",
-            "icons/plus.svg",
+            "icons/settings/add-01.svg",
             switch_blue(),
             gpui::white(),
             true,
@@ -98,7 +98,7 @@ impl PaneFlowApp {
                     soft_icon_button(
                         "workspace-template-back",
                         "Back",
-                        "icons/arrow_left.svg",
+                        "icons/settings/arrow-left-02.svg",
                         ui,
                     )
                     .on_click(cx.listener(
@@ -151,7 +151,7 @@ impl PaneFlowApp {
                                 raised_icon_button(
                                     ("workspace-template-run", idx),
                                     "Run",
-                                    "icons/player-play.svg",
+                                    "icons/settings/play.svg",
                                     switch_blue(),
                                     gpui::white(),
                                     pane_count > 0,
@@ -168,7 +168,7 @@ impl PaneFlowApp {
                                 soft_icon_button(
                                     ("workspace-template-duplicate", idx),
                                     "Duplicate",
-                                    "icons/file-text.svg",
+                                    "icons/settings/copy-01.svg",
                                     ui,
                                 )
                                 .on_click(cx.listener(
@@ -181,7 +181,7 @@ impl PaneFlowApp {
                                 raised_icon_button(
                                     ("workspace-template-delete", idx),
                                     "Delete",
-                                    "icons/trash.svg",
+                                    "icons/settings/delete-02.svg",
                                     apple_red(),
                                     gpui::white(),
                                     true,
@@ -285,7 +285,7 @@ impl PaneFlowApp {
                         svg()
                             .size(px(14.))
                             .flex_none()
-                            .path("icons/chevron-right.svg")
+                            .path("icons/settings/arrow-right-01.svg")
                             .text_color(ui.muted),
                     ),
             )
