@@ -53,6 +53,86 @@ pub(crate) enum Scope {
     EndedSessions,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Section {
+    Panes,
+    Tabs,
+    Workspaces,
+    Sidebar,
+    Terminal,
+    Markdown,
+    Agents,
+    Appearance,
+    Paneflow,
+}
+
+impl Section {
+    pub(crate) const ALL: [Section; 9] = [
+        Section::Panes,
+        Section::Tabs,
+        Section::Workspaces,
+        Section::Sidebar,
+        Section::Terminal,
+        Section::Markdown,
+        Section::Agents,
+        Section::Appearance,
+        Section::Paneflow,
+    ];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Section::Panes => "Panes",
+            Section::Tabs => "Tabs",
+            Section::Workspaces => "Workspaces",
+            Section::Sidebar => "Sidebar",
+            Section::Terminal => "Terminal",
+            Section::Markdown => "Markdown",
+            Section::Agents => "Agents",
+            Section::Appearance => "Appearance",
+            Section::Paneflow => "Paneflow",
+        }
+    }
+
+    pub(crate) fn icon(self) -> &'static str {
+        match self {
+            Section::Panes => "icons/palette/dashboard-square-01.svg",
+            Section::Tabs => "icons/palette/browser.svg",
+            Section::Workspaces => "icons/palette/folder-01.svg",
+            Section::Sidebar => "icons/palette/sidebar-left.svg",
+            Section::Terminal => "icons/palette/computer-terminal-02.svg",
+            Section::Markdown => "icons/palette/file-01.svg",
+            Section::Agents => "icons/palette/ai-magic.svg",
+            Section::Appearance => "icons/palette/paint-brush-01.svg",
+            Section::Paneflow => "icons/palette/settings-02.svg",
+        }
+    }
+
+    pub(crate) fn placeholder(self) -> String {
+        format!("Search {}…", self.title().to_lowercase())
+    }
+
+    pub(crate) fn commands(self) -> impl Iterator<Item = (usize, &'static Command)> {
+        COMMANDS
+            .iter()
+            .enumerate()
+            .filter(move |(_, command)| command.section == self)
+    }
+}
+
+impl Needs {
+    pub(crate) fn is_contextual(self) -> bool {
+        matches!(
+            self,
+            Needs::TerminalSearch
+                | Needs::ConversationResumeOffer
+                | Needs::ConversationFailure
+                | Needs::ConversationNotice
+                | Needs::WriteRequest
+                | Needs::MarkdownSearch
+        )
+    }
+}
+
 pub(crate) enum Kind {
     Action(&'static str),
     Run(RunFn),
@@ -68,6 +148,7 @@ pub(crate) struct Command {
     pub(crate) icon: Option<&'static str>,
     pub(crate) keywords: &'static str,
     pub(crate) needs: Needs,
+    pub(crate) section: Section,
     pub(crate) kind: Kind,
 }
 
@@ -674,485 +755,554 @@ fn set_all_expanded(app: &mut PaneFlowApp, expanded: bool, cx: &mut Context<Pane
 pub(crate) const COMMANDS: &[Command] = &[
     Command {
         label: "Split vertical",
-        icon: Some("icons/split_vertical.svg"),
+        icon: Some("icons/palette/layout-two-column.svg"),
         keywords: "pane divide right",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("split_vertically"),
     },
     Command {
         label: "Split horizontal",
-        icon: Some("icons/split_horizontal.svg"),
+        icon: Some("icons/palette/layout-two-row.svg"),
         keywords: "pane divide down",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("split_horizontally"),
     },
     Command {
         label: "Equalize panes",
-        icon: None,
+        icon: Some("icons/palette/layout-three-column.svg"),
         keywords: "balance even sizes",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("split_equalize"),
     },
     Command {
         label: "Pane layout",
-        icon: Some("icons/layout-grid.svg"),
+        icon: Some("icons/palette/layout-dashboard.svg"),
         keywords: "arrange tiled grid",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Scope(Scope::PaneLayout),
     },
     Command {
         label: "Focus left",
-        icon: None,
+        icon: Some("icons/palette/arrow-left-02.svg"),
         keywords: "pane move",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("focus_left"),
     },
     Command {
         label: "Focus right",
-        icon: None,
+        icon: Some("icons/palette/arrow-right-02.svg"),
         keywords: "pane move",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("focus_right"),
     },
     Command {
         label: "Focus up",
-        icon: None,
+        icon: Some("icons/palette/arrow-up-02.svg"),
         keywords: "pane move",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("focus_up"),
     },
     Command {
         label: "Focus down",
-        icon: None,
+        icon: Some("icons/palette/arrow-down-02.svg"),
         keywords: "pane move",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("focus_down"),
     },
     Command {
         label: "Detach pane into a window",
-        icon: Some("icons/detach-pane.svg"),
+        icon: Some("icons/palette/link-square-02.svg"),
         keywords: "float window return",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("toggle_detached_pane"),
     },
     Command {
         label: "Close pane",
-        icon: None,
+        icon: Some("icons/palette/cancel-square.svg"),
         keywords: "remove stop sessions",
         needs: Needs::Workspace,
+        section: Section::Panes,
         kind: Kind::Action("close_pane"),
     },
     Command {
         label: "New tab",
-        icon: None,
+        icon: Some("icons/palette/add-01.svg"),
         keywords: "create",
         needs: Needs::Workspace,
+        section: Section::Tabs,
         kind: Kind::Action("new_tab"),
     },
     Command {
         label: "Switch tab",
-        icon: None,
+        icon: Some("icons/palette/arrow-data-transfer-horizontal.svg"),
         keywords: "go to change",
         needs: Needs::ManyTabs,
+        section: Section::Tabs,
         kind: Kind::Scope(Scope::Tab),
     },
     Command {
         label: "Next tab",
-        icon: None,
+        icon: Some("icons/palette/circle-arrow-right-02.svg"),
         keywords: "cycle",
         needs: Needs::ManyTabs,
+        section: Section::Tabs,
         kind: Kind::Action("next_tab"),
     },
     Command {
         label: "Previous tab",
-        icon: None,
+        icon: Some("icons/palette/circle-arrow-left-02.svg"),
         keywords: "cycle",
         needs: Needs::ManyTabs,
+        section: Section::Tabs,
         kind: Kind::Action("previous_tab"),
     },
     Command {
         label: "Close tab",
-        icon: None,
+        icon: Some("icons/palette/cancel-01.svg"),
         keywords: "remove stop sessions",
         needs: Needs::Workspace,
+        section: Section::Tabs,
         kind: Kind::Action("close_tab"),
     },
     Command {
         label: "New workspace",
-        icon: None,
+        icon: Some("icons/palette/folder-add.svg"),
         keywords: "project folder open",
         needs: Needs::Always,
+        section: Section::Workspaces,
         kind: Kind::Action("new_workspace"),
     },
     Command {
         label: "Switch workspace",
-        icon: Some("icons/folders.svg"),
+        icon: Some("icons/palette/folders.svg"),
         keywords: "go to change project",
         needs: Needs::ManyWorkspaces,
+        section: Section::Workspaces,
         kind: Kind::Scope(Scope::Workspace),
     },
     Command {
         label: "Next workspace",
-        icon: None,
+        icon: Some("icons/palette/folder-export.svg"),
         keywords: "cycle",
         needs: Needs::ManyWorkspaces,
+        section: Section::Workspaces,
         kind: Kind::Action("next_workspace"),
     },
     Command {
         label: "Switch space",
-        icon: Some("icons/archive-02.svg"),
+        icon: Some("icons/palette/archive-02.svg"),
         keywords: "go to change context work personal",
         needs: Needs::Spaces,
+        section: Section::Workspaces,
         kind: Kind::Scope(Scope::Space),
     },
     Command {
         label: "Next space",
-        icon: None,
+        icon: Some("icons/palette/arrow-right-double.svg"),
         keywords: "cycle context",
         needs: Needs::Spaces,
+        section: Section::Workspaces,
         kind: Kind::Action("next_space"),
     },
     Command {
         label: "Previous space",
-        icon: None,
+        icon: Some("icons/palette/arrow-left-double.svg"),
         keywords: "cycle context",
         needs: Needs::Spaces,
+        section: Section::Workspaces,
         kind: Kind::Action("previous_space"),
     },
     Command {
         label: "New space",
-        icon: None,
+        icon: Some("icons/palette/add-square.svg"),
         keywords: "create context group work personal",
         needs: Needs::Always,
+        section: Section::Workspaces,
         kind: Kind::Action("new_space"),
     },
     Command {
         label: "Move workspace to space",
-        icon: None,
+        icon: Some("icons/palette/folder-move-to.svg"),
         keywords: "context group organize",
         needs: Needs::Spaces,
+        section: Section::Workspaces,
         kind: Kind::Scope(Scope::MoveToSpace),
     },
     Command {
         label: "Clone repository…",
-        icon: Some("icons/brand-git.svg"),
+        icon: Some("icons/palette/folder-git-2.svg"),
         keywords: "git checkout download",
         needs: Needs::Always,
+        section: Section::Workspaces,
         kind: Kind::Action("clone_repository"),
     },
     Command {
         label: "Open workspace in",
-        icon: Some("icons/folder-open.svg"),
+        icon: Some("icons/palette/square-arrow-up-right.svg"),
         keywords: "editor zed cursor vscode windsurf file manager reveal",
         needs: Needs::Workspace,
+        section: Section::Workspaces,
         kind: Kind::Scope(Scope::OpenWorkspaceIn),
     },
     Command {
         label: "Copy workspace path",
-        icon: None,
+        icon: Some("icons/palette/copy-01.svg"),
         keywords: "clipboard folder",
         needs: Needs::Workspace,
+        section: Section::Workspaces,
         kind: Kind::Action("copy_workspace_path"),
     },
     Command {
         label: "Close workspace",
-        icon: None,
+        icon: Some("icons/palette/folder-remove.svg"),
         keywords: "stop sessions quit project",
         needs: Needs::Workspace,
+        section: Section::Workspaces,
         kind: Kind::Action("close_workspace"),
     },
     Command {
         label: "Expand every workspace in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/unfold-more.svg"),
         keywords: "tree unfold show sessions",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, true, cx)),
     },
     Command {
         label: "Collapse every workspace in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/unfold-less.svg"),
         keywords: "tree fold hide sessions",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, false, cx)),
     },
     Command {
         label: "Focus Workspaces sidebar",
-        icon: Some("icons/sidebar.svg"),
+        icon: Some("icons/palette/sidebar-left-01.svg"),
         keywords: "keyboard navigate rail tabs",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Action("focus_workspaces_sidebar"),
     },
     Command {
         label: "Toggle Files sidebar",
-        icon: Some("icons/file_tree.svg"),
+        icon: Some("icons/palette/folder-tree.svg"),
         keywords: "tree explorer",
         needs: Needs::Workspace,
+        section: Section::Sidebar,
         kind: Kind::Action("toggle_files_sidebar"),
     },
     Command {
         label: "Maximize or restore the Changes dock",
-        icon: None,
+        icon: Some("icons/palette/maximize-screen.svg"),
         keywords: "diff git review",
         needs: Needs::Workspace,
+        section: Section::Workspaces,
         kind: Kind::Action("toggle_diff_dock_maximize"),
     },
     Command {
         label: "Changes dock: open a file tab",
-        icon: None,
+        icon: Some("icons/palette/file-add.svg"),
         keywords: "diff git editor",
         needs: Needs::GitRepo,
+        section: Section::Workspaces,
         kind: Kind::Action("diff_new_file_tab"),
     },
     Command {
         label: "Changes dock: open a terminal tab",
-        icon: None,
+        icon: Some("icons/palette/computer-terminal-01.svg"),
         keywords: "diff git shell",
         needs: Needs::GitRepo,
+        section: Section::Workspaces,
         kind: Kind::Action("diff_new_terminal_tab"),
     },
     Command {
         label: "Select all",
-        icon: None,
+        icon: Some("icons/palette/text-selection.svg"),
         keywords: "clipboard terminal",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("terminal_select_all"),
     },
     Command {
         label: "Insert path",
-        icon: Some("icons/folder.svg"),
+        icon: Some("icons/palette/folder-search.svg"),
         keywords: "file folder directory browse fuzzy find cwd picker",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("insert_path"),
     },
     Command {
         label: "Fork conversation",
-        icon: Some("icons/split_vertical.svg"),
+        icon: Some("icons/palette/git-fork.svg"),
         keywords: "agent branch claude codex split session both share files",
         needs: Needs::ForkableConversation,
+        section: Section::Agents,
         kind: Kind::Action("fork_conversation"),
     },
     Command {
         label: "Resume conversation",
-        icon: None,
+        icon: Some("icons/palette/play-circle.svg"),
         keywords: "agent restore reopen session claude codex",
         needs: Needs::ConversationResumeOffer,
+        section: Section::Agents,
         kind: Kind::Action("accept_conversation_notice"),
     },
     Command {
         label: "New agent session",
-        icon: None,
+        icon: Some("icons/palette/bubble-chat-add.svg"),
         keywords: "agent resume failed restart claude codex",
         needs: Needs::ConversationFailure,
+        section: Section::Agents,
         kind: Kind::Action("accept_conversation_notice"),
     },
     Command {
         label: "Allow agent write for this session",
-        icon: None,
+        icon: Some("icons/palette/checkmark-circle-02.svg"),
         keywords: "agent write request approve permit message orchestrate",
         needs: Needs::WriteRequest,
+        section: Section::Agents,
         kind: Kind::Action("accept_conversation_notice"),
     },
     Command {
         label: "Deny agent write",
-        icon: None,
+        icon: Some("icons/palette/blocked.svg"),
         keywords: "agent write request refuse reject block message",
         needs: Needs::WriteRequest,
+        section: Section::Agents,
         kind: Kind::Action("dismiss_conversation_notice"),
     },
     Command {
         label: "Dismiss conversation notice",
-        icon: None,
+        icon: Some("icons/palette/notification-off-01.svg"),
         keywords: "agent banner resume close hide",
         needs: Needs::ConversationNotice,
+        section: Section::Agents,
         kind: Kind::Action("dismiss_conversation_notice"),
     },
     Command {
         label: "Find in this pane",
-        icon: None,
+        icon: Some("icons/palette/search-01.svg"),
         keywords: "search terminal",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("toggle_search"),
     },
     Command {
         label: "Search next match",
-        icon: None,
+        icon: Some("icons/palette/arrow-down-01.svg"),
         keywords: "find forward",
         needs: Needs::TerminalSearch,
+        section: Section::Terminal,
         kind: Kind::Action("search_next"),
     },
     Command {
         label: "Search previous match",
-        icon: None,
+        icon: Some("icons/palette/arrow-up-01.svg"),
         keywords: "find backward",
         needs: Needs::TerminalSearch,
+        section: Section::Terminal,
         kind: Kind::Action("search_prev"),
     },
     Command {
         label: "Toggle search regex",
-        icon: None,
+        icon: Some("icons/palette/regex.svg"),
         keywords: "find pattern",
         needs: Needs::TerminalSearch,
+        section: Section::Terminal,
         kind: Kind::Action("toggle_search_regex"),
     },
     Command {
         label: "Dismiss search",
-        icon: None,
+        icon: Some("icons/palette/search-remove.svg"),
         keywords: "find close",
         needs: Needs::TerminalSearch,
+        section: Section::Terminal,
         kind: Kind::Action("dismiss_search"),
     },
     Command {
         label: "Increase pane font size",
-        icon: None,
+        icon: Some("icons/palette/zoom-in.svg"),
         keywords: "terminal zoom bigger",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("font_size_increase"),
     },
     Command {
         label: "Decrease pane font size",
-        icon: None,
+        icon: Some("icons/palette/zoom-out.svg"),
         keywords: "terminal zoom smaller",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("font_size_decrease"),
     },
     Command {
         label: "Reset pane font size",
-        icon: None,
+        icon: Some("icons/palette/arrow-reload-horizontal.svg"),
         keywords: "terminal zoom default",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("font_size_reset"),
     },
     Command {
         label: "Reset terminal",
-        icon: None,
+        icon: Some("icons/palette/refresh-ccw.svg"),
         keywords: "fix garbled escape",
         needs: Needs::Terminal,
+        section: Section::Terminal,
         kind: Kind::Action("reset_terminal"),
     },
     Command {
         label: "Markdown: scroll up one page",
-        icon: None,
+        icon: Some("icons/palette/arrow-up-double.svg"),
         keywords: "preview document",
         needs: Needs::Markdown,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_scroll_page_up"),
     },
     Command {
         label: "Markdown: scroll down one page",
-        icon: None,
+        icon: Some("icons/palette/arrow-down-double.svg"),
         keywords: "preview document",
         needs: Needs::Markdown,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_scroll_page_down"),
     },
     Command {
         label: "Markdown: open the find bar",
-        icon: None,
+        icon: Some("icons/palette/search-01.svg"),
         keywords: "preview search document",
         needs: Needs::Markdown,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_find_open"),
     },
     Command {
         label: "Markdown: copy the selection",
-        icon: None,
+        icon: Some("icons/palette/copy-01.svg"),
         keywords: "preview clipboard",
         needs: Needs::Markdown,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_copy"),
     },
     Command {
         label: "Markdown: jump to the next match",
-        icon: None,
+        icon: Some("icons/palette/arrow-down-01.svg"),
         keywords: "preview search forward",
         needs: Needs::MarkdownSearch,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_find_next"),
     },
     Command {
         label: "Markdown: jump to the previous match",
-        icon: None,
+        icon: Some("icons/palette/arrow-up-01.svg"),
         keywords: "preview search backward",
         needs: Needs::MarkdownSearch,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_find_prev"),
     },
     Command {
         label: "Markdown: close the find bar",
-        icon: None,
+        icon: Some("icons/palette/search-remove.svg"),
         keywords: "preview search dismiss",
         needs: Needs::MarkdownSearch,
+        section: Section::Markdown,
         kind: Kind::Action("markdown_find_dismiss"),
     },
     Command {
         label: "Theme",
-        icon: Some("icons/moon.svg"),
+        icon: Some("icons/palette/paint-board.svg"),
         keywords: "color palette appearance dark light",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::Theme),
     },
     Command {
         label: "Theme mode",
-        icon: None,
+        icon: Some("icons/palette/sun-moon.svg"),
         keywords: "appearance dark light system",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::ThemeMode),
     },
     Command {
         label: "Interface style",
-        icon: None,
+        icon: Some("icons/palette/layers-01.svg"),
         keywords: "appearance themed blended transparency translucent blur material mica vibrancy",
         needs: Needs::NativeMaterial,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::InterfaceStyle),
     },
     Command {
         label: "Terminal font",
-        icon: None,
+        icon: Some("icons/palette/text-square.svg"),
         keywords: "typeface family appearance",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::TerminalFont),
     },
     Command {
         label: "Terminal font size",
-        icon: None,
+        icon: Some("icons/palette/text-font.svg"),
         keywords: "typeface appearance points",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::FontSize),
     },
     Command {
         label: "Terminal font weight",
-        icon: None,
+        icon: Some("icons/palette/text-bold.svg"),
         keywords: "typeface appearance bold",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::FontWeight),
     },
     Command {
         label: "Terminal line height",
-        icon: None,
+        icon: Some("icons/palette/paragraph-spacing.svg"),
         keywords: "typeface appearance spacing",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::LineHeight),
     },
     Command {
         label: "Terminal cell width",
-        icon: None,
+        icon: Some("icons/palette/letter-spacing.svg"),
         keywords: "typeface appearance spacing",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::CellWidth),
     },
     Command {
         label: "Cursor shape",
-        icon: None,
+        icon: Some("icons/palette/cursor-text.svg"),
         keywords: "appearance caret block beam",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::CursorShape),
     },
     Command {
         label: "Minimum contrast",
-        icon: None,
+        icon: Some("icons/palette/contrast.svg"),
         keywords: "legibility readability apca light theme accessibility",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Scope(Scope::MinimumContrast),
     },
     Command {
         label: "Integrated glyphs",
-        icon: None,
+        icon: Some("icons/palette/shapes.svg"),
         keywords: "appearance powerline box drawing",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Toggle {
             read: |app| terminal_bool(app, |terminal| terminal.resolved_integrated_glyphs()),
             write: |app, next, cx| app.persist_setting(true, "integrated_glyphs", json!(next), cx),
@@ -1160,9 +1310,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Color emoji",
-        icon: None,
+        icon: Some("icons/palette/smile.svg"),
         keywords: "appearance glyphs",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Toggle {
             read: |app| terminal_bool(app, |terminal| terminal.resolved_color_emoji()),
             write: |app, next, cx| app.persist_setting(true, "color_emoji", json!(next), cx),
@@ -1170,9 +1321,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Terminal scrollbar",
-        icon: None,
+        icon: Some("icons/palette/scroll-vertical.svg"),
         keywords: "appearance scroll",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Toggle {
             read: |app| terminal_bool(app, |terminal| terminal.resolved_scrollbar_visible()),
             write: |app, next, cx| app.persist_setting(true, "scrollbar", json!(next), cx),
@@ -1180,9 +1332,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Reduce motion",
-        icon: None,
+        icon: Some("icons/palette/pause-circle.svg"),
         keywords: "appearance animation accessibility",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Toggle {
             read: |app| app.cached_config.reduce_motion.unwrap_or(false),
             write: |app, next, cx| app.persist_setting(false, "reduce_motion", json!(next), cx),
@@ -1190,9 +1343,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Comfortable density",
-        icon: None,
+        icon: Some("icons/palette/layout-grid.svg"),
         keywords: "appearance compact panes gutter spacing cards layout",
         needs: Needs::Always,
+        section: Section::Appearance,
         kind: Kind::Toggle {
             read: |app| app.cached_config.comfortable_density_enabled(),
             write: |app, next, cx| {
@@ -1202,9 +1356,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the branch in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/git-branch.svg"),
         keywords: "git appearance",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| app.cached_config.sidebar_show.branch.unwrap_or(true),
             write: |app, next, cx| sidebar_show_toggle(app, "branch", next, cx),
@@ -1212,9 +1367,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the diffstat in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/plus-minus-01.svg"),
         keywords: "git appearance changes",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| app.cached_config.sidebar_show.diffstat.unwrap_or(true),
             write: |app, next, cx| sidebar_show_toggle(app, "diffstat", next, cx),
@@ -1222,9 +1378,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show pull requests in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/git-pull-request.svg"),
         keywords: "git appearance github",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| app.cached_config.sidebar_show.pr.unwrap_or(true),
             write: |app, next, cx| sidebar_show_toggle(app, "pr", next, cx),
@@ -1232,9 +1389,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the indent guide in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/text-indent.svg"),
         keywords: "appearance tree",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| app.cached_config.sidebar_show.indent_guide.unwrap_or(true),
             write: |app, next, cx| sidebar_show_toggle(app, "indent_guide", next, cx),
@@ -1242,9 +1400,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the Agents section in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/sparkles.svg"),
         keywords: "agents attention appearance hide",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| app.cached_config.sidebar_show.agents_enabled(),
             write: |app, next, cx| sidebar_show_toggle(app, "agents", next, cx),
@@ -1252,9 +1411,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Expand the Agents section in the sidebar",
-        icon: None,
+        icon: Some("icons/palette/arrow-expand-01.svg"),
         keywords: "agents collapse fold attention",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Toggle {
             read: |app| !app.agents_section.borrow().collapsed(),
             write: |app, next, cx| app.set_agents_section_collapsed(!next, cx),
@@ -1262,37 +1422,42 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Default editor",
-        icon: Some("icons/code.svg"),
+        icon: Some("icons/palette/source-code.svg"),
         keywords: "external open zed cursor vscode",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Scope(Scope::DefaultEditor),
     },
     Command {
         label: "Shell in the integrated terminal",
-        icon: Some("icons/terminal.svg"),
+        icon: Some("icons/palette/command-line.svg"),
         keywords: "bash zsh fish powershell default",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Scope(Scope::DefaultShell),
     },
     Command {
         label: "When quitting with sessions running",
-        icon: None,
+        icon: Some("icons/palette/logout-square-01.svg"),
         keywords: "exit ask keep stop",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Scope(Scope::OnQuit),
     },
     Command {
         label: "Ended sessions listed per workspace",
-        icon: None,
+        icon: Some("icons/palette/history.svg"),
         keywords: "sidebar history limit",
         needs: Needs::Always,
+        section: Section::Sidebar,
         kind: Kind::Scope(Scope::EndedSessions),
     },
     Command {
         label: "Native OS notifications",
-        icon: Some("icons/bell.svg"),
+        icon: Some("icons/palette/notification-01.svg"),
         keywords: "alert agent waiting",
         needs: Needs::Always,
+        section: Section::Agents,
         kind: Kind::Toggle {
             read: |app| {
                 app.cached_config.agent_panel.as_ref().is_some_and(|panel| {
@@ -1308,9 +1473,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Remove old worktrees automatically",
-        icon: None,
+        icon: Some("icons/palette/clean.svg"),
         keywords: "git cleanup prune",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Toggle {
             read: |app| app.cached_config.worktrees.auto_remove.unwrap_or(false),
             write: |app, next, cx| {
@@ -1325,9 +1491,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "AI free access",
-        icon: None,
+        icon: Some("icons/palette/square-unlock-02.svg"),
         keywords: "agent permissions unrestricted",
         needs: Needs::Always,
+        section: Section::Agents,
         kind: Kind::Toggle {
             read: |app| app.cached_config.ai_unrestricted.unwrap_or(false),
             write: |app, next, cx| app.persist_setting(false, "ai_unrestricted", json!(next), cx),
@@ -1335,9 +1502,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Injection fence",
-        icon: None,
+        icon: Some("icons/palette/security-check.svg"),
         keywords: "agent security prompt",
         needs: Needs::Always,
+        section: Section::Agents,
         kind: Kind::Toggle {
             read: |app| app.cached_config.ai_injection_fence.unwrap_or(true),
             write: |app, next, cx| {
@@ -1347,9 +1515,10 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Full access for Claude Code",
-        icon: None,
+        icon: Some("icons/palette/key-01.svg"),
         keywords: "agent permissions bypass",
         needs: Needs::Always,
+        section: Section::Agents,
         kind: Kind::Toggle {
             read: |app| {
                 app.cached_config
@@ -1363,73 +1532,82 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Settings",
-        icon: Some("icons/settings.svg"),
+        icon: Some("icons/palette/sliders-horizontal.svg"),
         keywords: "preferences options configure",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Scope(Scope::SettingsTab),
     },
     Command {
         label: "Check for updates",
-        icon: Some("icons/download.svg"),
+        icon: Some("icons/palette/download-04.svg"),
         keywords: "version upgrade release",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Action("check_for_updates"),
     },
     Command {
         label: "Paneflow documentation",
-        icon: Some("icons/file-text.svg"),
+        icon: Some("icons/palette/book-open-01.svg"),
         keywords: "help docs manual",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, _window, cx| {
             app.open_help_url(crate::app::title_bar_menus::DOCUMENTATION_URL, cx)
         }),
     },
     Command {
         label: "What's new",
-        icon: Some("icons/sparkles.svg"),
+        icon: Some("icons/palette/new-releases.svg"),
         keywords: "help releases changelog",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, _window, cx| {
             app.open_help_url(crate::app::title_bar_menus::RELEASES_URL, cx)
         }),
     },
     Command {
         label: "Automations",
-        icon: Some("icons/bolt.svg"),
+        icon: Some("icons/palette/flash.svg"),
         keywords: "help scripting cli mcp",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, _window, cx| {
             app.open_help_url(crate::app::title_bar_menus::AUTOMATIONS_URL, cx)
         }),
     },
     Command {
         label: "Troubleshooting",
-        icon: Some("icons/bug.svg"),
+        icon: Some("icons/palette/bug-01.svg"),
         keywords: "help support debug",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, _window, cx| {
             app.open_help_url(crate::app::title_bar_menus::TROUBLESHOOTING_URL, cx)
         }),
     },
     Command {
         label: "System info…",
-        icon: Some("icons/server.svg"),
+        icon: Some("icons/palette/computer.svg"),
         keywords: "help diagnostics version gpu",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, window, cx| app.open_system_info_dialog(window, cx)),
     },
     Command {
         label: "About Paneflow",
-        icon: None,
+        icon: Some("icons/palette/information-circle.svg"),
         keywords: "help version license",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Run(|app, window, cx| app.open_about_dialog(window, cx)),
     },
     Command {
         label: "Quit Paneflow",
-        icon: None,
+        icon: Some("icons/palette/logout-01.svg"),
         keywords: "exit close application",
         needs: Needs::Always,
+        section: Section::Paneflow,
         kind: Kind::Action("quit"),
     },
 ];
@@ -1527,6 +1705,17 @@ mod tests {
     }
 
     #[test]
+    fn every_section_holds_a_command_and_an_embedded_icon() {
+        for section in Section::ALL {
+            assert!(section.commands().next().is_some(), "{section:?} is empty");
+            assert!(
+                crate::assets::Assets::get(section.icon()).is_some(),
+                "{section:?} points at a missing icon"
+            );
+        }
+    }
+
+    #[test]
     fn labels_are_unique() {
         let mut seen = std::collections::HashSet::new();
         for command in COMMANDS {
@@ -1539,15 +1728,16 @@ mod tests {
     }
 
     #[test]
-    fn every_command_icon_is_an_embedded_asset() {
+    fn every_command_has_an_embedded_icon() {
         for command in COMMANDS {
-            if let Some(icon) = command.icon {
-                assert!(
-                    crate::assets::Assets::get(icon).is_some(),
-                    "{} points at the missing icon {icon}",
-                    command.label
-                );
-            }
+            let Some(icon) = command.icon else {
+                panic!("{} has no icon", command.label);
+            };
+            assert!(
+                crate::assets::Assets::get(icon).is_some(),
+                "{} points at the missing icon {icon}",
+                command.label
+            );
         }
     }
 

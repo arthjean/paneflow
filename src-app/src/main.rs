@@ -316,6 +316,7 @@ struct PaneFlowApp {
     command_palette_query_seen: String,
     command_palette_scroll: gpui::UniformListScrollHandle,
     command_palette_scope: Option<crate::app::command_palette::Scope>,
+    command_palette_section: Option<crate::app::command_palette::Section>,
     command_palette_context: crate::app::command_palette::PaletteContext,
     command_palette_restore_focus: Option<FocusHandle>,
     pane_palette: Option<app::pane_palette::PanePaletteState>,

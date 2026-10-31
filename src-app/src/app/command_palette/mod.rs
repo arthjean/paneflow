@@ -23,11 +23,10 @@ use crate::ui_primitives::quick_pick::{
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
 
-pub(crate) use catalog::Scope;
 use catalog::{Apply, COMMANDS, Command, Kind, Needs, ScopeValue};
+pub(crate) use catalog::{Scope, Section};
 
-const PALETTE_MIN_WIDTH: f32 = 420.;
-const PALETTE_MAX_WIDTH: f32 = 640.;
+const PALETTE_WIDTH: f32 = 560.;
 const PALETTE_PLACEHOLDER: &str = "Search commands…";
 const CHIP_HEIGHT: f32 = 24.;
 const CHIP_RADIUS: gpui::Pixels = px(6.);
@@ -54,18 +53,21 @@ enum Trailing {
     Check,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Source {
+    Command(usize),
+    Value(usize),
+    Section(Section),
+}
+
 struct PaletteRow {
-    source: usize,
+    source: Source,
     icon: Option<&'static str>,
     label: String,
     highlights: Vec<Range<usize>>,
     value: Option<String>,
     shortcut: Option<String>,
     trailing: Trailing,
-}
-
-fn text_width(text: &str, size: f32) -> f32 {
-    text.chars().count() as f32 * size * 0.55
 }
 
 impl PaneFlowApp {
@@ -79,11 +81,12 @@ impl PaneFlowApp {
         self.dismiss_transient_surfaces();
         self.command_palette_open = true;
         self.command_palette_scope = None;
+        self.command_palette_section = None;
         self.command_palette_context = context;
         self.command_palette_restore_focus = restore;
         self.command_palette_selected = 0;
         self.command_palette_scroll = UniformListScrollHandle::new();
-        self.reset_palette_input(None, cx);
+        self.reset_palette_input(cx);
         let focus = self.command_palette_input.read(cx).focus_handle.clone();
         window.focus(&focus, cx);
         cx.notify();
@@ -95,8 +98,9 @@ impl PaneFlowApp {
         }
         self.command_palette_open = false;
         self.command_palette_scope = None;
+        self.command_palette_section = None;
         self.command_palette_selected = 0;
-        self.reset_palette_input(None, cx);
+        self.reset_palette_input(cx);
         if let Some(handle) = self.command_palette_restore_focus.take() {
             window.focus(&handle, cx);
         }
@@ -112,10 +116,11 @@ impl PaneFlowApp {
         self.open_command_palette(window, cx);
     }
 
-    fn reset_palette_input(&mut self, scope: Option<Scope>, cx: &mut Context<Self>) {
-        let placeholder = match scope {
-            Some(scope) => scope.placeholder(),
-            None => PALETTE_PLACEHOLDER.to_string(),
+    fn reset_palette_input(&mut self, cx: &mut Context<Self>) {
+        let placeholder = match (self.command_palette_scope, self.command_palette_section) {
+            (Some(scope), _) => scope.placeholder(),
+            (None, Some(section)) => section.placeholder(),
+            (None, None) => PALETTE_PLACEHOLDER.to_string(),
         };
         self.command_palette_input.update(cx, |input, cx| {
             input.clear(cx);
@@ -169,6 +174,12 @@ impl PaneFlowApp {
         }
     }
 
+    fn section_is_available(&self, section: Section) -> bool {
+        section
+            .commands()
+            .any(|(_, command)| self.command_is_available(command))
+    }
+
     fn command_is_available(&self, command: &Command) -> bool {
         match command.needs {
             Needs::Always => true,
@@ -212,7 +223,7 @@ impl PaneFlowApp {
                     ranked.push((
                         matched.rank,
                         PaletteRow {
-                            source: idx,
+                            source: Source::Value(idx),
                             icon: None,
                             label: value.label,
                             highlights: matched.highlights,
@@ -228,8 +239,14 @@ impl PaneFlowApp {
                 }
             }
             None => {
+                let section = self.command_palette_section;
+                let browsing = section.is_none() && query.is_empty();
                 for (idx, command) in COMMANDS.iter().enumerate() {
-                    if !self.command_is_available(command) {
+                    let listed = match section {
+                        Some(section) => command.section == section,
+                        None => !browsing || command.needs.is_contextual(),
+                    };
+                    if !listed || !self.command_is_available(command) {
                         continue;
                     }
                     let value = match command.kind {
@@ -252,7 +269,7 @@ impl PaneFlowApp {
                     ranked.push((
                         matched.rank,
                         PaletteRow {
-                            source: idx,
+                            source: Source::Command(idx),
                             icon: command.icon,
                             label: command.label.to_string(),
                             highlights: matched.highlights,
@@ -266,6 +283,25 @@ impl PaneFlowApp {
                             trailing,
                         },
                     ));
+                }
+                if browsing {
+                    for section in Section::ALL {
+                        if !self.section_is_available(section) {
+                            continue;
+                        }
+                        ranked.push((
+                            matcher::Rank::LabelWordStart,
+                            PaletteRow {
+                                source: Source::Section(section),
+                                icon: Some(section.icon()),
+                                label: section.title().to_string(),
+                                highlights: Vec::new(),
+                                value: None,
+                                shortcut: None,
+                                trailing: Trailing::Chevron,
+                            },
+                        ));
+                    }
                 }
             }
         }
@@ -295,7 +331,7 @@ impl PaneFlowApp {
         let Some(scope) = self.command_palette_scope else {
             return;
         };
-        let Some(source) = self
+        let Some(Source::Value(source)) = self
             .command_palette_rows(cx)
             .get(self.command_palette_selected)
             .map(|row| row.source)
@@ -322,12 +358,49 @@ impl PaneFlowApp {
         if !self.command_palette_open {
             self.open_command_palette(window, cx);
         }
+        self.command_palette_section = None;
         self.enter_palette_scope(Scope::MoveToSpace, cx);
+    }
+
+    fn enter_palette_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        self.command_palette_section = Some(section);
+        self.command_palette_scope = None;
+        self.reset_palette_input(cx);
+        self.command_palette_select(0, cx);
+    }
+
+    fn leave_palette_section(&mut self, cx: &mut Context<Self>) {
+        let Some(section) = self.command_palette_section.take() else {
+            return;
+        };
+        self.reset_palette_input(cx);
+        self.select_palette_row(Source::Section(section), cx);
+    }
+
+    fn select_palette_row(&mut self, source: Source, cx: &mut Context<Self>) {
+        let selected = self
+            .command_palette_rows(cx)
+            .iter()
+            .position(|row| row.source == source)
+            .unwrap_or(0);
+        self.command_palette_select(selected, cx);
+    }
+
+    fn leave_palette_level(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.command_palette_scope.is_some() {
+            self.leave_palette_scope(cx);
+            true
+        } else if self.command_palette_section.is_some() {
+            self.leave_palette_section(cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn enter_palette_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         self.command_palette_scope = Some(scope);
-        self.reset_palette_input(Some(scope), cx);
+        self.reset_palette_input(cx);
         let selected = scope
             .values(self)
             .iter()
@@ -340,18 +413,14 @@ impl PaneFlowApp {
         let Some(scope) = self.command_palette_scope.take() else {
             return;
         };
-        self.reset_palette_input(None, cx);
+        self.reset_palette_input(cx);
         let owner = COMMANDS
             .iter()
             .position(|command| matches!(command.kind, Kind::Scope(other) if other == scope));
-        let selected = owner
-            .and_then(|owner| {
-                self.command_palette_rows(cx)
-                    .iter()
-                    .position(|row| row.source == owner)
-            })
-            .unwrap_or(0);
-        self.command_palette_select(selected, cx);
+        match owner {
+            Some(owner) => self.select_palette_row(Source::Command(owner), cx),
+            None => self.command_palette_select(0, cx),
+        }
     }
 
     fn apply_scope_value(
@@ -407,20 +476,28 @@ impl PaneFlowApp {
         };
         self.command_palette_select(idx, cx);
 
-        if let Some(scope) = self.command_palette_scope {
-            let Some(value) = scope.values(self).into_iter().nth(source) else {
-                return;
-            };
-            if value.apply.applies_in_place() {
+        let command = match (source, self.command_palette_scope) {
+            (Source::Value(value), Some(scope)) => {
+                let Some(value) = scope.values(self).into_iter().nth(value) else {
+                    return;
+                };
+                if value.apply.applies_in_place() {
+                    self.apply_scope_value(value, window, cx);
+                    return;
+                }
+                self.close_command_palette(window, cx);
                 self.apply_scope_value(value, window, cx);
                 return;
             }
-            self.close_command_palette(window, cx);
-            self.apply_scope_value(value, window, cx);
-            return;
-        }
+            (Source::Section(section), _) => {
+                self.enter_palette_section(section, cx);
+                return;
+            }
+            (Source::Command(command), _) => command,
+            (Source::Value(_), None) => return,
+        };
 
-        let Some(command) = COMMANDS.get(source) else {
+        let Some(command) = COMMANDS.get(command) else {
             return;
         };
         match command.kind {
@@ -449,14 +526,12 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key != "backspace"
-            || self.command_palette_scope.is_none()
-            || !self.palette_query(cx).is_empty()
-        {
+        if event.keystroke.key != "backspace" || !self.palette_query(cx).is_empty() {
             return;
         }
-        self.leave_palette_scope(cx);
-        cx.stop_propagation();
+        if self.leave_palette_level(cx) {
+            cx.stop_propagation();
+        }
     }
 
     pub(crate) fn handle_command_palette_key_down(
@@ -469,9 +544,7 @@ impl PaneFlowApp {
         let selected = self.command_palette_selected;
         match event.keystroke.key.as_str() {
             "escape" => {
-                if self.command_palette_scope.is_some() {
-                    self.leave_palette_scope(cx);
-                } else {
+                if !self.leave_palette_level(cx) {
                     self.close_command_palette(window, cx);
                 }
                 cx.stop_propagation();
@@ -511,7 +584,12 @@ impl PaneFlowApp {
         let has_query = !self.palette_query(cx).is_empty();
         let style = FilterFieldStyle::palette();
         let chip_inset = (style.height - px(CHIP_HEIGHT)) / 2.;
-        let prefix = self.command_palette_scope.map(|scope| {
+        let chip = match (self.command_palette_scope, self.command_palette_section) {
+            (Some(scope), _) => Some(scope.title()),
+            (None, Some(section)) => Some(section.title()),
+            (None, None) => None,
+        };
+        let prefix = chip.map(|title| {
             div()
                 .relative()
                 .flex_none()
@@ -525,7 +603,7 @@ impl PaneFlowApp {
                         .relative()
                         .text_size(px(LABEL_SIZE))
                         .text_color(ui.text)
-                        .child(SharedString::from(scope.title())),
+                        .child(SharedString::from(title)),
                 )
                 .into_any_element()
         });
@@ -684,7 +762,6 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let rows = Rc::new(self.command_palette_rows(cx));
-        let width = palette_width(&rows);
 
         let list = if rows.is_empty() {
             div()
@@ -735,7 +812,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .p(px(PANEL_PADDING))
-            .w(px(width))
+            .w(px(PALETTE_WIDTH))
             .occlude()
             .capture_key_down(cx.listener(Self::handle_command_palette_capture_key_down))
             .on_key_down(cx.listener(Self::handle_command_palette_key_down))
@@ -767,78 +844,6 @@ impl PaneFlowApp {
     }
 }
 
-fn palette_width(rows: &[PaletteRow]) -> f32 {
-    let mut widest: f32 = 0.;
-    for row in rows {
-        let mut width = text_width(&row.label, LABEL_SIZE);
-        if row.icon.is_some() {
-            width += ICON_SIZE + ICON_GAP;
-        }
-        if let Some(value) = &row.value {
-            width += ROW_GAP + text_width(value, LABEL_SIZE).min(200.);
-        }
-        if let Some(shortcut) = &row.shortcut {
-            width += ROW_GAP + text_width(shortcut, SHORTCUT_SIZE);
-        }
-        if row.trailing != Trailing::None {
-            width += ROW_GAP + 13.;
-        }
-        widest = widest.max(width + 2. * ROW_TEXT_INSET);
-    }
-    (widest + 2. * PANEL_PADDING).clamp(PALETTE_MIN_WIDTH, PALETTE_MAX_WIDTH)
-}
-
 fn list_height(rows: usize) -> Pixels {
     px(rows as f32 * (ROW_HEIGHT + ROW_SPACING)).min(MENU_MAX_HEIGHT)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(
-        label: &str,
-        value: Option<&str>,
-        shortcut: Option<&str>,
-        trailing: Trailing,
-    ) -> PaletteRow {
-        PaletteRow {
-            source: 0,
-            icon: None,
-            label: label.to_string(),
-            highlights: Vec::new(),
-            value: value.map(str::to_string),
-            shortcut: shortcut.map(str::to_string),
-            trailing,
-        }
-    }
-
-    #[test]
-    fn the_width_fits_the_content_between_the_clamps() {
-        let narrow = palette_width(&[row("New tab", None, None, Trailing::None)]);
-        assert_eq!(narrow, PALETTE_MIN_WIDTH);
-
-        let wide = palette_width(&[row(
-            "A command label long enough to push this palette well past its maximum width whatever the row metrics are",
-            Some("with a current value"),
-            Some("Ctrl+Shift+Alt+X"),
-            Trailing::Chevron,
-        )]);
-        assert_eq!(wide, PALETTE_MAX_WIDTH);
-    }
-
-    #[test]
-    fn the_width_grows_with_the_widest_row() {
-        let base = "Maximize or restore the Changes dock of this workspace right now";
-        let short = palette_width(&[row(base, None, None, Trailing::None)]);
-        let long = palette_width(&[
-            row(base, None, None, Trailing::None),
-            row(base, Some("a current value"), None, Trailing::Chevron),
-        ]);
-        assert!(
-            short > PALETTE_MIN_WIDTH,
-            "the base row must clear the clamp"
-        );
-        assert!(long > short);
-    }
 }

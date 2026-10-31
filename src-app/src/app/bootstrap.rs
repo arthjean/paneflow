@@ -414,6 +414,7 @@ impl PaneFlowApp {
             command_palette_query_seen: String::new(),
             command_palette_scroll: gpui::UniformListScrollHandle::new(),
             command_palette_scope: None,
+            command_palette_section: None,
             command_palette_context: Default::default(),
             command_palette_restore_focus: None,
             pane_palette: None,

@@ -926,12 +926,20 @@ filled with `accent` at 0.15, and the hint `Enter creates · Esc cancels`. The
 `Clone repository` modal is the menu surface of 5.6, 544 wide, docked 96 from
 the top of the window over a 0.4 black scrim. The command palette docks at the
 same height on its own panel: the menu surface at squircle 13 with padding 6,
-420 to 640 wide by its widest row, then a 34 px search well (the 0.07 `text`
+a fixed 560 wide so it never resizes while navigating, then a 34 px search well (the 0.07 `text`
 tint on squircle 9, no border, a 14 px glyph and 14 px text; a scope shows as
 a 24 px chip inset 5 on every side), then 29 px rows 2 px apart in a
 `uniform_list` capped at 400. A row is a squircle 8 pill in the selection blue
 when selected, an optional 14 px glyph, the label at 14 px, the current value
-or binding at 13 px muted, and a chevron when it opens a scope. Typing filters
+or binding at 13 px muted, and a chevron when it opens a scope or a category.
+With an empty query the palette opens on its categories (Panes, Tabs,
+Workspaces, Sidebar, Terminal, Markdown, Agents, Appearance, Paneflow), each a
+row with its 14 px glyph and a chevron, hidden when none of its commands
+applies. Above them sit the contextual commands that apply right now (a
+pending agent write, a conversation notice, an open search). A category opens
+like a scope, with its title as the chip, and its query filters only that
+category; typing at the top level searches every command. Escape or Backspace
+on an empty query steps back one level. Typing filters
 on whole words, arrows move, Enter dispatches, and the palette never lists
 itself. The path picker reuses that panel, 420 wide, anchored to the terminal
 cursor instead of docked: it opens under the cursor, or above it when the
