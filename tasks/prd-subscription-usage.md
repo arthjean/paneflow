@@ -8,6 +8,7 @@
 | 1.0 | 2026-10-31 | Arthur Jean | PRD initial : capsule d'usage dans le pied de sidebar (variante A) et page Settings › Usage (variante P2). Les limites viennent du status line de Claude Code et des rollouts Codex, sans lecture de credential ; le worker tient un journal quotidien des tours, du temps actif et des tokens. 5 epics, 19 stories. |
 | 1.1 | 2026-10-31 | Arthur Jean | Les validations macOS et Linux de US-001 passent dans deux epics finaux, EP-006 (Linux, US-020) puis EP-007 (macOS, US-021, sur une machine Scaleway). Le critère Team, Enterprise ou clé API de US-001 est retiré faute de compte : le comportement sans `rate_limits` repose sur le code et ses tests. 7 epics, 21 stories. |
 | 1.2 | 2026-10-31 | Arthur Jean | La preuve en pane réel sous Windows du relais vers le host passe de la Definition of Done de EP-001 à US-007 : avant EP-002, le worker ignore le frame `plan_limits` et aucun outil ne l'observe. EP-001 est certifiée sur les tests du relais (processus réel vers un host simulé), du host (IPC réel) et sur le rejet par un host ancien. |
+| 1.3 | 2026-11-01 | Arthur Jean | La preuve en pane réel sous Windows du trajet relais, host, worker passe de US-007 à US-011 : la passe visuelle de la capsule l'observe dans l'app réelle. EP-002 est certifiée sur le test bout en bout du worker (host réel, PTY réel, worker réel, frame `status_line` envoyé par IPC comme le relais). Les bornes de US-008 acceptent une remise à zéro future jusqu'à `max(8 jours, durée de la fenêtre + 1 jour)`, faute de quoi la fenêtre mensuelle du free tier Codex serait toujours rejetée ; Claude garde 8 jours. |
 
 ## Problem Statement
 
@@ -257,7 +258,7 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 **Dependencies:** Blocked by US-004, US-005
 
 **Acceptance Criteria:**
-- [ ] Given Windows, un compte Claude Pro, Max ou Ultra dont le dossier de config porte le `statusLine` géré (pas un status line étranger), when un message reçoit une réponse dans un pane Paneflow réel, then le worker reçoit le frame `plan_limits` et met à jour l'instantané du compte. Le constat est consigné avec la version de Claude Code (amendement 1.2 : preuve reprise de la Definition of Done de EP-001).
+- ~~Given Windows, un compte Claude Pro, Max ou Ultra dont le dossier de config porte le `statusLine` géré (pas un status line étranger), when un message reçoit une réponse dans un pane Paneflow réel, then le worker reçoit le frame `plan_limits` et met à jour l'instantané du compte. Le constat est consigné avec la version de Claude Code (amendement 1.2 : preuve reprise de la Definition of Done de EP-001).~~ Déplacé vers US-011 par l'amendement 1.3.
 - [ ] Given un frame du relais, when le worker le reçoit, then il remplace l'instantané du compte (Claude, dossier de config) par ses fenêtres, leur `resets_at` et l'heure de réception, et publie l'ensemble des instantanés aux apps connectées.
 - [ ] Given deux sessions du même compte, then le frame reçu en dernier l'emporte.
 - [ ] L'ensemble est écrit dans `~/.paneflow/usage/plans.json` (`~/.paneflow-dev/usage/` en debug) par `paneflow_home::write_atomically`, au plus une fois toutes les 10 s, et rechargé au démarrage du worker.
@@ -266,6 +267,12 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 - [ ] Given un frame dont `rate_limits` vaut `null`, then le compte passe à l'état `NoLimitsReported`, et l'instantané précédent est conservé avec son heure.
 - [ ] Given un dossier de config absent de l'inventaire (Claude lancé avec un `CLAUDE_CONFIG_DIR` ponctuel), then l'instantané est conservé et le compte apparaît avec le chemin comme libellé.
 - [ ] Un test vérifie que `plans.json` ne contient que des pourcentages, des horodatages, des chemins de dossier et des libellés.
+
+**Notes d'implémentation (2026-11-01) :**
+
+- Trajet : le host publie `plan_limits` sur `agent.follow`, le worker le reçoit (`CoreFrame::PlanLimits`, `crates/paneflow-serve/src/core_link.rs`) et l'applique au magasin (`crates/paneflow-serve/src/usage/plans.rs`). Les apps reçoivent un frame `{"type": "usage"}` sur le flux du worker, et l'en-tête de `agent.follow` porte `usage`. La méthode `usage.snapshot` renvoie les instantanés et le journal.
+- « Le dernier frame l'emporte » est appliqué fenêtre par fenêtre, avec les deux constats de US-001 : pour un même `resets_at`, le pourcentage le plus haut est gardé, et une fenêtre absente du frame garde la valeur détenue.
+- Bornes : une remise à zéro future est acceptée jusqu'à `max(8 jours, durée de la fenêtre + 1 jour)`, sinon la fenêtre mensuelle du free tier Codex (US-002, jusqu'à 30 jours) serait toujours rejetée. Pour Claude (5 h et 7 jours), la borne reste 8 jours. Validé par Arthur et inscrit dans US-008 par l'amendement 1.3.
 
 #### US-008: Limites Codex lues dans les rollouts
 **Description:** As a développeur sur abonnement, I want que les limites Codex viennent des fichiers que Codex écrit lui-même so that Paneflow n'ait jamais à lire `auth.json`.
@@ -280,7 +287,12 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 - [ ] Le compte est attribué d'après l'emplacement du rollout sous `CODEX_HOME`, jamais d'après l'environnement du hook : le daemon partagé de Codex 0.159+ transmet aux hooks l'environnement du premier lanceur.
 - [ ] Les fenêtres reçoivent leur libellé par la règle de durée de US-004, si bien que la fenêtre mensuelle du free tier se lit « Month ».
 - [ ] Given aucun rollout, un fichier illisible ou aucun `token_count` avec `rate_limits`, then l'instantané existant est conservé et le compte passe à l'état `NoCodexData`.
-- [ ] Les instantanés Codex suivent la même persistance et les mêmes bornes que US-007.
+- [ ] Les instantanés Codex suivent la même persistance et les mêmes bornes que US-007, sauf la borne future de remise à zéro, qui vaut `max(8 jours, durée de la fenêtre + 1 jour)` (amendement 1.3).
+
+**Notes d'implémentation (2026-11-01) :**
+
+- Déclencheurs : `Stop` d'un hook Codex ou sortie de working d'une session Codex (lecture immédiate), méthode du worker `usage.refresh` pour l'ouverture de la bulle ou de la page (plancher de 30 s, appelée par US-012 et US-014), et balayage du worker toutes les 5 min par compte qui a une session Codex vivante.
+- Le compte Codex d'une session vient de `CODEX_HOME` dans l'environnement de lancement de la session (porté par l'entrée `account_env` du snapshot du host), sinon de celui du worker ou de `~/.codex`. L'environnement du hook n'est jamais lu.
 
 #### US-009: Journal quotidien des tours et du temps actif
 **Description:** As a développeur multi-agents, I want que Paneflow compte mes tours et mon temps d'agent par jour et par compte so that je voie mon rythme sur un an, au-delà des 30 jours de transcripts.
@@ -300,6 +312,14 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 - [ ] Given un `ledger.json` corrompu, then il est renommé `ledger.json.bad-<horodatage>`, un journal vide le remplace, et un avertissement est journalisé.
 - [ ] Given un agent qui n'émet ni OSC 7501 ni hook, then rien n'est compté pour lui.
 - [ ] Un test rejoue une séquence enregistrée de 20 tours Claude Code et trouve 20 tours et un temps actif exact à la seconde près.
+
+**Notes d'implémentation (2026-11-01) :**
+
+- Un passage de working à blocked (demande de permission) suspend le temps actif sans fermer le tour ; le tour se ferme à la sortie vers idle, done ou error. Sans cela, chaque demande de permission compterait un tour de plus (risque 6).
+- Anti-rejeu : chaque session garde le couple (heure de réception, révision du hook) du dernier hook compté, persisté dans `ledger.json` avec les tours ouverts (`open_turns`, `watermarks`, sans contenu). Deux hooks reçus dans la même milliseconde restent ordonnés par leur révision.
+- Après un redémarrage, l'intervalle working ouvert est clos au dernier événement connu ; si la session est encore en working, le même tour reprend sans être recompté.
+- La séquence de 20 tours du test (`state::tests::a_replayed_twenty_turn_claude_session_counts_twenty_turns_and_its_exact_active_time`) est construite sur la forme des frames réels de Claude Code (hooks et OSC 7501), pas capturée dans une session réelle.
+- L'heure locale vient de `chrono` (`Local`), déjà compilé dans l'app par GPUI ; `paneflow-serve` en devient dépendant direct.
 
 ---
 
@@ -341,6 +361,7 @@ Affiche les limites dans le pied de la sidebar et dans une bulle, avec tous leur
 - [ ] Given la publication d'un instantané, then la capsule se met à jour en moins de 1 s, sans reconstruire l'arbre des workspaces (vue en cache, `src-app/src/app/sidebar/view.rs:28`).
 - [ ] Le nom accessible commence par le texte visible : « 54% plan usage, Claude Code week ». L'état déplié est exposé, la capsule est atteinte par Tab depuis le filtre, et Entrée ou Espace ouvre la bulle.
 - [ ] Given la fenêtre minimale de 800 px avec une sidebar de 300 px, then le filtre garde au moins 120 px ; en dessous, la capsule ne montre que l'anneau et garde son nom accessible.
+- [ ] Given Windows, un compte Claude Pro, Max ou Ultra dont le dossier de config porte le `statusLine` géré (pas un status line étranger), when un message reçoit une réponse dans un pane Paneflow réel, then le worker reçoit le frame `plan_limits`, met à jour l'instantané du compte et la capsule affiche son pourcentage. Le constat est consigné avec la version de Claude Code (amendement 1.3 : preuve reprise de US-007).
 
 #### US-012: Bulle d'usage
 **Description:** As a utilisateur à deux comptes, I want ouvrir le détail de chaque compte depuis la capsule so that je voie les deux fenêtres, la remise à zéro et mon rythme.
