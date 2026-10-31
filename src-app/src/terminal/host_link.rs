@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::protocol::{
-    ClientHello, ERR_CHECKPOINT_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_SESSION_NOT_FOUND,
-    ERR_SESSION_NOT_LIVE,
+    ClientHello, ERR_CHECKPOINT_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_LAUNCH_PENDING,
+    ERR_SESSION_NOT_FOUND, ERR_SESSION_NOT_LIVE,
 };
 use paneflow_host::{
     BootstrapError, CellSize, Checkpoint, CreateSession, HostClient, HostClientError,
@@ -437,6 +437,7 @@ pub(crate) struct HostedAttachment {
     pub(crate) cwd: String,
 }
 
+#[derive(Clone)]
 pub(super) struct AttachRequest {
     pub(super) intent: SessionIntent,
     pub(super) session: SessionId,
@@ -449,6 +450,7 @@ pub(super) struct AttachRequest {
 pub(crate) enum ResolveOutcome {
     Attached(Box<HostedAttachment>, CheckpointPayload),
     Ended(HostLinkEnd, Option<FinalText>),
+    Starting,
 }
 
 fn final_text_of(client: &mut HostClient, session: &SessionId) -> Option<FinalText> {
@@ -533,9 +535,15 @@ fn resolve_at(
     let live = match (request.intent, existing) {
         (_, Some(summary)) if summary.live && summary.owned => summary,
         (_, Some(summary)) if summary.owned && summary.pending_launch => {
-            return Ok(ResolveOutcome::Ended(HostLinkEnd::starting(), None));
+            return Ok(ResolveOutcome::Starting);
         }
-        (SessionIntent::Create, None) => client.create(&create_request(&request))?,
+        (SessionIntent::Create, None) => match client.create(&create_request(&request)) {
+            Ok(created) => created,
+            Err(error) if error.code() == Some(ERR_LAUNCH_PENDING) => {
+                return Ok(ResolveOutcome::Starting);
+            }
+            Err(error) => return Err(error.into()),
+        },
         (SessionIntent::Create, Some(summary)) => {
             let end = end_of(&client, &summary);
             return Ok(ended_with_final_text(&mut client, &request.session, end));
@@ -560,12 +568,18 @@ fn resolve_at(
                 Err(error) if error.code() == Some(ERR_GENERATION_MISMATCH) => {
                     match inspect_optional(&mut client, &request.session)? {
                         Some(current) if current.live && current.owned => current,
+                        Some(current) if current.owned && current.pending_launch => {
+                            return Ok(ResolveOutcome::Starting);
+                        }
                         Some(current) => {
                             let end = end_of(&client, &current);
                             return Ok(ended_with_final_text(&mut client, &request.session, end));
                         }
                         None => return Ok(ResolveOutcome::Ended(HostLinkEnd::missing(), None)),
                     }
+                }
+                Err(error) if error.code() == Some(ERR_LAUNCH_PENDING) => {
+                    return Ok(ResolveOutcome::Starting);
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -610,6 +624,91 @@ fn resolve_at(
         }),
         snapshot,
     ))
+}
+
+pub(crate) const TRANSIENT_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const TRANSIENT_QUIET_PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
+const TRANSIENT_RETRY_BASE: std::time::Duration = std::time::Duration::from_millis(250);
+const TRANSIENT_RETRY_CEILING: std::time::Duration = std::time::Duration::from_secs(4);
+
+pub(crate) fn transient_retry_delay(session: &SessionId, attempt: u32) -> std::time::Duration {
+    use std::hash::{Hash, Hasher};
+    let ceiling = TRANSIENT_RETRY_BASE
+        .saturating_mul(2u32.saturating_pow(attempt.min(31)))
+        .min(TRANSIENT_RETRY_CEILING);
+    let floor = ceiling / 2;
+    let span = u64::try_from((ceiling - floor).as_millis()).unwrap_or(u64::MAX);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    session.as_str().hash(&mut hasher);
+    attempt.hash(&mut hasher);
+    floor + std::time::Duration::from_millis(hasher.finish() % span.saturating_add(1))
+}
+
+pub(crate) fn is_transient(result: &Result<ResolveOutcome, HostLinkError>) -> bool {
+    match result {
+        Ok(ResolveOutcome::Starting) => true,
+        Err(HostLinkError::Client(error)) => error.is_capacity_refusal(),
+        Ok(_) | Err(_) => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RetryPause {
+    pub(crate) quiet: std::time::Duration,
+    pub(crate) announce: bool,
+    pub(crate) visible: std::time::Duration,
+}
+
+pub(crate) struct TransientRetry {
+    session: SessionId,
+    attempt: u32,
+    first: Option<std::time::Instant>,
+}
+
+impl TransientRetry {
+    pub(crate) fn new(session: SessionId) -> Self {
+        Self {
+            session,
+            attempt: 0,
+            first: None,
+        }
+    }
+
+    pub(crate) fn next_pause(&mut self, now: std::time::Instant) -> Option<RetryPause> {
+        let first = *self.first.get_or_insert(now);
+        let elapsed = now.saturating_duration_since(first);
+        if elapsed >= TRANSIENT_RETRY_BUDGET {
+            return None;
+        }
+        let delay = transient_retry_delay(&self.session, self.attempt);
+        self.attempt = self.attempt.saturating_add(1);
+        let quiet = TRANSIENT_QUIET_PERIOD.saturating_sub(elapsed).min(delay);
+        Some(RetryPause {
+            quiet,
+            announce: elapsed + delay >= TRANSIENT_QUIET_PERIOD,
+            visible: delay - quiet,
+        })
+    }
+}
+
+pub(crate) async fn resolve_until_settled(
+    session: SessionId,
+    mut attempt: impl AsyncFnMut() -> Result<ResolveOutcome, HostLinkError>,
+    mut pause: impl AsyncFnMut(RetryPause) -> bool,
+) -> Option<Result<ResolveOutcome, HostLinkError>> {
+    let mut retry = TransientRetry::new(session);
+    loop {
+        let resolved = attempt().await;
+        if !is_transient(&resolved) {
+            return Some(resolved);
+        }
+        let Some(next) = retry.next_pause(std::time::Instant::now()) else {
+            return Some(resolved);
+        };
+        if !pause(next).await {
+            return None;
+        }
+    }
 }
 
 pub(crate) fn stop_session(
@@ -1507,6 +1606,289 @@ mod tests {
         assert_eq!(counted_on_this_thread(&SESSION_LIST_CALLS) - before, 1);
         list_sessions_at(&endpoint, None).unwrap();
         assert_eq!(counted_on_this_thread(&SESSION_LIST_CALLS) - before, 2);
+        server.stop().unwrap();
+    }
+
+    #[cfg(windows)]
+    const TEST_SHELL: &str = "cmd.exe";
+    #[cfg(unix)]
+    const TEST_SHELL: &str = "/bin/sh";
+
+    fn shell_request(intent: SessionIntent, session: SessionId) -> AttachRequest {
+        AttachRequest {
+            intent,
+            session,
+            workspace: None,
+            params: SpawnParams {
+                shell: TEST_SHELL.into(),
+                shell_quoting: super::super::types::ShellQuoting::default_for_platform(),
+                extra_args: Vec::new(),
+                env: Default::default(),
+                cwd: std::env::temp_dir(),
+                cols: 80,
+                rows: 24,
+                profile: paneflow_config::schema::TerminalSurfaceProfile::Normal,
+            },
+            appearance: crate::terminal::ghostty_session::current_host_appearance(),
+            cell: None,
+        }
+    }
+
+    #[test]
+    fn a_replayed_create_attaches_to_the_session_its_first_attempt_already_launched() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .unwrap();
+        let target = HostEndpoint {
+            home: home.path().to_path_buf(),
+            endpoint,
+        };
+        let session = SessionId::new();
+        let request = shell_request(SessionIntent::Create, session.clone());
+        let Ok(ResolveOutcome::Attached(first, _)) = resolve_at(request.clone(), target.clone())
+        else {
+            panic!("the first create launches and attaches");
+        };
+        let Ok(ResolveOutcome::Attached(replayed, _)) = resolve_at(request, target) else {
+            panic!("the replayed create attaches instead of reporting the session");
+        };
+        assert_eq!(replayed.attachment.session, session);
+        assert_eq!(replayed.attachment.generation, first.attachment.generation);
+        assert_eq!(replayed.pid, first.pid, "no second process was launched");
+        assert_eq!(host.list(None).len(), 1);
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    fn busy() -> Result<ResolveOutcome, HostLinkError> {
+        Err(HostLinkError::Client(HostClientError::Rpc {
+            code: paneflow_host::protocol::ERR_BUSY,
+            message: "the host is at capacity".into(),
+            data: None,
+        }))
+    }
+
+    fn failed_launch() -> Result<ResolveOutcome, HostLinkError> {
+        Ok(ResolveOutcome::Ended(
+            HostLinkEnd::from_reconnection(
+                SessionReconnection::Failed {
+                    reason: "fixture".into(),
+                },
+                SessionGeneration::FIRST,
+            ),
+            None,
+        ))
+    }
+
+    #[test]
+    fn a_transient_retry_delay_is_drawn_deterministically_between_half_and_full_backoff() {
+        use std::time::Duration;
+        let sessions: Vec<SessionId> = (0..24).map(|_| SessionId::new()).collect();
+        for attempt in 0..12u32 {
+            let ceiling = (Duration::from_millis(250) * 2u32.pow(attempt.min(10)))
+                .min(Duration::from_secs(4));
+            for session in &sessions {
+                let delay = transient_retry_delay(session, attempt);
+                assert!(
+                    delay >= ceiling / 2 && delay <= ceiling,
+                    "attempt {attempt}: {delay:?} outside [{:?}, {ceiling:?}]",
+                    ceiling / 2
+                );
+                assert_eq!(delay, transient_retry_delay(session, attempt));
+            }
+        }
+        let saturated = transient_retry_delay(&sessions[0], u32::MAX);
+        assert!(saturated >= Duration::from_secs(2) && saturated <= Duration::from_secs(4));
+        let spread: std::collections::BTreeSet<_> = sessions
+            .iter()
+            .map(|session| transient_retry_delay(session, 3))
+            .collect();
+        assert!(spread.len() > 1, "sessions are jittered apart: {spread:?}");
+    }
+
+    #[test]
+    fn a_transient_wait_stays_quiet_for_one_second_then_announces_until_the_sixty_second_budget() {
+        use std::time::Duration;
+        let mut retry = TransientRetry::new(SessionId::new());
+        let first = std::time::Instant::now();
+        let mut now = first;
+        let mut pauses = 0;
+        while let Some(pause) = retry.next_pause(now) {
+            pauses += 1;
+            let elapsed = now - first;
+            let woken = elapsed + pause.quiet + pause.visible;
+            assert!(elapsed < TRANSIENT_RETRY_BUDGET);
+            if woken < TRANSIENT_QUIET_PERIOD {
+                assert!(!pause.announce, "still Attaching at {woken:?}");
+                assert!(pause.visible.is_zero());
+            } else {
+                assert!(pause.announce, "Reconnecting once {woken:?} have passed");
+                assert_eq!(
+                    elapsed + pause.quiet,
+                    elapsed.max(TRANSIENT_QUIET_PERIOD),
+                    "the announcement lands on the one second mark"
+                );
+            }
+            now += pause.quiet + pause.visible + Duration::from_millis(30);
+        }
+        assert!(now - first >= TRANSIENT_RETRY_BUDGET);
+        assert!(
+            now - first < TRANSIENT_RETRY_BUDGET + Duration::from_secs(5),
+            "the budget is not overshot by more than one capped delay"
+        );
+        assert!(pauses > 10, "{pauses}");
+        assert_eq!(retry.next_pause(now), None);
+    }
+
+    #[test]
+    fn only_capacity_refusals_and_pending_launches_are_transient() {
+        assert!(is_transient(&busy()));
+        assert!(is_transient(&Ok(ResolveOutcome::Starting)));
+        assert!(!is_transient(&failed_launch()));
+        for error in [
+            HostLinkError::NoHome,
+            HostLinkError::Client(HostClientError::Incompatible("fixture".into())),
+            HostLinkError::Client(HostClientError::Unreachable {
+                endpoint: "fixture".into(),
+                source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            }),
+            HostLinkError::Client(HostClientError::Rpc {
+                code: ERR_CHECKPOINT_TOO_LARGE,
+                message: "fixture".into(),
+                data: None,
+            }),
+        ] {
+            assert!(!is_transient(&Err(error)));
+        }
+    }
+
+    #[test]
+    fn a_transient_resolution_retries_with_the_same_request_until_it_settles() {
+        let mut script = vec![busy(), Ok(ResolveOutcome::Starting), failed_launch()].into_iter();
+        let mut attempts = 0;
+        let mut pauses = Vec::new();
+        let settled = smol::block_on(resolve_until_settled(
+            SessionId::new(),
+            async || {
+                attempts += 1;
+                script.next().unwrap_or_else(busy)
+            },
+            async |pause| {
+                pauses.push(pause);
+                true
+            },
+        ));
+        assert!(matches!(
+            settled,
+            Some(Ok(ResolveOutcome::Ended(
+                HostLinkEnd {
+                    kind: HostLinkEndKind::Failed,
+                    ..
+                },
+                _
+            )))
+        ));
+        assert_eq!((attempts, pauses.len()), (3, 2));
+        assert!(pauses.iter().all(|pause| !pause.announce));
+    }
+
+    #[test]
+    fn a_settled_or_permanent_resolution_never_retries_and_a_canceled_wait_stops_calling_the_host()
+    {
+        for permanent in [
+            Err(HostLinkError::Client(HostClientError::Incompatible(
+                "fixture".into(),
+            ))),
+            failed_launch(),
+        ] {
+            let mut first = Some(permanent);
+            let mut attempts = 0;
+            let settled = smol::block_on(resolve_until_settled(
+                SessionId::new(),
+                async || {
+                    attempts += 1;
+                    first.take().unwrap_or_else(busy)
+                },
+                async |_| panic!("a permanent outcome never waits"),
+            ));
+            assert!(settled.is_some_and(|resolved| !is_transient(&resolved)));
+            assert_eq!(attempts, 1);
+        }
+        let mut attempts = 0;
+        let canceled = smol::block_on(resolve_until_settled(
+            SessionId::new(),
+            async || {
+                attempts += 1;
+                busy()
+            },
+            async |_| false,
+        ));
+        assert!(canceled.is_none());
+        assert_eq!(attempts, 1, "no host call follows a canceled wait");
+    }
+
+    #[test]
+    fn a_resolve_refused_by_full_checkpoint_staging_retries_until_it_attaches() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let session = host
+            .create(CreateSession {
+                shell: Some(TEST_SHELL.into()),
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                ..CreateSession::default()
+            })
+            .unwrap()
+            .manifest
+            .session;
+        let held = [
+            host.checkpoint(&session, None).unwrap(),
+            host.checkpoint(&session, None).unwrap(),
+        ];
+        let server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).unwrap();
+        let watched = Arc::clone(&host);
+        let release = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while watched.resource_report().checkpoints.refused == 0
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            drop(held);
+        });
+        let target = HostEndpoint {
+            home: home.path().to_path_buf(),
+            endpoint,
+        };
+        let request = shell_request(SessionIntent::Reattach, session.clone());
+        let mut refusals = 0;
+        let settled = smol::block_on(resolve_until_settled(
+            session.clone(),
+            async || {
+                let resolved = resolve_at(request.clone(), target.clone());
+                if is_transient(&resolved) {
+                    refusals += 1;
+                }
+                resolved
+            },
+            async |pause| {
+                std::thread::sleep(pause.quiet + pause.visible);
+                true
+            },
+        ));
+        release.join().unwrap();
+        let Some(Ok(ResolveOutcome::Attached(hosted, _))) = settled else {
+            panic!("the resolve attaches once a staging slot frees");
+        };
+        assert!(refusals >= 1, "the first attach met a full staging");
+        assert_eq!(hosted.attachment.session, session);
+        assert_eq!(host.list(None).len(), 1, "no second session was created");
+        host.stop(&session, None).unwrap();
         server.stop().unwrap();
     }
 }

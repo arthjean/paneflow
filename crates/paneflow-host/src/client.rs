@@ -52,6 +52,10 @@ impl HostClientError {
         )
     }
 
+    pub fn is_capacity_refusal(&self) -> bool {
+        self.code() == Some(protocol::ERR_BUSY)
+    }
+
     pub fn is_connection_loss(&self) -> bool {
         matches!(
             self,
@@ -623,5 +627,32 @@ mod tests {
             };
             assert_eq!(error.is_endpoint_absent(), absent);
         }
+    }
+
+    #[test]
+    fn only_the_busy_code_is_a_capacity_refusal() {
+        let rpc = |code| HostClientError::Rpc {
+            code,
+            message: "fixture".into(),
+            data: None,
+        };
+        assert!(rpc(protocol::ERR_BUSY).is_capacity_refusal());
+        for code in [
+            protocol::ERR_CHECKPOINT_TOO_LARGE,
+            protocol::ERR_LAUNCH_PENDING,
+            protocol::ERR_SHUTTING_DOWN,
+            protocol::ERR_INCOMPATIBLE,
+            protocol::ERR_INTERNAL,
+        ] {
+            assert!(!rpc(code).is_capacity_refusal(), "{code}");
+        }
+        assert!(!HostClientError::Incompatible("fixture".into()).is_capacity_refusal());
+        assert!(
+            !HostClientError::Unreachable {
+                endpoint: "fixture".into(),
+                source: io::Error::from(io::ErrorKind::ConnectionRefused),
+            }
+            .is_capacity_refusal()
+        );
     }
 }

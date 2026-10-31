@@ -48,6 +48,21 @@ fn spawn_error_message(failure: &TerminalBackendFailureDiagnostics) -> String {
     )
 }
 
+fn resume_intent(
+    host_link: &HostLinkState,
+    recorded: SessionIntent,
+    observed: Option<paneflow_config::schema::SessionGeneration>,
+) -> Option<(SessionIntent, bool)> {
+    match host_link {
+        HostLinkState::Ended(end) => {
+            let intent = end.intent(observed);
+            Some((intent, intent == SessionIntent::Create))
+        }
+        HostLinkState::Unavailable(_) => Some((recorded, false)),
+        HostLinkState::Attaching | HostLinkState::Attached | HostLinkState::Reconnecting => None,
+    }
+}
+
 enum AttachOutcome {
     Attached(Box<HostedAttachment>),
     Ended(HostLinkEnd, Option<FinalText>),
@@ -57,12 +72,15 @@ enum AttachOutcome {
 
 impl TerminalView {
     pub(super) fn begin_hosted_attach(
-        &self,
+        &mut self,
         intent: SessionIntent,
         params: crate::terminal::pty_session::SpawnParams,
         pending: crate::terminal::pty_session::PendingTerminalBackend,
         cx: &mut Context<Self>,
     ) {
+        self.session_intent = intent;
+        self.attach_epoch = self.attach_epoch.wrapping_add(1);
+        let epoch = self.attach_epoch;
         let ghostty = self.terminal.ghostty_session();
         let ghostty_pending = pending.ghostty;
         let profile = params.profile;
@@ -94,7 +112,7 @@ impl TerminalView {
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let (outcome, dir_errors) = executor
+                let (request, dir_errors) = executor
                     .spawn(async move {
                         let dir_errors = crate::space_env::ensure_config_dirs(&config_dirs);
                         let mut request = request;
@@ -107,7 +125,51 @@ impl TerminalView {
                             .resolve(crate::workspace::CONFINE_TIMEOUT)
                             .unwrap_or(requested);
                         }
-                        let outcome = match host_link::resolve(request) {
+                        (request, dir_errors)
+                    })
+                    .await;
+                let resolved = host_link::resolve_until_settled(
+                    request.session.clone(),
+                    async || {
+                        let attempt = request.clone();
+                        executor
+                            .spawn(async move { host_link::resolve(attempt) })
+                            .await
+                    },
+                    async |pause| {
+                        if !pause.quiet.is_zero() {
+                            executor.timer(pause.quiet).await;
+                        }
+                        let current = this
+                            .update(cx, |view, cx| {
+                                let current = view.attach_epoch == epoch;
+                                if current
+                                    && pause.announce
+                                    && view.terminal.host_link != HostLinkState::Reconnecting
+                                {
+                                    view.terminal.mark_host_link(HostLinkState::Reconnecting);
+                                    cx.notify();
+                                }
+                                current
+                            })
+                            .unwrap_or(false);
+                        if !current {
+                            return false;
+                        }
+                        if !pause.visible.is_zero() {
+                            executor.timer(pause.visible).await;
+                        }
+                        this.update(cx, |view, _| view.attach_epoch == epoch)
+                            .unwrap_or(false)
+                    },
+                )
+                .await;
+                let Some(resolved) = resolved else {
+                    return;
+                };
+                let outcome = executor
+                    .spawn(async move {
+                        match resolved {
                             Ok(ResolveOutcome::Attached(hosted, snapshot)) => {
                                 match ghostty.start_attached(
                                     ghostty_pending,
@@ -123,6 +185,10 @@ impl TerminalView {
                                 let _ = ghostty.start_display(ghostty_pending, max_scrollback);
                                 AttachOutcome::Ended(end, final_text)
                             }
+                            Ok(ResolveOutcome::Starting) => {
+                                let _ = ghostty.start_display(ghostty_pending, max_scrollback);
+                                AttachOutcome::Ended(host_link::HostLinkEnd::starting(), None)
+                            }
                             Err(error) => {
                                 let _ = ghostty.start_display(ghostty_pending, max_scrollback);
                                 log::log!(
@@ -132,8 +198,7 @@ impl TerminalView {
                                 );
                                 AttachOutcome::Unavailable(error.user_message())
                             }
-                        };
-                        (outcome, dir_errors)
+                        }
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
@@ -219,13 +284,10 @@ impl TerminalView {
             .hosted
             .as_ref()
             .map(|hosted| hosted.generation);
-        let (intent, fresh_identity) = match &self.terminal.host_link {
-            HostLinkState::Ended(end) => {
-                let intent = end.intent(observed);
-                (intent, intent == SessionIntent::Create)
-            }
-            HostLinkState::Unavailable(_) => (SessionIntent::Reattach, false),
-            _ => return,
+        let Some((intent, fresh_identity)) =
+            resume_intent(&self.terminal.host_link, self.session_intent, observed)
+        else {
+            return;
         };
         self.start_hosted_session(intent, fresh_identity, cx);
     }
@@ -266,7 +328,6 @@ impl TerminalView {
         fresh_identity: bool,
         cx: &mut Context<Self>,
     ) {
-        self.session_intent = intent;
         let surface_id = cx.entity_id().as_u64();
         let (params, shell_notice) = self
             .launch
@@ -437,5 +498,36 @@ mod tests {
         assert_eq!(backend_failure_level(&fresh), log::Level::Error);
         assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
         assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
+    }
+
+    #[test]
+    fn retry_on_an_unavailable_pane_replays_the_intent_it_started_with() {
+        use paneflow_config::schema::SessionGeneration;
+        let unavailable = HostLinkState::Unavailable("refused".into());
+        let restart = SessionIntent::Restart {
+            expected: Some(SessionGeneration::FIRST),
+        };
+        for recorded in [SessionIntent::Create, SessionIntent::Reattach, restart] {
+            assert_eq!(
+                resume_intent(&unavailable, recorded, None),
+                Some((recorded, false)),
+                "the same session id is kept for {recorded:?}"
+            );
+        }
+        assert_eq!(
+            resume_intent(
+                &HostLinkState::Ended(host_link::HostLinkEnd::missing()),
+                SessionIntent::Reattach,
+                None
+            ),
+            Some((SessionIntent::Create, true))
+        );
+        for waiting in [
+            HostLinkState::Attaching,
+            HostLinkState::Attached,
+            HostLinkState::Reconnecting,
+        ] {
+            assert_eq!(resume_intent(&waiting, SessionIntent::Create, None), None);
+        }
     }
 }

@@ -279,6 +279,7 @@ pub struct TerminalView {
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     launch: HostedLaunch,
     session_intent: SessionIntent,
+    attach_epoch: u64,
     saved_scrollback: Option<String>,
     pump_epoch: u64,
     exit_announced: bool,
@@ -563,7 +564,7 @@ impl TerminalView {
         if let Some(session) = session {
             terminal.session_id = session;
         }
-        let view = Self::from_terminal_state(launch, terminal, cx);
+        let mut view = Self::from_terminal_state(launch, terminal, cx);
         view.begin_hosted_attach(intent, params, pending, cx);
         view
     }
@@ -719,6 +720,7 @@ impl TerminalView {
             terminal_window_size: Arc::new(Mutex::new(None)),
             launch,
             session_intent: SessionIntent::Create,
+            attach_epoch: 0,
             saved_scrollback: None,
             pump_epoch: 0,
             exit_announced: false,

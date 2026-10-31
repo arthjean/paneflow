@@ -995,7 +995,7 @@ fn follow_host_output(
                     finish_host_link(&link, &mailbox, end);
                     return;
                 }
-                Err(error) if error.is_connection_loss() => {
+                Err(error) if error.is_connection_loss() || error.is_capacity_refusal() => {
                     lose_link(&mut reconnecting);
                     if !backoff.wait(&link) {
                         return;
@@ -2250,6 +2250,133 @@ mod tests {
             "closing the pane ends a blocked mirror within 200 ms, took {ended_in:?}"
         );
 
+        drop(mirror);
+        host.stop(&session, Some(generation)).expect("stop");
+        server.stop().expect("server stop");
+    }
+
+    #[test]
+    fn a_follower_refused_by_full_checkpoint_staging_reconnects_instead_of_ending() {
+        use paneflow_host::server::ServerHandle;
+        use paneflow_host::{ClientHello, CreateSession, HostClient, SessionHost};
+
+        let _accounting = checkpoint_accounting_lock();
+
+        let home = tempfile::tempdir().expect("host home");
+        let endpoint = attached_host_endpoint(home.path());
+        let host = SessionHost::open(home.path(), &endpoint).expect("session host");
+        let server = ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).expect("host server");
+        let hello = ClientHello::local("paneflow-desktop-test");
+        let mut client = HostClient::connect(&endpoint, &hello).expect("control connection");
+
+        #[cfg(windows)]
+        let (shell, args, wake) = (
+            "cmd.exe",
+            vec!["/Q".to_string(), "/D".to_string()],
+            "echo WAKE\r\n",
+        );
+        #[cfg(unix)]
+        let (shell, args, wake) = ("/bin/sh", Vec::<String>::new(), "echo WAKE\r\n");
+        let created = client
+            .create(&CreateSession {
+                session: None,
+                workspace: None,
+                cwd: Some(std::env::temp_dir().display().to_string()),
+                shell: Some(shell.to_string()),
+                args,
+                env: Default::default(),
+                cols: Some(80),
+                rows: Some(24),
+                title: None,
+                appearance: None,
+                cell: None,
+            })
+            .expect("hosted session");
+        let session = created.manifest.session.clone();
+        let generation = created.manifest.generation;
+        let attachment = client
+            .attach(&session, Some(generation))
+            .expect("checkpoint");
+        drop(client);
+        let (mirror, pending, mut events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let test_attachment = test_attachment(&endpoint, &hello, &session, attachment);
+        mirror
+            .start_attached(pending, test_attachment.0.clone(), test_attachment.1, 1_000)
+            .expect("attached mirror");
+        mirror.promote();
+
+        let held = [
+            host.checkpoint(&session, None).expect("first staging slot"),
+            host.checkpoint(&session, None)
+                .expect("second staging slot"),
+        ];
+        server.stop().expect("server stop");
+        host.input(&session, Some(generation), wake.as_bytes().to_vec())
+            .expect("output that wakes the follower stream");
+
+        let mut seen = Vec::new();
+        let mut drain = |seen: &mut Vec<HostLinkState>| {
+            while let Ok(event) = events_rx.try_recv() {
+                if let GhosttyUiEvent::HostLink(state) = event {
+                    seen.push(state);
+                }
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !seen.contains(&HostLinkState::Reconnecting) && Instant::now() < deadline {
+            drain(&mut seen);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            seen.contains(&HostLinkState::Reconnecting),
+            "the follower loses its link when the server stops: {seen:?}"
+        );
+        let mut respawned = None;
+        while respawned.is_none() && Instant::now() < deadline {
+            match ServerHandle::spawn(Arc::clone(&host), endpoint.clone()) {
+                Ok(server) => respawned = Some(server),
+                Err(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+        let server = respawned.expect("the server serves the same host again");
+
+        while host.resource_report().checkpoints.refused == 0 && Instant::now() < deadline {
+            drain(&mut seen);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            host.resource_report().checkpoints.refused >= 1,
+            "the resuming checkpoint met a full staging"
+        );
+        drop(held);
+
+        let reattached = Instant::now() + Duration::from_secs(30);
+        let settled = |seen: &[HostLinkState]| {
+            seen.iter()
+                .rposition(|state| *state == HostLinkState::Reconnecting)
+                .is_some_and(|reconnect| seen[reconnect..].contains(&HostLinkState::Attached))
+                || seen
+                    .iter()
+                    .any(|state| matches!(state, HostLinkState::Ended(_)))
+        };
+        while !settled(&seen) && Instant::now() < reattached {
+            drain(&mut seen);
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !seen
+                .iter()
+                .any(|state| matches!(state, HostLinkState::Ended(_))),
+            "a capacity refusal never ends the link: {seen:?}"
+        );
+        assert_eq!(
+            seen.last(),
+            Some(&HostLinkState::Attached),
+            "the link comes back attached: {seen:?}"
+        );
+
+        mirror.shutdown();
         drop(mirror);
         host.stop(&session, Some(generation)).expect("stop");
         server.stop().expect("server stop");
