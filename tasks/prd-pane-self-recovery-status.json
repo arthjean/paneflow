@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "La restauration rétablit seule les panes perdues ou inconnues",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -128,37 +128,37 @@
       "id": "US-008",
       "title": "Relancer une fois les panes Lost et HostReplaced à la restauration",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-005"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-009",
       "title": "Créer un shell neuf pour une pane Missing à la restauration",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-008"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-010",
       "title": "Documenter le contrat de restauration",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "XS",
       "blocked_by": ["US-001", "US-004", "US-008", "US-009"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-011",

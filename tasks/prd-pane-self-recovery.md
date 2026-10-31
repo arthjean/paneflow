@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-30 | Arthur Jean | PRD initial : admission de lancement avec attente côté host, refus de capacité traités comme passagers côté desktop, attente d'une session encore en démarrage, Retry qui rejoue l'intention, relance automatique unique des panes perdues ou inconnues à la restauration, validation Windows sur matériel réel. 4 epics, 11 stories. |
+| 1.1 | 2026-10-31 | Arthur Jean | US-008 : une relance dont le cwd a disparu repart dans le dossier personnel, comme toute relance du host (`crates/paneflow-host/src/host/spawn_env.rs:3`), au lieu d'échouer. |
 
 ## Problem Statement
 
@@ -276,7 +277,7 @@ Après un reboot ou la mort du host, les terminaux hors agent reviennent avec un
 - [ ] Given une pane `Exited` ou `Failed` à la restauration, when elle est résolue, then elle garde son bouton Restart, comme aujourd'hui
 - [ ] Given une pane qui finit `Lost` en cours de session (et non à la restauration), when l'issue arrive, then aucune relance automatique n'a lieu
 - [ ] Given deux relances concurrentes de la même génération, when elles se résolvent, then une seule nouvelle génération est validée et la pane s'attache à elle
-- [ ] Given une relance dont le cwd enregistré n'existe plus, when le host répond, then la pane affiche l'échec avec son bouton, sans nouvelle tentative automatique
+- [ ] Given une relance dont le cwd enregistré n'existe plus, when le host répond, then la pane repart avec un shell neuf dans le dossier personnel, sans nouvelle tentative automatique
 - [ ] Given la relance, when on inspecte la requête envoyée au host, then elle ne contient aucune commande, aucune entrée à rejouer et aucune variable d'environnement persistée
 
 #### US-009: Créer un shell neuf pour une pane Missing à la restauration
