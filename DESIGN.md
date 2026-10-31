@@ -209,9 +209,9 @@ inside `theme/builtin.rs`.
 
 | Role | Use | Paneflow Dark | Paneflow Light |
 | --- | --- | --- | --- |
-| `base` | Panel background, the work surface; the Settings page paints `settings_page_color` instead, which is `base` in dark and `card` blended 5% toward `text` in light, so cards keep their step above the page | `#181818` | `#ffffff` |
+| `base` | Panel background, the work surface; the Settings page paints `settings_page_color` instead, which is `base` in dark and `card` blended 5% toward `text` in light, so cards keep their step above the page; while the terminal material is on it takes the pane card color, and where that is transparent (Mica on a light theme) a 0.5 `background` veil, so the page always separates from the sidebar | `#181818` | `#ffffff` |
 | `surface` | Cards inside a panel, menu surfaces in dark | `#212121` | `#f7f7f7` |
-| `card` | Settings cards and modal cards, one step above `base`; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
+| `card` | Modal cards, one step above `base`; a `setting_card` paints the `menu_panel` surface (`select_menu_surface`) with its 0.6 border instead, so it stays readable over a material; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
 | `border` | Hairlines, card outlines, pane card border | `#252525` | `#e6e6e6` |
 | `subtle` | Pills, search fields, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
@@ -286,7 +286,7 @@ to the surfaces named:
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
 | Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only. In compact density a pane rounds only the corners it shares with the outer edge of the grid, at the main panel radius 10, and draws its `border` only on those outer sides; attention outlines the whole pane. The dock keeps a full 1 px `border`, which is the line between the grid and the dock |
-| Settings card, System Info and About dialogs, toast | 20 | squircle | none on a settings card or a toast, 1 px `border` at 0.6 on a dialog |
+| Settings card, System Info and About dialogs, toast | 20 | squircle | 1 px `border` at 0.6 on a settings card and a dialog, none on a toast |
 | Pane palette ground | 24 | squircle | none |
 | Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
 | Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
@@ -1085,7 +1085,7 @@ while the window is unfocused.
 
 | Platform | Backdrop | Sidebar | Terminal | Chrome |
 | --- | --- | --- | --- | --- |
-| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off | Native caption glyphs in light and dark |
+| Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on; with `windows_material_veil` (the Blended style) the backdrop switches to the Acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`, a blur of what lies behind the window, not GPUI's `Blurred` accent, which lags on drag) and the sidebar reveals the Linux theme veil over it (0.72 dark, 0.80 light) | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off; with `windows_material_veil` the terminal card takes the Linux 0.35 shade over the veil | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
 | Linux | Opaque shell by default. `linux_chrome_material` or `linux_terminal_material` makes the surface transparent and paints the shell as a theme veil (0.72 on dark themes, 0.80 on light ones, since a light veil lets a mid-tone wallpaper grey it); Paneflow requests no blur, so any blur comes from the compositor, for instance Blur my Shell on GNOME | Opaque, tinted from the title bar color; reveals the veil when `linux_chrome_material` is on | Opaque; with `linux_terminal_material` the terminal card adds a 0.35 shade over the veil, black on dark themes and white on light ones, so the terminal reads denser than the sidebar | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |

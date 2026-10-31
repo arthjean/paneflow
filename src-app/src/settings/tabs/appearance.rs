@@ -512,7 +512,7 @@ impl PaneFlowApp {
                     }
                 },
             ));
-            for (idx, style) in InterfaceStyle::ALL.into_iter().enumerate() {
+            for (idx, &style) in InterfaceStyle::ALL.iter().enumerate() {
                 let is_current = current == Some(style);
                 menu = menu.child(
                     select_option(("interface-style", idx), is_current, ui)
@@ -552,8 +552,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn apply_interface_style(&mut self, style: InterfaceStyle, cx: &mut Context<Self>) {
-        let enabled = style == InterfaceStyle::Blended;
-        for &key in PaneFlowConfig::INTERFACE_STYLE_KEYS {
+        for (key, enabled) in PaneFlowConfig::interface_style_settings(style) {
             self.persist_setting(false, key, serde_json::Value::Bool(enabled), cx);
         }
     }

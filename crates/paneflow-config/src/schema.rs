@@ -59,6 +59,7 @@ mod tests {
             window_backdrop: Some("auto".to_string()),
             windows_terminal_material: Some(true),
             windows_chrome_material: Some(true),
+            windows_material_veil: Some(true),
             macos_chrome_material: Some(true),
             linux_terminal_material: Some(true),
             linux_chrome_material: Some(true),

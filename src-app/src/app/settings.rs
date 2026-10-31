@@ -232,6 +232,7 @@ impl PaneFlowApp {
                 key,
                 "windows_terminal_material"
                     | "windows_chrome_material"
+                    | "windows_material_veil"
                     | "macos_chrome_material"
                     | "linux_terminal_material"
                     | "linux_chrome_material"

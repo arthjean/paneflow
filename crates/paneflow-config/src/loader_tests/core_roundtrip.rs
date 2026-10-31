@@ -25,6 +25,7 @@ fn test_serialization_roundtrip() {
         window_backdrop: None,
         windows_terminal_material: None,
         windows_chrome_material: None,
+        windows_material_veil: None,
         macos_chrome_material: None,
         linux_terminal_material: None,
         linux_chrome_material: None,

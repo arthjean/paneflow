@@ -221,6 +221,11 @@
       "description": "Windows-only. When true, the primary sidebar card reveals the active native window backdrop (Mica, blur, or transparent). Other platforms ignore this field.",
       "default": false
     },
+    "windows_material_veil": {
+      "type": ["boolean", "null"],
+      "description": "Windows-only. When true, the system backdrop switches from Mica to Acrylic, a blur of what lies behind the window, and the shell paints a theme veil over it (0.72 on dark themes, 0.80 on light ones) while the terminal card adds a 0.35 shade, like Linux: this is the Blended interface style. When false or null, the backdrop shows through unveiled: the Mica interface style. Only matters while windows_chrome_material or windows_terminal_material is on. Other platforms ignore this field.",
+      "default": false
+    },
     "macos_chrome_material": {
       "type": ["boolean", "null"],
       "description": "macOS-only. When true, the primary sidebar card reveals AppKit's native Sidebar material. Other platforms ignore this field.",

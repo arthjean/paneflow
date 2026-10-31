@@ -73,13 +73,23 @@ fn pane_colors() -> crate::theme::UiColors {
     crate::theme::ui_colors()
 }
 
-fn pane_card_background(
+pub(crate) fn pane_card_background(
     theme: &crate::theme::TerminalTheme,
     terminal_material_active: bool,
     terminal_selected: bool,
+    material_veiled: bool,
 ) -> Hsla {
     if !terminal_material_active || !terminal_selected {
         return theme.background;
+    }
+
+    if material_veiled {
+        let shade = if theme.background.l <= 0.5 {
+            gpui::black()
+        } else {
+            gpui::white()
+        };
+        return shade.opacity(VEILED_TERMINAL_SHADE);
     }
 
     #[cfg(target_os = "windows")]
@@ -91,17 +101,7 @@ fn pane_card_background(
         }
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        let shade = if theme.background.l <= 0.5 {
-            gpui::black()
-        } else {
-            gpui::white()
-        };
-        shade.opacity(LINUX_TERMINAL_SHADE)
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(not(target_os = "windows"))]
     {
         theme.background
     }
@@ -164,8 +164,7 @@ fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
 }
 
 const HEADER_GAP: f32 = 7.0;
-#[cfg(target_os = "linux")]
-const LINUX_TERMINAL_SHADE: f32 = 0.35;
+const VEILED_TERMINAL_SHADE: f32 = 0.35;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
 const ACTION_BUTTON_SIZE: f32 = 22.0;
 
@@ -1570,6 +1569,7 @@ impl Pane {
                 &crate::theme::active_theme(),
                 self.cached_config.terminal_material_enabled(),
                 true,
+                self.cached_config.material_veiled(),
             )
         };
         let fade_scroll = self.tab_scroll.clone();
@@ -1878,6 +1878,7 @@ impl Render for Pane {
             &theme,
             self.cached_config.terminal_material_enabled(),
             terminal_selected,
+            self.cached_config.material_veiled(),
         );
 
         let dim_target = if self.dimmed() {
@@ -2424,16 +2425,35 @@ mod tests {
     fn terminal_material_scopes_the_card_to_windows_terminal_surfaces() {
         let theme = crate::theme::paneflow_dark();
 
-        assert_eq!(pane_card_background(&theme, true, false), theme.background);
-        assert_eq!(pane_card_background(&theme, false, true), theme.background);
+        assert_eq!(
+            pane_card_background(&theme, true, false, true),
+            theme.background
+        );
+        assert_eq!(
+            pane_card_background(&theme, false, true, true),
+            theme.background
+        );
 
-        let material = pane_card_background(&theme, true, true);
+        let unveiled = pane_card_background(&theme, true, true, false);
         #[cfg(target_os = "windows")]
-        assert_eq!(material, theme.background.opacity(0.35));
-        #[cfg(target_os = "linux")]
-        assert_eq!(material, gpui::black().opacity(super::LINUX_TERMINAL_SHADE));
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        assert_eq!(material, theme.background);
+        assert_eq!(unveiled, theme.background.opacity(0.35));
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(unveiled, theme.background);
+    }
+
+    #[test]
+    fn a_veiled_material_shades_the_terminal_card_toward_the_theme() {
+        let dark = crate::theme::paneflow_dark();
+        let light = crate::theme::paneflow_light();
+
+        assert_eq!(
+            pane_card_background(&dark, true, true, true),
+            gpui::black().opacity(super::VEILED_TERMINAL_SHADE)
+        );
+        assert_eq!(
+            pane_card_background(&light, true, true, true),
+            gpui::white().opacity(super::VEILED_TERMINAL_SHADE)
+        );
     }
 
     #[test]
@@ -2453,7 +2473,9 @@ mod tests {
 
         assert!(!card_paints_quads(theme.background));
         #[cfg(target_os = "linux")]
-        assert!(card_paints_quads(pane_card_background(&theme, true, true)));
+        assert!(card_paints_quads(pane_card_background(
+            &theme, true, true, true
+        )));
     }
 
     #[test]

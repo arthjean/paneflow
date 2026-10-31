@@ -132,6 +132,15 @@ impl Render for PaneFlowApp {
                 crate::window_chrome::backdrop::sync_wallpaper_mica_theme(window, is_light);
                 self.windows_backdrop_light = Some(is_light);
             }
+            let acrylic = self.cached_config.material_veiled();
+            if self.windows_backdrop_acrylic != Some(acrylic) {
+                if crate::app::constants::window_backdrop_uses_mica(
+                    self.cached_config.window_backdrop.as_deref(),
+                ) {
+                    crate::window_chrome::backdrop::sync_system_backdrop(window, acrylic);
+                }
+                self.windows_backdrop_acrylic = Some(acrylic);
+            }
         }
         let chrome_material_suppressed =
             native_material_suppressed_by_fullscreen(window.is_fullscreen());
@@ -162,13 +171,10 @@ impl Render for PaneFlowApp {
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().root.is_some());
         let terminal_material_visible =
-            !settings_open && terminal_surface_mounted && terminal_material_active;
+            (settings_open || terminal_surface_mounted) && terminal_material_active;
         let panel_inset_shell_visible = terminal_material_visible && !chrome_material_active;
-        let native_material_active = native_backdrop_material_active(
-            settings_open,
-            terminal_material_active,
-            chrome_material_active,
-        );
+        let native_material_active =
+            native_backdrop_material_active(terminal_material_active, chrome_material_active);
         let is_window_active = window.is_window_active();
         let shell_color = if is_window_active {
             theme.title_bar_background
@@ -179,10 +185,18 @@ impl Render for PaneFlowApp {
             a: 1.,
             ..shell_color
         };
-        let app_backdrop_bg =
-            crate::app::constants::cockpit_shell_background(shell_color, native_material_active);
+        let material_veiled = self.cached_config.material_veiled();
+        let app_backdrop_bg = crate::app::constants::cockpit_shell_background(
+            shell_color,
+            native_material_active,
+            material_veiled,
+        );
         let panel_bg = if settings_open {
-            crate::settings::components::settings_page_color(ui)
+            crate::settings::components::settings_page_color(
+                ui,
+                terminal_material_active,
+                material_veiled,
+            )
         } else {
             gpui::transparent_black()
         };

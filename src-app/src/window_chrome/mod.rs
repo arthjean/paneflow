@@ -10,11 +10,10 @@ pub mod title_bar;
 use gpui::{IntoElement, PathBuilder, Styled, canvas, point};
 
 pub(crate) fn native_backdrop_material_active(
-    settings_open: bool,
     terminal_material_active: bool,
     chrome_material_active: bool,
 ) -> bool {
-    chrome_material_active || (!settings_open && terminal_material_active)
+    chrome_material_active || terminal_material_active
 }
 
 pub(crate) fn native_material_suppressed_by_fullscreen(is_fullscreen: bool) -> bool {
@@ -110,16 +109,16 @@ mod native_material_tests {
 
     #[test]
     fn terminal_material_can_activate_backdrop_without_chrome_material() {
-        assert!(native_backdrop_material_active(false, true, false));
-    }
-
-    #[test]
-    fn terminal_material_only_applies_to_a_visible_terminal() {
-        assert!(!native_backdrop_material_active(true, true, false));
+        assert!(native_backdrop_material_active(true, false));
     }
 
     #[test]
     fn chrome_material_activates_backdrop_independently() {
-        assert!(native_backdrop_material_active(true, false, true));
+        assert!(native_backdrop_material_active(false, true));
+    }
+
+    #[test]
+    fn themed_style_keeps_the_backdrop_opaque() {
+        assert!(!native_backdrop_material_active(false, false));
     }
 }

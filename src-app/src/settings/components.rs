@@ -93,7 +93,21 @@ pub fn section_header_with_action(
         .child(action)
 }
 
-pub fn settings_page_color(ui: crate::theme::UiColors) -> Hsla {
+const TRANSPARENT_MATERIAL_PAGE_VEIL: f32 = 0.5;
+
+pub fn settings_page_color(
+    ui: crate::theme::UiColors,
+    terminal_material_active: bool,
+    material_veiled: bool,
+) -> Hsla {
+    if terminal_material_active {
+        let theme = crate::theme::active_theme();
+        let page = crate::pane::pane_card_background(&theme, true, true, material_veiled);
+        if page.a > f32::EPSILON {
+            return page;
+        }
+        return theme.background.opacity(TRANSPARENT_MATERIAL_PAGE_VEIL);
+    }
     if ui.surface.l > 0.5 {
         lerp_color(ui.card, ui.text, 0.05)
     } else {
@@ -105,15 +119,19 @@ pub fn card_color() -> Hsla {
     crate::theme::ui_colors().card
 }
 
-pub fn setting_card(_ui: crate::theme::UiColors) -> Div {
-    let bg = card_color();
+pub fn setting_card(ui: crate::theme::UiColors) -> Div {
     div()
         .relative()
         .flex()
         .flex_col()
         .child(squircle::squircle_fill(
             crate::app::constants::SETTINGS_CARD_RADIUS,
-            bg,
+            select_menu_surface(ui),
+        ))
+        .child(squircle::squircle_border(
+            crate::app::constants::SETTINGS_CARD_RADIUS,
+            px(1.),
+            with_alpha(ui.border, 0.6),
         ))
 }
 

@@ -429,9 +429,10 @@ pub(crate) fn run() {
                     if crate::app::constants::window_backdrop_uses_mica(
                         config.window_backdrop.as_deref(),
                     ) {
-                        crate::window_chrome::backdrop::apply_wallpaper_mica(
+                        crate::window_chrome::backdrop::apply_system_backdrop(
                             window,
                             crate::theme::active_theme().background.l > 0.5,
+                            config.material_veiled(),
                         );
                     }
                     #[cfg(target_os = "macos")]

@@ -302,8 +302,8 @@ fn mode_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
 fn interface_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
     let current = app.cached_config.interface_style();
     InterfaceStyle::ALL
-        .into_iter()
-        .map(|style| ScopeValue {
+        .iter()
+        .map(|&style| ScopeValue {
             label: style.label().to_string(),
             current: current == Some(style),
             apply: Apply::InterfaceStyle(style),

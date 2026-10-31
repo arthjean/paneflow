@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicI8, AtomicIsize, Ordering};
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
 const DWMSBT_MAINWINDOW: u32 = 2;
+const DWMSBT_TRANSIENTWINDOW: u32 = 3;
 const THEME_UNKNOWN: i8 = -1;
 const THEME_LIGHT: i8 = 0;
 const THEME_DARK: i8 = 1;
@@ -21,14 +22,27 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-pub(crate) fn apply_wallpaper_mica(window: &gpui::Window, is_light: bool) {
+pub(crate) fn apply_system_backdrop(window: &gpui::Window, is_light: bool, acrylic: bool) {
     let Some(hwnd) = win32_hwnd(window) else {
         return;
     };
 
     apply_native_theme(hwnd, is_light);
+    set_system_backdrop(hwnd, acrylic);
+}
 
-    let backdrop = DWMSBT_MAINWINDOW;
+pub(crate) fn sync_system_backdrop(window: &gpui::Window, acrylic: bool) {
+    if let Some(hwnd) = win32_hwnd(window) {
+        set_system_backdrop(hwnd, acrylic);
+    }
+}
+
+fn set_system_backdrop(hwnd: isize, acrylic: bool) {
+    let backdrop = if acrylic {
+        DWMSBT_TRANSIENTWINDOW
+    } else {
+        DWMSBT_MAINWINDOW
+    };
     let result = unsafe {
         DwmSetWindowAttribute(
             hwnd,
@@ -39,7 +53,7 @@ pub(crate) fn apply_wallpaper_mica(window: &gpui::Window, is_light: bool) {
     };
 
     if result < 0 {
-        log::debug!("Mica is unavailable; retaining the GPUI backdrop");
+        log::debug!("The system backdrop is unavailable; retaining the GPUI backdrop");
     }
 }
 

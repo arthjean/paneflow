@@ -16,10 +16,8 @@ pub(crate) const PANE_CONTENT_INSET_X: f32 = 10.;
 pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;
 const SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.16;
 const SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.10;
-#[cfg(target_os = "linux")]
-const LINUX_DARK_SHELL_OPACITY: f32 = 0.72;
-#[cfg(target_os = "linux")]
-const LINUX_LIGHT_SHELL_OPACITY: f32 = 0.80;
+const DARK_SHELL_VEIL_OPACITY: f32 = 0.72;
+const LIGHT_SHELL_VEIL_OPACITY: f32 = 0.80;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
@@ -191,13 +189,16 @@ pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: boo
     }
 }
 
-pub(crate) fn cockpit_shell_background(background: Hsla, material_active: bool) -> Hsla {
-    #[cfg(target_os = "linux")]
-    if material_active {
+pub(crate) fn cockpit_shell_background(
+    background: Hsla,
+    material_active: bool,
+    material_veiled: bool,
+) -> Hsla {
+    if material_active && material_veiled {
         let a = if background.l > 0.5 {
-            LINUX_LIGHT_SHELL_OPACITY
+            LIGHT_SHELL_VEIL_OPACITY
         } else {
-            LINUX_DARK_SHELL_OPACITY
+            DARK_SHELL_VEIL_OPACITY
         };
         return Hsla { a, ..background };
     }
@@ -298,31 +299,41 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn translucent_linux_shell_carries_one_veil_and_clears_the_corner_masks() {
-        let dark = Hsla::from(gpui::rgb(0x141414));
-        let light = Hsla::from(gpui::rgb(0xf5f7fd));
-
-        assert_eq!(
-            cockpit_shell_background(dark, true).a,
-            LINUX_DARK_SHELL_OPACITY
-        );
-        assert_eq!(
-            cockpit_shell_background(light, true).a,
-            LINUX_LIGHT_SHELL_OPACITY
-        );
-        assert_eq!(
-            cockpit_backdrop_background(dark, true),
-            gpui::transparent_black()
-        );
-        assert_eq!(cockpit_shell_background(dark, false), dark);
-    }
 }
 
 #[cfg(test)]
 mod material_tests {
     use super::*;
+
+    #[test]
+    fn a_veiled_shell_carries_one_veil_and_clears_the_corner_masks() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+        let light = Hsla::from(gpui::rgb(0xf5f7fd));
+
+        assert_eq!(
+            cockpit_shell_background(dark, true, true).a,
+            DARK_SHELL_VEIL_OPACITY
+        );
+        assert_eq!(
+            cockpit_shell_background(light, true, true).a,
+            LIGHT_SHELL_VEIL_OPACITY
+        );
+        assert_eq!(
+            cockpit_backdrop_background(dark, true),
+            gpui::transparent_black()
+        );
+        assert_eq!(cockpit_shell_background(dark, false, true).a, 1.0);
+    }
+
+    #[test]
+    fn an_unveiled_material_shell_stays_transparent() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+
+        assert_eq!(
+            cockpit_shell_background(dark, true, false),
+            gpui::transparent_black()
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -387,7 +398,7 @@ mod material_tests {
                 }
             );
             assert_eq!(
-                cockpit_shell_background(background, false),
+                cockpit_shell_background(background, false, true),
                 Hsla {
                     a: 1.0,
                     ..background

@@ -381,6 +381,8 @@ impl PaneFlowApp {
             sidebar_view: None,
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
+            #[cfg(target_os = "windows")]
+            windows_backdrop_acrylic: None,
             jump_cursor: None,
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),

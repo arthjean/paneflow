@@ -50,8 +50,9 @@ pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
         "Themed paints the app in solid theme colors. Blended lets the desktop show through the \
          sidebar and the terminal."
     } else {
-        "Themed paints the app in solid theme colors. Blended lets Mica show through the sidebar \
-         and the terminal."
+        "Themed paints the app in solid theme colors. Mica lets the wallpaper tint show through \
+         the sidebar and the terminal. Blended lets the desktop show through a blur, under a veil \
+         of theme color."
     },
 };
 pub(crate) const REDUCE_MOTION: SettingCopy = SettingCopy {

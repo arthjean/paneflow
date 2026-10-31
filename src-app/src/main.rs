@@ -283,6 +283,8 @@ struct PaneFlowApp {
     sidebar_view: Option<Entity<app::sidebar::view::SidebarView>>,
     #[cfg(target_os = "windows")]
     windows_backdrop_light: Option<bool>,
+    #[cfg(target_os = "windows")]
+    windows_backdrop_acrylic: Option<bool>,
     jump_cursor: Option<u64>,
     closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
