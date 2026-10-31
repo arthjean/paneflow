@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
-use super::lane::{mark_shimmer_drawn, render_lane};
+use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
@@ -471,15 +471,16 @@ fn render_agent_status(row: &AgentRow, ui: crate::theme::UiColors) -> Option<Any
                     )))
                     .flex_none()
                     .h(px(SIDEBAR_ROW_LINE_HEIGHT))
-                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                    .text_size(crate::ui_primitives::LABEL_XS)
-                    .font_weight(FontWeight::MEDIUM)
-                    .whitespace_nowrap()
-                    .text_color(ui.muted)
+                    .flex()
+                    .items_start()
                     .aria_label(tooltip.clone())
                     .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
                     .debug_selector(|| "agent-no-status".into())
-                    .child("No status")
+                    .child(render_status_badge(
+                        "No status".to_string(),
+                        &format!("agent-no-status-{}", row.surface_id),
+                        ui.muted,
+                    ))
                     .into_any_element(),
             )
         }

@@ -507,13 +507,15 @@ space color fills a swatch and never tints text. A workspace is a folder row; it
 inline rename, hover actions, and reorder by drag. A tab row shows the tab
 title, the branch with its glyph, and the
 diffstat in `vc_added` and `vc_deleted`. Status sits at the trailing edge of
-both row kinds, on one X, as an 11 px glyph and a 10 px word: an amber bell
-and `Input` when the agent needs input, an `agent_error` circle-x and
-`Error` when it failed, the dot matrix alone while it thinks, in the agent's accent when it declares one and `muted` otherwise, a light
-blue 7 px dot and `Done` with the unread count once it is finished.
-With no agent to report, the tab's pull request takes the slot in GitHub's
-state color: `Review`, `Draft`, or `Merged`. The bell and the dot use the
-fixed colors from 4.3. The slot is shared with the hover action: under the
+both row kinds, on one X. An agent that needs you, failed, or finished shows a
+status badge and no glyph: `Need you` in amber, `Error` in `agent_error`, and
+`Done` in light blue with the unread count, each in 12 px Medium on its own
+color at 0.16 (0.08 on a light theme), 18 px tall with 6 px of padding, in a
+radius 6 squircle sitting on the whole pixel below the line center. While it
+thinks, the dot matrix stands alone in the agent's accent when it declares one
+and `muted` otherwise. With no agent to report, the tab's pull request takes
+the slot as an 11 px glyph and a 10 px word in GitHub's state color: `Review`,
+`Draft`, or `Merged`. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
 over it. A `Customize sidebar` menu on the rail header toggles branch,
 diffstat, pull request, and indent guide per value, then, below a menu rule,
@@ -539,8 +541,8 @@ not yet seen, working, idle, then without OSC 7501 capability, the most recent
 first within a rank. Rows are 2 px apart and 10 px where a new rank begins.
 Working shows the matrix in the runtime's tint and the title shimmers; both
 hold still under `reduce_motion`. An idle row carries no status, and a finished
-row loses its `Done` dot once its tab has been seen. A recognized agent that
-has declared nothing for 3 s shows `No status` at 10 px Medium `muted`; its
+row loses its `Done` badge once its tab has been seen. A recognized agent that
+has declared nothing for 3 s shows a `No status` status badge in `muted`; its
 tooltip reads `No OSC 7501 status received. Claude Code reports it from version
 2.1.295.` when the catalog knows the version, else `No OSC 7501 status received
 from {agent}.` Before 3 s the row shows no status. The row of the active tab of

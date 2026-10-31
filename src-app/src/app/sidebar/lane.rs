@@ -35,7 +35,7 @@ impl Lane {
     pub(super) fn word(self) -> &'static str {
         match self {
             Lane::Agent(summary) => match summary.state {
-                SidebarAgentState::NeedsInput => "Input",
+                SidebarAgentState::NeedsInput => "Need you",
                 SidebarAgentState::Errored => "Error",
                 SidebarAgentState::Thinking => "",
                 SidebarAgentState::Finished => "Done",
@@ -47,6 +47,10 @@ impl Lane {
                 PrState::Closed => "Closed",
             },
         }
+    }
+
+    fn is_badge(self) -> bool {
+        matches!(self, Lane::Agent(summary) if summary.state != SidebarAgentState::Thinking)
     }
 
     pub(super) fn label(self) -> String {
@@ -127,7 +131,7 @@ pub(super) fn render_lane(
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     let (color, glyph) = lane_visual(lane, ui);
-    div()
+    let slot = div()
         .id(SharedString::from(format!("lane-{row_key}")))
         .flex_none()
         .h(px(20.))
@@ -146,27 +150,63 @@ pub(super) fn render_lane(
         .whitespace_nowrap()
         .text_color(color)
         .aria_label(tooltip.clone())
-        .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
-        .child(
-            div()
-                .flex_none()
-                .mt(px(super::sidebar_lane_glyph_top()))
-                .child(glyph),
-        )
-        .when(!lane.label().is_empty(), |slot| {
-            let ink_height_em = if lane.word().is_empty() {
-                super::GEIST_CAP_HEIGHT_EM
-            } else {
-                super::GEIST_X_HEIGHT_EM
-            };
-            let label_axis = super::sidebar_text_ink_axis(
-                crate::ui_primitives::LABEL_XS.as_f32(),
-                ink_height_em,
-            );
-            let drop = (super::sidebar_lane_glyph_center() - label_axis).round();
-            slot.child(div().relative().top(px(drop)).child(lane.label()))
-        })
-        .into_any_element()
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip));
+    if lane.is_badge() {
+        return slot
+            .child(render_status_badge(lane.label(), row_key, color))
+            .into_any_element();
+    }
+    slot.child(
+        div()
+            .flex_none()
+            .mt(px(super::sidebar_lane_glyph_top()))
+            .child(glyph),
+    )
+    .when(!lane.label().is_empty(), |slot| {
+        let ink_height_em = if lane.word().is_empty() {
+            super::GEIST_CAP_HEIGHT_EM
+        } else {
+            super::GEIST_X_HEIGHT_EM
+        };
+        let label_axis =
+            super::sidebar_text_ink_axis(crate::ui_primitives::LABEL_XS.as_f32(), ink_height_em);
+        let drop = (super::sidebar_lane_glyph_center() - label_axis).round();
+        slot.child(div().relative().top(px(drop)).child(lane.label()))
+    })
+    .into_any_element()
+}
+
+pub(super) fn render_status_badge(label: String, key: &str, color: gpui::Hsla) -> AnyElement {
+    let tint = if crate::theme::active_theme().background.l > 0.5 {
+        STATUS_BADGE_TINT_LIGHT
+    } else {
+        STATUS_BADGE_TINT_DARK
+    };
+    crate::ui_primitives::squircle_skin(
+        div()
+            .id(SharedString::from(format!("status-badge-{key}")))
+            .flex_none()
+            .mt(px(super::sidebar_glyph_top(STATUS_BADGE_HEIGHT)))
+            .h(px(STATUS_BADGE_HEIGHT))
+            .px(px(STATUS_BADGE_PADDING_X))
+            .flex()
+            .items_center()
+            .text_size(crate::ui_primitives::BODY)
+            .line_height(px(STATUS_BADGE_HEIGHT))
+            .font_weight(FontWeight::MEDIUM)
+            .whitespace_nowrap()
+            .text_color(color)
+            .debug_selector({
+                let key = key.to_string();
+                move || format!("status-badge-{key}")
+            }),
+        SharedString::from(format!("status-badge-group-{key}")),
+        STATUS_BADGE_RADIUS,
+        Some(color.opacity(tint)),
+        None,
+    )
+    .child(label)
+    .into_any_element()
 }
 
 pub(super) enum LaneSlot {
@@ -207,6 +247,12 @@ pub(super) fn render_lane_slot(
             .into_any_element(),
     }
 }
+
+const STATUS_BADGE_HEIGHT: f32 = 18.0;
+const STATUS_BADGE_PADDING_X: f32 = 6.0;
+const STATUS_BADGE_RADIUS: gpui::Pixels = px(6.0);
+const STATUS_BADGE_TINT_DARK: f32 = 0.16;
+const STATUS_BADGE_TINT_LIGHT: f32 = 0.08;
 
 const COMET_TRAIL_DOT_SIZE: f32 = 3.0;
 const COMET_TRAIL_DOT_GAP: f32 = 1.0;
@@ -436,8 +482,14 @@ mod tests {
                 tint: None,
             })
         };
-        assert_eq!(summary(SidebarAgentState::NeedsInput, 1).label(), "Input");
-        assert_eq!(summary(SidebarAgentState::NeedsInput, 2).label(), "Input 2");
+        assert_eq!(
+            summary(SidebarAgentState::NeedsInput, 1).label(),
+            "Need you"
+        );
+        assert_eq!(
+            summary(SidebarAgentState::NeedsInput, 2).label(),
+            "Need you 2"
+        );
         assert_eq!(summary(SidebarAgentState::Errored, 1).label(), "Error");
         assert_eq!(summary(SidebarAgentState::Thinking, 1).label(), "");
         assert_eq!(summary(SidebarAgentState::Thinking, 2).label(), "2");
