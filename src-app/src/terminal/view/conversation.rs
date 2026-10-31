@@ -93,14 +93,6 @@ pub(crate) fn resume_input(quoting: ShellQuoting, command: &str) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn host_session_was_lost(kind: &HostLinkEndKind) -> bool {
-    match kind {
-        HostLinkEndKind::Missing | HostLinkEndKind::Lost | HostLinkEndKind::HostReplaced => true,
-        HostLinkEndKind::Exited { code, signal } => *code != 0 || signal.is_some(),
-        _ => false,
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WriteRequest {
     pub(crate) id: u64,
@@ -408,7 +400,7 @@ impl TerminalView {
         else {
             return;
         };
-        if !host_session_was_lost(kind) {
+        if !kind.lost_by_the_host() {
             self.conversation.restore = None;
             return;
         }
@@ -1077,28 +1069,33 @@ mod tests {
 
     #[test]
     fn only_a_session_the_host_lost_triggers_a_reopen() {
-        assert!(host_session_was_lost(&HostLinkEndKind::Missing));
-        assert!(host_session_was_lost(&HostLinkEndKind::Lost));
-        assert!(host_session_was_lost(&HostLinkEndKind::HostReplaced));
+        assert!(HostLinkEndKind::Missing.lost_by_the_host());
+        assert!(HostLinkEndKind::Lost.lost_by_the_host());
+        assert!(HostLinkEndKind::HostReplaced.lost_by_the_host());
         assert!(
-            !host_session_was_lost(&HostLinkEndKind::Exited {
+            !HostLinkEndKind::Exited {
                 code: 0,
                 signal: None
-            }),
+            }
+            .lost_by_the_host(),
             "a shell the user exited cleanly is not a lost conversation"
         );
         assert!(
-            host_session_was_lost(&HostLinkEndKind::Exited {
+            HostLinkEndKind::Exited {
                 code: 0xC000_013Au32 as i32,
                 signal: None
-            }),
+            }
+            .lost_by_the_host(),
             "host stop --force and a Windows shutdown end the shell with STATUS_CONTROL_C_EXIT"
         );
-        assert!(host_session_was_lost(&HostLinkEndKind::Exited {
-            code: 0,
-            signal: Some("SIGHUP".to_string())
-        }));
-        assert!(!host_session_was_lost(&HostLinkEndKind::Incompatible));
+        assert!(
+            HostLinkEndKind::Exited {
+                code: 0,
+                signal: Some("SIGHUP".to_string())
+            }
+            .lost_by_the_host()
+        );
+        assert!(!HostLinkEndKind::Incompatible.lost_by_the_host());
     }
 
     fn view(cx: &mut gpui::TestAppContext) -> gpui::Entity<TerminalView> {

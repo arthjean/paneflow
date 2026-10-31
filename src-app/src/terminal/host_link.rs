@@ -135,6 +135,21 @@ pub(crate) enum HostLinkEndKind {
     AttachRefused,
 }
 
+impl HostLinkEndKind {
+    pub(crate) fn lost_by_the_host(&self) -> bool {
+        match self {
+            Self::Missing | Self::Lost | Self::HostReplaced => true,
+            Self::Exited { code, signal } => *code != 0 || signal.is_some(),
+            Self::Failed
+            | Self::Starting
+            | Self::Unverified
+            | Self::Restarted { .. }
+            | Self::Incompatible
+            | Self::AttachRefused => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostLinkAction {
     NewTerminal,
@@ -382,21 +397,17 @@ impl HostLinkEnd {
         &self,
         observed: Option<SessionGeneration>,
     ) -> Option<(SessionIntent, bool)> {
-        match self.kind {
-            HostLinkEndKind::Lost | HostLinkEndKind::HostReplaced => match self.intent(observed) {
-                intent @ SessionIntent::Restart { expected: Some(_) } => Some((intent, false)),
-                SessionIntent::Create
-                | SessionIntent::Reattach
-                | SessionIntent::Restart { expected: None } => None,
-            },
-            HostLinkEndKind::Missing => Some((SessionIntent::Create, true)),
-            HostLinkEndKind::Exited { .. }
-            | HostLinkEndKind::Failed
-            | HostLinkEndKind::Starting
-            | HostLinkEndKind::Unverified
-            | HostLinkEndKind::Restarted { .. }
-            | HostLinkEndKind::Incompatible
-            | HostLinkEndKind::AttachRefused => None,
+        if self.kind == HostLinkEndKind::Missing {
+            return Some((SessionIntent::Create, true));
+        }
+        if !self.kind.lost_by_the_host() {
+            return None;
+        }
+        match self.intent(observed) {
+            intent @ SessionIntent::Restart { expected: Some(_) } => Some((intent, false)),
+            SessionIntent::Create
+            | SessionIntent::Reattach
+            | SessionIntent::Restart { expected: None } => None,
         }
     }
 }
@@ -1947,9 +1958,37 @@ mod tests {
             observed_generation: None,
         };
         assert_eq!(unobserved.restore_recovery(None), None);
+        for (code, signal) in [
+            (0xC000_013A, None),
+            (1, None),
+            (-1, None),
+            (0, Some("SIGHUP".to_string())),
+        ] {
+            let end = HostLinkEnd::from_reconnection(
+                SessionReconnection::Exited { code, signal },
+                generation,
+            );
+            assert_eq!(
+                end.restore_recovery(None),
+                Some((
+                    SessionIntent::Restart {
+                        expected: Some(generation)
+                    },
+                    false
+                )),
+                "a shell ended by a shutdown or a stopped host ({:?}) restarts",
+                end.kind
+            );
+        }
         for end in [
             HostLinkEnd::exited(0, None),
-            HostLinkEnd::exited(1, None),
+            HostLinkEnd::from_reconnection(
+                SessionReconnection::Exited {
+                    code: 0,
+                    signal: None,
+                },
+                generation,
+            ),
             HostLinkEnd::from_reconnection(
                 SessionReconnection::Failed {
                     reason: "spawn failed".into(),
@@ -1998,6 +2037,20 @@ mod tests {
         for (lifecycle, cwd) in [
             (SessionLifecycle::Running, workdir.path().to_path_buf()),
             (SessionLifecycle::Lost, removed.clone()),
+            (
+                SessionLifecycle::Exited {
+                    code: 0xC000_013A,
+                    signal: None,
+                },
+                workdir.path().to_path_buf(),
+            ),
+            (
+                SessionLifecycle::Exited {
+                    code: 1,
+                    signal: None,
+                },
+                workdir.path().to_path_buf(),
+            ),
         ] {
             let mut manifest = template.clone();
             manifest.session = SessionId::new();
@@ -2029,7 +2082,9 @@ mod tests {
             assert!(
                 matches!(
                     end.kind,
-                    HostLinkEndKind::Lost | HostLinkEndKind::HostReplaced
+                    HostLinkEndKind::Lost
+                        | HostLinkEndKind::HostReplaced
+                        | HostLinkEndKind::Exited { .. }
                 ),
                 "{:?}",
                 end.kind
