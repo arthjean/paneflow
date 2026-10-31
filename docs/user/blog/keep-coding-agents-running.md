@@ -39,7 +39,7 @@ Keeping a process alive lets it continue working, but its progress still depends
 - **Pending input or permission:** the agent keeps waiting until you respond. Paneflow does not approve requests for you.
 - **Sleep:** execution can pause and network connections can drop. Leave the machine awake if you want work to continue.
 - **Provider or network failure:** the process may remain alive while its task is interrupted. Check its output when you return.
-- **Shutdown, reboot, or host crash:** the live process can end. Reopening the saved layout cannot restore it; resuming the conversation requires history saved by the agent.
+- **Shutdown, reboot, or host crash:** the live process can end. When you reopen Paneflow, each terminal that was not running an agent comes back with a fresh shell in its folder, without replaying its previous command. An agent pane offers to resume its conversation instead, which requires history saved by the agent.
 
 The [terminal session documentation](/docs/features) explains the available reconnection and recovery controls.
 

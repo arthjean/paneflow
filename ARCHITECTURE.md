@@ -657,7 +657,7 @@ why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
 | `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
-| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them |
+| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them; on the next layout restore each non-agent pane comes back with a fresh shell in its cwd, and an agent pane offers its conversation resume |
 | `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
 | Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch, the pane offers Retry and an explicit "Stop host and restart" |
 | Stop or shutdown that cannot be confirmed (wait failed, descendants unresolved, runtime panic) | keeps running and keeps owning the process | `lifecycle: unverified`, never `exited` | the desktop keeps its window open with Retry / Keep running and quit / Cancel |
@@ -667,7 +667,19 @@ Reconnection classification lives in `SessionSummary::reconnection`: `live`,
 current instance), `lost` or `unverified`. `paneflow host status` and
 `paneflow-host session inspect` print it.
 
-The desktop never creates or restarts a process implicitly. `host_link::resolve`
+The desktop creates or restarts a process implicitly in exactly one case: the
+first resolution of a pane rebuilt from a saved session id by
+`PaneFlowApp::build_restored_surface`, which serves both `restore_workspaces` at
+launch and `workspace.restore_layout`. When that resolution ends `lost` or `host_replaced`, the pane submits one
+`Restart` of the generation it observed; when it ends `missing`, the pane
+submits one `Create` under a fresh `SessionId`. Both launch the recorded shell
+with no arguments and replay no command, input or persisted environment
+(`HostLinkEnd::restore_recovery`, armed by `TerminalView::recover_when_restored`
+and consumed by the first outcome). A pane whose recorded agent conversation is
+pending restore is excluded, because the conversation resume already reopens it.
+`exited`, `failed` and every other end keep their button, a pane that ends
+later in the same app run never recovers on its own, and a recovered pane that
+ends again shows its button, so no pane is relaunched twice. `host_link::resolve`
 carries one of three intents: `Create` (a new pane, a fresh `SessionId`),
 `Reattach` (a restored layout, a sidebar row, a Retry) which only attaches to a
 live owned session and otherwise ends the pane with the host's reconnection
@@ -691,10 +703,18 @@ of generation N never writes `exited` into N+1. A restart is transactional:
 the previous manifest is restored when its persist fails and no `starting`
 record is stranded. Viewport scans and hook events capture the generation they
 observed and are re-checked when they commit (`SessionHost::commit_scan`,
-`ingest_agent_event`). Admission is bounded at eight unresolved launches
-(`MAX_PENDING_LAUNCHES`); a pending launch is reported as `starting`, never as
-a verified process. No registry lock is held across PTY I/O, process waits or
-observer callbacks: the map lock brackets record lookups and commits only.
+`ingest_agent_event`). At most eight launches are unresolved at once
+(`MAX_PENDING_LAUNCHES`): a `session.create` or `session.restart` beyond that
+waits in the host for a slot up to `LAUNCH_ADMISSION_DEADLINE` (5 s) instead of
+being refused, and only a wait that outlives that deadline answers `-32000`.
+`-32000` is therefore always transient: it names a capacity that frees by
+itself (a launch slot, a checkpoint staging slot, a connection slot or a
+streaming slot), while an oversized checkpoint answers
+`ERR_CHECKPOINT_TOO_LARGE`. The desktop is the only layer that retries it,
+with jittered exponential backoff for up to 60 s. A pending launch is reported
+as `starting`, never as a verified process. No registry lock is held across PTY
+I/O, process waits or observer callbacks: the map lock brackets record lookups
+and commits only.
 
 Agent events require the generation captured by their producer. They commit,
 attempt persistence, and publish a nonblocking notification under the session
