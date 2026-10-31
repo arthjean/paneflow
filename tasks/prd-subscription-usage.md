@@ -6,6 +6,8 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-10-31 | Arthur Jean | PRD initial : capsule d'usage dans le pied de sidebar (variante A) et page Settings › Usage (variante P2). Les limites viennent du status line de Claude Code et des rollouts Codex, sans lecture de credential ; le worker tient un journal quotidien des tours, du temps actif et des tokens. 5 epics, 19 stories. |
+| 1.1 | 2026-10-31 | Arthur Jean | Les validations macOS et Linux de US-001 passent dans deux epics finaux, EP-006 (Linux, US-020) puis EP-007 (macOS, US-021, sur une machine Scaleway). Le critère Team, Enterprise ou clé API de US-001 est retiré faute de compte : le comportement sans `rate_limits` repose sur le code et ses tests. 7 epics, 21 stories. |
+| 1.2 | 2026-10-31 | Arthur Jean | La preuve en pane réel sous Windows du relais vers le host passe de la Definition of Done de EP-001 à US-007 : avant EP-002, le worker ignore le frame `plan_limits` et aucun outil ne l'observe. EP-001 est certifiée sur les tests du relais (processus réel vers un host simulé), du host (IPC réel) et sur le rejet par un host ancien. |
 
 ## Problem Statement
 
@@ -114,7 +116,7 @@ Gates additionnels :
 
 Établit, sans interface, d'où viennent les limites et à quel compte elles appartiennent : deux validations d'hypothèses, l'inventaire des comptes, le modèle pur, le relais status line et son installation.
 
-**Definition of Done:** les rapports de US-001 et US-002 sont consignés dans leurs stories ; l'inventaire renvoie un compte par couple (agent, dossier canonique) ; le modèle pur passe ses tests ; le relais envoie `rate_limits` au host depuis un pane réel ; l'installation pose et retire un `statusLine` géré sans toucher un status line étranger ; aucun fichier de credential n'est référencé.
+**Definition of Done:** les rapports de US-001 et US-002 sont consignés dans leurs stories ; l'inventaire renvoie un compte par couple (agent, dossier canonique) ; le modèle pur passe ses tests ; le relais, lancé comme le fait Claude Code, envoie `rate_limits` au host, prouvé par test d'intégration (la preuve en pane réel sous Windows est portée par US-007, amendement 1.2) ; l'installation pose et retire un `statusLine` géré sans toucher un status line étranger ; aucun fichier de credential n'est référencé.
 
 #### US-001: Validate assumption: le status line de Claude Code reçoit `rate_limits` dans un pane Paneflow
 **Description:** As a mainteneur, I want prouver qu'une commande `statusLine` installée dans un dossier de config reçoit `rate_limits` et l'environnement du pane so that la source des limites Claude ne dépende d'aucun credential.
@@ -124,13 +126,26 @@ Gates additionnels :
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un compte Claude Pro, Max ou Ultra et un script de status line qui recopie son stdin dans un fichier, when un message reçoit une réponse dans un pane Paneflow, then le JSON contient `rate_limits.five_hour.used_percentage`, `rate_limits.five_hour.resets_at`, `rate_limits.seven_day.used_percentage`, `rate_limits.seven_day.resets_at`, `session_id` et `transcript_path`. Le constat est consigné avec la version de Claude Code, sur macOS, Linux et Windows.
+- [ ] Given un compte Claude Pro, Max ou Ultra et un script de status line qui recopie son stdin dans un fichier, when un message reçoit une réponse dans un pane Paneflow, then le JSON contient `rate_limits.five_hour.used_percentage`, `rate_limits.five_hour.resets_at`, `rate_limits.seven_day.used_percentage`, `rate_limits.seven_day.resets_at`, `session_id` et `transcript_path`. Le constat est consigné avec la version de Claude Code, sous Windows. Linux et macOS sont validés par US-020 et US-021 (amendement 1.1).
 - [ ] Given le même script, when il s'exécute, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit.
 - [ ] Given un objet `statusLine` qui porte la clé `_paneflow_managed: true`, when Claude Code démarre, then il exécute la commande sans erreur ni avertissement bloquant. Sinon, la story consigne le rejet, et le marqueur retenu pour US-006 devient un suffixe de la commande.
 - [ ] Given Windows avec Git Bash, puis sans Git Bash, when la commande est le chemin absolu de `paneflow-ai-hook` suivi de `StatusLine`, chemin avec espaces compris, then elle s'exécute dans les deux shells (Git Bash, puis PowerShell).
 - [ ] Given la première ouverture d'une session, when aucune réponse n'est encore arrivée, then l'absence de `rate_limits` est consignée.
-- [ ] Given un compte Team, Enterprise ou une clé API, si l'un est disponible, when le script tourne, then la présence ou l'absence de `rate_limits` et de `spend_limit` est consignée. Sans compte disponible, le point est marqué `Not verified` et l'Open Question 2 reste ouverte.
+- ~~Given un compte Team, Enterprise ou une clé API, si l'un est disponible, when le script tourne, then la présence ou l'absence de `rate_limits` et de `spend_limit` est consignée.~~ Retiré par l'amendement 1.1 : aucun compte de ce type n'est disponible. L'absence de `rate_limits` est couverte par le code (US-005 envoie `rate_limits: null` une fois par session, US-007 en fait l'état `NoLimitsReported`) et par ses tests, sans preuve réelle. L'Open Question 2 reste ouverte.
 - [ ] Given `disableAllHooks: true` dans `settings.json`, when une réponse arrive, then le script ne s'exécute pas, et ce fait est consigné.
+
+**Rapport de validation (2026-10-31, Windows 11, Claude Code 2.1.316) :**
+
+Sonde : la commande `statusLine` de `~/.claude/settings.json` a été remplacée quelques secondes par un script qui recopiait son stdin et son environnement, puis le fichier a été restauré à l'octet près (`cmp`). Quatre sessions Claude Code tournaient dans des panes Paneflow (build installée), sous Git Bash (`MSYSTEM=MINGW64`, `SHELL=/bin/bash.exe`). Captures locales, hors dépôt.
+
+- `rate_limits.five_hour` et `rate_limits.seven_day` arrivent, chacun avec `used_percentage` (entier) et `resets_at` (secondes Unix), ainsi que `session_id`, `transcript_path` et `version`. Linux et macOS : US-020 et US-021.
+- L'environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`. Une session lancée dans un pane avec `CLAUDE_CONFIG_DIR` défini, comme le fait un espace, le transmet aussi au status line (`CLAUDE_CONFIG_DIR=C:\Users\Arthur\.claude` relu dans l'environnement capturé).
+- Un `statusLine` portant `_paneflow_managed: true` s'exécute sans erreur, dans les sessions en cours comme dans une nouvelle session lancée avec `--settings` : aucun avertissement au démarrage, et le status line s'affiche dès le premier rendu. US-006 garde la clé comme marqueur, et reconnaît aussi le relais à son chemin de programme.
+- Commande sous Windows : sans Git Bash, Claude Code exécute le status line via PowerShell ([statusline, Windows configuration](https://code.claude.com/docs/en/statusline)). Le chemin absolu en barres obliques suivi de `StatusLine` s'exécute dans Git Bash, PowerShell 7 et PowerShell 5.1. Entre apostrophes (chemin avec espaces), PowerShell le rejette (`ParserError`). Correction technique de US-006 : quand le chemin absolu exigerait des apostrophes et que le relais est sous le dossier personnel, la commande devient `~/.paneflow/bin/paneflow-ai-hook.exe StatusLine`, sans guillemets. Cette forme s'exécute dans les trois shells avec un dossier personnel qui contient une espace, et Claude Code 2.1.316 l'a exécutée sous Git Bash (`$0` vaut `/usr/bin/bash`). `CLAUDE_CODE_GIT_BASH_PATH` invalide ne force pas PowerShell : Claude retrouve Git Bash à son emplacement standard. Le routage de Claude vers PowerShell repose donc sur la documentation, la commande étant prouvée dans PowerShell lui-même.
+- Première ouverture : le tout premier appel du status line d'une nouvelle session n'a pas de `rate_limits` ; l'appel suivant, quelques secondes plus tard et toujours sans réponse, les porte (20 % et 61 %). Hypothèse infirmée : il n'est pas nécessaire qu'une réponse arrive, la session reçoit les valeurs du compte (`cost.total_api_duration_ms: 0`). Le relais ne s'appuie donc pas sur « première réponse » pour la présence des limites ; il n'envoie `rate_limits: null` qu'après une réponse (`total_api_duration_ms > 0`).
+- Constat pour US-007 : une session inactive continue de transmettre des valeurs anciennes. Elle annonçait `seven_day` à 55 % (même `resets_at`) quand les autres en étaient à 59 %, et omettait `five_hour`. « Le dernier frame l'emporte » ferait reculer la jauge ; pour un même `resets_at`, il faut garder le pourcentage le plus haut.
+- Team, Enterprise, clé API : critère retiré par l'amendement 1.1.
+- `disableAllHooks: true` : aucune exécution du status line en 11 s, contre environ 3 par seconde avant. Le status line est coupé avec les hooks.
 
 #### US-002: Validate assumption: les rollouts Codex portent `rate_limits` et les totaux de tokens
 **Description:** As a mainteneur, I want vérifier sur la version courante de Codex ce que contient un rollout so that les limites Codex se lisent sur disque, sans `auth.json`.
@@ -145,6 +160,18 @@ Gates additionnels :
 - [ ] Given au moins un compte ChatGPT (Free, Plus ou Pro), when la fenêtre secondaire est mensuelle, then sa durée est consignée.
 - [ ] Given un rollout sans aucun `token_count` (cas observé le 2026-10-31 sur deux rollouts locaux de 22 Ko), when la story l'analyse, then elle en donne la cause : version, mode daemon ou session sans réponse.
 - [ ] Given qu'aucune version courante n'écrit `rate_limits` dans ses rollouts, then US-008 passe en BLOCKED et l'Open Question 3 tranche le repli.
+
+**Rapport de validation (2026-10-31, Windows 11) :**
+
+- Codex 0.166.0, compte ChatGPT `plan_type: "free"` : un tour `codex exec` lancé depuis un pane Paneflow écrit dans `sessions/2026/10/31/rollout-*.jsonl` un événement `event_msg` de type `token_count`. Champs de `rate_limits` : `limit_id`, `limit_name`, `primary` et `secondary`, chacun `{used_percent (flottant), window_minutes (entier), resets_at (secondes Unix)}`, puis `credits`, `individual_limit`, `spend_control_reached`, `plan_type`, `rate_limit_reached_type`. Ici `secondary` vaut `null`.
+- Codex 0.160.0 en TUI (rollouts du 2026-10-02, `plan_type: "prolite"`) : même forme, `primary.window_minutes: 10080` (semaine), `secondary: null`.
+- `info.total_token_usage` est cumulatif par fichier : 113 événements d'un même rollout, croissance monotone. Champs : `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`, `total_tokens`. Hypothèse infirmée : le premier `token_count` porte déjà `info` dans les deux versions. Le parseur tolère quand même `info: null`.
+- Fenêtre mensuelle : le compte free a `primary.window_minutes: 43200`, soit 30 jours, libellé « Month ».
+- Rollouts sans `token_count` : la tentative du 2026-10-31 refusée par le serveur (modèle non pris en charge) a laissé un rollout de 108 Ko sans `token_count`, et les deux rollouts de 22 Ko du 2026-10-30 ne contiennent que `session_meta`. Cause : aucune réponse réussie, pas la version.
+- Constat pour US-008 et US-018 : les rollouts terminés sont recompressés plus tard en `rollout-*.jsonl.zst` (74 fichiers sur 76). La lecture des limites vise le `.jsonl` actif ; le rattrapage de l'historique demande un décodeur zstd, donc une dépendance à décider.
+- Nouveau type de ligne en 0.166.0 : `token_usage_record`.
+- Codex 0.166.0 en TUI dans un pane Paneflow (`originator: codex-tui`), avec le daemon app-server puis avec `--no-daemon` : chaque tour écrit un `token_count` avec `rate_limits.primary` (2 % puis 3 %, `window_minutes: 43200`) et `secondary: null`. Le mode du daemon ne change ni le fichier ni les champs.
+- `rate_limits` est bien présent : US-008 n'est pas bloquée.
 
 #### US-003: Inventaire des comptes par dossier de config
 **Description:** As a utilisateur à deux comptes, I want que Paneflow liste chaque compte Claude Code et Codex une seule fois so that la bulle et la page montrent tous mes abonnements sans configuration.
@@ -230,6 +257,7 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 **Dependencies:** Blocked by US-004, US-005
 
 **Acceptance Criteria:**
+- [ ] Given Windows, un compte Claude Pro, Max ou Ultra dont le dossier de config porte le `statusLine` géré (pas un status line étranger), when un message reçoit une réponse dans un pane Paneflow réel, then le worker reçoit le frame `plan_limits` et met à jour l'instantané du compte. Le constat est consigné avec la version de Claude Code (amendement 1.2 : preuve reprise de la Definition of Done de EP-001).
 - [ ] Given un frame du relais, when le worker le reçoit, then il remplace l'instantané du compte (Claude, dossier de config) par ses fenêtres, leur `resets_at` et l'heure de réception, et publie l'ensemble des instantanés aux apps connectées.
 - [ ] Given deux sessions du même compte, then le frame reçu en dernier l'emporte.
 - [ ] L'ensemble est écrit dans `~/.paneflow/usage/plans.json` (`~/.paneflow-dev/usage/` en debug) par `paneflow_home::write_atomically`, au plus une fois toutes les 10 s, et rechargé au démarrage du worker.
@@ -461,6 +489,48 @@ Couvre les utilisateurs qui ont déjà un status line, le rattrapage de l'histor
 - [ ] Le CHANGELOG annonce la capsule, la page, le relais status line et la clé `usage.plan_limits`.
 - [ ] La documentation utilisateur est rédigée dans le dépôt `paneflow-web`, jamais seulement dans le miroir `docs/user/`. Elle couvre la page, le relais, ce qui est stocké et la limite de 30 jours des transcripts.
 - [ ] Given un lecteur qui a son propre status line, then la documentation explique l'état `ForeignStatusLine`, le chaînage et comment le défaire.
+
+---
+
+### EP-006: Validation Linux
+
+Rejoue sur Linux, dans un pane Paneflow réel, les constats que US-001 a faits sous Windows.
+
+**Definition of Done:** le rapport de US-020 est consigné dans sa story, avec la distribution, le serveur d'affichage et la version de Claude Code.
+
+#### US-020: Validate on Linux: le status line et le relais dans un pane Paneflow
+**Description:** As a mainteneur, I want rejouer US-001 sur Linux so that la source des limites Claude soit prouvée sur cette cible livrée.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-006
+
+**Acceptance Criteria:**
+- [ ] Given Linux (Wayland ou X11) et un compte Claude Pro, Max ou Ultra, when un script de status line recopie son stdin dans un pane Paneflow, then le JSON contient `rate_limits.five_hour` et `rate_limits.seven_day` avec `used_percentage` et `resets_at`. La distribution, le serveur d'affichage et la version de Claude Code sont consignés.
+- [ ] Given le même script, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit.
+- [ ] Given le `statusLine` géré posé par US-006 (`paneflow-ai-hook.sh StatusLine`), when une réponse arrive, then le host accepte le frame `status_line` et le publie en `plan_limits` sur le flux `agent.follow`.
+- [ ] Given `disableAllHooks: true`, then le status line ne s'exécute pas.
+
+---
+
+### EP-007: Validation macOS
+
+Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
+
+**Definition of Done:** le rapport de US-021 est consigné dans sa story, avec la version de macOS, l'architecture et la version de Claude Code.
+
+#### US-021: Validate on macOS: le status line et le relais dans un pane Paneflow
+**Description:** As a mainteneur, I want rejouer US-001 sur macOS so that la source des limites Claude soit prouvée sur la dernière cible livrée.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-006, US-020
+
+**Acceptance Criteria:**
+- [ ] Given macOS (Apple Silicon, sur une machine Scaleway) et un compte Claude Pro, Max ou Ultra, when un script de status line recopie son stdin dans un pane Paneflow, then le JSON contient `rate_limits.five_hour` et `rate_limits.seven_day` avec `used_percentage` et `resets_at`. La version de macOS et celle de Claude Code sont consignées.
+- [ ] Given le même script, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit.
+- [ ] Given le `statusLine` géré posé par US-006, when une réponse arrive, then le host accepte le frame `status_line` et le publie en `plan_limits` sur le flux `agent.follow`.
+- [ ] Given `disableAllHooks: true`, then le status line ne s'exécute pas.
 
 ---
 

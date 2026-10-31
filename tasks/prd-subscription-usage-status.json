@@ -3,22 +3,24 @@
     "file": "tasks/prd-subscription-usage.md",
     "title": "Usage des abonnements d'agents",
     "created_at": "2026-10-31",
-    "status": "READY"
+    "status": "IN_PROGRESS"
   },
   "epics": [
-    { "id": "EP-001", "title": "Sources de données et comptes", "status": "TODO", "priority": "P0", "stories_total": 6, "stories_done": 0 },
+    { "id": "EP-001", "title": "Sources de données et comptes", "status": "DONE", "priority": "P0", "stories_total": 6, "stories_done": 6 },
     { "id": "EP-002", "title": "Magasin d'usage dans le worker", "status": "TODO", "priority": "P0", "stories_total": 3, "stories_done": 0 },
     { "id": "EP-003", "title": "Capsule et bulle dans la sidebar (variante A)", "status": "TODO", "priority": "P0", "stories_total": 4, "stories_done": 0 },
     { "id": "EP-004", "title": "Page Settings › Usage (variante P2)", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 },
-    { "id": "EP-005", "title": "Chaînage, rattrapage et documentation", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 }
+    { "id": "EP-005", "title": "Chaînage, rattrapage et documentation", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 },
+    { "id": "EP-006", "title": "Validation Linux", "status": "TODO", "priority": "P1", "stories_total": 1, "stories_done": 0 },
+    { "id": "EP-007", "title": "Validation macOS", "status": "TODO", "priority": "P1", "stories_total": 1, "stories_done": 0 }
   ],
   "stories": [
-    { "id": "US-001", "title": "Validate assumption: le status line de Claude Code reçoit rate_limits dans un pane Paneflow", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "S", "blocked_by": [], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-002", "title": "Validate assumption: les rollouts Codex portent rate_limits et les totaux de tokens", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "S", "blocked_by": [], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-003", "title": "Inventaire des comptes par dossier de config", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": [], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-004", "title": "Modèle d'usage pur : fenêtres, seuils, projection et remise à zéro", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": [], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-005", "title": "Relais status line dans paneflow-ai-hook", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": ["US-001"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-006", "title": "Installation du relais dans chaque dossier Claude", "epic": "EP-001", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": ["US-003", "US-005"], "started_at": null, "completed_at": null, "reviewed_at": null },
+    { "id": "US-001", "title": "Validate assumption: le status line de Claude Code reçoit rate_limits dans un pane Paneflow", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "S", "blocked_by": [], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-002", "title": "Validate assumption: les rollouts Codex portent rate_limits et les totaux de tokens", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "S", "blocked_by": [], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-003", "title": "Inventaire des comptes par dossier de config", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": [], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-004", "title": "Modèle d'usage pur : fenêtres, seuils, projection et remise à zéro", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": [], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-005", "title": "Relais status line dans paneflow-ai-hook", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-001"], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-006", "title": "Installation du relais dans chaque dossier Claude", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-003", "US-005"], "started_at": "2026-10-31", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
     { "id": "US-007", "title": "Instantanés de limites Claude reçus du relais", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": ["US-004", "US-005"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-008", "title": "Limites Codex lues dans les rollouts", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": ["US-002", "US-004"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-009", "title": "Journal quotidien des tours et du temps actif", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "L", "blocked_by": ["US-003"], "started_at": null, "completed_at": null, "reviewed_at": null },
@@ -31,6 +33,8 @@
     { "id": "US-016", "title": "Tokens tirés des transcripts", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "M", "blocked_by": ["US-008", "US-009"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-017", "title": "Chaînage d'un status line existant, sur demande", "epic": "EP-005", "status": "TODO", "priority": "P1", "size": "M", "blocked_by": ["US-006", "US-013"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-018", "title": "Rattrapage initial depuis les transcripts", "epic": "EP-005", "status": "TODO", "priority": "P2", "size": "M", "blocked_by": ["US-016"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-019", "title": "Contrats de design, d'architecture et documentation", "epic": "EP-005", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-013", "US-015"], "started_at": null, "completed_at": null, "reviewed_at": null }
+    { "id": "US-019", "title": "Contrats de design, d'architecture et documentation", "epic": "EP-005", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-013", "US-015"], "started_at": null, "completed_at": null, "reviewed_at": null },
+    { "id": "US-020", "title": "Validate on Linux: le status line et le relais dans un pane Paneflow", "epic": "EP-006", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-006"], "started_at": null, "completed_at": null, "reviewed_at": null },
+    { "id": "US-021", "title": "Validate on macOS: le status line et le relais dans un pane Paneflow", "epic": "EP-007", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-006", "US-020"], "started_at": null, "completed_at": null, "reviewed_at": null }
   ]
 }
