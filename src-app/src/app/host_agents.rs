@@ -352,6 +352,9 @@ fn projected_session(
     previous: Option<&AgentSession>,
 ) -> Option<AgentSession> {
     let (tool, state) = (row.tool?, row.state?);
+    if state == AgentState::Finished && row.runtime.is_none() {
+        return None;
+    }
     let mut session = previous
         .cloned()
         .unwrap_or_else(|| AgentSession::new(tool, state));
@@ -1318,6 +1321,7 @@ mod tests {
                 "session": SessionId::new().to_string(),
                 "live": true,
                 "activity": {"tool": "claude", "state": "finished"},
+                "foreground_runtime_id": "com.anthropic.claude-code",
                 "program_status_capable": capable,
             }))
             .expect("row")
@@ -1680,6 +1684,48 @@ mod tests {
         ));
         assert_eq!(surfaces_of(&sessions), vec![(102, 2)]);
         assert_eq!(sessions[&102].tool, TerminalAgent::ClaudeCode);
+    }
+
+    #[test]
+    fn an_agent_that_left_the_foreground_drops_its_session_despite_its_last_hook_state() {
+        let session = SessionId::new();
+        let row = |foreground: Value, state: &str| {
+            row_from_event(
+                &session,
+                &json!({
+                    "type": "event",
+                    "session": session.to_string(),
+                    "agent": {"tool": "claude", "state": state, "source": "hook", "updated_at_ms": 1},
+                    "activity_source": "none",
+                    "runtime_id": "com.anthropic.claude-code",
+                    "foreground_runtime_id": foreground,
+                }),
+            )
+            .expect("row")
+        };
+        let mut sessions = std::collections::HashMap::new();
+        let start = |_| None;
+
+        assert!(seed_projected_session(
+            &mut sessions,
+            &row(json!("com.anthropic.claude-code"), "finished"),
+            7,
+            start
+        ));
+        assert_eq!(surfaces_of(&sessions).len(), 1);
+
+        seed_projected_session(&mut sessions, &row(Value::Null, "finished"), 7, start);
+        assert!(
+            sessions.is_empty(),
+            "the pane is back at its shell, so the hook's last state names no agent"
+        );
+
+        seed_projected_session(&mut sessions, &row(Value::Null, "errored"), 7, start);
+        assert_eq!(
+            surfaces_of(&sessions).len(),
+            1,
+            "a crashed agent keeps its error on screen"
+        );
     }
 
     #[test]
