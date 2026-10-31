@@ -85,6 +85,37 @@ impl PaneFlowApp {
         }
     }
 
+    fn rendered_pane_density(&mut self, window: &mut Window) -> crate::layout::PaneDensity {
+        let target = crate::layout::PaneDensity::from_config(&self.cached_config);
+        let now = std::time::Instant::now();
+        if let Some(previous) = self.density_target
+            && previous != target
+        {
+            let from = self
+                .density_animation
+                .map_or(previous.comfort(), |animation| animation.width_at(now));
+            self.density_animation =
+                (!crate::ui_primitives::reduce_motion()).then_some(SidebarWidthAnimation {
+                    from_width: from,
+                    to_width: target.comfort(),
+                    started_at: now,
+                });
+        }
+        self.density_target = Some(target);
+        match self.density_animation {
+            Some(animation)
+                if !animation.is_finished(now) && !crate::ui_primitives::reduce_motion() =>
+            {
+                window.request_animation_frame();
+                crate::layout::PaneDensity::blended(animation.width_at(now))
+            }
+            _ => {
+                self.density_animation = None;
+                target
+            }
+        }
+    }
+
     pub(crate) fn toggle_primary_sidebar(&mut self, cx: &mut Context<Self>) {
         if self.primary_sidebar_visible {
             self.commit_rename(cx);
@@ -215,17 +246,14 @@ impl Render for PaneFlowApp {
         };
         let panel_edge_share = 1. - primary_sidebar_opacity;
         let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
-        let density = crate::layout::PaneDensity::from_config(&self.cached_config);
+        let density = self.rendered_pane_density(window);
         let pane_grid_left_gutter = density.outer_gutter_px() * panel_edge_share;
         let comfortable_right_gutter = if self.diff_dock_visible() {
             (crate::layout::PANE_GUTTER_PX + crate::app::constants::PANE_OUTER_GUTTER) / 2.
         } else {
             crate::app::constants::PANE_OUTER_GUTTER
         };
-        let pane_grid_right_gutter = match density {
-            crate::layout::PaneDensity::Comfortable => comfortable_right_gutter,
-            crate::layout::PaneDensity::Compact => density.outer_gutter_px(),
-        };
+        let pane_grid_right_gutter = comfortable_right_gutter * density.comfort();
         let welcome_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
         let grid_edges = crate::layout::grid_edges(!self.diff_dock_beside_grid());
         let main_panel_corner_mask_bg = panel_corner_mask_bg;

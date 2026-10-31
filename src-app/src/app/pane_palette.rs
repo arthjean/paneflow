@@ -755,6 +755,12 @@ impl PaneFlowApp {
                     edges,
                     crate::theme::active_theme().background,
                 )),
+                crate::layout::CardFrame::Morph { outer, comfort } => {
+                    card.child(crate::ui_primitives::squircle::squircle_corners_fill(
+                        crate::layout::morph_corners(outer, comfort),
+                        crate::theme::active_theme().background,
+                    ))
+                }
             })
             .child(
                 div()
@@ -768,7 +774,7 @@ impl PaneFlowApp {
             )
             .when_some(
                 match frame {
-                    crate::layout::CardFrame::Card => None,
+                    crate::layout::CardFrame::Card | crate::layout::CardFrame::Morph { .. } => None,
                     crate::layout::CardFrame::Flush(edges) => Some(edges),
                 },
                 |card, edges| card.child(crate::layout::flush_border(edges, ui.border)),

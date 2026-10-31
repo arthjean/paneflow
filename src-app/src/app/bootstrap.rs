@@ -282,6 +282,8 @@ impl PaneFlowApp {
             title_bar,
             primary_sidebar_visible: true,
             primary_sidebar_animation: None,
+            density_target: None,
+            density_animation: None,
             title_bar_files_menu_open: None,
             title_bar_help_menu_open: None,
             git_watcher,

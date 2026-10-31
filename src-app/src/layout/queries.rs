@@ -297,17 +297,17 @@ mod tests {
             cx.update(|cx| pane.read(cx).card_frame())
         };
 
-        cx.update(|cx| tree.sync_card_frames(PaneDensity::Compact, grid_edges(true), None, cx));
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::COMPACT, grid_edges(true), None, cx));
         assert_eq!(frame_of(&left, cx), edges(true, false, true, true));
         assert_eq!(frame_of(&top_right, cx), edges(true, true, false, false));
         assert_eq!(frame_of(&bottom_right, cx), edges(false, true, true, false));
 
-        cx.update(|cx| tree.sync_card_frames(PaneDensity::Compact, grid_edges(false), None, cx));
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::COMPACT, grid_edges(false), None, cx));
         assert_eq!(frame_of(&top_right, cx), edges(true, false, false, false));
 
         let palette = cx.update(|cx| {
             tree.sync_card_frames(
-                PaneDensity::Compact,
+                PaneDensity::COMPACT,
                 grid_edges(true),
                 Some((&left, SplitDirection::Horizontal)),
                 cx,
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(frame_of(&left, cx), edges(true, false, false, true));
         assert_eq!(palette, edges(false, false, true, true));
 
-        cx.update(|cx| tree.sync_card_frames(PaneDensity::Comfortable, grid_edges(true), None, cx));
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::COMFORTABLE, grid_edges(true), None, cx));
         for pane in [&left, &top_right, &bottom_right] {
             assert_eq!(frame_of(pane, cx), CardFrame::Card);
         }

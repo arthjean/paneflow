@@ -1,4 +1,4 @@
-use gpui::{Div, Edges, Hsla, Styled, div, px};
+use gpui::{Corners, Div, Edges, Hsla, Pixels, Styled, div, px};
 use paneflow_config::schema::PaneFlowConfig;
 
 use super::tree::{DIVIDER_PX, SplitDirection};
@@ -6,46 +6,63 @@ use super::tree::{DIVIDER_PX, SplitDirection};
 pub(crate) const COMPACT_DIVIDER_PX: f32 = 1.0;
 pub(crate) const COMPACT_DIVIDER_HIT_PX: f32 = 7.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PaneDensity {
-    Comfortable,
-    Compact,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PaneDensity {
+    comfort: f32,
 }
 
 impl PaneDensity {
+    pub(crate) const COMFORTABLE: Self = Self { comfort: 1.0 };
+    pub(crate) const COMPACT: Self = Self { comfort: 0.0 };
+
     pub(crate) fn from_config(config: &PaneFlowConfig) -> Self {
         if config.comfortable_density_enabled() {
-            Self::Comfortable
+            Self::COMFORTABLE
         } else {
-            Self::Compact
+            Self::COMPACT
         }
+    }
+
+    pub(crate) fn blended(comfort: f32) -> Self {
+        Self {
+            comfort: comfort.clamp(0.0, 1.0),
+        }
+    }
+
+    pub(crate) fn comfort(self) -> f32 {
+        self.comfort
+    }
+
+    pub(crate) fn is_compact(self) -> bool {
+        self.comfort < 0.5
     }
 
     pub(crate) fn divider_px(self) -> f32 {
-        match self {
-            Self::Comfortable => DIVIDER_PX,
-            Self::Compact => COMPACT_DIVIDER_PX,
-        }
+        COMPACT_DIVIDER_PX + (DIVIDER_PX - COMPACT_DIVIDER_PX) * self.comfort
+    }
+
+    pub(crate) fn divider_line_alpha(self) -> f32 {
+        (1.0 - 2.0 * self.comfort).clamp(0.0, 1.0)
     }
 
     pub(crate) fn top_gutter_px(self) -> f32 {
-        match self {
-            Self::Comfortable => DIVIDER_PX,
-            Self::Compact => 0.0,
-        }
+        DIVIDER_PX * self.comfort
     }
 
     pub(crate) fn outer_gutter_px(self) -> f32 {
-        match self {
-            Self::Comfortable => crate::app::constants::PANE_OUTER_GUTTER,
-            Self::Compact => 0.0,
-        }
+        crate::app::constants::PANE_OUTER_GUTTER * self.comfort
     }
 
     pub(crate) fn frame(self, outer: Edges<bool>) -> CardFrame {
-        match self {
-            Self::Comfortable => CardFrame::Card,
-            Self::Compact => CardFrame::Flush(outer),
+        if self.comfort >= 1.0 {
+            CardFrame::Card
+        } else if self.comfort <= 0.0 {
+            CardFrame::Flush(outer)
+        } else {
+            CardFrame::Morph {
+                outer,
+                comfort: self.comfort,
+            }
         }
     }
 }
@@ -54,6 +71,22 @@ impl PaneDensity {
 pub(crate) enum CardFrame {
     Card,
     Flush(Edges<bool>),
+    Morph { outer: Edges<bool>, comfort: f32 },
+}
+
+pub(crate) fn morph_corners(outer: Edges<bool>, comfort: f32) -> Corners<Pixels> {
+    let card = crate::app::constants::PANE_CARD_RADIUS;
+    let flush = crate::app::constants::PANEL_CORNER_RADIUS;
+    let corner = |a: bool, b: bool| {
+        let from = if a && b { flush } else { px(0.) };
+        from + (card - from) * comfort
+    };
+    Corners {
+        top_left: corner(outer.top, outer.left),
+        top_right: corner(outer.top, outer.right),
+        bottom_right: corner(outer.bottom, outer.right),
+        bottom_left: corner(outer.bottom, outer.left),
+    }
 }
 
 pub(crate) fn grid_edges(right_is_outer: bool) -> Edges<bool> {
@@ -123,8 +156,43 @@ mod tests {
     }
 
     #[test]
+    fn a_density_halfway_through_its_transition_blends_every_metric() {
+        let density = PaneDensity::blended(0.5);
+        assert_eq!(
+            density.divider_px(),
+            (DIVIDER_PX + COMPACT_DIVIDER_PX) / 2.0
+        );
+        assert_eq!(
+            density.outer_gutter_px(),
+            crate::app::constants::PANE_OUTER_GUTTER / 2.0
+        );
+        assert_eq!(density.divider_line_alpha(), 0.0);
+        assert_eq!(
+            density.frame(all()),
+            CardFrame::Morph {
+                outer: all(),
+                comfort: 0.5
+            }
+        );
+    }
+
+    #[test]
+    fn a_morphing_card_starts_at_the_flush_corners_and_ends_at_the_card_radius() {
+        let inner_right = Edges {
+            right: false,
+            ..all()
+        };
+        let flush = morph_corners(inner_right, 0.0);
+        assert_eq!(flush.top_left, crate::app::constants::PANEL_CORNER_RADIUS);
+        assert_eq!(flush.top_right, px(0.));
+        let card = morph_corners(inner_right, 1.0);
+        assert_eq!(card.top_right, crate::app::constants::PANE_CARD_RADIUS);
+        assert_eq!(card.top_left, crate::app::constants::PANE_CARD_RADIUS);
+    }
+
+    #[test]
     fn comfortable_density_keeps_the_card_gutters() {
-        let density = PaneDensity::Comfortable;
+        let density = PaneDensity::COMFORTABLE;
         assert_eq!(density.divider_px(), DIVIDER_PX);
         assert_eq!(density.top_gutter_px(), DIVIDER_PX);
         assert_eq!(
@@ -136,7 +204,7 @@ mod tests {
 
     #[test]
     fn compact_density_joins_panes_with_a_hairline() {
-        let density = PaneDensity::Compact;
+        let density = PaneDensity::COMPACT;
         assert_eq!(density.divider_px(), 1.0);
         assert_eq!(density.top_gutter_px(), 0.0);
         assert_eq!(density.outer_gutter_px(), 0.0);
@@ -146,9 +214,9 @@ mod tests {
     #[test]
     fn density_follows_the_config_and_defaults_to_comfortable() {
         let mut config = PaneFlowConfig::default();
-        assert_eq!(PaneDensity::from_config(&config), PaneDensity::Comfortable);
+        assert_eq!(PaneDensity::from_config(&config), PaneDensity::COMFORTABLE);
         config.comfortable_density = Some(false);
-        assert_eq!(PaneDensity::from_config(&config), PaneDensity::Compact);
+        assert_eq!(PaneDensity::from_config(&config), PaneDensity::COMPACT);
     }
 
     #[test]

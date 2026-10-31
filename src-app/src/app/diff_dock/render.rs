@@ -10,13 +10,18 @@ use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
 use crate::layout::CardFrame;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{
+    squircle_border, squircle_corners_border, squircle_corners_fill, squircle_fill,
+};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, ROW_RADIUS, squircle_skin};
 
 pub(super) fn dock_card_fill(frame: CardFrame, ui: crate::theme::UiColors) -> AnyElement {
     match frame {
         CardFrame::Card => squircle_fill(crate::app::constants::PANE_CARD_RADIUS, ui.base),
         CardFrame::Flush(edges) => crate::layout::flush_fill(edges, ui.base).into_any_element(),
+        CardFrame::Morph { outer, comfort } => {
+            squircle_corners_fill(crate::layout::morph_corners(outer, comfort), ui.base)
+        }
     }
 }
 
@@ -29,6 +34,12 @@ pub(super) fn dock_card_border(frame: CardFrame, ui: crate::theme::UiColors) -> 
         CardFrame::Flush(edges) => {
             crate::layout::flush_outline(edges, ui.border).into_any_element()
         }
+        CardFrame::Morph { outer, comfort } => squircle_corners_border(
+            crate::layout::morph_corners(outer, comfort),
+            px(1.),
+            ui.border,
+        )
+        .into_any_element(),
     }
 }
 
@@ -39,7 +50,7 @@ pub(super) fn render_diff_resize_handle(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let overlaps_the_grid = matches!(frame, CardFrame::Flush(_));
+    let overlaps_the_grid = !matches!(frame, CardFrame::Card);
     div()
         .id("diff-dock-resize")
         .absolute()

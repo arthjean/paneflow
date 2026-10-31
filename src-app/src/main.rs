@@ -199,6 +199,8 @@ struct PaneFlowApp {
     title_bar: Entity<title_bar::TitleBar>,
     primary_sidebar_visible: bool,
     primary_sidebar_animation: Option<SidebarWidthAnimation>,
+    density_target: Option<layout::PaneDensity>,
+    density_animation: Option<SidebarWidthAnimation>,
     title_bar_files_menu_open: Option<Point<Pixels>>,
     title_bar_help_menu_open: Option<Point<Pixels>>,
     git_watcher: Option<notify::RecommendedWatcher>,

@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use gpui::{
-    AnyElement, Bounds, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels, Point, Styled,
-    canvas, div, point, px, size,
+    AnyElement, Bounds, Corners, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels,
+    Point, Styled, canvas, div, point, px, size,
 };
 
 const CORNER_EXTENT: f32 = 1.528_665;
@@ -26,12 +26,18 @@ fn limited_radius(bounds: Bounds<Pixels>, radius: Pixels) -> Pixels {
         .max(px(0.))
 }
 
-fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radius: Pixels) {
-    let radius = limited_radius(bounds, radius);
+fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixels>) {
+    let radii = [
+        radii.top_right,
+        radii.bottom_right,
+        radii.bottom_left,
+        radii.top_left,
+    ]
+    .map(|radius| limited_radius(bounds, radius));
     let (left, right) = (bounds.left(), bounds.right());
     let (top, bottom) = (bounds.top(), bounds.bottom());
-    builder.move_to(point(left + radius * CORNER_EXTENT, top));
-    for corner in 0..4 {
+    builder.move_to(point(left + radii[3] * CORNER_EXTENT, top));
+    for (corner, radius) in radii.into_iter().enumerate() {
         let transform = |(x, y): (f32, f32)| match corner {
             0 => point(right - radius * x, top + radius * y),
             1 => point(right - radius * y, bottom - radius * x),
@@ -139,10 +145,14 @@ fn translated(shape: &Path<Pixels>, offset: Point<Pixels>) -> Path<Pixels> {
 }
 
 pub(crate) fn squircle_path(bounds: Bounds<Pixels>, radius: Pixels) -> Option<Path<Pixels>> {
+    squircle_corners_path(bounds, Corners::all(radius))
+}
+
+fn squircle_corners_path(bounds: Bounds<Pixels>, radii: Corners<Pixels>) -> Option<Path<Pixels>> {
     #[cfg(test)]
     BUILDS.with(|builds| builds.set(builds.get() + 1));
     let mut builder = PathBuilder::fill();
-    trace(&mut builder, bounds, radius);
+    trace(&mut builder, bounds, radii);
     builder.build().ok()
 }
 
@@ -151,10 +161,18 @@ pub(crate) fn squircle_stroke_path(
     radius: Pixels,
     width: Pixels,
 ) -> Option<Path<Pixels>> {
+    squircle_corners_stroke_path(bounds, Corners::all(radius), width)
+}
+
+fn squircle_corners_stroke_path(
+    bounds: Bounds<Pixels>,
+    radii: Corners<Pixels>,
+    width: Pixels,
+) -> Option<Path<Pixels>> {
     #[cfg(test)]
     BUILDS.with(|builds| builds.set(builds.get() + 1));
     let half = width / 2.;
-    let radius = limited_radius(bounds, radius);
+    let inset = |radius: Pixels| (limited_radius(bounds, radius) - half).max(px(0.));
     let inner = Bounds {
         origin: bounds.origin + point(half, half),
         size: size(
@@ -162,17 +180,30 @@ pub(crate) fn squircle_stroke_path(
             (bounds.size.height - width).max(px(0.)),
         ),
     };
+    let radii = Corners {
+        top_left: inset(radii.top_left),
+        top_right: inset(radii.top_right),
+        bottom_right: inset(radii.bottom_right),
+        bottom_left: inset(radii.bottom_left),
+    };
     let mut builder = PathBuilder::stroke(width);
-    trace(&mut builder, inner, (radius - half).max(px(0.)));
+    trace(&mut builder, inner, radii);
     builder.build().ok()
 }
 
 pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> AnyElement {
+    squircle_corners_fill(Corners::all(radius), color)
+}
+
+pub(crate) fn squircle_corners_fill(radii: Corners<Pixels>, color: Hsla) -> AnyElement {
     if translucent_over_transparent_window(color) {
         return div()
             .absolute()
             .inset_0()
-            .rounded(radius)
+            .rounded_tl(radii.top_left)
+            .rounded_tr(radii.top_right)
+            .rounded_br(radii.bottom_right)
+            .rounded_bl(radii.bottom_left)
             .bg(color)
             .into_any_element();
     }
@@ -186,7 +217,7 @@ pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> AnyElement {
                     if color.a <= f32::EPSILON {
                         return;
                     }
-                    if let Some(path) = squircle_path(bounds, radius) {
+                    if let Some(path) = squircle_corners_path(bounds, radii) {
                         window.paint_path(path, color);
                     }
                 },
@@ -238,6 +269,14 @@ fn translucent_over_transparent_window(color: Hsla) -> bool {
 }
 
 pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> impl IntoElement {
+    squircle_corners_border(Corners::all(radius), width, color)
+}
+
+pub(crate) fn squircle_corners_border(
+    radii: Corners<Pixels>,
+    width: Pixels,
+    color: Hsla,
+) -> impl IntoElement {
     div().absolute().inset_0().child(
         canvas(
             |_, _, _| {},
@@ -245,7 +284,7 @@ pub(crate) fn squircle_border(radius: Pixels, width: Pixels, color: Hsla) -> imp
                 if color.a <= f32::EPSILON {
                     return;
                 }
-                if let Some(path) = squircle_stroke_path(bounds, radius, width) {
+                if let Some(path) = squircle_corners_stroke_path(bounds, radii, width) {
                     window.paint_path(path, color);
                 }
             },
@@ -272,7 +311,7 @@ mod tests {
             let bounds = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
             assert_eq!(limited_radius(bounds, px(radius)), px(radius));
             let mut builder = PathBuilder::fill();
-            trace(&mut builder, bounds, px(radius));
+            trace(&mut builder, bounds, Corners::all(px(radius)));
             assert!(builder.build().is_ok());
         }
     }

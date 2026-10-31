@@ -11,7 +11,8 @@ use gpui::{
 };
 
 use crate::ui_primitives::squircle::{
-    cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_fill,
+    cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_corners_border,
+    squircle_corners_fill, squircle_fill,
 };
 use crate::ui_primitives::{AccessibleControlExt, squircle_skin};
 
@@ -111,6 +112,10 @@ pub(crate) fn pane_card_background(
 enum CardShape {
     Squircle(Pixels),
     Flush(gpui::Edges<bool>),
+    Morph {
+        radii: gpui::Corners<Pixels>,
+        comfort: f32,
+    },
 }
 
 impl CardShape {
@@ -118,6 +123,7 @@ impl CardShape {
         match self {
             Self::Squircle(radius) => squircle_fill(radius, color),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
+            Self::Morph { radii, .. } => squircle_corners_fill(radii, color),
         }
     }
 
@@ -125,6 +131,7 @@ impl CardShape {
         match self {
             Self::Squircle(radius) => pane_card_fill(radius, color),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
+            Self::Morph { radii, .. } => squircle_corners_fill(radii, color),
         }
     }
 
@@ -142,7 +149,58 @@ impl CardShape {
                 crate::layout::flush_outline(edges, color).into_any_element()
             }
             Self::Flush(edges) => crate::layout::flush_border(edges, color).into_any_element(),
+            Self::Morph { radii, .. } if card_paints_quads(background) => div()
+                .absolute()
+                .inset_0()
+                .rounded_tl(radii.top_left)
+                .rounded_tr(radii.top_right)
+                .rounded_br(radii.bottom_right)
+                .rounded_bl(radii.bottom_left)
+                .border_1()
+                .border_color(color)
+                .into_any_element(),
+            Self::Morph { radii, .. } => {
+                squircle_corners_border(radii, px(1.), color).into_any_element()
+            }
         }
+    }
+
+    fn drop_veil_radius(self) -> Pixels {
+        match self {
+            Self::Squircle(radius) => (radius - px(OVERLAY_MARGIN)).max(px(OVERLAY_RADIUS)),
+            Self::Flush(_) | Self::Morph { .. } => px(OVERLAY_RADIUS),
+        }
+    }
+
+    fn tab_chip_radius(self) -> Option<Pixels> {
+        let compact = crate::app::constants::PANEL_CORNER_RADIUS - px(UNIFIED_TAB_BAR_INSET);
+        match self {
+            Self::Squircle(_) => None,
+            Self::Flush(_) => Some(compact),
+            Self::Morph { comfort, .. } => {
+                Some(compact + (px(UNIFIED_TAB_HEIGHT / 2.) - compact) * comfort)
+            }
+        }
+    }
+
+    fn drop_veil(self, background: Hsla, fill: Hsla, stroke: Hsla) -> AnyElement {
+        let radius = self.drop_veil_radius();
+        if !matches!(self, Self::Squircle(_)) || card_paints_quads(background) {
+            return div()
+                .absolute()
+                .inset_0()
+                .rounded(radius)
+                .bg(fill)
+                .border_2()
+                .border_color(stroke)
+                .into_any_element();
+        }
+        div()
+            .absolute()
+            .inset_0()
+            .child(squircle_fill(radius, fill))
+            .child(squircle_border(radius, px(2.), stroke))
+            .into_any_element()
     }
 }
 
@@ -175,6 +233,8 @@ const FOCUSED_PANE_BORDER_ALPHA: f32 = 0.24;
 const UNFOCUSED_PANE_TITLE_ALPHA: f32 = 0.65;
 const PANE_DIM_EPSILON: f32 = 0.002;
 const OVERLAY_MARGIN: f32 = 8.0;
+const UNIFIED_TAB_BAR_INSET: f32 = 6.0;
+const UNIFIED_TAB_HEIGHT: f32 = 32.0;
 const OVERLAY_RADIUS: f32 = 8.0;
 const DROP_OVERLAY_BLUE: u32 = 0x007aff;
 const DROP_OVERLAY_BACKGROUND_ALPHA: f32 = 0.10;
@@ -655,6 +715,10 @@ impl Pane {
                 CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS)
             }
             crate::layout::CardFrame::Flush(edges) => CardShape::Flush(edges),
+            crate::layout::CardFrame::Morph { outer, comfort } => CardShape::Morph {
+                radii: crate::layout::morph_corners(outer, comfort),
+                comfort,
+            },
         }
     }
 
@@ -1399,6 +1463,7 @@ impl Pane {
         let rail_hover = crate::app::constants::sidebar_tab_hover_background();
         let rail_active = crate::app::constants::sidebar_tab_active_background();
         let content_group = SharedString::from(format!("pane-content-{pane_id}"));
+        let chip_radius = self.card_shape().tab_chip_radius();
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1446,7 +1511,11 @@ impl Pane {
             let chip = div()
                 .id(SharedString::from(format!("pane-{pane_id}-tab-{index}")))
                 .flex_none()
-                .h(px(if unified { 32. } else { TAB_BAR_HEIGHT }))
+                .h(px(if unified {
+                    UNIFIED_TAB_HEIGHT
+                } else {
+                    TAB_BAR_HEIGHT
+                }))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1456,7 +1525,10 @@ impl Pane {
                 .cursor(gpui::CursorStyle::Arrow);
             let chip = if unified {
                 chip.group(group.clone())
-                    .rounded_full()
+                    .map(|chip| match chip_radius {
+                        Some(radius) => chip.rounded(radius),
+                        None => chip.rounded_full(),
+                    })
                     .border_1()
                     .border_color(gpui::transparent_black())
                     .w(px(208.))
@@ -1542,7 +1614,9 @@ impl Pane {
                         .items_center()
                         .justify_center()
                         .rounded(px(4.))
-                        .when(unified, |button| button.rounded_full())
+                        .when(unified && chip_radius.is_none(), |button| {
+                            button.rounded_full()
+                        })
                         .invisible()
                         .group_hover(group, |style| style.visible())
                         .hover(|style| style.bg(ui.text.opacity(0.12)))
@@ -1623,13 +1697,15 @@ impl Pane {
             .items_center()
             .w_full()
             .h(px(if unified {
-                44.
+                UNIFIED_TAB_HEIGHT + 2. * UNIFIED_TAB_BAR_INSET
             } else {
                 TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET
             }))
             .pb(px(if unified { 0. } else { TAB_BAR_BOTTOM_INSET }))
             .px(px(if unified { 2. } else { SECTION_PX }))
-            .when(unified && !self.is_detached(), |bar| bar.pl(px(6.)))
+            .when(unified && !self.is_detached(), |bar| {
+                bar.pl(px(UNIFIED_TAB_BAR_INSET))
+            })
             .when(unified && self.is_detached(), |bar| bar.pl(px(0.)))
             .gap(px(TAB_BAR_GAP))
             .overflow_hidden();
@@ -1939,24 +2015,37 @@ impl Render for Pane {
 
         let overlay_blue = Hsla::from(rgb(DROP_OVERLAY_BLUE));
         let swap_tint = pane_colors().text;
-        let overlay = div()
+        let session_veil = div()
             .absolute()
-            .bg(overlay_blue.opacity(DROP_OVERLAY_BACKGROUND_ALPHA))
-            .rounded(px(OVERLAY_RADIUS))
-            .border_2()
-            .border_color(overlay_blue)
+            .inset_0()
             .invisible()
             .group_drag_over::<SessionDrag>(group_name.clone(), |s| s.visible())
-            .group_drag_over::<PaneDrag>(group_name.clone(), move |s| {
-                s.visible()
-                    .bg(swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
-                    .border_color(swap_tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
-            })
-            .group_drag_over::<SurfaceDrag>(group_name.clone(), move |s| {
-                s.visible()
-                    .bg(swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
-                    .border_color(swap_tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
-            })
+            .child(card_shape.drop_veil(
+                card_background,
+                overlay_blue.opacity(DROP_OVERLAY_BACKGROUND_ALPHA),
+                overlay_blue,
+            ))
+            .on_drop(cx.listener(move |this, drag: &SessionDrag, _window, cx| {
+                let edge = this.drag_split_direction.take();
+                cx.emit(PaneEvent::DropSessionSplit {
+                    edge,
+                    agent: drag.agent,
+                    session_id: drag.session_id.clone(),
+                    cwd: drag.cwd.clone(),
+                });
+                cx.notify();
+            }));
+        let move_veil = div()
+            .absolute()
+            .inset_0()
+            .invisible()
+            .group_drag_over::<PaneDrag>(group_name.clone(), |s| s.visible())
+            .group_drag_over::<SurfaceDrag>(group_name.clone(), |s| s.visible())
+            .child(card_shape.drop_veil(
+                card_background,
+                swap_tint.opacity(SWAP_OVERLAY_FILL_ALPHA),
+                swap_tint.opacity(SWAP_OVERLAY_BORDER_ALPHA),
+            ))
             .on_drop(cx.listener(|this, drag: &SurfaceDrag, _, cx| {
                 cx.emit(PaneEvent::DropSurfaceMove {
                     source_pane_id: drag.pane_id,
@@ -1972,17 +2061,11 @@ impl Render for Pane {
                     edge,
                 });
                 cx.notify();
-            }))
-            .on_drop(cx.listener(move |this, drag: &SessionDrag, _window, cx| {
-                let edge = this.drag_split_direction.take();
-                cx.emit(PaneEvent::DropSessionSplit {
-                    edge,
-                    agent: drag.agent,
-                    session_id: drag.session_id.clone(),
-                    cwd: drag.cwd.clone(),
-                });
-                cx.notify();
-            }))
+            }));
+        let overlay = div()
+            .absolute()
+            .child(session_veil)
+            .child(move_veil)
             .with_animation(
                 overlay_anim_id,
                 Animation::new(Duration::from_millis(130)).with_easing(ease_out_quint()),
@@ -2453,6 +2536,38 @@ mod tests {
         assert_eq!(
             pane_card_background(&light, true, true, true),
             gpui::white().opacity(super::VEILED_TERMINAL_SHADE)
+        );
+    }
+
+    #[test]
+    fn the_drop_veil_nests_concentrically_inside_a_comfortable_card() {
+        let card = super::CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS);
+        assert_eq!(
+            card.drop_veil_radius() + gpui::px(super::OVERLAY_MARGIN),
+            crate::app::constants::PANE_CARD_RADIUS
+        );
+        assert_eq!(
+            super::CardShape::Squircle(gpui::px(10.)).drop_veil_radius(),
+            gpui::px(super::OVERLAY_RADIUS)
+        );
+        assert_eq!(
+            super::CardShape::Flush(gpui::Edges::default()).drop_veil_radius(),
+            gpui::px(super::OVERLAY_RADIUS)
+        );
+    }
+
+    #[test]
+    fn a_compact_tab_nests_concentrically_in_the_pane_corner() {
+        let radius = super::CardShape::Flush(gpui::Edges::default())
+            .tab_chip_radius()
+            .unwrap();
+        assert_eq!(
+            radius + gpui::px(super::UNIFIED_TAB_BAR_INSET),
+            crate::app::constants::PANEL_CORNER_RADIUS
+        );
+        assert_eq!(
+            super::CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS).tab_chip_radius(),
+            None
         );
     }
 
