@@ -9,6 +9,7 @@ pub mod jsonc;
 #[cfg(feature = "config-io")]
 pub mod lock;
 pub mod runtime_catalog;
+pub mod usage;
 
 #[cfg(test)]
 #[path = "../build_support.rs"]
