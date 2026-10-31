@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::{self, Read};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::OnceLock;
 use std::thread;
@@ -62,6 +62,7 @@ pub enum ProcError {
         cap: u64,
     },
     Timeout,
+    Canceled,
 }
 
 impl fmt::Display for ProcError {
@@ -86,6 +87,7 @@ impl fmt::Display for ProcError {
                 write!(f, "process {stream} exceeded its {cap}-byte capture limit")
             }
             ProcError::Timeout => write!(f, "process exceeded its deadline; termination requested"),
+            ProcError::Canceled => write!(f, "process canceled; termination requested"),
         }
     }
 }
@@ -100,7 +102,8 @@ impl Error for ProcError {
             ProcError::ReaderSpawn { source, .. } | ProcError::Read { source, .. } => Some(source),
             ProcError::InvalidOutputLimit(_)
             | ProcError::OutputLimitExceeded { .. }
-            | ProcError::Timeout => None,
+            | ProcError::Timeout
+            | ProcError::Canceled => None,
         }
     }
 }
@@ -116,7 +119,14 @@ pub fn run_with_timeout(
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<BoundedOutput, ProcError> {
-    run_supervised(cmd, deadline, stdout_cap, None, StdoutCapture::Bounded)
+    run_supervised(
+        cmd,
+        deadline,
+        stdout_cap,
+        None,
+        StdoutCapture::Bounded,
+        None,
+    )
 }
 
 pub fn run_with_timeout_keeping_stderr_tail(
@@ -130,6 +140,7 @@ pub fn run_with_timeout_keeping_stderr_tail(
         stdout_cap,
         Some(Box::new(|_: &[u8]| {})),
         StdoutCapture::Bounded,
+        None,
     )
 }
 
@@ -144,6 +155,7 @@ pub fn run_with_timeout_keeping_stdout_head(
         stdout_cap,
         Some(Box::new(|_: &[u8]| {})),
         StdoutCapture::Head,
+        None,
     )?;
     let truncated = output.stdout.len() as u64 > stdout_cap;
     output.stdout.truncate(validate_capture_cap(stdout_cap)?);
@@ -168,6 +180,24 @@ pub fn run_with_timeout_tapping_stderr(
         stdout_cap,
         Some(Box::new(stderr_tap)),
         StdoutCapture::Bounded,
+        None,
+    )
+}
+
+pub fn run_cancelable_tapping_stderr(
+    cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+    stderr_tap: impl FnMut(&[u8]) + Send + 'static,
+    cancel: &AtomicBool,
+) -> Result<BoundedOutput, ProcError> {
+    run_supervised(
+        cmd,
+        deadline,
+        stdout_cap,
+        Some(Box::new(stderr_tap)),
+        StdoutCapture::Bounded,
+        Some(cancel),
     )
 }
 
@@ -177,6 +207,7 @@ fn run_supervised(
     stdout_cap: u64,
     stderr_tap: Option<StderrTap>,
     stdout_capture: StdoutCapture,
+    cancel: Option<&AtomicBool>,
 ) -> Result<BoundedOutput, ProcError> {
     let stdout_cap = validate_capture_cap(stdout_cap)?;
     let stderr_cap = validate_capture_cap(STDERR_CAP)?;
@@ -232,6 +263,9 @@ fn run_supervised(
         match process.child_mut()?.try_wait().map_err(ProcError::Wait)? {
             Some(status) => break status,
             None => {
+                if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    return Err(ProcError::Canceled);
+                }
                 let Some(sleep_for) = poll_sleep_duration(start, deadline) else {
                     return Err(ProcError::Timeout);
                 };
@@ -841,6 +875,27 @@ mod tests {
         let _ = std::fs::remove_file(marker.with_extension("started"));
         let _ = std::fs::remove_file(marker.with_extension("stdout"));
         let _ = std::fs::remove_file(marker.with_extension("stderr"));
+    }
+
+    #[test]
+    fn a_raised_cancel_flag_stops_a_running_process_well_before_its_deadline() {
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let trigger = cancel.clone();
+        let raiser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            trigger.store(true, Ordering::Relaxed);
+        });
+        let start = Instant::now();
+        let result = run_cancelable_tapping_stderr(
+            sleep_command(),
+            Duration::from_secs(60),
+            1024,
+            |_: &[u8]| {},
+            &cancel,
+        );
+        raiser.join().unwrap();
+        assert!(matches!(result, Err(ProcError::Canceled)));
+        assert!(start.elapsed() < Duration::from_secs(20));
     }
 
     #[test]
