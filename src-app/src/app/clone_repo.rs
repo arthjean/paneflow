@@ -1,18 +1,28 @@
 use std::path::Path;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, CursorStyle, Entity,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, PathPromptOptions,
-    SharedString, Styled, Window, deferred, div, ease_in_out, prelude::*, px, relative, svg,
+    AnyElement, AppContext, ClickEvent, Context, Entity, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, Window,
+    deferred, div, prelude::*, px, svg,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_divider_color, menu_surface, select_item, with_alpha};
+use crate::settings::components::{
+    MENU_MAX_HEIGHT, select_item_shaped, select_menu_surface, with_alpha,
+};
+use crate::ui_primitives::quick_pick::{
+    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PANEL_RADIUS, ROW_GAP,
+    ROW_HEIGHT, ROW_RADIUS, ROW_SPACING, ROW_TEXT_INSET,
+};
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::{FilterFieldStyle, filter_field};
 use crate::widgets::text_input::TextInput;
 
-const CLONE_MODAL_WIDTH: f32 = 544.0;
-const CLONE_MAX_LIST_HEIGHT: f32 = 360.0;
+const CLONE_PANEL_WIDTH: f32 = 560.;
+const CLONE_PANEL_TOP_MARGIN: f32 = 96.;
+const TRAILING_SIZE: f32 = 13.;
+const GITHUB_ICON: &str = "icons/brand-github.svg";
 const CLONE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(600);
 const CLONE_OUTPUT_CAP: u64 = 256 * 1024;
 const GITHUB_LIST_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
@@ -24,9 +34,6 @@ const GITHUB_SOURCE_LABEL: &str = "Clone from GitHub";
 const GITHUB_SOURCE_GROUP: &str = "remote sources";
 const GITHUB_CLI_HINT: &str =
     "Install the GitHub CLI and run gh auth login to list your repositories";
-const CLONE_SWEEP_MS: u64 = 1400;
-const CLONE_SWEEP_WIDTH: f32 = 0.3;
-const CLONE_PROGRESS_FILL: u32 = 0x3fa266;
 const CLONE_PHASES: [(&str, f32, f32); 6] = [
     ("Enumerating objects", 0.0, 0.02),
     ("Counting objects", 0.02, 0.05),
@@ -69,10 +76,13 @@ pub(crate) struct CloneRepoState {
     pub(crate) url_input: Entity<TextInput>,
     pub(crate) source: CloneSource,
     pub(crate) selected: usize,
-    pub(crate) running: bool,
-    pub(crate) target: String,
-    pub(crate) progress: Option<CloneProgress>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CloneFailure {
+    Canceled,
+    Failed(String),
 }
 
 enum CloneRow {
@@ -284,13 +294,14 @@ fn clone_command(
 
 fn run_clone_command(
     command: std::process::Command,
+    cancel: &AtomicBool,
     mut on_progress: impl FnMut(CloneProgress) + Send + 'static,
 ) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
     let mut carry = Vec::new();
     if command.get_program() == "git" {
         crate::git_command::record_spawn(&command);
     }
-    paneflow_process::run_with_timeout_tapping_stderr(
+    paneflow_process::run_cancelable_tapping_stderr(
         command,
         CLONE_DEADLINE,
         CLONE_OUTPUT_CAP,
@@ -301,6 +312,7 @@ fn run_clone_command(
                 }
             });
         },
+        cancel,
     )
 }
 
@@ -317,30 +329,37 @@ fn gh_is_unusable(
     }
 }
 
-fn run_clone(
+pub(crate) fn run_clone(
     target: &str,
     destination: &Path,
     space_env: &[(String, String)],
+    cancel: &AtomicBool,
     on_progress: impl FnMut(CloneProgress) + Send + Clone + 'static,
-) -> Result<(), String> {
+) -> Result<(), CloneFailure> {
     let tool = clone_tool_for(target);
     let mut result = run_clone_command(
         clone_command(tool, target, destination, space_env),
+        cancel,
         on_progress.clone(),
     );
-    if tool == CloneTool::GitHubCli && gh_is_unusable(&result) {
+    if tool == CloneTool::GitHubCli && gh_is_unusable(&result) && !cancel.load(Ordering::Relaxed) {
         log::info!("gh is missing or signed out; cloning {target} with git");
         result = run_clone_command(
             clone_command(CloneTool::Git, target, destination, space_env),
+            cancel,
             on_progress,
         );
     }
-    let output = result.map_err(|error| error.to_string())?;
+    let output = match result {
+        Ok(output) => output,
+        Err(paneflow_process::ProcError::Canceled) => return Err(CloneFailure::Canceled),
+        Err(error) => return Err(CloneFailure::Failed(error.to_string())),
+    };
     if output.status.success() {
         return Ok(());
     }
-    Err(clone_failure_message(&String::from_utf8_lossy(
-        &output.stderr,
+    Err(CloneFailure::Failed(clone_failure_message(
+        &String::from_utf8_lossy(&output.stderr),
     )))
 }
 
@@ -397,114 +416,6 @@ fn list_github_repos(space_env: &[(String, String)]) -> Result<Vec<GitHubRepo>, 
     Ok(parse_github_repos(&output.stdout))
 }
 
-fn clone_sweep_rest_left() -> f32 {
-    (1.0 - CLONE_SWEEP_WIDTH) / 2.0
-}
-
-fn clone_sweep_left(delta: f32) -> f32 {
-    -CLONE_SWEEP_WIDTH + (1.0 + CLONE_SWEEP_WIDTH) * delta
-}
-
-fn clone_progress_fill() -> gpui::Hsla {
-    gpui::rgb(CLONE_PROGRESS_FILL).into()
-}
-
-fn render_clone_progress(
-    target: &str,
-    progress: Option<&CloneProgress>,
-    ui: crate::theme::UiColors,
-) -> AnyElement {
-    let percent = progress.map(|progress| (progress.fraction * 100.0).round() as u32);
-    let status = match progress {
-        Some(CloneProgress {
-            phase,
-            detail: Some(detail),
-            ..
-        }) => format!("{phase} · {detail}"),
-        Some(CloneProgress { phase, .. }) => (*phase).to_string(),
-        None => "Connecting to the remote…".to_string(),
-    };
-    let fill = match progress {
-        Some(progress) => div()
-            .h_full()
-            .w(relative(progress.fraction.clamp(0.02, 1.0)))
-            .rounded_full()
-            .bg(clone_progress_fill())
-            .into_any_element(),
-        None => {
-            let sweep = div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .w(relative(CLONE_SWEEP_WIDTH))
-                .rounded_full()
-                .bg(clone_progress_fill());
-            if crate::ui_primitives::reduce_motion() {
-                sweep
-                    .left(relative(clone_sweep_rest_left()))
-                    .into_any_element()
-            } else {
-                sweep
-                    .with_animation(
-                        "clone-progress-sweep",
-                        Animation::new(Duration::from_millis(CLONE_SWEEP_MS))
-                            .repeat()
-                            .with_easing(ease_in_out),
-                        |bar, delta| bar.left(relative(clone_sweep_left(delta))),
-                    )
-                    .into_any_element()
-            }
-        }
-    };
-
-    div()
-        .px(px(8.))
-        .pt(px(8.))
-        .pb(px(10.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(12.))
-                        .text_color(ui.text)
-                        .child(format!("Cloning {target}")),
-                )
-                .when_some(percent, |row, percent| {
-                    row.child(
-                        div()
-                            .flex_none()
-                            .pl(px(8.))
-                            .text_size(px(11.))
-                            .text_color(ui.muted)
-                            .child(format!("{percent}%")),
-                    )
-                }),
-        )
-        .child(
-            div()
-                .relative()
-                .w_full()
-                .h(px(4.))
-                .rounded_full()
-                .bg(with_alpha(ui.text, 0.10))
-                .overflow_hidden()
-                .child(fill),
-        )
-        .child(div().text_size(px(11.)).text_color(ui.muted).child(status))
-        .into_any_element()
-}
-
 impl PaneFlowApp {
     pub(crate) fn open_clone_repo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.clone_repo.is_some() {
@@ -517,9 +428,6 @@ impl PaneFlowApp {
             url_input,
             source: CloneSource::Url,
             selected: 0,
-            running: false,
-            target: String::new(),
-            progress: None,
             error: None,
         });
         window.focus(&focus, cx);
@@ -536,16 +444,12 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn close_clone_repo(&mut self, cx: &mut Context<Self>) {
-        if self.clone_repo.as_ref().is_some_and(|clone| clone.running) {
-            return;
-        }
         self.clone_repo = None;
         cx.notify();
     }
 
     fn clone_repo_set_error(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
         if let Some(clone) = self.clone_repo.as_mut() {
-            clone.running = false;
             if let CloneSource::GitHub { loading, .. } = &mut clone.source {
                 *loading = false;
             }
@@ -644,7 +548,7 @@ impl PaneFlowApp {
     }
 
     fn clone_repo_activate(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.clone_repo.as_ref().is_none_or(|clone| clone.running) {
+        if self.clone_repo.is_none() {
             return;
         }
         let rows = self.clone_repo_rows(cx);
@@ -662,9 +566,6 @@ impl PaneFlowApp {
         let Some(clone) = self.clone_repo.as_ref() else {
             return;
         };
-        if clone.running {
-            return;
-        }
         let typed = clone.url_input.read(cx).value().trim().to_string();
         let selected = clone.selected;
         if matches!(clone.source, CloneSource::Url) && !typed.is_empty() {
@@ -684,6 +585,11 @@ impl PaneFlowApp {
             return;
         };
 
+        if self.clone_job_is_running() {
+            self.clone_repo_set_error("A clone is already in progress", cx);
+            return;
+        }
+
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -694,8 +600,6 @@ impl PaneFlowApp {
             clone.error = None;
         }
         cx.notify();
-        let space_env =
-            crate::space_env::subprocess_env(&self.cached_config, self.active_space.as_ref());
 
         cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
             let picked = match receiver.await {
@@ -706,63 +610,19 @@ impl PaneFlowApp {
                 return;
             };
             let destination = parent.join(&name);
-            if destination.exists() {
-                let _ = this.update(cx, |app, cx| {
+            let exists = {
+                let probe = destination.clone();
+                smol::unblock(move || probe.exists()).await
+            };
+            let _ = this.update_in(cx, |app, window, cx| {
+                if exists {
                     app.clone_repo_set_error(
                         format!("{} already exists", destination.display()),
                         cx,
                     );
-                });
-                return;
-            }
-            let target = name.clone();
-            let _ = this.update(cx, |app, cx| {
-                if let Some(clone) = app.clone_repo.as_mut() {
-                    clone.running = true;
-                    clone.target = target;
-                    clone.progress = None;
-                    clone.error = None;
+                    return;
                 }
-                cx.notify();
-            });
-
-            let clone_url = url.clone();
-            let clone_destination = destination.clone();
-            let (progress_tx, progress_rx) = smol::channel::unbounded::<CloneProgress>();
-            let clone_task = smol::unblock(move || {
-                run_clone(
-                    &clone_url,
-                    &clone_destination,
-                    &space_env,
-                    move |progress| {
-                        let _ = progress_tx.try_send(progress);
-                    },
-                )
-            });
-            while let Ok(progress) = progress_rx.recv().await {
-                let _ = this.update(cx, |app, cx| {
-                    if let Some(clone) = app.clone_repo.as_mut() {
-                        clone.progress = Some(progress);
-                        cx.notify();
-                    }
-                });
-            }
-            let result = clone_task.await;
-
-            let _ = this.update_in(cx, |app, window, cx| match result {
-                Ok(()) => {
-                    app.clone_repo = None;
-                    app.open_workspace_folders(std::slice::from_ref(&destination), cx);
-                    if let Some(idx) = app
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws.cwd == destination.display().to_string())
-                    {
-                        app.select_workspace(idx, window, cx);
-                    }
-                    cx.notify();
-                }
-                Err(message) => app.clone_repo_set_error(message, cx),
+                app.begin_clone_job(url, name, destination, window, cx);
             });
         })
         .detach();
@@ -801,27 +661,32 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (icon, label, trailing): (&'static str, String, Option<&'static str>) = match row {
-            CloneRow::GitHubSource => (
-                "icons/brand-github.svg",
-                GITHUB_SOURCE_LABEL.to_string(),
-                Some(GITHUB_SOURCE_GROUP),
-            ),
-            CloneRow::Url(url) => (
-                "icons/brand-github.svg",
-                format!("Clone {url}"),
-                Some("repository URL"),
-            ),
-            CloneRow::Repo(repo) => ("icons/brand-github.svg", repo.name_with_owner.clone(), None),
+        let (label, trailing): (String, Option<&'static str>) = match row {
+            CloneRow::GitHubSource => (GITHUB_SOURCE_LABEL.to_string(), Some(GITHUB_SOURCE_GROUP)),
+            CloneRow::Url(url) => (format!("Clone {url}"), Some("repository URL")),
+            CloneRow::Repo(repo) => (repo.name_with_owner.clone(), None),
         };
-        select_item(
+        let label_color = if selected {
+            crate::theme::on_selection_color()
+        } else {
+            ui.text
+        };
+        let muted_color = if selected {
+            crate::theme::on_selection_muted()
+        } else {
+            ui.muted
+        };
+        select_item_shaped(
             SharedString::from(format!("clone-repo-row-{idx}")),
             selected,
             ui,
+            crate::theme::selection_color(),
+            ROW_RADIUS,
         )
-        .w_full()
-        .justify_between()
-        .cursor(CursorStyle::PointingHand)
+        .h(px(ROW_HEIGHT))
+        .px(px(ROW_TEXT_INSET))
+        .gap(px(ROW_GAP))
+        .text_size(px(LABEL_SIZE))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.clone_repo_activate(idx, window, cx);
@@ -829,42 +694,83 @@ impl PaneFlowApp {
         }))
         .child(
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
+                .relative()
+                .flex_1()
                 .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(ICON_GAP))
                 .child(
                     svg()
-                        .size(px(14.))
                         .flex_none()
-                        .path(icon)
-                        .text_color(ui.text),
+                        .size(px(ICON_SIZE))
+                        .path(GITHUB_ICON)
+                        .text_color(with_alpha(label_color, 0.8)),
                 )
                 .child(
                     div()
+                        .flex_1()
                         .min_w_0()
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_color(ui.text)
+                        .text_color(label_color)
                         .child(label),
                 ),
         )
         .when_some(trailing, |row, group| {
             row.child(
                 div()
+                    .relative()
                     .flex_none()
-                    .pl(px(8.))
-                    .text_size(px(11.))
-                    .text_color(ui.muted)
+                    .text_size(px(TRAILING_SIZE))
+                    .text_color(muted_color)
                     .child(group),
             )
         })
         .into_any_element()
     }
 
-    pub(crate) fn render_clone_repo(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_clone_field(
+        &self,
+        url_input: Entity<TextInput>,
+        ui: crate::theme::UiColors,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let focus = url_input.read(cx).focus_handle.clone();
+        let focused = focus.is_focused(window);
+        let has_query = !url_input.read(cx).value().is_empty();
+        let clear_target = url_input.clone();
+        filter_field(
+            "clone-repo-field",
+            "clone-repo-field-clear",
+            "Repository URL",
+            ui,
+            FilterFieldStyle::palette(),
+            focused,
+            has_query,
+            true,
+            None,
+            url_input,
+            move |_: &ClickEvent, window: &mut Window, cx: &mut gpui::App| {
+                cx.stop_propagation();
+                clear_target.update(cx, |input, cx| input.clear(cx));
+                let focus = clear_target.read(cx).focus_handle.clone();
+                window.focus(&focus, cx);
+            },
+        )
+        .flex_none()
+        .mx(px(FIELD_INSET))
+        .mb(px(FIELD_GAP))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus, cx);
+            cx.stop_propagation();
+        })
+        .into_any_element()
+    }
+
+    pub(crate) fn render_clone_repo(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(clone) = self.clone_repo.as_ref() else {
             return div().into_any_element();
         };
@@ -873,32 +779,29 @@ impl PaneFlowApp {
         let selected = clone.selected.min(rows.len().saturating_sub(1));
         let loading = matches!(clone.source, CloneSource::GitHub { loading: true, .. });
         let url_input = clone.url_input.clone();
-        let running = clone.running;
-        let target = clone.target.clone();
-        let progress = clone.progress.clone();
         let error = clone.error.clone();
 
         let mut list = div()
             .id("clone-repo-list")
             .flex()
             .flex_col()
-            .gap(px(1.))
-            .p(px(4.))
-            .max_h(px(CLONE_MAX_LIST_HEIGHT))
+            .gap(px(ROW_SPACING))
+            .max_h(MENU_MAX_HEIGHT)
             .overflow_y_scroll();
 
         let status_row = |text: String, color: gpui::Hsla| {
             div()
-                .px(px(8.))
-                .py(px(12.))
-                .text_size(px(12.))
+                .min_h(px(ROW_HEIGHT))
+                .px(px(ROW_TEXT_INSET))
+                .py(px(6.))
+                .flex()
+                .items_center()
+                .text_size(px(LABEL_SIZE))
                 .text_color(color)
                 .child(text)
         };
 
-        if running {
-            list = list.child(render_clone_progress(&target, progress.as_ref(), ui));
-        } else if let Some(error) = error {
+        if let Some(error) = error {
             list = list.child(status_row(error, ui.vc_deleted));
         } else if loading {
             list = list.child(status_row(
@@ -913,7 +816,19 @@ impl PaneFlowApp {
             }
         }
 
-        let card = menu_surface(div().id("clone-repo"), ui)
+        let panel = div()
+            .id("clone-repo")
+            .relative()
+            .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
+            .child(squircle_border(
+                PANEL_RADIUS,
+                px(1.),
+                with_alpha(ui.border, 0.6),
+            ))
+            .flex()
+            .flex_col()
+            .p(px(PANEL_PADDING))
+            .w(px(CLONE_PANEL_WIDTH))
             .occlude()
             .track_focus(&self.clone_repo_focus)
             .on_key_down(cx.listener(Self::handle_clone_repo_key_down))
@@ -922,20 +837,7 @@ impl PaneFlowApp {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .w(px(CLONE_MODAL_WIDTH))
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .child(
-                div()
-                    .px(px(14.))
-                    .py(px(10.))
-                    .border_b_1()
-                    .border_color(menu_divider_color(ui))
-                    .text_size(px(13.))
-                    .text_color(ui.text)
-                    .child(url_input),
-            )
+            .child(self.render_clone_field(url_input, ui, window, cx))
             .child(list);
 
         deferred(
@@ -948,9 +850,11 @@ impl PaneFlowApp {
                 .flex()
                 .items_start()
                 .justify_center()
-                .pt(px(96.))
-                .bg(gpui::hsla(0., 0., 0., 0.4))
-                .child(card),
+                .pt(px(CLONE_PANEL_TOP_MARGIN))
+                .child(crate::ui_primitives::menu_reveal(
+                    "clone-repo-reveal",
+                    panel,
+                )),
         )
         .with_priority(7)
         .into_any_element()
@@ -1016,14 +920,6 @@ mod tests {
                 "the default space clones with exactly today's env"
             );
         }
-    }
-
-    #[test]
-    fn the_reduced_motion_sweep_is_a_fixed_visible_segment() {
-        assert!(clone_sweep_left(0.0) + CLONE_SWEEP_WIDTH <= 0.0);
-        let rest = clone_sweep_rest_left();
-        assert!(rest >= 0.0);
-        assert!(rest + CLONE_SWEEP_WIDTH <= 1.0);
     }
 
     #[test]

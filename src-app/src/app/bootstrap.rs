@@ -411,6 +411,7 @@ impl PaneFlowApp {
             recent_workspaces: crate::app::recents::load(),
             welcome_focus: cx.focus_handle(),
             clone_repo: None,
+            clone_job: None,
             clone_repo_focus: cx.focus_handle(),
             command_palette_open: false,
             command_palette_input,

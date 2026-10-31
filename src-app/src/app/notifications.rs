@@ -300,6 +300,7 @@ impl PaneFlowApp {
 
         let hold_ms = toast.hold_ms;
         let static_motion = toast_motion_is_static(cx);
+        let rest = 20.0 + self.clone_bubble_clearance();
         let toast_el = div()
             .id(SharedString::from(format!("copy-toast-{}", toast.id)))
             .absolute()
@@ -325,7 +326,7 @@ impl PaneFlowApp {
             let (opacity, lift) = toast_frame(TOAST_HOLD_STAGE, 0.0);
             toast_el
                 .opacity(opacity)
-                .bottom(px(20.0 + lift))
+                .bottom(px(rest + lift))
                 .into_any_element()
         } else {
             toast_el
@@ -338,9 +339,9 @@ impl PaneFlowApp {
                         Animation::new(std::time::Duration::from_millis(TOAST_EXIT_MS))
                             .with_easing(ease_in_out),
                     ],
-                    |toast_el, stage, delta| {
+                    move |toast_el, stage, delta| {
                         let (opacity, lift) = toast_frame(stage, delta);
-                        toast_el.opacity(opacity).bottom(px(20.0 + lift))
+                        toast_el.opacity(opacity).bottom(px(rest + lift))
                     },
                 )
                 .into_any_element()

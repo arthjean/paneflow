@@ -313,6 +313,7 @@ struct PaneFlowApp {
     recent_workspaces: Vec<app::recents::RecentWorkspace>,
     welcome_focus: FocusHandle,
     clone_repo: Option<app::clone_repo::CloneRepoState>,
+    clone_job: Option<app::clone_bubble::CloneJob>,
     clone_repo_focus: FocusHandle,
     command_palette_open: bool,
     command_palette_input: gpui::Entity<crate::widgets::text_input::TextInput>,

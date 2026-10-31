@@ -6,6 +6,7 @@ pub mod auto_naming;
 pub mod bootstrap;
 pub mod branch_prompt;
 pub mod cli_diff_dock;
+pub mod clone_bubble;
 pub mod clone_repo;
 pub mod close_policy;
 pub mod command_palette;

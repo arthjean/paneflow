@@ -715,6 +715,9 @@ impl Render for PaneFlowApp {
             );
         }
 
+        if self.clone_job.is_some() {
+            app_content = app_content.child(self.render_clone_bubble(window, cx));
+        }
         if let Some(toast) = &self.toast {
             app_content = app_content.child(self.render_toast(toast, ui, cx));
         }
@@ -741,7 +744,7 @@ impl Render for PaneFlowApp {
         }
 
         if self.clone_repo.is_some() {
-            app_content = app_content.child(self.render_clone_repo(cx));
+            app_content = app_content.child(self.render_clone_repo(window, cx));
         }
         if self.command_palette_open {
             app_content = app_content.child(self.render_command_palette(window, cx));
