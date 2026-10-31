@@ -6,9 +6,20 @@ use crate::{FocusWorkspacesSidebar, PaneFlowApp};
 use super::{SidebarRow, tab_display_title};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SidebarCursor {
-    pub(crate) workspace_id: u64,
-    pub(crate) tab_id: Option<u64>,
+pub(crate) enum SidebarCursor {
+    Tree {
+        workspace_id: u64,
+        tab_id: Option<u64>,
+    },
+    Agent {
+        surface_id: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarNavRow {
+    Tree(SidebarRow),
+    Agent(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +42,13 @@ fn moved_cursor_index(current: Option<usize>, len: usize, step: CursorMove) -> O
     })
 }
 
+fn sidebar_nav_order(tree: Vec<SidebarRow>, agents: &[u64]) -> Vec<SidebarNavRow> {
+    tree.into_iter()
+        .map(SidebarNavRow::Tree)
+        .chain(agents.iter().copied().map(SidebarNavRow::Agent))
+        .collect()
+}
+
 impl PaneFlowApp {
     pub(crate) fn handle_focus_workspaces_sidebar(
         &mut self,
@@ -41,8 +59,8 @@ impl PaneFlowApp {
         if !self.primary_sidebar_visible {
             self.toggle_primary_sidebar(cx);
         }
-        if self.sidebar_cursor_index(cx).is_none() {
-            self.sidebar_cursor = self.active_workspace().map(|ws| SidebarCursor {
+        if self.sidebar_cursor_row(cx).is_none() {
+            self.sidebar_cursor = self.active_workspace().map(|ws| SidebarCursor::Tree {
                 workspace_id: ws.id,
                 tab_id: None,
             });
@@ -54,6 +72,13 @@ impl PaneFlowApp {
     pub(super) fn sidebar_cursor_matches(&self, row: SidebarRow) -> bool {
         self.sidebar_cursor
             .is_some_and(|cursor| self.sidebar_cursor_for(row) == Some(cursor))
+    }
+
+    pub(super) fn sidebar_agent_cursor(&self) -> Option<u64> {
+        match self.sidebar_cursor? {
+            SidebarCursor::Agent { surface_id } => Some(surface_id),
+            SidebarCursor::Tree { .. } => None,
+        }
     }
 
     pub(super) fn place_sidebar_cursor(
@@ -68,13 +93,15 @@ impl PaneFlowApp {
 
     fn sidebar_cursor_for(&self, row: SidebarRow) -> Option<SidebarCursor> {
         match row {
-            SidebarRow::Folder(ws_idx) => self.workspaces.get(ws_idx).map(|ws| SidebarCursor {
-                workspace_id: ws.id,
-                tab_id: None,
-            }),
+            SidebarRow::Folder(ws_idx) => {
+                self.workspaces.get(ws_idx).map(|ws| SidebarCursor::Tree {
+                    workspace_id: ws.id,
+                    tab_id: None,
+                })
+            }
             SidebarRow::Tab(ws_idx, tab_idx) => {
                 let ws = self.workspaces.get(ws_idx)?;
-                ws.tabs().get(tab_idx).map(|tab| SidebarCursor {
+                ws.tabs().get(tab_idx).map(|tab| SidebarCursor::Tree {
                     workspace_id: ws.id,
                     tab_id: Some(tab.id),
                 })
@@ -82,36 +109,54 @@ impl PaneFlowApp {
         }
     }
 
-    fn sidebar_nav_rows(&self, cx: &Context<Self>) -> Vec<SidebarRow> {
+    fn sidebar_nav_cursor_for(&self, row: SidebarNavRow) -> Option<SidebarCursor> {
+        match row {
+            SidebarNavRow::Tree(row) => self.sidebar_cursor_for(row),
+            SidebarNavRow::Agent(surface_id) => Some(SidebarCursor::Agent { surface_id }),
+        }
+    }
+
+    fn sidebar_nav_rows(&self, cx: &Context<Self>) -> Vec<SidebarNavRow> {
         let query = self
             .sidebar_filter_input
             .read(cx)
             .value()
             .trim()
             .to_lowercase();
-        self.sidebar_rows(&query)
+        sidebar_nav_order(self.sidebar_rows(&query), &self.agents_nav_surfaces(cx))
     }
 
-    fn sidebar_cursor_index(&self, cx: &Context<Self>) -> Option<usize> {
+    fn sidebar_cursor_position(&self, rows: &[SidebarNavRow]) -> Option<usize> {
         let cursor = self.sidebar_cursor?;
-        self.sidebar_nav_rows(cx)
-            .into_iter()
-            .position(|row| self.sidebar_cursor_for(row) == Some(cursor))
+        rows.iter()
+            .position(|&row| self.sidebar_nav_cursor_for(row) == Some(cursor))
+    }
+
+    fn scroll_sidebar_to(&self, rows: &[SidebarNavRow], index: usize) {
+        let tree_len = rows
+            .iter()
+            .take_while(|row| matches!(row, SidebarNavRow::Tree(_)))
+            .count();
+        match index.checked_sub(tree_len) {
+            None => self.sidebar_scroll.scroll_to_item(index * 2 + 1),
+            Some(position) => self.scroll_agents_to(position),
+        }
     }
 
     fn move_sidebar_cursor(&mut self, step: CursorMove, cx: &mut Context<Self>) {
         let rows = self.sidebar_nav_rows(cx);
-        let current = self.sidebar_cursor_index(cx);
+        let current = self.sidebar_cursor_position(&rows);
         if let Some(index) = moved_cursor_index(current, rows.len(), step) {
-            self.sidebar_cursor = self.sidebar_cursor_for(rows[index]);
-            self.sidebar_scroll.scroll_to_item(index * 2 + 1);
+            self.sidebar_cursor = self.sidebar_nav_cursor_for(rows[index]);
+            self.scroll_sidebar_to(&rows, index);
         }
         cx.notify();
     }
 
-    fn sidebar_cursor_row(&self, cx: &Context<Self>) -> Option<SidebarRow> {
-        let index = self.sidebar_cursor_index(cx)?;
-        self.sidebar_nav_rows(cx).get(index).copied()
+    fn sidebar_cursor_row(&self, cx: &Context<Self>) -> Option<SidebarNavRow> {
+        let rows = self.sidebar_nav_rows(cx);
+        let index = self.sidebar_cursor_position(&rows)?;
+        rows.get(index).copied()
     }
 
     fn return_focus_to_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -170,8 +215,9 @@ impl PaneFlowApp {
                 }
             }
         }
-        if let Some(index) = self.sidebar_cursor_index(cx) {
-            self.sidebar_scroll.scroll_to_item(index * 2 + 1);
+        let rows = self.sidebar_nav_rows(cx);
+        if let Some(index) = self.sidebar_cursor_position(&rows) {
+            self.scroll_sidebar_to(&rows, index);
         }
         cx.notify();
     }
@@ -204,7 +250,7 @@ impl PaneFlowApp {
                 "down" => true,
                 _ => return,
             };
-            if let Some(row) = self.sidebar_cursor_row(cx) {
+            if let Some(SidebarNavRow::Tree(row)) = self.sidebar_cursor_row(cx) {
                 self.move_cursor_row(row, down, cx);
             }
             cx.stop_propagation();
@@ -227,8 +273,17 @@ impl PaneFlowApp {
             cx.stop_propagation();
             return;
         }
-        let Some(row) = self.sidebar_cursor_row(cx) else {
-            return;
+        let row = match self.sidebar_cursor_row(cx) {
+            Some(SidebarNavRow::Tree(row)) => row,
+            Some(SidebarNavRow::Agent(surface_id)) => {
+                if key != "enter" {
+                    return;
+                }
+                self.focus_agent_surface(surface_id, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            None => return,
         };
         match (key, row) {
             ("enter", SidebarRow::Folder(ws_idx)) => {
@@ -271,7 +326,7 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{CursorMove, moved_cursor_index};
+    use super::{CursorMove, SidebarNavRow, SidebarRow, moved_cursor_index, sidebar_nav_order};
 
     #[test]
     fn cursor_moves_clamp_at_both_ends() {
@@ -289,6 +344,52 @@ mod tests {
         assert_eq!(moved_cursor_index(None, 4, CursorMove::Previous), Some(3));
         assert_eq!(moved_cursor_index(Some(1), 4, CursorMove::Last), Some(3));
         assert_eq!(moved_cursor_index(Some(3), 4, CursorMove::First), Some(0));
+    }
+
+    #[test]
+    fn the_cursor_enters_the_agents_section_past_the_last_tree_row() {
+        let rows = sidebar_nav_order(
+            vec![SidebarRow::Folder(0), SidebarRow::Tab(0, 0)],
+            &[41, 42],
+        );
+        assert_eq!(
+            rows,
+            [
+                SidebarNavRow::Tree(SidebarRow::Folder(0)),
+                SidebarNavRow::Tree(SidebarRow::Tab(0, 0)),
+                SidebarNavRow::Agent(41),
+                SidebarNavRow::Agent(42),
+            ]
+        );
+        let past_tree = moved_cursor_index(Some(1), rows.len(), CursorMove::Next);
+        assert_eq!(
+            past_tree.map(|index| rows[index]),
+            Some(SidebarNavRow::Agent(41))
+        );
+        let back = moved_cursor_index(Some(2), rows.len(), CursorMove::Previous);
+        assert_eq!(
+            back.map(|index| rows[index]),
+            Some(SidebarNavRow::Tree(SidebarRow::Tab(0, 0)))
+        );
+        let last = moved_cursor_index(Some(0), rows.len(), CursorMove::Last);
+        assert_eq!(
+            last.map(|index| rows[index]),
+            Some(SidebarNavRow::Agent(42))
+        );
+    }
+
+    #[test]
+    fn a_hidden_or_collapsed_section_is_skipped_by_the_cursor() {
+        let rows = sidebar_nav_order(vec![SidebarRow::Folder(0), SidebarRow::Tab(0, 0)], &[]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            moved_cursor_index(Some(1), rows.len(), CursorMove::Next),
+            Some(1)
+        );
+        assert_eq!(
+            moved_cursor_index(Some(0), rows.len(), CursorMove::Last).map(|index| rows[index]),
+            Some(SidebarNavRow::Tree(SidebarRow::Tab(0, 0)))
+        );
     }
 
     #[test]

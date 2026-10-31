@@ -359,10 +359,11 @@ impl PaneFlowApp {
             &mut self.space_last_shown,
             space,
         );
-        self.sidebar_cursor = target.map(|idx| crate::app::sidebar::keyboard::SidebarCursor {
-            workspace_id: self.workspaces[idx].id,
-            tab_id: None,
-        });
+        self.sidebar_cursor =
+            target.map(|idx| crate::app::sidebar::keyboard::SidebarCursor::Tree {
+                workspace_id: self.workspaces[idx].id,
+                tab_id: None,
+            });
         match (target, window) {
             (Some(idx), window) => {
                 let probed = match window {

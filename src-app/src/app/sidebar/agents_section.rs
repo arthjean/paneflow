@@ -337,6 +337,39 @@ fn agent_state_words(state: SidebarAgentState) -> &'static str {
     }
 }
 
+fn agent_row_spoken_state(row: &AgentRow) -> &'static str {
+    match (row.status, row.rank) {
+        (AgentRowStatus::Lane(SidebarAgentState::NeedsInput), _) => "waiting for input",
+        (AgentRowStatus::Lane(SidebarAgentState::Errored), _) => "error",
+        (AgentRowStatus::Lane(SidebarAgentState::Finished), _) => "done, not yet seen",
+        (AgentRowStatus::Lane(SidebarAgentState::Thinking), _) => "working",
+        (AgentRowStatus::NoStatus, _) => "no status",
+        (AgentRowStatus::Silent, AgentRank::NoStatus) => "starting",
+        (AgentRowStatus::Silent, _) => "idle",
+    }
+}
+
+pub(super) fn agent_row_label(row: &AgentRow) -> String {
+    format!(
+        "{}, {}, {}, {}",
+        row.tool.display_name(),
+        row.title,
+        row.workspace,
+        agent_row_spoken_state(row)
+    )
+}
+
+pub(super) fn agent_row_child_index(position: usize) -> usize {
+    position * 2
+}
+
+fn agents_nav_targets(enabled: bool, collapsed: bool, rows: &[AgentRow]) -> Vec<u64> {
+    if !enabled || collapsed {
+        return Vec::new();
+    }
+    rows.iter().map(|row| row.surface_id).collect()
+}
+
 pub(super) fn agent_surface_location(
     workspaces: &[Workspace],
     surface_id: u64,
@@ -454,7 +487,12 @@ fn render_agent_status(row: &AgentRow, ui: crate::theme::UiColors) -> Option<Any
     }
 }
 
-fn render_agent_row(row: &AgentRow, ui: crate::theme::UiColors, on_pick: PickAgent) -> AnyElement {
+fn render_agent_row(
+    row: &AgentRow,
+    cursor: bool,
+    ui: crate::theme::UiColors,
+    on_pick: PickAgent,
+) -> gpui::Stateful<gpui::Div> {
     let surface_id = row.surface_id;
     let group = SharedString::from(format!("agent-row-group-{surface_id}"));
     let (resting, hovered) = if row.active {
@@ -554,7 +592,12 @@ fn render_agent_row(row: &AgentRow, ui: crate::theme::UiColors, on_pick: PickAge
         .id(SharedString::from(format!("agent-row-{surface_id}")))
         .debug_selector(move || format!("agent-row-{surface_id}"));
     squircle_skin(shell, group, ROW_RADIUS, resting, hovered)
-        .aria_label(SharedString::from(row.title.clone()))
+        .role(Role::ListItem)
+        .aria_label(SharedString::from(agent_row_label(row)))
+        .aria_selected(row.active)
+        .when(row.status == AgentRowStatus::NoStatus, |shell| {
+            shell.aria_description(no_status_tooltip(row.tool))
+        })
         .when_some(title_tooltip, |shell, title| {
             shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
         })
@@ -564,7 +607,15 @@ fn render_agent_row(row: &AgentRow, ui: crate::theme::UiColors, on_pick: PickAge
         })
         .child(title_row)
         .child(meta)
-        .into_any_element()
+        .when(cursor, |shell| {
+            shell.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .debug_selector(move || format!("agent-cursor-{surface_id}"))
+                    .child(sidebar_cursor_ring(ui)),
+            )
+        })
 }
 
 fn agents_resize_key(event: &KeyDownEvent) -> Option<AgentsResizeInput> {
@@ -697,6 +748,7 @@ pub(super) fn render_agents_resize_handle(
 
 pub(super) struct AgentsSectionFrame<'a> {
     pub(super) rows: &'a [AgentRow],
+    pub(super) cursor: Option<u64>,
     pub(super) collapsed: bool,
     pub(super) chosen_height: Option<f32>,
     pub(super) chevron_turn: f32,
@@ -705,36 +757,17 @@ pub(super) struct AgentsSectionFrame<'a> {
     pub(super) resize_handle: Option<AnyElement>,
 }
 
-pub(super) fn render_agents_section(
-    frame: AgentsSectionFrame,
+fn render_agents_list(
+    rows: &[AgentRow],
+    cursor: Option<u64>,
+    scroll: &ScrollHandle,
     ui: crate::theme::UiColors,
-    on_toggle: impl Fn(&mut Window, &mut App) + 'static,
     on_pick: PickAgent,
-) -> gpui::Div {
-    let AgentsSectionFrame {
-        rows,
-        collapsed,
-        chosen_height,
-        chevron_turn,
-        scroll,
-        scrollbar,
-        resize_handle,
-    } = frame;
-    let section = div()
-        .relative()
-        .h(px(agents_section_height(rows, collapsed, chosen_height)))
-        .min_h(px(AGENTS_HEADER_HEIGHT))
-        .flex_shrink_1()
-        .flex()
-        .flex_col()
-        .debug_selector(|| "agents-section".into())
-        .child(render_agents_header(collapsed, chevron_turn, ui, on_toggle));
-    if collapsed {
-        return section;
-    }
-    let resize_handle = resize_handle.filter(|_| !rows.is_empty());
+) -> gpui::Stateful<gpui::Div> {
     let mut list = div()
         .id("agents-section-list")
+        .role(Role::List)
+        .aria_label("Agents")
         .flex_1()
         .min_h_0()
         .overflow_x_hidden()
@@ -767,8 +800,46 @@ pub(super) fn render_agents_section(
         if spacing > 0. {
             list = list.child(div().flex_none().h(px(spacing)));
         }
-        list = list.child(render_agent_row(row, ui, on_pick.clone()));
+        list = list.child(render_agent_row(
+            row,
+            cursor == Some(row.surface_id),
+            ui,
+            on_pick.clone(),
+        ));
     }
+    list
+}
+
+pub(super) fn render_agents_section(
+    frame: AgentsSectionFrame,
+    ui: crate::theme::UiColors,
+    on_toggle: impl Fn(&mut Window, &mut App) + 'static,
+    on_pick: PickAgent,
+) -> gpui::Div {
+    let AgentsSectionFrame {
+        rows,
+        cursor,
+        collapsed,
+        chosen_height,
+        chevron_turn,
+        scroll,
+        scrollbar,
+        resize_handle,
+    } = frame;
+    let section = div()
+        .relative()
+        .h(px(agents_section_height(rows, collapsed, chosen_height)))
+        .min_h(px(AGENTS_HEADER_HEIGHT))
+        .flex_shrink_1()
+        .flex()
+        .flex_col()
+        .debug_selector(|| "agents-section".into())
+        .child(render_agents_header(collapsed, chevron_turn, ui, on_toggle));
+    if collapsed {
+        return section;
+    }
+    let resize_handle = resize_handle.filter(|_| !rows.is_empty());
+    let list = render_agents_list(rows, cursor, scroll, ui, on_pick);
     section
         .child(
             div()
@@ -860,9 +931,13 @@ impl PaneFlowApp {
         );
         let toggle_app = cx.weak_entity();
         let pick_app = cx.weak_entity();
+        let cursor = self
+            .sidebar_agent_cursor()
+            .filter(|_| self.sidebar_focus.is_focused(window));
         render_agents_section(
             AgentsSectionFrame {
                 rows: &rows,
+                cursor,
                 collapsed,
                 chosen_height,
                 chevron_turn,
@@ -943,11 +1018,15 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.cached_config.sidebar_show.agents_enabled()
-            || self.agents_section.borrow().collapsed
-        {
+        if self.agents_nav_surfaces(cx).is_empty() {
             return false;
         }
+        self.agents_resize_focus.focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    pub(super) fn agents_nav_surfaces(&self, cx: &App) -> Vec<u64> {
         let shown = agent_rows(
             &self.workspaces,
             self.active_space.as_ref(),
@@ -955,12 +1034,18 @@ impl PaneFlowApp {
             Instant::now(),
             cx,
         );
-        if shown.rows.is_empty() {
-            return false;
-        }
-        self.agents_resize_focus.focus(window, cx);
-        cx.notify();
-        true
+        agents_nav_targets(
+            self.cached_config.sidebar_show.agents_enabled(),
+            self.agents_section.borrow().collapsed,
+            &shown.rows,
+        )
+    }
+
+    pub(super) fn scroll_agents_to(&self, position: usize) {
+        self.agents_section
+            .borrow()
+            .scroll
+            .scroll_to_item(agent_row_child_index(position));
     }
 
     pub(crate) fn set_agents_section_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
@@ -1290,6 +1375,7 @@ mod tests {
                 .child(render_agents_section(
                     AgentsSectionFrame {
                         rows: &self.rows,
+                        cursor: None,
                         collapsed: self.section.collapsed,
                         chosen_height: chosen,
                         chevron_turn: if self.section.collapsed { 1. } else { 0. },
@@ -1718,6 +1804,8 @@ mod tests {
 
     struct SectionHarness {
         rows: Vec<AgentRow>,
+        cursor: Option<u64>,
+        scroll: ScrollHandle,
         collapsed: bool,
         height: f32,
         picks: Rc<RefCell<Vec<u64>>>,
@@ -1743,10 +1831,11 @@ mod tests {
                 .child(render_agents_section(
                     AgentsSectionFrame {
                         rows: &self.rows,
+                        cursor: self.cursor,
                         collapsed: self.collapsed,
                         chosen_height: None,
                         chevron_turn: if self.collapsed { 1. } else { 0. },
-                        scroll: &ScrollHandle::new(),
+                        scroll: &self.scroll,
                         scrollbar: None,
                         resize_handle: None,
                     },
@@ -1775,6 +1864,8 @@ mod tests {
         let (held_picks, held_toggles) = (picks.clone(), toggles.clone());
         let (_view, cx) = cx.add_window_view(move |_, _| SectionHarness {
             rows,
+            cursor: None,
+            scroll: ScrollHandle::new(),
             collapsed,
             height,
             picks,
@@ -1909,6 +2000,130 @@ mod tests {
         assert_eq!(label.size.height, px(20.));
     }
 
+    fn a11y_node(element: &gpui::Stateful<gpui::Div>) -> gpui::accesskit::Node {
+        use gpui::Element as _;
+        let mut node =
+            gpui::accesskit::Node::new(element.a11y_role().expect("the element exposes a role"));
+        element.write_a11y_info(&mut node);
+        node
+    }
+
+    #[test]
+    fn a_row_is_a_list_item_named_by_agent_title_workspace_and_state() {
+        use gpui::Element as _;
+        let ui = crate::theme::ui_colors();
+        let waiting = row(
+            1,
+            AgentRank::Blocked,
+            AgentRowStatus::Lane(SidebarAgentState::NeedsInput),
+        );
+        let element = render_agent_row(&waiting, false, ui, Rc::new(|_, _, _| {}));
+        assert_eq!(element.a11y_role(), Some(gpui::accesskit::Role::ListItem));
+        assert_eq!(
+            a11y_node(&element).label(),
+            Some("Claude Code, Attention sidebar, paneflow, waiting for input")
+        );
+
+        let spoken = [
+            (
+                AgentRank::Errored,
+                AgentRowStatus::Lane(SidebarAgentState::Errored),
+                "error",
+            ),
+            (
+                AgentRank::Done,
+                AgentRowStatus::Lane(SidebarAgentState::Finished),
+                "done, not yet seen",
+            ),
+            (
+                AgentRank::Working,
+                AgentRowStatus::Lane(SidebarAgentState::Thinking),
+                "working",
+            ),
+            (AgentRank::Idle, AgentRowStatus::Silent, "idle"),
+            (AgentRank::NoStatus, AgentRowStatus::NoStatus, "no status"),
+            (AgentRank::NoStatus, AgentRowStatus::Silent, "starting"),
+        ];
+        for (rank, status, words) in spoken {
+            assert_eq!(
+                agent_row_label(&row(1, rank, status)),
+                format!("Claude Code, Attention sidebar, paneflow, {words}")
+            );
+        }
+        assert_eq!(a11y_node(&element).description(), None);
+        assert_eq!(a11y_node(&element).is_selected(), Some(false));
+
+        let mut silent = row(2, AgentRank::NoStatus, AgentRowStatus::NoStatus);
+        silent.active = true;
+        let silent = a11y_node(&render_agent_row(&silent, false, ui, Rc::new(|_, _, _| {})));
+        assert_eq!(
+            silent.description(),
+            Some(no_status_tooltip(TerminalAgent::ClaudeCode).as_str()),
+            "the reason behind No status reaches assistive technology without a hover"
+        );
+        assert_eq!(silent.is_selected(), Some(true));
+    }
+
+    #[test]
+    fn the_keyboard_cursor_reaches_the_rows_only_of_a_shown_expanded_section() {
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Working]);
+        assert_eq!(agents_nav_targets(true, false, &rows), [1, 2]);
+        assert!(agents_nav_targets(true, true, &rows).is_empty());
+        assert!(agents_nav_targets(false, false, &rows).is_empty());
+        assert!(agents_nav_targets(true, false, &[]).is_empty());
+    }
+
+    #[test]
+    fn the_section_list_is_a_list_named_agents() {
+        use gpui::Element as _;
+        let list = render_agents_list(
+            &ranked_rows(&[AgentRank::Blocked]),
+            None,
+            &ScrollHandle::new(),
+            crate::theme::ui_colors(),
+            Rc::new(|_, _, _| {}),
+        );
+        assert_eq!(list.a11y_role(), Some(gpui::accesskit::Role::List));
+        assert_eq!(a11y_node(&list).label(), Some("Agents"));
+    }
+
+    #[gpui::test]
+    fn the_cursor_row_wears_the_sidebar_cursor_ring_and_is_scrolled_into_view(
+        cx: &mut TestAppContext,
+    ) {
+        let scroll = ScrollHandle::new();
+        let held = scroll.clone();
+        let (view, cx) = cx.add_window_view(move |_, _| SectionHarness {
+            rows: ranked_rows(&[AgentRank::Working; 10]),
+            cursor: Some(10),
+            scroll: held,
+            collapsed: false,
+            height: 900.,
+            picks: Rc::new(RefCell::new(Vec::new())),
+            toggles: Rc::new(Cell::new(0)),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let section = cx.debug_bounds("agents-section").expect("section");
+        assert!(
+            cx.debug_bounds("agent-row-10")
+                .is_none_or(|row| row.top() >= section.bottom()),
+            "the last row starts below the 330 px section"
+        );
+
+        scroll.scroll_to_item(agent_row_child_index(9));
+        view.update(cx, |_, cx| cx.notify());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let row = cx.debug_bounds("agent-row-10").expect("last row");
+        assert!(
+            row.bottom() <= section.bottom(),
+            "the cursor row is visible"
+        );
+        let ring = cx.debug_bounds("agent-cursor-10").expect("cursor ring");
+        assert_eq!(ring, row);
+        assert!(cx.debug_bounds("agent-cursor-9").is_none());
+    }
+
     struct LoadedSidebar {
         workspaces: Vec<Workspace>,
         build_times: Rc<RefCell<Vec<Duration>>>,
@@ -1934,6 +2149,7 @@ mod tests {
         render_agents_section(
             AgentsSectionFrame {
                 rows: &rows,
+                cursor: None,
                 collapsed: false,
                 chosen_height: None,
                 chevron_turn: 0.,
