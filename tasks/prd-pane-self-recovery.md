@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-10-30 | Arthur Jean | PRD initial : admission de lancement avec attente côté host, refus de capacité traités comme passagers côté desktop, attente d'une session encore en démarrage, Retry qui rejoue l'intention, relance automatique unique des panes perdues ou inconnues à la restauration, validation Windows sur matériel réel. 4 epics, 11 stories. |
 | 1.1 | 2026-10-31 | Arthur Jean | US-008 : une relance dont le cwd a disparu repart dans le dossier personnel, comme toute relance du host (`crates/paneflow-host/src/host/spawn_env.rs:3`), au lieu d'échouer. |
+| 1.2 | 2026-10-31 | Arthur Jean | US-008 et FR-07 : à la restauration, une pane `Exited` avec un code non nul ou un signal est relancée comme une pane `Lost`. La passe Windows (US-011) a montré qu'un arrêt de la machine ou `host stop --force` termine les shells avec `0xC000013A` ou `1` pendant que le host enregistre encore, ce qui laissait Restart au redémarrage. Seule une sortie propre (code 0) garde son bouton. US-011 : la mort du host et de tous ses processus remplace le reboot réel, qui ne mesurerait rien de plus sur la machine d'Arthur. |
 
 ## Problem Statement
 
@@ -274,7 +275,8 @@ Après un reboot ou la mort du host, les terminaux hors agent reviennent avec un
 - [ ] Given une pane restaurée par `restore_workspaces` dont la résolution finit `Ended` avec `Lost` ou `HostReplaced`, when l'issue arrive (`host_attach.rs:155-170`), then la pane lance `SessionIntent::Restart` avec la génération observée, sans action de l'utilisateur
 - [ ] Given une pane d'agent pour laquelle `conversation_restore_pending()` (`conversation.rs:380`) est vrai, when elle finit `Lost`, then aucune relance automatique n'a lieu, et la reprise de conversation existante reste la seule voie
 - [ ] Given une pane relancée automatiquement, when son nouveau shell finit `Exited` ou `Failed`, then elle affiche son bouton Restart et n'est plus relancée automatiquement pendant ce lancement de l'app
-- [ ] Given une pane `Exited` ou `Failed` à la restauration, when elle est résolue, then elle garde son bouton Restart, comme aujourd'hui
+- [ ] Given une pane `Exited` avec le code 0 ou une pane `Failed` à la restauration, when elle est résolue, then elle garde son bouton Restart, comme aujourd'hui
+- [ ] Given une pane hors agent `Exited` avec un code non nul ou un signal à la restauration (arrêt de Windows, `host stop --force`), when elle est résolue, then elle est relancée une fois comme une pane `Lost`, selon le même prédicat que la reprise de conversation (`HostLinkEndKind::lost_by_the_host`)
 - [ ] Given une pane qui finit `Lost` en cours de session (et non à la restauration), when l'issue arrive, then aucune relance automatique n'a lieu
 - [ ] Given deux relances concurrentes de la même génération, when elles se résolvent, then une seule nouvelle génération est validée et la pane s'attache à elle
 - [ ] Given une relance dont le cwd enregistré n'existe plus, when le host répond, then la pane repart avec un shell neuf dans le dossier personnel, sans nouvelle tentative automatique
@@ -329,7 +331,7 @@ Le scénario du signalement est rejoué et mesuré sur le matériel d'Arthur, av
 **Acceptance Criteria:**
 - [ ] Given 30 terminaux répartis sur 3 workspaces, dont 4 panes d'agent, when Arthur fait « Stop everything and quit » puis relance, then toutes les panes sont vivantes sans clic, et le délai jusqu'à la dernière pane vivante est consigné, avec une cible de 3 s au plus
 - [ ] Given la même configuration sur un build debug lancé avec `PANEFLOW_DEV_FORCE_UPDATE=9.9.9`, when Arthur choisit « Stop everything and restart » dans le dialogue de mise à jour, then aucune pane n'affiche Retry, Restart ni « New terminal » au redémarrage. Si la mise à jour factice ne redémarre pas l'app, le rapport le dit et s'appuie sur le premier scénario, qui passe par le même `forget_terminal_sessions`
-- [ ] Given un reboot de Windows, when Arthur relance Paneflow, then les terminaux hors agent reviennent avec un shell neuf dans leur cwd, les panes d'agent proposent leur reprise de conversation, et une pane fermée volontairement avant le reboot garde son bouton
+- [ ] Given la mort du host et de tous ses processus, ou `host stop --force`, comme à l'arrêt de Windows, when Paneflow est relancé, then les terminaux hors agent reviennent avec un shell neuf dans leur cwd, les panes d'agent proposent leur reprise de conversation, et une pane fermée volontairement avant le reboot garde son bouton
 - [ ] Given 60 terminaux, when on rejoue le premier scénario, then aucune pane n'affiche d'erreur. Sinon, le nombre de panes en échec et le message sont consignés et la story reste IN_REVIEW
 - [ ] Given le build desktop de cette branche face à un host de `58bf6819e` encore en cours d'exécution, when Arthur restaure 12 panes à créer, then toutes finissent vivantes grâce aux nouvelles tentatives de US-004
 - [ ] Given le rapport, when on le lit, then il précise pour chaque scénario s'il a été vérifié sur matériel ou par lecture du code `cfg(windows)`
@@ -344,7 +346,7 @@ Le scénario du signalement est rejoué et mesuré sur le matériel d'Arthur, av
 - FR-04 : le desktop doit attendre une session en démarrage au lieu d'afficher un bouton.
 - FR-05 : Retry doit rejouer l'intention d'origine de la pane.
 - FR-06 : à la restauration, le desktop doit relancer une fois les panes hors agent `Lost` ou `HostReplaced`, et créer un shell neuf pour les panes hors agent `Missing`.
-- FR-07 : le desktop ne doit PAS relancer automatiquement une pane `Exited` ou `Failed`, ni une pane qui se termine en cours de session.
+- FR-07 : le desktop ne doit PAS relancer automatiquement une pane `Exited` avec le code 0, une pane `Failed`, ni une pane qui se termine en cours de session. Une pane `Exited` avec un code non nul ou un signal est relancée une fois à la restauration, comme une pane `Lost`.
 - FR-08 : une relance automatique ne doit PAS rejouer de commande, d'entrée ni de variable d'environnement.
 - FR-09 : aucune attente côté desktop ne doit bloquer le thread de rendu ni un thread du pool GPUI.
 
