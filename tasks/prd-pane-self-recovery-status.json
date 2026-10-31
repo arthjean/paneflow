@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Le desktop traite un refus de capacité comme passager",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -80,49 +80,49 @@
       "id": "US-004",
       "title": "Réessayer un Busy au premier attachement, avec backoff jitté",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-005",
       "title": "Attendre une session encore en démarrage",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-004"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-006",
       "title": "Reconnecter le lien de sortie sur un Busy",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-007",
       "title": "Faire rejouer à Retry l'intention d'origine",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-008",
