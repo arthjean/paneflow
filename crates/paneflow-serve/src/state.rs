@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use paneflow_agent_config::runtime_catalog::Runtime;
+use paneflow_agent_config::usage::accounts::{UsageAgent, session_account_dir};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
-use paneflow_host::agent::AgentEvent;
+use paneflow_host::agent::{AgentEvent, AgentEventKind};
 use paneflow_host::manifest::{SessionLifecycle, SessionManifest};
 use paneflow_host::program_status::DeclaredStatus;
 use paneflow_host::runtime_observer::RuntimeObservation;
@@ -15,6 +16,7 @@ use serde_json::{Value, json};
 use crate::activity::{AgentDecision, AgentSummary, apply_event, reconcile_adopted};
 use crate::notifications::{ActivityLog, Notice, Notification, notification_for};
 use crate::protocol::restart_recommendation;
+use crate::usage::ledger::{LedgerAccount, TurnInput, TurnSignal};
 
 pub const DECLARED_WORKING: &str = "working";
 pub const DECLARED_BLOCKED: &str = "blocked";
@@ -110,6 +112,7 @@ pub struct SessionEntry {
     pub program_status_capable: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
+    pub account_env: BTreeMap<String, String>,
     pub state_seq: u64,
     pub unread: bool,
     pub updated_at_ms: u64,
@@ -144,6 +147,7 @@ impl SessionEntry {
             program_status_capable: manifest.program_status_capable,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
+            account_env: paneflow_host::agent::account_env(&manifest.launch.env),
             state_seq: 0,
             unread: false,
             updated_at_ms: manifest.updated_at_ms,
@@ -233,6 +237,31 @@ impl SessionEntry {
                     .as_ref()
                     .and_then(RuntimeObservation::runtime)
             })
+    }
+
+    pub fn usage_account(&self) -> Option<LedgerAccount> {
+        let runtime = self.runtime()?;
+        let config_dir = match UsageAgent::for_runtime_slug(runtime.slug) {
+            Some(agent) => {
+                let mut env: BTreeMap<String, String> = paneflow_host::agent::ACCOUNT_ENV_KEYS
+                    .iter()
+                    .filter_map(|key| {
+                        std::env::var(key)
+                            .ok()
+                            .map(|value| ((*key).to_string(), value))
+                    })
+                    .collect();
+                env.extend(self.account_env.clone());
+                session_account_dir(agent, &env, paneflow_agent_config::home_dir().as_deref())?
+                    .display()
+                    .to_string()
+            }
+            None => String::new(),
+        };
+        Some(LedgerAccount {
+            agent: runtime.slug.to_string(),
+            config_dir,
+        })
     }
 
     pub fn runtime_label(&self) -> String {
@@ -332,6 +361,7 @@ pub struct WorkerState {
     home: PathBuf,
     sessions: BTreeMap<SessionId, SessionEntry>,
     log: ActivityLog,
+    turn_signals: Vec<TurnSignal>,
 }
 
 impl WorkerState {
@@ -340,7 +370,60 @@ impl WorkerState {
             home: home.into(),
             sessions: BTreeMap::new(),
             log: ActivityLog::default(),
+            turn_signals: Vec::new(),
         }
+    }
+
+    pub fn drain_turn_signals(&mut self) -> Vec<TurnSignal> {
+        std::mem::take(&mut self.turn_signals)
+    }
+
+    pub fn running_sessions(&self) -> BTreeSet<String> {
+        self.sessions
+            .values()
+            .filter(|entry| entry.lifecycle.is_running())
+            .map(|entry| entry.session.to_string())
+            .collect()
+    }
+
+    pub fn sessions_in_turn(&self) -> BTreeSet<String> {
+        self.sessions
+            .values()
+            .filter(|entry| entry.lifecycle.is_running() && entry.status.in_turn())
+            .map(|entry| entry.session.to_string())
+            .collect()
+    }
+
+    pub fn running_accounts(&self) -> Vec<LedgerAccount> {
+        let mut accounts: Vec<LedgerAccount> = self
+            .sessions
+            .values()
+            .filter(|entry| entry.lifecycle.is_running())
+            .filter_map(SessionEntry::usage_account)
+            .collect();
+        accounts.sort();
+        accounts.dedup();
+        accounts
+    }
+
+    fn push_turn_signal(&mut self, session: &SessionId, input: TurnInput, at_ms: u64, order: u64) {
+        let Some(account) = self
+            .sessions
+            .get(session)
+            .and_then(SessionEntry::usage_account)
+        else {
+            return;
+        };
+        if self.turn_signals.len() >= MAX_PENDING_TURN_SIGNALS {
+            self.turn_signals.remove(0);
+        }
+        self.turn_signals.push(TurnSignal {
+            session: session.to_string(),
+            account,
+            input,
+            at_ms,
+            order,
+        });
     }
 
     pub fn len(&self) -> usize {
@@ -437,6 +520,7 @@ impl WorkerState {
     }
 
     pub fn forget_core_session(&mut self, session: &SessionId) -> bool {
+        self.push_turn_signal(session, TurnInput::Vanished, now_ms(), 0);
         self.sessions.remove(session).is_some()
     }
 
@@ -564,6 +648,15 @@ impl WorkerState {
         }
         entry.declared_activity = false;
         entry.updated_at_ms = now_ms;
+        let hook_input = match event.kind {
+            AgentEventKind::PromptSubmit => Some(TurnInput::Prompt),
+            AgentEventKind::Stop => Some(TurnInput::Stop),
+            AgentEventKind::Exit | AgentEventKind::SessionEnd => Some(TurnInput::Ended),
+            _ => None,
+        };
+        if let Some(input) = hook_input {
+            self.push_turn_signal(&event.session, input, now_ms, revision);
+        }
         let mut projection = self.derive(&event.session, now_ms)?;
         projection.changed = true;
         Some(projection)
@@ -589,6 +682,9 @@ impl WorkerState {
                 .activity
                 .as_ref()
                 .is_none_or(|summary| summary.state == state.wire_str());
+        let turn_input = (entry.status != status)
+            .then(|| turn_input_between(entry.status, status))
+            .flatten();
         if entry.status != status {
             entry.state_seq += 1;
         }
@@ -638,11 +734,15 @@ impl WorkerState {
         if outcome_changed && let Some(outcome) = outcome.as_deref() {
             self.log.record(session, entry.generation, outcome, now_ms);
         }
-        Some(Projection {
+        let projection = Projection {
             session: entry.to_value(),
             notification,
             changed: !settled,
-        })
+        };
+        if let Some(input) = turn_input {
+            self.push_turn_signal(session, input, now_ms, 0);
+        }
+        Some(projection)
     }
 
     pub fn acknowledge(&mut self, sessions: &[SessionId]) -> Vec<Projection> {
@@ -661,6 +761,16 @@ impl WorkerState {
                 })
             })
             .collect()
+    }
+}
+
+const MAX_PENDING_TURN_SIGNALS: usize = 4096;
+
+fn turn_input_between(before: Status, after: Status) -> Option<TurnInput> {
+    match after {
+        Status::Busy => Some(TurnInput::Working),
+        Status::Attention => Some(TurnInput::Blocked),
+        Status::Idle | Status::Errored => before.in_turn().then_some(TurnInput::Settled),
     }
 }
 
@@ -753,6 +863,11 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
             held.as_ref()
                 .and_then(|entry| entry.observed_runtime.clone())
         }),
+        account_env: serde_json::from_value(raw["account_env"].clone())
+            .ok()
+            .filter(|env: &BTreeMap<String, String>| !env.is_empty())
+            .or_else(|| held.as_ref().map(|entry| entry.account_env.clone()))
+            .unwrap_or_default(),
         state_seq: held.as_ref().map_or(0, |entry| entry.state_seq),
         unread: false,
         updated_at_ms: now_ms(),
@@ -1631,5 +1746,103 @@ mod tests {
             .expect("the completion projects");
         assert_eq!(projection.session["state_seq"], start + 2);
         assert_eq!(projection.session["status"], "idle");
+    }
+
+    #[derive(Clone, Copy)]
+    enum Step {
+        Hook(&'static str, &'static str),
+        Declared(&'static str),
+    }
+
+    fn twenty_turn_claude_session() -> (Vec<(u64, Step)>, u64) {
+        let mut steps = Vec::new();
+        let mut clock = 1_793_430_000_000_u64;
+        let mut expected_active_ms = 0;
+        for turn in 0..20_u64 {
+            steps.push((clock, Step::Hook("ai.prompt_submit", "UserPromptSubmit")));
+            clock += 700;
+            steps.push((clock, Step::Declared("working")));
+            let work = 3_000 + turn * 1_250;
+            clock += work;
+            expected_active_ms += work;
+            steps.push((clock, Step::Hook("ai.tool_use", "PostToolUse")));
+            if turn % 4 == 1 {
+                steps.push((clock, Step::Declared("blocked")));
+                clock += 4_000;
+                steps.push((clock, Step::Declared("working")));
+                clock += 2_000;
+                expected_active_ms += 2_000;
+            }
+            steps.push((clock, Step::Declared("done")));
+            clock += 150;
+            steps.push((clock, Step::Hook("ai.stop", "Stop")));
+            clock += 9_000 + turn * 300;
+        }
+        (steps, expected_active_ms)
+    }
+
+    #[test]
+    fn a_replayed_twenty_turn_claude_session_counts_twenty_turns_and_its_exact_active_time() {
+        use crate::usage::ledger::{Calendar, TurnBook, ZoneCalendar};
+
+        let mut state = WorkerState::new(PathBuf::from("home"));
+        let session = SessionId::new();
+        state.apply_core_snapshot(&[agent_row(&session)]);
+        state.drain_turn_signals();
+        let calendar = ZoneCalendar(chrono::FixedOffset::east_opt(3600).unwrap());
+        let mut book = TurnBook::default();
+        let mut inputs = Vec::new();
+        let (steps, expected_active_ms) = twenty_turn_claude_session();
+        for (revision, (at_ms, step)) in (1_u64..).zip(steps) {
+            match step {
+                Step::Hook(kind, name) => {
+                    let mut hook = frame(&session, kind, name, json!({}));
+                    hook["revision"] = json!(revision);
+                    hook["received_at_ms"] = json!(at_ms);
+                    state.apply_core_event(&hook);
+                }
+                Step::Declared(declared_state) => {
+                    state.apply_core_session(&with_declared(
+                        agent_row(&session),
+                        declared_state,
+                        "",
+                    ));
+                }
+            }
+            for mut signal in state.drain_turn_signals() {
+                if !signal.input.from_hook() {
+                    signal.at_ms = at_ms;
+                }
+                inputs.push(signal.input);
+                book.apply(&signal, &calendar);
+            }
+        }
+        let account = state
+            .get(&session)
+            .and_then(SessionEntry::usage_account)
+            .expect("a Claude Code account");
+        assert_eq!(account.agent, "claude-code");
+        let tally = book.tally(calendar.day(1_793_430_000_000), &account);
+        assert_eq!(tally.turns, 20, "{inputs:?}");
+        assert_eq!(tally.active_ms, expected_active_ms);
+        assert_eq!(book.open_turns(), 0);
+        assert_eq!(
+            inputs
+                .iter()
+                .filter(|input| **input == TurnInput::Blocked)
+                .count(),
+            5,
+            "each permission prompt pauses its turn"
+        );
+    }
+
+    #[test]
+    fn a_program_that_declares_nothing_and_sends_no_hook_counts_nothing() {
+        let mut state = WorkerState::new(PathBuf::from("home"));
+        let session = SessionId::new();
+        state.apply_core_snapshot(&[core_row(&session)]);
+        state.apply_core_session(&with_declared(core_row(&session), "working", ""));
+        state.apply_core_session(&with_declared(core_row(&session), "done", ""));
+        assert!(state.drain_turn_signals().is_empty());
     }
 }

@@ -33,6 +33,21 @@ pub struct AgentEvent {
     pub payload: Value,
 }
 
+pub const ACCOUNT_ENV_KEYS: [&str; 2] = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+
+pub fn account_env(
+    env: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    ACCOUNT_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            env.get(*key)
+                .filter(|value| !value.is_empty())
+                .map(|value| ((*key).to_string(), clamp_text(value)))
+        })
+        .collect()
+}
+
 pub const UNIDENTIFIED_TOOL: &str =
     "the event names no tool and the pane runs no recognized agent runtime";
 
@@ -154,6 +169,8 @@ pub struct AgentSnapshotEntry {
     pub session: SessionId,
     pub generation: SessionGeneration,
     pub launch_shell: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub account_env: std::collections::BTreeMap<String, String>,
     pub lifecycle: SessionLifecycle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<crate::process::ProcessIdentity>,

@@ -4473,6 +4473,7 @@ dependencies = [
 name = "paneflow-serve"
 version = "0.18.1"
 dependencies = [
+ "chrono",
  "interprocess",
  "log",
  "paneflow-agent-config",

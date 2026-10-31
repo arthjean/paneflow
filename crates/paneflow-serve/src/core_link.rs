@@ -17,6 +17,7 @@ pub enum CoreFrame {
     Session(Box<Value>),
     SessionRemoved(String),
     Event(Box<Value>),
+    PlanLimits(Box<Value>),
     Disconnected(String),
     Refused(String),
     Wake,
@@ -124,6 +125,9 @@ fn stream_frames(control: &mut HostControl, tx: &SyncSender<CoreFrame>) -> Resul
         };
         match value["type"].as_str() {
             Some("event") => send(tx, CoreFrame::Event(Box::new(value)))?,
+            Some(paneflow_host::host::PLAN_LIMITS_FRAME) => {
+                send(tx, CoreFrame::PlanLimits(Box::new(value)))?
+            }
             Some("session") => send(tx, CoreFrame::Session(Box::new(value["entry"].clone())))?,
             Some("session_removed") => {
                 if let Some(session) = value["session"].as_str() {

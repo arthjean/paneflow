@@ -884,6 +884,7 @@ impl SessionHost {
                     session: summary.manifest.session,
                     generation: summary.manifest.generation,
                     launch_shell: summary.manifest.launch.shell.clone(),
+                    account_env: crate::agent::account_env(&summary.manifest.launch.env),
                     lifecycle: summary.manifest.lifecycle,
                     process: summary.manifest.process,
                     workspace: summary.manifest.workspace,

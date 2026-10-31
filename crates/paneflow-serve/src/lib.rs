@@ -17,6 +17,7 @@ pub mod notifications;
 pub mod protocol;
 pub mod server;
 pub mod state;
+pub mod usage;
 pub mod worker;
 
 pub use bootstrap::{DRAIN_WAIT, ensure_worker_running, stop_worker};

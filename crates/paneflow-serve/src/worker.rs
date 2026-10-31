@@ -84,6 +84,10 @@ impl RunningWorker {
         if let Some(pump) = self.pump.take() {
             let _ = pump.join();
         }
+        self.worker.absorb_turn_signals();
+        self.worker
+            .lock_usage()
+            .flush(std::time::Instant::now(), true);
         if let Some(server) = self.server.take() {
             let _ = server.stop();
         }
@@ -133,6 +137,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         shutdown_requested: Default::default(),
         core_connected: AtomicBool::new(false),
         broadcast_snapshot: Mutex::new(None),
+        usage: Mutex::new(crate::usage::Usage::open(home, now_ms())),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -293,6 +298,8 @@ fn sweep(worker: &Arc<Worker>) {
         broadcast_projection(worker, &projection, &json!({}));
     }
     worker.broadcast_snapshot_if_changed(sessions);
+    worker.absorb_turn_signals();
+    worker.sweep_usage();
 }
 
 fn core_poll_interval(following: bool) -> Duration {
@@ -321,7 +328,17 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
 }
 
 fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
+    let following = apply_frame(worker, frame, following);
+    worker.absorb_turn_signals();
+    following
+}
+
+fn apply_frame(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
     match frame {
+        CoreFrame::PlanLimits(value) => {
+            worker.core_connected.store(true, Ordering::Release);
+            worker.absorb_plan_limits(&value);
+        }
         CoreFrame::Snapshot(entries) => {
             let projections = {
                 let mut state = worker.lock_state();
@@ -415,6 +432,33 @@ mod tests {
         assert_eq!(deltas["sweeps"], measured(1));
         assert_eq!(deltas["snapshot_broadcasts"], measured(1));
         assert_eq!(deltas["projection_broadcasts"], measured(0));
+        running.stop();
+    }
+
+    #[test]
+    fn open_turns_outlive_sweeps_until_the_core_reports_its_sessions() {
+        use crate::usage::ledger::{LedgerAccount, TurnInput, TurnSignal};
+
+        let home = tempfile::tempdir().expect("a temporary home");
+        let running = open_with_config(home.path(), "{}");
+        let worker = running.worker();
+        worker.lock_usage().apply_turn_signals(&[TurnSignal {
+            session: "restored".to_string(),
+            account: LedgerAccount {
+                agent: "claude-code".to_string(),
+                config_dir: home.path().join(".claude").display().to_string(),
+            },
+            input: TurnInput::Prompt,
+            at_ms: now_ms(),
+            order: 1,
+        }]);
+        assert!(!worker.core_connected.load(Ordering::Acquire));
+        worker.sweep_usage();
+        assert_eq!(
+            worker.lock_usage().ledger().book().open_turns(),
+            1,
+            "a sweep before the first core snapshot cannot tell a live session from a gone one"
+        );
         running.stop();
     }
 

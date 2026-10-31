@@ -16,10 +16,12 @@ use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
     ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
     METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN,
-    METHOD_WORKER_STATUS, WorkerIdentity, error_envelope, result_envelope,
+    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT,
+    METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS, WorkerIdentity,
+    error_envelope, result_envelope,
 };
 use crate::state::WorkerState;
+use crate::usage::Usage;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -37,9 +39,103 @@ pub struct Worker {
     pub(crate) shutdown_requested: Condvar,
     pub core_connected: AtomicBool,
     pub broadcast_snapshot: Mutex<Option<Vec<Value>>>,
+    pub usage: Mutex<Usage>,
 }
 
 impl Worker {
+    pub fn lock_usage(&self) -> std::sync::MutexGuard<'_, Usage> {
+        self.usage.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn publish_usage(&self) {
+        let frame = self.lock_usage().take_changed_frame();
+        if let Some(frame) = frame {
+            self.bus.broadcast(&frame);
+        }
+    }
+
+    pub fn absorb_plan_limits(&self, frame: &Value) {
+        let changed = self
+            .lock_usage()
+            .apply_plan_limits(frame, crate::state::now_ms());
+        if changed {
+            self.lock_usage().flush(Instant::now(), false);
+            self.publish_usage();
+        }
+    }
+
+    pub fn absorb_turn_signals(&self) {
+        let signals = self.lock_state().drain_turn_signals();
+        if signals.is_empty() {
+            return;
+        }
+        let turn_ends = self.lock_usage().apply_turn_signals(&signals);
+        let claimed =
+            self.lock_usage()
+                .claim_codex_reads(turn_ends, Duration::ZERO, Instant::now());
+        self.read_codex(claimed);
+        self.lock_usage().flush(Instant::now(), false);
+        self.publish_usage();
+    }
+
+    pub fn sweep_usage(&self) {
+        if self.core_connected.load(Ordering::Acquire) {
+            let (running, in_turn) = {
+                let state = self.lock_state();
+                (state.running_sessions(), state.sessions_in_turn())
+            };
+            self.lock_usage()
+                .expire_turns(&running, &in_turn, crate::state::now_ms());
+        }
+        let live_codex = self.running_codex_dirs();
+        let claimed = self.lock_usage().claim_codex_reads(
+            live_codex,
+            crate::usage::codex::CODEX_POLL_INTERVAL,
+            Instant::now(),
+        );
+        self.read_codex(claimed);
+        self.lock_usage().flush(Instant::now(), false);
+        self.publish_usage();
+    }
+
+    pub fn refresh_usage(&self) -> Value {
+        let mut dirs: Vec<PathBuf> = paneflow_agent_config::codex_home().into_iter().collect();
+        dirs.extend(self.running_codex_dirs());
+        let held = self.lock_usage().codex_dirs();
+        dirs.extend(held);
+        let claimed = self.lock_usage().claim_codex_reads(
+            dirs,
+            crate::usage::codex::CODEX_READ_FLOOR,
+            Instant::now(),
+        );
+        self.read_codex(claimed);
+        self.lock_usage().flush(Instant::now(), false);
+        self.publish_usage();
+        self.lock_usage().snapshot()
+    }
+
+    fn running_codex_dirs(&self) -> Vec<PathBuf> {
+        let codex = paneflow_agent_config::usage::accounts::UsageAgent::Codex.runtime_slug();
+        self.lock_state()
+            .running_accounts()
+            .into_iter()
+            .filter(|account| account.agent == codex && !account.config_dir.is_empty())
+            .map(|account| PathBuf::from(account.config_dir))
+            .collect()
+    }
+
+    fn read_codex(&self, dirs: Vec<PathBuf>) {
+        if dirs.is_empty() {
+            return;
+        }
+        let now = crate::state::now_ms();
+        let readings = crate::usage::read_codex_accounts(dirs, now / 1000);
+        let mut usage = self.lock_usage();
+        for (dir, reading) in readings {
+            usage.record_codex(&dir, reading, now);
+        }
+    }
+
     pub fn request_shutdown(&self) {
         let _gate = self
             .shutdown_gate
@@ -87,11 +183,14 @@ impl Worker {
     }
 
     pub fn snapshot_frame(&self) -> Value {
+        let sessions = self.lock_state().snapshot();
+        let usage = self.lock_usage().frame();
         json!({
             "worker": self.identity,
             "capabilities": self.identity.capabilities,
             "core_connected": self.core_connected.load(Ordering::Acquire),
-            "sessions": self.lock_state().snapshot(),
+            "sessions": sessions,
+            "usage": usage,
         })
     }
 
@@ -411,6 +510,8 @@ fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, Disp
             Ok(json!({"entries": worker.lock_state().activity_log().to_values(limit)}))
         }
         METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
+        METHOD_USAGE_SNAPSHOT => Ok(worker.lock_usage().snapshot()),
+        METHOD_USAGE_REFRESH => Ok(worker.refresh_usage()),
         _ => Err(DispatchError::MethodNotFound),
     }
 }

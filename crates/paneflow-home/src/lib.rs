@@ -202,6 +202,20 @@ pub fn reserved_host_endpoint() -> Option<PathBuf> {
     Some(host_endpoint_path(&dirs::home_dir()?.join(reserved)))
 }
 
+pub const USAGE_DIR_NAME: &str = "usage";
+
+pub fn usage_dir_in(home: &Path) -> PathBuf {
+    home.join(USAGE_DIR_NAME)
+}
+
+pub fn usage_plans_path_in(home: &Path) -> PathBuf {
+    usage_dir_in(home).join("plans.json")
+}
+
+pub fn usage_ledger_path_in(home: &Path) -> PathBuf {
+    usage_dir_in(home).join("ledger.json")
+}
+
 pub const SERVE_DIR_NAME: &str = "serve";
 
 pub const SERVE_OWNER_LOCK_FILE_NAME: &str = "owner.lock";

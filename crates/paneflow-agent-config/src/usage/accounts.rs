@@ -44,6 +44,19 @@ impl UsageAgent {
         }
     }
 
+    pub const fn runtime_slug(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+        }
+    }
+
+    pub fn for_runtime_slug(slug: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|agent| agent.runtime_slug() == slug)
+    }
+
     pub fn for_profile_agent(agent: &str) -> Option<Self> {
         match agent {
             "claude_code" | "claude" => Some(Self::ClaudeCode),
@@ -264,6 +277,28 @@ pub fn claude_account_email(account_file: &Path) -> Option<String> {
         .map(str::trim)
         .filter(|email| !email.is_empty())
         .map(str::to_string)
+}
+
+pub fn session_account_dir(
+    agent: UsageAgent,
+    env: &BTreeMap<String, String>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    let origin = AccountOrigin {
+        kind: OriginKind::Default,
+        name: String::new(),
+        agent: Some(agent),
+        env: env.clone(),
+    };
+    resolve(&origin, agent, home).map(|resolved| resolved.dir)
+}
+
+pub fn canonical_account_dir(path: &Path) -> PathBuf {
+    canonical_dir(path)
+}
+
+pub fn account_dir_key(path: &Path) -> String {
+    dir_key(path)
 }
 
 #[cfg(test)]
@@ -658,5 +693,32 @@ mod tests {
             Some(UsageAgent::Codex)
         );
         assert_eq!(UsageAgent::for_profile_agent("gemini"), None);
+    }
+
+    #[test]
+    fn a_session_resolves_its_account_from_its_launch_env_or_the_default_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let work = BTreeMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            "~/.claude-work".to_string(),
+        )]);
+        assert_eq!(
+            session_account_dir(UsageAgent::ClaudeCode, &work, Some(home.path())),
+            Some(canonical_account_dir(&home.path().join(".claude-work")))
+        );
+        assert_eq!(
+            session_account_dir(UsageAgent::ClaudeCode, &BTreeMap::new(), Some(home.path())),
+            Some(canonical_account_dir(&home.path().join(".claude")))
+        );
+        assert_eq!(
+            session_account_dir(UsageAgent::Codex, &work, Some(home.path())),
+            Some(canonical_account_dir(&home.path().join(".codex"))),
+            "a Claude variable never moves the Codex account"
+        );
+        assert_eq!(
+            UsageAgent::for_runtime_slug("claude-code"),
+            Some(UsageAgent::ClaudeCode)
+        );
+        assert_eq!(UsageAgent::for_runtime_slug("gemini"), None);
     }
 }

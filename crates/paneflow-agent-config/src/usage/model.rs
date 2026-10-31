@@ -5,6 +5,7 @@ use serde_json::Value;
 pub const SESSION_WINDOW_SECS: u64 = 5 * 3600;
 pub const WEEK_WINDOW_SECS: u64 = 7 * DAY_SECS;
 const DAY_SECS: u64 = 86_400;
+pub const MAX_RESET_DISTANCE_SECS: u64 = 8 * DAY_SECS;
 const MONTH_MIN_SECS: u64 = 28 * DAY_SECS;
 const WEEK_MIN_SECS: u64 = 5 * DAY_SECS;
 const WARN_FRACTION: f64 = 0.80;
@@ -235,38 +236,80 @@ impl PlanLimits {
 
 pub fn parse_claude_rate_limits(rate_limits: &Value) -> PlanLimits {
     PlanLimits {
-        primary: claude_window(rate_limits.get("five_hour"), SESSION_WINDOW_SECS),
-        secondary: claude_window(rate_limits.get("seven_day"), WEEK_WINDOW_SECS),
+        primary: claude_window(rate_limits.get("five_hour"), SESSION_WINDOW_SECS)
+            .map(|raw| raw.window),
+        secondary: claude_window(rate_limits.get("seven_day"), WEEK_WINDOW_SECS)
+            .map(|raw| raw.window),
     }
 }
 
-fn claude_window(window: Option<&Value>, window_secs: u64) -> Option<LimitWindow> {
+pub fn plausible_claude_rate_limits(rate_limits: &Value, now: u64) -> PlanLimits {
+    PlanLimits {
+        primary: claude_window(rate_limits.get("five_hour"), SESSION_WINDOW_SECS)
+            .and_then(|raw| raw.plausible(now)),
+        secondary: claude_window(rate_limits.get("seven_day"), WEEK_WINDOW_SECS)
+            .and_then(|raw| raw.plausible(now)),
+    }
+}
+
+struct RawWindow {
+    reported_percent: f64,
+    window: LimitWindow,
+}
+
+impl RawWindow {
+    fn plausible(self, now: u64) -> Option<LimitWindow> {
+        let horizon = MAX_RESET_DISTANCE_SECS.max(self.window.window_secs + DAY_SECS);
+        let resets_at = self.window.resets_at;
+        ((0.0..=100.0).contains(&self.reported_percent)
+            && resets_at <= now.saturating_add(horizon)
+            && resets_at.saturating_add(MAX_RESET_DISTANCE_SECS) >= now)
+            .then_some(self.window)
+    }
+}
+
+fn claude_window(window: Option<&Value>, window_secs: u64) -> Option<RawWindow> {
     let window = window?;
-    Some(LimitWindow::new(
-        number(window.get("used_percentage")?)?,
-        window_secs,
-        timestamp(window.get("resets_at")?)?,
-    ))
+    let reported_percent = number(window.get("used_percentage")?)?;
+    Some(RawWindow {
+        reported_percent,
+        window: LimitWindow::new(
+            reported_percent,
+            window_secs,
+            timestamp(window.get("resets_at")?)?,
+        ),
+    })
 }
 
 pub fn parse_codex_rate_limits(rate_limits: &Value) -> PlanLimits {
     PlanLimits {
-        primary: codex_window(rate_limits.get("primary")),
-        secondary: codex_window(rate_limits.get("secondary")),
+        primary: codex_window(rate_limits.get("primary")).map(|raw| raw.window),
+        secondary: codex_window(rate_limits.get("secondary")).map(|raw| raw.window),
     }
 }
 
-fn codex_window(window: Option<&Value>) -> Option<LimitWindow> {
+pub fn plausible_codex_rate_limits(rate_limits: &Value, now: u64) -> PlanLimits {
+    PlanLimits {
+        primary: codex_window(rate_limits.get("primary")).and_then(|raw| raw.plausible(now)),
+        secondary: codex_window(rate_limits.get("secondary")).and_then(|raw| raw.plausible(now)),
+    }
+}
+
+fn codex_window(window: Option<&Value>) -> Option<RawWindow> {
     let window = window?;
     let minutes = number(window.get("window_minutes")?)?;
     if minutes < 1.0 {
         return None;
     }
-    Some(LimitWindow::new(
-        number(window.get("used_percent")?)?,
-        (minutes * 60.0) as u64,
-        timestamp(window.get("resets_at")?)?,
-    ))
+    let reported_percent = number(window.get("used_percent")?)?;
+    Some(RawWindow {
+        reported_percent,
+        window: LimitWindow::new(
+            reported_percent,
+            (minutes * 60.0) as u64,
+            timestamp(window.get("resets_at")?)?,
+        ),
+    })
 }
 
 fn number(value: &Value) -> Option<f64> {
@@ -529,5 +572,55 @@ mod tests {
         ] {
             assert_eq!(parse_codex_rate_limits(&broken), PlanLimits::default());
         }
+    }
+
+    #[test]
+    fn an_implausible_window_is_dropped_while_its_sibling_is_kept() {
+        let now = 1_793_481_752;
+        let week = 7 * DAY_SECS;
+        let limits = plausible_claude_rate_limits(
+            &json!({
+                "five_hour": {"used_percentage": 101, "resets_at": now + 3600},
+                "seven_day": {"used_percentage": 59, "resets_at": now + week}
+            }),
+            now,
+        );
+        assert_eq!(limits.primary, None, "a percentage above 100 is ignored");
+        assert_eq!(
+            limits.secondary.map(|window| window.used_percent),
+            Some(59.0)
+        );
+
+        for (percent, resets_at) in [
+            (-1.0, now + 3600),
+            (10.0, now + 9 * DAY_SECS),
+            (10.0, now - 9 * DAY_SECS),
+        ] {
+            let limits = plausible_claude_rate_limits(
+                &json!({"seven_day": {"used_percentage": percent, "resets_at": resets_at}}),
+                now,
+            );
+            assert_eq!(limits, PlanLimits::default(), "{percent} {resets_at}");
+        }
+        let edge = plausible_claude_rate_limits(
+            &json!({"seven_day": {"used_percentage": 100, "resets_at": now + 8 * DAY_SECS}}),
+            now,
+        );
+        assert!(edge.secondary.is_some(), "8 days ahead is still accepted");
+
+        let month = plausible_codex_rate_limits(
+            &json!({"primary": {"used_percent": 3.0, "window_minutes": 43_200, "resets_at": now + 29 * DAY_SECS}}),
+            now,
+        );
+        assert_eq!(
+            month.primary.map(|window| window.label()),
+            Some(WindowLabel::Month),
+            "a monthly window may reset up to its own length ahead"
+        );
+        let too_far = plausible_codex_rate_limits(
+            &json!({"primary": {"used_percent": 3.0, "window_minutes": 43_200, "resets_at": now + 32 * DAY_SECS}}),
+            now,
+        );
+        assert_eq!(too_far, PlanLimits::default());
     }
 }
