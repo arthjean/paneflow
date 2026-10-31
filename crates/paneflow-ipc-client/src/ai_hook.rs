@@ -10,6 +10,7 @@ pub const METHOD_NOTIFICATION: &str = "ai.notification";
 pub const METHOD_STOP: &str = "ai.stop";
 pub const METHOD_TOOL_USE: &str = "ai.tool_use";
 pub const METHOD_EXIT: &str = "ai.exit";
+pub const KIND_STATUS_LINE: &str = "status_line";
 
 pub const EVENT_REORDER_TOLERANCE_MS: u64 = 5_000;
 pub const MAX_TOOL_NAME_BYTES: usize = 64;

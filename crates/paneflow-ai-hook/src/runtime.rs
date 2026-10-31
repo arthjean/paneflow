@@ -42,20 +42,29 @@ pub(crate) fn dispatch() {
         diagnose("missing argv[1] hook event name");
         return;
     };
-    let Some(event) = event_name
+    let event = event_name
         .to_str()
-        .and_then(|name| name.parse::<HookEvent>().ok())
-    else {
+        .and_then(|name| name.parse::<HookEvent>().ok());
+    if event.is_none() && event_name != crate::status_line::STATUS_LINE_ARG {
         diagnose(&format!(
             "{}: unhandled hook event",
             event_name.to_string_lossy()
         ));
         return;
-    };
+    }
     let Some((endpoint, session)) =
         resolve_target(env::var_os(HOST_ENDPOINT_ENV).as_deref(), Some(&session))
     else {
-        diagnose(&format!("{}: no local host endpoint", event.name()));
+        diagnose(&format!(
+            "{}: no local host endpoint",
+            event_name.to_string_lossy()
+        ));
+        return;
+    };
+    let runtime_generation =
+        read_runtime_generation_from(env::var(RUNTIME_GENERATION_ENV).ok().as_deref());
+    let Some(event) = event else {
+        crate::status_line::relay(&endpoint, &session, runtime_generation);
         return;
     };
     let Some(hook_payload) = read_payload(event) else {
@@ -73,9 +82,7 @@ pub(crate) fn dispatch() {
         tool,
         pid: read_ai_pid_from(env::var(PID_ENV).ok().as_deref()),
         event_source: read_event_source_from(env::var(EVENT_SOURCE_ENV).ok().as_deref()),
-        runtime_generation: read_runtime_generation_from(
-            env::var(RUNTIME_GENERATION_ENV).ok().as_deref(),
-        ),
+        runtime_generation,
     };
     if let Err(error) = crate::background::record(
         event,
@@ -164,16 +171,20 @@ fn read_event_source_from(raw: Option<&str>) -> Option<LifecycleEventSource> {
     raw.and_then(LifecycleEventSource::parse)
 }
 
-fn read_stdin_json(event: HookEvent) -> Option<Value> {
+pub(crate) fn read_stdin_bytes() -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    if std::io::stdin()
+    std::io::stdin()
         .take(MAX_STDIN_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
-        .is_err()
-    {
+        .ok()?;
+    Some(bytes)
+}
+
+fn read_stdin_json(event: HookEvent) -> Option<Value> {
+    let Some(bytes) = read_stdin_bytes() else {
         diagnose(&format!("{}: stdin read error", event.name()));
         return None;
-    }
+    };
     if bytes.len() > MAX_STDIN_BYTES {
         diagnose(&format!(
             "{}: stdin exceeds {MAX_STDIN_BYTES} bytes",

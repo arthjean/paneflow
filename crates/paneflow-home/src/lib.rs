@@ -74,7 +74,11 @@ fn same_home(left: &Path, right: &Path) -> bool {
 }
 
 pub fn config_path() -> Option<PathBuf> {
-    paneflow_home().map(|home| home.join("paneflow.json"))
+    paneflow_home().map(|home| config_path_in(&home))
+}
+
+pub fn config_path_in(home: &Path) -> PathBuf {
+    home.join("paneflow.json")
 }
 
 pub fn session_path() -> Option<PathBuf> {

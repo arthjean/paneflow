@@ -16,6 +16,8 @@ pub mod usage;
 mod build_support;
 #[cfg(test)]
 mod packaging_tests;
+#[cfg(test)]
+mod usage_guard_tests;
 
 #[cfg(feature = "config-io")]
 pub use io::{

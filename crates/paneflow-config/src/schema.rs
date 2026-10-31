@@ -145,6 +145,9 @@ mod tests {
                 restore_conversations: Some(true),
                 claude_preassign_session_id: Some(false),
             }),
+            usage: Some(UsageConfig {
+                plan_limits: Some(true),
+            }),
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),
                 agent: "claude_code".to_string(),
@@ -219,6 +222,11 @@ mod tests {
             object_keys(&serialized["agents"]),
             object_keys(&schema["properties"]["agents"]["properties"]),
             "AgentsConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["usage"]),
+            object_keys(&schema["properties"]["usage"]["properties"]),
+            "UsageConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["agent_profiles"][0]),
@@ -341,6 +349,11 @@ mod tests {
             &doc,
             &schema["properties"]["agents"]["properties"],
             "agents",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["properties"]["usage"]["properties"],
+            "usage",
         );
         assert_doc_mentions_property_keys(
             &doc,

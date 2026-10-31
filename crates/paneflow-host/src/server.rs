@@ -510,6 +510,19 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     Err(_) => Flow::Close,
                 }
             }
+            METHOD_AGENT_EVENT
+                if params.get("kind").and_then(Value::as_str)
+                    == Some(paneflow_ipc_client::ai_hook::KIND_STATUS_LINE) =>
+            {
+                let envelope = match host.publish_plan_limits(&params) {
+                    Ok(ack) => result_envelope(&id, ack),
+                    Err(error) => error_to_envelope(&id, DispatchError::Host(error)),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             METHOD_AGENT_EVENT => {
                 let ingested = match host.attribute_agent_tool(&params) {
                     Err(reason) => Ok(json!({"accepted": false, "reason": reason})),
@@ -3630,6 +3643,105 @@ mod tests {
             .unwrap();
         let session = SessionId::parse(created["session"].as_str().unwrap()).unwrap();
         assert_eq!(host.list(None).len(), 1);
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn a_status_line_event_is_published_without_touching_the_session_hook_state() {
+        let (_home, host, server) = start();
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let subscription = host.follow_agents();
+        let mut hook =
+            HostClient::connect(server.endpoint(), &ClientHello::control("paneflow-ai-hook"))
+                .unwrap();
+        let rate_limits = json!({
+            "five_hour": {"used_percentage": 13, "resets_at": 1_793_492_400},
+            "seven_day": {"used_percentage": 59, "resets_at": 1_793_527_200}
+        });
+        let ack = hook
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": session,
+                    "kind": "status_line",
+                    "tool": "claude",
+                    "emitted_at_ms": 1_793_481_752_042_u64,
+                    "hook_payload": {
+                        "session_id": "b08fea1d-0871-4dd1-acbb-f05e3b9d348b",
+                        "config_dir": "/home/u/.claude-work",
+                        "rate_limits": rate_limits,
+                        "received_at_ms": 1_793_481_752_042_u64,
+                    },
+                }),
+            )
+            .unwrap();
+        assert_eq!(ack, json!({"accepted": true}));
+        let frame = std::iter::from_fn(|| {
+            subscription
+                .frames
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .ok()
+        })
+        .find(|frame| frame["type"] == crate::host::PLAN_LIMITS_FRAME)
+        .expect("a plan_limits frame on the agent bus");
+        assert_eq!(frame["session"], json!(session));
+        assert_eq!(frame["agent"], "claude");
+        assert_eq!(frame["config_dir"], "/home/u/.claude-work");
+        assert_eq!(frame["rate_limits"], rate_limits);
+        assert_eq!(
+            frame["provider_session_id"],
+            "b08fea1d-0871-4dd1-acbb-f05e3b9d348b"
+        );
+        assert!(frame["received_at_ms"].as_u64().is_some());
+        let manifest = host.inspect(&session).unwrap().manifest;
+        assert!(
+            manifest.last_hook.is_none(),
+            "a status line is not a lifecycle hook"
+        );
+        assert_eq!(manifest.hook_revision, 0);
+
+        let unknown = hook
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": SessionId::new(),
+                    "kind": "status_line",
+                    "hook_payload": {"config_dir": "/c", "rate_limits": null},
+                }),
+            )
+            .unwrap_err();
+        assert!(unknown.to_string().contains("not known"), "{unknown}");
+        let malformed = hook
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": session,
+                    "kind": "status_line",
+                    "hook_payload": {"config_dir": "/c", "rate_limits": [1]},
+                }),
+            )
+            .unwrap_err();
+        assert!(malformed.to_string().contains("rate_limits"), "{malformed}");
+        let oversized = hook
+            .call(
+                METHOD_AGENT_EVENT,
+                json!({
+                    "session": session,
+                    "kind": "status_line",
+                    "hook_payload": {
+                        "config_dir": "/c",
+                        "rate_limits": {"padding": "x".repeat(4096)},
+                    },
+                }),
+            )
+            .unwrap_err();
+        assert!(oversized.to_string().contains("exceeds"), "{oversized}");
 
         host.stop(&session, None).unwrap();
         server.stop().unwrap();

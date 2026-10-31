@@ -11,6 +11,7 @@
 mod background;
 mod event;
 mod runtime;
+mod status_line;
 mod transport;
 
 pub const MAX_STDIN_BYTES: usize = 16 * 1024 * 1024;

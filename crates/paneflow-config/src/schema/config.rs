@@ -1,6 +1,6 @@
 use super::{
     AgentPanelConfig, AgentsConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
-    Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig,
+    Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig, UsageConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -88,6 +88,8 @@ pub struct PaneFlowConfig {
     pub agent_panel: Option<AgentPanelConfig>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agents: Option<AgentsConfig>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub usage: Option<UsageConfig>,
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",

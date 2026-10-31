@@ -675,3 +675,152 @@ fn an_unusable_background_identity_is_still_forwarded_as_a_latch() {
         "{recorded}"
     );
 }
+
+fn status_line_input() -> Value {
+    json!({
+        "session_id": "b08fea1d-0871-4dd1-acbb-f05e3b9d348b",
+        "transcript_path": "/home/u/.claude/projects/p/b08fea1d.jsonl",
+        "cost": {"total_cost_usd": 0.8, "total_api_duration_ms": 50_442},
+        "rate_limits": {
+            "five_hour": {"used_percentage": 13, "resets_at": 1_793_492_400},
+            "seven_day": {"used_percentage": 59, "resets_at": 1_793_527_200}
+        }
+    })
+}
+
+fn run_status_line(
+    endpoint: Option<&Path>,
+    config_dir: &Path,
+    stdin_bytes: &[u8],
+) -> (std::process::ExitStatus, Duration, Vec<u8>) {
+    let mut command = Command::new(HOOK_BIN);
+    command
+        .arg("StatusLine")
+        .env_clear()
+        .envs(non_paneflow_environment())
+        .env("CLAUDE_CONFIG_DIR", config_dir)
+        .env("PANEFLOW_SESSION_ID", SESSION_ID)
+        .env("PANEFLOW_RUNTIME_GENERATION", "4")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    if let Some(endpoint) = endpoint {
+        command.env("PANEFLOW_HOST_ENDPOINT", endpoint);
+    }
+    let started = Instant::now();
+    let mut child = command.spawn().expect("relay process");
+    let _ = child.stdin.as_mut().expect("stdin").write_all(stdin_bytes);
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("relay output");
+    (output.status, started.elapsed(), output.stdout)
+}
+
+fn p95(mut samples: Vec<Duration>) -> Duration {
+    samples.sort();
+    samples[samples.len() * 95 / 100 - 1]
+}
+
+#[test]
+fn the_status_line_relay_forwards_rate_limits_to_the_host() {
+    let host = MockHost::start();
+    let config_dir = std::env::temp_dir().join("claude-work");
+    let (status, _, stdout) = run_status_line(
+        Some(&host.endpoint),
+        &config_dir,
+        status_line_input().to_string().as_bytes(),
+    );
+    assert!(status.success());
+    assert!(
+        stdout.is_empty(),
+        "the relay prints nothing without a chained command"
+    );
+    let frame = host.event();
+    assert_eq!(frame["method"], "agent.event");
+    assert_eq!(frame["params"]["session"], SESSION_ID);
+    assert_eq!(frame["params"]["kind"], "status_line");
+    assert_eq!(frame["params"]["runtime_generation"], 4);
+    let payload = &frame["params"]["hook_payload"];
+    assert_eq!(
+        payload["config_dir"],
+        config_dir.display().to_string(),
+        "{frame}"
+    );
+    assert_eq!(payload["rate_limits"], status_line_input()["rate_limits"]);
+    assert_eq!(
+        payload["session_id"],
+        "b08fea1d-0871-4dd1-acbb-f05e3b9d348b"
+    );
+    assert!(payload["received_at_ms"].as_u64().is_some_and(|ms| ms > 0));
+    assert!(
+        !frame.to_string().contains("transcript"),
+        "the transcript path never leaves the relay: {frame}"
+    );
+}
+
+#[test]
+fn the_status_line_relay_outside_paneflow_or_with_bad_input_exits_zero_silently() {
+    let config_dir = std::env::temp_dir();
+    let (status, elapsed, stdout) = run_status_line(
+        None,
+        &config_dir,
+        status_line_input().to_string().as_bytes(),
+    );
+    assert!(status.success() && stdout.is_empty());
+    assert!(elapsed < EXIT_TIMEOUT);
+    let (endpoint, _keepalive) = unique_ipc_path();
+    for input in [&b"not json"[..], b"", b"[1]"] {
+        let (status, _, stdout) = run_status_line(Some(&endpoint), &config_dir, input);
+        assert!(status.success() && stdout.is_empty());
+    }
+}
+
+#[test]
+fn the_status_line_relay_returns_within_100_ms_at_p95_when_the_host_is_down_or_silent() {
+    let config_dir = std::env::temp_dir();
+    let input = status_line_input().to_string();
+    let (absent, _keepalive) = unique_ipc_path();
+    let down: Vec<Duration> = (0..100)
+        .map(|_| {
+            let (status, elapsed, _) =
+                run_status_line(Some(&absent), &config_dir, input.as_bytes());
+            assert!(status.success());
+            elapsed
+        })
+        .collect();
+
+    let (silent, _silent_keepalive) = unique_ipc_path();
+    let name = silent
+        .as_path()
+        .to_fs_name::<GenericFilePath>()
+        .expect("IPC name");
+    let listener = ListenerOptions::new()
+        .name(name)
+        .create_sync()
+        .expect("IPC listener");
+    let held = std::thread::spawn(move || {
+        let mut streams = Vec::new();
+        for _ in 0..100 {
+            match listener.accept() {
+                Ok(stream) => streams.push(stream),
+                Err(_) => break,
+            }
+        }
+        streams.len()
+    });
+    let slow: Vec<Duration> = (0..100)
+        .map(|_| {
+            let (status, elapsed, _) =
+                run_status_line(Some(&silent), &config_dir, input.as_bytes());
+            assert!(status.success());
+            elapsed
+        })
+        .collect();
+    assert_eq!(held.join().expect("silent host"), 100);
+    let (down, slow) = (p95(down), p95(slow));
+    eprintln!("status line relay p95: host down {down:?}, host silent {slow:?}");
+    assert!(down < Duration::from_millis(100), "host down p95 {down:?}");
+    assert!(
+        slow < Duration::from_millis(100),
+        "host silent p95 {slow:?}"
+    );
+}

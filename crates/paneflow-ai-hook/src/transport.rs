@@ -13,15 +13,22 @@ pub(crate) fn send_agent_event(
     session: &str,
     frame: &AiHookFrame,
 ) -> io::Result<()> {
-    let mut control =
-        HostControl::connect_with_deadline(endpoint, HOST_CLIENT_NAME, HOOK_REQUEST_DEADLINE)
-            .map_err(|error| io::Error::new(io::ErrorKind::ConnectionRefused, error))?;
+    send_event_params(
+        endpoint,
+        frame.to_agent_event_params(session),
+        HOOK_REQUEST_DEADLINE,
+    )
+}
+
+pub(crate) fn send_event_params(
+    endpoint: &Path,
+    params: serde_json::Value,
+    deadline: Duration,
+) -> io::Result<()> {
+    let mut control = HostControl::connect_with_deadline(endpoint, HOST_CLIENT_NAME, deadline)
+        .map_err(|error| io::Error::new(io::ErrorKind::ConnectionRefused, error))?;
     let accepted = control
-        .request_with_deadline(
-            METHOD_AGENT_EVENT,
-            frame.to_agent_event_params(session),
-            HOOK_REQUEST_DEADLINE,
-        )
+        .request_with_deadline(METHOD_AGENT_EVENT, params, deadline)
         .map_err(io::Error::other)?;
     if accepted.get("accepted").and_then(|value| value.as_bool()) == Some(false) {
         let reason = accepted

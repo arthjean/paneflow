@@ -42,6 +42,8 @@ pub const LAUNCH_RESPONSE_BUDGET: Duration = Duration::from_secs(9);
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
+const MAX_PLAN_LIMITS_BYTES: usize = 4096;
+pub const PLAN_LIMITS_FRAME: &str = "plan_limits";
 const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
 pub const STOP_ACTION_BUDGET: Duration = Duration::from_secs(5);
 pub const MAX_CONCURRENT_CHECKPOINTS: usize = 2;
@@ -1116,6 +1118,64 @@ impl SessionHost {
                 "persistence_error": persistence_error,
                 "revision": revision,
         }))
+    }
+
+    pub fn publish_plan_limits(&self, params: &Value) -> Result<Value, HostError> {
+        let session = params
+            .get("session")
+            .and_then(Value::as_str)
+            .and_then(|raw| SessionId::parse(raw).ok())
+            .ok_or_else(|| HostError::InvalidRequest("missing or invalid session".to_string()))?;
+        let workspace = {
+            let sessions = self.lock_sessions();
+            let record = sessions
+                .get(&session)
+                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+            let manifest = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            manifest.workspace.clone()
+        };
+        let payload = params.get("hook_payload").unwrap_or(&Value::Null);
+        let rate_limits = match payload.get("rate_limits") {
+            Some(limits @ Value::Object(_)) => limits.clone(),
+            None | Some(Value::Null) => Value::Null,
+            Some(_) => {
+                return Err(HostError::InvalidRequest(
+                    "rate_limits must be an object or null".to_string(),
+                ));
+            }
+        };
+        if serde_json::to_vec(&rate_limits)
+            .map_or(true, |bytes| bytes.len() > MAX_PLAN_LIMITS_BYTES)
+        {
+            return Err(HostError::InvalidRequest(format!(
+                "rate_limits exceeds {MAX_PLAN_LIMITS_BYTES} bytes"
+            )));
+        }
+        let config_dir = payload
+            .get("config_dir")
+            .and_then(Value::as_str)
+            .map(crate::agent::clamp_text)
+            .filter(|dir| !dir.is_empty())
+            .ok_or_else(|| HostError::InvalidRequest("missing config_dir".to_string()))?;
+        let provider_session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(crate::agent::clamp_text);
+        self.publish_agent_frame(&json!({
+            "type": PLAN_LIMITS_FRAME,
+            "session": session,
+            "workspace": workspace,
+            "agent": params.get("tool").and_then(Value::as_str).map(crate::agent::clamp_text),
+            "config_dir": config_dir,
+            "provider_session_id": provider_session_id,
+            "rate_limits": rate_limits,
+            "emitted_at_ms": params.get("emitted_at_ms").and_then(Value::as_u64),
+            "received_at_ms": now_ms(),
+        }));
+        Ok(json!({"accepted": true}))
     }
 
     pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {

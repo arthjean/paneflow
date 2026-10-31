@@ -89,6 +89,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `sidebar_ended_sessions` | `0`, `3`, `5`, `10`, null | `5` | Next sidebar render | How many ended sessions a workspace previews in the sidebar before the rest collapse under one "N more ended sessions" row. Nothing is pruned; the cap only controls the preview. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
 | `agents` | object/null | defaults below | Restore and next launch | Agent conversation restore and Claude Code session-id preassignment. |
+| `usage` | object/null | defaults below | Next integration refresh | Subscription usage: whether Paneflow relays Claude Code plan limits. |
 | `telemetry` | object/null | `{ "enabled": null }` | Startup/consent | Desktop telemetry consent. `PANEFLOW_NO_TELEMETRY=1` overrides it. |
 
 ## Agent launcher buttons
@@ -148,6 +149,12 @@ and macOS keep every agent below.
 | --- | --- | --- | --- |
 | `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
 | `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
+
+## `usage`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `usage.plan_limits` | boolean/null | `true` | Paneflow installs its status line relay, `paneflow-ai-hook StatusLine`, in each Claude Code config directory whose `settings.json` has no `statusLine`, so the plan limits Claude Code hands its status line reach Paneflow. A status line of your own is never changed. `false` removes the relay at the next integration refresh. No credential is read. |
 
 ## `worktrees`
 

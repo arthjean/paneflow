@@ -55,6 +55,7 @@ fn test_serialization_roundtrip() {
         terminal: None,
         agent_panel: None,
         agents: None,
+        usage: None,
         external_editor: None,
         agent_profiles: Vec::new(),
         spaces: Vec::new(),

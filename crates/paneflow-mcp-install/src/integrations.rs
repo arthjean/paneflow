@@ -5,6 +5,9 @@ use paneflow_agent_config::claude_hooks::{
     cmd_command_word, sh_command_word, CLAUDE_HOOK_EVENTS as CLAUDE_EVENTS,
     CLAUDE_RETIRED_HOOK_EVENTS as CLAUDE_RETIRED_EVENTS, MANAGED_MARKER,
 };
+use paneflow_agent_config::usage::status_line::{
+    reconcile_status_line, remove_managed_status_line, status_line_command,
+};
 use paneflow_agent_config::{
     runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter, RuntimeMcpConfig,
     RuntimeSkillsDir, RUNTIMES,
@@ -82,6 +85,7 @@ pub struct IntegrationBinaries {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IntegrationTarget {
     pub marker_dir: PathBuf,
+    pub config_file: PathBuf,
     pub claude: Option<paneflow_agent_config::ClaudePaths>,
     pub codex_home: Option<PathBuf>,
 }
@@ -96,6 +100,7 @@ impl IntegrationTarget {
     ) -> Self {
         Self {
             marker_dir: home.join("integrations").join("spaces").join(space),
+            config_file: paneflow_home::config_path_in(home),
             claude,
             codex_home,
         }
@@ -130,6 +135,7 @@ struct ConfigPaths {
     claude_mcp: PathBuf,
     codex_hooks: PathBuf,
     codex_config: PathBuf,
+    plan_limits: bool,
 }
 
 impl ConfigPaths {
@@ -145,12 +151,14 @@ impl ConfigPaths {
             .ok_or_else(|| anyhow!("cannot resolve the Claude config directory"))?;
         let codex_home = paneflow_agent_config::codex_home()
             .ok_or_else(|| anyhow!("cannot resolve the Codex home"))?;
-        Ok(Self::with_dirs(
+        let mut paths = Self::with_dirs(
             marker_home.join("integrations"),
-            marker_home,
+            marker_home.clone(),
             claude,
             &codex_home,
-        ))
+        );
+        paths.plan_limits = plan_limits_enabled(&paneflow_home::config_path_in(&marker_home));
+        Ok(paths)
     }
 
     fn for_target(target: &IntegrationTarget) -> Result<Self> {
@@ -171,6 +179,7 @@ impl ConfigPaths {
             &codex_home,
         );
         paths.launch_time_evidence = false;
+        paths.plan_limits = plan_limits_enabled(&target.config_file);
         Ok(paths)
     }
 
@@ -189,6 +198,7 @@ impl ConfigPaths {
             claude_mcp: claude.global_config,
             codex_hooks: codex_home.join("hooks.json"),
             codex_config: codex_home.join("config.toml"),
+            plan_limits: true,
         }
     }
 
@@ -781,10 +791,7 @@ fn remove_integration_at(paths: &ConfigPaths, slug: &str) -> Result<IntegrationS
         bail!("{} offers detection only", runtime.label);
     }
     match runtime.integration.hook_adapter {
-        RuntimeHookAdapter::Claude => remove_json_hooks(
-            &paths.claude_settings,
-            &owned_events(CLAUDE_EVENTS, CLAUDE_RETIRED_EVENTS),
-        )?,
+        RuntimeHookAdapter::Claude => remove_claude_hooks(&paths.claude_settings)?,
         RuntimeHookAdapter::Codex => remove_json_hooks(
             &paths.codex_hooks,
             &owned_events(CODEX_EVENTS, CODEX_RETIRED_EVENTS),
@@ -979,6 +986,13 @@ fn reporter_for_current_platform<'a>(unix_reporter: &'a Path, hook_binary: &'a P
     }
 }
 
+fn plan_limits_enabled(config_file: &Path) -> bool {
+    merge::read_json_or_default(config_file)
+        .ok()
+        .and_then(|root| root.pointer("/usage/plan_limits").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
 fn install_claude_hooks(
     paths: &ConfigPaths,
     unix_reporter: &Path,
@@ -986,10 +1000,12 @@ fn install_claude_hooks(
 ) -> Result<()> {
     io::with_config_lock(&paths.claude_settings, || {
         let mut root = merge::read_json_or_default(&paths.claude_settings)?;
-        reconcile_claude_hooks(
-            &mut root,
-            reporter_for_current_platform(unix_reporter, &binaries.hook_binary),
-        )?;
+        let reporter = reporter_for_current_platform(unix_reporter, &binaries.hook_binary);
+        reconcile_claude_hooks(&mut root, reporter)?;
+        let status_line = paths
+            .plan_limits
+            .then(|| status_line_command(reporter, paneflow_agent_config::home_dir().as_deref()));
+        reconcile_status_line(&mut root, status_line.as_deref());
         io::write_if_changed_unlocked(&paths.claude_settings, &merge::json_to_bytes(&root)?)?;
         Ok(())
     })
@@ -1028,6 +1044,22 @@ fn owned_events(current: &[&'static str], retired: &[&'static str]) -> Vec<&'sta
         .copied()
         .chain(retired.iter().copied())
         .collect()
+}
+
+fn remove_claude_hooks(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    io::with_config_lock(path, || {
+        let mut root = merge::read_json_or_default(path)?;
+        remove_owned_hooks(
+            &mut root,
+            &owned_events(CLAUDE_EVENTS, CLAUDE_RETIRED_EVENTS),
+        )?;
+        remove_managed_status_line(&mut root);
+        io::write_if_changed_unlocked(path, &merge::json_to_bytes(&root)?)?;
+        Ok(())
+    })
 }
 
 fn remove_json_hooks(path: &Path, events: &[&str]) -> Result<()> {
@@ -1282,6 +1314,7 @@ mod tests {
             claude_mcp: root.join(".claude.json"),
             codex_hooks: root.join("codex").join("hooks.json"),
             codex_config: root.join("codex").join("config.toml"),
+            plan_limits: true,
         };
         (
             directory,
@@ -2507,5 +2540,192 @@ mod tests {
         std::fs::set_permissions(&claude_dir, std::fs::Permissions::from_mode(0o700))
             .expect("writable");
         install_target_integration(&target, "claude-code", &binaries).expect("retry");
+    }
+
+    fn expected_status_line(binaries: &IntegrationBinaries) -> String {
+        let unix_reporter = binaries
+            .hook_binary
+            .parent()
+            .expect("bin")
+            .join("paneflow-ai-hook.sh");
+        status_line_command(
+            reporter_for_current_platform(&unix_reporter, &binaries.hook_binary),
+            paneflow_agent_config::home_dir().as_deref(),
+        )
+    }
+
+    fn try_install_claude(
+        paths: &ConfigPaths,
+        binaries: &IntegrationBinaries,
+    ) -> Result<IntegrationStatus> {
+        install_integration_at(paths, "claude-code", binaries, None, InstallMode::default())
+    }
+
+    fn status_line_state_of(
+        settings: &Value,
+    ) -> paneflow_agent_config::usage::status_line::StatusLineState {
+        paneflow_agent_config::usage::status_line::status_line_state(settings)
+    }
+
+    #[test]
+    fn claude_install_adds_a_managed_status_line_and_keeps_the_rest() {
+        use paneflow_agent_config::usage::status_line::StatusLineState;
+        let (_directory, paths, binaries) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_claude(&paths, &binaries);
+        let settings = read_settings(&paths);
+        assert_eq!(
+            settings["statusLine"],
+            json!({
+                "type": "command",
+                "command": expected_status_line(&binaries),
+                MANAGED_MARKER: true,
+            })
+        );
+        assert!(expected_status_line(&binaries).ends_with(" StatusLine"));
+        assert_eq!(settings["theme"], "dark");
+        assert_eq!(
+            settings["hooks"]["Stop"][0],
+            user_stop_hook()["hooks"]["Stop"][0]
+        );
+        assert_eq!(status_line_state_of(&settings), StatusLineState::Managed);
+    }
+
+    #[test]
+    fn claude_install_never_touches_a_foreign_status_line() {
+        use paneflow_agent_config::usage::status_line::StatusLineState;
+        let (_directory, paths, binaries) = fixture();
+        let foreign = json!({"type": "command", "command": "bash ~/.claude/statusline.sh", "refreshInterval": 5});
+        let mut starting = user_stop_hook();
+        starting["statusLine"] = foreign.clone();
+        write_settings(&paths, &starting);
+        install_claude(&paths, &binaries);
+        let settings = read_settings(&paths);
+        assert_eq!(settings["statusLine"], foreign);
+        assert_eq!(
+            status_line_state_of(&settings),
+            StatusLineState::ForeignStatusLine
+        );
+        remove_integration_at(&paths, "claude-code").expect("remove");
+        assert_eq!(read_settings(&paths)["statusLine"], foreign);
+    }
+
+    #[test]
+    fn claude_install_repoints_a_managed_status_line_from_an_old_reporter() {
+        let (_directory, paths, binaries) = fixture();
+        let mut starting = user_stop_hook();
+        starting["statusLine"] = json!({
+            "type": "command",
+            "command": "/opt/old/bin/paneflow-ai-hook StatusLine",
+            MANAGED_MARKER: true,
+        });
+        write_settings(&paths, &starting);
+        install_claude(&paths, &binaries);
+        assert_eq!(
+            read_settings(&paths)["statusLine"]["command"],
+            expected_status_line(&binaries)
+        );
+    }
+
+    #[test]
+    fn disabled_plan_limits_remove_the_managed_status_line_and_install_none() {
+        let (_directory, paths, binaries) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_claude(&paths, &binaries);
+        assert!(read_settings(&paths).get("statusLine").is_some());
+
+        std::fs::write(
+            paneflow_home::config_path_in(&paths.marker_home),
+            br#"{"usage": {"plan_limits": false}}"#,
+        )
+        .expect("paneflow.json");
+        let resolved = ConfigPaths::resolve(paths.marker_home.clone()).expect("resolved paths");
+        assert!(!resolved.plan_limits);
+        let paths = ConfigPaths {
+            plan_limits: resolved.plan_limits,
+            ..paths
+        };
+        install_claude(&paths, &binaries);
+        let settings = read_settings(&paths);
+        assert!(settings.get("statusLine").is_none(), "{settings}");
+        assert_eq!(settings["theme"], "dark");
+    }
+
+    #[test]
+    fn plan_limits_default_to_on_for_a_missing_or_unrelated_config() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let config = directory.path().join("paneflow.json");
+        assert!(plan_limits_enabled(&config));
+        for body in [
+            &br#"{"usage": {}}"#[..],
+            br#"{"usage": {"plan_limits": true}}"#,
+            br#"{"usage": {"plan_limits": "no"}}"#,
+            b"{broken",
+        ] {
+            std::fs::write(&config, body).expect("config");
+            assert!(plan_limits_enabled(&config));
+        }
+    }
+
+    #[test]
+    fn a_space_target_reads_plan_limits_from_its_paneflow_home() {
+        let (_directory, paths, binaries) = fixture();
+        let target = space_target(&paths, "space-off");
+        assert_eq!(
+            target.config_file,
+            paneflow_home::config_path_in(&paths.marker_home)
+        );
+        let settings = target.claude.as_ref().expect("claude").settings();
+        install_target_integration(&target, "claude-code", &binaries).expect("install");
+        let installed: Value =
+            serde_json::from_slice(&std::fs::read(&settings).expect("settings")).expect("json");
+        assert_eq!(installed["statusLine"][MANAGED_MARKER], true);
+
+        std::fs::write(&target.config_file, br#"{"usage": {"plan_limits": false}}"#)
+            .expect("paneflow.json");
+        install_target_integration(&target, "claude-code", &binaries).expect("reinstall");
+        let reinstalled: Value =
+            serde_json::from_slice(&std::fs::read(&settings).expect("settings")).expect("json");
+        assert!(reinstalled.get("statusLine").is_none(), "{reinstalled}");
+    }
+
+    #[test]
+    fn removing_the_claude_integration_removes_the_managed_status_line() {
+        let (_directory, paths, binaries) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_claude(&paths, &binaries);
+        remove_integration_at(&paths, "claude-code").expect("remove");
+        assert_eq!(read_settings(&paths), user_stop_hook());
+    }
+
+    #[test]
+    fn disabled_hooks_still_get_the_status_line_and_report_their_state() {
+        use paneflow_agent_config::usage::status_line::StatusLineState;
+        let (_directory, paths, binaries) = fixture();
+        let mut starting = user_stop_hook();
+        starting["disableAllHooks"] = json!(true);
+        write_settings(&paths, &starting);
+        install_claude(&paths, &binaries);
+        let settings = read_settings(&paths);
+        assert_eq!(settings["statusLine"][MANAGED_MARKER], true);
+        assert_eq!(
+            status_line_state_of(&settings),
+            StatusLineState::HooksDisabled
+        );
+    }
+
+    #[test]
+    fn an_invalid_settings_file_is_never_written_and_the_install_fails() {
+        let (_directory, paths, binaries) = fixture();
+        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
+            .expect("config directory");
+        let broken: &[u8] = b"{\"theme\": \"dark\", // a comment\n}";
+        std::fs::write(&paths.claude_settings, broken).expect("settings");
+        let error = try_install_claude(&paths, &binaries).expect_err("refused");
+        assert!(format!("{error:#}").contains("settings.json"), "{error:#}");
+        assert_eq!(
+            std::fs::read(&paths.claude_settings).expect("settings"),
+            broken
+        );
     }
 }

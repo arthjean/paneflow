@@ -63,6 +63,13 @@ impl AgentsConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+pub struct UsageConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_limits: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct TelemetryConfig {
     pub enabled: Option<bool>,
 }

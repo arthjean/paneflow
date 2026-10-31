@@ -485,6 +485,18 @@
         }
       }
     },
+    "usage": {
+      "type": ["object", "null"],
+      "description": "Subscription usage settings.",
+      "additionalProperties": false,
+      "properties": {
+        "plan_limits": {
+          "type": ["boolean", "null"],
+          "description": "Install Paneflow's Claude Code status line relay in each config directory that has no status line of its own, so plan limits reach Paneflow without reading any credential. false removes the relay at the next integration refresh. Default true.",
+          "default": true
+        }
+      }
+    },
     "agent_profiles": {
       "type": "array",
       "description": "Custom launcher entries. Each profile launches one of the built-in agents with extra environment variables and arguments, for example a second Claude Code account through CLAUDE_CONFIG_DIR. Profiles appear in the pane palette next to the built-in agents and inherit the base agent's status tracking, hooks, and sessions.",
