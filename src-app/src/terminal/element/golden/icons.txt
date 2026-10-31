@@ -16,5 +16,4 @@ blocks[0]:
 selection_rects[0]:
 search_rects[0]:
 cursor: None
-anchor: None
 ime: None

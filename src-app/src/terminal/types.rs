@@ -392,14 +392,6 @@ pub struct HyperlinkZone {
     pub col: Option<u32>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct CopyModeCursorState {
-    pub grid_line: i32,
-    pub col: usize,
-    pub anchor_grid_line: Option<i32>,
-    pub anchor_col: usize,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScrollbackWindow {
     pub lines: Vec<String>,

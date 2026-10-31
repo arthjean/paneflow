@@ -382,7 +382,6 @@ impl PaneFlowApp {
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
             jump_cursor: None,
-            swap_mode: None,
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),
             resume_batch: None,

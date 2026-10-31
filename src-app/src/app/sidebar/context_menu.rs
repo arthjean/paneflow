@@ -348,23 +348,6 @@ impl PaneFlowApp {
             }),
         ));
 
-        if self.resumable_ended_panes(idx, cx) > 0 {
-            let resume_shortcut = self
-                .shortcut_for_action("resume_ended_sessions")
-                .map(|s| SharedString::from(s.to_string()));
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "workspace-context-resume-ended".into(),
-                "Resume ended sessions",
-                resume_shortcut,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.workspace_menu_open = None;
-                    this.resume_ended_sessions_in_workspace(idx, cx);
-                    cx.stop_propagation();
-                }),
-            ));
-        }
-
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-custom-buttons".into(),
             "Manage Custom Buttons…",
@@ -1006,7 +989,6 @@ impl PaneFlowApp {
         );
 
         let source_for_close = source.clone();
-        let source_for_hide = source.clone();
         let source_for_detach = source.clone();
         context_menu = context_menu.child(self.render_select_menu_item(
             "pane-context-detach".into(),
@@ -1020,17 +1002,6 @@ impl PaneFlowApp {
             cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.pane_menu_open = None;
                 this.toggle_detached_pane(source_for_detach.clone(), window, cx);
-                cx.stop_propagation();
-            }),
-        ));
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "pane-context-hide".into(),
-            "Hide from layout (keeps running)",
-            None,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.pane_menu_open = None;
-                this.hide_pane_from_layout(source_for_hide.clone(), cx);
                 cx.stop_propagation();
             }),
         ));

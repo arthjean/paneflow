@@ -349,61 +349,16 @@ impl TerminalView {
     pub(super) fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.keystroke.key == "escape"
-            && crate::app::workspace_ops::swap_mode_active_in(window.window_handle().window_id())
-        {
-            cx.emit(TerminalEvent::CancelSwapMode);
-            return;
-        }
-
         if self.search_active {
             return;
         }
 
         if !self.terminal.host_link.accepts_input() {
-            if event.keystroke.key == "enter" && !self.copy_mode_active {
+            if event.keystroke.key == "enter" {
                 self.resume_hosted_session(cx);
-            }
-            return;
-        }
-
-        if self.copy_mode_active {
-            let keystroke = &event.keystroke;
-            let key = keystroke.key.as_str();
-            let shift = keystroke.modifiers.shift;
-
-            match key {
-                "left" | "right" | "up" | "down" => {
-                    let (dx, dy): (i32, i32) = match key {
-                        "left" => (-1, 0),
-                        "right" => (1, 0),
-                        "up" => (0, -1),
-                        "down" => (0, 1),
-                        _ => unreachable!(),
-                    };
-                    if shift {
-                        self.extend_copy_selection(dx, dy, cx);
-                    } else {
-                        self.move_copy_cursor(dx, dy, cx);
-                    }
-                }
-                "enter" => {
-                    self.exit_copy_mode(true, cx);
-                }
-                "escape" => {
-                    self.exit_copy_mode(false, cx);
-                }
-                _ => {
-                    if keystroke.key_char.as_deref() == Some("q")
-                        && !keystroke.modifiers.control
-                        && !keystroke.modifiers.alt
-                    {
-                        self.exit_copy_mode(false, cx);
-                    }
-                }
             }
             return;
         }
@@ -527,7 +482,7 @@ impl TerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
-        if self.search_active || self.copy_mode_active {
+        if self.search_active {
             return;
         }
         let release_id = ghostty_release_id(&event.keystroke);

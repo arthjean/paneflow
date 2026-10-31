@@ -96,7 +96,6 @@ impl PaneFlowApp {
 
     fn prepare_pane_transfer(&mut self, pane: &Entity<Pane>, cx: &mut Context<Self>) {
         self.cancel_pane_layout_resize();
-        self.cancel_swap_mode(cx);
         self.dismiss_transient_surfaces();
         for ws in &mut self.workspaces {
             if let Some(tab_idx) = ws.tab_index_containing_pane(pane)

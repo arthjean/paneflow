@@ -218,27 +218,8 @@ impl TerminalSessionBackend {
         self.ghostty.line_text_at(point)
     }
 
-    pub(crate) fn move_copy_cursor(&self, current: Point, dx: i32, dy: i32, extend: bool) -> Point {
-        let metrics = self.ghostty.grid_metrics();
-        let column = (current.column.0 as i32 + dx)
-            .clamp(0, metrics.columns.saturating_sub(1) as i32) as usize;
-        let line = (current.line.0 + dy).clamp(metrics.topmost_line.0, metrics.bottommost_line.0);
-        let next = Point::new(line, column);
-        if extend {
-            let geometry = self.selection_geometry(1.0, 1.0);
-            if self.ghostty.selection_range().is_none() {
-                self.ghostty
-                    .press_selection(SelectionKind::Simple, current, (0.0, 0.0));
-            }
-            self.ghostty
-                .drag_selection(next, (0.0, 0.0), geometry, false);
-        } else {
-            self.ghostty.clear_selection();
-        }
-        next
-    }
-
-    pub(crate) fn selection_range(&self) -> Option<SelectionRange> {
+    #[cfg(test)]
+    pub(crate) fn selection_range(&self) -> Option<crate::terminal::types::SelectionRange> {
         self.ghostty.selection_range()
     }
 

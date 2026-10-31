@@ -284,7 +284,6 @@ struct PaneFlowApp {
     #[cfg(target_os = "windows")]
     windows_backdrop_light: Option<bool>,
     jump_cursor: Option<u64>,
-    swap_mode: Option<SwapMode>,
     closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
@@ -331,8 +330,6 @@ struct PaneFlowApp {
     pub(crate) diff_dock: DiffDockState,
     pub(crate) sidebar_order_cache: std::cell::RefCell<crate::app::sidebar::SidebarOrderCache>,
 }
-
-pub static SWAP_WINDOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn main() {
     run();

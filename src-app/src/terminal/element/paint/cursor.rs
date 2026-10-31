@@ -110,18 +110,3 @@ pub fn paint_cursor(
 
     paint_cursor_info(cursor, layout, geom, base_font, font_size, window, cx);
 }
-
-pub fn paint_anchor_cursor(
-    layout: &LayoutState,
-    geom: &CellGeometry,
-    base_font: &Font,
-    font_size: Pixels,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let Some(anchor) = &layout.anchor_cursor else {
-        return;
-    };
-
-    paint_cursor_info(anchor, layout, geom, base_font, font_size, window, cx);
-}

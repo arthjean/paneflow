@@ -144,13 +144,6 @@ impl CardShape {
             Self::Flush(edges) => crate::layout::flush_border(edges, color).into_any_element(),
         }
     }
-
-    fn round(self, element: gpui::Div) -> gpui::Div {
-        match self {
-            Self::Squircle(radius) => element.rounded(radius),
-            Self::Flush(edges) => crate::layout::flush_corners(element, edges),
-        }
-    }
 }
 
 fn card_paints_quads(background: Hsla) -> bool {
@@ -434,7 +427,6 @@ pub struct Pane {
     overlay_current: Rc<Cell<(f32, f32, f32, f32)>>,
     overlay_seq: usize,
     overlay_pane_size: Size<Pixels>,
-    swap_source: bool,
     split_focus: SplitFocus,
     dim_from: f32,
     dim_alpha: Rc<Cell<f32>>,
@@ -493,7 +485,6 @@ impl Pane {
             overlay_current: Rc::new(Cell::new((0.0, 0.0, 0.0, 0.0))),
             overlay_seq: 0,
             overlay_pane_size: Size::default(),
-            swap_source: false,
             split_focus: SplitFocus::Alone,
             dim_from: 0.0,
             dim_alpha: Rc::new(Cell::new(0.0)),
@@ -668,13 +659,6 @@ impl Pane {
         }
     }
 
-    pub fn set_swap_source(&mut self, source: bool, cx: &mut Context<Self>) {
-        if self.swap_source != source {
-            self.swap_source = source;
-            cx.notify();
-        }
-    }
-
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<TerminalView>> {
         self.surfaces.iter().filter_map(PaneSurface::as_terminal)
     }
@@ -741,7 +725,6 @@ impl Pane {
             TerminalEvent::CwdChanged(_)
             | TerminalEvent::ActivityBurst
             | TerminalEvent::ServiceDetected(_)
-            | TerminalEvent::CancelSwapMode
             | TerminalEvent::SelectionCopied
             | TerminalEvent::Notice(_)
             | TerminalEvent::OpenMarkdownPath(_)
@@ -2068,30 +2051,6 @@ impl Render for Pane {
             .overflow_hidden()
             .child(card_shape.background(card_background))
             .child(content)
-            .when(self.swap_source, |d| {
-                let tint = pane_colors().text;
-                d.child(
-                    card_shape
-                        .round(div().absolute().inset_0())
-                        .border_2()
-                        .border_color(tint.opacity(SWAP_OVERLAY_BORDER_ALPHA))
-                        .bg(tint.opacity(SWAP_OVERLAY_FILL_ALPHA))
-                        .flex()
-                        .items_start()
-                        .justify_center()
-                        .pt(px(10.))
-                        .child(
-                            div()
-                                .px(px(8.))
-                                .py(px(3.))
-                                .rounded(px(6.))
-                                .bg(pane_colors().overlay)
-                                .text_size(px(11.))
-                                .text_color(tint)
-                                .child("Swap: pick a direction, Esc cancels"),
-                        ),
-                )
-            })
             .child(card_shape.border(
                 card_background,
                 if has_attention {

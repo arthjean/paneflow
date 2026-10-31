@@ -6,7 +6,7 @@ use gpui::{App, AppContext, Context, Entity, Focusable, Window};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_host::{HostClientError, SessionLifecycle};
 
-use crate::app::close_policy::{CloseIntent, CloseTarget};
+use crate::app::close_policy::CloseTarget;
 use crate::app::workspace_ops::{
     expire_held_sessions, settle_closed_sessions, take_undo_window_sessions,
     undo_window_session_ids,
@@ -16,10 +16,7 @@ use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
 use crate::workspace::{Tab, Workspace, next_workspace_id_in};
-use crate::{
-    CLOSED_SESSION_GRACE_MS, HidePane, PaneFlowApp, RemoveEndedSessions, ResumeEndedSessions,
-    SessionHold, StopSession,
-};
+use crate::{CLOSED_SESSION_GRACE_MS, PaneFlowApp, SessionHold, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
 
@@ -457,20 +454,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(crate) fn handle_hide_pane(
-        &mut self,
-        _: &HidePane,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(pane) = self
-            .nav_root()
-            .and_then(|root| root.focused_pane(window, cx))
-        {
-            self.hide_pane_from_layout(pane, cx);
-        }
-    }
-
     pub(crate) fn handle_stop_session(
         &mut self,
         _: &StopSession,
@@ -491,70 +474,6 @@ impl PaneFlowApp {
         }
         let session = terminal.read(cx).terminal.session_id.clone();
         self.request_close(CloseTarget::Session(session), Some(window), cx);
-    }
-
-    pub(crate) fn handle_resume_ended_sessions(
-        &mut self,
-        _: &ResumeEndedSessions,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(idx) = self.shown_workspace_idx() {
-            self.resume_ended_sessions_in_workspace(idx, cx);
-        }
-    }
-
-    pub(crate) fn handle_remove_ended_sessions(
-        &mut self,
-        _: &RemoveEndedSessions,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(ws) = self.active_workspace() else {
-            return;
-        };
-        let ended: Vec<SessionId> = self
-            .owned_sessions_for_workspace(ws, cx)
-            .into_iter()
-            .filter(|session| !session.live)
-            .map(|session| session.session)
-            .collect();
-        if ended.is_empty() {
-            self.show_toast("No ended session to remove in this workspace", cx);
-            return;
-        }
-        for session in ended {
-            self.remove_listed_session(session, cx);
-        }
-    }
-
-    pub(crate) fn resume_ended_sessions_in_workspace(
-        &mut self,
-        ws_idx: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let resuming = self.resume_ended_panes(ws_idx, cx);
-        if resuming.is_empty() {
-            self.show_toast("No ended session to resume in this workspace", cx);
-            return;
-        }
-        self.track_resume_batch(resuming, cx);
-    }
-
-    pub(crate) fn hide_pane_from_layout(&mut self, pane: Entity<Pane>, cx: &mut Context<Self>) {
-        let hidden = pane_terminals(&pane, cx)
-            .iter()
-            .filter(|terminal| terminal.read(cx).terminal.hosted.is_some())
-            .count();
-        self.perform_close(CloseTarget::Pane(pane), CloseIntent::Detach, None, cx);
-        if hidden > 0 {
-            self.show_toast(
-                format!(
-                    "{hidden} session(s) hidden from the layout and still running; reopen them from the sidebar."
-                ),
-                cx,
-            );
-        }
     }
 
     pub(crate) fn refresh_owned_sessions(&mut self, cx: &mut Context<Self>) {
@@ -867,42 +786,6 @@ impl PaneFlowApp {
             .find(|pane| pane.read(cx).contains_terminal(terminal))
     }
 
-    pub(crate) fn resume_ended_panes(
-        &mut self,
-        ws_idx: usize,
-        cx: &mut Context<Self>,
-    ) -> Vec<Entity<TerminalView>> {
-        let Some(ws) = self.workspaces.get(ws_idx) else {
-            return Vec::new();
-        };
-        let resumable: Vec<_> = ws
-            .collect_panes()
-            .iter()
-            .flat_map(|pane| pane_terminals(pane, cx))
-            .filter(|terminal| terminal_is_resumable(terminal, cx))
-            .collect();
-        for terminal in &resumable {
-            terminal.update(cx, |view, cx| view.resume_hosted_session(cx));
-        }
-        if !resumable.is_empty() {
-            cx.notify();
-        }
-        resumable
-    }
-
-    pub(crate) fn resumable_ended_panes(&self, ws_idx: usize, cx: &App) -> usize {
-        self.workspaces
-            .get(ws_idx)
-            .map(|ws| {
-                ws.collect_panes()
-                    .iter()
-                    .flat_map(|pane| pane_terminals(pane, cx))
-                    .filter(|terminal| terminal_is_resumable(terminal, cx))
-                    .count()
-            })
-            .unwrap_or(0)
-    }
-
     pub(crate) fn track_resume_batch(
         &mut self,
         terminals: Vec<Entity<TerminalView>>,
@@ -951,14 +834,6 @@ impl PaneFlowApp {
 pub(crate) fn resume_batch_failure_notice(resumed: usize, requested: usize) -> Option<String> {
     let failed = requested.saturating_sub(resumed);
     (failed > 0).then(|| format!("{failed} of {requested} panes could not be resumed"))
-}
-
-pub(crate) fn host_link_is_resumable(link: &HostLinkState) -> bool {
-    matches!(link, HostLinkState::Ended(end) if end.restartable())
-}
-
-fn terminal_is_resumable(terminal: &Entity<TerminalView>, cx: &App) -> bool {
-    host_link_is_resumable(&terminal.read(cx).terminal.host_link)
 }
 
 pub(crate) struct ResumeBatch {
@@ -1354,34 +1229,6 @@ mod tests {
         assert_eq!(relative_age(7_200_000, 0), "2 h ago");
         assert_eq!(relative_age(172_800_000, 0), "2 d ago");
         assert_eq!(relative_age(0, 5_000), "just now");
-    }
-
-    #[test]
-    fn a_pane_restored_into_an_ended_session_resumes_without_an_attachment() {
-        let mut state = crate::terminal::TerminalState::new_display_only(24, 80);
-        assert!(
-            state.hosted.is_none(),
-            "a reattach that lands on an ended session never promotes an attachment"
-        );
-        state.host_link = HostLinkState::Ended(host_link::HostLinkEnd::exited(0, None));
-        assert!(host_link_is_resumable(&state.host_link));
-
-        state.host_link = HostLinkState::Ended(host_link::HostLinkEnd::incompatible(
-            "source_sha".to_string(),
-        ));
-        assert!(
-            !host_link_is_resumable(&state.host_link),
-            "an incompatible host is left alone"
-        );
-
-        for live in [
-            HostLinkState::Attaching,
-            HostLinkState::Attached,
-            HostLinkState::Reconnecting,
-            HostLinkState::Unavailable("no host".to_string()),
-        ] {
-            assert!(!host_link_is_resumable(&live));
-        }
     }
 
     #[test]

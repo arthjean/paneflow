@@ -917,7 +917,6 @@ enforces.
 | Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped and its record removed, or asked for when an agent is thinking or waiting |
 | Close tab, close workspace | every contained session stopped and its record removed, one dialog for the whole action |
 | Child exit | nothing closes: the surface stays as a passive final view (zero or nonzero code, with or without prior input) until the user closes it through one of the rows above |
-| Hide pane from layout (`hide_pane` action, pane menu) | kept running, the `Detach` intent skips the stop, never asks |
 | Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
 | Return a detached pane to its window | untouched |
 | Quit (`Quit` action, main window close, title bar close) with live sessions | asks: "Keep sessions running" (Enter, default) leaves them and the host untouched; "Stop everything and quit" stops each live session, then `host.shutdown`; the `on_quit` setting skips the dialog |
@@ -949,13 +948,9 @@ the session it stopped and leaves no row behind. The row is held back from the
 moment the stop is issued until its outcome lands, so a close never flashes
 one; a record whose stop failed comes back and is reconciled from the next
 listing. An ended row therefore comes from a session nobody stopped: one a
-hidden pane left running, or one that outlived the app.
-`resume_ended_sessions` brings back every ended restartable pane of a
-workspace in layout order, resumability being decided by the host link alone
-because a reattach that lands on an ended session never promotes an
-attachment, and a window that opens with at least two of them offers it once
-through a toast. Worktree teardown asks the host for the live session cwds
-first: a worktree that still contains a live session, hidden or not, is kept;
+`Keep running` close left behind, or one that outlived the app. Worktree
+teardown asks the host for the live session cwds first: a worktree that still
+contains a live session, attached or not, is kept;
 an unreachable host proceeds with the current rules; any other host error
 skips the teardown.
 

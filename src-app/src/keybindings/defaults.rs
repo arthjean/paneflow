@@ -251,16 +251,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: None,
     },
     DefaultBinding {
-        key: "secondary-shift-s",
-        action_name: "swap_pane",
-        context: None,
-    },
-    DefaultBinding {
-        key: "ctrl-shift-x",
-        action_name: "toggle_copy_mode",
-        context: Some("Terminal"),
-    },
-    DefaultBinding {
         key: "ctrl-shift-f",
         action_name: "toggle_search",
         context: Some("Terminal"),
@@ -478,10 +468,8 @@ mod tests {
             "terminal_copy",
             "terminal_paste",
             "toggle_zoom",
-            "toggle_copy_mode",
             "toggle_search",
             "split_equalize",
-            "swap_pane",
             "undo_close_pane",
             "toggle_files_sidebar",
             "insert_path",

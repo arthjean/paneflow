@@ -1,8 +1,6 @@
 mod focus;
 mod git_watch;
 mod layout;
-mod swap;
-pub(crate) use swap::swap_mode_active_in;
 mod tab;
 mod template_launch;
 pub(crate) mod templates;

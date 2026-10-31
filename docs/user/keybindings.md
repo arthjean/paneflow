@@ -49,7 +49,6 @@ pane. Search actions apply while the corresponding search is active.
 | Panes and tabs | `toggle_zoom` | `Cmd/Ctrl+Shift+Z` |
 | Panes and tabs | `toggle_detached_pane` | `Cmd/Ctrl+Alt+Shift+D` |
 | Panes and tabs | `split_equalize` | `Cmd/Ctrl+Shift+=` |
-| Panes and tabs | `swap_pane` | `Cmd/Ctrl+Shift+S` |
 | Pane focus | `focus_left` | `Alt+Left` |
 | Pane focus | `focus_right` | `Alt+Right` |
 | Pane focus | `focus_up` | `Alt+Up` |
@@ -103,7 +102,6 @@ pane. Search actions apply while the corresponding search is active.
 | Terminal pane | `clear_scroll_history` | `Cmd/Ctrl+Shift+K` |
 | Terminal pane | `clear_scroll_history` | `Cmd+K (macOS)` |
 | Terminal pane | `reset_terminal` | `Cmd/Ctrl+Shift+R` |
-| Terminal pane | `toggle_copy_mode` | `Ctrl+Shift+X` |
 | Terminal pane | `toggle_search` | `Ctrl+Shift+F` |
 | Terminal pane | `toggle_search` | `Cmd+F (macOS)` |
 | Terminal pane | `font_size_increase` | `Cmd/Ctrl+=` |

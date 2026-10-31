@@ -687,20 +687,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("split_horizontally"),
     },
     Command {
-        label: "Toggle zoom",
-        icon: Some("icons/maximize.svg"),
-        keywords: "pane fullscreen maximize",
-        needs: Needs::Workspace,
-        kind: Kind::Action("toggle_zoom"),
-    },
-    Command {
-        label: "Swap pane",
-        icon: None,
-        keywords: "move exchange",
-        needs: Needs::Workspace,
-        kind: Kind::Action("swap_pane"),
-    },
-    Command {
         label: "Equalize panes",
         icon: None,
         keywords: "balance even sizes",
@@ -748,27 +734,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "float window return",
         needs: Needs::Workspace,
         kind: Kind::Action("toggle_detached_pane"),
-    },
-    Command {
-        label: "Hide pane from the layout",
-        icon: None,
-        keywords: "keep session running",
-        needs: Needs::Workspace,
-        kind: Kind::Action("hide_pane"),
-    },
-    Command {
-        label: "Undo close pane",
-        icon: None,
-        keywords: "restore reopen",
-        needs: Needs::Workspace,
-        kind: Kind::Action("undo_close_pane"),
-    },
-    Command {
-        label: "Stop the session of this pane",
-        icon: None,
-        keywords: "kill process end",
-        needs: Needs::Workspace,
-        kind: Kind::Action("stop_session"),
     },
     Command {
         label: "Close pane",
@@ -890,53 +855,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("copy_workspace_path"),
     },
     Command {
-        label: "Resume every ended session",
-        icon: Some("icons/player-play.svg"),
-        keywords: "restart workspace",
-        needs: Needs::Workspace,
-        kind: Kind::Action("resume_ended_sessions"),
-    },
-    Command {
-        label: "Remove every ended session",
-        icon: Some("icons/trash.svg"),
-        keywords: "clean list workspace",
-        needs: Needs::Workspace,
-        kind: Kind::Action("remove_ended_sessions"),
-    },
-    Command {
         label: "Close workspace",
         icon: None,
         keywords: "stop sessions quit project",
         needs: Needs::Workspace,
         kind: Kind::Action("close_workspace"),
-    },
-    Command {
-        label: "Mute this workspace's notifications",
-        icon: None,
-        keywords: "silence agent alerts",
-        needs: Needs::Workspace,
-        kind: Kind::Toggle {
-            read: |app| {
-                app.active_workspace()
-                    .is_some_and(|workspace| workspace.muted)
-            },
-            write: |app, _next, cx| {
-                if let Some(active) = app.shown_workspace_idx() {
-                    app.toggle_workspace_muted(active, cx);
-                }
-            },
-        },
-    },
-    Command {
-        label: "Mark this workspace as read",
-        icon: None,
-        keywords: "notification acknowledge agent",
-        needs: Needs::Workspace,
-        kind: Kind::Run(|app, _window, cx| {
-            if let Some(active) = app.shown_workspace_idx() {
-                app.mark_workspace_read(active, cx);
-            }
-        }),
     },
     Command {
         label: "Expand every workspace in the sidebar",
@@ -951,13 +874,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "tree fold hide sessions",
         needs: Needs::Always,
         kind: Kind::Run(|app, _window, cx| set_all_expanded(app, false, cx)),
-    },
-    Command {
-        label: "Jump to the next waiting agent",
-        icon: None,
-        keywords: "attention review",
-        needs: Needs::Always,
-        kind: Kind::Action("jump_next_waiting"),
     },
     Command {
         label: "Focus Workspaces sidebar",
@@ -993,20 +909,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "diff git shell",
         needs: Needs::GitRepo,
         kind: Kind::Action("diff_new_terminal_tab"),
-    },
-    Command {
-        label: "Copy",
-        icon: None,
-        keywords: "clipboard terminal selection",
-        needs: Needs::Terminal,
-        kind: Kind::Action("terminal_copy"),
-    },
-    Command {
-        label: "Paste",
-        icon: None,
-        keywords: "clipboard terminal insert",
-        needs: Needs::Terminal,
-        kind: Kind::Action("terminal_paste"),
     },
     Command {
         label: "Select all",
@@ -1065,25 +967,11 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("dismiss_conversation_notice"),
     },
     Command {
-        label: "Toggle copy mode",
-        icon: None,
-        keywords: "terminal keyboard selection vim",
-        needs: Needs::Terminal,
-        kind: Kind::Action("toggle_copy_mode"),
-    },
-    Command {
         label: "Find in this pane",
         icon: None,
         keywords: "search terminal",
         needs: Needs::Terminal,
         kind: Kind::Action("toggle_search"),
-    },
-    Command {
-        label: "Search across all panes",
-        icon: Some("icons/tool_search.svg"),
-        keywords: "fleet find everywhere",
-        needs: Needs::Terminal,
-        kind: Kind::Action("toggle_fleet_search"),
     },
     Command {
         label: "Search next match",
@@ -1114,34 +1002,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Action("dismiss_search"),
     },
     Command {
-        label: "Scroll up one page",
-        icon: None,
-        keywords: "terminal scrollback",
-        needs: Needs::Terminal,
-        kind: Kind::Action("scroll_page_up"),
-    },
-    Command {
-        label: "Scroll down one page",
-        icon: None,
-        keywords: "terminal scrollback",
-        needs: Needs::Terminal,
-        kind: Kind::Action("scroll_page_down"),
-    },
-    Command {
-        label: "Jump to the previous prompt",
-        icon: None,
-        keywords: "terminal shell integration mark",
-        needs: Needs::Terminal,
-        kind: Kind::Action("jump_prev_prompt"),
-    },
-    Command {
-        label: "Jump to the next prompt",
-        icon: None,
-        keywords: "terminal shell integration mark",
-        needs: Needs::Terminal,
-        kind: Kind::Action("jump_next_prompt"),
-    },
-    Command {
         label: "Increase pane font size",
         icon: None,
         keywords: "terminal zoom bigger",
@@ -1161,13 +1021,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         keywords: "terminal zoom default",
         needs: Needs::Terminal,
         kind: Kind::Action("font_size_reset"),
-    },
-    Command {
-        label: "Clear scroll history",
-        icon: None,
-        keywords: "terminal scrollback wipe",
-        needs: Needs::Terminal,
-        kind: Kind::Action("clear_scroll_history"),
     },
     Command {
         label: "Reset terminal",

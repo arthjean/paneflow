@@ -1,7 +1,7 @@
-use gpui::{ClipboardItem, Context, Focusable};
+use gpui::{Context, Focusable};
 
 use super::TerminalView;
-use super::types::{Line, Point};
+use super::types::Line;
 
 const SEARCH_REFRESH_DEBOUNCE_MS: u64 = 400;
 
@@ -12,20 +12,6 @@ enum SearchScanKind {
 }
 
 const LOCAL_SEARCH_DEBOUNCE_MS: u64 = 80;
-
-fn copy_mode_entry_cursor(
-    cursor_point: Point,
-    display_offset: usize,
-    screen_lines: usize,
-) -> Point {
-    let cursor_display_line = cursor_point.line.0 + display_offset as i32;
-    if cursor_display_line >= 0 && cursor_display_line < screen_lines as i32 {
-        cursor_point
-    } else {
-        let center_display = screen_lines as i32 / 2;
-        Point::new(center_display - display_offset as i32, 0)
-    }
-}
 
 impl TerminalView {
     pub(super) fn clear_scroll_history(&mut self, cx: &mut Context<Self>) {
@@ -436,115 +422,5 @@ impl TerminalView {
         if let Some(m) = self.search_matches.get(self.search_current) {
             self.terminal.session_backend().scroll_to_match(m);
         }
-    }
-
-    pub(super) fn toggle_copy_mode(&mut self, cx: &mut Context<Self>) {
-        if self.copy_mode_active {
-            self.exit_copy_mode(false, cx);
-        } else {
-            self.enter_copy_mode(cx);
-        }
-    }
-
-    pub(super) fn enter_copy_mode(&mut self, cx: &mut Context<Self>) {
-        if self.search_active {
-            self.dismiss_search(cx);
-        }
-
-        let backend = self.terminal.session_backend();
-        let metrics = backend.grid_metrics();
-        backend.clear_selection();
-
-        let copy_cursor =
-            copy_mode_entry_cursor(metrics.cursor, metrics.display_offset, metrics.screen_lines);
-
-        self.copy_cursor = copy_cursor;
-        self.copy_mode_frozen_offset = metrics.display_offset;
-        self.copy_mode_active = true;
-
-        cx.notify();
-    }
-
-    pub(super) fn exit_copy_mode(&mut self, copy_to_clipboard: bool, cx: &mut Context<Self>) {
-        let backend = self.terminal.session_backend();
-
-        if copy_to_clipboard {
-            if let Some(text) = backend.selection_text() {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            }
-            backend.scroll_to_bottom();
-        } else {
-            backend.restore_display_offset(self.copy_mode_frozen_offset);
-        }
-
-        backend.clear_selection();
-
-        self.copy_mode_active = false;
-        cx.notify();
-    }
-
-    pub(super) fn move_copy_cursor(&mut self, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        self.copy_cursor =
-            self.terminal
-                .session_backend()
-                .move_copy_cursor(self.copy_cursor, dx, dy, false);
-
-        self.ensure_copy_cursor_visible();
-        cx.notify();
-    }
-
-    pub(super) fn extend_copy_selection(&mut self, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        self.copy_cursor =
-            self.terminal
-                .session_backend()
-                .move_copy_cursor(self.copy_cursor, dx, dy, true);
-
-        self.ensure_copy_cursor_visible();
-        cx.notify();
-    }
-
-    fn ensure_copy_cursor_visible(&mut self) {
-        let offset = self.copy_mode_frozen_offset as i32;
-        let cursor_display_line = self.copy_cursor.line.0 + offset;
-
-        let backend = self.terminal.session_backend();
-        let screen_lines = backend.grid_metrics().screen_lines as i32;
-
-        let new_offset = if cursor_display_line < 0 {
-            Some((offset - cursor_display_line) as usize)
-        } else if cursor_display_line >= screen_lines {
-            let excess = cursor_display_line - screen_lines + 1;
-            Some((offset - excess).max(0) as usize)
-        } else {
-            None
-        };
-
-        if let Some(new_offset) = new_offset {
-            self.copy_mode_frozen_offset = new_offset;
-            backend.restore_display_offset(new_offset);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn copy_mode_entry_keeps_visible_raw_cursor_at_live_edge() {
-        let cursor = Point::new(12, 8);
-        assert_eq!(copy_mode_entry_cursor(cursor, 0, 24), cursor);
-    }
-
-    #[test]
-    fn copy_mode_entry_centers_when_live_cursor_is_scrolled_out() {
-        let cursor = Point::new(23, 8);
-        assert_eq!(copy_mode_entry_cursor(cursor, 10, 24), Point::new(2, 0));
-    }
-
-    #[test]
-    fn copy_mode_entry_keeps_scrollback_cursor_when_visible() {
-        let cursor = Point::new(-5, 3);
-        assert_eq!(copy_mode_entry_cursor(cursor, 10, 24), cursor);
     }
 }

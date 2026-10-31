@@ -619,9 +619,6 @@ impl PaneFlowApp {
                     }
                 }
             }
-            terminal::TerminalEvent::CancelSwapMode => {
-                self.cancel_swap_mode(cx);
-            }
             terminal::TerminalEvent::SelectionCopied => {
                 self.show_toast("Copied", cx);
             }

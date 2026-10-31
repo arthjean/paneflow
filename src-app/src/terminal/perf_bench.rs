@@ -118,7 +118,6 @@ fn layout_inputs<'a>(
         cells: content.cells.clone(),
         cursor: None,
         selection_range: None,
-        copy_mode_cursor: None,
         search_highlights: &[],
         display_offset: content.display_offset,
         history_size: content.history_size,

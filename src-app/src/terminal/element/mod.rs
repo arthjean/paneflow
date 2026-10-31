@@ -8,9 +8,8 @@ use gpui::{
 
 use crate::terminal::TerminalSessionBackend;
 use crate::terminal::types::{
-    Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, NamedColor, OverscanRow,
-    Point as GridPoint, RenderableCursor, SearchHighlight, SelectionRange, TerminalWindowSize,
-    terminal_metric_to_u16,
+    Cell, CellFlags, Color, Content, CursorShape, NamedColor, OverscanRow, Point as GridPoint,
+    RenderableCursor, SearchHighlight, SelectionRange, TerminalWindowSize, terminal_metric_to_u16,
 };
 
 pub(super) mod color;
@@ -202,15 +201,6 @@ fn resolved_cell_background(
     }
 }
 
-fn selection_marker_color() -> Hsla {
-    Hsla {
-        h: 0.5,
-        s: 0.8,
-        l: 0.65,
-        a: 0.9,
-    }
-}
-
 #[derive(Clone, Copy, PartialEq)]
 pub struct CellDimensions {
     pub cell_width: Pixels,
@@ -343,66 +333,6 @@ pub(crate) struct CursorInfo {
     italic: bool,
 }
 
-#[derive(Clone, Copy)]
-struct CursorCellContext<'a> {
-    desired_cols: usize,
-    desired_rows: usize,
-    colors: RenderColors<'a>,
-}
-
-fn selection_marker_cursor(
-    cells: &[Cell],
-    line: i32,
-    col: usize,
-    color: Hsla,
-    ctx: CursorCellContext<'_>,
-) -> Option<CursorInfo> {
-    if line < 0 || line >= ctx.desired_rows as i32 || col >= ctx.desired_cols {
-        return None;
-    }
-
-    let cell = cells
-        .iter()
-        .find(|cell| cell.point.line.0 == line && cell.point.column.0 == col);
-
-    let (wide, text, bold, italic, cell_bg) = cell
-        .map(|cell| {
-            let is_spacer = cell.flags.contains(CellFlags::WIDE_CHAR_SPACER);
-            (
-                cell.flags.contains(CellFlags::WIDE_CHAR),
-                (!is_spacer && cell.c != '\0').then_some(cell.c),
-                cell.flags.contains(CellFlags::BOLD) || cell.flags.contains(CellFlags::BOLD_ITALIC),
-                cell.flags.contains(CellFlags::ITALIC)
-                    || cell.flags.contains(CellFlags::BOLD_ITALIC),
-                resolved_cell_background(cell.fg, cell.bg, cell.flags, ctx.colors),
-            )
-        })
-        .unwrap_or((
-            false,
-            None,
-            false,
-            false,
-            resolved_cell_background(
-                Color::Named(NamedColor::Foreground),
-                Color::Named(NamedColor::Background),
-                CellFlags::empty(),
-                ctx.colors,
-            ),
-        ));
-
-    Some(CursorInfo {
-        line,
-        col,
-        shape: CursorShape::Block,
-        color,
-        text_color: cursor_glyph_color(cell_bg, color, ctx.colors.theme),
-        wide,
-        text,
-        bold,
-        italic,
-    })
-}
-
 pub(crate) const CURSOR_GLYPH_MIN_APCA_CONTRAST: f32 = 45.0;
 
 fn cursor_glyph_color(
@@ -455,18 +385,10 @@ fn cursor_from_content(
     })
 }
 
-fn focused_copy_mode_cursor(
-    copy_mode_cursor: Option<&CopyModeCursorState>,
-    focused: bool,
-) -> Option<&CopyModeCursorState> {
-    focused.then_some(copy_mode_cursor).flatten()
-}
-
 pub(crate) struct LayoutInputs<'a> {
     pub cells: Arc<[Cell]>,
     pub cursor: Option<CursorInfo>,
     pub selection_range: Option<SelectionRange>,
-    pub copy_mode_cursor: Option<&'a CopyModeCursorState>,
     pub search_highlights: &'a [SearchHighlight],
     pub display_offset: usize,
     pub history_size: usize,
@@ -537,7 +459,6 @@ pub struct LayoutState {
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
     cursor: Option<CursorInfo>,
-    anchor_cursor: Option<CursorInfo>,
     #[cfg(test)]
     dimensions: CellDimensions,
     background_color: Hsla,
@@ -609,7 +530,6 @@ pub(crate) struct LayoutCacheKey {
     dimensions: CellDimensions,
     base_font: Font,
     focused: bool,
-    copy_mode_cursor: Option<CopyModeCursorState>,
     search_highlights: Vec<SearchHighlight>,
     exited: Option<i32>,
     exit_signal: Option<String>,
@@ -655,7 +575,6 @@ pub struct TerminalElement {
     exit_signal: Option<String>,
     element_origin: Arc<Mutex<Point<Pixels>>>,
     search_highlights: Vec<SearchHighlight>,
-    copy_mode_cursor: Option<CopyModeCursorState>,
     hovered_link_range: Option<(i32, usize, usize)>,
     ime_marked_text: String,
     focus_handle: gpui::FocusHandle,
@@ -688,7 +607,6 @@ impl TerminalElement {
         exit_signal: Option<String>,
         element_origin: Arc<Mutex<Point<Pixels>>>,
         search_highlights: Vec<SearchHighlight>,
-        copy_mode_cursor: Option<CopyModeCursorState>,
         hovered_link_range: Option<(i32, usize, usize)>,
         ime_marked_text: String,
         focus_handle: gpui::FocusHandle,
@@ -717,7 +635,6 @@ impl TerminalElement {
             exit_signal,
             element_origin,
             search_highlights,
-            copy_mode_cursor,
             hovered_link_range,
             ime_marked_text,
             focus_handle,
@@ -829,8 +746,6 @@ impl TerminalElement {
                 palette: &palette,
             },
         );
-        let copy_mode_cursor =
-            focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
 
         let key = LayoutCacheKey {
             content_generation: content.generation,
@@ -841,7 +756,6 @@ impl TerminalElement {
             dimensions: dims,
             base_font: self.frame_metrics.base_font.clone(),
             focused: self.focused,
-            copy_mode_cursor: self.copy_mode_cursor.clone(),
             search_highlights: self.search_highlights.clone(),
             exited: self.exited,
             exit_signal: self.exit_signal.clone(),
@@ -893,7 +807,6 @@ impl TerminalElement {
                 cells,
                 cursor: cursor_snapshot,
                 selection_range,
-                copy_mode_cursor,
                 search_highlights: &self.search_highlights,
                 display_offset,
                 history_size,
@@ -948,7 +861,6 @@ pub(crate) fn overscan_row_layout(
             cells,
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -1006,7 +918,6 @@ pub(crate) fn layout_from_snapshot_cached(
         cells,
         cursor: cursor_snapshot,
         selection_range,
-        copy_mode_cursor,
         search_highlights,
         display_offset,
         history_size,
@@ -1035,39 +946,10 @@ pub(crate) fn layout_from_snapshot_cached(
         (cursor.line >= 0 && cursor.line < desired_rows as i32).then_some(cursor)
     });
 
-    let (cursor_snapshot, anchor_cursor) = if let Some(cm) = copy_mode_cursor {
-        let display_line = cm.grid_line + display_offset as i32;
-        let marker_color = selection_marker_color();
-        let cursor_ctx = CursorCellContext {
-            desired_cols,
-            desired_rows,
-            colors,
-        };
-
-        let main = selection_marker_cursor(
-            cells.as_ref(),
-            display_line,
-            cm.col,
-            marker_color,
-            cursor_ctx,
-        );
-
-        let anchor = cm.anchor_grid_line.and_then(|anchor_line| {
-            let display_anchor = anchor_line + display_offset as i32;
-            selection_marker_cursor(
-                cells.as_ref(),
-                display_anchor,
-                cm.anchor_col,
-                marker_color,
-                cursor_ctx,
-            )
-        });
-
-        (main, anchor)
-    } else if selection_range.is_some() {
-        (None, None)
+    let cursor_snapshot = if selection_range.is_some() {
+        None
     } else {
-        (cursor_snapshot, None)
+        cursor_snapshot
     };
 
     let search_match_color = Hsla {
@@ -1517,7 +1399,6 @@ pub(crate) fn layout_from_snapshot_cached(
         selection_rects,
         search_rects,
         cursor: cursor_snapshot,
-        anchor_cursor,
         #[cfg(test)]
         dimensions: dims,
         background_color,
@@ -1869,8 +1750,6 @@ impl Element for TerminalElement {
             if self.cursor_visible {
                 paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
             }
-
-            paint::cursor::paint_anchor_cursor(&layout, &geom, base_font, font_size, window, cx);
 
             paint::scrollbar::paint_scrollbar(
                 &layout,
@@ -2343,7 +2222,6 @@ impl LayoutState {
             }
         };
         let _ = writeln!(s, "cursor: {}", cur_repr(&self.cursor));
-        let _ = writeln!(s, "anchor: {}", cur_repr(&self.anchor_cursor));
         match &self.ime_cursor_bounds {
             None => {
                 let _ = writeln!(s, "ime: None");
@@ -2476,7 +2354,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor,
             selection_range: selection,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -2561,7 +2438,6 @@ mod golden_frame_tests {
             cells,
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -2832,7 +2708,6 @@ mod golden_frame_tests {
             cells: Vec::new().into(),
             cursor: None,
             selection_range: Some(selection),
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -2864,7 +2739,6 @@ mod golden_frame_tests {
             cells: Vec::new().into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &highlights,
             display_offset: 1,
             history_size: 3,
@@ -3334,7 +3208,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -3365,7 +3238,6 @@ mod golden_frame_tests {
             cells: text_row(0, "history", default_fg(), CellFlags::empty()).into(),
             cursor: Some(cursor_at_line(3, 0, CursorShape::Block, None)),
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 2,
             history_size: 10,
@@ -3564,25 +3436,6 @@ mod golden_frame_tests {
     }
 
     #[test]
-    fn unfocused_terminal_hides_copy_mode_cursor() {
-        let copy_cursor = CopyModeCursorState {
-            grid_line: 0,
-            col: 1,
-            anchor_grid_line: Some(0),
-            anchor_col: 0,
-        };
-
-        assert!(
-            focused_copy_mode_cursor(Some(&copy_cursor), true).is_some(),
-            "focused terminals should keep copy-mode cursor markers"
-        );
-        assert!(
-            focused_copy_mode_cursor(Some(&copy_cursor), false).is_none(),
-            "unfocused terminals should not paint copy-mode cursor markers"
-        );
-    }
-
-    #[test]
     fn mouse_selection_renders_without_endpoint_markers() {
         let selection = SelectionRange {
             start: GridPoint::new(0, 1),
@@ -3607,10 +3460,6 @@ mod golden_frame_tests {
         assert!(
             state.cursor.is_none(),
             "mouse selection should hide the terminal cursor while dragging"
-        );
-        assert!(
-            state.anchor_cursor.is_none(),
-            "mouse selection should not paint a start/end marker"
         );
     }
 
@@ -3736,7 +3585,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -3809,7 +3657,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -3904,7 +3751,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -3939,7 +3785,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -4163,7 +4008,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: selection,
-            copy_mode_cursor: None,
             search_highlights: highlights,
             display_offset: 0,
             history_size: 0,
@@ -4365,7 +4209,6 @@ mod golden_frame_tests {
             cells: content.cells.clone(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,
@@ -5123,7 +4966,6 @@ mod golden_frame_tests {
             cells: cells.into(),
             cursor: None,
             selection_range: None,
-            copy_mode_cursor: None,
             search_highlights: &[],
             display_offset: 0,
             history_size: 0,

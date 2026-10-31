@@ -6,18 +6,17 @@ use crate::{
 };
 use crate::{
     ClearScrollHistory, ClosePane, CloseTab, CloseWorkspace, CopyWorkspacePath, DismissSearch,
-    FocusDown, FocusLeft, FocusRight, FocusUp, HidePane, JumpNextPrompt, JumpNextWaiting,
-    JumpPrevPrompt, LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled,
-    MarkdownCopy, MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
+    FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting, JumpPrevPrompt,
+    LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
+    MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
     MarkdownScrollPageDown, MarkdownScrollPageUp, NewTab, NewWorkspace, NextTab, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
-    PreviousTab, Quit, RemoveEndedSessions, ResetTerminal, ResumeEndedSessions,
-    RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp, SearchNext, SearchPrev,
-    SelectWorkspace1, SelectWorkspace2, SelectWorkspace3, SelectWorkspace4, SelectWorkspace5,
-    SelectWorkspace6, SelectWorkspace7, SelectWorkspace8, SelectWorkspace9, SplitEqualize,
-    SplitHorizontally, SplitVertically, StopSession, SwapPane, TerminalCopy, TerminalPaste,
-    TerminalSelectAll, ToggleCopyMode, ToggleDetachedPane, ToggleSearch, ToggleSearchRegex,
-    ToggleZoom, UndoClosePane,
+    PreviousTab, Quit, ResetTerminal, RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp,
+    SearchNext, SearchPrev, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3, SelectWorkspace4,
+    SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8, SelectWorkspace9,
+    SplitEqualize, SplitHorizontally, SplitVertically, StopSession, TerminalCopy, TerminalPaste,
+    TerminalSelectAll, ToggleDetachedPane, ToggleSearch, ToggleSearchRegex, ToggleZoom,
+    UndoClosePane,
 };
 use crate::{MoveWorkspaceToSpace, NewSpace, NextSpace, PreviousSpace};
 
@@ -102,32 +101,11 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Panes,
     },
     ActionMeta {
-        name: "hide_pane",
-        factory: || Box::new(HidePane),
-        context: "",
-        description: "Hide pane from layout (keep session running)",
-        group: ShortcutGroup::Panes,
-    },
-    ActionMeta {
         name: "stop_session",
         factory: || Box::new(StopSession),
         context: "",
         description: "Stop the session of this pane (keeps the pane)",
         group: ShortcutGroup::Panes,
-    },
-    ActionMeta {
-        name: "resume_ended_sessions",
-        factory: || Box::new(ResumeEndedSessions),
-        context: "",
-        description: "Resume every ended session of this workspace",
-        group: ShortcutGroup::Workspaces,
-    },
-    ActionMeta {
-        name: "remove_ended_sessions",
-        factory: || Box::new(RemoveEndedSessions),
-        context: "",
-        description: "Remove every ended session of this workspace from the list",
-        group: ShortcutGroup::Workspaces,
     },
     ActionMeta {
         name: "new_workspace",
@@ -445,25 +423,11 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Panes,
     },
     ActionMeta {
-        name: "swap_pane",
-        factory: || Box::new(SwapPane),
-        context: "",
-        description: "Swap pane",
-        group: ShortcutGroup::Panes,
-    },
-    ActionMeta {
         name: "undo_close_pane",
         factory: || Box::new(UndoClosePane),
         context: "",
         description: "Undo close pane",
         group: ShortcutGroup::Panes,
-    },
-    ActionMeta {
-        name: "toggle_copy_mode",
-        factory: || Box::new(ToggleCopyMode),
-        context: "Terminal",
-        description: "Toggle copy mode",
-        group: ShortcutGroup::Terminal,
     },
     ActionMeta {
         name: "toggle_search",
@@ -731,10 +695,21 @@ mod tests {
         assert!(action_from_name("close_pane").is_some());
         assert!(action_from_name("toggle_zoom").is_some());
         assert!(action_from_name("undo_close_pane").is_some());
-        assert!(action_from_name("swap_pane").is_some());
         assert!(action_from_name("split_equalize").is_some());
-        assert!(action_from_name("toggle_copy_mode").is_some());
         assert!(action_from_name("toggle_files_sidebar").is_some());
+    }
+
+    #[test]
+    fn removed_actions_no_longer_resolve() {
+        for name in [
+            "swap_pane",
+            "hide_pane",
+            "resume_ended_sessions",
+            "remove_ended_sessions",
+            "toggle_copy_mode",
+        ] {
+            assert!(action_from_name(name).is_none(), "{name} still resolves");
+        }
     }
 
     #[test]
@@ -746,7 +721,6 @@ mod tests {
     #[test]
     fn context_for_terminal_actions() {
         assert_eq!(context_for_action("terminal_copy"), Some("Terminal"));
-        assert_eq!(context_for_action("toggle_copy_mode"), Some("Terminal"));
         assert_eq!(context_for_action("toggle_search"), Some("Terminal"));
         assert_eq!(context_for_action("insert_path"), Some("Terminal"));
         assert_eq!(context_for_action("split_horizontally"), None);

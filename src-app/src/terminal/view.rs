@@ -19,8 +19,7 @@ use super::pty_session::{
 };
 use super::service_detector::ServiceInfo;
 use super::types::{
-    CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, MouseShape, Point,
-    SearchHighlight, TerminalWindowSize,
+    CursorShape, HyperlinkZone, Line, Modes, MouseShape, Point, SearchHighlight, TerminalWindowSize,
 };
 
 use super::ghostty_session::GhosttyStartError;
@@ -31,7 +30,6 @@ mod host_attach;
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
 const SEARCH_REGEX_TOGGLE_LABEL: &str = "Regular expression";
-const COPY_MODE_BADGE_LABEL: &str = "Copy mode";
 
 fn search_regex_toggle(
     active: bool,
@@ -62,16 +60,6 @@ fn search_regex_toggle(
         })
         .when(active, |toggle| toggle.bg(active_background))
         .child(".*")
-}
-
-fn copy_mode_badge() -> gpui::Stateful<gpui::Div> {
-    use crate::ui_primitives::TooltipDelayExt;
-
-    div()
-        .id("copy-mode-badge")
-        .role(gpui::accesskit::Role::Status)
-        .aria_label(COPY_MODE_BADGE_LABEL)
-        .delayed_tooltip(crate::ui_primitives::text_tooltip(COPY_MODE_BADGE_LABEL))
 }
 
 #[cfg(debug_assertions)]
@@ -258,9 +246,6 @@ pub struct TerminalView {
     pub(super) integrated_glyphs_enabled: bool,
     pub(super) color_emoji_enabled: bool,
     pub(super) minimum_contrast: f32,
-    pub(super) copy_mode_active: bool,
-    pub(super) copy_cursor: Point,
-    pub(super) copy_mode_frozen_offset: usize,
     was_focused: bool,
     focus_subscriptions: Option<(gpui::WindowId, gpui::Subscription, gpui::Subscription)>,
     pub(super) ghostty_pressed_keys:
@@ -332,12 +317,6 @@ impl TerminalView {
                 cx.emit(TerminalEvent::ServiceDetected(service));
             }
             cx.emit(TerminalEvent::ActivityBurst);
-        }
-
-        if self.copy_mode_active {
-            self.terminal
-                .session_backend()
-                .restore_display_offset(self.copy_mode_frozen_offset);
         }
 
         cx.notify();
@@ -702,9 +681,6 @@ impl TerminalView {
             integrated_glyphs_enabled,
             color_emoji_enabled,
             minimum_contrast,
-            copy_mode_active: false,
-            copy_cursor: Point::new(0, 0),
-            copy_mode_frozen_offset: 0,
             was_focused: false,
             focus_subscriptions: None,
             ghostty_pressed_keys: std::collections::HashMap::new(),
@@ -1070,7 +1046,6 @@ pub enum TerminalEvent {
     ShellPromptReady,
     ActivityBurst,
     ServiceDetected(ServiceInfo),
-    CancelSwapMode,
     SelectionCopied,
     Notice(String),
     OpenMarkdownPath(std::path::PathBuf),
@@ -1660,21 +1635,6 @@ impl Render for TerminalView {
             Vec::new()
         };
 
-        let copy_cursor_state = if self.copy_mode_active {
-            let (anchor_grid_line, anchor_col) = backend
-                .selection_range()
-                .map(|range| (Some(range.start.line.0), range.start.column.0))
-                .unwrap_or((None, 0));
-            Some(CopyModeCursorState {
-                grid_line: self.copy_cursor.line.0,
-                col: self.copy_cursor.column.0,
-                anchor_grid_line,
-                anchor_col,
-            })
-        } else {
-            None
-        };
-
         let alt_screen = terminal_mode.contains(Modes::ALT_SCREEN);
         let cursor_visible = self.cursor_visible || alt_screen;
 
@@ -1703,7 +1663,6 @@ impl Render for TerminalView {
             self.terminal.exit_signal.clone(),
             self.element_origin.clone(),
             search_match_rects,
-            copy_cursor_state,
             self.ctrl_hovered_link
                 .as_ref()
                 .map(|link| (link.start.line.0, link.start.column.0, link.end.column.0)),
@@ -1805,9 +1764,6 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &crate::SearchPrev, _window, cx| {
                 this.search_prev(cx);
             }))
-            .on_action(cx.listener(|this, _: &crate::ToggleCopyMode, _window, cx| {
-                this.toggle_copy_mode(cx);
-            }))
             .on_action(
                 cx.listener(|this, _: &crate::FontSizeIncrease, _window, cx| {
                     this.font_zoom_step(1.0, cx);
@@ -1851,22 +1807,6 @@ impl Render for TerminalView {
 
         if let Some(banner) = self.render_conversation_banner(crate::theme::ui_colors(), cx) {
             el = el.child(banner);
-        }
-
-        if self.copy_mode_active {
-            let copy_badge = copy_mode_badge()
-                .absolute()
-                .top_1()
-                .right_1()
-                .px_2()
-                .py(gpui::px(2.0))
-                .rounded_md()
-                .bg(gpui::rgba(0x89b4facc))
-                .text_color(gpui::rgb(0x1e1e2e))
-                .text_size(gpui::px(11.0))
-                .font_weight(gpui::FontWeight::BOLD)
-                .child("COPY");
-            el = el.child(copy_badge);
         }
 
         div()
@@ -1961,14 +1901,6 @@ mod tests {
             assert_eq!(node.label(), Some(SEARCH_REGEX_TOGGLE_LABEL));
             assert_eq!(node.toggled(), Some(expected));
         }
-    }
-
-    #[test]
-    fn the_copy_mode_badge_has_a_role_and_a_name() {
-        use gpui::Element as _;
-        let badge = copy_mode_badge();
-        assert_eq!(badge.a11y_role(), Some(gpui::accesskit::Role::Status));
-        assert_eq!(a11y_node(&badge).label(), Some("Copy mode"));
     }
 
     #[test]

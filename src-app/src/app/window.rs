@@ -175,11 +175,6 @@ impl FocusReturn {
     }
 }
 
-pub(crate) struct SwapMode {
-    pub(crate) source: gpui::WeakEntity<Pane>,
-    pub(crate) _source_released: gpui::Subscription,
-}
-
 #[derive(Clone)]
 pub(crate) struct FilesContextMenu {
     pub(crate) root: std::path::PathBuf,

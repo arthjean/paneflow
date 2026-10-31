@@ -1,4 +1,4 @@
-use gpui::{Context, Focusable, Window};
+use gpui::{Context, Window};
 
 use crate::PaneFlowApp;
 use crate::layout::{FocusDirection, FocusNav, LayoutTree};
@@ -8,11 +8,6 @@ impl PaneFlowApp {
     pub(crate) fn nav_root(&self) -> Option<&LayoutTree> {
         self.active_workspace()
             .and_then(|ws| ws.active_tab().root.as_ref())
-    }
-
-    pub(crate) fn nav_root_mut(&mut self) -> Option<&mut LayoutTree> {
-        self.active_workspace_mut()
-            .and_then(|ws| ws.active_tab_mut().root.as_mut())
     }
 
     pub(crate) fn take_nav_root(&mut self) -> Option<LayoutTree> {
@@ -72,36 +67,6 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(source) = self.end_swap_mode(cx) {
-            let Some(source) = source.upgrade() else {
-                self.show_toast("Swap source pane is no longer available", cx);
-                cx.notify();
-                return;
-            };
-            if let Some(root) = self.nav_root() {
-                let moved = matches!(root.focus_in_direction(dir, window, cx), FocusNav::Moved);
-                if let Some(target) = root.focused_pane(window, cx)
-                    && target != source
-                {
-                    let swapped = if let Some(root) = self.nav_root_mut() {
-                        root.swap_panes(&source, &target)
-                    } else {
-                        false
-                    };
-                    if swapped {
-                        source.read(cx).focus_handle(cx).focus(window, cx);
-                    } else {
-                        self.show_toast("Swap source pane is no longer available", cx);
-                    }
-                } else if !moved {
-                    self.show_toast("No pane in that direction", cx);
-                }
-            }
-            self.save_session(cx);
-            cx.notify();
-            return;
-        }
-
         if let Some(root) = self.nav_root()
             && !matches!(root.focus_in_direction(dir, window, cx), FocusNav::Moved)
         {

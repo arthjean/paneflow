@@ -11,5 +11,4 @@ blocks[0]:
 selection_rects[0]:
 search_rects[0]:
 cursor: L0 C0 HollowBlock hsla(0.0000,0.0000,1.0000,1.0000) wide=false text=None bold=false italic=false
-anchor: None
 ime: x=0.000 y=0.000 w=8.000 h=16.000

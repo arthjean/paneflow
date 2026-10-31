@@ -12,5 +12,4 @@ selection_rects[1]:
   L0+1ln C1+3c hsla(0.5899,1.0000,0.6765,0.2200)
 search_rects[0]:
 cursor: None
-anchor: None
 ime: None

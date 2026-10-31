@@ -18,7 +18,7 @@ use super::service_detector::{ServiceInfo, detect_framework, parse_service_line}
 use super::shell::{resolve_shell_for_spawn, setup_shell_integration};
 use super::types::{
     Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, MouseShape, Point,
-    SelectionGeometry, SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
+    SelectionGeometry, SelectionKind, ShellQuoting, TerminalWindowSize,
 };
 use crate::limits::MAX_OSC52_BYTES;
 #[cfg(test)]
