@@ -197,8 +197,20 @@ fn event_keeps_row(frame: &Value) -> bool {
 }
 
 pub(crate) fn host_observed_agent(row: Option<&HostAgentRow>) -> Option<TerminalAgent> {
-    row.filter(|row| row.live)
-        .and_then(|row| row.runtime.or(row.tool))
+    row.filter(|row| row.live).and_then(|row| row.runtime)
+}
+
+fn row_from_event(session: &SessionId, frame: &Value) -> Option<HostAgentRow> {
+    row_from_snapshot(&json!({
+        "session": session.to_string(),
+        "live": true,
+        "activity": frame.get("agent").cloned().unwrap_or(Value::Null),
+        "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
+        "foreground_runtime_id": frame.get("foreground_runtime_id").cloned().unwrap_or(Value::Null),
+        "unread": frame.get("unread").cloned().unwrap_or(Value::Null),
+        "declared_status": frame.get("declared_status").cloned().unwrap_or(Value::Null),
+        "program_status_capable": frame.get("program_status_capable").cloned().unwrap_or(Value::Null),
+    }))
 }
 
 fn declaration_survives_observation(
@@ -740,15 +752,7 @@ impl PaneFlowApp {
         else {
             return;
         };
-        let row = row_from_snapshot(&json!({
-            "session": session.to_string(),
-            "live": true,
-            "activity": frame.get("agent").cloned().unwrap_or(Value::Null),
-            "activity_source": frame.get("activity_source").cloned().unwrap_or(Value::Null),
-            "unread": frame.get("unread").cloned().unwrap_or(Value::Null),
-            "declared_status": frame.get("declared_status").cloned().unwrap_or(Value::Null),
-            "program_status_capable": frame.get("program_status_capable").cloned().unwrap_or(Value::Null),
-        }));
+        let row = row_from_event(&session, frame);
         if let Some(row) = row.as_ref() {
             if event_keeps_row(frame) {
                 self.host_agents.rows.insert(session.clone(), row.clone());
@@ -1061,6 +1065,7 @@ mod tests {
     fn a_hosted_codex_pane_yields_one_sidebar_row_from_the_host_observation() {
         let row = HostAgentRow {
             live: true,
+            runtime: Some(TerminalAgent::Codex),
             ..projected_row(Some("codex"), Some(4242))
         };
         let observed = host_observed_agent(Some(&row));
@@ -1110,6 +1115,45 @@ mod tests {
             })),
             None
         );
+    }
+
+    #[test]
+    fn a_claude_session_that_returned_to_the_shell_is_no_longer_observed() {
+        let row = row_from_snapshot(&json!({
+            "session": SessionId::new().to_string(),
+            "live": true,
+            "activity": {"tool": "claude", "state": "finished", "source": "hook", "updated_at_ms": 1},
+            "runtime_id": "com.anthropic.claude-code",
+            "foreground_runtime_id": null,
+        }))
+        .expect("row");
+        assert_eq!(row.tool, Some(TerminalAgent::ClaudeCode));
+        assert_eq!(host_observed_agent(Some(&row)), None);
+    }
+
+    #[test]
+    fn a_worker_event_observes_the_agent_while_it_runs_and_releases_it_once_it_exits() {
+        let session = SessionId::new();
+        let frame = |foreground: Value| {
+            json!({
+                "type": "event",
+                "session": session.to_string(),
+                "agent": {"tool": "claude", "state": "finished", "source": "hook", "updated_at_ms": 1},
+                "activity_source": "none",
+                "status": "idle",
+                "runtime_id": "com.anthropic.claude-code",
+                "foreground_runtime_id": foreground,
+            })
+        };
+
+        let running = row_from_event(&session, &frame(json!("com.anthropic.claude-code")));
+        assert_eq!(
+            host_observed_agent(running.as_ref()),
+            Some(TerminalAgent::ClaudeCode)
+        );
+
+        let exited = row_from_event(&session, &frame(Value::Null));
+        assert_eq!(host_observed_agent(exited.as_ref()), None);
     }
 
     #[test]

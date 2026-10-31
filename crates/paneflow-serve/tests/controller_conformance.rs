@@ -106,6 +106,7 @@ fn assert_projection_fields(value: &Value) {
         "unread",
         "updated_at_ms",
         "runtime_id",
+        "foreground_runtime_id",
     ] {
         assert!(
             value.get(field).is_some(),

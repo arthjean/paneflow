@@ -141,6 +141,7 @@ impl Worker {
             "status": session["status"],
             "outcome": session["outcome"],
             "runtime_id": session["runtime_id"],
+            "foreground_runtime_id": session["foreground_runtime_id"],
             "unread": session["unread"],
             "declared_status": session["declared_status"],
             "program_status_capable": session["program_status_capable"],
