@@ -284,6 +284,7 @@ pub struct TerminalView {
     pump_epoch: u64,
     exit_announced: bool,
     relaunch_pending: bool,
+    recover_on_restore: bool,
     conversation: conversation::Conversation,
 }
 
@@ -725,6 +726,7 @@ impl TerminalView {
             pump_epoch: 0,
             exit_announced: false,
             relaunch_pending: false,
+            recover_on_restore: false,
             conversation: conversation::Conversation::default(),
         }
     }

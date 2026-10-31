@@ -377,6 +377,28 @@ impl HostLinkEnd {
             HostLinkAction::Attach | HostLinkAction::Retry => SessionIntent::Reattach,
         }
     }
+
+    pub(crate) fn restore_recovery(
+        &self,
+        observed: Option<SessionGeneration>,
+    ) -> Option<(SessionIntent, bool)> {
+        match self.kind {
+            HostLinkEndKind::Lost | HostLinkEndKind::HostReplaced => match self.intent(observed) {
+                intent @ SessionIntent::Restart { expected: Some(_) } => Some((intent, false)),
+                SessionIntent::Create
+                | SessionIntent::Reattach
+                | SessionIntent::Restart { expected: None } => None,
+            },
+            HostLinkEndKind::Missing => Some((SessionIntent::Create, true)),
+            HostLinkEndKind::Exited { .. }
+            | HostLinkEndKind::Failed
+            | HostLinkEndKind::Starting
+            | HostLinkEndKind::Unverified
+            | HostLinkEndKind::Restarted { .. }
+            | HostLinkEndKind::Incompatible
+            | HostLinkEndKind::AttachRefused => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1889,6 +1911,206 @@ mod tests {
         assert_eq!(hosted.attachment.session, session);
         assert_eq!(host.list(None).len(), 1, "no second session was created");
         host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
+    fn restore_recovery_restarts_lost_and_replaced_ends_and_recreates_missing_ones() {
+        let generation = SessionGeneration::FIRST.next();
+        for reconnection in [
+            SessionReconnection::Lost,
+            SessionReconnection::HostReplaced {
+                previous_owner: HostInstanceToken::new(),
+                current_owner: HostInstanceToken::new(),
+            },
+        ] {
+            let end = HostLinkEnd::from_reconnection(reconnection, generation);
+            assert_eq!(
+                end.restore_recovery(None),
+                Some((
+                    SessionIntent::Restart {
+                        expected: Some(generation)
+                    },
+                    false
+                )),
+                "{:?} restarts the observed generation under the same id",
+                end.kind
+            );
+        }
+        assert_eq!(
+            HostLinkEnd::missing().restore_recovery(None),
+            Some((SessionIntent::Create, true))
+        );
+        let unobserved = HostLinkEnd {
+            kind: HostLinkEndKind::Lost,
+            detail: String::new(),
+            observed_generation: None,
+        };
+        assert_eq!(unobserved.restore_recovery(None), None);
+        for end in [
+            HostLinkEnd::exited(0, None),
+            HostLinkEnd::exited(1, None),
+            HostLinkEnd::from_reconnection(
+                SessionReconnection::Failed {
+                    reason: "spawn failed".into(),
+                },
+                generation,
+            ),
+            HostLinkEnd::starting(),
+            HostLinkEnd::unverified("wait failed".into()),
+            HostLinkEnd::incompatible("protocol".into()),
+            HostLinkEnd::attach_refused("too large".into()),
+            HostLinkEnd::from_reconnection(SessionReconnection::Live, generation),
+        ] {
+            assert_eq!(
+                end.restore_recovery(Some(generation)),
+                None,
+                "{:?} keeps its button",
+                end.kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_restored_pane_recovers_once_into_a_live_shell_without_replaying_its_launch() {
+        use paneflow_host::manifest::{SessionLifecycle, write_manifest};
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let workdir = tempfile::tempdir().unwrap();
+        let removed = workdir.path().join("removed");
+        std::fs::create_dir(&removed).unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let recorded = host
+            .create(CreateSession {
+                shell: Some(TEST_SHELL.into()),
+                cwd: Some(workdir.path().display().to_string()),
+                ..CreateSession::default()
+            })
+            .unwrap()
+            .manifest
+            .session;
+        host.stop(&recorded, None).unwrap();
+        let template = host.inspect(&recorded).unwrap().manifest;
+        host.remove(&recorded).unwrap();
+        drop(host);
+        let mut restored = Vec::new();
+        for (lifecycle, cwd) in [
+            (SessionLifecycle::Running, workdir.path().to_path_buf()),
+            (SessionLifecycle::Lost, removed.clone()),
+        ] {
+            let mut manifest = template.clone();
+            manifest.session = SessionId::new();
+            manifest.lifecycle = lifecycle;
+            manifest.process = None;
+            manifest.cwd = cwd.display().to_string();
+            manifest.current_cwd = None;
+            manifest.launch.shell = TEST_SHELL.into();
+            manifest.launch.args = vec!["-recorded-command".into()];
+            manifest.host_instance = HostInstanceToken::new();
+            write_manifest(home.path(), &manifest).unwrap();
+            restored.push(manifest.session.clone());
+        }
+        std::fs::remove_dir(&removed).unwrap();
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).unwrap();
+        let target = HostEndpoint {
+            home: home.path().to_path_buf(),
+            endpoint,
+        };
+        for session in &restored {
+            let Ok(ResolveOutcome::Ended(end, _)) = resolve_at(
+                shell_request(SessionIntent::Reattach, session.clone()),
+                target.clone(),
+            ) else {
+                panic!("a restored record of a dead host ends the pane");
+            };
+            assert!(
+                matches!(
+                    end.kind,
+                    HostLinkEndKind::Lost | HostLinkEndKind::HostReplaced
+                ),
+                "{:?}",
+                end.kind
+            );
+            let Some((intent, false)) = end.restore_recovery(None) else {
+                panic!("{:?} is recovered under the same id", end.kind);
+            };
+            let racing: Vec<_> = (0..2)
+                .map(|_| {
+                    let request = shell_request(intent, session.clone());
+                    let target = target.clone();
+                    let session = session.clone();
+                    std::thread::spawn(move || {
+                        smol::block_on(resolve_until_settled(
+                            session,
+                            async || resolve_at(request.clone(), target.clone()),
+                            async |pause| {
+                                std::thread::sleep(pause.quiet + pause.visible);
+                                true
+                            },
+                        ))
+                    })
+                })
+                .collect();
+            for race in racing {
+                let settled = race.join().unwrap();
+                let Some(Ok(ResolveOutcome::Attached(hosted, _))) = settled else {
+                    let seen = match &settled {
+                        Some(Ok(ResolveOutcome::Ended(end, _))) => format!("ended {:?}", end.kind),
+                        Some(Ok(ResolveOutcome::Starting)) => "starting".to_string(),
+                        Some(Err(error)) => format!("error {error}"),
+                        Some(Ok(ResolveOutcome::Attached(..))) | None => "canceled".to_string(),
+                    };
+                    panic!("both concurrent restarts attach to the committed generation: {seen}");
+                };
+                assert_eq!(hosted.attachment.session, *session);
+                assert_eq!(
+                    hosted.attachment.generation,
+                    SessionGeneration::FIRST.next()
+                );
+            }
+            let manifest = host.inspect(session).unwrap().manifest;
+            assert_eq!(manifest.generation, SessionGeneration::FIRST.next());
+            assert!(
+                manifest.launch.args.is_empty(),
+                "the recorded command is not replayed"
+            );
+        }
+        let lost_cwd = host.inspect(&restored[1]).unwrap().manifest.cwd;
+        assert_ne!(
+            std::path::Path::new(&lost_cwd),
+            removed.as_path(),
+            "a removed cwd falls back to the home directory"
+        );
+
+        let unknown = SessionId::new();
+        let Ok(ResolveOutcome::Ended(end, _)) = resolve_at(
+            shell_request(SessionIntent::Reattach, unknown.clone()),
+            target.clone(),
+        ) else {
+            panic!("an unknown id ends the pane as missing");
+        };
+        assert_eq!(end.kind, HostLinkEndKind::Missing);
+        let Some((SessionIntent::Create, true)) = end.restore_recovery(None) else {
+            panic!("a missing pane is recreated under a fresh identity");
+        };
+        let fresh = SessionId::new();
+        let Ok(ResolveOutcome::Attached(hosted, _)) =
+            resolve_at(shell_request(SessionIntent::Create, fresh.clone()), target)
+        else {
+            panic!("the fresh shell attaches");
+        };
+        assert_eq!(hosted.attachment.session, fresh);
+        assert!(matches!(
+            host.inspect(&unknown),
+            Err(paneflow_host::HostError::SessionNotFound(_))
+        ));
+        for session in restored.iter().chain([&fresh]) {
+            host.stop(session, None).unwrap();
+        }
+        assert!(host.live_sessions().is_empty());
         server.stop().unwrap();
     }
 }

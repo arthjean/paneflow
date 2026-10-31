@@ -731,6 +731,8 @@ impl PaneFlowApp {
             view.restore_agent_session(agent_session, restore_conversations);
             if surface.session.is_none() {
                 view.expect_fresh_shell_for_conversation();
+            } else {
+                view.recover_when_restored();
             }
         });
         cx.subscribe(&t, Self::handle_terminal_event).detach();

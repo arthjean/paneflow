@@ -63,6 +63,18 @@ fn resume_intent(
     }
 }
 
+fn restore_recovery(
+    armed: bool,
+    conversation_restore_pending: bool,
+    end: &host_link::HostLinkEnd,
+    observed: Option<paneflow_config::schema::SessionGeneration>,
+) -> Option<(SessionIntent, bool)> {
+    if !armed || conversation_restore_pending {
+        return None;
+    }
+    end.restore_recovery(observed)
+}
+
 enum AttachOutcome {
     Attached(Box<HostedAttachment>),
     Ended(HostLinkEnd, Option<FinalText>),
@@ -202,6 +214,7 @@ impl TerminalView {
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
+                    let recover = std::mem::take(&mut view.recover_on_restore);
                     for error in dir_errors {
                         cx.emit(TerminalEvent::Notice(error));
                     }
@@ -230,8 +243,17 @@ impl TerminalView {
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             let kind = end.kind.clone();
+                            let recovery = restore_recovery(
+                                recover,
+                                view.conversation_restore_pending(),
+                                &end,
+                                view.terminal.hosted.as_ref().map(|hosted| hosted.generation),
+                            );
                             view.terminal.mark_host_link(HostLinkState::Ended(end));
                             view.conversation_host_ended(&kind, cx);
+                            if let Some((intent, fresh_identity)) = recovery {
+                                view.start_hosted_session(intent, fresh_identity, cx);
+                            }
                         }
                         AttachOutcome::Unavailable(message) => {
                             view.restore_saved_scrollback();
@@ -276,6 +298,10 @@ impl TerminalView {
             },
         )
         .detach();
+    }
+
+    pub(crate) fn recover_when_restored(&mut self) {
+        self.recover_on_restore = true;
     }
 
     pub(crate) fn resume_hosted_session(&mut self, cx: &mut Context<Self>) {
@@ -498,6 +524,41 @@ mod tests {
         assert_eq!(backend_failure_level(&fresh), log::Level::Error);
         assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
         assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
+    }
+
+    #[test]
+    fn only_the_restored_resolution_of_a_pane_without_a_pending_conversation_recovers() {
+        use paneflow_config::schema::SessionGeneration;
+        let lost = host_link::HostLinkEnd::from_reconnection(
+            paneflow_host::SessionReconnection::Lost,
+            SessionGeneration::FIRST,
+        );
+        let missing = host_link::HostLinkEnd::missing();
+        assert_eq!(
+            restore_recovery(true, false, &lost, None),
+            Some((
+                SessionIntent::Restart {
+                    expected: Some(SessionGeneration::FIRST)
+                },
+                false
+            ))
+        );
+        assert_eq!(
+            restore_recovery(true, false, &missing, None),
+            Some((SessionIntent::Create, true))
+        );
+        for end in [&lost, &missing] {
+            assert_eq!(
+                restore_recovery(true, true, end, None),
+                None,
+                "an agent pane keeps its conversation restore as the only path"
+            );
+            assert_eq!(
+                restore_recovery(false, false, end, None),
+                None,
+                "a pane that ends after its restored resolution keeps its button"
+            );
+        }
     }
 
     #[test]
