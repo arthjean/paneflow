@@ -17,7 +17,7 @@ see the WSL2 section below.
 
 1. Open the [Paneflow download page](/download) or the
    [latest Paneflow release on GitHub](https://github.com/arthjean/paneflow/releases/latest).
-2. Download `paneflow-0.18.0-x86_64-pc-windows-msvc.msi`.
+2. Download `paneflow-0.18.1-x86_64-pc-windows-msvc.msi`.
 3. Verify the file's signature as described below, then run the MSI.
    Approve the Windows administrator prompt to continue.
 4. Keep **PATH Environment Variable** selected to use `paneflow` from a
@@ -32,7 +32,7 @@ then follow the [getting started guide](/docs) to open a project and run an agen
 In PowerShell, open the folder containing the downloaded MSI and run:
 
 ```powershell
-$version = "0.18.0"
+$version = "0.18.1"
 $signature = Get-AuthenticodeSignature ".\paneflow-$version-x86_64-pc-windows-msvc.msi"
 $signature.Status
 $signature.SignerCertificate.Subject
@@ -118,7 +118,7 @@ Before upgrading, save files and finish active commands. The MSI can stop
 running terminal sessions during an upgrade.
 
 Use the in-app updater or download and run
-[`paneflow-0.18.0-x86_64-pc-windows-msvc.msi`](/download). If an update
+[`paneflow-0.18.1-x86_64-pc-windows-msvc.msi`](/download). If an update
 reports a corrupt download, or restarts the same version, install the
 latest MSI manually. This also applies to the known update failures in
 0.7.7/0.7.8 and 0.17.0/0.17.1; you do not need to install an intermediate version.

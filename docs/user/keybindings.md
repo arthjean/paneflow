@@ -138,6 +138,15 @@ pane. Search actions apply while the corresponding search is active.
 | Terminal pane | `accept_conversation_notice` | Run the action of the pane's conversation notice. |
 | Terminal pane | `dismiss_conversation_notice` | Dismiss the pane's conversation notice. |
 
+`jump_next_waiting` goes through the agents that need you, in the order of
+the sidebar's Agents section: agents waiting for input first, then agents in
+an error state, then finished agents whose result you have not seen yet, the
+most recent first within each group. It covers every workspace, the active
+space first, whether the Agents section is shown, collapsed, or hidden, and
+wraps around at the end. After `focus_workspaces_sidebar`, the arrow keys,
+`Home`, and `End` move through the workspace tree and on into the Agents
+section, and `Enter` opens the selected agent's pane.
+
 `next_space` and `previous_space` go through `Default` and then the spaces
 in their `paneflow.json` order, and wrap around at the end. They do nothing
 until you create a space. On a laptop without dedicated `PageUp` and

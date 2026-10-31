@@ -87,6 +87,27 @@ process, but shows no turn status: Paneflow never guesses it from the screen.
 Use `paneflow sessions` to read session status even when the window is closed.
 The [automation guide](/docs/scripting) explains hooks and events.
 
+The **Agents** section at the bottom of the sidebar lists the agent sessions
+of the active space, most urgent first: waiting for input, failed, finished
+with a result you have not seen yet, working, idle, then agents that report
+no status. Each row shows the agent's logo, the tab title, its status, and
+the workspace name. Click a row to open the agent's pane; opening a finished
+agent's tab marks its result as seen and removes its `Done` dot. An agent
+that has reported nothing through OSC 7501 after 3 seconds shows
+`No status`, and its tooltip names the first version that reports it when
+Paneflow knows it, for example Claude Code 2.1.295. `Cmd/Ctrl+Shift+J` goes
+through the agents waiting for input, then the failed ones, then the unseen
+results, in the same order, across every workspace.
+
+Click the **Agents** header to collapse the section. Drag its top edge to
+resize it, or press `Tab` in the focused sidebar to reach that edge, then
+use the arrow keys, `Home`, `End`, and `Enter`, which returns to the content
+height. Paneflow remembers the height and the collapsed state across
+restarts. After `Cmd/Ctrl+Alt+S`, the sidebar's keyboard cursor continues
+from the last tree row into the section, and `Enter` opens the agent's pane.
+Hide the section from **Customize sidebar > Show > Agents** or with
+[`sidebar_show.agents`](/docs/configuration/schema).
+
 On Linux and macOS, the **Claude Code (team)** launcher entry starts Claude
 Code with agent teams enabled and opens each teammate in its own Paneflow
 pane, next to the lead's pane, instead of inside the lead's terminal. Claude
