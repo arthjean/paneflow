@@ -752,10 +752,11 @@ mod platform {
         let entries = listing.entries.as_ref().as_ref().ok()?;
         let mut processes = Vec::new();
         for entry in descendants(session_leader_pid, entries) {
-            let started_at = crate::process::process_start_time(entry.pid);
-            if started_at.is_none() {
+            let identity = crate::process::ProcessIdentity::capture(entry.pid);
+            if !identity.is_provably_live() {
                 continue;
             }
+            let started_at = identity.started_at;
             let argv = crate::process::process_argv(entry.pid);
             if crate::process::process_start_time(entry.pid) != started_at {
                 continue;

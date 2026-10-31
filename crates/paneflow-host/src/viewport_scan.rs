@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use paneflow_config::schema::{SessionGeneration, SessionId};
@@ -194,10 +194,40 @@ pub fn spawn(host: &Arc<SessionHost>) {
 
 type TrackerKey = (SessionId, SessionGeneration);
 
+#[derive(Default)]
+struct PromptStarts {
+    count: Mutex<u64>,
+    changed: Condvar,
+}
+
+fn prompt_starts() -> &'static PromptStarts {
+    static STARTS: OnceLock<PromptStarts> = OnceLock::new();
+    STARTS.get_or_init(PromptStarts::default)
+}
+
+pub(crate) fn note_prompt_start() {
+    let starts = prompt_starts();
+    *starts.count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+    starts.changed.notify_all();
+}
+
+fn wait_for_next_scan(prompts_seen: &mut u64) {
+    let starts = prompt_starts();
+    let count = starts.count.lock().unwrap_or_else(PoisonError::into_inner);
+    let (count, _) = starts
+        .changed
+        .wait_timeout_while(count, VIEWPORT_SCAN_INTERVAL, |count| {
+            *count == *prompts_seen
+        })
+        .unwrap_or_else(PoisonError::into_inner);
+    *prompts_seen = *count;
+}
+
 fn scan_loop(host: Weak<SessionHost>) {
     let mut trackers: BTreeMap<TrackerKey, ViewportTracker> = BTreeMap::new();
+    let mut prompts_seen = 0;
     loop {
-        std::thread::sleep(VIEWPORT_SCAN_INTERVAL);
+        wait_for_next_scan(&mut prompts_seen);
         let Some(host) = host.upgrade() else {
             return;
         };
@@ -599,6 +629,138 @@ mod tests {
         assert!(
             !tracker.observation_settle_due(settled + OBSERVATION_SETTLE * 4),
             "the settling rescan is not repeated without new output"
+        );
+    }
+
+    const RELEASE_CYCLES: usize = 5;
+    const RELEASE_BUDGET: Duration = Duration::from_millis(250);
+    const RELEASE_DEADLINE: Duration = Duration::from_secs(20);
+
+    #[cfg(windows)]
+    fn prompt_marking_shell() -> crate::host::CreateSession {
+        crate::host::CreateSession {
+            shell: Some("cmd.exe".to_string()),
+            args: vec!["/Q".to_string(), "/D".to_string()],
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(100),
+            rows: Some(24),
+            ..crate::host::CreateSession::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn prompt_marking_shell() -> crate::host::CreateSession {
+        crate::host::CreateSession {
+            shell: Some("/bin/sh".to_string()),
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(100),
+            rows: Some(24),
+            ..crate::host::CreateSession::default()
+        }
+    }
+
+    #[cfg(windows)]
+    fn prompt_marking_command() -> Vec<u8> {
+        b"prompt $E]133;A$E\\$G\r\n".to_vec()
+    }
+
+    #[cfg(unix)]
+    fn prompt_marking_command() -> Vec<u8> {
+        b"PS1=\"$(printf '\\033]133;A\\007')$ \"\r".to_vec()
+    }
+
+    #[cfg(windows)]
+    fn fake_agent_command(bin: &std::path::Path) -> Vec<u8> {
+        let claude = bin.join("claude.exe");
+        if !claude.exists() {
+            let system_root = std::env::var_os("SystemRoot").unwrap();
+            std::fs::copy(
+                std::path::Path::new(&system_root)
+                    .join("System32")
+                    .join("PING.EXE"),
+                &claude,
+            )
+            .unwrap();
+        }
+        format!("\"{}\" -n 4 127.0.0.1\r\n", claude.display()).into_bytes()
+    }
+
+    #[cfg(unix)]
+    fn fake_agent_command(_bin: &std::path::Path) -> Vec<u8> {
+        b"bash -c 'exec -a claude bash -c \"for _ in 1 2 3; do echo tick; sleep 1; done\"'\r"
+            .to_vec()
+    }
+
+    fn current_observation(host: &SessionHost, session: &SessionId) -> Option<RuntimeObservation> {
+        host.inspect(session)
+            .unwrap()
+            .manifest
+            .runtime
+            .and_then(|runtime| runtime.current_observation)
+    }
+
+    fn wait_for<T>(label: &str, mut probe: impl FnMut() -> Option<T>) -> T {
+        let until = Instant::now() + RELEASE_DEADLINE;
+        loop {
+            if let Some(found) = probe() {
+                return found;
+            }
+            assert!(
+                Instant::now() < until,
+                "{label}: timed out after {RELEASE_DEADLINE:?}"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn release_latency(host: &SessionHost, session: &SessionId, bin: &std::path::Path) -> Duration {
+        host.input(
+            session,
+            Some(SessionGeneration::FIRST),
+            fake_agent_command(bin),
+        )
+        .unwrap();
+        let observed = wait_for("observed", || current_observation(host, session));
+        assert_eq!(observed.id, "com.anthropic.claude-code");
+        let agent = ProcessIdentity::capture(observed.pid);
+        let exited_at = wait_for("exited", || {
+            (agent.verify() == crate::process::ProcessVerdict::Gone).then(Instant::now)
+        });
+        let released_at = wait_for("released", || {
+            current_observation(host, session)
+                .is_none()
+                .then(Instant::now)
+        });
+        released_at.saturating_duration_since(exited_at)
+    }
+
+    #[test]
+    fn an_agent_that_exits_is_released_as_soon_as_the_shell_prompt_returns() {
+        let home = tempfile::tempdir().unwrap();
+        let bin = tempfile::tempdir().unwrap();
+        let host =
+            SessionHost::open(home.path(), std::path::Path::new("foreground-release")).unwrap();
+        let session = host
+            .create(prompt_marking_shell())
+            .unwrap()
+            .manifest
+            .session;
+        host.input(
+            &session,
+            Some(SessionGeneration::FIRST),
+            prompt_marking_command(),
+        )
+        .unwrap();
+
+        let latencies: Vec<Duration> = (0..RELEASE_CYCLES)
+            .map(|_| release_latency(&host, &session, bin.path()))
+            .collect();
+        eprintln!("agent exit to foreground release: {latencies:?}");
+
+        host.stop(&session, None).unwrap();
+        assert!(
+            latencies.iter().all(|latency| *latency < RELEASE_BUDGET),
+            "every release lands within {RELEASE_BUDGET:?} of the agent exit: {latencies:?}"
         );
     }
 }

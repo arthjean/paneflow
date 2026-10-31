@@ -1357,6 +1357,7 @@ impl Session {
                     if kind == ghostty::SemanticPromptKind::PromptStart {
                         self.program_status.release_finished_program();
                         self.program_status_capable = false;
+                        crate::viewport_scan::note_prompt_start();
                     }
                 }
                 ghostty::BackendEvent::Reset => {
