@@ -36,11 +36,13 @@ impl CheckpointStaging {
         bytes: usize,
         deadline: Instant,
     ) -> Result<StagingLease, HostError> {
-        if bytes > CHECKPOINT_STAGING_BUDGET_BYTES {
+        let limit = crate::protocol::MAX_CHECKPOINT_BYTES.min(CHECKPOINT_STAGING_BUDGET_BYTES);
+        if bytes > limit {
             self.lock().refused += 1;
-            return Err(HostError::Busy(format!(
-                "a {bytes} byte checkpoint exceeds the {CHECKPOINT_STAGING_BUDGET_BYTES} byte staging budget"
-            )));
+            return Err(HostError::Runtime(RuntimeError::CheckpointTooLarge {
+                bytes,
+                limit,
+            }));
         }
         let mut state = self.lock();
         loop {

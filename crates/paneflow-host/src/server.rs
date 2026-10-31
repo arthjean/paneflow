@@ -1426,6 +1426,42 @@ mod tests {
     }
 
     #[test]
+    fn an_attach_whose_checkpoint_cannot_fit_is_refused_as_too_large_without_waiting_for_staging() {
+        let (_home, host, server) = start();
+        let session = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap()
+            .manifest
+            .session;
+        let first = host.checkpoint(&session, None).unwrap();
+        let second = host.checkpoint(&session, None).unwrap();
+        let hello = ClientHello::local("oversized-attach");
+        let mut client = HostClient::connect(server.endpoint(), &hello).unwrap();
+        for estimate in [
+            protocol::MAX_CHECKPOINT_BYTES + 1,
+            crate::host::CHECKPOINT_STAGING_BUDGET_BYTES + 1,
+        ] {
+            host.set_checkpoint_estimate_floor(estimate);
+            let started = Instant::now();
+            let refused = client.attach(&session, None);
+            assert_eq!(
+                refused.err().and_then(|error| error.code()),
+                Some(ERR_CHECKPOINT_TOO_LARGE)
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the refusal precedes the staging admission"
+            );
+        }
+        assert_eq!(host.resource_report().checkpoints.active, 2);
+        drop((first, second));
+        host.set_checkpoint_estimate_floor(0);
+        assert!(client.attach(&session, None).is_ok());
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
     fn streaming_followers_leave_reserved_slots_for_control_requests() {
         let (_home, host, server) = start();
         let created = host

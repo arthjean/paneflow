@@ -446,7 +446,7 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | Path | Automated cases | Platform evidence |
 |---|---|---|
 | 1 Empty home | `the_host_assigns_durable_ids_persists_manifests_and_stops_owned_processes` | first-launch cell |
-| 2 Launch still pending | `admission_stops_at_eight_unresolved_launches`, `a_startup_deadline_then_cancellation_retains_the_late_child` | none required |
+| 2 Launch still pending | `a_create_queued_behind_eight_stuck_launches_is_refused_at_its_admission_deadline`, `a_startup_deadline_then_cancellation_retains_the_late_child` | none required |
 | 3 Host compatibility mismatch | `an_incompatible_or_missing_handshake_is_refused_before_any_effect`, `a_client_from_another_release_attaches_when_protocol_and_engine_agree` | upgrade cells |
 | 4 Replacement unavailable | `replacement_preflight_and_wrong_home_never_stop_live_sessions`, `an_update_preflight_defers_a_missing_replacement_and_counts_the_host_sessions` | upgrade cells |
 | 5 Restart persistence failure | `a_restart_whose_persist_fails_restores_the_prior_record_without_a_stranded_start` | D-10 |
@@ -459,7 +459,7 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | 12 Old callback/write | `a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation`, `an_older_revision_queued_behind_a_newer_one_never_regresses_the_file` | none required |
 | 13 Host dies | `a_new_host_instance_marks_inherited_running_records_lost_and_never_signals_them`, `every_retained_end_state_restores_without_creating_a_process` | D-01 |
 | 14 Cold text unavailable | `a_lost_data_directory_reports_unavailable_text_without_blocking_retirement`, `a_missing_data_directory_refuses_the_write_instead_of_recreating_it` | D-07 |
-| 15 Over limit | `an_oversized_control_frame_is_rejected_without_buffering_it`, `oversized_terminal_dimensions_are_refused_before_reaching_the_engine`, `admission_stops_at_eight_unresolved_launches`, `accepted_hook_frames_fit_the_reload_limit_and_oversized_events_never_commit` | none required |
+| 15 Over limit | `an_oversized_control_frame_is_rejected_without_buffering_it`, `oversized_terminal_dimensions_are_refused_before_reaching_the_engine`, `a_create_queued_behind_eight_stuck_launches_is_refused_at_its_admission_deadline`, `accepted_hook_frames_fit_the_reload_limit_and_oversized_events_never_commit` | none required |
 | 16 Concurrent create/restart/remove | `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, `a_requested_session_id_is_created_once_and_never_silently_replaced` | none required |
 | 17 Permission revoked | `a_failed_final_revision_is_retained_and_retried_after_storage_recovers`, `a_lost_data_directory_reports_unavailable_text_without_blocking_retirement` | D-10 |
 | 18 Unknown agent during close | `an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell` | D-08 |

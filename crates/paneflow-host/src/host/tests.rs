@@ -190,10 +190,30 @@ fn checkpoint_staging_admits_two_captures_and_the_third_waits_for_a_release() {
     drop(first);
     let third = staging.admit(4096, soon()).unwrap();
     assert_eq!(staging.report().staged_bytes, 6144);
-    let oversized = staging.admit(CHECKPOINT_STAGING_BUDGET_BYTES + 1, soon());
-    assert!(matches!(oversized, Err(HostError::Busy(_))));
-    let over_budget = staging.admit(CHECKPOINT_STAGING_BUDGET_BYTES - 6144 + 1, soon());
-    assert!(matches!(over_budget, Err(HostError::Busy(_))));
+    let full = staging.admit(1, soon());
+    assert!(matches!(full, Err(HostError::Busy(_))));
+    assert_eq!(staging.report().refused, 2);
+    for estimate in [
+        crate::protocol::MAX_CHECKPOINT_BYTES + 1,
+        CHECKPOINT_STAGING_BUDGET_BYTES - 6144 + 1,
+        CHECKPOINT_STAGING_BUDGET_BYTES + 1,
+    ] {
+        let started = Instant::now();
+        let oversized = staging.admit(estimate, Instant::now() + Duration::from_secs(5));
+        assert!(
+            matches!(
+                oversized,
+                Err(HostError::Runtime(RuntimeError::CheckpointTooLarge { bytes, .. })) if bytes == estimate
+            ),
+            "an estimate above the checkpoint limit is permanent, never busy"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "no staging wait"
+        );
+    }
+    assert_eq!(staging.report().refused, 5);
+    assert_eq!(staging.report().staged_bytes, 6144);
     drop(second);
     drop(third);
     let report = staging.report();
@@ -1657,70 +1677,321 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
     assert!(!identity.is_provably_live());
 }
 
-#[test]
-fn admission_stops_at_eight_unresolved_launches() {
-    let home = tempfile::tempdir().unwrap();
-    let host = SessionHost::open(home.path(), Path::new("admission")).unwrap();
-    {
-        let mut sessions = host.lock_sessions();
-        for index in 0..MAX_PENDING_LAUNCHES {
+fn unlaunched_record(host: &SessionHost, session: &SessionId) -> SessionRecord {
+    SessionRecord::fresh(Arc::new(Mutex::new(SessionManifest {
+        schema: MANIFEST_SCHEMA_VERSION,
+        session: session.clone(),
+        workspace: None,
+        generation: SessionGeneration::FIRST,
+        host_instance: host.instance().clone(),
+        cwd: std::env::temp_dir().display().to_string(),
+        launch: SessionLaunch {
+            shell: "sh".to_string(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        },
+        lifecycle: SessionLifecycle::Starting,
+        process: None,
+        name: None,
+        title: None,
+        current_cwd: None,
+        last_hook: None,
+        hook_revision: 0,
+        generation_started_at_ms: None,
+        screen_changed_at_ms: None,
+        declared_status: None,
+        program_status_capable: false,
+        runtime: None,
+        final_output: None,
+        host_protocol_version: HOST_PROTOCOL_VERSION,
+        host_build_id: crate::protocol::host_build_id(),
+        created_at_ms: now_ms(),
+        updated_at_ms: now_ms(),
+    })))
+}
+
+fn hold_unresolved_launches(host: &SessionHost, count: usize) -> Vec<(SessionId, OperationId)> {
+    let mut sessions = host.lock_sessions();
+    (0..count)
+        .map(|index| {
             let session = SessionId::new();
-            let mut record = SessionRecord::fresh(Arc::new(Mutex::new(SessionManifest {
-                schema: MANIFEST_SCHEMA_VERSION,
-                session: session.clone(),
-                workspace: None,
-                generation: SessionGeneration::FIRST,
-                host_instance: host.instance().clone(),
-                cwd: std::env::temp_dir().display().to_string(),
-                launch: SessionLaunch {
-                    shell: "sh".to_string(),
-                    args: Vec::new(),
-                    env: BTreeMap::new(),
-                    cols: 80,
-                    rows: 24,
-                },
-                lifecycle: SessionLifecycle::Starting,
-                process: None,
-                name: None,
-                title: None,
-                current_cwd: None,
-                last_hook: None,
-                hook_revision: 0,
-                generation_started_at_ms: None,
-                screen_changed_at_ms: None,
-                declared_status: None,
-                program_status_capable: false,
-                runtime: None,
-                final_output: None,
-                host_protocol_version: HOST_PROTOCOL_VERSION,
-                host_build_id: crate::protocol::host_build_id(),
-                created_at_ms: now_ms(),
-                updated_at_ms: now_ms(),
-            })));
+            let operation = u64::MAX - index as u64;
+            let mut record = unlaunched_record(host, &session);
             record.launch = Some(PendingLaunch {
-                operation: index as u64 + 1,
+                operation,
                 generation: SessionGeneration::FIRST,
                 cancel: None,
                 cancelled: false,
                 fallback_owner: None,
             });
-            sessions.insert(session, record);
+            sessions.insert(session.clone(), record);
+            (session, operation)
+        })
+        .collect()
+}
+
+fn pending_launches(host: &SessionHost) -> usize {
+    host.lock_sessions()
+        .values()
+        .filter(|record| record.launch.is_some())
+        .count()
+}
+
+#[test]
+fn a_ninth_create_waits_for_a_launch_slot_and_starts_once_a_launch_fails() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-wait")).unwrap();
+    let held = hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let queued = Arc::clone(&host);
+    let started = Instant::now();
+    let ninth = std::thread::spawn(move || queued.create(shell_request(80, 24)));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !ninth.is_finished(),
+        "the ninth create waits instead of being refused"
+    );
+    let (session, operation) = &held[0];
+    let _ = host.fail_launch(session, *operation, "released by the test".into());
+    let created = ninth
+        .join()
+        .unwrap()
+        .expect("the queued create starts once a launch slot frees");
+    assert!(created.live);
+    assert!(started.elapsed() < LAUNCH_ADMISSION_DEADLINE);
+    host.stop(&created.manifest.session, None).unwrap();
+    host.lock_sessions().clear();
+}
+
+#[test]
+fn twelve_concurrent_creates_all_start_and_never_exceed_eight_pending_launches() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-burst")).unwrap();
+    host.set_barrier(Arc::new(|point| {
+        if point == Barrier::LaunchCommit {
+            std::thread::sleep(Duration::from_millis(150));
         }
+    }));
+    let done = Arc::new(AtomicBool::new(false));
+    let monitor = {
+        let host = Arc::clone(&host);
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            let mut peak = 0;
+            while !done.load(Ordering::Acquire) {
+                peak = peak.max(pending_launches(&host));
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            peak
+        })
+    };
+    let creates: Vec<_> = (0..12)
+        .map(|_| {
+            let host = Arc::clone(&host);
+            std::thread::spawn(move || host.create(shell_request(80, 24)))
+        })
+        .collect();
+    let results: Vec<_> = creates
+        .into_iter()
+        .map(|create| create.join().unwrap())
+        .collect();
+    done.store(true, Ordering::Release);
+    let peak = monitor.join().unwrap();
+    host.set_barrier(Arc::new(|_| {}));
+    let refused = results.iter().filter(|result| result.is_err()).count();
+    assert_eq!(
+        refused,
+        0,
+        "{:?}",
+        results
+            .iter()
+            .filter_map(|r| r.as_ref().err())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        peak, MAX_PENDING_LAUNCHES,
+        "the burst fills the launch slots without exceeding them"
+    );
+    for created in results.into_iter().flatten() {
+        assert!(host.inspect(&created.manifest.session).unwrap().live);
+        host.stop(&created.manifest.session, None).unwrap();
     }
+}
+
+#[test]
+fn a_create_queued_behind_eight_stuck_launches_is_refused_at_its_admission_deadline() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-deadline")).unwrap();
+    hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let id = SessionId::new();
+    let started = Instant::now();
+    let refused = host.create(CreateSession {
+        session: Some(id.clone()),
+        ..shell_request(80, 24)
+    });
+    let waited = started.elapsed();
+    assert!(
+        matches!(&refused, Err(HostError::Busy(_))),
+        "{:?}",
+        refused.as_ref().err()
+    );
+    assert!(waited >= LAUNCH_ADMISSION_DEADLINE, "{waited:?}");
+    assert!(
+        waited < LAUNCH_ADMISSION_DEADLINE + Duration::from_secs(1),
+        "{waited:?}"
+    );
+    assert!(
+        !host.lock_sessions().contains_key(&id),
+        "a refused launch leaves no session record"
+    );
     assert_eq!(
         host.resource_report().pending_launches,
         MAX_PENDING_LAUNCHES
     );
-    assert!(matches!(
-        host.create(shell_request(80, 24)),
-        Err(HostError::Busy(_))
-    ));
     let summaries = host.list(None);
     assert!(
         summaries.iter().all(|summary| summary.pending_launch
             && summary.reconnection(host.instance()) == SessionReconnection::Starting),
         "a pending launch is reported as starting, never as a verified process"
     );
+    host.lock_sessions().clear();
+}
+
+#[test]
+fn a_queued_create_returns_shutting_down_as_soon_as_shutdown_begins() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-shutdown")).unwrap();
+    hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let queued = Arc::clone(&host);
+    let ninth = std::thread::spawn(move || {
+        let started = Instant::now();
+        (queued.create(shell_request(80, 24)), started.elapsed())
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!ninth.is_finished(), "the create is queued");
+    let _ = host.shutdown_until(true, Instant::now() + Duration::from_millis(500));
+    let (result, waited) = ninth.join().unwrap();
+    assert!(
+        matches!(&result, Err(HostError::ShuttingDown)),
+        "{:?}",
+        result.as_ref().err()
+    );
+    assert!(waited < LAUNCH_ADMISSION_DEADLINE, "{waited:?}");
+    assert_eq!(pending_launches(&host), MAX_PENDING_LAUNCHES);
+    host.lock_sessions().clear();
+}
+
+#[test]
+fn a_restart_waits_in_the_same_admission_queue_as_create() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-restart")).unwrap();
+    let created = host.create(shell_request(80, 24)).unwrap();
+    let session = created.manifest.session.clone();
+    host.stop(&session, Some(created.manifest.generation))
+        .unwrap();
+    let held = hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let queued = Arc::clone(&host);
+    let target = session.clone();
+    let restart = std::thread::spawn(move || queued.restart(&target, None));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !restart.is_finished(),
+        "the restart waits for a launch slot instead of being refused"
+    );
+    let (fake, operation) = &held[0];
+    let _ = host.fail_launch(fake, *operation, "released by the test".into());
+    let restarted = restart
+        .join()
+        .unwrap()
+        .expect("the queued restart starts once a launch slot frees");
+    assert!(restarted.live);
+    assert_eq!(
+        restarted.manifest.generation,
+        created.manifest.generation.next()
+    );
+    host.stop(&session, None).unwrap();
+    host.lock_sessions().clear();
+}
+
+#[test]
+fn a_queued_create_whose_id_appears_meanwhile_returns_session_exists_without_launching() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-exists")).unwrap();
+    let held = hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let id = SessionId::new();
+    let queued = Arc::clone(&host);
+    let requested = id.clone();
+    let ninth = std::thread::spawn(move || {
+        queued.create(CreateSession {
+            session: Some(requested),
+            ..shell_request(80, 24)
+        })
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!ninth.is_finished(), "the create is queued");
+    {
+        let record = unlaunched_record(&host, &id);
+        host.lock_sessions().insert(id.clone(), record);
+    }
+    let (fake, operation) = &held[0];
+    let _ = host.fail_launch(fake, *operation, "released by the test".into());
+    let result = ninth.join().unwrap();
+    assert!(
+        matches!(&result, Err(HostError::SessionExists { session }) if *session == id),
+        "{:?}",
+        result.as_ref().err()
+    );
+    let sessions = host.lock_sessions();
+    let competing = &sessions[&id];
+    assert!(
+        competing.launch.is_none() && competing.runtime.is_none(),
+        "the woken create launched no process"
+    );
+    drop(sessions);
+    assert_eq!(pending_launches(&host), MAX_PENDING_LAUNCHES - 1);
+    host.lock_sessions().clear();
+}
+
+#[test]
+fn a_create_admitted_after_waiting_still_answers_within_the_response_budget() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("admission-budget")).unwrap();
+    let held = hold_unresolved_launches(&host, MAX_PENDING_LAUNCHES);
+    let releasing = Arc::clone(&host);
+    let (fake, operation) = held[0].clone();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(4));
+        let _ = releasing.fail_launch(&fake, operation, "released by the test".into());
+    });
+    let id = SessionId::new();
+    let mut request = CreateSession {
+        session: Some(id.clone()),
+        ..shell_request(80, 24)
+    };
+    request
+        .env
+        .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "7000".into());
+    let started = Instant::now();
+    let answered = host.create(request);
+    let elapsed = started.elapsed();
+    release.join().unwrap();
+    assert!(
+        matches!(&answered, Err(HostError::LaunchPending(session)) if *session == id),
+        "{:?}",
+        answered.as_ref().err()
+    );
+    assert!(elapsed >= Duration::from_secs(4), "{elapsed:?}");
+    assert!(
+        elapsed <= LAUNCH_RESPONSE_BUDGET + Duration::from_millis(300),
+        "{elapsed:?}"
+    );
+    assert!(elapsed < crate::protocol::REQUEST_DEADLINE, "{elapsed:?}");
+    assert!(wait_until(Duration::from_secs(10), || {
+        host.inspect(&id)
+            .is_ok_and(|summary| !summary.pending_launch)
+    }));
+    let _ = host.stop(&id, None);
     host.lock_sessions().clear();
 }
 

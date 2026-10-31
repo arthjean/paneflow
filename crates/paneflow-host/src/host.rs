@@ -37,6 +37,8 @@ pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
 pub const MAX_PENDING_LAUNCHES: usize = 8;
+pub const LAUNCH_ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
+pub const LAUNCH_RESPONSE_BUDGET: Duration = Duration::from_secs(9);
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
@@ -204,6 +206,8 @@ pub struct SessionHost {
     staging: Arc<CheckpointStaging>,
     streaming_connections: AtomicUsize,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
+    launch_slots: std::sync::Condvar,
+    shutdown_attempts: AtomicU64,
     agent_bus: AgentBus,
     agent_snapshots: crate::work_counters::Counter,
     write_approvals: crate::agent_write::WriteApprovals,
@@ -217,6 +221,8 @@ pub struct SessionHost {
     barrier: Mutex<Option<BarrierHook>>,
     #[cfg(test)]
     fail_launch_owner_spawn: AtomicBool,
+    #[cfg(test)]
+    checkpoint_estimate_floor: AtomicUsize,
     #[cfg(test)]
     permission_override: Mutex<Option<crate::control::ControlPermissions>>,
     weak: Weak<Self>,
@@ -328,6 +334,8 @@ impl SessionHost {
             staging: Arc::new(CheckpointStaging::default()),
             streaming_connections: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
+            launch_slots: std::sync::Condvar::new(),
+            shutdown_attempts: AtomicU64::new(0),
             agent_bus: AgentBus::new(),
             agent_snapshots: crate::work_counters::Counter::new(),
             write_approvals: crate::agent_write::WriteApprovals::default(),
@@ -341,6 +349,8 @@ impl SessionHost {
             barrier: Mutex::new(None),
             #[cfg(test)]
             fail_launch_owner_spawn: AtomicBool::new(false),
+            #[cfg(test)]
+            checkpoint_estimate_floor: AtomicUsize::new(0),
             #[cfg(test)]
             permission_override: Mutex::new(None),
             weak: weak.clone(),
@@ -385,6 +395,12 @@ impl SessionHost {
         for stream in streams {
             stream.wake();
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_checkpoint_estimate_floor(&self, bytes: usize) {
+        self.checkpoint_estimate_floor
+            .store(bytes, Ordering::Release);
     }
 
     #[cfg(test)]
@@ -737,6 +753,7 @@ impl SessionHost {
             }
             dropped
         };
+        self.launch_slots.notify_all();
         for (id, seed, durability) in &dropped {
             self.delete_record_files(id, seed, durability);
         }
@@ -1102,6 +1119,7 @@ impl SessionHost {
     }
 
     pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
+        let requested = Instant::now();
         if request.args.len() > MAX_LAUNCH_ARGS {
             return Err(HostError::InvalidRequest(format!(
                 "at most {MAX_LAUNCH_ARGS} launch arguments are accepted"
@@ -1184,11 +1202,18 @@ impl SessionHost {
         let operation = self.next_operation();
         let durability;
         {
-            let mut sessions = self.lock_sessions();
-            if sessions.contains_key(&session) {
-                return Err(HostError::SessionExists { session });
-            }
-            self.admit_launch(&sessions)?;
+            let mut sessions = self.admit_launch(
+                self.lock_sessions(),
+                requested + LAUNCH_ADMISSION_DEADLINE,
+                |sessions| {
+                    if sessions.contains_key(&session) {
+                        return Err(HostError::SessionExists {
+                            session: session.clone(),
+                        });
+                    }
+                    Ok(())
+                },
+            )?;
             let mut record = SessionRecord::fresh(Arc::clone(&manifest));
             record.appearance = request.appearance.clone();
             record.cell = request.cell;
@@ -1227,6 +1252,7 @@ impl SessionHost {
                 sessions.remove(&session);
             }
             drop(sessions);
+            self.launch_slots.notify_all();
             self.persistence.remove(&session, &durability);
             return Err(error);
         }
@@ -1243,27 +1269,52 @@ impl SessionHost {
             cell: request.cell,
             xt_checksum: self.current_xt_checksum(),
         };
-        let created = self.launch(session, manifest, spec, SessionGeneration::FIRST, operation);
+        let created = self.launch(
+            session,
+            manifest,
+            spec,
+            SessionGeneration::FIRST,
+            operation,
+            requested + LAUNCH_RESPONSE_BUDGET,
+        );
         if created.is_ok() {
             self.trim_terminated_records();
         }
         created
     }
 
-    fn admit_launch(&self, sessions: &BTreeMap<SessionId, SessionRecord>) -> Result<(), HostError> {
-        if self.is_shutting_down() {
-            return Err(HostError::ShuttingDown);
+    fn admit_launch<'a>(
+        &'a self,
+        mut sessions: std::sync::MutexGuard<'a, BTreeMap<SessionId, SessionRecord>>,
+        deadline: Instant,
+        precheck: impl Fn(&BTreeMap<SessionId, SessionRecord>) -> Result<(), HostError>,
+    ) -> Result<std::sync::MutexGuard<'a, BTreeMap<SessionId, SessionRecord>>, HostError> {
+        let attempts = self.shutdown_attempts.load(Ordering::Acquire);
+        loop {
+            precheck(&sessions)?;
+            if self.is_shutting_down() || self.shutdown_attempts.load(Ordering::Acquire) != attempts
+            {
+                return Err(HostError::ShuttingDown);
+            }
+            let pending = sessions
+                .values()
+                .filter(|record| record.launch.is_some())
+                .count();
+            if pending < MAX_PENDING_LAUNCHES {
+                return Ok(sessions);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(HostError::Busy(format!(
+                    "{pending} launches are still unresolved after waiting {LAUNCH_ADMISSION_DEADLINE:?}; retry when one finishes"
+                )));
+            }
+            sessions = self
+                .launch_slots
+                .wait_timeout(sessions, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
         }
-        let pending = sessions
-            .values()
-            .filter(|record| record.launch.is_some())
-            .count();
-        if pending >= MAX_PENDING_LAUNCHES {
-            return Err(HostError::Busy(format!(
-                "{pending} launches are still unresolved; retry when one finishes"
-            )));
-        }
-        Ok(())
     }
 
     pub fn restart(
@@ -1271,6 +1322,7 @@ impl SessionHost {
         session: &SessionId,
         generation: Option<SessionGeneration>,
     ) -> Result<SessionSummary, HostError> {
+        let requested = Instant::now();
         if self.is_shutting_down() {
             return Err(HostError::ShuttingDown);
         }
@@ -1329,24 +1381,28 @@ impl SessionHost {
         })?;
         let xt_checksum = self.current_xt_checksum();
         let (manifest, spec, durability) = {
-            let mut sessions = self.lock_sessions();
-            let record = sessions
-                .get_mut(session)
-                .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
-            let current = record
-                .manifest
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            if current.generation != prior.generation {
-                return Err(HostError::GenerationMismatch {
-                    session: session.clone(),
-                    current: current.generation,
-                    requested: prior.generation,
-                });
-            }
-            self.refuse_replacement(session, record, &current)?;
-            self.admit_launch(&sessions)?;
+            let mut sessions = self.admit_launch(
+                self.lock_sessions(),
+                requested + LAUNCH_ADMISSION_DEADLINE,
+                |sessions| {
+                    let record = sessions
+                        .get(session)
+                        .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
+                    let current = record
+                        .manifest
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    if current.generation != prior.generation {
+                        return Err(HostError::GenerationMismatch {
+                            session: session.clone(),
+                            current: current.generation,
+                            requested: prior.generation,
+                        });
+                    }
+                    self.refuse_replacement(session, record, &current)
+                },
+            )?;
             let record = sessions
                 .get_mut(session)
                 .ok_or_else(|| HostError::SessionNotFound(session.clone()))?;
@@ -1418,6 +1474,7 @@ impl SessionHost {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = prior;
                 drop(sessions);
+                self.launch_slots.notify_all();
                 self.persist_final(&manifest, &durability);
             }
             return Err(HostError::Storage(format!(
@@ -1426,7 +1483,14 @@ impl SessionHost {
         }
         ledger.receipts.clear();
         drop(ledger);
-        self.launch(session.clone(), manifest, spec, next, operation)
+        self.launch(
+            session.clone(),
+            manifest,
+            spec,
+            next,
+            operation,
+            requested + LAUNCH_RESPONSE_BUDGET,
+        )
     }
 
     fn refuse_replacement(
@@ -1480,6 +1544,7 @@ impl SessionHost {
         spec: SpawnSpec,
         generation: SessionGeneration,
         operation: OperationId,
+        respond_by: Instant,
     ) -> Result<SessionSummary, HostError> {
         let durability = {
             let sessions = self.lock_sessions();
@@ -1515,14 +1580,17 @@ impl SessionHost {
                 }
             }
         }
-        match handle.wait(STARTUP_DEADLINE) {
+        let startup_wait = respond_by
+            .saturating_duration_since(Instant::now())
+            .min(STARTUP_DEADLINE);
+        match handle.wait(startup_wait) {
             LaunchWait::Ready(runtime) | LaunchWait::Recovery(runtime) => {
                 self.commit_launch(&session, operation, runtime)
             }
             LaunchWait::Failed(reason) => Err(self.fail_launch(&session, operation, reason)),
             LaunchWait::Pending(handle) => {
                 log::warn!(
-                    "paneflow-host: session {session} did not start within {STARTUP_DEADLINE:?}; the launch stays owned until it resolves"
+                    "paneflow-host: session {session} did not start within {startup_wait:?}; the launch stays owned until it resolves"
                 );
                 self.own_late_launch(session.clone(), operation, handle);
                 Err(HostError::LaunchPending(session))
@@ -1684,6 +1752,7 @@ impl SessionHost {
                 None
             }
         };
+        self.launch_slots.notify_all();
         if let Some((manifest, durability)) = snapshot {
             self.persist_final(&manifest, &durability);
         }
@@ -1745,6 +1814,7 @@ impl SessionHost {
             record.launch = None;
             cancelled
         };
+        self.launch_slots.notify_all();
         if cancelled {
             return self.stop(session, Some(runtime.generation()));
         }
@@ -1914,6 +1984,7 @@ impl SessionHost {
             sessions.remove(session);
             (manifest, seed, durability)
         };
+        self.launch_slots.notify_all();
         seed.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .removed = true;
@@ -1963,6 +2034,8 @@ impl SessionHost {
     ) -> Result<StagedCheckpoint, HostError> {
         let estimate =
             self.with_live_runtime(session, generation, SessionRuntime::checkpoint_size)?;
+        #[cfg(test)]
+        let estimate = estimate.max(self.checkpoint_estimate_floor.load(Ordering::Acquire));
         let mut lease = self
             .staging
             .admit(estimate, Instant::now() + CHECKPOINT_ADMISSION_DEADLINE)?;
@@ -2319,8 +2392,10 @@ impl SessionHost {
                 return Err(HostError::SessionsLive { count: owned.len() });
             }
             self.shutting_down.store(true, Ordering::Release);
+            self.shutdown_attempts.fetch_add(1, Ordering::AcqRel);
             owned
         };
+        self.launch_slots.notify_all();
         let mut ended = Vec::new();
         let mut unresolved = Vec::new();
         let (sender, receiver) = std::sync::mpsc::channel();
