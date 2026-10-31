@@ -106,8 +106,12 @@ pub(super) fn sidebar_text_ink_axis(font_size: f32, ink_height_em: f32) -> f32 {
         + font_size * (GEIST_ASCENT_EM - GEIST_DESCENT_EM - ink_height_em) / 2.
 }
 
+pub(super) fn sidebar_glyph_top(glyph_size: f32) -> f32 {
+    ((SIDEBAR_ROW_LINE_HEIGHT - glyph_size) / 2.).ceil()
+}
+
 pub(super) fn sidebar_lane_glyph_top() -> f32 {
-    ((SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_LANE_GLYPH_SIZE) / 2.).ceil()
+    sidebar_glyph_top(SIDEBAR_LANE_GLYPH_SIZE)
 }
 
 pub(super) fn sidebar_lane_glyph_center() -> f32 {

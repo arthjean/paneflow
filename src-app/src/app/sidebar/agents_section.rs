@@ -512,16 +512,23 @@ fn render_agent_row(
         .map_or(ui.text, |tint| gpui::Hsla::from(rgb(tint)));
     let logo = div()
         .flex_none()
-        .size(px(SIDEBAR_FOLDER_SLOT_WIDTH))
+        .w(px(SIDEBAR_FOLDER_SLOT_WIDTH))
+        .h(px(SIDEBAR_ROW_LINE_HEIGHT))
+        .pt(px(sidebar_glyph_top(AGENT_LOGO_SIZE)))
         .flex()
-        .items_center()
         .justify_center()
-        .child(crate::settings::components::render_logo(
-            row.tool.icon_path(),
-            row.tool.icon_multicolor(),
-            px(AGENT_LOGO_SIZE),
-            logo_tint,
-        ));
+        .child(
+            div()
+                .flex_none()
+                .size(px(AGENT_LOGO_SIZE))
+                .debug_selector(move || format!("agent-logo-{surface_id}"))
+                .child(crate::settings::components::render_logo(
+                    row.tool.icon_path(),
+                    row.tool.icon_multicolor(),
+                    px(AGENT_LOGO_SIZE),
+                    logo_tint,
+                )),
+        );
     let title_text = div()
         .flex_1()
         .min_w_0()
@@ -1913,6 +1920,19 @@ mod tests {
         );
         assert_eq!(third.top() - second.bottom(), px(2.));
         assert!(cx.debug_bounds("agents-empty").is_none());
+    }
+
+    #[gpui::test]
+    fn the_agent_logo_sits_on_the_whole_pixel_below_the_title_line_center(cx: &mut TestAppContext) {
+        let (cx, _, _) = harness(cx, ranked_rows(&[AgentRank::Blocked]), false, 800.);
+        let row = cx.debug_bounds("agent-row-1").expect("row 1");
+        let logo = cx.debug_bounds("agent-logo-1").expect("logo");
+        assert_eq!(logo.size.height, px(AGENT_LOGO_SIZE));
+        assert_eq!(logo.top() - row.top(), px(SIDEBAR_ROW_PADDING_Y + 3.));
+        assert_eq!(
+            logo.left() - row.left(),
+            px(SIDEBAR_ROW_PADDING_X + (SIDEBAR_FOLDER_SLOT_WIDTH - AGENT_LOGO_SIZE) / 2.)
+        );
     }
 
     #[gpui::test]
