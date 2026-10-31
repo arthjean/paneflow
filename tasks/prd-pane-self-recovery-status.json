@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Valider sur Windows réel",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     }
   ],
   "stories": [
@@ -164,13 +164,13 @@
       "id": "US-011",
       "title": "Passe Windows sur la mise à jour, l'arrêt complet et le reboot",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-003", "US-007", "US-009"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     }
   ]
 }
