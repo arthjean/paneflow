@@ -392,6 +392,32 @@ agent CLI (claude, codex, opencode, …)
   RIS: records, OSC 9;4 progress and title are emptied. Pending status events
   are budgeted at 256 KiB per terminal; a burst past it clears every record
   and the progress instead of keeping a partial state, and logs a warning.
+- **OSC 7501 capability.** Each host runtime carries one more flag,
+  `program_status_capable`, that says whether the program in the pane speaks
+  the protocol at all. It turns true when the engine's reply to
+  `OSC 7501 ; ?` passes through `drain_engine_events` as a `WritePty` that
+  starts with `ESC ] 7501 ; ?` (libghostty is not patched to report it), or
+  when a record is applied. It survives the records being emptied (`clear`,
+  RIS, a manual reset, a burst past the budget) and drops back to false at a
+  prompt start (OSC 133 A) and with every new runtime generation, so each new
+  agent process starts uncapable until its own query or first record. The
+  viewport scan edge-writes it on the manifest (omitted when false), the
+  worker carries it on each snapshot entry (`to_value` in
+  `crates/paneflow-serve/src/state.rs`, read as false when absent), and the
+  app exposes it as `AgentSession::program_status_capable`. The flag changes
+  no state: the worker derives the turn state exactly as before. The app only
+  uses it to rank a recognized agent that declares nothing below idle and to
+  label it `No status` once it has run 3 s without the capability.
+- **Agent ordering.** `src-app/src/app/sidebar/agents.rs` ranks every
+  recognized agent session by urgency: waiting for input, errored, finished
+  and not yet seen (the unread completion that `acknowledge_visible_completions`
+  clears when its tab becomes visible), working, idle, then without the
+  capability. Within a rank the most recent `last_event_at_ms`, then
+  `state_seq`, comes first, and the workspace then tab order breaks the
+  remaining ties. The sidebar's Agents section lists the active space's
+  sessions in that order. Jump to Next Waiting (`secondary-shift-j`) cycles the
+  first three ranks over every workspace, the active space first, so it works
+  whether the section is shown, collapsed, or hidden.
 
 The default loop is human-in-the-loop: Paneflow pre-fills prompts into real PTY
 sessions and the user submits them. Auto-submit exists only as an explicit,

@@ -516,7 +516,63 @@ state color: `Review`, `Draft`, or `Merged`. The bell and the dot use the
 fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
 over it. A `Customize sidebar` menu on the rail header toggles branch,
-diffstat, pull request, and indent guide per value.
+diffstat, pull request, and indent guide per value, then, below a menu rule,
+the Agents section behind a 13 px sparkles glyph (`sidebar_show.agents`, on by
+default).
+
+The Agents section sits between the workspace tree and the footer, with no
+separator. Its 36 px header (padding 8 horizontal) holds one 22 px button at
+radius 7, padding 7 leading and 6 trailing: `Agents` at 13 px `muted`, then a
+12 px `muted` chevron 8 px after it, both turning `text` under the pointer.
+There is no counter and no sort control. Clicking the header collapses the
+section to that row, the chevron turning -90 degrees over 180 ms (cubic
+ease-out, instant under `reduce_motion`); nothing expands it on its own, not
+even an agent turning blocked. Each row is one recognized agent session of the
+active space, on the tab row shell (margin 8, padding 7 by 6, radius 9, 55 px
+for two lines): the runtime logo at 15 px in the 20 px folder slot, in the
+runtime's accent (`#D97757` for Claude Code) or `text`, the tab title at 14 px
+Medium (the runtime's display name when the title is empty), and the trailing
+status from the tree rows. A meta line 3 px below, aligned with the title at
+28 px, shows a 12 px folder glyph and the workspace name at 14 px `muted`, 3 px
+apart. The rows are ordered by rank: waiting for input, errored, finished and
+not yet seen, working, idle, then without OSC 7501 capability, the most recent
+first within a rank. Rows are 2 px apart and 10 px where a new rank begins.
+Working shows the matrix in the runtime's tint and the title shimmers; both
+hold still under `reduce_motion`. An idle row carries no status, and a finished
+row loses its `Done` dot once its tab has been seen. A recognized agent that
+has declared nothing for 3 s shows `No status` at 10 px Medium `muted`; its
+tooltip reads `No OSC 7501 status received. Claude Code reports it from version
+2.1.295.` when the catalog knows the version, else `No OSC 7501 status received
+from {agent}.` Before 3 s the row shows no status. The row of the active tab of
+the shown workspace takes the active tint, every other row the hover tint under
+the pointer; a click activates the workspace, the tab and the pane, and writes
+nothing to the PTY. With no agent, one 32 px row reads `No agents running` at
+13 px `muted`, inset 15.
+
+The section's height is its header, its rows and a 4 px bottom margin, capped
+at 330 px with the list scrolling past it. A 9 px handle straddles its top
+edge, absent when the section is collapsed or empty: under the pointer, or
+while dragging, it shows the vertical resize cursor and a 1 px rule in `text`
+at 0.16, invisible at rest, `text` at 0.35 while it holds keyboard focus.
+Dragging sets the height between one row (95 px) and the smallest of 620 px,
+the content, and the available height minus 120 px kept for the tree, which
+also applies to the automatic height; the header always stays visible.
+Double-clicking the handle returns to the content height. From the focused
+tree, Tab focuses the handle; up and down step 16 px, Home and End go to the
+bounds, Enter returns to the content height, and Escape or Shift-Tab gives
+focus back to the tree. The chosen height and the collapsed state persist in
+`window-state.json` (`agents_section_height`, `agents_section_collapsed`),
+written once a gesture ends; a missing or unreadable value falls back to the
+content height, expanded.
+
+The section is a list named `Agents` and each row a list item named by
+runtime, title, workspace and state (`Claude Code, Attention sidebar,
+paneflow, waiting for input`), selected when it holds the active tab, and a
+`No status` row carries its tooltip as its description; the header button exposes `Agents` and its
+expanded state, the handle a horizontal splitter with its value and bounds.
+The tree's keyboard cursor runs on past the last tree row into the section,
+skips it while it is collapsed or hidden, wears the same cursor ring
+(`text` at 0.35), and Enter on a row focuses its pane as a click does.
 
 Drop placeholder while dragging: margin 6, radius 8, blue at 0.10 with a 0.22
 border and a 2 px line.
@@ -970,9 +1026,9 @@ every modal answers Enter and Escape.
 | Focus across the grid | `alt-arrow` |
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
-| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move; enter opens; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; escape returns to the pane |
+| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move, on into the Agents section rows; enter opens, or focuses an agent's pane; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; tab focuses the Agents resize handle; escape returns to the pane |
 | File tree in the dock | `secondary-alt-f` |
-| Jump to next waiting agent | `secondary-shift-j` |
+| Jump to next waiting agent | `secondary-shift-j`: agents waiting for input, then errored, then finished and not yet seen, in the Agents section order, active space first |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
 | Command palette | `secondary-shift-p` |
 | Insert a path at the terminal cursor | `secondary-shift-i` |
