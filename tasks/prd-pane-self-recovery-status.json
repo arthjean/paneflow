@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Le host met les lancements en file au lieu de les refuser",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-002",
@@ -44,37 +44,37 @@
       "id": "US-001",
       "title": "Mettre l'admission des lancements en file avec une deadline",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-002",
       "title": "Rendre le code -32000 strictement passager",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "XS",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-003",
       "title": "Verrouiller la restauration en rafale par un test à host réel",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-001"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-10-31",
+      "completed_at": "2026-10-31",
+      "reviewed_at": "2026-10-31"
     },
     {
       "id": "US-004",
