@@ -9,7 +9,7 @@
     { "id": "EP-001", "title": "Modèle, ordre et capacité OSC 7501", "status": "DONE", "priority": "P0", "stories_total": 5, "stories_done": 5 },
     { "id": "EP-002", "title": "Rendu de la section Agents", "status": "DONE", "priority": "P0", "stories_total": 5, "stories_done": 5 },
     { "id": "EP-003", "title": "Redimensionnement, persistance et préférence", "status": "DONE", "priority": "P1", "stories_total": 3, "stories_done": 3 },
-    { "id": "EP-004", "title": "Accessibilité, clavier et documentation", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 }
+    { "id": "EP-004", "title": "Accessibilité, clavier et documentation", "status": "DONE", "priority": "P1", "stories_total": 3, "stories_done": 3 }
   ],
   "stories": [
     { "id": "US-001", "title": "Fonction de tri des agents par urgence", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": [], "started_at": "2026-10-30", "completed_at": "2026-10-30", "reviewed_at": "2026-10-30" },
@@ -25,8 +25,8 @@
     { "id": "US-011", "title": "Poignée de redimensionnement", "epic": "EP-003", "status": "DONE", "priority": "P1", "size": "M", "blocked_by": ["US-006"], "started_at": "2026-10-30", "completed_at": "2026-10-30", "reviewed_at": "2026-10-30" },
     { "id": "US-012", "title": "Persistance de la hauteur et du repli", "epic": "EP-003", "status": "DONE", "priority": "P1", "size": "S", "blocked_by": ["US-010", "US-011"], "started_at": "2026-10-30", "completed_at": "2026-10-30", "reviewed_at": "2026-10-30" },
     { "id": "US-013", "title": "Préférence sidebar_show.agents", "epic": "EP-003", "status": "DONE", "priority": "P1", "size": "S", "blocked_by": ["US-006"], "started_at": "2026-10-30", "completed_at": "2026-10-30", "reviewed_at": "2026-10-30" },
-    { "id": "US-014", "title": "Noms accessibles et navigation clavier", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "M", "blocked_by": ["US-008", "US-009"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-015", "title": "Contrats de design et d'architecture", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-012", "US-013"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-016", "title": "Documentation utilisateur et CHANGELOG", "epic": "EP-004", "status": "TODO", "priority": "P2", "size": "S", "blocked_by": ["US-002", "US-013"], "started_at": null, "completed_at": null, "reviewed_at": null }
+    { "id": "US-014", "title": "Noms accessibles et navigation clavier", "epic": "EP-004", "status": "DONE", "priority": "P1", "size": "M", "blocked_by": ["US-008", "US-009"], "started_at": "2026-10-30", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-015", "title": "Contrats de design et d'architecture", "epic": "EP-004", "status": "DONE", "priority": "P1", "size": "S", "blocked_by": ["US-012", "US-013"], "started_at": "2026-10-30", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" },
+    { "id": "US-016", "title": "Documentation utilisateur et CHANGELOG", "epic": "EP-004", "status": "DONE", "priority": "P2", "size": "S", "blocked_by": ["US-002", "US-013"], "started_at": "2026-10-30", "completed_at": "2026-10-31", "reviewed_at": "2026-10-31" }
   ]
 }
