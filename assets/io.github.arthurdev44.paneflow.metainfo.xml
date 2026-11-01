@@ -64,6 +64,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.19.0" date="2026-11-01">
+      <description>
+        <p>An Agents section in the sidebar lists the agents of the active space by urgency, and a plan usage capsule shows how much of a Claude Code or Codex subscription is left. Restore relaunches the panes the host lost, and the terminal engine moves to Ghostty 1.4.0 with three security fixes.</p>
+        <ul>
+          <li>The Agents section ranks agents that need you first, and Ctrl+Shift+J follows the same order</li>
+          <li>Settings shows the plan limits and a year of daily activity for every agent account</li>
+          <li>Settings updates each agent CLI with the tool that installed it</li>
+          <li>The command palette opens on categories, and clones run in a bubble at the bottom right</li>
+          <li>The Composer, broadcast groups, the Attention queue, keyboard pane swap and copy mode are removed</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.18.1" date="2026-10-28">
       <description>
         <p>Paneflow uses far less CPU while an agent animates in one pane and the rest sits still, and wakes far less often at rest. Text fields edit like a text editor, and Settings frames its form inputs with a focus ring.</p>
