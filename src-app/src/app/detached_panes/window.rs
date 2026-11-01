@@ -347,36 +347,20 @@ impl Render for DetachedPaneWindow {
         let close = move |window: &mut Window, cx: &mut gpui::App| {
             pane.update(cx, |pane, cx| pane.toggle_detached(window, cx));
         };
-        let controls = cx
-            .button_layout()
-            .unwrap_or_else(crate::window_chrome::csd::default_button_layout);
         let render_controls = !cfg!(target_os = "macos")
             && !window.is_fullscreen()
             && (matches!(
                 window.window_decorations(),
                 gpui::Decorations::Client { .. }
             ) || cfg!(target_os = "windows"));
-        let left = render_controls
-            .then(|| {
-                crate::window_chrome::csd::render_button_group(
-                    "detached-left",
-                    &controls.left,
-                    window.is_maximized(),
-                    px(44.),
-                    &window.window_controls(),
-                    close.clone(),
-                )
-            })
-            .flatten();
         let right = render_controls
             .then(|| {
                 crate::window_chrome::csd::render_button_group(
                     "detached",
-                    &controls.right,
                     window.is_maximized(),
                     px(44.),
                     &window.window_controls(),
-                    close.clone(),
+                    close,
                 )
             })
             .flatten();
@@ -393,7 +377,6 @@ impl Render for DetachedPaneWindow {
             .flex_none()
             .gap(px(12.))
             .pl(px(if cfg!(target_os = "macos") { 80. } else { 7. }))
-            .children(left)
             .child(div().min_w_0().flex_1().h_full().children(tabs))
             .when(cfg!(target_os = "windows") && right.is_some(), |titlebar| {
                 titlebar.child(div().flex_none().w(px(1.)).h(px(16.)).bg(ui.border))

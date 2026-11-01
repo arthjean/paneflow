@@ -90,6 +90,8 @@ the GPUI asset loader expects.
 - `split_vertical.svg`
 - `square-slash.svg`
 - `tool_search.svg`
+- every file under `caption/`, the window caption buttons, taken from
+  `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
 - every file under `dock/`, the right dock glyphs, taken from
   `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
 - every file under `palette/`, the command palette glyphs, taken from

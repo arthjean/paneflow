@@ -5,7 +5,6 @@ use gpui::{
     Window, WindowControlArea, div, prelude::*, px, svg,
 };
 
-use super::csd::default_button_layout;
 use crate::{
     app::constants::{
         SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
@@ -24,7 +23,6 @@ pub struct TitleBar {
     pub update_pill: Option<UpdatePill>,
     pub cockpit: bool,
     pub cockpit_material_active: bool,
-    button_layout_observer: Option<gpui::Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,7 +198,6 @@ impl TitleBar {
             update_pill: None,
             cockpit: false,
             cockpit_material_active: !cfg!(target_os = "windows"),
-            button_layout_observer: None,
         }
     }
 }
@@ -216,11 +213,6 @@ impl EventEmitter<TitleBarEvent> for TitleBar {}
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.button_layout_observer.is_none() {
-            self.button_layout_observer =
-                Some(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
-        }
-
         let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
         let decorations = window.window_decorations();
         let is_csd = matches!(decorations, Decorations::Client { .. });
@@ -237,7 +229,6 @@ impl Render for TitleBar {
             self.cockpit_material_active,
         );
 
-        let layout = cx.button_layout().unwrap_or_else(default_button_layout);
         let is_maximized = window.is_maximized();
         let supported = window.window_controls();
 
@@ -250,39 +241,16 @@ impl Render for TitleBar {
 
         let render_controls = !window.is_fullscreen() && (is_csd || cfg!(target_os = "windows"));
 
-        let left_controls = if render_controls {
-            super::csd::render_button_group(
-                "l",
-                &layout.left,
-                is_maximized,
-                height,
-                &supported,
-                on_close.clone(),
-            )
-        } else {
-            None
-        };
-
         let right_controls = if render_controls {
-            super::csd::render_button_group(
-                "r",
-                &layout.right,
-                is_maximized,
-                height,
-                &supported,
-                on_close,
-            )
+            super::csd::render_button_group("r", is_maximized, height, &supported, on_close)
         } else {
             None
         };
-        let left_controls_present = left_controls.is_some();
         let right_controls_present = right_controls.is_some();
 
         let ui = crate::theme::ui_colors();
         let brand_pl = if cfg!(target_os = "macos") && !window.is_fullscreen() {
             gpui::px(80.0)
-        } else if left_controls_present {
-            gpui::px(0.)
         } else {
             TITLE_BAR_EDGE_INSET
         };
@@ -427,7 +395,6 @@ impl Render for TitleBar {
             .flex_row()
             .items_center()
             .overflow_x_hidden()
-            .children(left_controls)
             .child(brand);
 
         let mut content = div()

@@ -1,25 +1,20 @@
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
-    SharedString, Size, Styled, Tiling, Window, WindowButton, WindowButtonLayout,
-    WindowControlArea, WindowControls, canvas, div, point, prelude::*, px, size, svg,
+    SharedString, Size, Styled, Tiling, Window, WindowButton, WindowControlArea, WindowControls,
+    canvas, div, point, prelude::*, px, size, svg,
 };
 
-use crate::app::constants::{
-    TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
-};
+use crate::app::constants::TITLE_BAR_CONTROL_SPACING;
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
 
-pub fn default_button_layout() -> WindowButtonLayout {
-    WindowButtonLayout {
-        left: [None, None, None],
-        right: [
-            Some(WindowButton::Minimize),
-            Some(WindowButton::Maximize),
-            Some(WindowButton::Close),
-        ],
-    }
-}
+const CAPTION_BUTTONS: [WindowButton; 3] = [
+    WindowButton::Minimize,
+    WindowButton::Maximize,
+    WindowButton::Close,
+];
+const CAPTION_BUTTON_SIZE: Pixels = px(24.);
+const CAPTION_GROUP_INSET: Pixels = px(10.);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ClientDecorationGeometry {
@@ -243,15 +238,13 @@ pub fn resize_edge(
 
 pub(crate) fn render_button_group(
     side: &'static str,
-    buttons: &[Option<WindowButton>; 3],
     is_maximized: bool,
     bar_height: Pixels,
     supported: &WindowControls,
     on_close: impl Fn(&mut Window, &mut App) + Clone + 'static,
 ) -> Option<AnyElement> {
-    let children: Vec<AnyElement> = buttons
-        .iter()
-        .filter_map(|slot| *slot)
+    let children: Vec<AnyElement> = CAPTION_BUTTONS
+        .into_iter()
         .filter(|button| match button {
             WindowButton::Minimize => supported.minimize,
             WindowButton::Maximize => supported.maximize,
@@ -274,7 +267,7 @@ pub(crate) fn render_button_group(
             .items_center()
             .when(cfg!(target_os = "windows"), |d| d.h(bar_height))
             .when(!cfg!(target_os = "windows"), |d| {
-                d.gap(TITLE_BAR_CONTROL_SPACING).px(TITLE_BAR_EDGE_INSET)
+                d.gap(TITLE_BAR_CONTROL_SPACING).px(CAPTION_GROUP_INSET)
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .children(children)
@@ -335,10 +328,10 @@ pub(crate) fn render_window_button(
         (true, WindowButton::Maximize, true) => "icons/windows_restore.svg",
         (true, WindowButton::Maximize, false) => "icons/windows_maximize.svg",
         (true, WindowButton::Close, _) => "icons/windows_close.svg",
-        (false, WindowButton::Minimize, _) => "icons/generic_minimize.svg",
-        (false, WindowButton::Maximize, true) => "icons/generic_restore.svg",
-        (false, WindowButton::Maximize, false) => "icons/generic_maximize.svg",
-        (false, WindowButton::Close, _) => "icons/generic_close.svg",
+        (false, WindowButton::Minimize, _) => "icons/caption/minus-sign.svg",
+        (false, WindowButton::Maximize, true) => "icons/caption/copy-01.svg",
+        (false, WindowButton::Maximize, false) => "icons/caption/square.svg",
+        (false, WindowButton::Close, _) => "icons/caption/cancel-01.svg",
     };
 
     let control_area = match button {
@@ -353,7 +346,7 @@ pub(crate) fn render_window_button(
     let (button_width, button_height) = if is_windows {
         (px(46.), bar_height)
     } else {
-        (TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SIZE)
+        (CAPTION_BUTTON_SIZE, CAPTION_BUTTON_SIZE)
     };
 
     let btn = div()
@@ -379,29 +372,38 @@ pub(crate) fn render_window_button(
         });
 
     let ui = crate::theme::ui_colors();
-    let (hover_bg, pressed_bg, hover_text) = if is_windows && is_close {
+    let (resting_bg, hover_bg, pressed_bg, hover_text) = if is_windows && is_close {
+        let red = Hsla::from(gpui::rgb(0xc42b1c));
         (
-            Hsla::from(gpui::rgb(0xc42b1c)),
+            red.opacity(0.0),
+            red,
             Hsla::from(gpui::rgb(0xc84c3f)),
             Hsla::from(gpui::rgb(0xffffff)),
         )
     } else if is_windows {
+        let hover = crate::app::constants::sidebar_tab_hover_background();
         (
-            crate::app::constants::sidebar_tab_hover_background(),
+            hover.opacity(0.0),
+            hover,
             crate::app::constants::sidebar_tab_active_background(),
             ui.text,
         )
     } else {
-        (ui.subtle, ui.subtle, ui.text)
+        (
+            ui.text.opacity(0.08),
+            ui.text.opacity(0.16),
+            ui.text.opacity(0.24),
+            ui.text,
+        )
     };
 
-    let icon_size = if is_windows { px(12.) } else { px(16.) };
+    let icon_size = if is_windows { px(12.) } else { px(14.) };
     btn.when(!is_windows, |btn| btn.rounded_full())
         .text_color(ui.text)
         .animated_hover_element(move |button_element, delta| {
             button_element
                 .style()
-                .bg(lerp_color(hover_bg.opacity(0.0), hover_bg, delta))
+                .bg(lerp_color(resting_bg, hover_bg, delta))
                 .text_color(lerp_color(ui.text, hover_text, delta));
             let icon = svg()
                 .size(icon_size)
