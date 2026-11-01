@@ -11,7 +11,7 @@
     { "id": "EP-003", "title": "Capsule et bulle dans la sidebar (variante A)", "status": "DONE", "priority": "P0", "stories_total": 6, "stories_done": 6 },
     { "id": "EP-004", "title": "Page Settings › Usage (variante P2)", "status": "DONE", "priority": "P1", "stories_total": 3, "stories_done": 3 },
     { "id": "EP-005", "title": "Chaînage, rattrapage et documentation", "status": "DONE", "priority": "P1", "stories_total": 3, "stories_done": 2 },
-    { "id": "EP-006", "title": "Validation Linux", "status": "TODO", "priority": "P1", "stories_total": 1, "stories_done": 0 },
+    { "id": "EP-006", "title": "Validation Linux", "status": "DONE", "priority": "P1", "stories_total": 1, "stories_done": 1 },
     { "id": "EP-007", "title": "Validation macOS", "status": "TODO", "priority": "P1", "stories_total": 1, "stories_done": 0 }
   ],
   "stories": [
@@ -36,7 +36,7 @@
     { "id": "US-017", "title": "Chaînage d'un status line existant, sur demande", "epic": "EP-005", "status": "CANCELLED", "priority": "P1", "size": "M", "blocked_by": ["US-006", "US-013"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-018", "title": "Rattrapage initial depuis les transcripts", "epic": "EP-005", "status": "DONE", "priority": "P2", "size": "M", "blocked_by": ["US-016"], "started_at": "2026-11-01", "completed_at": "2026-11-01", "reviewed_at": "2026-11-01" },
     { "id": "US-019", "title": "Contrats de design, d'architecture et documentation", "epic": "EP-005", "status": "DONE", "priority": "P1", "size": "S", "blocked_by": ["US-013", "US-015"], "started_at": "2026-11-01", "completed_at": "2026-11-01", "reviewed_at": "2026-11-01" },
-    { "id": "US-020", "title": "Validate on Linux: le status line et le relais dans un pane Paneflow", "epic": "EP-006", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-006"], "started_at": null, "completed_at": null, "reviewed_at": null },
+    { "id": "US-020", "title": "Validate on Linux: le status line et le relais dans un pane Paneflow", "epic": "EP-006", "status": "DONE", "priority": "P1", "size": "S", "blocked_by": ["US-006"], "started_at": "2026-11-01", "completed_at": "2026-11-01", "reviewed_at": "2026-11-01" },
     { "id": "US-021", "title": "Validate on macOS: le status line et le relais dans un pane Paneflow", "epic": "EP-007", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-006", "US-020"], "started_at": null, "completed_at": null, "reviewed_at": null }
   ]
 }
