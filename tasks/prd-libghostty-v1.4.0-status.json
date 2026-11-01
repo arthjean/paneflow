@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Windows : archive, CI et matériel réel",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     }
   ],
   "stories": [
@@ -210,22 +210,22 @@
       "id": "US-013",
       "title": "Qualifier l'archive et la recette Windows depuis la CI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-004",
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-01",
+      "completed_at": "2026-11-01",
+      "reviewed_at": "2026-11-01"
     },
     {
       "id": "US-014",
       "title": "Faire passer les jobs Windows de la CI",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [
@@ -233,24 +233,24 @@
         "US-008",
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-01",
+      "completed_at": "2026-11-01",
+      "reviewed_at": "2026-11-01"
     },
     {
       "id": "US-015",
       "title": "Passe matérielle Windows sur le nouveau moteur",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-013",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-01",
+      "completed_at": "2026-11-01",
+      "reviewed_at": "2026-11-01"
     }
   ]
 }
