@@ -473,6 +473,7 @@ mod tests {
             pr: Some(false),
             indent_guide: Some(false),
             agents: None,
+            usage: None,
         }
     }
 

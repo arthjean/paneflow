@@ -117,6 +117,8 @@ pub struct SidebarShow {
     pub indent_guide: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agents: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub usage: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,6 +220,10 @@ impl SidebarShow {
 
     pub fn agents_enabled(&self) -> bool {
         self.agents.unwrap_or(true)
+    }
+
+    pub fn usage_enabled(&self) -> bool {
+        self.usage.unwrap_or(true)
     }
 
     pub fn any_enabled(&self) -> bool {

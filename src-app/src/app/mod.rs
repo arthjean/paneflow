@@ -46,6 +46,7 @@ pub mod telemetry_events;
 pub mod theme_selection;
 pub mod title_bar_menus;
 pub mod unsaved_dialog;
+pub(crate) mod usage;
 pub(crate) mod wake;
 pub mod welcome;
 pub mod win_timer;

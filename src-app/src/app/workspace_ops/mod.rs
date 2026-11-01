@@ -455,6 +455,7 @@ impl PaneFlowApp {
         self.tab_menu_open = None;
         self.pane_menu_open = None;
         self.files_menu_open = None;
+        self.usage.close();
     }
 
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {

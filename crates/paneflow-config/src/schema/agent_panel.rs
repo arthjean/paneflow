@@ -68,6 +68,12 @@ pub struct UsageConfig {
     pub plan_limits: Option<bool>,
 }
 
+impl UsageConfig {
+    pub fn plan_limits_enabled(&self) -> bool {
+        self.plan_limits.unwrap_or(true)
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TelemetryConfig {

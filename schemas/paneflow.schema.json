@@ -138,6 +138,11 @@
           "type": ["boolean", "null"],
           "description": "Show the Agents section at the bottom of the sidebar: the active space's agent sessions, most urgent first. Default true.",
           "default": true
+        },
+        "usage": {
+          "type": ["boolean", "null"],
+          "description": "Show the plan usage capsule in the sidebar footer, between the filter and Settings: the most used limit window of the active space's Claude Code and Codex accounts. Hidden anyway when usage.plan_limits is false. Default true.",
+          "default": true
         }
       }
     },

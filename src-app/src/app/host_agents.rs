@@ -41,6 +41,7 @@ pub(crate) enum HostAgentFrame {
         initial: bool,
     },
     Event(Box<Value>),
+    Usage(Box<Value>),
     Disconnected(String),
 }
 
@@ -452,6 +453,9 @@ fn follow_once(endpoint: &std::path::Path, tx: &FrameSink) -> Result<(), String>
             initial: true,
         },
     )?;
+    if let Some(usage) = header.get(paneflow_serve::usage::FRAME_TYPE) {
+        send(tx, HostAgentFrame::Usage(Box::new(usage.clone())))?;
+    }
     loop {
         let line = control
             .read_stream_line(STREAM_READ_TIMEOUT)
@@ -464,6 +468,13 @@ fn follow_once(endpoint: &std::path::Path, tx: &FrameSink) -> Result<(), String>
         };
         match value.get("type").and_then(Value::as_str) {
             Some("event") => send(tx, HostAgentFrame::Event(Box::new(value)))?,
+            Some(paneflow_serve::usage::FRAME_TYPE) => {
+                let usage = value
+                    .get(paneflow_serve::usage::FRAME_TYPE)
+                    .cloned()
+                    .unwrap_or_default();
+                send(tx, HostAgentFrame::Usage(Box::new(usage)))?;
+            }
             Some("snapshot") => {
                 let sessions = value
                     .get("sessions")
@@ -598,6 +609,7 @@ impl PaneFlowApp {
                     }
                 }
                 HostAgentFrame::Event(frame) => self.apply_host_agent_event(&frame, cx),
+                HostAgentFrame::Usage(usage) => self.apply_worker_usage(&usage, cx),
                 HostAgentFrame::Disconnected(reason) => {
                     self.host_agents.connected = false;
                     self.host_agents.disconnect_reason = Some(reason);

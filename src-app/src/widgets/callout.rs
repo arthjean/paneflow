@@ -21,6 +21,10 @@ pub(crate) struct Callout {
     description: Option<SharedString>,
 }
 
+pub(crate) fn warning_hue() -> Hsla {
+    hsla(40.0 / 360.0, 0.85, 0.55, 1.0)
+}
+
 impl Callout {
     pub(crate) fn new(severity: CalloutSeverity, title: impl Into<SharedString>) -> Self {
         Self {
@@ -44,7 +48,7 @@ impl Callout {
     pub(crate) fn render(self) -> AnyElement {
         let ui = ui_colors();
         let accent: Hsla = match self.severity {
-            CalloutSeverity::Warning => hsla(40.0 / 360.0, 0.85, 0.55, 1.0),
+            CalloutSeverity::Warning => warning_hue(),
         };
 
         let icon_element = self.icon.map(|i| {

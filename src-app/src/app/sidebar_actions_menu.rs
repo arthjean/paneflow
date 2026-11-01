@@ -198,6 +198,11 @@ impl PaneFlowApp {
                     .update(cx, |input, cx| input.clear(cx));
                 this.hand_sidebar_filter_focus_to_workspace(window, cx);
                 cx.stop_propagation();
+            } else if event.keystroke.key == "tab"
+                && !event.keystroke.modifiers.shift
+                && this.focus_usage_capsule(window, cx)
+            {
+                cx.stop_propagation();
             }
         }));
         let settings_row = squircle_skin(
@@ -228,6 +233,10 @@ impl PaneFlowApp {
                 .text_color(ui.muted),
         );
 
+        let usage = self.sidebar_usage_view();
+        let capsule = usage
+            .as_ref()
+            .map(|view| self.render_usage_capsule(view, window, cx));
         let footer_row: AnyElement = div()
             .id("sidebar-footer-row")
             .mx(px(crate::app::sidebar::SIDEBAR_ROW_MARGIN_X))
@@ -236,6 +245,7 @@ impl PaneFlowApp {
             .items_center()
             .gap(px(6.))
             .child(filter)
+            .children(capsule)
             .child(settings_row)
             .into_any_element();
 
@@ -245,6 +255,11 @@ impl PaneFlowApp {
         }
         if let Some(banner) = self.render_sidebar_update_banner(cx) {
             footer = footer.child(banner);
+        }
+        if self.usage.is_open()
+            && let Some(view) = &usage
+        {
+            footer = footer.child(self.render_usage_bubble(view, window, cx));
         }
         footer.child(footer_row).into_any_element()
     }

@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use serde_json::Value;
 
 use crate::io::absolute_env_dir;
+use crate::usage::status_line::{status_line_state, StatusLineState};
 
 pub const CLAUDE_BILLING_KEYS: &[&str] = &[
     "ANTHROPIC_API_KEY",
@@ -299,6 +300,16 @@ pub fn canonical_account_dir(path: &Path) -> PathBuf {
 
 pub fn account_dir_key(path: &Path) -> String {
     dir_key(path)
+}
+
+pub fn claude_status_line_state(config_dir: &Path) -> StatusLineState {
+    paneflow_home::read_regular_capped(&config_dir.join("settings.json"), ACCOUNT_LABEL_FILE_CAP)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| crate::jsonc::parse(&text).ok())
+        .map_or(StatusLineState::Missing, |settings| {
+            status_line_state(&settings)
+        })
 }
 
 #[cfg(test)]
@@ -720,5 +731,36 @@ mod tests {
             Some(UsageAgent::ClaudeCode)
         );
         assert_eq!(UsageAgent::for_runtime_slug("gemini"), None);
+    }
+
+    #[test]
+    fn a_claude_dir_reports_its_status_line_state_from_its_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            claude_status_line_state(dir.path()),
+            StatusLineState::Missing
+        );
+        let settings = dir.path().join("settings.json");
+        for (text, state) in [
+            (
+                "{
+  // mine
+  \"statusLine\": {\"type\": \"command\", \"command\": \"ccstatusline\"},
+}",
+                StatusLineState::ForeignStatusLine,
+            ),
+            (
+                r#"{"disableAllHooks": true, "statusLine": {"command": "x"}}"#,
+                StatusLineState::HooksDisabled,
+            ),
+            (
+                r#"{"statusLine": {"type": "command", "command": "~/.paneflow/bin/paneflow-ai-hook StatusLine", "_paneflow_managed": true}}"#,
+                StatusLineState::Managed,
+            ),
+            ("not json", StatusLineState::Missing),
+        ] {
+            std::fs::write(&settings, text).unwrap();
+            assert_eq!(claude_status_line_state(dir.path()), state, "{text}");
+        }
     }
 }

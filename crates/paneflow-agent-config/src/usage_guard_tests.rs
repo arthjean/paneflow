@@ -25,6 +25,12 @@ fn usage_sources() -> Vec<PathBuf> {
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs")),
     );
+    sources.extend(
+        std::fs::read_dir(root.join("src-app/src/app/usage"))
+            .expect("the app usage module directory")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs")),
+    );
     sources.push(root.join("crates/paneflow-ai-hook/src/status_line.rs"));
     sources.sort();
     sources

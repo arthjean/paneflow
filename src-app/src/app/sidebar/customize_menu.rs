@@ -44,6 +44,7 @@ impl PaneFlowApp {
                 show.indent_guide = Some(!show.indent_guide_enabled());
             }
             SidebarShowLine::Agents => show.agents = Some(!show.agents_enabled()),
+            SidebarShowLine::Usage => show.usage = Some(!show.usage_enabled()),
         }
         let value = sidebar_show_value(show);
         self.persist_setting(false, "sidebar_show", value, cx);
@@ -59,6 +60,7 @@ fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "pr": show.pr_enabled(),
         "indent_guide": show.indent_guide_enabled(),
         "agents": show.agents_enabled(),
+        "usage": show.usage_enabled(),
     })
 }
 
@@ -69,6 +71,7 @@ enum SidebarShowLine {
     Pr,
     IndentGuide,
     Agents,
+    Usage,
 }
 
 pub(super) fn render_customize_sidebar_button(
@@ -260,6 +263,14 @@ fn render_show_submenu(
             show.agents_enabled(),
             ui,
             cx,
+        ))
+        .child(render_show_option(
+            "Usage",
+            "icons/plan-usage.svg",
+            SidebarShowLine::Usage,
+            show.usage_enabled(),
+            ui,
+            cx,
         ));
 
     deferred(crate::ui_primitives::menu_reveal(
@@ -289,6 +300,7 @@ fn render_show_option(
         SidebarShowLine::Pr => "sidebar-show-pr",
         SidebarShowLine::IndentGuide => "sidebar-show-indent-guide",
         SidebarShowLine::Agents => "sidebar-show-agents",
+        SidebarShowLine::Usage => "sidebar-show-usage",
     };
 
     menu_row(id, false, ui)
@@ -359,6 +371,7 @@ mod tests {
                 "pr": false,
                 "indent_guide": false,
                 "agents": true,
+                "usage": true,
             })
         );
     }
@@ -380,5 +393,24 @@ mod tests {
 
         assert!(!next.sidebar_show.agents_enabled());
         assert_eq!(next.sidebar_show.indent_guide, Some(false));
+    }
+
+    #[test]
+    fn hiding_the_usage_capsule_round_trips_through_the_config_writer() {
+        let config = PaneFlowConfig::default();
+        assert!(config.sidebar_show.usage_enabled());
+        let mut show = config.sidebar_show;
+        show.usage = Some(false);
+
+        let next = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(show),
+        )
+        .expect("written");
+
+        assert!(!next.sidebar_show.usage_enabled());
+        assert!(next.sidebar_show.agents_enabled());
     }
 }

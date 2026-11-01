@@ -222,6 +222,7 @@ impl PaneFlowApp {
         };
         self.cached_config = next;
         crate::config_snapshot::publish(&self.cached_config, cx);
+        self.refresh_usage_inventory(false, cx);
         if crate::terminal::element::apply_font_config(&self.cached_config) {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
@@ -558,6 +559,7 @@ impl PaneFlowApp {
                 ws.propagate_config(&self.cached_config, cx);
             }
             self.reconcile_spaces_with_config(cx);
+            self.refresh_usage_inventory(false, cx);
             cx.notify();
         }
 
