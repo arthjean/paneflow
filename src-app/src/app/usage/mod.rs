@@ -1,20 +1,25 @@
+mod activity;
 pub(crate) mod model;
+mod page;
 mod render;
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui::{App, Context, FocusHandle, KeyDownEvent, Window};
+use chrono::NaiveDate;
+use gpui::{App, Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
 use paneflow_agent_config::usage::accounts::{
     AccountOrigin, OriginKind, UsageAgent, claude_status_line_state, inventory,
 };
 use paneflow_agent_config::usage::status_line::StatusLineState;
 use paneflow_config::schema::PaneFlowConfig;
+use paneflow_serve::usage::ledger::{LedgerDays, ledger_days};
 use paneflow_serve::usage::plans::AccountPlan;
 use serde_json::Value;
 
+use self::activity::Metric;
 use self::model::{InventoryEntry, UsageInputs, UsageView, step_cursor, usage_view};
-use crate::PaneFlowApp;
+use crate::{PaneFlowApp, SettingsSection};
 
 const DEFAULT_ORIGIN_NAME: &str = "Default";
 
@@ -29,6 +34,16 @@ pub(crate) struct UsagePanel {
     cursor: Option<usize>,
     capsule_focus: FocusHandle,
     bubble_focus: FocusHandle,
+    ledger: LedgerDays,
+    ledger_revision: Option<u64>,
+    metric: Metric,
+    metric_focus: FocusHandle,
+    refresh_focus: FocusHandle,
+    open_agents_focus: FocusHandle,
+    register_focus: Vec<FocusHandle>,
+    register_scroll: Vec<ScrollHandle>,
+    register_cursor: Option<(usize, NaiveDate)>,
+    hover_day: Option<NaiveDate>,
 }
 
 impl UsagePanel {
@@ -44,6 +59,16 @@ impl UsagePanel {
             cursor: None,
             capsule_focus: cx.focus_handle(),
             bubble_focus: cx.focus_handle(),
+            ledger: LedgerDays::new(),
+            ledger_revision: None,
+            metric: Metric::default(),
+            metric_focus: cx.focus_handle(),
+            refresh_focus: cx.focus_handle(),
+            open_agents_focus: cx.focus_handle(),
+            register_focus: Vec::new(),
+            register_scroll: Vec::new(),
+            register_cursor: None,
+            hover_day: None,
         }
     }
 
@@ -97,7 +122,44 @@ fn worker_plans(usage: &Value) -> Option<Vec<AccountPlan>> {
     serde_json::from_value(usage.get("plans")?.clone()).ok()
 }
 
-fn refresh_worker_usage(entries: &[InventoryEntry]) -> Option<Vec<AccountPlan>> {
+struct WorkerUsage {
+    plans: Option<Vec<AccountPlan>>,
+    ledger: Option<(LedgerDays, Option<u64>)>,
+}
+
+fn worker_usage(snapshot: &Value) -> WorkerUsage {
+    WorkerUsage {
+        plans: worker_plans(snapshot),
+        ledger: snapshot.get("ledger").and_then(|ledger| {
+            Some((
+                ledger_days(ledger)?,
+                ledger.get("revision").and_then(Value::as_u64),
+            ))
+        }),
+    }
+}
+
+fn read_worker_snapshot() -> Option<WorkerUsage> {
+    let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
+    match paneflow_serve::Controller::connect(&endpoint)
+        .and_then(|mut controller| controller.usage_snapshot())
+    {
+        Ok(snapshot) => Some(worker_usage(&snapshot)),
+        Err(error) => {
+            log::debug!("paneflow: the worker did not answer the usage snapshot: {error}");
+            None
+        }
+    }
+}
+
+pub(super) fn day_at(now_ms: u64, utc_offset_secs: i32) -> NaiveDate {
+    let local_secs = i64::try_from(now_ms / 1000)
+        .unwrap_or(i64::MAX)
+        .saturating_add(i64::from(utc_offset_secs));
+    chrono::DateTime::from_timestamp(local_secs, 0).map_or(NaiveDate::MIN, |at| at.date_naive())
+}
+
+fn refresh_worker_usage(entries: &[InventoryEntry]) -> Option<WorkerUsage> {
     let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
     let params = paneflow_serve::usage::probe::refresh_params(
         entries
@@ -109,11 +171,11 @@ fn refresh_worker_usage(entries: &[InventoryEntry]) -> Option<Vec<AccountPlan>> 
         .and_then(|mut controller| controller.refresh_usage(params))
     {
         Ok(snapshot) => {
-            let plans = worker_plans(&snapshot);
-            if plans.is_none() {
+            let usage = worker_usage(&snapshot);
+            if usage.plans.is_none() {
                 log::debug!("paneflow: the worker refresh carried no plan usage");
             }
-            plans
+            Some(usage)
         }
         Err(error) => {
             log::debug!("paneflow: the worker did not refresh plan usage: {error}");
@@ -175,18 +237,18 @@ impl PaneFlowApp {
         let generation = self.usage.inventory_generation;
         let home = self.usage.home.clone();
         cx.spawn(async move |this, cx| {
-            let (entries, offset, plans) = smol::unblock(move || {
+            let (entries, offset, usage) = smol::unblock(move || {
                 let entries = read_inventory(&origins, home.as_deref());
                 let offset = paneflow_serve::usage::local_utc_offset_secs(now_ms() / 1000);
-                let plans = refresh_worker
+                let usage = refresh_worker
                     .then(|| refresh_worker_usage(&entries))
                     .flatten();
-                (entries, offset, plans)
+                (entries, offset, usage)
             })
             .await;
             let _ = this.update(cx, |app, cx| {
-                if let Some(plans) = plans {
-                    app.apply_plans(plans, cx);
+                if let Some(usage) = usage {
+                    app.apply_snapshot(usage, cx);
                 }
                 if app.usage.inventory_generation != generation {
                     return;
@@ -205,6 +267,60 @@ impl PaneFlowApp {
         if let Some(plans) = worker_plans(usage) {
             self.apply_plans(plans, cx);
         }
+        let revision = usage.get("ledger_revision").and_then(Value::as_u64);
+        if revision.is_some()
+            && revision != self.usage.ledger_revision
+            && self.settings_section == Some(SettingsSection::Usage)
+        {
+            self.reload_usage_ledger(cx);
+        }
+    }
+
+    fn apply_snapshot(&mut self, usage: WorkerUsage, cx: &mut Context<Self>) {
+        if let Some(plans) = usage.plans {
+            self.apply_plans(plans, cx);
+        }
+        if let Some((ledger, revision)) = usage.ledger {
+            self.usage.ledger_revision = revision;
+            while self.usage.register_focus.len() < ledger.len() {
+                self.usage.register_focus.push(cx.focus_handle());
+                self.usage.register_scroll.push(ScrollHandle::new());
+                if let Some(scroll) = self.usage.register_scroll.last() {
+                    page::scroll_to_today(scroll);
+                }
+            }
+            if ledger != self.usage.ledger {
+                self.usage.ledger = ledger;
+                cx.notify();
+            }
+        }
+    }
+
+    pub(crate) fn reload_usage_ledger(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let usage = smol::unblock(read_worker_snapshot).await;
+            let _ = this.update(cx, |app, cx| {
+                if let Some(usage) = usage {
+                    app.apply_snapshot(usage, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn open_usage_page(&mut self, cx: &mut Context<Self>) {
+        self.usage.hover_day = None;
+        self.usage.register_cursor = None;
+        for scroll in &self.usage.register_scroll {
+            page::scroll_to_today(scroll);
+        }
+        self.reload_usage_inventory(true, false, cx);
+        self.reload_usage_ledger(cx);
+    }
+
+    pub(crate) fn refresh_usage_page(&mut self, cx: &mut Context<Self>) {
+        self.reload_usage_inventory(true, true, cx);
+        cx.notify();
     }
 
     fn apply_plans(&mut self, plans: Vec<AccountPlan>, cx: &mut Context<Self>) {
@@ -248,7 +364,7 @@ impl PaneFlowApp {
 
     fn open_usage_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.usage.close();
-        self.open_settings_at(crate::SettingsSection::Agents, window, cx);
+        self.open_settings_at(SettingsSection::Usage, window, cx);
     }
 
     fn handle_usage_bubble_key(
@@ -429,6 +545,120 @@ mod tests {
                 "No plan data yet. Finish a Codex turn in a Paneflow pane to load your limits."
                     .into()
             )
+        );
+    }
+
+    #[test]
+    fn test_the_worker_snapshot_fills_the_usage_page_tiles_and_registers() {
+        use paneflow_serve::usage::ledger::{LedgerAccount, TurnInput, TurnSignal};
+
+        let home = tempfile::tempdir().unwrap();
+        let claude = home.path().join(".claude");
+        let projects = claude.join("projects").join("C--work");
+        std::fs::create_dir_all(&projects).unwrap();
+        let now_ms = now_ms();
+        let mut worker = paneflow_serve::usage::Usage::open(home.path(), now_ms);
+        let relayed = serde_json::json!({
+            "config_dir": claude.to_string_lossy(),
+            "received_at_ms": now_ms,
+            "rate_limits": {
+                "five_hour": {"used_percentage": 12, "resets_at": now_ms / 1000 + 3600},
+                "seven_day": {"used_percentage": 54, "resets_at": now_ms / 1000 + 3 * 86_400},
+            },
+        });
+        assert!(worker.apply_plan_limits(&relayed, now_ms));
+        let stamp = chrono::DateTime::from_timestamp_millis(i64::try_from(now_ms).unwrap())
+            .unwrap()
+            .to_rfc3339();
+        let transcript = projects.join("session.jsonl");
+        std::fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "assistant",
+                    "timestamp": stamp,
+                    "message": {"id": "msg_1", "usage": {"input_tokens": 30, "output_tokens": 70}},
+                })
+            ),
+        )
+        .unwrap();
+        let account = LedgerAccount {
+            agent: UsageAgent::ClaudeCode.runtime_slug().to_string(),
+            config_dir: paneflow_agent_config::usage::accounts::canonical_account_dir(&claude)
+                .display()
+                .to_string(),
+        };
+        let signal = |input, at_ms, transcript: Option<String>| TurnSignal {
+            session: "pane-1".into(),
+            account: account.clone(),
+            input,
+            at_ms,
+            order: at_ms,
+            transcript,
+        };
+        let ends = worker.apply_turn_signals(&[
+            signal(TurnInput::Prompt, now_ms - 60_000, None),
+            signal(
+                TurnInput::Stop,
+                now_ms,
+                Some(transcript.display().to_string()),
+            ),
+        ]);
+        assert_eq!(ends.transcripts.len(), 1, "the Stop transcript is claimed");
+        for read in ends.transcripts {
+            let cursor = worker.token_cursor(&read.path);
+            let pass = paneflow_serve::usage::read_transcript(&read, cursor, now_ms).unwrap();
+            assert!(worker.record_tokens(&read.account, pass));
+        }
+
+        let usage = worker_usage(&worker.snapshot());
+        let mut origins = vec![AccountOrigin::process_default(DEFAULT_ORIGIN_NAME)];
+        origins[0].env.clear();
+        let inventory = read_inventory(&origins, Some(home.path()));
+        let plans = usage.plans.expect("the snapshot carries the plans");
+        let tiles = usage_view(&UsageInputs {
+            inventory: &inventory,
+            plans: &plans,
+            active_space: None,
+            home: Some(home.path()),
+            now_ms,
+            utc_offset_secs: 0,
+        })
+        .expect("the default Claude account gives a tile");
+        assert!(matches!(
+            &tiles.blocks[0].body,
+            model::BlockBody::Windows(rows) if rows.len() == 2
+        ));
+
+        let (ledger, revision) = usage.ledger.expect("the snapshot carries the ledger");
+        assert!(revision.is_some());
+        let today = chrono::Local::now().date_naive();
+        assert_eq!(
+            day_at(
+                now_ms,
+                paneflow_serve::usage::local_utc_offset_secs(now_ms / 1000)
+            ),
+            today,
+            "the app derives the worker's local day from the offset it reads off the render thread"
+        );
+        let inputs = |metric| activity::ActivityInputs {
+            ledger: &ledger,
+            inventory: &inventory,
+            home: Some(home.path()),
+            today,
+            metric,
+        };
+        let turns = activity::activity_view(&inputs(Metric::Turns));
+        assert_eq!(turns.registers.len(), 1);
+        assert_eq!(turns.registers[0].agent_name, "Claude Code");
+        assert_eq!(turns.registers[0].total, "1 turn in the last year");
+        let tokens = activity::activity_view(&inputs(Metric::Tokens));
+        assert_eq!(tokens.registers[0].total, "100 tokens in the last year");
+        assert!(
+            tokens.detail(today).ends_with("Claude Code 100 tokens"),
+            "{}",
+            tokens.detail(today)
         );
     }
 }

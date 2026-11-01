@@ -41,6 +41,9 @@ impl PaneFlowApp {
         if section == SettingsSection::Spaces {
             self.refresh_space_integration_status(cx);
         }
+        if section == SettingsSection::Usage {
+            self.open_usage_page(cx);
+        }
         self.settings_focus.focus(window, cx);
         cx.notify();
     }
@@ -336,9 +339,18 @@ impl PaneFlowApp {
     pub(crate) fn handle_settings_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let modifiers = event.keystroke.modifiers;
+        if self.settings_section == Some(SettingsSection::Usage)
+            && event.keystroke.key == "tab"
+            && !(modifiers.control || modifiers.alt || modifiers.platform)
+        {
+            self.step_usage_focus(!modifiers.shift, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.font_dropdown_open {
             let key = event.keystroke.key.as_str();
             match key {

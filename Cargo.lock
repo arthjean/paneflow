@@ -4255,6 +4255,7 @@ name = "paneflow-app"
 version = "0.18.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "cocoa",
  "core-foundation",

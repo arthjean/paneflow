@@ -135,6 +135,20 @@ const NAV_GROUPS: &[NavGroup] = &[
                 ],
             },
             NavItem {
+                section: SettingsSection::Usage,
+                label: "Usage",
+                icon: "icons/settings/chart-bar-line.svg",
+                keywords: &[
+                    "usage",
+                    "limits",
+                    "plan",
+                    "quota",
+                    "subscription",
+                    "tokens",
+                    "activity",
+                ],
+            },
+            NavItem {
                 section: SettingsSection::McpServers,
                 label: "Plugins",
                 icon: "icons/settings/puzzle.svg",
@@ -180,6 +194,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Shortcuts => "Keyboard Shortcuts",
         SettingsSection::Terminal => "Terminal",
         SettingsSection::Agents => "Agents",
+        SettingsSection::Usage => "Usage",
         SettingsSection::McpServers => "Plugins",
         SettingsSection::Workspaces => "Workspaces",
         SettingsSection::Spaces => "Spaces",
@@ -403,12 +418,16 @@ impl PaneFlowApp {
             )
         });
 
-        let title = div()
-            .pb(px(20.))
+        let title_text = div()
             .text_size(px(26.))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(ui.text)
             .child(section_title(section));
+        let title = if section == SettingsSection::Usage {
+            self.render_usage_heading(title_text, window, cx)
+        } else {
+            title_text.pb(px(20.)).into_any_element()
+        };
 
         let heading = div()
             .flex()
@@ -450,6 +469,7 @@ impl PaneFlowApp {
             SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
             SettingsSection::Agents => self.render_agents_content(cx).into_any_element(),
+            SettingsSection::Usage => self.render_usage_content(window, cx),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
             SettingsSection::Spaces => self.render_spaces_content(cx).into_any_element(),
@@ -616,6 +636,9 @@ impl PaneFlowApp {
         }
         if section == SettingsSection::Spaces {
             self.refresh_space_integration_status(cx);
+        }
+        if section == SettingsSection::Usage {
+            self.open_usage_page(cx);
         }
         if section == SettingsSection::Workspaces {
             self.sync_workspace_template_inputs(cx);

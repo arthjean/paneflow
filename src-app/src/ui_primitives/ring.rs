@@ -21,17 +21,10 @@ pub(crate) enum RingSize {
         not(test),
         expect(
             dead_code,
-            reason = "the Settings Usage tiles of US-014 draw the 44 px ring"
+            reason = "US-010 ships the 44 px size; the capsule and the Usage tiles draw 16 and 76 px"
         )
     )]
     Medium,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the Settings Usage tiles of US-014 draw the 76 px ring"
-        )
-    )]
     Large,
 }
 
@@ -108,13 +101,6 @@ pub(crate) fn ring(size: RingSize, value: f64, level: UsageLevel, ui: UiColors) 
     ring_canvas(size, vec![gauge], ui)
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the Settings Usage tiles of US-014 draw the week and session rings"
-    )
-)]
 pub(crate) fn concentric_rings(
     size: RingSize,
     outer: (f64, UsageLevel),

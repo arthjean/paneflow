@@ -349,7 +349,7 @@ pub(crate) fn age_text(age_ms: u64) -> String {
     }
 }
 
-fn display_dir(dir: &Path, home: Option<&Path>) -> String {
+pub(crate) fn display_dir(dir: &Path, home: Option<&Path>) -> String {
     match home.and_then(|home| dir.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".into(),
         Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),

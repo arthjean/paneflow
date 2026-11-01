@@ -7,6 +7,7 @@ pub(crate) enum SettingsSection {
     Shortcuts,
     Terminal,
     Agents,
+    Usage,
     McpServers,
     Workspaces,
     Spaces,

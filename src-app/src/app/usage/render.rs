@@ -31,7 +31,7 @@ const LOGO_SIZE: f32 = 15.;
 const SMALL_TEXT: f32 = 11.5;
 const FOCUS_RING_ALPHA: f32 = 0.35;
 const TRACK_ALPHA: f32 = 0.13;
-const OPEN_SETTINGS_LABEL: &str = "Open agent settings";
+const OPEN_SETTINGS_LABEL: &str = "Open usage settings";
 
 impl PaneFlowApp {
     pub(crate) fn render_usage_capsule(
@@ -390,7 +390,7 @@ fn muted_line(text: String, ui: UiColors) -> AnyElement {
         .into_any_element()
 }
 
-fn pace_line(pace: &Pace, ui: UiColors) -> AnyElement {
+pub(super) fn pace_line(pace: &Pace, ui: UiColors) -> AnyElement {
     let (icon, icon_color, text_color, text) = match pace {
         Pace::ReachesLimit(text) => (
             "icons/triangle-alert.svg",
@@ -421,10 +421,14 @@ fn pace_line(pace: &Pace, ui: UiColors) -> AnyElement {
 }
 
 fn agent_logo(agent: UsageAgent, ui: UiColors) -> AnyElement {
-    let Some(terminal) = runtime_by_slug(agent.runtime_slug())
-        .and_then(|runtime| TerminalAgent::from_runtime_id(runtime.id))
+    runtime_logo(agent.runtime_slug(), LOGO_SIZE, ui)
+}
+
+pub(super) fn runtime_logo(slug: &str, size: f32, ui: UiColors) -> AnyElement {
+    let Some(terminal) =
+        runtime_by_slug(slug).and_then(|runtime| TerminalAgent::from_runtime_id(runtime.id))
     else {
-        return div().size(px(LOGO_SIZE)).flex_none().into_any_element();
+        return div().size(px(size)).flex_none().into_any_element();
     };
     let tint: Hsla = terminal
         .accent()
@@ -432,12 +436,12 @@ fn agent_logo(agent: UsageAgent, ui: UiColors) -> AnyElement {
     crate::settings::components::render_logo(
         terminal.icon_path(),
         terminal.icon_multicolor(),
-        px(LOGO_SIZE),
+        px(size),
         tint,
     )
 }
 
-fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
+pub(super) fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
     div()
         .absolute()
         .inset_0()
@@ -449,6 +453,6 @@ fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
         .into_any_element()
 }
 
-fn tabular_numerals() -> gpui::FontFeatures {
+pub(super) fn tabular_numerals() -> gpui::FontFeatures {
     gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }

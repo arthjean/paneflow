@@ -438,6 +438,7 @@ fn settings_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         ("Spaces", SettingsSection::Spaces),
         ("Worktrees", SettingsSection::Worktrees),
         ("Agents", SettingsSection::Agents),
+        ("Usage", SettingsSection::Usage),
         ("MCP servers", SettingsSection::McpServers),
         ("Shortcuts", SettingsSection::Shortcuts),
     ]
