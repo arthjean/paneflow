@@ -455,7 +455,7 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
         &std::fs::read(paneflow_home::usage_ledger_path_in(home.path())).unwrap(),
     )
     .unwrap();
-    let cursor = &ledger["cursors"][transcript.display().to_string()];
+    let cursor = &ledger["cursors"][canonical(&transcript)];
     assert_eq!(
         cursor["offset"].as_u64(),
         Some(std::fs::metadata(&transcript).unwrap().len()),
