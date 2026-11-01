@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -39,6 +40,13 @@ pub struct TokenEntry {
     pub day: NaiveDate,
     pub input: u64,
     pub output: u64,
+    pub key: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnStart {
+    pub day: NaiveDate,
+    pub key: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +55,7 @@ pub struct TokenPass {
     pub start: TokenCursor,
     pub cursor: TokenCursor,
     pub entries: Vec<TokenEntry>,
+    pub turns: Vec<TurnStart>,
 }
 
 pub fn read_tokens(
@@ -72,6 +81,7 @@ pub fn read_tokens(
     }
     let mut seen: HashSet<String> = cursor.seen.iter().cloned().collect();
     let mut entries = Vec::new();
+    let mut turns = Vec::new();
     let mut at = 0;
     if cursor.skipping {
         match chunk.iter().position(|byte| *byte == b'\n') {
@@ -98,9 +108,22 @@ pub fn read_tokens(
         let Ok(value) = serde_json::from_slice::<Value>(line.trim_ascii()) else {
             continue;
         };
-        let entry = match kind {
-            TranscriptKind::Claude => claude_entry(&value, &mut seen, &mut cursor, today),
-            TranscriptKind::Codex => codex_entry(&value, &mut cursor),
+        if let Some(at_ms) = turn_start_ms(&value, kind) {
+            let key = match kind {
+                TranscriptKind::Claude => line_key(&value, "/uuid"),
+                TranscriptKind::Codex => line_key(&value, "/payload/turn_id"),
+            };
+            turns.push(TurnStart {
+                day: calendar.day(at_ms),
+                key,
+            });
+        }
+        let (entry, key) = match kind {
+            TranscriptKind::Claude => (
+                claude_entry(&value, &mut seen, &mut cursor, today),
+                line_key(&value, "/message/id"),
+            ),
+            TranscriptKind::Codex => (codex_entry(&value, &mut cursor), None),
         };
         if let Some((at_ms, input, output)) = entry
             && (input > 0 || output > 0)
@@ -109,6 +132,7 @@ pub fn read_tokens(
                 day: calendar.day(at_ms),
                 input,
                 output,
+                key,
             });
         }
     }
@@ -119,7 +143,50 @@ pub fn read_tokens(
         start,
         cursor,
         entries,
+        turns,
     })
+}
+
+fn line_key(value: &Value, pointer: &str) -> Option<u64> {
+    let id = value.pointer(pointer)?.as_str()?;
+    let mut hasher = std::hash::DefaultHasher::new();
+    id.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+fn turn_start_ms(value: &Value, kind: TranscriptKind) -> Option<u64> {
+    let starts = match kind {
+        TranscriptKind::Claude => is_claude_prompt(value),
+        TranscriptKind::Codex => {
+            value.get("type").and_then(Value::as_str) == Some("event_msg")
+                && matches!(
+                    value.pointer("/payload/type").and_then(Value::as_str),
+                    Some("task_started" | "turn_started")
+                )
+        }
+    };
+    starts.then(|| entry_ms(value)).flatten()
+}
+
+fn is_claude_prompt(value: &Value) -> bool {
+    let flagged = |key: &str| value.get(key).and_then(Value::as_bool) == Some(true);
+    if value.get("type").and_then(Value::as_str) != Some("user")
+        || flagged("isMeta")
+        || flagged("isSidechain")
+        || flagged("isCompactSummary")
+    {
+        return false;
+    }
+    match value.pointer("/message/content") {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(parts)) => {
+            !parts.is_empty()
+                && parts
+                    .iter()
+                    .all(|part| part.get("type").and_then(Value::as_str) != Some("tool_result"))
+        }
+        _ => false,
+    }
 }
 
 fn entry_ms(value: &Value) -> Option<u64> {
@@ -343,6 +410,69 @@ mod tests {
         );
         let second = pass(&path, TranscriptKind::Codex, first.cursor);
         assert_eq!(sum(&second), (500, 20));
+    }
+
+    #[test]
+    fn a_pass_dates_each_prompt_but_not_tool_results_meta_lines_or_sidechains() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join("session.jsonl");
+        let user = |stamp: &str, content: serde_json::Value, extra: serde_json::Value| {
+            let mut line = json!({"type": "user", "timestamp": stamp, "message": {"role": "user", "content": content}});
+            if let (Some(line), Some(extra)) = (line.as_object_mut(), extra.as_object()) {
+                line.extend(extra.clone());
+            }
+            line.to_string()
+        };
+        append(
+            &claude,
+            &[
+                user("2026-10-31T21:00:00Z", json!("fix the build"), json!({})),
+                user(
+                    "2026-10-31T21:00:05Z",
+                    json!([{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]),
+                    json!({}),
+                ),
+                user(
+                    "2026-10-31T21:00:06Z",
+                    json!("<caveat>"),
+                    json!({"isMeta": true}),
+                ),
+                user(
+                    "2026-10-31T21:00:07Z",
+                    json!("explore"),
+                    json!({"isSidechain": true}),
+                ),
+                user(
+                    "2026-10-31T23:30:00Z",
+                    json!([{"type": "text", "text": "and the tests"}]),
+                    json!({}),
+                ),
+            ],
+        );
+        let read = pass(&claude, TranscriptKind::Claude, TokenCursor::default());
+        assert_eq!(
+            read.turns.iter().map(|turn| turn.day).collect::<Vec<_>>(),
+            [
+                NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+            ]
+        );
+
+        let codex = dir.path().join("rollout-a.jsonl");
+        append(
+            &codex,
+            &[
+                json!({"timestamp": "2026-10-31T22:08:00Z", "type": "event_msg", "payload": {"type": "task_started"}}).to_string(),
+                json!({"timestamp": "2026-10-31T22:08:01Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions"}]}}).to_string(),
+                json!({"timestamp": "2026-10-31T22:09:00Z", "type": "event_msg", "payload": {"type": "task_complete"}}).to_string(),
+            ],
+        );
+        let read = pass(&codex, TranscriptKind::Codex, TokenCursor::default());
+        assert_eq!(
+            read.turns.iter().map(|turn| turn.day).collect::<Vec<_>>(),
+            [NaiveDate::from_ymd_opt(2026, 10, 31).unwrap()],
+            "a Codex turn is its task_started event, not the injected user items"
+        );
     }
 
     #[test]

@@ -250,6 +250,9 @@ fn remove_legacy_project_hooks(home: &Path) {
 
 pub fn run(home: &Path) -> Result<(), WorkerError> {
     let running = open(home)?;
+    let accounts =
+        crate::usage::configured_accounts(home, paneflow_agent_config::home_dir().as_deref());
+    running.worker().start_import(accounts, false);
     let integrations_home = home.to_path_buf();
     if let Err(error) = std::thread::Builder::new()
         .name("paneflow-serve-integrations".into())

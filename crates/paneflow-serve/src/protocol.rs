@@ -25,6 +25,7 @@ pub const METHOD_AGENT_ACTIVITY_LOG: &str = "agent.activity_log";
 pub const METHOD_AGENT_ACKNOWLEDGE: &str = "agent.acknowledge";
 pub const METHOD_USAGE_SNAPSHOT: &str = "usage.snapshot";
 pub const METHOD_USAGE_REFRESH: &str = "usage.refresh";
+pub const METHOD_USAGE_IMPORT: &str = "usage.import";
 
 pub const CAPABILITY_AGENT_FOLLOW: &str = "agent.follow";
 pub const CAPABILITY_AGENT_UNREAD: &str = "agent.unread";

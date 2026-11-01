@@ -74,6 +74,16 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportRecord {
+    pub finished_at_ms: u64,
+    pub files: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limited_days: Option<u64>,
+}
+
+pub type ImportedDays = BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TurnInput {
     Prompt,
@@ -161,6 +171,10 @@ struct LedgerFile {
     watermarks: BTreeMap<String, (u64, u64)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     cursors: BTreeMap<String, TokenCursor>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    imported: BTreeMap<NaiveDate, Vec<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    import: Option<ImportRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,6 +190,8 @@ pub struct TurnBook {
     open: BTreeMap<String, OpenTurn>,
     watermarks: BTreeMap<String, (u64, u64)>,
     cursors: BTreeMap<String, TokenCursor>,
+    imported: BTreeMap<NaiveDate, BTreeSet<LedgerAccount>>,
+    import: Option<ImportRecord>,
     revision: u64,
 }
 
@@ -206,6 +222,46 @@ impl TurnBook {
 
     pub fn cursor_count(&self) -> usize {
         self.cursors.len()
+    }
+
+    pub fn import_record(&self) -> Option<&ImportRecord> {
+        self.import.as_ref()
+    }
+
+    pub fn is_imported(&self, day: NaiveDate, account: &LedgerAccount) -> bool {
+        self.imported
+            .get(&day)
+            .is_some_and(|accounts| accounts.contains(account))
+    }
+
+    pub fn import_days(
+        &mut self,
+        days: ImportedDays,
+        today: NaiveDate,
+        record: ImportRecord,
+    ) -> usize {
+        let mut booked = 0;
+        for (day, tallies) in days.into_iter().filter(|(day, _)| *day < today) {
+            for (account, tally) in tallies {
+                if tally == DayTally::default()
+                    || self
+                        .days
+                        .get(&day)
+                        .is_some_and(|held| held.contains_key(&account))
+                {
+                    continue;
+                }
+                self.days
+                    .entry(day)
+                    .or_default()
+                    .insert(account.clone(), tally);
+                self.imported.entry(day).or_default().insert(account);
+                booked += 1;
+            }
+        }
+        self.import = Some(record);
+        self.revision += 1;
+        booked
     }
 
     pub fn record_tokens(&mut self, account: &LedgerAccount, pass: TokenPass) -> bool {
@@ -361,6 +417,9 @@ impl TurnBook {
         account: &LedgerAccount,
         change: impl FnOnce(&mut DayTally),
     ) {
+        if self.is_imported(day, account) {
+            return;
+        }
         change(
             self.days
                 .entry(day)
@@ -391,6 +450,7 @@ impl TurnBook {
             return;
         };
         self.days.retain(|day, _| *day > oldest);
+        self.imported.retain(|day, _| *day > oldest);
     }
 
     fn restore(file: LedgerFile) -> Self {
@@ -413,11 +473,24 @@ impl TurnBook {
                 (session, turn)
             })
             .collect();
+        let imported = file
+            .imported
+            .into_iter()
+            .map(|(day, indices)| {
+                let accounts = indices
+                    .into_iter()
+                    .filter_map(|index| file.accounts.get(index).cloned())
+                    .collect();
+                (day, accounts)
+            })
+            .collect();
         Self {
             days,
             open,
             watermarks: file.watermarks,
             cursors: file.cursors,
+            imported,
+            import: file.import,
             revision: 0,
         }
     }
@@ -447,6 +520,17 @@ impl TurnBook {
                 (*day, entries)
             })
             .collect();
+        let imported = self
+            .imported
+            .iter()
+            .map(|(day, held)| {
+                let indices = held
+                    .iter()
+                    .filter_map(|account| accounts.binary_search(account).ok())
+                    .collect();
+                (*day, indices)
+            })
+            .collect();
         LedgerFile {
             version: LEDGER_VERSION,
             accounts,
@@ -454,6 +538,8 @@ impl TurnBook {
             open_turns: self.open.clone(),
             watermarks: self.watermarks.clone(),
             cursors: self.cursors.clone(),
+            imported,
+            import: self.import.clone(),
         }
     }
 
@@ -463,6 +549,7 @@ impl TurnBook {
             "revision": self.revision,
             "accounts": file.accounts,
             "days": file.days,
+            "import": file.import,
         })
     }
 }
@@ -951,8 +1038,112 @@ mod tests {
                 day: date(31),
                 input: 7,
                 output: 212,
+                key: None,
             }],
+            turns: Vec::new(),
         }
+    }
+
+    fn tallies(entries: &[(u32, LedgerAccount, DayTally)]) -> ImportedDays {
+        let mut days = ImportedDays::new();
+        for (day, account, tally) in entries {
+            days.entry(date(*day))
+                .or_default()
+                .insert(account.clone(), *tally);
+        }
+        days
+    }
+
+    fn imported_tally(turns: u64, tokens_out: u64) -> DayTally {
+        DayTally {
+            turns,
+            tokens_out,
+            ..DayTally::default()
+        }
+    }
+
+    #[test]
+    fn an_import_fills_only_past_days_the_ledger_does_not_hold_and_never_twice() {
+        let calendar = calendar();
+        let mut book = TurnBook::default();
+        book.apply(&signal("s", TurnInput::Prompt, at(29, 9, 0, 0)), &calendar);
+        book.apply(&signal("s", TurnInput::Stop, at(29, 9, 0, 30)), &calendar);
+        let live = book.tally(date(29), &claude());
+        let found = tallies(&[
+            (28, claude(), imported_tally(3, 900)),
+            (29, claude(), imported_tally(5, 5_000)),
+            (31, claude(), imported_tally(2, 10)),
+        ]);
+        let record = ImportRecord {
+            finished_at_ms: at(31, 12, 0, 0),
+            files: 4,
+            limited_days: None,
+        };
+        assert_eq!(book.import_days(found.clone(), date(31), record.clone()), 1);
+        assert_eq!(book.tally(date(28), &claude()), imported_tally(3, 900));
+        assert_eq!(
+            book.tally(date(29), &claude()),
+            live,
+            "a day the live ledger already holds keeps its own count"
+        );
+        assert_eq!(
+            book.tally(date(31), &claude()),
+            DayTally::default(),
+            "today is left to the live count"
+        );
+        assert_eq!(book.import_record(), Some(&record));
+
+        assert_eq!(
+            book.import_days(found, date(31), record),
+            0,
+            "a second import adds nothing"
+        );
+        assert_eq!(book.tally(date(28), &claude()), imported_tally(3, 900));
+    }
+
+    #[test]
+    fn a_live_read_of_an_old_transcript_does_not_add_to_an_imported_day() {
+        let mut book = TurnBook::default();
+        let tomorrow = date(31).succ_opt().unwrap();
+        book.import_days(
+            tallies(&[(31, claude(), imported_tally(1, 212))]),
+            tomorrow,
+            ImportRecord::default(),
+        );
+        assert!(book.is_imported(date(31), &claude()));
+        assert!(book.record_tokens(&claude(), pass("/t.jsonl", TokenCursor::default(), 9, 1)));
+        assert_eq!(
+            book.tally(date(31), &claude()),
+            imported_tally(1, 212),
+            "the import already counted that day"
+        );
+    }
+
+    #[test]
+    fn imported_days_and_the_import_record_survive_a_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ledger.json");
+        let calendar = calendar();
+        let now = at(31, 12, 0, 0);
+        let mut ledger = Ledger::load(&path, &calendar, now);
+        let record = ImportRecord {
+            finished_at_ms: now,
+            files: 10_000,
+            limited_days: Some(30),
+        };
+        ledger.book_mut().import_days(
+            tallies(&[(30, claude(), imported_tally(4, 40))]),
+            date(31),
+            record.clone(),
+        );
+        assert!(ledger.flush(Instant::now(), true));
+        let reloaded = Ledger::load(&path, &calendar, now);
+        assert_eq!(reloaded.book().import_record(), Some(&record));
+        assert!(reloaded.book().is_imported(date(30), &claude()));
+        assert_eq!(
+            reloaded.book().to_value()["import"]["limited_days"],
+            serde_json::json!(30)
+        );
     }
 
     #[test]

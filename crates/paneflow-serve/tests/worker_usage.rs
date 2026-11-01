@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
 use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_FOLLOW};
-use paneflow_serve::protocol::{METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT};
+use paneflow_serve::protocol::{METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT};
 use serde_json::{Value, json};
 
 fn shell_params(env: Value) -> Value {
@@ -483,4 +483,89 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
     }
     core_server.stop().unwrap();
     drop(core);
+}
+
+fn finished_import(control: &mut HostControl, files: u64) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let snapshot = control.request(METHOD_USAGE_SNAPSHOT, json!({})).unwrap();
+        if snapshot["import"]["running"] == false && snapshot["import"]["files"] == files {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "the import finishes: {snapshot}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn import_past_activity_books_the_past_days_of_each_account_once() {
+    let home = tempfile::tempdir().unwrap();
+    let claude = home.path().join("claude-import");
+    let codex = home.path().join("codex-import");
+    let stamp = (chrono::Utc::now() - chrono::Duration::days(3)).to_rfc3339();
+    let transcript = claude.join("projects").join("C--work");
+    std::fs::create_dir_all(&transcript).unwrap();
+    let claude_lines = [
+        json!({"type": "user", "timestamp": stamp, "message": {"role": "user", "content": "fix the build"}}),
+        json!({"type": "assistant", "timestamp": stamp, "message": {"id": "msg_a", "usage": {"input_tokens": 4, "output_tokens": 40}}}),
+        json!({"type": "user", "timestamp": stamp, "message": {"content": [{"type": "tool_result", "tool_use_id": "t"}]}}),
+        json!({"type": "user", "timestamp": stamp, "message": {"role": "user", "content": "now the tests"}}),
+        json!({"type": "assistant", "timestamp": stamp, "message": {"id": "msg_b", "usage": {"input_tokens": 1, "output_tokens": 10}}}),
+    ];
+    std::fs::write(
+        transcript.join("s.jsonl"),
+        claude_lines.map(|line| format!("{line}\n")).concat(),
+    )
+    .unwrap();
+    let rollouts = codex.join("sessions").join("2026").join("10").join("28");
+    std::fs::create_dir_all(&rollouts).unwrap();
+    let codex_lines = [
+        json!({"timestamp": stamp, "type": "event_msg", "payload": {"type": "task_started"}}),
+        json!({"timestamp": stamp, "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 30, "cached_input_tokens": 10, "output_tokens": 7}}}}),
+    ];
+    std::fs::write(
+        rollouts.join("rollout-2026-10-28T10-00-00-a.jsonl"),
+        codex_lines.map(|line| format!("{line}\n")).concat(),
+    )
+    .unwrap();
+
+    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    let endpoint = paneflow_home::serve_endpoint_path(home.path());
+    let mut control = HostControl::connect(&endpoint, "worker-usage-import").unwrap();
+    let params = json!({
+        "accounts": [
+            {"agent": "claude-code", "config_dir": claude.display().to_string()},
+            {"agent": "codex", "config_dir": codex.display().to_string()},
+        ],
+        "force": true,
+    });
+    let started = control
+        .request(METHOD_USAGE_IMPORT, params.clone())
+        .unwrap();
+    assert!(started["import"].is_object(), "{started}");
+    let snapshot = finished_import(&mut control, 2);
+    let claude_dir = canonical(&claude);
+    let codex_dir = canonical(&codex);
+    assert_eq!(day_tally(&snapshot, "claude-code", &claude_dir).0, 2);
+    assert_eq!(day_tokens(&snapshot, "claude-code", &claude_dir), (5, 50));
+    assert_eq!(day_tally(&snapshot, "codex", &codex_dir).0, 1);
+    assert_eq!(day_tokens(&snapshot, "codex", &codex_dir), (20, 7));
+
+    control.request(METHOD_USAGE_IMPORT, params).unwrap();
+    let again = finished_import(&mut control, 2);
+    assert_eq!(
+        again["ledger"]["days"], snapshot["ledger"]["days"],
+        "a second import adds nothing"
+    );
+
+    drop(control);
+    worker.stop();
+    let restarted = reopen(home.path());
+    let usage = restarted.worker().lock_usage().snapshot();
+    assert_eq!(usage["import"]["files"], 2, "the import record persists");
+    assert!(
+        !restarted.worker().lock_usage().begin_import(false),
+        "a finished import is not repeated at the next start"
+    );
+    restarted.stop();
 }

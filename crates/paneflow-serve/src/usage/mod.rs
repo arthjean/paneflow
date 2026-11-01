@@ -1,3 +1,4 @@
+pub mod backfill;
 pub mod codex;
 pub mod ledger;
 pub mod plans;
@@ -9,17 +10,53 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use paneflow_agent_config::runtime_catalog::runtime_for_tool;
-use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
+use paneflow_agent_config::usage::accounts::{
+    AccountOrigin, OriginKind, UsageAgent, account_dir_key, canonical_account_dir, inventory,
+};
 use paneflow_agent_config::usage::model::plausible_claude_rate_limits;
+use paneflow_config::schema::PaneFlowConfig;
 use serde_json::{Value, json};
 
+use self::backfill::{ImportOutcome, ImportStatus};
 use self::codex::CodexReading;
-use self::ledger::{Ledger, LedgerAccount, TurnInput, TurnSignal, local_calendar};
+use self::ledger::{
+    Calendar, ImportRecord, Ledger, LedgerAccount, TurnInput, TurnSignal, local_calendar,
+};
 use self::plans::{PlanStore, PlanUpdate};
 use self::probe::ProbeOutcome;
 use self::tokens::{TokenCursor, TokenPass, TranscriptKind};
 
 pub const FRAME_TYPE: &str = "usage";
+pub const DEFAULT_ORIGIN_NAME: &str = "Default";
+
+pub fn usage_origins(config: &PaneFlowConfig) -> Vec<AccountOrigin> {
+    let mut origins = vec![AccountOrigin::process_default(DEFAULT_ORIGIN_NAME)];
+    origins.extend(config.spaces.iter().map(|space| AccountOrigin {
+        kind: OriginKind::Space,
+        name: space.name.clone(),
+        agent: None,
+        env: space.env.clone(),
+    }));
+    origins.extend(config.agent_profiles.iter().filter_map(|profile| {
+        Some(AccountOrigin {
+            kind: OriginKind::Profile,
+            name: profile.name.clone(),
+            agent: Some(UsageAgent::for_profile_agent(&profile.agent)?),
+            env: profile.env.clone(),
+        })
+    }));
+    origins
+}
+
+pub fn configured_accounts(home: &Path, user_home: Option<&Path>) -> Vec<(UsageAgent, PathBuf)> {
+    let config =
+        paneflow_config::loader::load_config_from_path(&paneflow_home::config_path_in(home));
+    inventory(&usage_origins(&config), user_home)
+        .into_iter()
+        .filter(|account| account.config_dir.is_dir())
+        .map(|account| (account.agent, account.config_dir))
+        .collect()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TranscriptRead {
@@ -39,6 +76,7 @@ pub struct Usage {
     ledger: Ledger,
     codex_reads: BTreeMap<String, Instant>,
     probes: BTreeMap<(UsageAgent, String), Instant>,
+    importing: Option<u64>,
     published: Option<Value>,
 }
 
@@ -58,6 +96,7 @@ impl Usage {
             ),
             codex_reads: BTreeMap::new(),
             probes: BTreeMap::new(),
+            importing: None,
             published: None,
         }
     }
@@ -233,6 +272,61 @@ impl Usage {
         self.plans.update(agent, dir, update, now_ms)
     }
 
+    pub fn begin_import(&mut self, force: bool) -> bool {
+        let book = self.ledger.book();
+        let first_start = book.days().is_empty() && book.import_record().is_none();
+        if self.importing.is_some() || !(force || first_start) {
+            return false;
+        }
+        self.importing = Some(0);
+        true
+    }
+
+    pub fn import_progress(&mut self, files: u64) {
+        if self.importing.is_some() {
+            self.importing = Some(files);
+        }
+    }
+
+    pub fn finish_import(&mut self, outcome: Option<ImportOutcome>, now_ms: u64) -> usize {
+        self.importing = None;
+        let Some(outcome) = outcome else {
+            return 0;
+        };
+        let record = ImportRecord {
+            finished_at_ms: now_ms,
+            files: outcome.files,
+            limited_days: outcome.limited_days,
+        };
+        let today = local_calendar().day(now_ms);
+        self.ledger
+            .book_mut()
+            .import_days(outcome.days, today, record)
+    }
+
+    pub fn import_status(&self) -> ImportStatus {
+        match self.importing {
+            Some(files) => ImportStatus {
+                running: true,
+                files,
+                limited_days: None,
+            },
+            None => ImportStatus {
+                running: false,
+                files: self
+                    .ledger
+                    .book()
+                    .import_record()
+                    .map_or(0, |record| record.files),
+                limited_days: self
+                    .ledger
+                    .book()
+                    .import_record()
+                    .and_then(|record| record.limited_days),
+            },
+        }
+    }
+
     pub fn flush(&mut self, now: Instant, force: bool) {
         self.plans.flush(now, force);
         self.ledger.flush(now, force);
@@ -242,6 +336,7 @@ impl Usage {
         json!({
             "plans": self.plans.to_value(),
             "ledger_revision": self.ledger.book().revision(),
+            "import": self.import_status(),
         })
     }
 
@@ -249,6 +344,7 @@ impl Usage {
         json!({
             "plans": self.plans.to_value(),
             "ledger": self.ledger.book().to_value(),
+            "import": self.import_status(),
         })
     }
 
@@ -366,6 +462,70 @@ mod tests {
             claim(&mut usage, poll, start + Duration::from_secs(359)).len(),
             1
         );
+    }
+
+    #[test]
+    fn the_first_import_runs_once_on_an_empty_ledger_and_a_request_always_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let now_ms = 1_793_481_752_042;
+        let mut usage = Usage::open(home.path(), now_ms);
+        assert!(
+            usage.begin_import(false),
+            "an empty ledger imports at first start"
+        );
+        assert!(!usage.begin_import(true), "one import at a time");
+        usage.import_progress(12);
+        assert_eq!(
+            usage.frame()["import"],
+            json!({"running": true, "files": 12}),
+            "the frame carries the progress the page shows"
+        );
+        usage.finish_import(
+            Some(ImportOutcome {
+                files: 12,
+                limited_days: Some(30),
+                ..ImportOutcome::default()
+            }),
+            now_ms,
+        );
+        assert_eq!(
+            usage.snapshot()["import"],
+            json!({"running": false, "files": 12, "limited_days": 30})
+        );
+        assert!(
+            !usage.begin_import(false),
+            "a finished import is not repeated at the next start"
+        );
+        assert!(usage.begin_import(true), "Import past activity runs again");
+        usage.finish_import(None, now_ms);
+        assert!(!usage.import_status().running);
+    }
+
+    #[test]
+    fn the_worker_lists_the_default_space_and_profile_accounts_of_its_config() {
+        let home = tempfile::tempdir().unwrap();
+        let user = tempfile::tempdir().unwrap();
+        for dir in [".claude", ".claude-work", ".codex"] {
+            std::fs::create_dir_all(user.path().join(dir)).unwrap();
+        }
+        let work = user.path().join(".claude-work");
+        std::fs::write(
+            paneflow_home::config_path_in(home.path()),
+            json!({"spaces": [{"id": "00000000-0000-4000-8000-000000000001", "name": "Work", "env": {"CLAUDE_CONFIG_DIR": work.display().to_string()}}]})
+                .to_string(),
+        )
+        .unwrap();
+        let accounts = configured_accounts(home.path(), Some(user.path()));
+        let claude: Vec<&PathBuf> = accounts
+            .iter()
+            .filter(|(agent, _)| *agent == UsageAgent::ClaudeCode)
+            .map(|(_, dir)| dir)
+            .collect();
+        assert!(
+            claude.contains(&&canonical_account_dir(&work)),
+            "{accounts:?}"
+        );
+        assert!(accounts.iter().all(|(_, dir)| dir.is_dir()));
     }
 
     #[test]

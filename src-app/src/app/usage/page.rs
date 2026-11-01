@@ -28,6 +28,8 @@ pub(crate) const INTRO: &str = "Plan limits come from Claude Code and Codex whil
 pub(crate) const NO_ACCOUNT: &str =
     "No Claude Code or Codex account found. Install an agent in Settings › Agents.";
 const OPEN_AGENTS_LABEL: &str = "Open agent settings";
+pub(crate) const IMPORT_LABEL: &str = "Import past activity";
+pub(crate) const TRANSCRIPT_NOTE: &str = "Claude Code keeps transcripts for 30 days by default.";
 const SCALE_NOTE: &str = "One scale for all agents";
 const TILE_GRID_MIN_WIDTH: f32 = 560.;
 const TILE_GAP: f32 = 10.;
@@ -91,6 +93,16 @@ fn reveal_day(scroll: &ScrollHandle, view: &ActivityView, day: NaiveDate) {
 enum UsageButton {
     Refresh,
     OpenAgents,
+    Import,
+}
+
+pub(crate) fn import_progress_label(files: u64) -> String {
+    let unit = if files == 1 { "file" } else { "files" };
+    format!("Importing past activity\u{2026} {files} {unit}")
+}
+
+pub(crate) fn import_limit_label(days: u64) -> String {
+    format!("Imported the last {days} days")
 }
 
 pub(crate) struct CellHover {
@@ -603,6 +615,7 @@ impl PaneFlowApp {
                         &[activity_copy.title, activity_copy.description],
                         self.render_activity_card(window, cx),
                     )
+                    .child(self.render_import_row(window, cx))
                     .finish(),
             )
             .into_any_element()
@@ -664,6 +677,66 @@ impl PaneFlowApp {
                             .text_color(ui.muted),
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_import_row(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let ui = crate::theme::ui_colors();
+        let import = &self.usage.import;
+        let status = if import.running {
+            Some(import_progress_label(import.files))
+        } else {
+            import.limited_days.map(import_limit_label)
+        };
+        let focused = self.usage.import_focus.is_focused(window);
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(12.))
+            .pt(px(8.))
+            .text_size(px(SMALL_TEXT))
+            .line_height(relative(1.45))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(220.))
+                    .text_color(ui.muted)
+                    .child(TRANSCRIPT_NOTE),
+            )
+            .when_some(status, |row, status| {
+                row.child(
+                    div()
+                        .id("usage-import-status")
+                        .flex_none()
+                        .font_features(tabular_numerals())
+                        .text_color(ui.muted)
+                        .role(Role::Status)
+                        .child(status),
+                )
+            })
+            .when(!import.running, |row| {
+                row.child(
+                    crate::settings::components::ghost_icon_button(
+                        "usage-import",
+                        IMPORT_LABEL,
+                        "icons/download.svg",
+                        ui,
+                    )
+                    .relative()
+                    .track_focus(&self.usage.import_focus)
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        this.handle_usage_button_key(UsageButton::Import, event, window, cx);
+                    }))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.import_past_activity(cx);
+                    }))
+                    .when(focused, |button| {
+                        button.child(focus_ring(crate::ui_primitives::ROW_RADIUS, ui))
+                    }),
+                )
+            })
             .into_any_element()
     }
 
@@ -924,6 +997,7 @@ impl PaneFlowApp {
                 UsageButton::OpenAgents => {
                     self.select_settings_section(SettingsSection::Agents, window, cx);
                 }
+                UsageButton::Import => self.import_past_activity(cx),
             },
             _ => return,
         }
@@ -951,6 +1025,9 @@ impl PaneFlowApp {
                 .filter(|(register, _)| register.has_data)
                 .map(|(_, handle)| handle.clone()),
         );
+        if !self.usage.import.running {
+            stops.push(self.usage.import_focus.clone());
+        }
         let current = stops.iter().position(|handle| handle.is_focused(window));
         let next = match (current, forward) {
             (None, true) => Some(0),

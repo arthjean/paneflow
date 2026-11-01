@@ -9,19 +9,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::NaiveDate;
 use gpui::{App, Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
 use paneflow_agent_config::usage::accounts::{
-    AccountOrigin, OriginKind, UsageAgent, claude_status_line_state, inventory,
+    AccountOrigin, UsageAgent, claude_status_line_state, inventory,
 };
 use paneflow_agent_config::usage::status_line::StatusLineState;
-use paneflow_config::schema::PaneFlowConfig;
+use paneflow_serve::usage::backfill::ImportStatus;
 use paneflow_serve::usage::ledger::{LedgerDays, ledger_days};
 use paneflow_serve::usage::plans::AccountPlan;
+use paneflow_serve::usage::usage_origins;
 use serde_json::Value;
 
 use self::activity::Metric;
 use self::model::{InventoryEntry, UsageInputs, UsageView, step_cursor, usage_view};
 use crate::{PaneFlowApp, SettingsSection};
-
-const DEFAULT_ORIGIN_NAME: &str = "Default";
 
 pub(crate) struct UsagePanel {
     plans: Vec<AccountPlan>,
@@ -44,6 +43,8 @@ pub(crate) struct UsagePanel {
     register_scroll: Vec<ScrollHandle>,
     register_cursor: Option<(usize, NaiveDate)>,
     hover_day: Option<NaiveDate>,
+    import: ImportStatus,
+    import_focus: FocusHandle,
 }
 
 impl UsagePanel {
@@ -69,6 +70,8 @@ impl UsagePanel {
             register_scroll: Vec::new(),
             register_cursor: None,
             hover_day: None,
+            import: ImportStatus::default(),
+            import_focus: cx.focus_handle(),
         }
     }
 
@@ -80,25 +83,6 @@ impl UsagePanel {
         self.bubble_open = false;
         self.cursor = None;
     }
-}
-
-pub(crate) fn usage_origins(config: &PaneFlowConfig) -> Vec<AccountOrigin> {
-    let mut origins = vec![AccountOrigin::process_default(DEFAULT_ORIGIN_NAME)];
-    origins.extend(config.spaces.iter().map(|space| AccountOrigin {
-        kind: OriginKind::Space,
-        name: space.name.clone(),
-        agent: None,
-        env: space.env.clone(),
-    }));
-    origins.extend(config.agent_profiles.iter().filter_map(|profile| {
-        Some(AccountOrigin {
-            kind: OriginKind::Profile,
-            name: profile.name.clone(),
-            agent: Some(UsageAgent::for_profile_agent(&profile.agent)?),
-            env: profile.env.clone(),
-        })
-    }));
-    origins
 }
 
 fn read_inventory(
@@ -122,14 +106,20 @@ fn worker_plans(usage: &Value) -> Option<Vec<AccountPlan>> {
     serde_json::from_value(usage.get("plans")?.clone()).ok()
 }
 
+fn worker_import(usage: &Value) -> Option<ImportStatus> {
+    serde_json::from_value(usage.get("import")?.clone()).ok()
+}
+
 struct WorkerUsage {
     plans: Option<Vec<AccountPlan>>,
     ledger: Option<(LedgerDays, Option<u64>)>,
+    import: Option<ImportStatus>,
 }
 
 fn worker_usage(snapshot: &Value) -> WorkerUsage {
     WorkerUsage {
         plans: worker_plans(snapshot),
+        import: worker_import(snapshot),
         ledger: snapshot.get("ledger").and_then(|ledger| {
             Some((
                 ledger_days(ledger)?,
@@ -179,6 +169,25 @@ fn refresh_worker_usage(entries: &[InventoryEntry]) -> Option<WorkerUsage> {
         }
         Err(error) => {
             log::debug!("paneflow: the worker did not refresh plan usage: {error}");
+            None
+        }
+    }
+}
+
+fn import_worker_usage(entries: &[InventoryEntry]) -> Option<WorkerUsage> {
+    let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
+    let mut params = paneflow_serve::usage::probe::refresh_params(
+        entries
+            .iter()
+            .map(|entry| (entry.account.agent, entry.account.config_dir.as_path())),
+    );
+    params["force"] = Value::Bool(true);
+    match paneflow_serve::Controller::connect(&endpoint)
+        .and_then(|mut controller| controller.import_usage(params))
+    {
+        Ok(snapshot) => Some(worker_usage(&snapshot)),
+        Err(error) => {
+            log::warn!("paneflow: the worker did not start the activity import: {error}");
             None
         }
     }
@@ -267,6 +276,9 @@ impl PaneFlowApp {
         if let Some(plans) = worker_plans(usage) {
             self.apply_plans(plans, cx);
         }
+        if let Some(import) = worker_import(usage) {
+            self.apply_import(import, cx);
+        }
         let revision = usage.get("ledger_revision").and_then(Value::as_u64);
         if revision.is_some()
             && revision != self.usage.ledger_revision
@@ -279,6 +291,9 @@ impl PaneFlowApp {
     fn apply_snapshot(&mut self, usage: WorkerUsage, cx: &mut Context<Self>) {
         if let Some(plans) = usage.plans {
             self.apply_plans(plans, cx);
+        }
+        if let Some(import) = usage.import {
+            self.apply_import(import, cx);
         }
         if let Some((ledger, revision)) = usage.ledger {
             self.usage.ledger_revision = revision;
@@ -321,6 +336,31 @@ impl PaneFlowApp {
     pub(crate) fn refresh_usage_page(&mut self, cx: &mut Context<Self>) {
         self.reload_usage_inventory(true, true, cx);
         cx.notify();
+    }
+
+    pub(crate) fn import_past_activity(&mut self, cx: &mut Context<Self>) {
+        if self.usage.import.running {
+            return;
+        }
+        self.usage.import.running = true;
+        self.usage.import.files = 0;
+        cx.notify();
+        let entries = self.usage.inventory.clone();
+        cx.spawn(async move |this, cx| {
+            let usage = smol::unblock(move || import_worker_usage(&entries)).await;
+            let _ = this.update(cx, |app, cx| match usage {
+                Some(usage) => app.apply_snapshot(usage, cx),
+                None => app.apply_import(ImportStatus::default(), cx),
+            });
+        })
+        .detach();
+    }
+
+    fn apply_import(&mut self, import: ImportStatus, cx: &mut Context<Self>) {
+        if import != self.usage.import {
+            self.usage.import = import;
+            cx.notify();
+        }
     }
 
     fn apply_plans(&mut self, plans: Vec<AccountPlan>, cx: &mut Context<Self>) {
@@ -399,7 +439,9 @@ impl PaneFlowApp {
 mod tests {
     use std::collections::BTreeMap;
 
-    use paneflow_config::schema::{AgentProfileConfig, SpaceConfig, SpaceId};
+    use paneflow_agent_config::usage::accounts::OriginKind;
+    use paneflow_config::schema::{AgentProfileConfig, PaneFlowConfig, SpaceConfig, SpaceId};
+    use paneflow_serve::usage::DEFAULT_ORIGIN_NAME;
 
     use super::*;
 
@@ -545,6 +587,44 @@ mod tests {
                 "No plan data yet. Finish a Codex turn in a Paneflow pane to load your limits."
                     .into()
             )
+        );
+    }
+
+    #[test]
+    fn test_the_import_status_of_the_worker_frame_reaches_the_page_labels() {
+        let home = tempfile::tempdir().unwrap();
+        let now_ms = 1_793_457_000_000;
+        let mut worker = paneflow_serve::usage::Usage::open(home.path(), now_ms);
+        assert!(worker.begin_import(true));
+        worker.import_progress(1);
+        let frame = worker
+            .take_changed_frame()
+            .expect("the progress is published");
+        let running = worker_import(&frame[paneflow_serve::usage::FRAME_TYPE])
+            .expect("the app reads the import status of the frame");
+        assert!(running.running);
+        assert_eq!(
+            page::import_progress_label(running.files),
+            "Importing past activity\u{2026} 1 file"
+        );
+        worker.finish_import(
+            Some(paneflow_serve::usage::backfill::ImportOutcome {
+                files: 10_000,
+                limited_days: Some(30),
+                ..Default::default()
+            }),
+            now_ms,
+        );
+        let finished = worker_usage(&worker.snapshot())
+            .import
+            .expect("the snapshot carries the import status");
+        assert!(!finished.running);
+        assert_eq!(
+            finished
+                .limited_days
+                .map(page::import_limit_label)
+                .as_deref(),
+            Some("Imported the last 30 days")
         );
     }
 

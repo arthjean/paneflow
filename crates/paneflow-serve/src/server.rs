@@ -16,9 +16,9 @@ use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
     ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
     METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT,
-    METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS, WorkerIdentity,
-    error_envelope, result_envelope,
+    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH,
+    METHOD_USAGE_SNAPSHOT, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS,
+    WorkerIdentity, error_envelope, result_envelope,
 };
 use crate::state::WorkerState;
 use crate::usage::Usage;
@@ -28,6 +28,7 @@ use paneflow_agent_config::usage::accounts::UsageAgent;
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
+const IMPORT_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct Worker {
     pub identity: WorkerIdentity,
@@ -129,6 +130,69 @@ impl Worker {
             self.spawn_probe(agent, dir);
         }
         self.lock_usage().snapshot()
+    }
+
+    pub fn import_usage(self: &Arc<Self>, params: &Value) -> Value {
+        let accounts = probe::requested_accounts(params);
+        let force = params
+            .get("force")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.start_import(accounts, force);
+        self.lock_usage().snapshot()
+    }
+
+    pub fn start_import(
+        self: &Arc<Self>,
+        accounts: Vec<(UsageAgent, PathBuf)>,
+        force: bool,
+    ) -> bool {
+        if !self.lock_usage().begin_import(force) {
+            return false;
+        }
+        self.publish_usage();
+        let worker = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-usage-import".to_string())
+            .spawn(move || worker.run_import(&accounts));
+        if let Err(error) = spawned {
+            log::warn!("paneflow-serve: cannot start the activity import: {error}");
+            self.lock_usage()
+                .finish_import(None, crate::state::now_ms());
+            self.publish_usage();
+            return false;
+        }
+        true
+    }
+
+    fn run_import(&self, accounts: &[(UsageAgent, PathBuf)]) {
+        let files = crate::usage::backfill::import_files(accounts);
+        let now = crate::state::now_ms();
+        let mut published = Instant::now();
+        let outcome = crate::usage::backfill::run_import(
+            files,
+            &crate::usage::ledger::local_calendar(),
+            now,
+            &self.shutdown,
+            |files| {
+                if published.elapsed() >= IMPORT_PROGRESS_INTERVAL {
+                    published = Instant::now();
+                    self.lock_usage().import_progress(files);
+                    self.publish_usage();
+                }
+            },
+        );
+        let interrupted = outcome.is_none();
+        let booked = self
+            .lock_usage()
+            .finish_import(outcome, crate::state::now_ms());
+        if interrupted {
+            log::info!("paneflow-serve: the activity import stopped before it finished");
+        } else {
+            log::info!("paneflow-serve: imported {booked} days of past activity");
+        }
+        self.lock_usage().flush(Instant::now(), true);
+        self.publish_usage();
     }
 
     fn spawn_probe(self: &Arc<Self>, agent: UsageAgent, dir: PathBuf) {
@@ -582,6 +646,7 @@ fn dispatch(worker: &Arc<Worker>, method: &str, params: &Value) -> Result<Value,
         METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
         METHOD_USAGE_SNAPSHOT => Ok(worker.lock_usage().snapshot()),
         METHOD_USAGE_REFRESH => Ok(worker.refresh_usage(params)),
+        METHOD_USAGE_IMPORT => Ok(worker.import_usage(params)),
         _ => Err(DispatchError::MethodNotFound),
     }
 }
