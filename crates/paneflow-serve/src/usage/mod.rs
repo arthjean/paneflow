@@ -1,6 +1,7 @@
 pub mod codex;
 pub mod ledger;
 pub mod plans;
+pub mod probe;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use serde_json::{Value, json};
 use self::codex::CodexReading;
 use self::ledger::{Ledger, TurnInput, TurnSignal, local_calendar};
 use self::plans::{PlanStore, PlanUpdate};
+use self::probe::ProbeOutcome;
 
 pub const FRAME_TYPE: &str = "usage";
 
@@ -21,6 +23,7 @@ pub struct Usage {
     plans: PlanStore,
     ledger: Ledger,
     codex_reads: BTreeMap<String, Instant>,
+    probes: BTreeMap<(UsageAgent, String), Instant>,
     published: Option<Value>,
 }
 
@@ -39,6 +42,7 @@ impl Usage {
                 now_ms,
             ),
             codex_reads: BTreeMap::new(),
+            probes: BTreeMap::new(),
             published: None,
         }
     }
@@ -76,8 +80,11 @@ impl Usage {
                     .get("received_at_ms")
                     .and_then(Value::as_u64)
                     .unwrap_or(now_ms),
+                agent_version: None,
             },
-            None | Some(Value::Null) => PlanUpdate::NoLimitsReported,
+            None | Some(Value::Null) => PlanUpdate::NoLimitsReported {
+                agent_version: None,
+            },
             Some(_) => return false,
         };
         self.plans
@@ -147,10 +154,56 @@ impl Usage {
             Some(reading) => PlanUpdate::Limits {
                 limits: reading.limits,
                 observed_at_ms: reading.observed_at_ms,
+                agent_version: None,
             },
             None => PlanUpdate::NoCodexData,
         };
         self.plans.update(UsageAgent::Codex, dir, update, now_ms)
+    }
+
+    pub fn claim_probes(
+        &mut self,
+        accounts: impl IntoIterator<Item = (UsageAgent, PathBuf)>,
+        floor: Duration,
+        now: Instant,
+    ) -> Vec<(UsageAgent, PathBuf)> {
+        let mut claimed = Vec::new();
+        for (agent, dir) in accounts {
+            let dir = canonical_account_dir(&dir);
+            let key = (agent, account_dir_key(&dir));
+            let due = self
+                .probes
+                .get(&key)
+                .is_none_or(|last| now.duration_since(*last) >= floor);
+            if due {
+                self.probes.insert(key, now);
+                claimed.push((agent, dir));
+            }
+        }
+        claimed
+    }
+
+    pub fn record_probe(
+        &mut self,
+        agent: UsageAgent,
+        dir: &Path,
+        outcome: ProbeOutcome,
+        now_ms: u64,
+    ) -> bool {
+        let update = match outcome {
+            ProbeOutcome::Limits {
+                limits,
+                agent_version,
+            } => PlanUpdate::Limits {
+                limits,
+                observed_at_ms: now_ms,
+                agent_version,
+            },
+            ProbeOutcome::NoLimitsReported { agent_version } => {
+                PlanUpdate::NoLimitsReported { agent_version }
+            }
+        };
+        self.plans.update(agent, dir, update, now_ms)
     }
 
     pub fn flush(&mut self, now: Instant, force: bool) {
@@ -180,6 +233,14 @@ impl Usage {
         self.published = Some(frame.clone());
         Some(json!({"type": FRAME_TYPE, "usage": frame}))
     }
+}
+
+pub fn local_utc_offset_secs(at_secs: u64) -> i32 {
+    use chrono::{Offset, TimeZone};
+    i64::try_from(at_secs)
+        .ok()
+        .and_then(|secs| chrono::Local.timestamp_opt(secs, 0).earliest())
+        .map_or(0, |at| at.offset().fix().local_minus_utc())
 }
 
 pub fn read_codex_accounts(
@@ -231,6 +292,37 @@ mod tests {
         assert_eq!(
             claim(&mut usage, poll, start + Duration::from_secs(359)).len(),
             1
+        );
+    }
+
+    #[test]
+    fn each_account_is_probed_at_most_once_per_floor() {
+        let home = tempfile::tempdir().unwrap();
+        let mut usage = Usage::open(home.path(), 1_793_481_752_042);
+        let dir = home.path().join("claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        let start = Instant::now();
+        let floor = probe::PROBE_FLOOR;
+        let accounts = vec![
+            (UsageAgent::ClaudeCode, dir.clone()),
+            (UsageAgent::ClaudeCode, dir.join(".")),
+            (UsageAgent::Codex, dir.clone()),
+        ];
+        assert_eq!(
+            usage.claim_probes(accounts.clone(), floor, start).len(),
+            2,
+            "one probe per agent and account"
+        );
+        assert!(
+            usage
+                .claim_probes(accounts.clone(), floor, start + Duration::from_secs(29))
+                .is_empty()
+        );
+        assert_eq!(
+            usage
+                .claim_probes(accounts, floor, start + Duration::from_secs(30))
+                .len(),
+            2
         );
     }
 }

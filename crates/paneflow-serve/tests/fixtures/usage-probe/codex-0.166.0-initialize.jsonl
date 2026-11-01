@@ -1,0 +1,2 @@
+{"id":1,"result":{"userAgent":"paneflow/0.166.0 (Windows 10.0.26300; x86_64) (paneflow; 0.0.0)","codexHome":"/home/user/.codex","platformFamily":"windows","platformOs":"windows"}}
+{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"host","installationId":"00000000-0000-0000-0000-000000000000","environmentId":null},"emittedAtMs":1793523923743}

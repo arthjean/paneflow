@@ -141,6 +141,7 @@ const ALLOWED_PLAN_KEYS: &[&str] = &[
     "primary",
     "secondary",
     "received_at_ms",
+    "agent_version",
     "updated_at_ms",
     "used_percent",
     "window_secs",

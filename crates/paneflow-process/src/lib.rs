@@ -2,8 +2,8 @@
 
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Read};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::OnceLock;
@@ -767,6 +767,131 @@ fn reap_detached_children(receiver: &Receiver<Child>) {
     }
 }
 
+pub struct LineSession {
+    process: RunningProcess,
+    stdin: Option<ChildStdin>,
+    lines: Receiver<Vec<u8>>,
+}
+
+pub fn spawn_line_session(mut cmd: Command, line_cap: usize) -> Result<LineSession, ProcError> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    configure_process_tree(&mut cmd);
+    let cleanup = spawn_cleanup_worker()?;
+    SPAWNS.fetch_add(1, Ordering::Relaxed);
+    let child = cmd.spawn().map_err(ProcError::Spawn)?;
+    let mut process = RunningProcess::new(child, cleanup)?;
+    let child = process.child_mut()?;
+    let stdin = child.stdin.take();
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| supervision_error("stdout pipe unavailable after spawn"))?;
+    let (sender, lines) = mpsc::channel();
+    thread::Builder::new()
+        .name("paneflow-process-lines".to_string())
+        .spawn(move || forward_lines(stdout, line_cap, &sender))
+        .map_err(|source| ProcError::ReaderSpawn {
+            stream: OutputStream::Stdout,
+            source,
+        })?;
+    Ok(LineSession {
+        process,
+        stdin,
+        lines,
+    })
+}
+
+impl LineSession {
+    pub fn send_line(&mut self, line: &[u8]) -> io::Result<()> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?;
+        stdin.write_all(line)?;
+        stdin.write_all(b"\n")?;
+        stdin.flush()
+    }
+
+    pub fn next_line(&self, timeout: Duration) -> Result<Option<Vec<u8>>, ProcError> {
+        match self.lines.recv_timeout(timeout) {
+            Ok(line) => Ok(Some(line)),
+            Err(RecvTimeoutError::Timeout) => Err(ProcError::Timeout),
+            Err(RecvTimeoutError::Disconnected) => Ok(None),
+        }
+    }
+
+    pub fn close(mut self, grace: Duration) -> bool {
+        self.stdin = None;
+        let start = Instant::now();
+        loop {
+            match self
+                .process
+                .child_mut()
+                .and_then(|child| child.try_wait().map_err(ProcError::Wait))
+            {
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
+                Err(_) => return false,
+            }
+            let Some(sleep_for) = poll_sleep_duration(start, grace) else {
+                return false;
+            };
+            thread::sleep(sleep_for);
+        }
+    }
+}
+
+fn forward_lines(stdout: impl Read, cap: usize, sender: &mpsc::Sender<Vec<u8>>) {
+    let mut reader = BufReader::new(stdout);
+    let limit = u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match (&mut reader).take(limit).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let complete = line.last() == Some(&b'\n');
+        if !complete && line.len() > cap {
+            if !skip_rest_of_line(&mut reader) {
+                return;
+            }
+            continue;
+        }
+        while matches!(line.last(), Some(b'\n' | b'\r')) {
+            line.pop();
+        }
+        if sender.send(std::mem::take(&mut line)).is_err() {
+            return;
+        }
+    }
+}
+
+fn skip_rest_of_line(reader: &mut impl BufRead) -> bool {
+    loop {
+        let (consumed, found) = match reader.fill_buf() {
+            Ok([]) | Err(_) => return false,
+            Ok(buffer) => match buffer.iter().position(|byte| *byte == b'\n') {
+                Some(end) => (end + 1, true),
+                None => (buffer.len(), false),
+            },
+        };
+        reader.consume(consumed);
+        if found {
+            return true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1217,5 +1342,51 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    #[cfg(unix)]
+    fn line_echo_command() -> Command {
+        sh("while IFS= read -r l; do printf '%s\\n' xxxxxxxxxxxxxxxxxxxx; printf 'got %s\\n' \"$l\"; done")
+    }
+
+    #[cfg(windows)]
+    fn line_echo_command() -> Command {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "while (($l = [Console]::In.ReadLine()) -ne $null) { [Console]::Out.WriteLine('x' * 20); [Console]::Out.WriteLine('got ' + $l) }",
+        ]);
+        c
+    }
+
+    #[test]
+    fn a_line_session_answers_each_line_skips_oversized_ones_and_exits_on_stdin_close() {
+        let mut session = spawn_line_session(line_echo_command(), 10).unwrap();
+        session.send_line(b"a").unwrap();
+        assert_eq!(
+            session.next_line(Duration::from_secs(20)).unwrap(),
+            Some(b"got a".to_vec())
+        );
+        session.send_line(b"b").unwrap();
+        assert_eq!(
+            session.next_line(Duration::from_secs(20)).unwrap(),
+            Some(b"got b".to_vec())
+        );
+        assert!(session.close(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn a_line_session_that_ignores_stdin_close_is_reported_and_killed() {
+        let session = spawn_line_session(sleep_command(), 1024).unwrap();
+        assert!(matches!(
+            session.next_line(Duration::from_millis(100)),
+            Err(ProcError::Timeout)
+        ));
+        let start = Instant::now();
+        assert!(!session.close(Duration::from_millis(200)));
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 }

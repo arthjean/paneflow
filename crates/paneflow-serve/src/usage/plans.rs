@@ -54,6 +54,8 @@ pub struct AccountPlan {
     pub secondary: Option<StoredWindow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub received_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_version: Option<String>,
     pub updated_at_ms: u64,
 }
 
@@ -79,8 +81,11 @@ pub enum PlanUpdate {
     Limits {
         limits: PlanLimits,
         observed_at_ms: u64,
+        agent_version: Option<String>,
     },
-    NoLimitsReported,
+    NoLimitsReported {
+        agent_version: Option<String>,
+    },
     NoCodexData,
 }
 
@@ -163,6 +168,7 @@ impl PlanStore {
                     primary: None,
                     secondary: None,
                     received_at_ms: None,
+                    agent_version: None,
                     updated_at_ms: now_ms,
                 });
                 self.accounts.len() - 1
@@ -174,13 +180,28 @@ impl PlanStore {
             PlanUpdate::Limits {
                 limits,
                 observed_at_ms,
+                agent_version,
             } => {
+                if account
+                    .received_at_ms
+                    .is_some_and(|held| observed_at_ms < held)
+                {
+                    return false;
+                }
                 account.primary = merge(account.primary, limits.primary);
                 account.secondary = merge(account.secondary, limits.secondary);
                 account.received_at_ms = Some(observed_at_ms);
                 account.state = PlanState::Reported;
+                if agent_version.is_some() {
+                    account.agent_version = agent_version;
+                }
             }
-            PlanUpdate::NoLimitsReported => account.state = PlanState::NoLimitsReported,
+            PlanUpdate::NoLimitsReported { agent_version } => {
+                account.state = PlanState::NoLimitsReported;
+                if agent_version.is_some() {
+                    account.agent_version = agent_version;
+                }
+            }
             PlanUpdate::NoCodexData => account.state = PlanState::NoCodexData,
         }
         if self.accounts[index] != before {
@@ -282,6 +303,7 @@ mod tests {
         PlanUpdate::Limits {
             limits: plausible_claude_rate_limits(rate_limits, NOW),
             observed_at_ms,
+            agent_version: None,
         }
     }
 
@@ -353,6 +375,42 @@ mod tests {
     }
 
     #[test]
+    fn an_older_observation_never_replaces_a_newer_one_and_keeps_the_agent_version() {
+        let home = tempfile::tempdir().unwrap();
+        let mut store = PlanStore::load(&home.path().join("plans.json"));
+        let dir = home.path().join(".claude");
+        let reset = NOW + 3 * 86_400;
+        let probed = PlanUpdate::Limits {
+            limits: plausible_claude_rate_limits(&limits(10.0, 40.0, reset), NOW),
+            observed_at_ms: 2_000,
+            agent_version: Some("2.1.316".into()),
+        };
+        assert!(store.update(UsageAgent::ClaudeCode, &dir, probed, 2_000));
+        assert!(
+            !store.update(
+                UsageAgent::ClaudeCode,
+                &dir,
+                claude_update(&limits(30.0, 50.0, reset), 1_000),
+                2_100
+            ),
+            "a relay frame observed before the probe answer is older"
+        );
+        assert!(store.update(
+            UsageAgent::ClaudeCode,
+            &dir,
+            claude_update(&limits(30.0, 50.0, reset), 3_000),
+            3_000
+        ));
+        let account = &store.accounts()[0];
+        assert_eq!(
+            account.secondary.map(|window| window.used_percent),
+            Some(50.0)
+        );
+        assert_eq!(account.received_at_ms, Some(3_000));
+        assert_eq!(account.agent_version.as_deref(), Some("2.1.316"));
+    }
+
+    #[test]
     fn missing_limits_keep_the_previous_snapshot_with_its_time() {
         let home = tempfile::tempdir().unwrap();
         let mut store = PlanStore::load(&home.path().join("plans.json"));
@@ -366,7 +424,9 @@ mod tests {
         assert!(store.update(
             UsageAgent::ClaudeCode,
             &dir,
-            PlanUpdate::NoLimitsReported,
+            PlanUpdate::NoLimitsReported {
+                agent_version: None
+            },
             9
         ));
         let account = &store.accounts()[0];

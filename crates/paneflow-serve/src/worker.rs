@@ -138,6 +138,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         core_connected: AtomicBool::new(false),
         broadcast_snapshot: Mutex::new(None),
         usage: Mutex::new(crate::usage::Usage::open(home, now_ms())),
+        probe_slots: crate::usage::probe::ProbeSlots::default(),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {

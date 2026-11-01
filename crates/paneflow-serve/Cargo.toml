@@ -20,10 +20,12 @@ paneflow-home.workspace = true
 paneflow-host.workspace = true
 paneflow-ipc-client.workspace = true
 paneflow-mcp-install.workspace = true
+paneflow-process.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -4482,11 +4482,13 @@ dependencies = [
  "paneflow-host",
  "paneflow-ipc-client",
  "paneflow-mcp-install",
+ "paneflow-process",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "which",
  "windows-sys 0.59.0",
 ]
 

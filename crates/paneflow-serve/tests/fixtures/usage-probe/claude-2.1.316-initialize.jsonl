@@ -1,0 +1,1 @@
+{"type":"control_response","response":{"subtype":"success","request_id":"paneflow-initialize","response":{"commands":[],"claude_code_version":"2.1.316","session_state":"idle"},"pending_permission_requests":[],"pending_user_dialog_requests":[]}}

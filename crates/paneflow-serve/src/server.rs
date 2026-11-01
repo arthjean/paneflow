@@ -22,6 +22,8 @@ use crate::protocol::{
 };
 use crate::state::WorkerState;
 use crate::usage::Usage;
+use crate::usage::probe::{self, ProbeSlots};
+use paneflow_agent_config::usage::accounts::UsageAgent;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -40,6 +42,7 @@ pub struct Worker {
     pub core_connected: AtomicBool,
     pub broadcast_snapshot: Mutex<Option<Vec<Value>>>,
     pub usage: Mutex<Usage>,
+    pub probe_slots: ProbeSlots,
 }
 
 impl Worker {
@@ -98,9 +101,16 @@ impl Worker {
         self.publish_usage();
     }
 
-    pub fn refresh_usage(&self) -> Value {
+    pub fn refresh_usage(self: &Arc<Self>, params: &Value) -> Value {
+        let requested = probe::requested_accounts(params);
         let mut dirs: Vec<PathBuf> = paneflow_agent_config::codex_home().into_iter().collect();
         dirs.extend(self.running_codex_dirs());
+        dirs.extend(
+            requested
+                .iter()
+                .filter(|(agent, _)| *agent == UsageAgent::Codex)
+                .map(|(_, dir)| dir.clone()),
+        );
         let held = self.lock_usage().codex_dirs();
         dirs.extend(held);
         let claimed = self.lock_usage().claim_codex_reads(
@@ -111,11 +121,52 @@ impl Worker {
         self.read_codex(claimed);
         self.lock_usage().flush(Instant::now(), false);
         self.publish_usage();
+        let probes = self
+            .lock_usage()
+            .claim_probes(requested, probe::PROBE_FLOOR, Instant::now());
+        for (agent, dir) in probes {
+            self.spawn_probe(agent, dir);
+        }
         self.lock_usage().snapshot()
     }
 
+    fn spawn_probe(self: &Arc<Self>, agent: UsageAgent, dir: PathBuf) {
+        let worker = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-usage-probe".to_string())
+            .spawn(move || worker.run_probe(agent, &dir));
+        if let Err(error) = spawned {
+            log::warn!("paneflow-serve: cannot start a usage probe: {error}");
+        }
+    }
+
+    fn run_probe(&self, agent: UsageAgent, dir: &std::path::Path) {
+        let _slot = self.probe_slots.acquire();
+        if self.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let user_home = paneflow_agent_config::home_dir();
+        let now = crate::state::now_ms();
+        match probe::probe_account(agent, dir, &self.home, user_home.as_deref(), now / 1000) {
+            Ok(outcome) => {
+                let changed =
+                    self.lock_usage()
+                        .record_probe(agent, dir, outcome, crate::state::now_ms());
+                if changed {
+                    self.lock_usage().flush(Instant::now(), false);
+                    self.publish_usage();
+                }
+            }
+            Err(error) => log::warn!(
+                "paneflow-serve: the {} usage probe for {} kept the previous limits: {error}",
+                agent.display_name(),
+                dir.display()
+            ),
+        }
+    }
+
     fn running_codex_dirs(&self) -> Vec<PathBuf> {
-        let codex = paneflow_agent_config::usage::accounts::UsageAgent::Codex.runtime_slug();
+        let codex = UsageAgent::Codex.runtime_slug();
         self.lock_state()
             .running_accounts()
             .into_iter()
@@ -494,7 +545,7 @@ enum DispatchError {
     MethodNotFound,
 }
 
-fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, DispatchError> {
+fn dispatch(worker: &Arc<Worker>, method: &str, params: &Value) -> Result<Value, DispatchError> {
     match method {
         METHOD_WORKER_HELLO | METHOD_HOST_HELLO => {
             Ok(serde_json::to_value(&worker.identity).unwrap_or_else(|_| json!({})))
@@ -511,7 +562,7 @@ fn dispatch(worker: &Worker, method: &str, params: &Value) -> Result<Value, Disp
         }
         METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
         METHOD_USAGE_SNAPSHOT => Ok(worker.lock_usage().snapshot()),
-        METHOD_USAGE_REFRESH => Ok(worker.refresh_usage()),
+        METHOD_USAGE_REFRESH => Ok(worker.refresh_usage(params)),
         _ => Err(DispatchError::MethodNotFound),
     }
 }
