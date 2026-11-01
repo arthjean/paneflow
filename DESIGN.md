@@ -277,7 +277,20 @@ to the surfaces named:
 | `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#1a6ff6` | Title bar update pill when a release is known or staged for restart | Solid update blue with a white glyph and label, no border, identical in every preset; white text holds 4.52:1 at rest, and hover darkens the lightness by 0.05 like `solid_button` (5.3:1) instead of lightening |
-| `hsl(40 85% 55%)` | Callout warning | Severity hue independent of preset |
+| `hsl(40 85% 55%)` | Callout warning, plan usage `Warn` level | Severity hue independent of preset |
+| `#D97757` | Claude Code logo in the usage capsule, bubble, and tiles; base of the Claude Code activity ramp | Brand mark color, identical in every preset |
+
+Plan usage has three levels, set by the used fraction of a window in
+`UsageLevel::for_fraction` (`crates/paneflow-agent-config/src/usage/model.rs`):
+`Normal` below 0.80 takes `accent`, `Warn` from 0.80 takes the callout warning
+hue above, and `Critical` from 0.95 takes `agent_error`. `level_color` in
+`src-app/src/ui_primitives/ring.rs` is the only mapping; the ring, the bubble
+meters, and the tile legend all read it. A level color only ever comes from a
+reported window: an account without a snapshot, billed through an API key, or
+reporting no limits draws the bare track and never tints the capsule. The
+activity registers use their own ramp, never the level colors: level 0 is
+`subtle`, and levels 1 to 4 mix the agent base (`#D97757` for Claude Code,
+`text` for every other agent) at 0.30, 0.52, 0.76, and 1.0.
 
 ### 4.4 Geometry
 
@@ -293,6 +306,9 @@ to the surfaces named:
 | Primary sidebar header controls | 7 | continuous corner approximation | no border |
 | Primary sidebar Settings button | 12 | continuous corner approximation | 36 px high, glyph 18 px for optical balance with the 20 px filter glyph |
 | Primary sidebar filter | full | capsule | 36 px high, glyph 20 px |
+| Primary sidebar usage capsule | 12 | continuous corner approximation | 36 px high, the Settings button skin |
+| Usage ring | full | stroked circle, round caps | a `text` at 0.13 track; sizes 16 (stroke 2.5), 44 (4.5), and 76 (7); two concentric rings sit 3 px apart |
+| Usage register cell | 2 | round | none; 8 px cells, 2 px gap |
 | Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
@@ -386,13 +402,23 @@ sidebar footer settings button uses the matching `settings.svg` gear.
 | 13 | Medium icon button, filter search, preset logo, menu check mark, path picker recent clock |
 | 14 | Title bar sidebar toggle, editor logos, sidebar footer banners and gear |
 | 15 | Toast error icon, sidebar folder, sidebar header glyphs |
-| 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon |
+| 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon, usage ring in the sidebar capsule |
 | 17 | Diff file header generic glyph |
 | 18 | Empty-state glyph |
 | 20 | Diff file header Rust icon, which needs the larger box |
 
 File type icons come from `src-app/src/file_icons.rs`, which maps extensions
 to `icons/languages/`.
+
+The usage ring (`ring` and `concentric_rings` in
+`src-app/src/ui_primitives/ring.rs`) is the one gauge glyph of the app: a track
+plus a value arc with round caps, drawn from twelve o'clock clockwise with
+`PathBuilder::stroke`. A value of 0 shows the track alone, 1.0 closes the
+circle, and anything outside [0, 1] is clamped. Below 8 px, or with a stroke
+of at least the radius, nothing is drawn. It has no motion, so reduced motion
+changes nothing. The 16 px size sits in the sidebar capsule, the 76 px
+concentric pair (week outside, session inside at 0.72, the agent logo in the
+middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 
 ### 4.8 Motion
 
@@ -603,6 +629,21 @@ workspace names and visible checkout labels. Matching ignores letter case.
 Matching tabs
 are revealed while filtering. Settings retains its 14 px gear and tooltip,
 with the active row tint when open and the hover tint otherwise.
+
+When at least one Claude Code or Codex account exists and
+`usage.plan_limits` and `sidebar_show.usage` are both on, a usage capsule sits
+between the filter and the Settings button (`src-app/src/app/usage/render.rs`).
+It is 36 px high at radius 12 with the Settings button's hover and open tints,
+and holds the 16 px ring of 4.7 and the most constraining percentage of the
+active space's accounts (the default accounts when the space declares none) in
+13 px Medium with tabular numerals, 7 px apart. Its tooltip, after 800 ms,
+reads `Plan usage: {account}, {window} {percent}`, or `Plan usage: no data
+yet` over a bare track. Its accessible name starts with the visible text
+(`54% plan usage, Claude Code week`) and exposes the expanded state. Tab
+reaches it from the filter, and Enter or Space opens the bubble of 5.6. The
+filter keeps at least 120 px: below that, the capsule drops its number and
+keeps the ring and its accessible name. With no account, or with either
+setting off, the capsule is absent and the filter takes its place.
 
 Filter changes animate row opacity and occupied height over 180 ms with a
 cubic ease-out. Exiting rows remain until the transition completes, and
@@ -882,6 +923,37 @@ blue leans azure and indigo), fixed across themes. Errors read
 in `vc_deleted` and warnings in `text` after an amber glyph, because the fixed
 red and `vc_modified` fall under 4.5:1 as text on the light card.
 
+The Usage page (`src-app/src/app/usage/page.rs`), under Integrations between
+Agents and Plugins with the 15 px `chart-bar-line` glyph, has the 26 px heading, a
+12 px muted intro, `Updated {relative time}`, and a soft `Refresh` button that
+reprobes the accounts and reloads the ledger. Under the `Plan limits` eyebrow,
+a two-column grid of tiles (squircle 20 on `card`, one column under 560 px of
+page width) shows each account: the 76 px concentric rings, the agent name in
+13 px Medium, the account label, a legend of swatch, window, percentage, and
+reset, and the pace line. A tile without data shows the state text of the
+bubble instead of a gauge. Under the `Activity by agent` eyebrow, whose
+trailing edge holds a `Turns` | `Tokens` | `Active time` segmented control of
+full-radius pills (Turns by default, not persisted), one card stacks a register
+per account with activity in the last 53 weeks: Claude Code first, then Codex,
+then the rest alphabetically. Each register has a header row (14 px logo,
+agent name at 12.5 px Medium, account label at 11 px muted, total on the
+trailing edge) above a 53 by 7 grid of the 8 px cells of 4.4, Monday first,
+months above at 10.5 px muted and Mon, Wed, Fri on the left. One scale serves
+every register: levels 1 to 4 are the quartiles of the nonzero values of the
+shown metric, colored with the ramp of 4.3. The strip scrolls horizontally
+with the tab strip fades and opens on today. A detail line under the
+registers names the hovered or focused day for each agent, beside `One scale
+for all agents`. Each register is a keyboard grid: Tab enters on today, the
+arrows move by day or week, Home and End reach the ends of the row, and each
+cell is named `{Tuesday, August 18, 2026}: {41 turns}` or `no activity`.
+Below the card, one 11.5 px muted row reads `Claude Code keeps transcripts
+for 30 days by default.`, then the import state (`Importing past activity…
+{n} files` while the worker reads, `Imported the last {n} days` after an
+import cut short by its limits) and an `Import past activity` ghost button
+with the 13 px download glyph, hidden while an import runs. With no account,
+a single card says so and links to Settings › Agents; with no activity
+anywhere, the register card is one muted line.
+
 ### 5.6 Menus, selects, tooltips
 
 Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:
@@ -899,6 +971,27 @@ theme picker, the clone dialog and the Welcome rows, keep the 28 px
 `select_item` row. Tooltips are squircle 14 on the title
 bar color, padding 8 by 6, small text, shown after 800 ms through
 `delayed_tooltip`.
+
+The usage bubble opens from the sidebar capsule of 5.2: a 284 px
+`menu_surface` whose bottom edge sits 52 px above the sidebar's, revealed with
+`menu_reveal`.
+Escape, an outside click, or a second click closes it and returns focus to
+the capsule. Its header pairs the `Plan usage` eyebrow (11 Semibold muted)
+with `Updated {relative time}` at 11 muted, taken from the oldest snapshot
+shown. One block per account follows, the active space's accounts first: the
+15 px agent logo, the agent name at 12.5 Medium, and the account label at
+11.5 muted, truncated with a tooltip. Each window is a meter: a 52 px label,
+a 4 px capsule bar on a `text` at 0.13 track in the level color of 4.3, and the
+percentage right-aligned on 34 px, with the reset time in the meter's tooltip.
+A week window with a projection adds one line: the warning glyph and `At this
+pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets.`
+when it overshoots, otherwise `On track: about {66%} of the week used when it
+resets.` in muted. An account without limits shows one muted sentence that
+says why and names the fix (no snapshot yet, API key billing, no limits
+reported, reset since the snapshot). The list scrolls past 420 px with the
+header and the last row fixed; the last row, a `menu_row`, opens Settings ›
+Usage. Up and Down move a 1 px `text` ring at 0.35 across the blocks and that
+row.
 
 ### 5.7 Palettes
 

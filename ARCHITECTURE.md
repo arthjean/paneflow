@@ -590,10 +590,84 @@ stale code.
   only when its recorded child pid with a matching kernel start time is
   absent. An unknown or recycled pid stays `non_resumable` and is never
   signaled.
-- **No front door.** The worker answers only `worker.*`, `host.hello` and the
-  `agent.*` methods, and forwards nothing to the core. The CLI and MCP reach
+- **No front door.** The worker answers only `worker.*`, `host.hello`, the
+  `agent.*` methods and the `usage.*` methods of the next section, and forwards
+  nothing to the core. The CLI and MCP reach
   `session.*` and `surface.*` on the host endpoint directly when no desktop is
   running.
+
+### Plan usage and the activity ledger
+
+The worker also owns plan usage: the session and weekly limits of each Claude
+Code and Codex subscription, and a daily ledger of turns, tokens and active
+time per account. An account is one (agent, canonical config directory) pair;
+`paneflow_agent_config::usage::accounts::inventory` lists them from the
+default directories, every space's `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and the
+agent profiles. The code lives in `crates/paneflow-serve/src/usage/`, and the
+app only renders what the worker publishes (`src-app/src/app/usage/`).
+
+**No credential is ever read.** Paneflow never opens `.credentials.json`,
+`auth.json` or a keychain item, never reads an OAuth token, and never sends an
+HTTP request for usage. Limits reach the worker through three paths, all of
+which leave authentication to the agent's own unmodified binary:
+
+- **The status line relay.** When `usage.plan_limits` is on (the default) and
+  the user has no status line of their own, the Claude integration installs a
+  managed `statusLine` whose command is `paneflow-ai-hook StatusLine`. Claude
+  Code pipes its status JSON to it after each response; the relay keeps only
+  the session, the config directory, `rate_limits` and the receive time, and
+  sends them to the host as an `agent.event` of kind `status_line` within a
+  40 ms deadline, printing nothing. The host republishes it as a `plan_limits`
+  frame on its agent bus, and the worker stores it. A foreign status line is
+  never rewritten, and `usage.plan_limits: false` or removing the integration
+  removes the managed one.
+- **The probes.** `usage.refresh`, sent when the sidebar bubble opens or the
+  Usage page refreshes, makes the worker probe each requested account at most
+  once per 30 s, two at a time, on background threads
+  (`usage/probe.rs`): Claude Code runs as
+  `claude -p --input-format stream-json --output-format stream-json` with the
+  account's `CLAUDE_CONFIG_DIR`, hooks and MCP servers off, and answers the
+  `get_usage` control request without any user message; Codex runs as
+  `codex app-server` and answers `account/rateLimits/read`. The real binary is
+  resolved with every Paneflow shim directory removed from `PATH`, and no
+  `PANEFLOW_*` variable reaches it.
+- **Codex rollouts.** At each Codex turn end, and every five minutes while a
+  Codex session runs, the worker reads the tail of the newest
+  `<CODEX_HOME>/sessions/**/rollout-*.jsonl` for its last `rate_limits`.
+
+The newest observation of an account wins. `<home>/usage/plans.json` holds one
+snapshot per account (windows, reset times, observation time, agent version,
+or a state such as `no_codex_data` or `no_limits_reported`), written at most
+every 10 s and on stop; the ledger below is written at most once a minute. Each change goes out as a `usage` frame on the
+`agent.follow` stream, carrying the plans and the ledger revision; the app
+fetches the ledger itself with `usage.snapshot` only when the revision moved
+and the Usage page is open.
+
+`<home>/usage/ledger.json` is the activity ledger, kept for 400 days and
+capped at 8 MiB (an unreadable file is moved aside as `ledger.json.bad-<ms>`).
+Turns and active time come from the hook frames the worker already reduces;
+tokens come from the bytes a Claude transcript gained at each `Stop` and from
+the growth of the Codex cumulative totals, excluding cache tokens, with at
+most 8 MiB read per file per pass and per-file offsets under `cursors`. Each
+day counts in the local calendar of the entry's timestamp.
+
+**The import.** At the worker's first start with an empty ledger, and on
+`usage.import` (the page's `Import past activity`), a low-priority background
+thread walks every account's Claude `projects/**/*.jsonl` transcripts and
+Codex rollouts, newest first, up to 10,000 files or 2 GB
+(`usage/backfill.rs`). It counts a turn per user prompt (not a tool result,
+meta line or sidechain; a Codex `task_started`) and the same tokens as the
+live path, then books the result in one step. A resumed Claude session copies
+its earlier lines into a new transcript, so the import counts each prompt
+`uuid`, assistant message `id` and Codex `turn_id` once per account across
+all files. Only days before today that the
+ledger does not already hold are booked, and each one is flagged per account
+under `imported`, so a second import adds nothing and a live read of an old
+transcript never adds to an imported day. When a limit stops the walk, the
+days the unread files could still cover are dropped and the import record
+(`import`) keeps `limited_days`, which the page shows as `Imported the last
+{n} days`. A stop request interrupts the walk and books nothing. Progress
+rides on the `usage` frame as `import.running` and `import.files`.
 
 ## Local host and durable session identity
 
