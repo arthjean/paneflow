@@ -450,6 +450,21 @@ pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     }
 }
 
+impl RowPalette {
+    pub fn on_material(self, material_active: bool) -> Self {
+        if !material_active {
+            return self;
+        }
+        let clear = gpui::transparent_black();
+        Self {
+            context_bg: clear,
+            gutter_bg: clear,
+            phantom_bg: clear,
+            ..self
+        }
+    }
+}
+
 pub const MUTED_WASH_ALPHA: f32 = 0.08;
 
 pub const MUTED_BAR_ALPHA: f32 = 0.5;
@@ -1266,6 +1281,28 @@ pub fn apply_expanded_split_with_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_material_clears_only_the_base_fills_of_the_palette() {
+        let ui = crate::theme::ui_colors_with(&crate::theme::paneflow_dark());
+        let base = palette(ui);
+        let clear = gpui::transparent_black();
+
+        let unchanged = base.on_material(false);
+        assert_eq!(unchanged.context_bg, base.context_bg);
+        assert_eq!(unchanged.gutter_bg, base.gutter_bg);
+        assert_eq!(unchanged.phantom_bg, base.phantom_bg);
+
+        let material = base.on_material(true);
+        assert_eq!(material.context_bg, clear);
+        assert_eq!(material.gutter_bg, clear);
+        assert_eq!(material.phantom_bg, clear);
+        assert_eq!(material.header_bg, base.header_bg);
+        assert_eq!(material.sticky_header_bg, base.sticky_header_bg);
+        assert_eq!(material.add_bg, base.add_bg);
+        assert_eq!(material.add_bar, base.add_bar);
+        assert_eq!(material.add_gutter_bg, base.add_gutter_bg);
+    }
 
     fn modified_file(base: &str, new: &str) -> FileDiff {
         FileDiff {

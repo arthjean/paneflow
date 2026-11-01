@@ -163,7 +163,8 @@ impl Render for CodeView {
         let focused = self.focus.is_focused(window);
         let element = CodeElement::new(
             cx.entity(),
-            palette(ui),
+            palette(ui)
+                .on_material(crate::config_snapshot::current(cx).terminal_material_enabled()),
             CodeColors {
                 scrollbar_thumb: theme.scrollbar_thumb,
                 cursor: theme.cursor,

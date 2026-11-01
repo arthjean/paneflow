@@ -319,6 +319,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
+| Diff dock tab bar | 44, the pane header chips (`unified_tab_chip`, `tab_close_button`, the terminal `tab_badge`), sized to the label between 64 and 208 instead of the pane's fixed 208; 32 tall, radius from the dock card frame; the strip scrolls with edge fades and the new tab button sits at the right beside the panel actions |
 | Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
 | Sidebar action button | 22, gap 1; folder glyph 15 in a 20 px slot |
@@ -1089,6 +1090,12 @@ while the window is unfocused.
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
 | Linux | Opaque shell by default. `linux_chrome_material` or `linux_terminal_material` makes the surface transparent and paints the shell as a theme veil (0.72 on dark themes, 0.80 on light ones, since a light veil lets a mid-tone wallpaper grey it); Paneflow requests no blur, so any blur comes from the compositor, for instance Blur my Shell on GNOME | Opaque, tinted from the title bar color; reveals the veil when `linux_chrome_material` is on | Opaque; with `linux_terminal_material` the terminal card adds a 0.35 shade over the veil, black on dark themes and white on light ones, so the terminal reads denser than the sidebar | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
+
+The right dock follows the Terminal column: while the terminal material is
+on, its card takes the terminal card color (`pane_card_background`), and the
+diff rows, the editor, and the file tree paint no `base` fill
+(`RowPalette::on_material`), so the material shows through. File headers,
+sticky headers, change washes, and hunk bars keep their colors.
 
 Rules that follow:
 

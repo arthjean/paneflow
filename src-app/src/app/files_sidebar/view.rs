@@ -101,7 +101,6 @@ impl Render for FilesSidebar {
             .min_h_0()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::handle_files_sidebar_key_down))
-            .bg(ui.base)
             .child(self.files_filter_row(ui, cx))
             .child(self.files_sidebar_body(ui, cx))
     }

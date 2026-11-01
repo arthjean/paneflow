@@ -143,6 +143,7 @@ struct DiffDockState {
     pub(crate) split: bool,
     pub(crate) generation: u64,
     pub(crate) scroll: gpui::ScrollHandle,
+    pub(crate) tab_scroll: gpui::ScrollHandle,
     pub(crate) diff_options_menu_open: bool,
     pub(crate) diff_options_submenu: Option<crate::app::diff_dock::DiffOptionsSubmenu>,
     pub(crate) diff_options: crate::diff::DiffOptions,

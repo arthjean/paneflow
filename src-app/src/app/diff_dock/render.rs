@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, img, prelude::FluentBuilder, px, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, img, prelude::FluentBuilder, px, svg,
 };
 
 use super::model::{DiffChrome, DiffDockTab};
@@ -9,38 +9,34 @@ use super::new_tab_menu::render_diff_new_tab_menu;
 use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
 use crate::layout::CardFrame;
+use crate::pane::CardShape;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::squircle::{
-    squircle_border, squircle_corners_border, squircle_corners_fill, squircle_fill,
-};
+use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, ROW_RADIUS, squircle_skin};
 
-pub(super) fn dock_card_fill(frame: CardFrame, ui: crate::theme::UiColors) -> AnyElement {
-    match frame {
-        CardFrame::Card => squircle_fill(crate::app::constants::PANE_CARD_RADIUS, ui.base),
-        CardFrame::Flush(edges) => crate::layout::flush_fill(edges, ui.base).into_any_element(),
-        CardFrame::Morph { outer, comfort } => {
-            squircle_corners_fill(crate::layout::morph_corners(outer, comfort), ui.base)
-        }
+pub(super) fn dock_card_background(
+    theme: &crate::theme::TerminalTheme,
+    ui: crate::theme::UiColors,
+    terminal_material_active: bool,
+    material_veiled: bool,
+) -> Hsla {
+    if terminal_material_active {
+        crate::pane::pane_card_background(theme, true, true, material_veiled)
+    } else {
+        ui.base
     }
 }
 
-pub(super) fn dock_card_border(frame: CardFrame, ui: crate::theme::UiColors) -> AnyElement {
-    match frame {
-        CardFrame::Card => {
-            squircle_border(crate::app::constants::PANE_CARD_RADIUS, px(1.), ui.border)
-                .into_any_element()
-        }
-        CardFrame::Flush(edges) => {
-            crate::layout::flush_outline(edges, ui.border).into_any_element()
-        }
-        CardFrame::Morph { outer, comfort } => squircle_corners_border(
-            crate::layout::morph_corners(outer, comfort),
-            px(1.),
-            ui.border,
-        )
-        .into_any_element(),
-    }
+pub(super) fn dock_card_fill(frame: CardFrame, background: Hsla) -> AnyElement {
+    CardShape::from(frame).background(background)
+}
+
+pub(super) fn dock_card_border(
+    frame: CardFrame,
+    background: Hsla,
+    ui: crate::theme::UiColors,
+) -> AnyElement {
+    CardShape::from(frame).border(background, ui.border, true)
 }
 
 pub(super) fn render_diff_resize_handle(
@@ -73,32 +69,37 @@ pub(super) fn render_diff_resize_handle(
         .into_any_element()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_diff_tab_strip(
     tabs: &[DiffDockTab],
     active: usize,
     close_armed: Option<usize>,
     new_tab_menu_open: bool,
     maximized: bool,
+    frame: CardFrame,
+    card_background: Hsla,
+    scroll: &gpui::ScrollHandle,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let mut strip = div()
-        .h(px(44.))
-        .flex_none()
+    let chip_radius = CardShape::from(frame).tab_chip_radius();
+    let mut chips = div()
+        .id("diff-dock-tab-chips")
         .flex()
         .flex_row()
         .items_center()
+        .h_full()
         .gap(px(3.))
-        .px(px(6.))
-        .border_b_1()
-        .border_color(ui.border);
+        .overflow_x_scroll()
+        .track_scroll(scroll);
 
     for (index, tab) in tabs.iter().enumerate() {
-        strip = strip.child(render_diff_tab(
+        chips = chips.child(render_diff_tab(
             tab,
             index,
             index == active,
             close_armed == Some(index),
+            chip_radius,
             ui,
             cx,
         ));
@@ -107,7 +108,28 @@ pub(super) fn render_diff_tab_strip(
     let open = new_tab_menu_open;
     let rail_hover = crate::app::constants::sidebar_tab_hover_background();
 
-    strip
+    div()
+        .h(px(44.))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(3.))
+        .px(px(6.))
+        .border_b_1()
+        .border_color(ui.border)
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .child(chips)
+                .child(crate::pane::tab_strip_fades(
+                    scroll.clone(),
+                    card_background,
+                )),
+        )
         .child(
             squircle_skin(
                 div()
@@ -138,7 +160,6 @@ pub(super) fn render_diff_tab_strip(
                 trigger.child(render_diff_new_tab_menu(ui, cx))
             }),
         )
-        .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
             "diff-dock-agent-sessions",
             "Agent sessions",
@@ -169,14 +190,11 @@ pub(super) fn render_diff_tab_strip(
             }),
             ui.muted,
         ))
-        .child(render_diff_header_icon_button(
+        .child(render_diff_dock_close_button(
             "diff-dock-close",
-            "Close panel",
-            "icons/layout-sidebar-right-collapse.svg",
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.dismiss_diff_dock_panel(cx);
-            }),
+            frame,
             ui.muted,
+            cx,
         ))
         .into_any_element()
 }
@@ -186,6 +204,7 @@ fn render_diff_tab(
     index: usize,
     active: bool,
     close_armed: bool,
+    chip_radius: Option<Pixels>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
@@ -200,74 +219,37 @@ fn render_diff_tab(
             Some((
                 crate::file_icons::language_icon_path(&name),
                 truncate_tab_label(&name),
+                view.path().display().to_string(),
                 view.is_dirty(),
             ))
         }
         _ => None,
     };
-    let (icon, label) = match (tab, &file) {
-        (DiffDockTab::Changes, _) => ("icons/plus-minus.svg", "Changes".to_string()),
-        (DiffDockTab::Terminal(_), _) => ("icons/terminal.svg", "Terminal".to_string()),
-        (DiffDockTab::PendingFile, _) => ("icons/file-text.svg", "Open a file".to_string()),
-        (_, Some((icon, label, _))) => (*icon, label.clone()),
-        _ => ("icons/file-text.svg", "File".to_string()),
+    let (icon, label, tooltip) = match (tab, &file) {
+        (DiffDockTab::Changes, _) => ("icons/plus-minus.svg", "Changes".to_string(), None),
+        (DiffDockTab::Terminal(_), _) => ("icons/terminal.svg", "Terminal".to_string(), None),
+        (DiffDockTab::PendingFile, _) => ("icons/file-text.svg", "Open a file".to_string(), None),
+        (_, Some((icon, label, path, _))) => (*icon, label.clone(), Some(path.clone())),
+        _ => ("icons/file-text.svg", "File".to_string(), None),
     };
-    let dirty = file.map(|(_, _, dirty)| dirty).unwrap_or(false);
-    let rail_hover = crate::app::constants::sidebar_tab_hover_background();
-    let active_border = if ui.base.l > 0.5 {
-        ui.accent.opacity(0.14)
-    } else {
-        ui.text.opacity(0.12)
-    };
+    let tooltip = tooltip.unwrap_or_else(|| label.clone());
+    let dirty = file.is_some_and(|(_, _, _, dirty)| dirty);
     let text = if active { ui.text } else { ui.muted };
     let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
+    let icon_element = match tab {
+        DiffDockTab::Terminal(terminal) => {
+            crate::pane::tab_badge(terminal.read(cx).terminal.detected_agent)
+        }
+        _ if icon_is_colored(icon) => file_icon_element(icon, px(16.), ui.muted),
+        _ => crate::pane::unified_tab_icon(icon, ui.muted),
+    };
 
-    let mut chip = div()
-        .id(SharedString::from(format!("diff-dock-tab-{index}")))
-        .group(group.clone())
-        .min_w(px(64.))
-        .max_w(px(208.))
-        .h(px(32.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(10.))
-        .pl(px(12.))
-        .pr(px(8.))
-        .rounded_full()
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .when(active, |chip| {
-            chip.bg(if ui.base.l > 0.5 { ui.base } else { ui.overlay })
-                .border_color(active_border)
-        })
-        .when(!active, |chip| chip.hover(|style| style.bg(rail_hover)))
-        .cursor(CursorStyle::PointingHand)
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.select_diff_tab(index, cx);
-            this.focus_diff_tab(index, window, cx);
-        }))
-        .child(file_icon_element(
-            icon,
-            px(16.),
-            if active { ui.muted } else { text },
-        ))
-        .child(
-            div()
-                .min_w_0()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .text_size(crate::ui_primitives::BODY)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(text)
-                .child(label),
-        );
-
+    let glyph = px(crate::pane::UNIFIED_TAB_CLOSE_GLYPH_SIZE);
     let mark: AnyElement = if dirty && !close_armed {
         div()
             .relative()
             .flex_none()
-            .size(px(11.))
+            .size(glyph)
             .flex()
             .items_center()
             .justify_center()
@@ -283,7 +265,7 @@ fn render_diff_tab(
                 svg()
                     .absolute()
                     .inset_0()
-                    .size(px(11.))
+                    .size(glyph)
                     .invisible()
                     .group_hover(group.clone(), |style| style.visible())
                     .path("icons/close.svg")
@@ -292,39 +274,50 @@ fn render_diff_tab(
             .into_any_element()
     } else {
         svg()
-            .size(px(11.))
+            .size(glyph)
             .flex_none()
             .path("icons/close.svg")
             .text_color(if close_armed { ui.vc_deleted } else { ui.muted })
             .into_any_element()
     };
-    chip = chip.child(
-        div()
-            .id(SharedString::from(format!("diff-dock-tab-close-{index}")))
-            .flex_none()
-            .size(px(16.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .when(!dirty && !close_armed, |button| {
-                button
-                    .invisible()
-                    .group_hover(group.clone(), |style| style.visible())
-            })
-            .animated_hover_bg(
-                gpui::transparent_black(),
-                crate::app::constants::sidebar_tab_active_background(),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.request_close_diff_tab(index, window, cx);
-                cx.stop_propagation();
-            }))
-            .child(mark),
-    );
 
-    chip.into_any_element()
+    crate::pane::unified_tab_chip(
+        SharedString::from(format!("diff-dock-tab-{index}")),
+        group.clone(),
+        active,
+        chip_radius,
+    )
+    .min_w(px(64.))
+    .max_w(px(208.))
+    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        this.select_diff_tab(index, cx);
+        this.focus_diff_tab(index, window, cx);
+    }))
+    .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
+    .child(icon_element)
+    .child(
+        crate::pane::unified_tab_label(text)
+            .flex_initial()
+            .child(label),
+    )
+    .child(
+        crate::pane::tab_close_button(
+            SharedString::from(format!("diff-dock-tab-close-{index}")),
+            chip_radius.is_none(),
+        )
+        .when(!dirty && !close_armed, |button| {
+            button
+                .invisible()
+                .group_hover(group.clone(), |style| style.visible())
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.request_close_diff_tab(index, window, cx);
+            cx.stop_propagation();
+        }))
+        .child(mark),
+    )
+    .into_any_element()
 }
 
 fn icon_is_colored(icon: &str) -> bool {
@@ -419,23 +412,62 @@ pub(crate) fn render_diff_header_icon_button(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
     color: Hsla,
 ) -> gpui::Stateful<gpui::Div> {
-    squircle_skin(
-        div()
-            .id(id)
-            .flex_none()
-            .size(px(28.))
-            .flex()
-            .items_center()
-            .justify_center(),
-        SharedString::from(format!("{id}-group")),
-        ROW_RADIUS,
-        None,
-        Some(crate::app::constants::sidebar_tab_hover_background()),
+    header_icon_button(id, label, icon, on_click, color, false)
+}
+
+pub(super) fn render_diff_dock_close_button(
+    id: &'static str,
+    frame: CardFrame,
+    color: Hsla,
+    cx: &mut Context<PaneFlowApp>,
+) -> gpui::Stateful<gpui::Div> {
+    header_icon_button(
+        id,
+        "Close panel",
+        "icons/layout-sidebar-right-collapse.svg",
+        cx.listener(|this, _: &ClickEvent, _w, cx| {
+            this.dismiss_diff_dock_panel(cx);
+        }),
+        color,
+        matches!(frame, CardFrame::Card),
     )
-    .accessible_control(gpui::accesskit::Role::Button, label)
-    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(on_click)
-    .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
+}
+
+fn header_icon_button(
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    color: Hsla,
+    round: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let group = SharedString::from(format!("{id}-group"));
+    let hover = crate::app::constants::sidebar_tab_hover_background();
+    let button = div()
+        .id(id)
+        .flex_none()
+        .size(px(28.))
+        .flex()
+        .items_center()
+        .justify_center();
+    let button = if round {
+        button.relative().group(group.clone()).child(
+            div()
+                .absolute()
+                .inset_0()
+                .rounded_full()
+                .bg(hover)
+                .invisible()
+                .group_hover(group, |style| style.visible()),
+        )
+    } else {
+        squircle_skin(button, group, ROW_RADIUS, None, Some(hover))
+    };
+    button
+        .accessible_control(gpui::accesskit::Role::Button, label)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(on_click)
+        .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
 }
 
 pub(super) fn render_diff_files_toolbar(
@@ -562,6 +594,24 @@ pub(super) fn diff_panel_centered(
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn the_dock_card_takes_the_terminal_card_color_under_a_material() {
+        for theme in [
+            crate::theme::paneflow_dark(),
+            crate::theme::paneflow_light(),
+        ] {
+            let ui = crate::theme::ui_colors_with(&theme);
+            assert_eq!(dock_card_background(&theme, ui, false, false), ui.base);
+            assert_eq!(dock_card_background(&theme, ui, false, true), ui.base);
+            for veiled in [false, true] {
+                assert_eq!(
+                    dock_card_background(&theme, ui, true, veiled),
+                    crate::pane::pane_card_background(&theme, true, true, veiled)
+                );
+            }
+        }
+    }
 
     #[test]
     fn colored_language_icons_are_not_painted_as_masks() {

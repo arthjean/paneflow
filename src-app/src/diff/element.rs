@@ -391,20 +391,26 @@ impl DiffElement {
         let p = &self.palette;
         let lh = self.line_height;
         let bounds = Bounds::new(origin, size(width, row_h));
+        let sep_h = px(FILE_HEADER_SEPARATOR_H);
+        let (header_fill, sep_y) = if sticky {
+            (bounds, origin.y + row_h - sep_h)
+        } else {
+            (
+                Bounds::new(
+                    point(origin.x, origin.y + sep_h),
+                    size(width, row_h - sep_h),
+                ),
+                origin.y,
+            )
+        };
         quads.push(Quad {
-            bounds,
+            bounds: header_fill,
             color: if sticky {
                 p.sticky_header_bg
             } else {
                 p.header_bg
             },
         });
-        let sep_h = px(FILE_HEADER_SEPARATOR_H);
-        let sep_y = if sticky {
-            origin.y + row_h - sep_h
-        } else {
-            origin.y
-        };
         quads.push(Quad {
             bounds: Bounds::new(point(origin.x, sep_y), size(width, sep_h)),
             color: p.context_bg,

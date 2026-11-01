@@ -80,7 +80,7 @@ pub(super) fn render_diff_new_tab_menu(
         div()
             .absolute()
             .top(px(30.))
-            .left(px(0.))
+            .right(px(0.))
             .occlude()
             .child(menu),
     ))

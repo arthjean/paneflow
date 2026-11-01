@@ -3,7 +3,7 @@ use gpui::{
     ParentElement, StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
 };
 
-use super::render::render_diff_header_icon_button;
+use super::render::render_diff_dock_close_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
 
@@ -49,6 +49,7 @@ impl PaneFlowApp {
 }
 
 pub(super) fn render_diff_picker_header(
+    frame: crate::layout::CardFrame,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
@@ -60,14 +61,11 @@ pub(super) fn render_diff_picker_header(
         .items_center()
         .px(px(8.))
         .child(div().flex_1().min_w_0())
-        .child(render_diff_header_icon_button(
+        .child(render_diff_dock_close_button(
             "diff-dock-picker-close",
-            "Close panel",
-            "icons/layout-sidebar-right-collapse.svg",
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.dismiss_diff_dock_panel(cx);
-            }),
+            frame,
             ui.muted,
+            cx,
         ))
         .into_any_element()
 }

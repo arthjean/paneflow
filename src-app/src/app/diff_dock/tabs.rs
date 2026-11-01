@@ -205,6 +205,7 @@ impl PaneFlowApp {
             self.diff_dock.diff_active_tab = index;
             self.diff_dock.diff_tab_close_armed = None;
             self.diff_dock.vertical_scrollbar.cancel_drag();
+            self.diff_dock.tab_scroll.scroll_to_item(index);
             cx.notify();
         }
     }

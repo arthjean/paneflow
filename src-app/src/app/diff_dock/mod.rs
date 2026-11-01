@@ -28,8 +28,8 @@ use self::branch::render_diff_branch_chip;
 use self::git::build_diff_dock;
 use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DiffChrome};
 use self::render::{
-    diff_file_header_path, diff_panel_centered, dock_card_border, dock_card_fill,
-    render_diff_error_banner, render_diff_file_header, render_diff_files_toolbar,
+    diff_file_header_path, diff_panel_centered, dock_card_background, dock_card_border,
+    dock_card_fill, render_diff_error_banner, render_diff_file_header, render_diff_files_toolbar,
     render_diff_resize_handle, render_diff_tab_strip,
 };
 use self::surface_picker::{render_diff_picker_header, render_diff_surface_picker};
@@ -405,12 +405,16 @@ impl PaneFlowApp {
         let file_active = self.diff_file_tab_active();
         let maximized = self.diff_dock.maximized.is_some();
         let fills_panel = self.diff_dock_fills_panel();
+        let card_background = self.diff_dock_card_background(ui);
         let header = render_diff_tab_strip(
             &tabs,
             active,
             self.diff_dock.diff_tab_close_armed.map(|(index, _)| index),
             self.diff_dock.diff_new_tab_menu_open,
             maximized,
+            frame,
+            card_background,
+            &self.diff_dock.tab_scroll,
             ui,
             cx,
         );
@@ -514,15 +518,24 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(dock_card_fill(frame, ui))
+            .child(dock_card_fill(frame, card_background))
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
             .child(header)
             .children(toolbar)
             .child(body)
-            .child(dock_card_border(frame, ui))
+            .child(dock_card_border(frame, card_background, ui))
             .into_any_element()
+    }
+
+    fn diff_dock_card_background(&self, ui: crate::theme::UiColors) -> gpui::Hsla {
+        dock_card_background(
+            &crate::theme::active_theme(),
+            ui,
+            self.cached_config.terminal_material_enabled(),
+            self.cached_config.material_veiled(),
+        )
     }
 
     fn render_diff_dock_picker(
@@ -534,6 +547,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let fills_panel = self.diff_dock_fills_panel();
+        let card_background = self.diff_dock_card_background(ui);
         div()
             .relative()
             .map(|panel| {
@@ -547,13 +561,13 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(dock_card_fill(frame, ui))
+            .child(dock_card_fill(frame, card_background))
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
-            .child(render_diff_picker_header(ui, cx))
+            .child(render_diff_picker_header(frame, ui, cx))
             .child(render_diff_surface_picker(ui, cx))
-            .child(dock_card_border(frame, ui))
+            .child(dock_card_border(frame, card_background, ui))
             .into_any_element()
     }
 
@@ -663,7 +677,7 @@ impl PaneFlowApp {
                 h_offsets,
             }
         };
-        let pal = palette(ui);
+        let pal = palette(ui).on_material(self.cached_config.terminal_material_enabled());
         let scroll = self.diff_dock.scroll.clone();
         let chip_row = self
             .diff_dock

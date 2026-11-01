@@ -109,13 +109,28 @@ pub(crate) fn pane_card_background(
 }
 
 #[derive(Clone, Copy)]
-enum CardShape {
+pub(crate) enum CardShape {
     Squircle(Pixels),
     Flush(gpui::Edges<bool>),
     Morph {
         radii: gpui::Corners<Pixels>,
         comfort: f32,
     },
+}
+
+impl From<crate::layout::CardFrame> for CardShape {
+    fn from(frame: crate::layout::CardFrame) -> Self {
+        match frame {
+            crate::layout::CardFrame::Card => {
+                Self::Squircle(crate::app::constants::PANE_CARD_RADIUS)
+            }
+            crate::layout::CardFrame::Flush(edges) => Self::Flush(edges),
+            crate::layout::CardFrame::Morph { outer, comfort } => Self::Morph {
+                radii: crate::layout::morph_corners(outer, comfort),
+                comfort,
+            },
+        }
+    }
 }
 
 impl CardShape {
@@ -127,7 +142,7 @@ impl CardShape {
         }
     }
 
-    fn background(self, color: Hsla) -> AnyElement {
+    pub(crate) fn background(self, color: Hsla) -> AnyElement {
         match self {
             Self::Squircle(radius) => pane_card_fill(radius, color),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
@@ -135,7 +150,7 @@ impl CardShape {
         }
     }
 
-    fn border(self, background: Hsla, color: Hsla, outline: bool) -> AnyElement {
+    pub(crate) fn border(self, background: Hsla, color: Hsla, outline: bool) -> AnyElement {
         match self {
             Self::Squircle(radius) if card_paints_quads(background) => div()
                 .absolute()
@@ -172,7 +187,7 @@ impl CardShape {
         }
     }
 
-    fn tab_chip_radius(self) -> Option<Pixels> {
+    pub(crate) fn tab_chip_radius(self) -> Option<Pixels> {
         let compact = crate::app::constants::PANEL_CORNER_RADIUS - px(UNIFIED_TAB_BAR_INSET);
         match self {
             Self::Squircle(_) => None,
@@ -235,6 +250,9 @@ const PANE_DIM_EPSILON: f32 = 0.002;
 const OVERLAY_MARGIN: f32 = 8.0;
 const UNIFIED_TAB_BAR_INSET: f32 = 6.0;
 const UNIFIED_TAB_HEIGHT: f32 = 32.0;
+const UNIFIED_TAB_WIDTH: f32 = 208.0;
+const UNIFIED_TAB_MIN_WIDTH: f32 = 96.0;
+pub(crate) const UNIFIED_TAB_CLOSE_GLYPH_SIZE: f32 = 12.0;
 const OVERLAY_RADIUS: f32 = 8.0;
 const DROP_OVERLAY_BLUE: u32 = 0x007aff;
 const DROP_OVERLAY_BACKGROUND_ALPHA: f32 = 0.10;
@@ -285,7 +303,7 @@ fn lift_rgb(color: gpui::Rgba, amount: f32) -> gpui::Rgba {
     }
 }
 
-fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement {
+pub(crate) fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement {
     let logo_size = px(TAB_BADGE_LOGO_SIZE);
     let graphite = gpui::linear_gradient(
         180.,
@@ -340,6 +358,144 @@ fn tab_badge(agent: Option<crate::agent_launcher::TerminalAgent>) -> AnyElement 
         },
     };
     badge_tile(background, ring, glyph)
+}
+
+pub(crate) fn unified_tab_chip(
+    id: SharedString,
+    group: SharedString,
+    active: bool,
+    radius: Option<Pixels>,
+) -> gpui::Stateful<gpui::Div> {
+    let ui = pane_colors();
+    let light = ui.base.l > 0.5;
+    let active_border = if light {
+        ui.accent.opacity(0.14)
+    } else {
+        ui.text.opacity(0.12)
+    };
+    let (active_bg, hover_bg) = if light {
+        (ui.card, ui.text.opacity(0.05))
+    } else {
+        (
+            crate::app::constants::sidebar_tab_active_background(),
+            crate::app::constants::sidebar_tab_hover_background(),
+        )
+    };
+    let active_shadow = if light {
+        gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.10)).blur_radius(px(3.))
+    } else {
+        gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.24)).blur_radius(px(2.))
+    };
+    div()
+        .id(id)
+        .group(group)
+        .flex_none()
+        .h(px(UNIFIED_TAB_HEIGHT))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .pl(px(12.))
+        .pr(px(8.))
+        .map(|chip| match radius {
+            Some(radius) => chip.rounded(radius),
+            None => chip.rounded_full(),
+        })
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .cursor(gpui::CursorStyle::Arrow)
+        .when(active, |chip| {
+            chip.bg(active_bg)
+                .border_color(active_border)
+                .shadow(vec![active_shadow])
+        })
+        .when(!active, |chip| chip.hover(|style| style.bg(hover_bg)))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+pub(crate) fn unified_tab_icon(path: &'static str, color: Hsla) -> AnyElement {
+    svg()
+        .w(px(20.))
+        .h(px(17.))
+        .flex_none()
+        .path(path)
+        .text_color(color)
+        .into_any_element()
+}
+
+pub(crate) fn unified_tab_label(color: Hsla) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .text_ellipsis()
+        .whitespace_nowrap()
+        .text_size(crate::ui_primitives::BODY)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(color)
+}
+
+pub(crate) fn tab_close_button(id: SharedString, pill: bool) -> gpui::Stateful<gpui::Div> {
+    let ui = pane_colors();
+    div()
+        .id(id)
+        .flex_none()
+        .size(px(TAB_CLOSE_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .map(|button| {
+            if pill {
+                button.rounded_full()
+            } else {
+                button.rounded(px(4.))
+            }
+        })
+        .hover(|style| style.bg(ui.text.opacity(0.12)))
+}
+
+pub(crate) fn tab_strip_fades(scroll: gpui::ScrollHandle, fade_color: Hsla) -> AnyElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            if fade_color.a <= f32::EPSILON {
+                return;
+            }
+            let hidden_right = scroll.max_offset().x + scroll.offset().x;
+            let hidden_left = -scroll.offset().x;
+            let fade_width = px(TAB_FADE_WIDTH).min(bounds.size.width);
+            if hidden_right > px(1.) {
+                let fade = gpui::Bounds {
+                    origin: gpui::point(bounds.right() - fade_width, bounds.top()),
+                    size: gpui::size(fade_width, bounds.size.height),
+                };
+                window.paint_quad(gpui::fill(
+                    fade,
+                    gpui::linear_gradient(
+                        90.,
+                        gpui::linear_color_stop(fade_color.opacity(0.), 0.),
+                        gpui::linear_color_stop(fade_color, 1.),
+                    ),
+                ));
+            }
+            if hidden_left > px(1.) {
+                let fade = gpui::Bounds {
+                    origin: bounds.origin,
+                    size: gpui::size(fade_width, bounds.size.height),
+                };
+                window.paint_quad(gpui::fill(
+                    fade,
+                    gpui::linear_gradient(
+                        90.,
+                        gpui::linear_color_stop(fade_color, 0.),
+                        gpui::linear_color_stop(fade_color.opacity(0.), 1.),
+                    ),
+                ));
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
 }
 
 pub(crate) fn tinted_badge_colors(tint: gpui::Rgba) -> (gpui::Background, Hsla) {
@@ -710,16 +866,7 @@ impl Pane {
         if self.is_detached() {
             return CardShape::Squircle(px(10.));
         }
-        match self.card_frame {
-            crate::layout::CardFrame::Card => {
-                CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS)
-            }
-            crate::layout::CardFrame::Flush(edges) => CardShape::Flush(edges),
-            crate::layout::CardFrame::Morph { outer, comfort } => CardShape::Morph {
-                radii: crate::layout::morph_corners(outer, comfort),
-                comfort,
-            },
-        }
+        CardShape::from(self.card_frame)
     }
 
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<TerminalView>> {
@@ -1490,65 +1637,26 @@ impl Pane {
             } else {
                 text
             };
-            let unified_active_border = if ui.base.l > 0.5 {
-                ui.accent.opacity(0.14)
-            } else {
-                ui.text.opacity(0.12)
-            };
-            let (unified_active_bg, unified_hover_bg) = if ui.base.l > 0.5 {
-                (ui.card, ui.text.opacity(0.05))
-            } else {
-                (rail_active, rail_hover)
-            };
-            let unified_active_shadow = if ui.base.l > 0.5 {
-                gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.10))
-                    .blur_radius(px(3.))
-            } else {
-                gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.24))
-                    .blur_radius(px(2.))
-            };
             let group = SharedString::from(format!("pane-{pane_id}-tab-{index}-group"));
-            let chip = div()
-                .id(SharedString::from(format!("pane-{pane_id}-tab-{index}")))
-                .flex_none()
-                .h(px(if unified {
-                    UNIFIED_TAB_HEIGHT
-                } else {
-                    TAB_BAR_HEIGHT
-                }))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .pl(px(8.))
-                .pr(px(4.))
-                .cursor(gpui::CursorStyle::Arrow);
+            let chip_id = SharedString::from(format!("pane-{pane_id}-tab-{index}"));
             let chip = if unified {
-                chip.group(group.clone())
-                    .map(|chip| match chip_radius {
-                        Some(radius) => chip.rounded(radius),
-                        None => chip.rounded_full(),
-                    })
-                    .border_1()
-                    .border_color(gpui::transparent_black())
-                    .w(px(208.))
+                unified_tab_chip(chip_id, group.clone(), active, chip_radius)
+                    .w(px(UNIFIED_TAB_WIDTH))
                     .max_w_full()
-                    .min_w(px(96.))
-                    .pl(px(12.))
-                    .pr(px(8.))
-                    .gap(px(10.))
-                    .when(active, |chip| {
-                        chip.bg(unified_active_bg)
-                            .border_color(unified_active_border)
-                            .shadow(vec![unified_active_shadow])
-                    })
-                    .when(!active, |chip| {
-                        chip.hover(|style| style.bg(unified_hover_bg))
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .min_w(px(UNIFIED_TAB_MIN_WIDTH))
             } else {
                 squircle_skin(
-                    chip,
+                    div()
+                        .id(chip_id)
+                        .flex_none()
+                        .h(px(TAB_BAR_HEIGHT))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.))
+                        .pl(px(8.))
+                        .pr(px(4.))
+                        .cursor(gpui::CursorStyle::Arrow),
                     group.clone(),
                     crate::ui_primitives::ROW_RADIUS,
                     resting,
@@ -1576,62 +1684,51 @@ impl Pane {
                     cx.stop_propagation();
                 }))
                 .delayed_tooltip(crate::ui_primitives::text_tooltip(full_title))
-                .child(
-                    if let (true, PaneSurface::Terminal(terminal)) = (unified, surface) {
+                .child(match (unified, surface) {
+                    (true, PaneSurface::Terminal(terminal)) => {
                         tab_badge(terminal.read(cx).terminal.detected_agent)
-                    } else {
-                        svg()
-                            .size(px(TAB_ICON_SIZE))
-                            .when(unified, |icon| icon.w(px(20.)).h(px(17.)))
-                            .flex_none()
-                            .path(surface.kind_icon())
-                            .text_color(ui.muted)
-                            .into_any_element()
-                    },
-                )
-                .child(
+                    }
+                    (true, _) => unified_tab_icon(surface.kind_icon(), ui.muted),
+                    (false, _) => svg()
+                        .size(px(TAB_ICON_SIZE))
+                        .flex_none()
+                        .path(surface.kind_icon())
+                        .text_color(ui.muted)
+                        .into_any_element(),
+                })
+                .child(if unified {
+                    unified_tab_label(text).child(Self::surface_full_title(surface, cx))
+                } else {
                     div()
-                        .when(unified, |label| label.flex_1().min_w_0().text_ellipsis())
-                        .when(!unified, |label| label.flex_none())
+                        .flex_none()
                         .whitespace_nowrap()
                         .text_size(crate::ui_primitives::BODY)
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(text)
-                        .child(if unified {
-                            Self::surface_full_title(surface, cx)
-                        } else {
-                            label
-                        }),
-                )
+                        .child(label)
+                })
                 .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "pane-{pane_id}-tab-close-{index}"
-                        )))
-                        .flex_none()
-                        .size(px(TAB_CLOSE_SIZE))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(4.))
-                        .when(unified && chip_radius.is_none(), |button| {
-                            button.rounded_full()
-                        })
-                        .invisible()
-                        .group_hover(group, |style| style.visible())
-                        .hover(|style| style.bg(ui.text.opacity(0.12)))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.close_surface(index, cx);
-                            cx.stop_propagation();
-                        }))
-                        .child(
-                            svg()
-                                .size(px(TAB_CLOSE_GLYPH_SIZE))
-                                .when(unified, |icon| icon.size(px(12.)))
-                                .flex_none()
-                                .path("icons/close.svg")
-                                .text_color(ui.muted),
-                        ),
+                    tab_close_button(
+                        SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),
+                        unified && chip_radius.is_none(),
+                    )
+                    .invisible()
+                    .group_hover(group, |style| style.visible())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.close_surface(index, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(if unified {
+                                UNIFIED_TAB_CLOSE_GLYPH_SIZE
+                            } else {
+                                TAB_CLOSE_GLYPH_SIZE
+                            }))
+                            .flex_none()
+                            .path("icons/close.svg")
+                            .text_color(ui.muted),
+                    ),
                 );
             strip = strip.child(chip);
         }
@@ -1646,48 +1743,7 @@ impl Pane {
                 self.cached_config.material_veiled(),
             )
         };
-        let fade_scroll = self.tab_scroll.clone();
-        let fades = gpui::canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                if fade_color.a <= f32::EPSILON {
-                    return;
-                }
-                let hidden_right = fade_scroll.max_offset().x + fade_scroll.offset().x;
-                let hidden_left = -fade_scroll.offset().x;
-                let fade_width = px(TAB_FADE_WIDTH).min(bounds.size.width);
-                if hidden_right > px(1.) {
-                    let fade = gpui::Bounds {
-                        origin: gpui::point(bounds.right() - fade_width, bounds.top()),
-                        size: gpui::size(fade_width, bounds.size.height),
-                    };
-                    window.paint_quad(gpui::fill(
-                        fade,
-                        gpui::linear_gradient(
-                            90.,
-                            gpui::linear_color_stop(fade_color.opacity(0.), 0.),
-                            gpui::linear_color_stop(fade_color, 1.),
-                        ),
-                    ));
-                }
-                if hidden_left > px(1.) {
-                    let fade = gpui::Bounds {
-                        origin: bounds.origin,
-                        size: gpui::size(fade_width, bounds.size.height),
-                    };
-                    window.paint_quad(gpui::fill(
-                        fade,
-                        gpui::linear_gradient(
-                            90.,
-                            gpui::linear_color_stop(fade_color, 0.),
-                            gpui::linear_color_stop(fade_color.opacity(0.), 1.),
-                        ),
-                    ));
-                }
-            },
-        )
-        .absolute()
-        .inset_0();
+        let fades = tab_strip_fades(self.tab_scroll.clone(), fade_color);
 
         let mut bar = div()
             .id("pane-tab-bar")
