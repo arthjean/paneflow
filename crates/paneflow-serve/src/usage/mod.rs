@@ -382,6 +382,7 @@ fn claude_transcript(signal: &TurnSignal) -> Option<TranscriptRead> {
         return None;
     }
     let account_key = account_dir_key(Path::new(&signal.account.config_dir));
+    let path = canonical_account_dir(&path);
     path.ancestors()
         .skip(1)
         .any(|ancestor| account_dir_key(ancestor) == account_key)
@@ -557,5 +558,32 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_transcript_reached_through_a_symlinked_config_dir_is_claimed() {
+        let home = tempfile::tempdir().unwrap();
+        let real = home.path().join("dotfiles").join("claude");
+        let projects = real.join("projects").join("work");
+        std::fs::create_dir_all(&projects).unwrap();
+        let linked = home.path().join(".claude");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        std::fs::write(projects.join("session.jsonl"), "").unwrap();
+        let mut usage = Usage::open(home.path(), 1_793_481_752_042);
+        let account = LedgerAccount {
+            agent: UsageAgent::ClaudeCode.runtime_slug().to_string(),
+            config_dir: canonical_account_dir(&linked).display().to_string(),
+        };
+        let transcript = linked.join("projects").join("work").join("session.jsonl");
+        let ends = usage.apply_turn_signals(&[TurnSignal {
+            session: "pane-1".into(),
+            account,
+            input: TurnInput::Stop,
+            at_ms: 1_793_481_752_042,
+            order: 1,
+            transcript: Some(transcript.display().to_string()),
+        }]);
+        assert_eq!(ends.transcripts.len(), 1);
     }
 }
