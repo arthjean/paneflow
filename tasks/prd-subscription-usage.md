@@ -9,6 +9,9 @@
 | 1.1 | 2026-10-31 | Arthur Jean | Les validations macOS et Linux de US-001 passent dans deux epics finaux, EP-006 (Linux, US-020) puis EP-007 (macOS, US-021, sur une machine Scaleway). Le critère Team, Enterprise ou clé API de US-001 est retiré faute de compte : le comportement sans `rate_limits` repose sur le code et ses tests. 7 epics, 21 stories. |
 | 1.2 | 2026-10-31 | Arthur Jean | La preuve en pane réel sous Windows du relais vers le host passe de la Definition of Done de EP-001 à US-007 : avant EP-002, le worker ignore le frame `plan_limits` et aucun outil ne l'observe. EP-001 est certifiée sur les tests du relais (processus réel vers un host simulé), du host (IPC réel) et sur le rejet par un host ancien. |
 | 1.3 | 2026-11-01 | Arthur Jean | La preuve en pane réel sous Windows du trajet relais, host, worker passe de US-007 à US-011 : la passe visuelle de la capsule l'observe dans l'app réelle. EP-002 est certifiée sur le test bout en bout du worker (host réel, PTY réel, worker réel, frame `status_line` envoyé par IPC comme le relais). Les bornes de US-008 acceptent une remise à zéro future jusqu'à `max(8 jours, durée de la fenêtre + 1 jour)`, faute de quoi la fenêtre mensuelle du free tier Codex serait toujours rejetée ; Claude garde 8 jours. |
+| 1.4 | 2026-11-01 | Arthur Jean | La passe visuelle macOS de la capsule et de la bulle passe de la Definition of Done de EP-003 à US-021 (EP-007), sur la machine Scaleway ; Arthur a fait la passe Windows le 2026-11-01. La dernière ligne de la bulle de US-012 devient « Open agent settings » et ouvre Settings › Agents, parce que Settings › Usage n'existe qu'à partir de US-014, bloquée par US-013 ; US-014 la renomme « Open usage settings » et la fait pointer vers Usage. |
+| 1.5 | 2026-11-01 | Arthur Jean | Les limites Claude viennent aussi d'une sonde du binaire Claude Code non modifié (US-022, ajoutée à EP-003) : la requête de contrôle `get_usage` du protocole stream-json, comme T3 Code au commit `37d7615a91` : options de la sonde dans [`ClaudeProvider.ts:198-228`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/ClaudeProvider.ts#L198-L228), appel `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET` dans [`ClaudeProvider.ts:337-363`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/ClaudeProvider.ts#L337-L363). Un spike du 2026-11-01 sur Claude Code 2.1.316 sous Windows l'a validée : réponse en 0,96 s, `total_cost_usd` à 0, fenêtre de 7 jours à 67 %, identique à Zeron. Paneflow ne lit toujours aucun credential et n'émet aucune requête HTTP ; seul le binaire contacte Anthropic avec son propre login, ce que la page légale de Claude Code autorise (« signing in to the unmodified Claude Code binary with their own Claude subscription »). L'approche de Zeron (lecture du token et appel à `api/oauth/usage`) reste écartée. US-017 (chaînage) est annulée : la sonde lit les limites quel que soit le status line. Codex suit la même approche avec US-023 : la méthode `account/rateLimits/read` de `codex app-server`, comme T3 Code ([`CodexProvider.ts:580`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/CodexProvider.ts#L580)) ; les rollouts de US-008 restent la source hors sonde. Grok et Gemini restent hors périmètre : leur CLI n'expose aucune lecture du quota hors du mode interactif (`grok usage` ne rend que les tokens d'une session locale), et Zeron comme T3 Code ne les obtiennent qu'en lisant le token pour appeler un endpoint privé (`cli-chat-proxy.grok.com/v1/billing`, [`cloudcode-pa.googleapis.com`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/antigravityUsageLimits.ts)), ce que FR-04 exclut. FR-02, FR-03, FR-04, US-011, US-013, EP-005 et les Non-Goals sont ajustés. |
+| 1.6 | 2026-11-01 | Arthur Jean | Les textes des états `ForeignStatusLine` et `HooksDisabled` de US-013 (et des cas limites 3 et 4) deviennent « Claude Code has not reported plan limits for {dossier} yet. Check that it is installed and signed in for this folder, then reopen this panel. ». Depuis l'amendement 1.5, la sonde de US-022 lit les limites quel que soit le status line et coupe elle-même les hooks : sans instantané, ces deux états ne signifient plus que la configuration empêche la lecture, mais que la sonde n'a pas encore répondu ou a échoué (binaire absent, login manquant, délai, erreur). L'ancien texte accusait la configuration de l'utilisateur et ne nommait aucune correction ; `/better-interface` l'a classé HIGH (texte trompeur, erreur sans issue). |
 
 ## Problem Statement
 
@@ -109,7 +112,7 @@ Gates additionnels :
 - Stories qui modifient l'installation des hooks (US-006, US-017) : `cargo test -p paneflow-agent-config --locked`.
 - Stories qui touchent du code `#[cfg(windows)]` : relecture de l'ordre des items par inspection. La lane `Windows x86_64 libghostty check` fait foi après le push.
 - Stories d'interface (US-010 à US-015, US-017) : revue par le skill `/better-interface` sur la surface modifiée. La story ne passe en IN_REVIEW qu'avec un verdict `Approve`, sans finding `HIGH`. Ce qui exige l'app rendue est marqué `Not verified` et revient à la passe visuelle.
-- Stories d'interface (EP-003, EP-004, US-017) : passe visuelle manuelle par Arthur sur macOS et Windows, comparée à l'artifact validé. L'agent d'implémentation ne lance pas l'application et ne fait pas de capture.
+- Stories d'interface (EP-003, EP-004, US-017) : passe visuelle manuelle par Arthur sur macOS et Windows, comparée à l'artifact validé. Pour EP-003, la passe macOS se fait dans US-021 (amendement 1.4). L'agent d'implémentation ne lance pas l'application et ne fait pas de capture.
 
 ## Epics & User Stories
 
@@ -327,7 +330,7 @@ Le worker reçoit les frames du relais, lit les rollouts Codex, tient le journal
 
 Affiche les limites dans le pied de la sidebar et dans une bulle, avec tous leurs états.
 
-**Definition of Done:** la capsule et la bulle reproduisent la variante A de l'artifact validé ; chaque état de US-013 a son texte ; le parcours clavier complet fonctionne ; `/better-interface` rend `Approve` ; Arthur a fait la passe visuelle sur macOS et Windows.
+**Definition of Done:** la capsule et la bulle reproduisent la variante A de l'artifact validé ; chaque état de US-013 a son texte ; le parcours clavier complet fonctionne ; `/better-interface` rend `Approve` ; Arthur a fait la passe visuelle sur Windows. La passe macOS est reprise par US-021 (amendement 1.4).
 
 #### US-010: Primitive d'anneau GPUI
 **Description:** As a mainteneur, I want une seule primitive d'anneau so that la capsule et les tuiles de la page dessinent la même jauge.
@@ -361,7 +364,8 @@ Affiche les limites dans le pied de la sidebar et dans une bulle, avec tous leur
 - [ ] Given la publication d'un instantané, then la capsule se met à jour en moins de 1 s, sans reconstruire l'arbre des workspaces (vue en cache, `src-app/src/app/sidebar/view.rs:28`).
 - [ ] Le nom accessible commence par le texte visible : « 54% plan usage, Claude Code week ». L'état déplié est exposé, la capsule est atteinte par Tab depuis le filtre, et Entrée ou Espace ouvre la bulle.
 - [ ] Given la fenêtre minimale de 800 px avec une sidebar de 300 px, then le filtre garde au moins 120 px ; en dessous, la capsule ne montre que l'anneau et garde son nom accessible.
-- [ ] Given Windows, un compte Claude Pro, Max ou Ultra dont le dossier de config porte le `statusLine` géré (pas un status line étranger), when un message reçoit une réponse dans un pane Paneflow réel, then le worker reçoit le frame `plan_limits`, met à jour l'instantané du compte et la capsule affiche son pourcentage. Le constat est consigné avec la version de Claude Code (amendement 1.3 : preuve reprise de US-007).
+- [ ] Given Windows et un compte Claude Pro, Max ou Ultra, when la bulle s'ouvre (sonde de US-022) ou qu'un message reçoit une réponse dans un pane Paneflow réel (`statusLine` géré), then le worker met à jour l'instantané du compte et la capsule affiche son pourcentage. Le constat est consigné avec la version de Claude Code et la source observée (amendement 1.3 : preuve reprise de US-007 ; amendement 1.5 : la sonde est une source valable).
+  - Constat du 2026-11-01 (Windows 11 Pro 10.0.26300, build de dev, Claude Code 2.1.316, Codex 0.166.0) : à l'ouverture de la bulle, la sonde de US-022 a mis à jour les comptes `~/.claude` (`agent_version` 2.1.316, état `reported`) et `~/.codex` (`agent_version` 0.166.0) de `~/.paneflow-dev/usage/plans.json` à 11:09, et Arthur a vu la capsule afficher le pourcentage pendant sa passe visuelle. Source observée : la sonde. Le même jour, un lancement direct des binaires installés a répondu en 1,52 s (Claude, semaine à 68 %) et 1,23 s (Codex, mois à 3 %), sans passer par le shim de Paneflow.
 
 #### US-012: Bulle d'usage
 **Description:** As a utilisateur à deux comptes, I want ouvrir le détail de chaque compte depuis la capsule so that je voie les deux fenêtres, la remise à zéro et mon rythme.
@@ -376,7 +380,7 @@ Affiche les limites dans le pied de la sidebar et dans une bulle, avec tous leur
 - [ ] Il y a un bloc par compte : ceux de l'espace actif d'abord, puis les autres dans l'ordre de l'inventaire. Chaque bloc a le logo en 15 px (`#D97757` pour Claude Code), le nom de l'agent en 12,5 px Medium et le libellé en 11,5 px `muted`, tronqué avec infobulle.
 - [ ] Chaque fenêtre est une jauge : libellé sur 52 px, barre capsule de 4 px dans la couleur du niveau, pourcentage aligné à droite sur 34 px, et texte de remise à zéro dans l'infobulle de la jauge.
 - [ ] Chaque fenêtre Week qui a une projection ajoute une ligne. En dépassement : le glyphe d'avertissement et « At this pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets. » Sinon : « On track: about {66%} of the week used when it resets. » en `muted`.
-- [ ] La dernière ligne, une `menu_row` « Open usage settings », ouvre Settings › Usage et ferme la bulle.
+- [ ] La dernière ligne, une `menu_row` « Open agent settings », ouvre Settings › Agents et ferme la bulle (amendement 1.4 : US-014 la fait pointer vers Settings › Usage).
 - [ ] L'ouverture demande au worker une relecture Codex (US-008, avec son plancher de 30 s) sans jamais bloquer le rendu.
 - [ ] Haut et Bas passent d'un bloc de compte à l'autre puis à la dernière ligne, avec l'anneau de focus `text` à 0,35.
 - [ ] Given plus de 4 comptes, then la liste défile au-delà de 420 px, avec l'en-tête et la dernière ligne fixes.
@@ -392,13 +396,43 @@ Affiche les limites dans le pied de la sidebar et dans une bulle, avec tous leur
 **Acceptance Criteria:**
 - [ ] Given un compte Claude sans instantané, then le bloc affiche « No plan data yet. Send a message to Claude Code in a Paneflow pane to load your limits. »
 - [ ] Given un compte Codex à l'état `NoCodexData`, then le bloc affiche « No plan data yet. Finish a Codex turn in a Paneflow pane to load your limits. »
-- [ ] Given l'état `ForeignStatusLine`, then le bloc affiche « Your own Claude Code status line runs in {dossier}, so Paneflow cannot read plan limits. » Le bouton « Chain status line » s'y ajoute avec US-017.
-- [ ] Given l'état `HooksDisabled`, then le bloc affiche « Claude Code hooks are off in {dossier}/settings.json, so plan limits cannot be read. »
+- [ ] Given l'état `ForeignStatusLine` et aucun instantané, then le bloc affiche « Claude Code has not reported plan limits for {dossier} yet. Check that it is installed and signed in for this folder, then reopen this panel. » (amendement 1.6) Avec un instantané (sonde de US-022), les jauges s'affichent normalement (amendement 1.5 ; le bouton « Chain status line » disparaît avec US-017).
+- [ ] Given l'état `HooksDisabled` et aucun instantané, then le bloc affiche le même texte (amendement 1.6). Avec un instantané, les jauges s'affichent normalement (amendement 1.5).
 - [ ] Given un compte `api_billing`, then le bloc affiche « Billed through an API key. This account has no plan limits. »
 - [ ] Given l'état `NoLimitsReported`, then le bloc affiche « Claude Code reports no plan limits for this account. »
 - [ ] Given une fenêtre `ResetSinceSnapshot`, then la jauge affiche 0 %, avec « Reset at {09:00}. Updates at your next message. » en `muted`.
 - [ ] Given un instantané de plus de 1 h, then l'en-tête affiche son âge (« Updated 3 h ago ») et les jauges restent affichées.
 - [ ] Chaque texte est en sentence case, sans point d'exclamation, et nomme l'action qui corrige l'état quand elle existe. La capsule ne prend jamais une couleur de niveau à partir d'un compte dans l'un de ces états.
+
+#### US-022: Sonde d'usage par le binaire Claude Code
+**Description:** As a utilisateur qui a son propre status line, I want que Paneflow lise mes limites Claude sans toucher à ma configuration ni à mes credentials so that la capsule montre mes vrais comptes dès l'ouverture.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-003, US-007, US-012 (amendement 1.5)
+
+**Acceptance Criteria:**
+- [ ] Le worker lance le binaire Claude Code réel (résolu comme le lanceur d'agents, jamais le shim de Paneflow) avec `-p --input-format stream-json --output-format stream-json`, envoie `initialize` puis la requête de contrôle `get_usage` avec `skip_behaviors: true`, lit le `control_response`, ferme stdin et termine le processus en moins de 2 s après la réponse. Aucun message utilisateur n'est envoyé ; `session.total_cost_usd` reste à 0.
+- [ ] La sonde tourne avec le `CLAUDE_CONFIG_DIR` du compte (absent pour le dossier par défaut), sans aucune variable `PANEFLOW_*`, hooks coupés (`disableAllHooks`), sans persistance de session, sans serveur MCP (`ENABLE_CLAUDEAI_MCP_SERVERS=false`), comme [`buildClaudeCapabilitiesProbeQueryOptions`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/ClaudeProvider.ts#L198-L228) de T3 Code ; l'appel lui-même est dans [`ClaudeProvider.ts:337-363`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/ClaudeProvider.ts#L337-L363).
+- [ ] L'ouverture de la bulle demande au worker, par `usage.refresh`, de sonder chaque compte Claude de l'inventaire, avec un plancher de 30 s par compte et au plus 2 sondes simultanées. Rien ne s'exécute sur le thread de rendu.
+- [ ] `rate_limits.five_hour` et `rate_limits.seven_day` (`utilization` de 0 à 100, `resets_at` en ISO 8601) deviennent les fenêtres de l'instantané, avec les bornes de US-008 ; une fenêtre `null` est absente ; `rate_limits_available: false` donne l'état `NoLimitsReported`. Quand le relais et la sonde rapportent tous deux, l'observation la plus récente gagne.
+- [ ] Given un binaire absent, un délai de 10 s dépassé, une réponse d'erreur ou un schéma inconnu, then l'instantané précédent est conservé, un avertissement est journalisé, et rien ne panique.
+- [ ] La version de Claude Code rapportée par `initialize` est conservée avec l'instantané.
+- [ ] Un test pilote un faux binaire qui rejoue le protocole stream-json à partir d'une réponse enregistrée sur Claude Code 2.1.316, et couvre succès, erreur, délai et schéma inconnu. Le test de garde de US-003 couvre le module de la sonde.
+
+#### US-023: Sonde d'usage par `codex app-server`
+**Description:** As a utilisateur de Codex, I want voir mes limites Codex à jour dès l'ouverture de la bulle so that je n'aie pas à finir un tour pour les rafraîchir.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-008, US-022 (amendement 1.5)
+
+**Acceptance Criteria:**
+- [ ] Le worker lance le binaire Codex réel (jamais le shim de Paneflow) en `codex app-server`, avec le `CODEX_HOME` du compte et sans variable `PANEFLOW_*`, fait la poignée de main JSON-RPC, appelle `account/rateLimits/read`, puis ferme le processus en moins de 2 s après la réponse. Aucun tour n'est démarré. Référence : [`CodexProvider.ts:580`](https://github.com/pingdotgg/t3code/blob/37d7615a91d880c3776d575e1152b9c955104de2/apps/server/src/provider/CodexProvider.ts#L580) de T3 Code.
+- [ ] La sonde partage le déclencheur, le plancher de 30 s par compte et la limite de 2 sondes simultanées de US-022, et ne s'exécute jamais sur le thread de rendu.
+- [ ] Les fenêtres primaire et secondaire de la réponse deviennent l'instantané du compte, avec les bornes et les libellés de US-008 ; quand une lecture de rollout et la sonde rapportent toutes deux, l'observation la plus récente gagne.
+- [ ] Given un binaire absent, une connexion par clé API, un délai de 10 s dépassé, une erreur JSON-RPC ou un schéma inconnu, then l'instantané précédent est conservé (ou l'état `NoCodexData` reste affiché), un avertissement est journalisé, et rien ne panique.
+- [ ] Un test pilote un faux `codex app-server` qui rejoue une réponse enregistrée sur la version de Codex installée, et couvre succès, erreur, délai et schéma inconnu. Le test de garde de US-003 couvre le module de la sonde.
 
 ---
 
@@ -423,6 +457,7 @@ Ajoute la page Usage : tuiles de limites à anneaux, registres d'activité par c
 - [ ] Les tuiles reprennent les états et les textes de US-013.
 - [ ] La recherche des Settings trouve la page avec « usage », « quota » ou « limit », via des entrées `SettingCopy` déclarées dans `src-app/src/settings/search.rs`.
 - [ ] Given aucun compte, then une carte unique affiche « No Claude Code or Codex account found. Install an agent in Settings › Agents. », avec une ligne qui ouvre Agents.
+- [ ] La dernière ligne de la bulle de US-012 devient « Open usage settings » et ouvre Settings › Usage (amendement 1.4).
 
 #### US-015: Registres d'activité sur 53 semaines
 **Description:** As a développeur multi-agents, I want un registre quotidien par compte, à la GitHub so that je voie mon rythme et compare mes agents sur un an.
@@ -464,9 +499,11 @@ Ajoute la page Usage : tuiles de limites à anneaux, registres d'activité par c
 
 Couvre les utilisateurs qui ont déjà un status line, le rattrapage de l'historique existant, et les contrats de documentation.
 
-**Definition of Done:** un status line existant peut être chaîné puis restauré à l'octet près ; le rattrapage remplit le journal sans double compte ; DESIGN.md, ARCHITECTURE.md, le CHANGELOG et la documentation du site décrivent la fonctionnalité.
+**Definition of Done:** (US-017 annulée par l'amendement 1.5) le rattrapage remplit le journal sans double compte ; DESIGN.md, ARCHITECTURE.md, le CHANGELOG et la documentation du site décrivent la fonctionnalité.
 
 #### US-017: Chaînage d'un status line existant, sur demande
+
+**Status:** CANCELLED (amendement 1.5) : la sonde de US-022 lit les limites quel que soit le status line, sans réécrire `settings.json`.
 **Description:** As a utilisateur qui a déjà un status line, I want garder le mien tout en donnant ses limites à Paneflow so that je n'aie pas à choisir entre les deux.
 
 **Priority:** P1
@@ -538,7 +575,7 @@ Rejoue sur Linux, dans un pane Paneflow réel, les constats que US-001 a faits s
 
 Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 
-**Definition of Done:** le rapport de US-021 est consigné dans sa story, avec la version de macOS, l'architecture et la version de Claude Code.
+**Definition of Done:** le rapport de US-021 est consigné dans sa story, avec la version de macOS, l'architecture et la version de Claude Code ; Arthur a fait la passe visuelle macOS de la capsule et de la bulle.
 
 #### US-021: Validate on macOS: le status line et le relais dans un pane Paneflow
 **Description:** As a mainteneur, I want rejouer US-001 sur macOS so that la source des limites Claude soit prouvée sur la dernière cible livrée.
@@ -552,15 +589,16 @@ Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 - [ ] Given le même script, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit.
 - [ ] Given le `statusLine` géré posé par US-006, when une réponse arrive, then le host accepte le frame `status_line` et le publie en `plan_limits` sur le flux `agent.follow`.
 - [ ] Given `disableAllHooks: true`, then le status line ne s'exécute pas.
+- [ ] Arthur fait sur macOS la passe visuelle de la capsule et de la bulle de EP-003, comparée à l'artifact validé (amendement 1.4).
 
 ---
 
 ## Functional Requirements
 
 - FR-01: Le système doit lister un compte par couple (agent, dossier de config canonique), en réunissant le dossier par défaut, ceux des espaces et ceux des profils.
-- FR-02: Le système doit obtenir les limites Claude uniquement à partir du JSON que Claude Code passe à sa commande de status line.
-- FR-03: Le système doit obtenir les limites Codex uniquement à partir des événements `token_count` des rollouts écrits par Codex.
-- FR-04: Le système ne doit jamais lire, copier, écrire ni rafraîchir `.credentials.json`, une entrée de Keychain, `auth.json` ou une variable de token, ni émettre de requête HTTP pour cette fonctionnalité.
+- FR-02: Le système doit obtenir les limites Claude uniquement à partir du JSON que Claude Code passe à sa commande de status line, ou de la réponse à la requête de contrôle `get_usage` du binaire Claude Code non modifié (amendement 1.5).
+- FR-03: Le système doit obtenir les limites Codex uniquement à partir des événements `token_count` des rollouts écrits par Codex, ou de la méthode `account/rateLimits/read` de `codex app-server` non modifié (amendement 1.5).
+- FR-04: Le système ne doit jamais lire, copier, écrire ni rafraîchir `.credentials.json`, une entrée de Keychain, `auth.json` ou une variable de token, ni émettre de requête HTTP pour cette fonctionnalité. Seuls les binaires Claude Code et Codex, lancés sans modification par les sondes de US-022 et US-023, contactent leur fournisseur avec leur propre login (amendement 1.5).
 - FR-05: Le système doit libeller une fenêtre d'après sa durée et lui attribuer un niveau aux seuils 0,80 et 0,95.
 - FR-06: Le système doit afficher dans le pied de sidebar le pourcentage de la fenêtre la plus consommée des comptes de l'espace actif.
 - FR-07: Quand l'utilisateur ouvre la capsule, le système doit afficher chaque compte avec ses fenêtres, leur remise à zéro et une projection pour la semaine.
@@ -586,8 +624,8 @@ Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 |---|----------|---------|-------------------|--------------|
 | 1 | Premier lancement | Aucun instantané, journal vide | Capsule en piste seule ; registres remplacés par l'état vide | "No plan data yet. Send a message to Claude Code in a Paneflow pane to load your limits." |
 | 2 | Attente de la première réponse | Session ouverte, aucune réponse encore | Instantané précédent conservé avec son âge | "Updated 2 h ago" |
-| 3 | Status line personnel | `statusLine` étranger dans `settings.json` | Aucune écriture ; état `ForeignStatusLine` | "Your own Claude Code status line runs in {dossier}, so Paneflow cannot read plan limits." |
-| 4 | Hooks coupés | `disableAllHooks: true` | État `HooksDisabled` | "Claude Code hooks are off in {dossier}/settings.json, so plan limits cannot be read." |
+| 3 | Status line personnel | `statusLine` étranger dans `settings.json` | Aucune écriture ; état `ForeignStatusLine` ; seule la sonde de US-022 lit les limites | "Claude Code has not reported plan limits for {dossier} yet. Check that it is installed and signed in for this folder, then reopen this panel." |
+| 4 | Hooks coupés | `disableAllHooks: true` | État `HooksDisabled` ; seule la sonde de US-022 lit les limites | "Claude Code has not reported plan limits for {dossier} yet. Check that it is installed and signed in for this folder, then reopen this panel." |
 | 5 | Facturation par clé API | `ANTHROPIC_API_KEY` ou `OPENAI_API_KEY` actif pour l'origine | Compte `api_billing`, aucune jauge | "Billed through an API key. This account has no plan limits." |
 | 6 | Siège Team ou Enterprise | `rate_limits` absent après une réponse | État `NoLimitsReported` | "Claude Code reports no plan limits for this account." |
 | 7 | Remise à zéro passée | `resets_at` < maintenant | Fenêtre à 0 %, projection masquée | "Reset at 09:00. Updates at your next message." |
@@ -615,6 +653,7 @@ Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 | 7 | L'utilisateur prend une valeur ancienne pour l'état réel (usage sur le web) | High | Low | Âge toujours affiché ; sémantique de remise à zéro ; documentation (US-019) |
 | 8 | Différences de shell sous Windows pour le status line | Medium | Medium | US-001 couvre Git Bash et PowerShell ; US-017 reproduit la règle de Claude Code |
 | 9 | Changement de la politique d'Anthropic sur les commandes de status line | Low | High | Point d'extension documenté par Anthropic ; aucune donnée transmise hors de la machine |
+| 10 | La requête `get_usage` change ou disparaît (le SDK la nomme `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`) | Medium | Medium | Parsing tolérant ; le relais du status line reste une seconde source ; version de Claude Code conservée ; échec explicite sans jauge trompeuse (US-022) |
 
 ## Non-Goals
 
@@ -623,7 +662,7 @@ Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 - Pas de coûts en dollars, pas d'affichage de `spend_limit` des gateways : prévu après la v1 si un utilisateur d'entreprise le demande.
 - Pas de synchronisation du journal entre machines.
 - Pas de notification ni de toast au franchissement d'un seuil.
-- Pas de limites pour Gemini, OpenCode ou Pi : leur activité seule est comptée, quand ils émettent OSC 7501 ou des hooks.
+- Pas de limites pour Gemini, Grok, OpenCode ou Pi : leur activité seule est comptée, quand ils émettent OSC 7501 ou des hooks. Leur CLI n'expose pas le quota hors du mode interactif ; les lire exigerait le token de l'utilisateur (amendement 1.5). À revoir quand un de ces CLI publie une méthode headless ou ACP pour le quota.
 - Pas de courbe de consommation façon CodexBar : la phrase de projection la remplace en v1.
 
 ## Files NOT to Modify
