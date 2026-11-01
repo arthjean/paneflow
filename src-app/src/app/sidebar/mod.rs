@@ -436,14 +436,19 @@ impl PaneFlowApp {
         list = self.render_workspace_rows(list, ui, window, cx);
         list = self.render_fallback_session_group(list, ui, cx);
         let agents_shown = self.cached_config.sidebar_show.agents_enabled();
-        sidebar = sidebar.child(
+        let bubble_top = self.usage.bubble_top();
+        sidebar = sidebar.child(crate::ui_primitives::clip_below_line(
             self.sidebar_list_wrapper(list, cx)
                 .when(agents_shown, |tree| {
                     tree.min_h(px(agents_section::AGENTS_TREE_MIN_HEIGHT))
                 }),
-        );
+            bubble_top.clone(),
+        ));
         if agents_shown {
-            sidebar = sidebar.child(self.render_sidebar_agents(window, cx));
+            sidebar = sidebar.child(crate::ui_primitives::clip_below_line(
+                self.render_sidebar_agents(window, cx),
+                bubble_top,
+            ));
         }
         sidebar = sidebar.child(self.render_sidebar_settings_footer(window, cx));
         sidebar

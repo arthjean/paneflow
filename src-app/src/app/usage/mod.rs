@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use self::activity::Metric;
 use self::model::{InventoryEntry, UsageInputs, UsageView, step_cursor, usage_view};
+use crate::ui_primitives::ClipLine;
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) struct UsagePanel {
@@ -30,6 +31,7 @@ pub(crate) struct UsagePanel {
     utc_offset_secs: i32,
     home: Option<PathBuf>,
     bubble_open: bool,
+    bubble_top: ClipLine,
     cursor: Option<usize>,
     capsule_focus: FocusHandle,
     bubble_focus: FocusHandle,
@@ -57,6 +59,7 @@ impl UsagePanel {
             utc_offset_secs: 0,
             home: paneflow_agent_config::home_dir(),
             bubble_open: false,
+            bubble_top: ClipLine::default(),
             cursor: None,
             capsule_focus: cx.focus_handle(),
             bubble_focus: cx.focus_handle(),
@@ -77,6 +80,10 @@ impl UsagePanel {
 
     pub(crate) fn is_open(&self) -> bool {
         self.bubble_open
+    }
+
+    pub(crate) fn bubble_top(&self) -> ClipLine {
+        self.bubble_top.clone()
     }
 
     pub(crate) fn close(&mut self) {

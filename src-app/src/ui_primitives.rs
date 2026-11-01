@@ -122,6 +122,87 @@ where
         .into_any_element()
 }
 
+pub(crate) type ClipLine = std::rc::Rc<std::cell::Cell<Option<Pixels>>>;
+
+pub(crate) struct ClipBelowLine {
+    child: AnyElement,
+    line: ClipLine,
+}
+
+pub(crate) fn clip_below_line(child: impl IntoElement, line: ClipLine) -> ClipBelowLine {
+    ClipBelowLine {
+        child: child.into_any_element(),
+        line,
+    }
+}
+
+impl IntoElement for ClipBelowLine {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for ClipBelowLine {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(line) = self.line.get() else {
+            self.child.paint(window, cx);
+            return;
+        };
+        let height = (line - bounds.origin.y).clamp(px(0.), bounds.size.height);
+        let mask = gpui::ContentMask {
+            bounds: Bounds {
+                origin: bounds.origin,
+                size: gpui::size(bounds.size.width, height),
+            },
+        };
+        window.with_content_mask(Some(mask), |window| self.child.paint(window, cx));
+    }
+}
+
 type StyleAnimator = dyn for<'a> Fn(&mut AnimatedStyle<'a>, f32);
 type ElementAnimator = dyn for<'a> FnOnce(&mut AnimatedElement<'a>, f32);
 

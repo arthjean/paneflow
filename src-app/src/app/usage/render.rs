@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
     MouseButton, MouseUpEvent, ParentElement, Role, SharedString, StatefulInteractiveElement,
-    Styled, Window, deferred, div, prelude::FluentBuilder, px, relative, rgb, svg,
+    Styled, Window, canvas, deferred, div, prelude::FluentBuilder, px, relative, rgb, svg,
 };
 use paneflow_agent_config::runtime_catalog::runtime_by_slug;
 use paneflow_agent_config::usage::accounts::UsageAgent;
@@ -13,7 +13,11 @@ use super::model::{
 };
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
-use crate::settings::components::{menu_divider_color, menu_row, menu_surface, with_alpha};
+use paneflow_config::schema::InterfaceStyle;
+
+use crate::settings::components::{
+    menu_divider_color, menu_row, menu_surface_filled, select_menu_surface, with_alpha,
+};
 use crate::theme::UiColors;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::ring::{RingSize, level_color, ring};
@@ -132,6 +136,9 @@ impl PaneFlowApp {
             .max_h(px(list_max_height))
             .overflow_y_scroll();
         for (index, block) in view.blocks.iter().enumerate() {
+            if index > 0 {
+                accounts = accounts.child(bubble_divider(ui));
+            }
             accounts = accounts.child(render_block(index, block, cursor == Some(index), ui));
         }
         let open_settings = menu_row("usage-open-settings", false, ui)
@@ -142,13 +149,6 @@ impl PaneFlowApp {
                 cx.stop_propagation();
                 this.open_usage_settings(window, cx);
             }))
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/plan-usage.svg")
-                    .text_color(ui.muted),
-            )
             .child(
                 div()
                     .flex_1()
@@ -192,7 +192,25 @@ impl PaneFlowApp {
                         .child(updated),
                 )
             });
-        let bubble = menu_surface(div().id("usage-bubble"), ui)
+        let blended = self
+            .cached_config
+            .interface_style()
+            .is_some_and(|style| style != InterfaceStyle::Themed);
+        let fill = if blended {
+            crate::app::constants::sidebar_tab_active_background()
+        } else {
+            select_menu_surface(ui)
+        };
+        let top = self.usage.bubble_top();
+        let bubble = menu_surface_filled(div().id("usage-bubble"), fill, ui)
+            .child(
+                canvas(
+                    move |bounds, _, _| top.set(Some(bounds.origin.y)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .font_family("Geist")
             .w(px(BUBBLE_WIDTH))
             .flex()
@@ -211,13 +229,7 @@ impl PaneFlowApp {
             )
             .child(header)
             .child(accounts)
-            .child(
-                div()
-                    .mx(px(6.))
-                    .my(px(4.))
-                    .h(px(1.))
-                    .bg(menu_divider_color(ui)),
-            )
+            .child(bubble_divider(ui))
             .child(open_settings);
         deferred(crate::ui_primitives::menu_reveal(
             "usage-bubble-reveal",
@@ -231,6 +243,15 @@ impl PaneFlowApp {
         .with_priority(3)
         .into_any_element()
     }
+}
+
+fn bubble_divider(ui: UiColors) -> gpui::Div {
+    div()
+        .flex_none()
+        .mx(px(6.))
+        .my(px(4.))
+        .h(px(1.))
+        .bg(menu_divider_color(ui))
 }
 
 fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors) -> AnyElement {
@@ -296,9 +317,6 @@ fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors)
         .px(px(10.))
         .pt(px(8.))
         .pb(px(10.))
-        .when(index > 0, |block| {
-            block.border_t_1().border_color(with_alpha(ui.border, 0.7))
-        })
         .role(Role::Group)
         .aria_label(format!("{}, {}", block.agent.display_name(), block.label))
         .child(identity)

@@ -249,12 +249,17 @@ impl PaneFlowApp {
             .child(settings_row)
             .into_any_element();
 
+        let bubble_top = self.usage.bubble_top();
+        bubble_top.set(None);
         let mut footer = div().relative().flex_none().py(px(9.5));
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
-            footer = footer.child(banner);
+            footer = footer.child(crate::ui_primitives::clip_below_line(
+                banner,
+                bubble_top.clone(),
+            ));
         }
         if let Some(banner) = self.render_sidebar_update_banner(cx) {
-            footer = footer.child(banner);
+            footer = footer.child(crate::ui_primitives::clip_below_line(banner, bubble_top));
         }
         if self.usage.is_open()
             && let Some(view) = &usage

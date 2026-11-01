@@ -43,6 +43,7 @@ const DAY_LABEL_WIDTH: f32 = 28.;
 const MONTH_ROW_HEIGHT: f32 = 14.;
 const INNER_SWATCH_ALPHA: f32 = 0.72;
 const CLAUDE_HEAT: u32 = 0xD9_77_57;
+const EMPTY_CELL_MIX: f32 = 0.05;
 const DAY_LABELS: [&str; 7] = ["Mon", "", "Wed", "", "Fri", "", ""];
 
 pub(crate) fn tile_columns(page_width: f32) -> usize {
@@ -128,13 +129,14 @@ impl GridColors {
         } else {
             ui.text
         };
+        let empty = lerp_color(select_menu_surface(ui), ui.text, EMPTY_CELL_MIX);
         Self {
             ramp: [
-                ui.subtle,
-                lerp_color(ui.subtle, heat, LEVEL_MIX[0]),
-                lerp_color(ui.subtle, heat, LEVEL_MIX[1]),
-                lerp_color(ui.subtle, heat, LEVEL_MIX[2]),
-                lerp_color(ui.subtle, heat, LEVEL_MIX[3]),
+                empty,
+                lerp_color(empty, heat, LEVEL_MIX[0]),
+                lerp_color(empty, heat, LEVEL_MIX[1]),
+                lerp_color(empty, heat, LEVEL_MIX[2]),
+                lerp_color(empty, heat, LEVEL_MIX[3]),
             ],
             muted: ui.muted,
             focus: with_alpha(ui.text, 0.7),

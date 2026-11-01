@@ -1025,11 +1025,16 @@ pub fn menu_divider_color(ui: crate::theme::UiColors) -> Hsla {
 pub(crate) const MENU_RADIUS: Pixels = px(18.);
 
 pub fn menu_surface<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
+    menu_surface_filled(el, select_menu_surface(ui), ui)
+}
+
+pub fn menu_surface_filled<E: Styled + ParentElement>(
+    el: E,
+    fill: Hsla,
+    ui: crate::theme::UiColors,
+) -> E {
     el.relative()
-        .child(squircle::squircle_fill(
-            MENU_RADIUS,
-            select_menu_surface(ui),
-        ))
+        .child(squircle::squircle_fill(MENU_RADIUS, fill))
         .child(squircle::squircle_border(
             MENU_RADIUS,
             px(1.),
