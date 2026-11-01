@@ -15,6 +15,7 @@ const CAPTION_BUTTONS: [WindowButton; 3] = [
 ];
 const CAPTION_BUTTON_SIZE: Pixels = px(24.);
 const CAPTION_GROUP_INSET: Pixels = px(10.);
+const WINDOWS_CAPTION_GLYPH_SIZE: Pixels = px(10.);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ClientDecorationGeometry {
@@ -323,16 +324,13 @@ pub(crate) fn render_window_button(
         WindowButton::Close => "wc-close",
     };
 
-    let icon_path = match (cfg!(target_os = "windows"), button, is_maximized) {
-        (true, WindowButton::Minimize, _) => "icons/windows_minimize.svg",
-        (true, WindowButton::Maximize, true) => "icons/windows_restore.svg",
-        (true, WindowButton::Maximize, false) => "icons/windows_maximize.svg",
-        (true, WindowButton::Close, _) => "icons/windows_close.svg",
-        (false, WindowButton::Minimize, _) => "icons/caption/minus-sign.svg",
-        (false, WindowButton::Maximize, true) => "icons/caption/copy-01.svg",
-        (false, WindowButton::Maximize, false) => "icons/caption/square.svg",
-        (false, WindowButton::Close, _) => "icons/caption/cancel-01.svg",
+    let icon_path = match (button, is_maximized) {
+        (WindowButton::Minimize, _) => "icons/caption/minus-sign.svg",
+        (WindowButton::Maximize, true) => "icons/caption/copy-01.svg",
+        (WindowButton::Maximize, false) => "icons/caption/square.svg",
+        (WindowButton::Close, _) => "icons/caption/cancel-01.svg",
     };
+    let windows_glyph = windows_caption_glyph(button, is_maximized);
 
     let control_area = match button {
         WindowButton::Minimize => WindowControlArea::Min,
@@ -397,23 +395,53 @@ pub(crate) fn render_window_button(
         )
     };
 
-    let icon_size = if is_windows { px(12.) } else { px(14.) };
     btn.when(!is_windows, |btn| btn.rounded_full())
+        .when(is_windows, |btn| {
+            btn.font(windows_caption_font())
+                .text_size(WINDOWS_CAPTION_GLYPH_SIZE)
+        })
         .text_color(ui.text)
         .animated_hover_element(move |button_element, delta| {
+            let color = lerp_color(ui.text, hover_text, delta);
             button_element
                 .style()
                 .bg(lerp_color(resting_bg, hover_bg, delta))
-                .text_color(lerp_color(ui.text, hover_text, delta));
-            let icon = svg()
-                .size(icon_size)
-                .flex_none()
-                .path(icon_path)
-                .text_color(lerp_color(ui.text, hover_text, delta))
-                .into_any_element();
+                .text_color(color);
+            let icon = if is_windows {
+                div()
+                    .flex_none()
+                    .text_color(color)
+                    .child(windows_glyph)
+                    .into_any_element()
+            } else {
+                svg()
+                    .size(px(14.))
+                    .flex_none()
+                    .path(icon_path)
+                    .text_color(color)
+                    .into_any_element()
+            };
             button_element.extend([icon]);
         })
         .active(move |style| style.bg(pressed_bg).text_color(hover_text))
+}
+
+fn windows_caption_font() -> gpui::Font {
+    gpui::Font {
+        fallbacks: Some(gpui::FontFallbacks::from_fonts(vec![
+            "Segoe MDL2 Assets".into(),
+        ])),
+        ..gpui::font("Segoe Fluent Icons")
+    }
+}
+
+fn windows_caption_glyph(button: WindowButton, is_maximized: bool) -> &'static str {
+    match (button, is_maximized) {
+        (WindowButton::Minimize, _) => "\u{e921}",
+        (WindowButton::Maximize, false) => "\u{e922}",
+        (WindowButton::Maximize, true) => "\u{e923}",
+        (WindowButton::Close, _) => "\u{e8bb}",
+    }
 }
 
 pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &'static str {
