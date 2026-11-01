@@ -58,13 +58,22 @@ impl TerminalAgent {
                 .collect()
         };
         for agent in pending {
-            let version = which::which(agent.binary())
-                .ok()
-                .and_then(|path| probe_version(&path));
-            if let Ok(mut cache) = version_cache().lock() {
-                cache.insert(agent, version);
-            }
+            agent.refresh_version();
         }
+    }
+
+    pub fn refresh_version(self) -> Option<String> {
+        let version = self.real_executable().and_then(|path| probe_version(&path));
+        if let Ok(mut cache) = version_cache().lock() {
+            cache.insert(self, version.clone());
+        }
+        version
+    }
+
+    pub fn real_executable(self) -> Option<std::path::PathBuf> {
+        which::which_all(self.binary())
+            .ok()?
+            .find(|candidate| !is_paneflow_shim(candidate))
     }
 
     pub fn display_rank(self) -> usize {
@@ -306,6 +315,14 @@ fn version_cache() -> &'static Mutex<HashMap<TerminalAgent, Option<String>>> {
 
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const VERSION_PROBE_STDOUT_CAP: u64 = 4096;
+
+fn is_paneflow_shim(candidate: &std::path::Path) -> bool {
+    candidate.parent().is_some_and(|dir| {
+        ["paneflow-ai-hook", "paneflow-ai-hook.exe"]
+            .iter()
+            .any(|hook| dir.join(hook).is_file())
+    })
+}
 
 fn probe_version(binary: &std::path::Path) -> Option<String> {
     let mut command = std::process::Command::new(binary);

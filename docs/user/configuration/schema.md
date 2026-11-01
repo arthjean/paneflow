@@ -148,6 +148,7 @@ and macOS keep every agent below.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
+| `agents.update_methods` | object | `{}` | How **Settings › Agents** updates each agent's CLI, keyed by runtime slug such as `claude-code` or `codex`. `auto` (or no entry) uses the tool that installed it; `self` runs the agent's own updater; `npm`, `bun`, `pnpm` and `yarn` install its npm package globally with that tool; `script` reruns its official installer, through PowerShell on Windows and curl elsewhere. Choosing a tool other than the one that installed the CLI installs a second copy, and the copy first on PATH is the one that runs. |
 | `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
 
 ## `usage`

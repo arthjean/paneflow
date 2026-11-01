@@ -34,6 +34,9 @@ failure_markers = ["No saved session found with ID"]
 [sessions]
 reader = "codex"
 
+[update]
+npm_package = "@openai/codex"
+
 [[suggested_presets]]
 id = "codex"
 command = "codex"

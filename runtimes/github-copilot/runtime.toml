@@ -22,6 +22,10 @@ strip_inherited = []
 summary = "Paneflow shows GitHub Copilot CLI's turn status when Copilot reports it through OSC 7501."
 hook_adapter = "none"
 
+[update]
+npm_package = "@github/copilot"
+curl_script = "https://gh.io/copilot-install"
+
 [[suggested_presets]]
 id = "copilot"
 command = "copilot"

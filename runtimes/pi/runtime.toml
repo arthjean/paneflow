@@ -30,6 +30,10 @@ failure_markers = []
 [sessions]
 reader = "pi"
 
+[update]
+npm_package = "@earendil-works/pi-coding-agent"
+self_update = ["pi", "update", "--self"]
+
 [[suggested_presets]]
 id = "pi"
 command = "pi"

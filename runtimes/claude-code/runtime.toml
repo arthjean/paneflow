@@ -36,6 +36,12 @@ failure_markers = ["No conversation found with session ID"]
 [sessions]
 reader = "claude"
 
+[update]
+npm_package = "@anthropic-ai/claude-code"
+self_update = ["claude", "update"]
+curl_script = "https://claude.ai/install.sh"
+powershell_script = "https://claude.ai/install.ps1"
+
 [[suggested_presets]]
 id = "claude_code"
 command = "claude"

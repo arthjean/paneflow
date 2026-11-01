@@ -22,6 +22,9 @@ strip_inherited = []
 summary = "Paneflow shows Openclaw's turn status when Openclaw reports it through OSC 7501."
 hook_adapter = "none"
 
+[update]
+npm_package = "openclaw"
+
 [[suggested_presets]]
 id = "openclaw"
 command = "openclaw tui"

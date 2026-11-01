@@ -487,6 +487,15 @@
           "type": ["boolean", "null"],
           "description": "Have the Claude Code shim pass a generated --session-id to a fresh interactive launch, so the conversation can be reopened even without Paneflow's hooks.",
           "default": false
+        },
+        "update_methods": {
+          "type": "object",
+          "description": "How Settings > Agents updates each agent's CLI, keyed by runtime slug (claude-code, codex, ...). An agent left out, or set to auto, is updated with the tool that installed it. self runs the agent's own updater, npm, bun, pnpm and yarn install its npm package globally with that tool, and script reruns its official installer (PowerShell on Windows, curl elsewhere).",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["auto", "self", "npm", "bun", "pnpm", "yarn", "script"]
+          },
+          "default": {}
         }
       }
     },

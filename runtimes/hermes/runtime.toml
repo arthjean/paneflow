@@ -22,6 +22,9 @@ strip_inherited = []
 summary = "Paneflow shows Hermes Agent's turn status when Hermes reports it through OSC 7501."
 hook_adapter = "none"
 
+[update]
+self_update = ["hermes", "update", "--yes"]
+
 [[suggested_presets]]
 id = "hermes"
 command = "hermes"

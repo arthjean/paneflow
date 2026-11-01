@@ -30,6 +30,9 @@ failure_markers = []
 [sessions]
 reader = "grok"
 
+[update]
+self_update = ["grok", "update"]
+
 [[suggested_presets]]
 id = "grok"
 command = "grok"

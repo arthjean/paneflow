@@ -19,6 +19,8 @@ pub struct Descriptor {
     pub integration: Integration,
     pub resume: Option<Resume>,
     pub sessions: Option<Sessions>,
+    #[serde(default)]
+    pub update: Option<Update>,
     pub suggested_presets: Vec<SuggestedPreset>,
 }
 
@@ -241,6 +243,15 @@ pub struct Resume {
     pub fork_argv: Option<Vec<String>>,
     pub session_id_pattern: String,
     pub failure_markers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Update {
+    pub npm_package: Option<String>,
+    pub self_update: Option<Vec<String>>,
+    pub curl_script: Option<String>,
+    pub powershell_script: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -473,6 +484,14 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
                 &mut errors,
             );
         }
+        if let Some(update) = &runtime.update {
+            validate_update(
+                path,
+                &runtime.detection.command_aliases,
+                update,
+                &mut errors,
+            );
+        }
         if runtime.suggested_presets.is_empty() {
             errors.push(format!(
                 "{}: suggested_presets must not be empty",
@@ -505,6 +524,94 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
         Ok(())
     } else {
         Err(errors.join("\n"))
+    }
+}
+
+fn validate_update(
+    path: &Path,
+    command_aliases: &[String],
+    update: &Update,
+    errors: &mut Vec<String>,
+) {
+    if update.npm_package.is_none()
+        && update.self_update.is_none()
+        && update.curl_script.is_none()
+        && update.powershell_script.is_none()
+    {
+        errors.push(format!(
+            "{}: [update] declares no npm_package, self_update, curl_script or powershell_script",
+            path.display()
+        ));
+    }
+    for (field, url) in [
+        ("update.curl_script", &update.curl_script),
+        ("update.powershell_script", &update.powershell_script),
+    ] {
+        if let Some(url) = url.as_ref().filter(|url| !is_script_url(url)) {
+            errors.push(format!(
+                "{}: {field} '{url}' must be an https URL without spaces or quotes",
+                path.display()
+            ));
+        }
+    }
+    if let Some(package) = update
+        .npm_package
+        .as_ref()
+        .filter(|package| !is_npm_package_name(package))
+    {
+        errors.push(format!(
+            "{}: update.npm_package '{package}' is not an npm package name",
+            path.display()
+        ));
+    }
+    let Some(argv) = &update.self_update else {
+        return;
+    };
+    match argv.first() {
+        None => errors.push(format!(
+            "{}: update.self_update must not be empty",
+            path.display()
+        )),
+        Some(program) if !command_aliases.contains(program) => errors.push(format!(
+            "{}: update.self_update program '{program}' is not one of the runtime's detection.command_aliases",
+            path.display()
+        )),
+        Some(_) => {}
+    }
+    for arg in argv.iter().skip(1) {
+        if !is_plain_argument(arg) {
+            errors.push(format!(
+                "{}: update.self_update argument '{arg}' must use only ASCII letters, digits, '-', '_', '.' or '='",
+                path.display()
+            ));
+        }
+    }
+}
+
+fn is_script_url(url: &str) -> bool {
+    url.strip_prefix("https://").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && !b"\"'`$;|&<>\\".contains(&byte))
+    })
+}
+
+fn is_npm_package_name(name: &str) -> bool {
+    let plain = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with(['.', '_'])
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'.' | b'_')
+            })
+    };
+    match name.strip_prefix('@') {
+        Some(scoped) => scoped
+            .split_once('/')
+            .is_some_and(|(scope, package)| plain(scope) && plain(package)),
+        None => plain(name),
     }
 }
 
@@ -710,6 +817,14 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             )),
             None => output.push_str("sessions: None,\n"),
         }
+        let update = runtime.update.as_ref();
+        output.push_str(&format!(
+            "update: RuntimeUpdate {{ npm_package: {}, self_update: {}, curl_script: {}, powershell_script: {} }},\n",
+            option_string(update.and_then(|update| update.npm_package.as_deref())),
+            option_strings(update.and_then(|update| update.self_update.as_deref())),
+            option_string(update.and_then(|update| update.curl_script.as_deref())),
+            option_string(update.and_then(|update| update.powershell_script.as_deref()))
+        ));
         output.push_str("suggested_presets: &[\n");
         for preset in &runtime.suggested_presets {
             let env = preset
@@ -1121,6 +1236,77 @@ command = "{alias}"
             generated.contains("continue_argv: Some(&[\"alpha\", \"--continue\"])"),
             "{generated}"
         );
+    }
+
+    fn with_update(update: &str) -> String {
+        descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "[[suggested_presets]]",
+            &format!("[update]\n{update}\n[[suggested_presets]]"),
+        )
+    }
+
+    #[test]
+    fn an_update_section_is_generated_and_its_absence_is_explicit() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_runtime(
+            temp.path(),
+            "alpha",
+            &with_update(
+                "npm_package = \"@example/alpha-cli\"\nself_update = [\"alpha\", \"update\", \"--self\"]\ncurl_script = \"https://example.com/install.sh\"\npowershell_script = \"https://example.com/install.ps1\"",
+            ),
+        );
+        write_runtime(
+            temp.path(),
+            "beta",
+            &descriptor("beta", "com.example.beta", "beta").replace("order = 0", "order = 1"),
+        );
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        let generated = generate_catalog(&descriptors).unwrap();
+        assert!(
+            generated.contains(
+                "update: RuntimeUpdate { npm_package: Some(\"@example/alpha-cli\"), self_update: Some(&[\"alpha\", \"update\", \"--self\"]), curl_script: Some(\"https://example.com/install.sh\"), powershell_script: Some(\"https://example.com/install.ps1\") }"
+            ),
+            "{generated}"
+        );
+        assert!(
+            generated.contains(
+                "update: RuntimeUpdate { npm_package: None, self_update: None, curl_script: None, powershell_script: None }"
+            ),
+            "{generated}"
+        );
+    }
+
+    #[test]
+    fn an_update_section_rejects_foreign_programs_bad_packages_and_emptiness() {
+        for (update, expected) in [
+            (
+                "",
+                "declares no npm_package, self_update, curl_script or powershell_script",
+            ),
+            (
+                "curl_script = \"http://example.com/install.sh\"",
+                "must be an https URL",
+            ),
+            (
+                "powershell_script = \"https://example.com/x.ps1; rm -rf ~\"",
+                "must be an https URL",
+            ),
+            ("npm_package = \"Alpha CLI\"", "is not an npm package name"),
+            ("npm_package = \"@scope\"", "is not an npm package name"),
+            (
+                "self_update = [\"npm\", \"update\"]",
+                "program 'npm' is not one of the runtime's detection.command_aliases",
+            ),
+            (
+                "self_update = [\"alpha\", \"up;rm\"]",
+                "argument 'up;rm' must use only",
+            ),
+        ] {
+            let temp = tempfile::TempDir::new().unwrap();
+            write_runtime(temp.path(), "alpha", &with_update(update));
+            let error = discover_and_validate(temp.path()).unwrap_err();
+            assert!(error.contains(expected), "{update}: {error}");
+        }
     }
 
     #[test]

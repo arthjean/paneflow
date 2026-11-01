@@ -10,6 +10,7 @@ use paneflow_mcp_install::IntegrationState;
 use crate::PaneFlowApp;
 use crate::SidebarWidthAnimation;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
+use crate::agent_updates::{self, AgentUpdateState, UpdateMethod, UpdatePhase};
 use crate::settings::components::{
     deferred_select_menu, destructive_color, ghost_icon_button, ghost_skin, hairline,
     hairline_inset, raised_button, section_header_with_action, section_title, select_chevron,
@@ -32,8 +33,7 @@ const CARD_PADDING_X: f32 = crate::settings::components::CARD_PADDING_X;
 const CARD_PADDING_Y: f32 = crate::settings::components::CARD_PADDING_Y;
 const HAIRLINE_HEIGHT: f32 = 1.;
 const MISSING_PREVIEW_ROWS: usize = 3;
-const HOOK_GLYPH: f32 = 14.;
-const HOOK_STEP_DOT: f32 = 6.;
+const UPDATE_METHOD_WIDTH: f32 = 220.;
 
 fn installed_agents() -> impl Iterator<Item = TerminalAgent> {
     TerminalAgent::for_this_platform().filter(|agent| agent.is_installed())
@@ -123,7 +123,10 @@ impl PaneFlowApp {
     pub(crate) fn probe_agent_versions(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             smol::unblock(TerminalAgent::probe_missing_versions).await;
-            let _ = this.update(cx, |_, cx| cx.notify());
+            let _ = this.update(cx, |this, cx| {
+                cx.notify();
+                this.inspect_agent_updates(cx);
+            });
         })
         .detach();
     }
@@ -310,6 +313,142 @@ impl PaneFlowApp {
             .finish()
     }
 
+    fn toggle_agent_details(&mut self, agent: TerminalAgent, cx: &mut Context<Self>) {
+        self.expanded_agent = if self.expanded_agent == Some(agent) {
+            None
+        } else {
+            Some(agent)
+        };
+        cx.notify();
+    }
+
+    fn inspect_agent_updates(&mut self, cx: &mut Context<Self>) {
+        for agent in installed_agents() {
+            if self
+                .agent_updates
+                .get(&agent)
+                .is_some_and(AgentUpdateState::is_running)
+            {
+                continue;
+            }
+            cx.spawn(async move |this, cx| {
+                let inspection = smol::unblock(move || agent_updates::inspect(agent)).await;
+                let _ = this.update(cx, |this, cx| {
+                    let state = this.agent_updates.entry(agent).or_default();
+                    if !state.is_running() {
+                        state.inspection = Some(inspection);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn selected_update_method(&self, agent: TerminalAgent) -> UpdateMethod {
+        UpdateMethod::from_id(
+            self.cached_config
+                .agents
+                .as_ref()
+                .and_then(|agents| agents.update_methods.get(agent.runtime().slug))
+                .map(String::as_str),
+        )
+    }
+
+    fn set_agent_update_method(
+        &mut self,
+        agent: TerminalAgent,
+        method: UpdateMethod,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_update_menu_open = None;
+        let mut agents = self.cached_config.agents.clone().unwrap_or_default();
+        let slug = agent.runtime().slug.to_string();
+        if method == UpdateMethod::Auto {
+            agents.update_methods.remove(&slug);
+        } else {
+            agents.update_methods.insert(slug, method.id().to_string());
+        }
+        if let Some(state) = self.agent_updates.get_mut(&agent)
+            && !state.is_running()
+        {
+            state.phase = None;
+        }
+        match serde_json::to_value(agents) {
+            Ok(value) => self.persist_setting(false, "agents", value, cx),
+            Err(_) => cx.notify(),
+        }
+    }
+
+    fn start_agent_update(&mut self, agent: TerminalAgent, cx: &mut Context<Self>) {
+        let method = self.selected_update_method(agent);
+        let Some(state) = self.agent_updates.get_mut(&agent) else {
+            return;
+        };
+        if state.is_running() {
+            return;
+        }
+        let Some(plan) = state.runnable_plan(method).cloned() else {
+            return;
+        };
+        state.phase = Some(UpdatePhase::Running { progress: None });
+        cx.notify();
+        let before = agent.cached_version();
+        cx.spawn(async move |this, cx| {
+            let (sender, receiver) = smol::channel::unbounded::<String>();
+            let job = smol::unblock(move || {
+                agent_updates::run_update(&plan, move |line| {
+                    let _ = sender.try_send(line);
+                })
+            });
+            while let Ok(line) = receiver.recv().await {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(state) = this.agent_updates.get_mut(&agent)
+                        && state.is_running()
+                    {
+                        state.phase = Some(UpdatePhase::Running {
+                            progress: Some(line),
+                        });
+                        cx.notify();
+                    }
+                });
+            }
+            let result = job.await;
+            let after = smol::unblock(move || agent.refresh_version()).await;
+            let phase = match result {
+                Err(message) => UpdatePhase::Failed { message },
+                Ok(()) if after.is_some() && after != before => {
+                    UpdatePhase::Updated { version: after }
+                }
+                Ok(()) => UpdatePhase::Unchanged,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.agent_updates.entry(agent).or_default().phase = Some(phase);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn open_agent_sessions(&self, agent: TerminalAgent) -> usize {
+        let mut surfaces = std::collections::HashSet::new();
+        let mut unbound = 0;
+        for session in self
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.agent_sessions.values())
+            .filter(|session| session.tool == agent)
+        {
+            match session.surface_id {
+                Some(surface) => {
+                    surfaces.insert(surface);
+                }
+                None => unbound += 1,
+            }
+        }
+        surfaces.len() + unbound
+    }
+
     fn render_installed_agent_row(
         &self,
         agent: TerminalAgent,
@@ -317,37 +456,83 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let visible = agent.is_visible(&self.cached_config);
-        let slug = agent.runtime().slug;
-        let subtitle: AnyElement = match self.integration_errors.get(slug) {
-            Some(error) => div()
+        let expanded = self.expanded_agent == Some(agent);
+        let installed = agent.cached_version();
+        let update = self.agent_updates.get(&agent);
+        let running = update.is_some_and(AgentUpdateState::is_running);
+        let newer = update
+            .and_then(|update| update.newer_version(installed.as_deref()))
+            .map(str::to_string);
+        let method = self.selected_update_method(agent);
+        let can_update = update.is_some_and(|update| update.runnable_plan(method).is_some());
+
+        let subtitle: AnyElement = if running {
+            div()
                 .text_size(LABEL_SM)
-                .text_color(destructive_color())
-                .truncate()
-                .child(error.clone())
-                .into_any_element(),
-            None => {
-                let mut label = agent.binary().to_string();
-                if let Some(version) = agent.cached_version() {
-                    label.push(' ');
-                    label.push_str(&version);
-                }
-                mono_text(label.into(), ui.muted).into_any_element()
+                .text_color(ui.muted)
+                .child("Updating…")
+                .into_any_element()
+        } else {
+            let mut label = agent.binary().to_string();
+            if let Some(version) = installed.as_deref() {
+                label.push(' ');
+                label.push_str(version);
             }
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .child(mono_text(label.into(), ui.muted))
+                .when_some(newer.clone(), |line, newer| {
+                    line.child(mono_text("→".into(), ui.muted))
+                        .child(mono_text(newer.into(), ui.text))
+                })
+                .into_any_element()
         };
+
+        let tag = agent.tag();
         let key = agent.visibility_config_key();
         let target = !visible;
         let toggle = toggle_switch(
-            SharedString::from(format!("agent-visible-{}", agent.tag())),
+            SharedString::from(format!("agent-visible-{tag}")),
             format!("Show {} in the agent picker", agent.display_name()),
             visible,
             ui,
         )
         .cursor(CursorStyle::PointingHand)
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            cx.stop_propagation();
             this.persist_setting(false, key, serde_json::Value::Bool(target), cx);
         }));
 
-        div()
+        let action: Option<AnyElement> = if running {
+            Some(crate::ui_primitives::comet_spinner(
+                SharedString::from(format!("agent-update-spinner-{tag}")),
+                px(14.),
+                ui.muted,
+            ))
+        } else if newer.is_some() && can_update {
+            Some(
+                soft_button(
+                    SharedString::from(format!("agent-update-header-{tag}")),
+                    "Update",
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        cx.stop_propagation();
+                        this.start_agent_update(agent, cx);
+                    }),
+                )
+                .into_any_element(),
+            )
+        } else {
+            None
+        };
+
+        let group = SharedString::from(format!("agent-row-{tag}"));
+        let header = div()
+            .id(group.clone())
+            .group(group.clone())
             .flex()
             .flex_row()
             .items_center()
@@ -355,6 +540,13 @@ impl PaneFlowApp {
             .h(px(AGENT_ROW_HEIGHT))
             .gap(px(12.))
             .px(px(CARD_PADDING_X))
+            .cursor(CursorStyle::PointingHand)
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(format!("{} settings", agent.display_name()))
+            .aria_expanded(expanded)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.toggle_agent_details(agent, cx);
+            }))
             .child(agent_icon_el(agent, ui))
             .child(
                 div()
@@ -372,92 +564,383 @@ impl PaneFlowApp {
                     )
                     .child(subtitle),
             )
-            .child(self.render_hook_control(agent, ui, cx))
-            .child(toggle)
+            .child(
+                div()
+                    .id(SharedString::from(format!("agent-row-controls-{tag}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.))
+                    .flex_none()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .children(action)
+                    .child(
+                        svg()
+                            .size(px(12.))
+                            .flex_none()
+                            .path(if expanded {
+                                "icons/settings/arrow-down-01.svg"
+                            } else {
+                                "icons/settings/arrow-right-01.svg"
+                            })
+                            .text_color(ui.muted)
+                            .group_hover(group, move |style| style.text_color(ui.text)),
+                    )
+                    .child(toggle),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .when(expanded, |row| {
+                row.child(self.render_agent_details(agent, ui, cx))
+            })
             .into_any_element()
     }
 
-    fn render_hook_control(
+    fn render_agent_details(
         &self,
         agent: TerminalAgent,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let slug = agent.runtime().slug;
-        let Some(status) = self
-            .integration_status
-            .as_ref()
-            .and_then(|statuses| statuses.iter().find(|status| status.slug == slug))
-        else {
-            return div().into_any_element();
-        };
-        if self.integration_busy.as_deref() == Some(slug) {
-            return div()
-                .flex_none()
-                .text_size(LABEL_SM)
-                .text_color(ui.muted)
-                .child("Working...")
-                .into_any_element();
+        let mut rows: Vec<AnyElement> = vec![self.render_agent_update_row(agent, ui, cx)];
+        if let Some(method) = self.render_agent_update_method_row(agent, ui, cx) {
+            rows.push(method);
         }
-        let owned = slug.to_string();
-        match status.state {
-            IntegrationState::NotInstalled => soft_button(
-                format!("integration-install-{slug}"),
-                "Install hooks",
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.change_integration(owned.clone(), true, cx);
-                }),
+        if let Some(location) = self.render_agent_location_row(agent, ui, cx) {
+            rows.push(location);
+        }
+        if let Some(hooks) = self.render_agent_hooks_row(agent, ui, cx) {
+            rows.push(hooks);
+        }
+        let mut details = div()
+            .flex()
+            .flex_col()
+            .pl(px(crate::settings::components::ROW_HAIRLINE_INSET))
+            .pr(px(CARD_PADDING_X))
+            .pb(px(4.));
+        for (idx, row) in rows.into_iter().enumerate() {
+            if idx > 0 {
+                details = details.child(hairline(ui));
+            }
+            details = details.child(row);
+        }
+        details.into_any_element()
+    }
+
+    fn render_agent_update_row(
+        &self,
+        agent: TerminalAgent,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tag = agent.tag();
+        let installed = agent.cached_version();
+        let method = self.selected_update_method(agent);
+        let state = self.agent_updates.get(&agent);
+        let inspection = state.and_then(|state| state.inspection.as_ref());
+        let plan = inspection.and_then(|inspection| inspection.plan(method));
+        let latest = inspection.and_then(|inspection| inspection.latest.as_deref());
+        let newer = state.and_then(|state| state.newer_version(installed.as_deref()));
+        let up_to_date = state.is_some_and(|state| state.is_up_to_date(installed.as_deref()));
+
+        let (text, color): (String, Hsla) =
+            match (state.and_then(|state| state.phase.as_ref()), plan) {
+                (Some(UpdatePhase::Running { progress }), _) => (
+                    progress.clone().unwrap_or_else(|| "Updating…".to_string()),
+                    ui.muted,
+                ),
+                (Some(UpdatePhase::Failed { message }), _) => {
+                    (format!("Update failed: {message}"), destructive_color())
+                }
+                (Some(UpdatePhase::Updated { version }), _) => (
+                    match version {
+                        Some(version) => format!("Updated to {version}."),
+                        None => "Updated.".to_string(),
+                    },
+                    ui.muted,
+                ),
+                (Some(UpdatePhase::Unchanged), _) => ("Already up to date.".to_string(), ui.muted),
+                (None, None) => ("Checking for updates…".to_string(), ui.muted),
+                (None, Some(Err(reason))) => (reason.clone(), ui.muted),
+                (None, Some(Ok(plan))) => (
+                    match (newer, latest) {
+                        (Some(newer), _) => {
+                            format!("Version {newer} is available through {}.", plan.via)
+                        }
+                        (None, Some(_)) => "Up to date.".to_string(),
+                        (None, None) => format!("Updates through {}.", plan.via),
+                    },
+                    ui.muted,
+                ),
+            };
+
+        let running = state.is_some_and(AgentUpdateState::is_running);
+        let sessions = self.open_agent_sessions(agent);
+        let mut description = div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(detail_text(text, color));
+        let offers_update = plan.is_some_and(Result::is_ok) && !up_to_date;
+        if sessions > 0 && offers_update && !running {
+            description = description.child(detail_text(
+                if sessions == 1 {
+                    "1 open session keeps the current version until it restarts.".to_string()
+                } else {
+                    format!("{sessions} open sessions keep the current version until they restart.")
+                },
+                ui.muted,
+            ));
+        }
+
+        let control: Option<AnyElement> = if running {
+            Some(crate::ui_primitives::comet_spinner(
+                SharedString::from(format!("agent-update-row-spinner-{tag}")),
+                px(14.),
+                ui.muted,
+            ))
+        } else if offers_update {
+            Some(
+                soft_button(
+                    SharedString::from(format!("agent-update-{tag}")),
+                    "Update",
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.start_agent_update(agent, cx);
+                    }),
+                )
+                .into_any_element(),
             )
-            .into_any_element(),
-            IntegrationState::Installed => {
-                let (glyph, tip): (AnyElement, String) = match status.post_install_step {
-                    Some(step) => (
-                        div()
-                            .size(px(HOOK_STEP_DOT))
-                            .rounded_full()
-                            .bg(ui.vc_modified)
-                            .into_any_element(),
-                        format!("Hooks installed. {step} Click to remove them."),
-                    ),
-                    None => (
-                        div()
-                            .size(px(HOOK_GLYPH))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(ui.vc_added)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .size(px(9.))
-                                    .path("icons/settings/tick-02.svg")
-                                    .text_color(ui.vc_added),
-                            )
-                            .into_any_element(),
-                        "Hooks installed. Click to remove them.".to_string(),
-                    ),
-                };
-                div()
-                    .id(SharedString::from(format!("integration-remove-{slug}")))
-                    .flex_none()
-                    .size(px(ICON_BUTTON_SIZE))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::PointingHand)
-                    .delayed_tooltip(text_tooltip(tip))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.change_integration(owned.clone(), false, cx);
-                    }))
-                    .child(glyph)
-                    .into_any_element()
-            }
-            IntegrationState::UnsupportedPlatform | IntegrationState::DetectionOnly => {
-                div().into_any_element()
-            }
+        } else {
+            None
+        };
+        detail_row("Update", description.into_any_element(), control, ui)
+    }
+
+    fn render_agent_update_method_row(
+        &self,
+        agent: TerminalAgent,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let inspection = self.agent_updates.get(&agent)?.inspection.as_ref()?;
+        let selected = self.selected_update_method(agent);
+        let offered = inspection.offered_methods(selected);
+        if offered.len() <= 1 {
+            return None;
         }
+        let tag = agent.tag();
+        let auto_via = inspection
+            .plan(UpdateMethod::Auto)
+            .and_then(|plan| plan.as_ref().ok())
+            .map(|plan| plan.via);
+        let option_label = |method: UpdateMethod| -> String {
+            match (method, auto_via) {
+                (UpdateMethod::Auto, Some(via)) => format!("Automatic ({via})"),
+                _ => method.label().to_string(),
+            }
+        };
+
+        let is_open = self.agent_update_menu_open == Some(agent);
+        let mut trigger = select_trigger(
+            SharedString::from(format!("agent-update-method-{tag}")),
+            "Update method",
+            is_open,
+            ui,
+        )
+        .w_full()
+        .h(px(INPUT_HEIGHT))
+        .py(px(0.))
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.agent_update_menu_open = if is_open { None } else { Some(agent) };
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(BODY)
+                .text_color(ui.text)
+                .truncate()
+                .child(option_label(selected)),
+        )
+        .child(select_chevron(ui));
+        if is_open {
+            let mut menu = select_popup(
+                SharedString::from(format!("agent-update-method-list-{tag}")),
+                ui,
+            )
+            .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
+                this.agent_update_menu_open = None;
+                cx.notify();
+            }));
+            for method in offered {
+                menu = menu.child(
+                    select_option(
+                        SharedString::from(format!("agent-update-method-{tag}-{}", method.id())),
+                        method == selected,
+                        ui,
+                    )
+                    .cursor(CursorStyle::Arrow)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        this.set_agent_update_method(agent, method, cx);
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(ui.text)
+                            .child(option_label(method)),
+                    ),
+                );
+            }
+            trigger = trigger.child(deferred_select_menu(menu));
+        }
+
+        let mut description = div().flex().flex_col().gap(px(2.)).min_w_0();
+        match inspection.plan(selected) {
+            Some(Ok(plan)) => {
+                description = description.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(mono_text(plan.display_command().into(), ui.muted)),
+                );
+            }
+            Some(Err(reason)) => {
+                description = description.child(detail_text(reason.clone(), destructive_color()));
+            }
+            None => {}
+        }
+        if let Some(via) = auto_via.filter(|_| inspection.installs_second_copy(selected)) {
+            description = description.child(detail_text(
+                format!(
+                    "{} was installed through {via}: this installs a second copy, and the one \
+                     first on PATH runs.",
+                    agent.display_name()
+                ),
+                ui.vc_modified,
+            ));
+        }
+
+        Some(detail_row(
+            "Update with",
+            description.into_any_element(),
+            Some(
+                div()
+                    .relative()
+                    .flex_none()
+                    .w(px(UPDATE_METHOD_WIDTH))
+                    .child(trigger)
+                    .into_any_element(),
+            ),
+            ui,
+        ))
+    }
+
+    fn render_agent_location_row(
+        &self,
+        agent: TerminalAgent,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let inspection = self.agent_updates.get(&agent)?.inspection.as_ref()?;
+        let executable = inspection.executable.as_ref()?;
+        let command = inspection
+            .plan(self.selected_update_method(agent))
+            .and_then(|plan| plan.as_ref().ok())
+            .map(agent_updates::UpdatePlan::display_command);
+        let copy = command.map(|command| {
+            icon_button(
+                SharedString::from(format!("agent-update-copy-{}", agent.tag())),
+                "icons/settings/copy-01.svg",
+                with_alpha(ui.text, 0.8),
+                ui.text,
+                ui,
+            )
+            .delayed_tooltip(text_tooltip(format!("Copy update command: {command}")))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _w, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(command.clone()));
+            }))
+            .into_any_element()
+        });
+        Some(detail_row(
+            "Location",
+            div()
+                .min_w_0()
+                .truncate()
+                .child(mono_text(
+                    executable.to_string_lossy().into_owned().into(),
+                    ui.muted,
+                ))
+                .into_any_element(),
+            copy,
+            ui,
+        ))
+    }
+
+    fn render_agent_hooks_row(
+        &self,
+        agent: TerminalAgent,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let slug = agent.runtime().slug;
+        let status = self
+            .integration_status
+            .as_ref()?
+            .iter()
+            .find(|status| status.slug == slug)?;
+        let installed = match status.state {
+            IntegrationState::Installed => true,
+            IntegrationState::NotInstalled => false,
+            IntegrationState::UnsupportedPlatform | IntegrationState::DetectionOnly => {
+                return None;
+            }
+        };
+        let (text, color) = match self.integration_errors.get(slug) {
+            Some(error) => (error.clone(), destructive_color()),
+            None => match status.post_install_step.filter(|_| installed) {
+                Some(step) => (step.to_string(), ui.muted),
+                None => (
+                    "Lets Paneflow resume its conversations and registers the Paneflow MCP server."
+                        .to_string(),
+                    ui.muted,
+                ),
+            },
+        };
+        let control = if self.integration_busy.as_deref() == Some(slug) {
+            crate::ui_primitives::comet_spinner(
+                SharedString::from(format!("integration-spinner-{slug}")),
+                px(14.),
+                ui.muted,
+            )
+        } else {
+            let owned = slug.to_string();
+            toggle_switch(
+                SharedString::from(format!("integration-toggle-{slug}")),
+                format!("Paneflow hooks for {}", agent.display_name()),
+                installed,
+                ui,
+            )
+            .cursor(CursorStyle::PointingHand)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.change_integration(owned.clone(), !installed, cx);
+            }))
+            .into_any_element()
+        };
+        Some(detail_row(
+            "Paneflow hooks",
+            detail_text(text, color),
+            Some(control),
+            ui,
+        ))
     }
 
     fn render_agent_profiles_section(
@@ -1271,6 +1754,46 @@ fn missing_agent_row(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyEle
                 .child(agent.display_name()),
         )
         .child(mono_text(agent.binary().into(), ui.muted))
+        .into_any_element()
+}
+
+fn detail_row(
+    title: &'static str,
+    description: AnyElement,
+    control: Option<AnyElement>,
+    ui: crate::theme::UiColors,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(16.))
+        .py(px(10.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_size(BODY)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(ui.text)
+                        .child(title),
+                )
+                .child(description),
+        )
+        .children(control)
+        .into_any_element()
+}
+
+fn detail_text(text: String, color: Hsla) -> AnyElement {
+    div()
+        .text_size(LABEL_SM)
+        .text_color(color)
+        .child(text)
         .into_any_element()
 }
 

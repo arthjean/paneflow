@@ -11,6 +11,7 @@
 mod agent_launcher;
 mod agent_resume;
 mod agent_sessions;
+mod agent_updates;
 mod agents;
 mod ai_hooks;
 mod ai_types;
@@ -231,6 +232,12 @@ struct PaneFlowApp {
     integration_status: Option<Vec<paneflow_mcp_install::IntegrationStatus>>,
     integration_busy: Option<String>,
     integration_errors: std::collections::HashMap<String, String>,
+    expanded_agent: Option<crate::agent_launcher::TerminalAgent>,
+    agent_update_menu_open: Option<crate::agent_launcher::TerminalAgent>,
+    agent_updates: std::collections::HashMap<
+        crate::agent_launcher::TerminalAgent,
+        crate::agent_updates::AgentUpdateState,
+    >,
     agent_profile_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     space_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     space_name_editor: Option<crate::settings::tabs::spaces::SpaceNameEditor>,

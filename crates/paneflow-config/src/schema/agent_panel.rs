@@ -49,6 +49,8 @@ pub struct AgentsConfig {
     pub restore_conversations: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_preassign_session_id: Option<bool>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub update_methods: std::collections::BTreeMap<String, String>,
 }
 
 impl AgentsConfig {

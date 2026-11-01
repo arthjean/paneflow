@@ -23,6 +23,11 @@ strip_inherited = []
 summary = "Paneflow shows Amp's turn status when Amp reports it through OSC 7501."
 hook_adapter = "none"
 
+[update]
+npm_package = "@sourcegraph/amp"
+curl_script = "https://ampcode.com/install.sh"
+powershell_script = "https://ampcode.com/install.ps1"
+
 [[suggested_presets]]
 id = "amp"
 command = "amp"

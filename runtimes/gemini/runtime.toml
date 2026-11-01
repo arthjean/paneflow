@@ -31,6 +31,9 @@ failure_markers = []
 [sessions]
 reader = "gemini"
 
+[update]
+npm_package = "@google/gemini-cli"
+
 [[suggested_presets]]
 id = "gemini"
 command = "gemini"

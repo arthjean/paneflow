@@ -129,7 +129,16 @@ pub struct Runtime {
     pub environment: RuntimeEnvironment,
     pub integration: RuntimeIntegration,
     pub sessions: Option<RuntimeSessions>,
+    pub update: RuntimeUpdate,
     pub suggested_presets: &'static [RuntimeSuggestedPreset],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeUpdate {
+    pub npm_package: Option<&'static str>,
+    pub self_update: Option<&'static [&'static str]>,
+    pub curl_script: Option<&'static str>,
+    pub powershell_script: Option<&'static str>,
 }
 
 include!(concat!(env!("OUT_DIR"), "/runtime_catalog.rs"));

@@ -31,6 +31,11 @@ failure_markers = []
 [sessions]
 reader = "opencode"
 
+[update]
+npm_package = "opencode-ai"
+self_update = ["opencode", "upgrade"]
+curl_script = "https://opencode.ai/install"
+
 [[suggested_presets]]
 id = "opencode"
 command = "opencode"

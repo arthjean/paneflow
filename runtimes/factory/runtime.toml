@@ -22,6 +22,10 @@ strip_inherited = []
 summary = "Paneflow shows Factory Droid's turn status when Droid reports it through OSC 7501."
 hook_adapter = "none"
 
+[update]
+npm_package = "@factory/cli"
+curl_script = "https://app.factory.ai/cli"
+
 [[suggested_presets]]
 id = "factory"
 command = "droid"
