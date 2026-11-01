@@ -407,13 +407,15 @@ impl WorkerState {
     }
 
     fn push_turn_signal(&mut self, session: &SessionId, input: TurnInput, at_ms: u64, order: u64) {
-        let Some(account) = self
-            .sessions
-            .get(session)
-            .and_then(SessionEntry::usage_account)
-        else {
+        let Some(entry) = self.sessions.get(session) else {
             return;
         };
+        let Some(account) = entry.usage_account() else {
+            return;
+        };
+        let transcript = (input == TurnInput::Stop)
+            .then(|| entry.activity.as_ref()?.transcript_path.clone())
+            .flatten();
         if self.turn_signals.len() >= MAX_PENDING_TURN_SIGNALS {
             self.turn_signals.remove(0);
         }
@@ -423,6 +425,7 @@ impl WorkerState {
             input,
             at_ms,
             order,
+            transcript,
         });
     }
 

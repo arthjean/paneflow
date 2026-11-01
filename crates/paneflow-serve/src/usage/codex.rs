@@ -25,6 +25,10 @@ pub fn read_latest_limits(codex_home: &Path, now_secs: u64) -> Option<CodexReadi
     })
 }
 
+pub fn latest_rollout_in(codex_home: &Path) -> Option<PathBuf> {
+    latest_rollout(&codex_home.join("sessions"))
+}
+
 fn numbered_children(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();

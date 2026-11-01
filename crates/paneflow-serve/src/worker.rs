@@ -452,6 +452,7 @@ mod tests {
             input: TurnInput::Prompt,
             at_ms: now_ms(),
             order: 1,
+            transcript: None,
         }]);
         assert!(!worker.core_connected.load(Ordering::Acquire));
         worker.sweep_usage();

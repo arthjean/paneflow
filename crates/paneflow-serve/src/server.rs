@@ -75,8 +75,9 @@ impl Worker {
         let turn_ends = self.lock_usage().apply_turn_signals(&signals);
         let claimed =
             self.lock_usage()
-                .claim_codex_reads(turn_ends, Duration::ZERO, Instant::now());
+                .claim_codex_reads(turn_ends.codex, Duration::ZERO, Instant::now());
         self.read_codex(claimed);
+        self.read_transcripts(turn_ends.transcripts);
         self.lock_usage().flush(Instant::now(), false);
         self.publish_usage();
     }
@@ -181,9 +182,27 @@ impl Worker {
         }
         let now = crate::state::now_ms();
         let readings = crate::usage::read_codex_accounts(dirs, now / 1000);
-        let mut usage = self.lock_usage();
-        for (dir, reading) in readings {
-            usage.record_codex(&dir, reading, now);
+        let rollouts: Vec<crate::usage::TranscriptRead> = readings
+            .iter()
+            .filter_map(|(dir, _)| crate::usage::codex_transcript(dir))
+            .collect();
+        {
+            let mut usage = self.lock_usage();
+            for (dir, reading) in readings {
+                usage.record_codex(&dir, reading, now);
+            }
+        }
+        self.read_transcripts(rollouts);
+    }
+
+    fn read_transcripts(&self, reads: Vec<crate::usage::TranscriptRead>) {
+        for read in reads {
+            let cursor = self.lock_usage().token_cursor(&read.path);
+            let Some(pass) = crate::usage::read_transcript(&read, cursor, crate::state::now_ms())
+            else {
+                continue;
+            };
+            self.lock_usage().record_tokens(&read.account, pass);
         }
     }
 

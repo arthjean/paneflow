@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use chrono::{NaiveDate, TimeZone};
 use serde::{Deserialize, Serialize};
 
+use super::tokens::{MAX_CURSORS, TokenCursor, TokenPass};
+
 pub const LEDGER_WRITE_INTERVAL: Duration = Duration::from_secs(60);
 pub const TURN_IDLE_LIMIT_MS: u64 = 4 * 3600 * 1000;
 pub const MAX_TURN_ACTIVE_MS: u64 = 4 * 3600 * 1000;
@@ -96,6 +98,7 @@ pub struct TurnSignal {
     pub input: TurnInput,
     pub at_ms: u64,
     pub order: u64,
+    pub transcript: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +159,8 @@ struct LedgerFile {
     open_turns: BTreeMap<String, OpenTurn>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     watermarks: BTreeMap<String, (u64, u64)>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    cursors: BTreeMap<String, TokenCursor>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -170,6 +175,7 @@ pub struct TurnBook {
     days: BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>>,
     open: BTreeMap<String, OpenTurn>,
     watermarks: BTreeMap<String, (u64, u64)>,
+    cursors: BTreeMap<String, TokenCursor>,
     revision: u64,
 }
 
@@ -192,6 +198,49 @@ impl TurnBook {
 
     pub fn open_turns(&self) -> usize {
         self.open.len()
+    }
+
+    pub fn token_cursor(&self, path: &str) -> TokenCursor {
+        self.cursors.get(path).cloned().unwrap_or_default()
+    }
+
+    pub fn cursor_count(&self) -> usize {
+        self.cursors.len()
+    }
+
+    pub fn record_tokens(&mut self, account: &LedgerAccount, pass: TokenPass) -> bool {
+        if self.token_cursor(&pass.path) != pass.start {
+            return false;
+        }
+        for entry in &pass.entries {
+            self.book(entry.day, account, |tally| {
+                tally.tokens_in += entry.input;
+                tally.tokens_out += entry.output;
+            });
+        }
+        if pass.cursor == pass.start {
+            return !pass.entries.is_empty();
+        }
+        let seen_day = pass.cursor.seen_day;
+        self.cursors.insert(pass.path, pass.cursor);
+        for cursor in self.cursors.values_mut() {
+            if cursor.seen_day != seen_day {
+                cursor.seen.clear();
+            }
+        }
+        while self.cursors.len() > MAX_CURSORS {
+            let Some(oldest) = self
+                .cursors
+                .iter()
+                .min_by_key(|(_, cursor)| cursor.touched_ms)
+                .map(|(path, _)| path.clone())
+            else {
+                break;
+            };
+            self.cursors.remove(&oldest);
+        }
+        self.revision += 1;
+        true
     }
 
     pub fn apply(&mut self, signal: &TurnSignal, calendar: &impl Calendar) {
@@ -368,6 +417,7 @@ impl TurnBook {
             days,
             open,
             watermarks: file.watermarks,
+            cursors: file.cursors,
             revision: 0,
         }
     }
@@ -403,6 +453,7 @@ impl TurnBook {
             days,
             open_turns: self.open.clone(),
             watermarks: self.watermarks.clone(),
+            cursors: self.cursors.clone(),
         }
     }
 
@@ -414,6 +465,30 @@ impl TurnBook {
             "days": file.days,
         })
     }
+}
+
+pub type LedgerDays = BTreeMap<LedgerAccount, BTreeMap<NaiveDate, DayTally>>;
+
+pub fn ledger_days(value: &serde_json::Value) -> Option<LedgerDays> {
+    #[derive(Deserialize)]
+    struct Published {
+        #[serde(default)]
+        accounts: Vec<LedgerAccount>,
+        #[serde(default)]
+        days: BTreeMap<NaiveDate, Vec<DayEntry>>,
+    }
+    let published = Published::deserialize(value).ok()?;
+    let mut days: LedgerDays = BTreeMap::new();
+    for (day, entries) in published.days {
+        for entry in entries {
+            if let Some(account) = published.accounts.get(entry.account) {
+                days.entry(account.clone())
+                    .or_default()
+                    .insert(day, entry.tally);
+            }
+        }
+    }
+    Some(days)
 }
 
 pub struct Ledger {
@@ -551,6 +626,7 @@ mod tests {
             input,
             at_ms,
             order: 0,
+            transcript: None,
         }
     }
 
@@ -803,6 +879,7 @@ mod tests {
                             input,
                             at_ms: start + offset,
                             order: 0,
+                            transcript: None,
                         },
                         &calendar,
                     );
@@ -859,5 +936,82 @@ mod tests {
             ledger.flush(start + Duration::from_secs(61), true),
             "the stop flush is forced"
         );
+    }
+
+    fn pass(path: &str, start: TokenCursor, offset: u64, touched_ms: u64) -> TokenPass {
+        TokenPass {
+            path: path.to_string(),
+            start,
+            cursor: TokenCursor {
+                offset,
+                touched_ms,
+                ..TokenCursor::default()
+            },
+            entries: vec![super::super::tokens::TokenEntry {
+                day: date(31),
+                input: 7,
+                output: 212,
+            }],
+        }
+    }
+
+    #[test]
+    fn tokens_are_booked_once_per_cursor_and_published_with_the_days() {
+        let mut book = TurnBook::default();
+        let account = claude();
+        assert!(book.record_tokens(&account, pass("/t/a.jsonl", TokenCursor::default(), 100, 1)));
+        assert!(
+            !book.record_tokens(&account, pass("/t/a.jsonl", TokenCursor::default(), 100, 2)),
+            "a pass that started from a stale cursor is dropped"
+        );
+        assert_eq!(book.tally(date(31), &account).tokens_in, 7);
+        assert_eq!(book.tally(date(31), &account).tokens_out, 212);
+        assert_eq!(book.token_cursor("/t/a.jsonl").offset, 100);
+
+        let days = ledger_days(&book.to_value()).expect("the published ledger parses");
+        assert_eq!(days[&account][&date(31)].tokens_out, 212);
+
+        let restored = TurnBook::restore(book.to_file());
+        assert_eq!(restored.token_cursor("/t/a.jsonl").offset, 100);
+    }
+
+    #[test]
+    fn the_cursor_table_keeps_the_two_hundred_most_recent_files() {
+        let mut book = TurnBook::default();
+        let account = claude();
+        for index in 0..=MAX_CURSORS as u64 {
+            let path = format!("/t/{index}.jsonl");
+            let mut pass = pass(&path, TokenCursor::default(), 10, 1_000 + index);
+            pass.entries.clear();
+            assert!(book.record_tokens(&account, pass));
+        }
+        assert_eq!(book.cursor_count(), MAX_CURSORS);
+        assert_eq!(book.token_cursor("/t/0.jsonl"), TokenCursor::default());
+        assert_eq!(book.token_cursor("/t/200.jsonl").offset, 10);
+    }
+
+    #[test]
+    fn message_ids_of_an_earlier_day_are_dropped_from_the_saved_cursors() {
+        let mut book = TurnBook::default();
+        let account = claude();
+        let seen_on = |day: u32| TokenCursor {
+            offset: 10,
+            touched_ms: u64::from(day),
+            seen_day: Some(date(day)),
+            seen: vec!["msg_1".into(), "msg_2".into()],
+            ..TokenCursor::default()
+        };
+        let mut yesterday = pass("/t/a.jsonl", TokenCursor::default(), 10, 30);
+        yesterday.cursor = seen_on(30);
+        assert!(book.record_tokens(&account, yesterday));
+        let mut today = pass("/t/b.jsonl", TokenCursor::default(), 10, 31);
+        today.cursor = seen_on(31);
+        assert!(book.record_tokens(&account, today));
+        assert!(
+            book.token_cursor("/t/a.jsonl").seen.is_empty(),
+            "only today's ids can prevent a double count, so older ones are not kept"
+        );
+        assert_eq!(book.token_cursor("/t/a.jsonl").offset, 10);
+        assert_eq!(book.token_cursor("/t/b.jsonl").seen.len(), 2);
     }
 }

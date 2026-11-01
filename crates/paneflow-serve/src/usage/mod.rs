@@ -2,6 +2,7 @@ pub mod codex;
 pub mod ledger;
 pub mod plans;
 pub mod probe;
+pub mod tokens;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -13,11 +14,25 @@ use paneflow_agent_config::usage::model::plausible_claude_rate_limits;
 use serde_json::{Value, json};
 
 use self::codex::CodexReading;
-use self::ledger::{Ledger, TurnInput, TurnSignal, local_calendar};
+use self::ledger::{Ledger, LedgerAccount, TurnInput, TurnSignal, local_calendar};
 use self::plans::{PlanStore, PlanUpdate};
 use self::probe::ProbeOutcome;
+use self::tokens::{TokenCursor, TokenPass, TranscriptKind};
 
 pub const FRAME_TYPE: &str = "usage";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TranscriptRead {
+    pub account: LedgerAccount,
+    pub path: PathBuf,
+    pub kind: TranscriptKind,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TurnEnds {
+    pub codex: Vec<PathBuf>,
+    pub transcripts: Vec<TranscriptRead>,
+}
 
 pub struct Usage {
     plans: PlanStore,
@@ -91,21 +106,33 @@ impl Usage {
             .update(agent, &canonical_account_dir(config_dir), update, now_ms)
     }
 
-    pub fn apply_turn_signals(&mut self, signals: &[TurnSignal]) -> Vec<PathBuf> {
+    pub fn apply_turn_signals(&mut self, signals: &[TurnSignal]) -> TurnEnds {
         let calendar = local_calendar();
-        let mut turn_ends = Vec::new();
+        let mut ends = TurnEnds::default();
         for signal in signals {
             self.ledger.book_mut().apply(signal, &calendar);
             if signal.account.agent == UsageAgent::Codex.runtime_slug()
                 && matches!(signal.input, TurnInput::Stop | TurnInput::Settled)
                 && !signal.account.config_dir.is_empty()
             {
-                turn_ends.push(PathBuf::from(&signal.account.config_dir));
+                ends.codex.push(PathBuf::from(&signal.account.config_dir));
+            }
+            if let Some(read) = claude_transcript(signal) {
+                ends.transcripts.push(read);
             }
         }
-        turn_ends.sort();
-        turn_ends.dedup();
-        turn_ends
+        ends.codex.sort();
+        ends.codex.dedup();
+        ends.transcripts.dedup();
+        ends
+    }
+
+    pub fn token_cursor(&self, path: &Path) -> TokenCursor {
+        self.ledger.book().token_cursor(&path.display().to_string())
+    }
+
+    pub fn record_tokens(&mut self, account: &LedgerAccount, pass: TokenPass) -> bool {
+        self.ledger.book_mut().record_tokens(account, pass)
     }
 
     pub fn expire_turns(
@@ -241,6 +268,52 @@ pub fn local_utc_offset_secs(at_secs: u64) -> i32 {
         .ok()
         .and_then(|secs| chrono::Local.timestamp_opt(secs, 0).earliest())
         .map_or(0, |at| at.offset().fix().local_minus_utc())
+}
+
+fn claude_transcript(signal: &TurnSignal) -> Option<TranscriptRead> {
+    if signal.input != TurnInput::Stop
+        || signal.account.agent != UsageAgent::ClaudeCode.runtime_slug()
+        || signal.account.config_dir.is_empty()
+    {
+        return None;
+    }
+    let path = PathBuf::from(signal.transcript.as_deref()?);
+    if !path.is_absolute()
+        || path
+            .extension()
+            .is_none_or(|extension| extension != "jsonl")
+    {
+        return None;
+    }
+    let account_key = account_dir_key(Path::new(&signal.account.config_dir));
+    path.ancestors()
+        .skip(1)
+        .any(|ancestor| account_dir_key(ancestor) == account_key)
+        .then(|| TranscriptRead {
+            account: signal.account.clone(),
+            path,
+            kind: TranscriptKind::Claude,
+        })
+}
+
+pub fn codex_transcript(codex_home: &Path) -> Option<TranscriptRead> {
+    let dir = canonical_account_dir(codex_home);
+    Some(TranscriptRead {
+        path: codex::latest_rollout_in(&dir)?,
+        account: LedgerAccount {
+            agent: UsageAgent::Codex.runtime_slug().to_string(),
+            config_dir: dir.display().to_string(),
+        },
+        kind: TranscriptKind::Codex,
+    })
+}
+
+pub fn read_transcript(
+    read: &TranscriptRead,
+    cursor: TokenCursor,
+    now_ms: u64,
+) -> Option<TokenPass> {
+    tokens::read_tokens(&read.path, read.kind, cursor, &local_calendar(), now_ms)
 }
 
 pub fn read_codex_accounts(

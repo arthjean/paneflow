@@ -84,6 +84,59 @@ fn day_tally(snapshot: &Value, agent: &str, dir: &str) -> (u64, u64) {
         })
 }
 
+fn day_tokens(snapshot: &Value, agent: &str, dir: &str) -> (u64, u64) {
+    let ledger = &snapshot["ledger"];
+    let Some(index) = ledger["accounts"].as_array().and_then(|accounts| {
+        accounts
+            .iter()
+            .position(|account| account["agent"] == agent && account["config_dir"] == dir)
+    }) else {
+        return (0, 0);
+    };
+    ledger["days"]
+        .as_object()
+        .into_iter()
+        .flat_map(|days| days.values())
+        .flat_map(|entries| entries.as_array().cloned().unwrap_or_default())
+        .filter(|entry| entry["account"].as_u64() == Some(index as u64))
+        .fold((0, 0), |(input, output), entry| {
+            (
+                input + entry["tokens_in"].as_u64().unwrap_or(0),
+                output + entry["tokens_out"].as_u64().unwrap_or(0),
+            )
+        })
+}
+
+fn write_claude_transcript(config_dir: &Path) -> PathBuf {
+    let dir = config_dir.join("projects").join("C--work");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("b08fea1d-0871-4dd1-acbb-f05e3b9d348b.jsonl");
+    let assistant = |id: &str, input: u64, output: u64| {
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-31T22:09:12.042Z",
+            "message": {
+                "id": id,
+                "usage": {
+                    "input_tokens": input,
+                    "cache_creation_input_tokens": 36_935,
+                    "cache_read_input_tokens": 30_180,
+                    "output_tokens": output,
+                },
+            },
+        })
+    };
+    let lines = [
+        json!({"type": "user", "timestamp": "2026-10-31T22:09:00.000Z"}),
+        assistant("msg_01", 2, 172),
+        assistant("msg_01", 2, 172),
+        assistant("msg_02", 5, 40),
+    ];
+    let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
 fn reopen(home: &Path) -> paneflow_serve::worker::RunningWorker {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -314,9 +367,42 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
         assert!(Instant::now() < deadline, "the turn is booked: {snapshot}");
         std::thread::sleep(Duration::from_millis(100));
     };
-    hook(&mut relay, &claude, "ai.stop", "claude");
+    let transcript = write_claude_transcript(&claude_work);
+    relay
+        .call(
+            METHOD_AGENT_EVENT,
+            json!({
+                "session": claude.manifest.session,
+                "kind": "ai.stop",
+                "tool": "claude",
+                "runtime_generation": claude.manifest.generation,
+                "hook_payload": {
+                    "session_id": "b08fea1d-0871-4dd1-acbb-f05e3b9d348b",
+                    "transcript_path": transcript.display().to_string(),
+                },
+            }),
+        )
+        .unwrap();
     assert_eq!(turns, 1);
     assert!(active_ms < 60_000, "{active_ms}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let snapshot = control.request(METHOD_USAGE_SNAPSHOT, json!({})).unwrap();
+        let tokens = day_tokens(&snapshot, "claude-code", &claude_dir);
+        if tokens != (0, 0) {
+            assert_eq!(
+                tokens,
+                (7, 212),
+                "each message counts once and cache tokens are excluded"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the Stop transcript is read: {snapshot}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     write_rollout(&codex_work);
     let codex_dir = canonical(&codex_work);
@@ -339,6 +425,11 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
     );
     let snapshot = control.request(METHOD_USAGE_SNAPSHOT, json!({})).unwrap();
     assert_eq!(day_tally(&snapshot, "codex", &codex_dir).0, 1);
+    assert_eq!(
+        day_tokens(&snapshot, "codex", &codex_dir),
+        (10, 2),
+        "the rollout read books the growth of its cumulative totals"
+    );
 
     drop(follower);
     drop(control);
@@ -358,6 +449,17 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
     assert_eq!(
         day_tally(&reloaded, "claude-code", &claude_dir),
         (turns, active_ms)
+    );
+    assert_eq!(day_tokens(&reloaded, "claude-code", &claude_dir), (7, 212));
+    let ledger: Value = serde_json::from_slice(
+        &std::fs::read(paneflow_home::usage_ledger_path_in(home.path())).unwrap(),
+    )
+    .unwrap();
+    let cursor = &ledger["cursors"][transcript.display().to_string()];
+    assert_eq!(
+        cursor["offset"].as_u64(),
+        Some(std::fs::metadata(&transcript).unwrap().len()),
+        "the transcript offset is kept under cursors: {ledger}"
     );
 
     let plans: Value = serde_json::from_slice(&std::fs::read(&plans_path).unwrap()).unwrap();

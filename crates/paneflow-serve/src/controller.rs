@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use crate::protocol::{
     CAPABILITY_AGENT_FOLLOW, METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG,
-    METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_USAGE_REFRESH, REQUEST_DEADLINE,
-    WorkerIdentity,
+    METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT,
+    REQUEST_DEADLINE, WorkerIdentity,
 };
 
 pub const CLIENT_NAME: &str = "paneflow-controller";
@@ -179,6 +179,12 @@ impl Controller {
         self.require(crate::protocol::CAPABILITY_AGENT_UNREAD)?;
         self.control
             .request(METHOD_AGENT_ACKNOWLEDGE, json!({"sessions": sessions}))
+            .map_err(ControllerError::Protocol)
+    }
+
+    pub fn usage_snapshot(&mut self) -> Result<Value, ControllerError> {
+        self.control
+            .request(METHOD_USAGE_SNAPSHOT, json!({}))
             .map_err(ControllerError::Protocol)
     }
 
