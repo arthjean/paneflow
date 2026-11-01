@@ -38,7 +38,7 @@ pub(super) fn render_diff_new_tab_menu(
         .child(
             option_row(
                 "diff-dock-new-tab-changes",
-                "icons/plus-minus.svg",
+                "icons/dock/git-compare.svg",
                 "Changes",
                 None,
                 ui,
@@ -51,7 +51,7 @@ pub(super) fn render_diff_new_tab_menu(
         .child(
             option_row(
                 "diff-dock-new-tab-file",
-                "icons/file-text.svg",
+                "icons/dock/file-code.svg",
                 "File",
                 Some("secondary-g"),
                 ui,
@@ -64,7 +64,7 @@ pub(super) fn render_diff_new_tab_menu(
         .child(
             option_row(
                 "diff-dock-new-tab-terminal",
-                "icons/terminal.svg",
+                "icons/dock/computer-terminal-01.svg",
                 "Terminal",
                 Some("secondary-j"),
                 ui,

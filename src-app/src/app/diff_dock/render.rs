@@ -153,7 +153,7 @@ pub(super) fn render_diff_tab_strip(
                 svg()
                     .size(px(14.))
                     .flex_none()
-                    .path("icons/plus.svg")
+                    .path("icons/dock/add-01.svg")
                     .text_color(ui.muted),
             )
             .when(open, |trigger| {
@@ -163,7 +163,7 @@ pub(super) fn render_diff_tab_strip(
         .child(render_diff_header_icon_button(
             "diff-dock-agent-sessions",
             "Agent sessions",
-            "icons/sessions.svg",
+            "icons/dock/ai-chat-02.svg",
             cx.listener(|this, _: &ClickEvent, window, cx| {
                 if let Some(pane) = this.focused_or_first_pane(window, cx) {
                     pane.update(cx, |_, cx| {
@@ -181,9 +181,9 @@ pub(super) fn render_diff_tab_strip(
                 "Maximize panel"
             },
             if maximized {
-                "icons/minimize.svg"
+                "icons/dock/arrow-shrink.svg"
             } else {
-                "icons/maximize.svg"
+                "icons/dock/arrow-expand.svg"
             },
             cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.toggle_diff_dock_maximize(window, cx);
@@ -226,11 +226,17 @@ fn render_diff_tab(
         _ => None,
     };
     let (icon, label, tooltip) = match (tab, &file) {
-        (DiffDockTab::Changes, _) => ("icons/plus-minus.svg", "Changes".to_string(), None),
-        (DiffDockTab::Terminal(_), _) => ("icons/terminal.svg", "Terminal".to_string(), None),
-        (DiffDockTab::PendingFile, _) => ("icons/file-text.svg", "Open a file".to_string(), None),
+        (DiffDockTab::Changes, _) => ("icons/dock/git-compare.svg", "Changes".to_string(), None),
+        (DiffDockTab::Terminal(_), _) => (
+            "icons/dock/computer-terminal-01.svg",
+            "Terminal".to_string(),
+            None,
+        ),
+        (DiffDockTab::PendingFile, _) => {
+            ("icons/dock/file-code.svg", "Open a file".to_string(), None)
+        }
         (_, Some((icon, label, path, _))) => (*icon, label.clone(), Some(path.clone())),
-        _ => ("icons/file-text.svg", "File".to_string(), None),
+        _ => ("icons/dock/file-code.svg", "File".to_string(), None),
     };
     let tooltip = tooltip.unwrap_or_else(|| label.clone());
     let dirty = file.is_some_and(|(_, _, _, dirty)| dirty);
@@ -268,7 +274,7 @@ fn render_diff_tab(
                     .size(glyph)
                     .invisible()
                     .group_hover(group.clone(), |style| style.visible())
-                    .path("icons/close.svg")
+                    .path("icons/dock/cancel-01.svg")
                     .text_color(ui.muted),
             )
             .into_any_element()
@@ -276,7 +282,7 @@ fn render_diff_tab(
         svg()
             .size(glyph)
             .flex_none()
-            .path("icons/close.svg")
+            .path("icons/dock/cancel-01.svg")
             .text_color(if close_armed { ui.vc_deleted } else { ui.muted })
             .into_any_element()
     };
@@ -424,7 +430,7 @@ pub(super) fn render_diff_dock_close_button(
     header_icon_button(
         id,
         "Close panel",
-        "icons/layout-sidebar-right-collapse.svg",
+        "icons/dock/panel-right-close.svg",
         cx.listener(|this, _: &ClickEvent, _w, cx| {
             this.dismiss_diff_dock_panel(cx);
         }),
@@ -494,7 +500,7 @@ pub(super) fn render_diff_files_toolbar(
             svg()
                 .size(px(14.))
                 .flex_none()
-                .path("icons/file-text.svg")
+                .path("icons/dock/file-code.svg")
                 .text_color(ui.muted),
         )
         .child(
@@ -535,7 +541,7 @@ pub(super) fn render_diff_files_toolbar(
 pub(super) fn render_pending_file_body(ui: crate::theme::UiColors) -> AnyElement {
     crate::ui_primitives::panel_empty_state(
         ui,
-        Some("icons/folder-open.svg"),
+        Some("icons/dock/folder-open.svg"),
         Some("Open a file".into()),
         "Select a file in the workspace tree",
         false,
@@ -561,7 +567,7 @@ pub(super) fn render_diff_error_banner(error: &str, ui: crate::theme::UiColors) 
             svg()
                 .size(px(14.))
                 .flex_none()
-                .path("icons/triangle-alert.svg")
+                .path("icons/dock/alert-02.svg")
                 .text_color(ui.vc_deleted),
         )
         .child(
@@ -585,7 +591,7 @@ pub(super) fn diff_panel_centered(
         Some(icon),
         None,
         label.into(),
-        icon == "icons/loader-circle.svg",
+        icon == "icons/dock/loader-circle.svg",
     )
     .into_any_element()
 }
@@ -631,7 +637,7 @@ mod tests {
                 "{name} resolves to {icon}, which would be tinted flat"
             );
         }
-        assert!(!icon_is_colored("icons/close.svg"));
+        assert!(!icon_is_colored("icons/dock/cancel-01.svg"));
     }
 
     #[test]

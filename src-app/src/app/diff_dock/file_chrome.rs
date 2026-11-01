@@ -45,7 +45,7 @@ pub(super) fn render_tree_toggle(
         }))
         .child(
             svg()
-                .path("icons/folders.svg")
+                .path("icons/dock/folder-tree.svg")
                 .size(px(16.))
                 .text_color(if open { ui.text } else { ui.muted }),
         )
@@ -86,7 +86,7 @@ pub(super) fn render_file_breadcrumbs(root: &str, path: &str, ui: UiColors) -> A
                 .when(index > 0, |crumb| {
                     crumb.child(
                         svg()
-                            .path("icons/chevron-right.svg")
+                            .path("icons/dock/arrow-right-01.svg")
                             .size(px(12.))
                             .flex_none()
                             .text_color(ui.muted),

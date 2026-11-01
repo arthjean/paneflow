@@ -206,7 +206,7 @@ pub(super) fn render_diff_branch_chip(
         svg()
             .size(px(13.))
             .flex_none()
-            .path("icons/git-branch.svg")
+            .path("icons/dock/git-branch.svg")
             .text_color(ui.muted),
     )
     .child(
@@ -223,7 +223,7 @@ pub(super) fn render_diff_branch_chip(
         svg()
             .size(px(12.))
             .flex_none()
-            .path("icons/chevron-down.svg")
+            .path("icons/dock/arrow-down-01.svg")
             .text_color(ui.muted),
     )
     .when_some(menu.filter(|_| menu_open), |chip, menu| {
@@ -327,7 +327,7 @@ fn render_diff_branch_search_row(
             svg()
                 .size(px(14.))
                 .flex_none()
-                .path("icons/tool_search.svg")
+                .path("icons/dock/search-01.svg")
                 .text_color(ui.muted),
         )
         .child(
@@ -372,7 +372,7 @@ fn render_diff_branch_item(
         svg()
             .size(px(16.))
             .flex_none()
-            .path("icons/git-branch.svg")
+            .path("icons/dock/git-branch.svg")
             .text_color(ui.muted),
     )
     .child(
@@ -398,7 +398,7 @@ fn render_diff_branch_item(
     .child(div().w(px(14.)).flex_none().child(if selected {
         svg()
             .size(px(14.))
-            .path("icons/check.svg")
+            .path("icons/dock/tick-02.svg")
             .text_color(ui.text)
             .into_any_element()
     } else {

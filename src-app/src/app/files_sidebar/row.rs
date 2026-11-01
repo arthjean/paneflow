@@ -51,9 +51,9 @@ impl FilesSidebar {
                 .size(px(ROW_SLOT))
                 .flex_none()
                 .path(if row.expanded {
-                    "icons/chevron-down.svg"
+                    "icons/dock/arrow-down-01.svg"
                 } else {
-                    "icons/chevron-right.svg"
+                    "icons/dock/arrow-right-01.svg"
                 })
                 .text_color(ui.muted)
                 .into_any_element()

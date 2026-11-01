@@ -8,7 +8,7 @@ impl CodeView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let panel =
-            super::super::render::diff_panel_centered("icons/triangle-alert.svg", message, ui);
+            super::super::render::diff_panel_centered("icons/dock/alert-02.svg", message, ui);
         if !self.state.is_retriable() {
             return panel;
         }
@@ -149,7 +149,7 @@ impl Render for CodeView {
             return match self.state.error_message() {
                 Some(message) => self.render_load_error(message, ui, cx),
                 None => super::super::render::diff_panel_centered(
-                    "icons/loader-circle.svg",
+                    "icons/dock/loader-circle.svg",
                     "Loading file…",
                     ui,
                 ),

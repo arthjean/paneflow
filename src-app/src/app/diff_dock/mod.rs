@@ -626,7 +626,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let Some(data) = data else {
             return diff_panel_centered(
-                "icons/file-text.svg",
+                "icons/dock/git-compare.svg",
                 "Open the panel to see changes.",
                 ui,
             );
@@ -634,15 +634,19 @@ impl PaneFlowApp {
         let split = self.diff_dock.split;
         let has_rows = data.has_mode(split);
         if data.loading && !has_rows {
-            return diff_panel_centered("icons/loader-circle.svg", "Loading changes…", ui);
+            return diff_panel_centered("icons/dock/loader-circle.svg", "Loading changes…", ui);
         }
         let banner = match &data.error {
             Some(error) if has_rows => Some(render_diff_error_banner(error, ui)),
-            Some(error) => return diff_panel_centered("icons/triangle-alert.svg", error, ui),
+            Some(error) => return diff_panel_centered("icons/dock/alert-02.svg", error, ui),
             None => None,
         };
         if data.file_count == 0 && banner.is_none() {
-            return diff_panel_centered("icons/check.svg", "No uncommitted changes.", ui);
+            return diff_panel_centered(
+                "icons/dock/checkmark-circle-02.svg",
+                "No uncommitted changes.",
+                ui,
+            );
         }
 
         let file_count = if split {

@@ -114,7 +114,7 @@ pub(super) fn render_diff_options_button(
         svg()
             .size(px(16.))
             .flex_none()
-            .path("icons/dots.svg")
+            .path("icons/dock/more-horizontal.svg")
             .text_color(ui.muted),
     )
     .when(open, |trigger| {
@@ -421,7 +421,7 @@ fn render_submenu_row(
             svg()
                 .size(px(13.))
                 .flex_none()
-                .path("icons/chevron-right.svg")
+                .path("icons/dock/arrow-right-01.svg")
                 .text_color(ui.muted),
         )
         .when(open, |row| {
@@ -483,7 +483,7 @@ fn render_option_entry(
         .child(div().w(px(14.)).flex_none().child(if entry.selected {
             svg()
                 .size(px(13.))
-                .path("icons/check.svg")
+                .path("icons/dock/tick-02.svg")
                 .text_color(ui.text)
                 .into_any_element()
         } else {

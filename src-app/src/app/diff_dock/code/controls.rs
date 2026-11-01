@@ -163,7 +163,7 @@ impl EditorControls {
                 .child(div().w(px(14.)).flex_none().child(if checked {
                     svg()
                         .size(px(13.))
-                        .path("icons/check.svg")
+                        .path("icons/dock/tick-02.svg")
                         .text_color(ui.text)
                         .into_any_element()
                 } else {
@@ -240,7 +240,7 @@ impl Render for EditorControls {
             .child(
                 svg()
                     .size(px(16.))
-                    .path("icons/editor-controls.svg")
+                    .path("icons/dock/sliders-horizontal.svg")
                     .text_color(if self.open { ui.text } else { ui.muted }),
             )
             .when(self.open, |button| button.child(self.menu(cx)))

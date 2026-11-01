@@ -90,7 +90,7 @@ pub(super) fn render_diff_surface_picker(
                 .gap(px(CARD_GAP))
                 .child(card(
                     "diff-dock-picker-changes",
-                    "icons/git-pull-request.svg",
+                    "icons/dock/git-compare.svg",
                     "Changes",
                     DiffDockSurface::Changes,
                     ui,
@@ -98,7 +98,7 @@ pub(super) fn render_diff_surface_picker(
                 ))
                 .child(card(
                     "diff-dock-picker-terminal",
-                    "icons/terminal.svg",
+                    "icons/dock/computer-terminal-01.svg",
                     "Terminal",
                     DiffDockSurface::Terminal,
                     ui,
@@ -106,7 +106,7 @@ pub(super) fn render_diff_surface_picker(
                 ))
                 .child(card(
                     "diff-dock-picker-file",
-                    "icons/file-text.svg",
+                    "icons/dock/file-code.svg",
                     "File",
                     DiffDockSurface::File,
                     ui,
