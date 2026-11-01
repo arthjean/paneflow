@@ -331,7 +331,6 @@ impl Render for PaneFlowApp {
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
                     .pr(px(pane_grid_right_gutter))
-                    .pt(px(density.top_gutter_px()))
                     .pb(px(density.outer_gutter_px()));
                 let preview =
                     split_palette.map(|(target, direction)| crate::layout::SplitPreview {
@@ -360,7 +359,6 @@ impl Render for PaneFlowApp {
                     .size_full()
                     .pl(px(pane_grid_left_gutter))
                     .pr(px(pane_grid_right_gutter))
-                    .pt(px(density.top_gutter_px()))
                     .pb(px(density.outer_gutter_px()))
                     .child(self.render_pane_palette(density.frame(grid_edges), cx))
                     .into_any_element()
@@ -373,7 +371,6 @@ impl Render for PaneFlowApp {
                 .size_full()
                 .pl(px(welcome_left_gutter))
                 .pr(px(comfortable_right_gutter))
-                .pt(px(crate::layout::PANE_GUTTER_PX))
                 .pb(px(crate::app::constants::PANE_OUTER_GUTTER))
                 .child(self.render_welcome(cx))
                 .into_any_element()

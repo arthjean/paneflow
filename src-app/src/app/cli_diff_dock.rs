@@ -493,7 +493,6 @@ impl PaneFlowApp {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .pt(px(density.top_gutter_px()))
                     .pb(px(outer_gutter))
                     .pr(px(outer_gutter))
                     .child(self.render_diff_dock_panel(

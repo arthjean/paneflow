@@ -24,6 +24,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- **The title bar is 40 px tall and the panes and sidebar sit closer to it.** The window buttons now have the same space above and below them, the pane grid starts right under the title bar, and the first sidebar row moves up by 4 px.
 - **The window buttons sit on the right in round buttons.** Where Paneflow draws its own title bar (GNOME on Wayland, for instance), minimize, maximize and close now always appear on the right in that order, as tinted round buttons, whatever button layout the desktop sets. Detached pane windows match.
 - **The Install hooks button leaves the agent row.** The Paneflow hooks of Claude Code and Codex are now a toggle in the agent's unfolded settings, with the step Codex still asks for after installing.
 - **The terminal engine moves to Ghostty 1.4.0.** The pinned `libghostty-vt` archive moves from Ghostty `b699ea79` to the `v1.4.0` tag (`83fb9562`), built with Zig 0.17.0.

@@ -45,10 +45,6 @@ impl PaneDensity {
         (1.0 - 2.0 * self.comfort).clamp(0.0, 1.0)
     }
 
-    pub(crate) fn top_gutter_px(self) -> f32 {
-        DIVIDER_PX * self.comfort
-    }
-
     pub(crate) fn outer_gutter_px(self) -> f32 {
         crate::app::constants::PANE_OUTER_GUTTER * self.comfort
     }
@@ -194,7 +190,6 @@ mod tests {
     fn comfortable_density_keeps_the_card_gutters() {
         let density = PaneDensity::COMFORTABLE;
         assert_eq!(density.divider_px(), DIVIDER_PX);
-        assert_eq!(density.top_gutter_px(), DIVIDER_PX);
         assert_eq!(
             density.outer_gutter_px(),
             crate::app::constants::PANE_OUTER_GUTTER
@@ -206,7 +201,6 @@ mod tests {
     fn compact_density_joins_panes_with_a_hairline() {
         let density = PaneDensity::COMPACT;
         assert_eq!(density.divider_px(), 1.0);
-        assert_eq!(density.top_gutter_px(), 0.0);
         assert_eq!(density.outer_gutter_px(), 0.0);
         assert_eq!(density.frame(all()), CardFrame::Flush(all()));
     }

@@ -337,6 +337,7 @@ impl PaneFlowApp {
                 .h(px(36.))
                 .flex_none()
                 .px(px(8.))
+                .pb(px(8.))
                 .flex()
                 .flex_row()
                 .items_center()

@@ -407,7 +407,7 @@ pub(crate) fn run() {
                 title: None,
                 appears_transparent: true,
                 #[cfg(target_os = "macos")]
-                traffic_light_position: Some(point(px(12.0), px(10.0))),
+                traffic_light_position: Some(point(px(12.0), px(14.0))),
                 ..Default::default()
             };
 
