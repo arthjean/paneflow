@@ -520,7 +520,7 @@ function Initialize-ZigSourceLib {
         $xzTimer.Stop()
         Write-Phase "xz decompression finished in $([int]$xzTimer.Elapsed.TotalSeconds)s (exit $xzExit)"
         if ($xzExit -ne 0) {
-            throw "cannot decompress the pinned Zig source archive (7z exit $xzExit)"
+            throw "cannot decompress the pinned Zig source archive $ZigSourceArchive (7z exit $xzExit)"
         }
 
         $plainTar = @(Get-ChildItem -LiteralPath $xzStage -Filter *.tar -File)
@@ -535,7 +535,7 @@ function Initialize-ZigSourceLib {
         $tarTimer.Stop()
         Write-Phase "tar extraction finished in $([int]$tarTimer.Elapsed.TotalSeconds)s (exit $tarExit)"
         if ($tarExit -ne 0) {
-            throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
+            throw "cannot extract the decompressed Zig source tar $($plainTar[0].FullName) (tar exit $tarExit)"
         }
         Remove-Item -LiteralPath $xzStage -Recurse -Force
     }
@@ -547,12 +547,12 @@ function Initialize-ZigSourceLib {
         $extractTimer.Stop()
         Write-Phase "single-step extraction finished in $([int]$extractTimer.Elapsed.TotalSeconds)s (exit $tarExit)"
         if ($tarExit -ne 0) {
-            throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
+            throw "cannot extract the pinned Zig source archive $ZigSourceArchive (tar exit $tarExit)"
         }
     }
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
-        throw "Zig $ZigVersion source archive does not contain the expected library"
+        throw "Zig $ZigVersion source archive $ZigSourceArchive does not contain the expected library $sourceLib"
     }
     return $sourceLib
 }
