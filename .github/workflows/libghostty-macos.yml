@@ -182,7 +182,7 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     name: Repository consumer and release budget
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -208,7 +208,7 @@ jobs:
       # the empty path and fail on `symlink_metadata`.
       #
       # clippy and `cargo test` used to run here too. They are exactly what
-      # `run_tests.yml::macos_check` already runs on macos-14 against the same
+      # `run_tests.yml::macos_check` already runs on macos-15 against the same
       # committed archive, and its `libghostty` path filter covers every path
       # that triggers this workflow, so the copy was a second 14x runner for
       # the same answer. What is left below is what only this lane does: the

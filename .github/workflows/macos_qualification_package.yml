@@ -52,7 +52,7 @@ env:
 jobs:
   package:
     name: Build and rehearse the macOS qualification package
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5

@@ -46,7 +46,7 @@ jobs:
   #   - rendering:        the GPUI paint / font / theme paths the visual
   #                       smoke jobs are designed to protect
   #
-  # Gating posture (US-018 AC5 etc.): the macos-14 / windows-2022
+  # Gating posture (US-018 AC5 etc.): the macos-15 / windows-2022
   # runners are 14× / 2× pricier than ubuntu-latest and contribute
   # most of CI wall-clock. The path filter short-circuits them on
   # docs-only / non-workflow .github/** PRs.
@@ -490,15 +490,15 @@ jobs:
   # on every PR so a regression in platform-gated code is caught at the PR
   # gate rather than at release cut.
   #
-  # Runner: macos-14 (Apple Silicon M1, 3 vCPU / 7 GB, Xcode + CLT preinstalled).
-  # Fallback: if a PR consistently exceeds 20 min wall time on macos-14,
-  # swap to `macos-14-xlarge` (6 vCPU, paid tier) and note the rationale
+  # Runner: macos-15 (Apple Silicon M1, 3 vCPU / 7 GB, Xcode + CLT preinstalled).
+  # Fallback: if a PR consistently exceeds 20 min wall time on macos-15,
+  # swap to `macos-15-xlarge` (6 vCPU, paid tier) and note the rationale
   # in the PR description per US-001 AC5.
   macos_check:
     name: macOS aarch64 smoke build
     # US-018 AC5: only run when Rust-relevant files change. `needs: orchestrate`
     # waits for the cheap filter job (runs on ubuntu-latest, ~seconds) and
-    # short-circuits the 14× pricier macos-14 runner on docs-only /
+    # short-circuits the 14× pricier macos-15 runner on docs-only /
     # non-workflow .github/** PRs.
     #
     # US-013 adds the `libghostty` filter so a change to the pinned archive,
@@ -512,10 +512,10 @@ jobs:
       needs.orchestrate.outputs.rendering == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     # US-013 AC5: the libghostty steps add a native archive link to every
     # cargo invocation here. Budget is a 25 min median over the first five
-    # runs; past that, switch to `macos-14-xlarge` and record the rationale in
+    # runs; past that, switch to `macos-15-xlarge` and record the rationale in
     # the PR per the US-001 AC5 note above. The timeout is the hard backstop.
     timeout-minutes: 60
     steps:
@@ -525,13 +525,13 @@ jobs:
       - uses: ./.github/actions/fetch-libghostty
 
       # US-003 - fail fast if the runner image drifts away from a full Xcode
-      # install. The macos-14 hosted image ships Xcode 15+ with the Metal
+      # install. The macos-15 hosted image ships Xcode 15+ with the Metal
       # toolchain preinstalled, so under normal conditions every check here
       # succeeds silently; the value is turning an otherwise cryptic mid-compile
       # "Metal.h: no such file" error into a clearly labelled preflight failure
       # that points at the runner configuration rather than the Rust source.
       #
-      # The same step is expected to be ported to release.yml's macos-14 matrix
+      # The same step is expected to be ported to release.yml's macos-15 matrix
       # leg when US-019 adds it - keep this block in sync across workflows.
       - name: Verify Xcode CLT + Metal toolchain
         run: |
@@ -539,7 +539,7 @@ jobs:
 
           CLT_PATH="$(xcode-select -p 2>/dev/null || true)"
           if [ -z "$CLT_PATH" ] || [ ! -d "$CLT_PATH" ]; then
-            echo "::error::Xcode Command Line Tools not found (xcode-select -p returned '$CLT_PATH'). GitHub macos-14 runners should ship Xcode preinstalled - this indicates a runner image drift or a misconfigured self-hosted runner."
+            echo "::error::Xcode Command Line Tools not found (xcode-select -p returned '$CLT_PATH'). GitHub macos-15 runners should ship Xcode preinstalled - this indicates a runner image drift or a misconfigured self-hosted runner."
             exit 1
           fi
           echo "Xcode CLT path: $CLT_PATH"
@@ -665,7 +665,7 @@ jobs:
   #     alone passes this trivially when rendering works; failure
   #     means we're staring at a black screen or empty cells).
   #
-  # Runner: macos-14 hosts a real macOS user session with WindowServer
+  # Runner: macos-15 hosts a real macOS user session with WindowServer
   # access - GUI apps launch and render normally, exactly the pattern
   # used by Electron / Flutter / native-Cocoa CI setups.
   # ───────────────────────────────────────────────────────────────────────
@@ -677,12 +677,12 @@ jobs:
     # ride in on edits to the rendering paths declared by the `changes`
     # job. A pure config-file or non-render Rust PR cannot regress
     # macOS Core Text empty-text rendering, so spending 10-15 min on a
-    # macos-14 runner on every such PR is wasted spend.
+    # macos-15 runner on every such PR is wasted spend.
     if: >-
       needs.orchestrate.outputs.rendering == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -755,7 +755,7 @@ jobs:
           trap 'kill "$APP_PID" 2>/dev/null || true; sleep 2; kill -9 "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true' EXIT
 
           # Poll for the first-paint marker instead of betting the job on a
-          # fixed cold-launch budget. Typical first paint on macos-14 (M1,
+          # fixed cold-launch budget. Typical first paint on macos-15 (M1,
           # 3 vCPU) is under 5s, but the gate below is HARD: a contended
           # runner that pushed past a flat 10s sleep would have failed the
           # job for a timing race rather than a rendering regression.

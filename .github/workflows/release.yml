@@ -149,7 +149,7 @@ jobs:
             arch: aarch64
             runs-on: ubuntu-22.04-arm
           # US-019: macOS aarch64 (Apple Silicon). Native build on
-          # GitHub-hosted macos-14, chains through the US-013→US-016
+          # GitHub-hosted macos-15, chains through the US-013→US-016
           # bundle + sign + notarize + .dmg pipeline. Uses the same
           # TAG value as the Linux legs; the macOS-only prelude below
           # strips the leading `v` before feeding it to Info.plist
@@ -164,7 +164,7 @@ jobs:
           # would still report success.
           - target: aarch64-apple-darwin
             arch: aarch64
-            runs-on: macos-14
+            runs-on: macos-15
           # x86_64-pc-windows-msvc - OPEN since 2026-06-14. Azure Artifact
           # Signing is provisioned for the Strivex subscription (account
           # strivex-signing, cert profile StriveX-Release; the 6 AZURE_*
@@ -243,7 +243,7 @@ jobs:
             imagemagick
             icnsutils
 
-      # ImageMagick is preinstalled on windows-2022 and the macos-14 GHA images
+      # ImageMagick is preinstalled on windows-2022 and the macos-15 GHA images
       # ship sips (Apple's built-in resizer) + iconutil out of the box, but
       # neither ships ImageMagick. scripts/build-icons.sh prefers `magick` for
       # multi-resolution .ico assembly, so install it here on the macOS leg only
@@ -1076,7 +1076,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ─── Free disk space before .dmg ─────────────────────────────────
-      # macos-14 hosted runners ship with ~14 GB free. A workspace-wide
+      # macos-15 hosted runners ship with ~14 GB free. A workspace-wide
       # `cargo build --release` for the GPUI graph routinely consumes
       # 11-13 GB of `target/` (Zed monorepo deps, libghostty,
       # gpui_macos with Metal shaders, all release-mode codegen). By the
@@ -1136,7 +1136,7 @@ jobs:
       # Stage the .dmg + SHA-256 sibling into release-assets/ so the
       # downstream `release` job picks it up alongside the Linux-leg
       # artifacts. Mirrors the sha256 pattern used by the tar.gz step.
-      # Linux legs skip this entirely; US-019 adds the macos-14 matrix
+      # Linux legs skip this entirely; US-019 adds the macos-15 matrix
       # leg that activates it. US-023: gated on signing_available so
       # unsigned legs produce no release asset.
       - name: Stage macOS .dmg
