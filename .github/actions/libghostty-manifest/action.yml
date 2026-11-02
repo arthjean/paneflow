@@ -1,0 +1,36 @@
+name: libghostty manifest pins
+description: >-
+  Reads the libghostty engine pins from native/libghostty/manifest.toml in the
+  checked-out workspace through scripts/libghostty-manifest.sh, the only place
+  a workflow reads them. A staged bump manifest downloaded over the checkout is
+  honored. A missing key fails the step and names the key.
+
+outputs:
+  source_sha:
+    description: Pinned Ghostty commit
+    value: ${{ steps.read.outputs.source_sha }}
+  zig_version:
+    description: Pinned Zig version
+    value: ${{ steps.read.outputs.zig_version }}
+  macos_llvm_version:
+    description: LLVM toolchain that normalizes the macOS archive
+    value: ${{ steps.read.outputs.macos_llvm_version }}
+  windows_llvm_version:
+    description: LLVM toolchain that normalizes the Windows archive
+    value: ${{ steps.read.outputs.windows_llvm_version }}
+  macos_rust_toolchain:
+    description: Rust toolchain whose llvm-tools match macos_llvm_version
+    value: ${{ steps.read.outputs.macos_rust_toolchain }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read the manifest pins
+      id: read
+      shell: bash
+      run: |
+        for key in source_sha zig_version macos_llvm_version windows_llvm_version macos_rust_toolchain; do
+          value="$(scripts/libghostty-manifest.sh "$key")"
+          echo "$key=$value" >> "$GITHUB_OUTPUT"
+          echo "$key=$value"
+        done

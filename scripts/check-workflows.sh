@@ -9,6 +9,7 @@ RELEASE_WORKFLOWS=(
   ".github/workflows/update_cask.yml"
 )
 XTRACE_RE='(^|[[:space:];&|(])(set|bash|sh)([[:space:]]+(-[A-Za-z]+|[+-]o[[:space:]]+[a-z]+))*[[:space:]]+(-[A-Za-z]*x[A-Za-z]*|-o[[:space:]]+xtrace)([[:space:]]|$)'
+GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
 
 if [ "$#" -gt 0 ]; then
   pin_files=("$@")
@@ -79,12 +80,16 @@ for file in "${trace_files[@]}"; do
       echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: shell xtrace (-x, set -x, set -o xtrace) writes secrets into the public log; use bash -euo pipefail {0}"
       status=1
     fi
+    if [[ "$line" =~ $GHOSTTY_PIN_RE ]] && [[ "${BASH_REMATCH[1]}" != '${{'* ]]; then
+      echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: literal GHOSTTY_SHA pin; read source_sha from native/libghostty/manifest.toml through .github/actions/libghostty-manifest"
+      status=1
+    fi
   done < "$file"
   traced=$((traced + 1))
 done
 
 if [ "$status" -eq 0 ]; then
   echo "every third-party action in ${#pin_files[@]} file(s) is pinned by SHA ($checked references checked)"
-  echo "no shell xtrace in $traced workflow or composite action file(s)"
+  echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
 fi
 exit "$status"

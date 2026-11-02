@@ -61,8 +61,6 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: 83fb95624b0439ee660c2679b43b38c8b63769cd
-  ZIG_VERSION: 0.17.0
   # US-003: synthesize the canonical TAG every downstream packaging
   # step already uses as its version source (every `cp`, sha256, .deb,
   # .rpm, .dmg, .msi name resolves through `${TAG#v}`). In tag-push
@@ -214,13 +212,18 @@ jobs:
           # `main`); tag-push runs check out `refs/tags/<tag>`.
           ref: ${{ env.RELEASE_REF }}
 
+      - name: Read libghostty pins
+        id: libghostty_pins
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/libghostty-manifest
+
       - name: Checkout pinned Ghostty source
         if: runner.os == 'Linux'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
           repository: ghostty-org/ghostty
-          ref: ${{ env.GHOSTTY_SHA }}
+          ref: ${{ steps.libghostty_pins.outputs.source_sha }}
           path: .ghostty-source
           fetch-depth: 1
 
@@ -232,7 +235,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: ${{ env.ZIG_VERSION }}
+          version: ${{ steps.libghostty_pins.outputs.zig_version }}
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
