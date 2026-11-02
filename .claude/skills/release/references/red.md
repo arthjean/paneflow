@@ -21,7 +21,10 @@ The guard deletes a draft and nothing else. Commit the fix on `main`, rerun the 
 
 | Evidence | Move |
 |---|---|
-| fmt, clippy, or test failure in `Release test gate` or a build leg | Reproduce locally with the exact `AGENTS.md` gate, fix the source, re-tag (before publication). A `#[cfg(windows)]` clippy failure is invisible on Linux: read the file's item order, the `items_after_test_module` trap in `AGENTS.md` is the usual cause. |
+| `ci-verdict` names a required `run_tests` job as `failure` | The tagged commit is red on `main`. Reproduce locally with the exact `AGENTS.md` gate, fix the source, re-tag (before publication). A `#[cfg(windows)]` clippy failure is invisible on Linux: read the file's item order, the `items_after_test_module` trap in `AGENTS.md` is the usual cause. |
+| `ci-verdict` names a required job as `skipped` or `cancelled`, or times out | Run the command it prints, `gh workflow run run_tests.yml --ref <tag>`, wait for it to go green, then `gh run rerun <id> --failed` on the release run. |
+| `preflight` fails on the tag or `target_ref` | Its message names the rule: a tag that is not `v` plus the `Cargo.toml` version, an abbreviated `target_ref`, or an MSI version that does not upgrade the latest release. Fix the input; no build ran. |
+| Compile failure in a build leg | Reproduce locally with the exact `AGENTS.md` gate, fix the source, re-tag (before publication). |
 | Failure with no source cause: network fetch, runner crash, a known flaky test | `gh run rerun <id> --failed` once. A second identical failure needs diagnosis. Ignoring or deleting a test is never the fix. |
 | Other legs show `cancelled` | They were cancelled by the failed leg. Fix that one; check the cancelled legs on the next run. |
 | Missing or invalid signing secret | Read the matching `docs/release/*-signing.md` and `keys/README.md`. Restoring a secret is blocker 1 unless you can do it through `gh secret set` with a value you already hold. Never print a secret value. |
