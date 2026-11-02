@@ -70,9 +70,7 @@ impl AgentSession {
 #[derive(Debug, Clone)]
 pub struct ToolAggregate {
     pub tool: TerminalAgent,
-    pub dominant: AgentState,
     pub count: usize,
-    pub active_tool_name: Option<String>,
 }
 
 impl ToolAggregate {
@@ -133,15 +131,6 @@ where
     }
 }
 
-fn state_rank(s: &AgentState) -> u8 {
-    match s {
-        AgentState::Errored => 5,
-        AgentState::WaitingForInput => 4,
-        AgentState::Thinking => 2,
-        AgentState::Finished => 1,
-    }
-}
-
 pub fn aggregate_by_tool<'a, I>(sessions: I) -> Vec<ToolAggregate>
 where
     I: IntoIterator<Item = &'a AgentSession>,
@@ -151,19 +140,11 @@ where
     for s in sessions {
         by_tool
             .entry(s.tool)
-            .and_modify(|agg| {
-                agg.count += 1;
-                if state_rank(&s.state) > state_rank(&agg.dominant) {
-                    agg.dominant = s.state;
-                    agg.active_tool_name = s.active_tool_name.clone();
-                }
-            })
-            .or_insert_with(|| ToolAggregate {
+            .or_insert(ToolAggregate {
                 tool: s.tool,
-                dominant: s.state,
-                count: 1,
-                active_tool_name: s.active_tool_name.clone(),
-            });
+                count: 0,
+            })
+            .count += 1;
     }
 
     let mut rows: Vec<ToolAggregate> = by_tool.into_values().collect();
@@ -208,35 +189,15 @@ mod tests {
     }
 
     #[test]
-    fn dominant_picks_waiting_over_thinking() {
+    fn sessions_of_one_tool_in_different_states_aggregate_into_one_row() {
         let sessions = [
             s(TerminalAgent::ClaudeCode, AgentState::Thinking),
             s(TerminalAgent::ClaudeCode, AgentState::WaitingForInput),
-            s(TerminalAgent::ClaudeCode, AgentState::Finished),
         ];
         let rows = aggregate_by_tool(sessions.iter());
-        assert_eq!(rows[0].dominant, AgentState::WaitingForInput);
-    }
-
-    #[test]
-    fn dominant_picks_thinking_over_finished() {
-        let sessions = [
-            s(TerminalAgent::ClaudeCode, AgentState::Finished),
-            s(TerminalAgent::ClaudeCode, AgentState::Thinking),
-        ];
-        let rows = aggregate_by_tool(sessions.iter());
-        assert_eq!(rows[0].dominant, AgentState::Thinking);
-    }
-
-    #[test]
-    fn dominant_picks_errored_over_everything() {
-        let sessions = [
-            s(TerminalAgent::ClaudeCode, AgentState::Thinking),
-            s(TerminalAgent::ClaudeCode, AgentState::WaitingForInput),
-            s(TerminalAgent::ClaudeCode, AgentState::Errored),
-        ];
-        let rows = aggregate_by_tool(sessions.iter());
-        assert_eq!(rows[0].dominant, AgentState::Errored);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].count, 2);
+        assert_eq!(rows[0].extra_suffix(), " +1");
     }
 
     #[test]
