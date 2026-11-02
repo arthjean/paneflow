@@ -104,7 +104,6 @@ mod tests {
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
             on_quit: Some(OnQuit::Stop),
-            sidebar_ended_sessions: Some(3),
             agent_button_visibility: [
                 "claude_code_button_visible",
                 "codex_button_visible",

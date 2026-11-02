@@ -169,7 +169,6 @@ impl PaneFlowApp {
     fn sidebar_menu_open(&self) -> bool {
         self.workspace_menu_open.is_some()
             || self.tab_menu_open.is_some()
-            || self.session_menu_open.is_some()
             || self.sidebar_customize_menu_open
             || self.sidebar_space_menu_open
             || self.agents_display_menu_open

@@ -23,7 +23,6 @@ pub(super) const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
 pub(super) const SIDEBAR_HEADER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_TITLE_TOOLTIP_MIN_CHARS: usize = 13;
-pub(super) const SESSION_ROW_ICON_SIZE: f32 = 12.0;
 
 pub(super) fn sidebar_row_shell() -> gpui::Div {
     div()
@@ -49,16 +48,6 @@ pub(super) fn render_sidebar_indent_guide(ui: crate::theme::UiColors) -> gpui::D
         .bottom_0()
         .w(px(1.))
         .bg(color)
-}
-
-pub(super) fn sidebar_row(
-    shell: gpui::Stateful<gpui::Div>,
-    group: SharedString,
-    resting: Option<gpui::Hsla>,
-    hovered: Option<gpui::Hsla>,
-    body: impl IntoElement,
-) -> gpui::Stateful<gpui::Div> {
-    squircle_skin(shell, group, ROW_RADIUS, resting, hovered).child(body)
 }
 
 pub(super) fn sidebar_cursor_ring(ui: crate::theme::UiColors) -> impl IntoElement {

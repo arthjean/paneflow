@@ -1,99 +1,91 @@
 use std::collections::{HashSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Entity, Focusable, Window};
-use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
-use paneflow_host::{HostClientError, SessionLifecycle};
+use gpui::{App, Context, Entity, Window};
+use paneflow_config::schema::{SessionGeneration, SessionId};
+use paneflow_host::SessionLifecycle;
+use paneflow_host::protocol::ERR_PROCESS_UNVERIFIED;
 
-use crate::app::close_policy::CloseTarget;
 use crate::app::workspace_ops::{
     expire_held_sessions, settle_closed_sessions, take_undo_window_sessions,
     undo_window_session_ids,
 };
-use crate::layout::{LayoutTree, SplitDirection};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
-use crate::workspace::{Tab, Workspace, next_workspace_id_in};
+use crate::workspace::Tab;
 use crate::{CLOSED_SESSION_GRACE_MS, PaneFlowApp, SessionHold, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SessionRowScope {
-    Workspace(usize),
-    Fallback,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OwnedSession {
     pub(crate) session: SessionId,
     pub(crate) generation: SessionGeneration,
-    pub(crate) workspace: Option<WorkspaceId>,
-    pub(crate) title: Option<String>,
-    pub(crate) cwd: String,
-    pub(crate) live: bool,
-    pub(crate) lifecycle: SessionLifecycle,
-    pub(crate) updated_at_ms: u64,
 }
 
-impl OwnedSession {
-    fn shows_as(&self, other: &OwnedSession) -> bool {
-        let shown_age = |session: &OwnedSession| (!session.live).then_some(session.updated_at_ms);
-        self.session == other.session
-            && self.generation == other.generation
-            && self.workspace == other.workspace
-            && self.title == other.title
-            && self.cwd == other.cwd
-            && self.live == other.live
-            && self.lifecycle == other.lifecycle
-            && shown_age(self) == shown_age(other)
-    }
-
-    pub(crate) fn label(&self) -> String {
-        self.title
-            .clone()
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| {
-                std::path::Path::new(&self.cwd)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| self.cwd.clone())
-            })
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct OwnedSessions {
     rows: Vec<OwnedSession>,
-    stale: bool,
-    unknown: HashSet<SessionId>,
     forgetting: HashSet<SessionId>,
-    expanded: HashSet<WorkspaceId>,
-    fallback_expanded: bool,
     refresh_generation: u64,
+    live_sweep_pending: bool,
 }
 
-impl OwnedSessions {
-    fn apply_listing(&mut self, listed: Option<Vec<OwnedSession>>) -> bool {
-        let Some(mut rows) = listed else {
-            return !std::mem::replace(&mut self.stale, true);
-        };
-        order_session_rows(&mut rows);
-        let changed = self.rows.len() != rows.len()
-            || self
-                .rows
-                .iter()
-                .zip(&rows)
-                .any(|(shown, listed)| !shown.shows_as(listed))
-            || self.stale
-            || !self.unknown.is_empty();
-        self.rows = rows;
-        self.stale = false;
-        self.unknown.clear();
-        changed
+impl Default for OwnedSessions {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            forgetting: HashSet::new(),
+            refresh_generation: 0,
+            live_sweep_pending: true,
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ListedRecord {
+    pub(crate) session: SessionId,
+    pub(crate) generation: SessionGeneration,
+    pub(crate) owned: bool,
+    pub(crate) live: bool,
+    pub(crate) lifecycle: SessionLifecycle,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct OrphanSweep {
+    pub(crate) forget: Vec<SessionId>,
+    pub(crate) stop: Vec<OwnedSession>,
+}
+
+fn has_ended(lifecycle: &SessionLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        SessionLifecycle::Exited { .. } | SessionLifecycle::Failed { .. } | SessionLifecycle::Lost
+    )
+}
+
+pub(crate) fn orphan_sweep(
+    listed: &[ListedRecord],
+    held: &HashSet<SessionId>,
+    forgetting: &HashSet<SessionId>,
+    sweep_live: bool,
+) -> OrphanSweep {
+    let mut sweep = OrphanSweep::default();
+    for record in listed {
+        if held.contains(&record.session) || forgetting.contains(&record.session) {
+            continue;
+        }
+        if !record.live && has_ended(&record.lifecycle) {
+            sweep.forget.push(record.session.clone());
+        } else if sweep_live && record.live && record.owned {
+            sweep.stop.push(OwnedSession {
+                session: record.session.clone(),
+                generation: record.generation,
+            });
+        }
+    }
+    sweep
 }
 
 pub(crate) fn pane_terminals(pane: &Entity<Pane>, cx: &App) -> Vec<Entity<TerminalView>> {
@@ -114,133 +106,6 @@ pub(crate) fn surface_terminal(surface: &PaneSurface) -> Option<Entity<TerminalV
     }
 }
 
-pub(crate) fn order_session_rows(rows: &mut [OwnedSession]) {
-    rows.sort_by(|a, b| {
-        b.live
-            .cmp(&a.live)
-            .then(b.updated_at_ms.cmp(&a.updated_at_ms))
-            .then(a.session.as_str().cmp(b.session.as_str()))
-    });
-}
-
-pub(crate) fn relative_age(now_ms: u64, updated_at_ms: u64) -> String {
-    let seconds = now_ms.saturating_sub(updated_at_ms) / 1000;
-    match seconds {
-        0..=59 => "just now".to_string(),
-        60..=3599 => format!("{} min ago", seconds / 60),
-        3600..=86_399 => format!("{} h ago", seconds / 3600),
-        _ => format!("{} d ago", seconds / 86_400),
-    }
-}
-
-pub(crate) fn lifecycle_sentence(lifecycle: &SessionLifecycle) -> String {
-    match lifecycle {
-        SessionLifecycle::Starting => "Starting".to_string(),
-        SessionLifecycle::Running => "Running".to_string(),
-        SessionLifecycle::Exited { code, signal } => match signal {
-            Some(signal) => format!("Exited with code {code} ({signal})"),
-            None => format!("Exited with code {code}"),
-        },
-        SessionLifecycle::Failed { reason } => format!("Failed to start: {reason}"),
-        SessionLifecycle::Lost => "Lost: its process did not survive".to_string(),
-        SessionLifecycle::Unverified { reason } => {
-            format!("Unverified: the host still owns its process ({reason})")
-        }
-    }
-}
-
-pub(crate) struct OpenWorkspace {
-    pub(crate) id: WorkspaceId,
-    pub(crate) root: PathBuf,
-}
-
-fn path_contains(root: &Path, cwd: &Path) -> bool {
-    let mut roots = root.components();
-    let mut cwds = cwd.components();
-    loop {
-        match (roots.next(), cwds.next()) {
-            (None, _) => return true,
-            (Some(_), None) => return false,
-            (Some(a), Some(b)) => {
-                let same = if cfg!(windows) {
-                    a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
-                } else {
-                    a == b
-                };
-                if !same {
-                    return false;
-                }
-            }
-        }
-    }
-}
-
-fn adopting_workspace<'a>(cwd: &str, open: &'a [OpenWorkspace]) -> Option<&'a WorkspaceId> {
-    let cwd = Path::new(cwd);
-    open.iter()
-        .filter(|ws| path_contains(&ws.root, cwd))
-        .max_by_key(|ws| ws.root.components().count())
-        .map(|ws| &ws.id)
-}
-
-fn session_belongs_to(
-    session: &OwnedSession,
-    workspace: &WorkspaceId,
-    open: &[OpenWorkspace],
-) -> bool {
-    match session.workspace.as_ref() {
-        Some(id) if open.iter().any(|ws| &ws.id == id) => id == workspace,
-        _ => adopting_workspace(&session.cwd, open) == Some(workspace),
-    }
-}
-
-fn visible_session_rows(
-    rows: &[OwnedSession],
-    workspace: &WorkspaceId,
-    open: &[OpenWorkspace],
-    attached: &HashSet<SessionId>,
-    forgetting: &HashSet<SessionId>,
-) -> Vec<OwnedSession> {
-    let mut visible: Vec<OwnedSession> = rows
-        .iter()
-        .filter(|session| session_belongs_to(session, workspace, open))
-        .filter(|session| !attached.contains(&session.session))
-        .filter(|session| !forgetting.contains(&session.session))
-        .cloned()
-        .collect();
-    order_session_rows(&mut visible);
-    visible
-}
-
-fn fallback_session_rows(
-    rows: &[OwnedSession],
-    open: &[OpenWorkspace],
-    attached: &HashSet<SessionId>,
-    forgetting: &HashSet<SessionId>,
-) -> Vec<OwnedSession> {
-    let mut visible: Vec<OwnedSession> = rows
-        .iter()
-        .filter(|session| {
-            !open
-                .iter()
-                .any(|ws| session_belongs_to(session, &ws.id, open))
-        })
-        .filter(|session| !attached.contains(&session.session))
-        .filter(|session| !forgetting.contains(&session.session))
-        .cloned()
-        .collect();
-    order_session_rows(&mut visible);
-    visible
-}
-
-pub(crate) fn fallback_workspace_dir(recorded: &str, home: Option<PathBuf>) -> Option<PathBuf> {
-    let recorded = PathBuf::from(recorded);
-    if !recorded.as_os_str().is_empty() && recorded.is_dir() {
-        return Some(recorded);
-    }
-    home.filter(|home| home.is_dir())
-}
-
 pub(crate) fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
     let mut failures = Vec::new();
     for (endpoint, session, generation) in targets {
@@ -257,6 +122,19 @@ pub(crate) fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
                     ),
                 }
             }
+            Err(error) if error.code() == Some(ERR_PROCESS_UNVERIFIED) => {
+                match host_link::remove_session(&endpoint, &session) {
+                    Ok(()) => log::info!(
+                        "paneflow: hosted session {session} had no process to stop; record removed"
+                    ),
+                    Err(remove_error) => {
+                        log::warn!(
+                            "paneflow: hosted session {session} stop outcome unknown: {error}; removal refused: {remove_error}"
+                        );
+                        failures.push(session);
+                    }
+                }
+            }
             Err(error) => {
                 log::warn!("paneflow: hosted session {session} stop outcome unknown: {error}");
                 failures.push(session);
@@ -264,6 +142,22 @@ pub(crate) fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
         }
     }
     failures
+}
+
+fn forget_ended(endpoint: PathBuf, sessions: Vec<SessionId>) -> usize {
+    let mut removed = 0;
+    for session in sessions {
+        match host_link::remove_session(&endpoint, &session) {
+            Ok(()) => {
+                removed += 1;
+                log::info!("paneflow: ended session {session} had no view left; record removed");
+            }
+            Err(error) => {
+                log::debug!("paneflow: ended session {session} record kept: {error}");
+            }
+        }
+    }
+    removed
 }
 
 impl PaneFlowApp {
@@ -371,10 +265,10 @@ impl PaneFlowApp {
         take_undo_window_sessions(&mut self.closed_panes)
     }
 
-    fn sidebar_hidden_sessions(&self, cx: &App) -> HashSet<SessionId> {
-        let mut hidden = self.attached_session_ids(cx);
-        hidden.extend(undo_window_session_ids(&self.closed_panes));
-        hidden
+    fn held_session_ids(&self, cx: &App) -> HashSet<SessionId> {
+        let mut held = self.attached_session_ids(cx);
+        held.extend(undo_window_session_ids(&self.closed_panes));
+        held
     }
 
     pub(crate) fn stop_hosted_sessions(
@@ -382,6 +276,10 @@ impl PaneFlowApp {
         targets: Vec<StopTarget>,
         cx: &mut Context<Self>,
     ) {
+        let targets: Vec<StopTarget> = targets
+            .into_iter()
+            .filter(|(_, session, _)| !self.owned_sessions.forgetting.contains(session))
+            .collect();
         if targets.is_empty() {
             return;
         }
@@ -405,14 +303,11 @@ impl PaneFlowApp {
                 if !failures.is_empty() {
                     app.show_toast(
                         format!(
-                            "{} session(s) may still be running: the stop request did not complete. The session list reconciles it.",
+                            "{} session(s) may still be running: the stop request did not complete.",
                             failures.len()
                         ),
                         cx,
                     );
-                    for session in failures {
-                        app.owned_sessions.unknown.insert(session);
-                    }
                 }
                 app.refresh_owned_sessions(cx);
             });
@@ -420,35 +315,29 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(crate) fn remove_listed_session(&mut self, session: SessionId, cx: &mut Context<Self>) {
+    fn forget_ended_sessions(&mut self, sessions: Vec<SessionId>, cx: &mut Context<Self>) {
+        if sessions.is_empty() {
+            return;
+        }
         let Some(endpoint) = host_link::host_endpoint().map(|target| target.endpoint) else {
             return;
         };
+        self.owned_sessions
+            .forgetting
+            .extend(sessions.iter().cloned());
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let outcome = executor
-                .spawn({
-                    let session = session.clone();
-                    async move { host_link::remove_session(&endpoint, &session) }
-                })
+            let attempted = sessions.clone();
+            let removed = executor
+                .spawn(async move { forget_ended(endpoint, sessions) })
                 .await;
             let _ = this.update(cx, |app, cx| {
-                match outcome {
-                    Ok(()) => {
-                        app.owned_sessions.unknown.remove(&session);
-                    }
-                    Err(HostClientError::Rpc { message, .. }) => {
-                        app.show_toast(format!("The session was not removed: {message}"), cx)
-                    }
-                    Err(error) => {
-                        app.owned_sessions.unknown.insert(session.clone());
-                        app.show_toast(
-                            format!("The removal outcome is unknown: {error}. The session list reconciles it."),
-                            cx,
-                        )
-                    }
+                for session in &attempted {
+                    app.owned_sessions.forgetting.remove(session);
                 }
-                app.refresh_owned_sessions(cx);
+                if removed > 0 {
+                    app.refresh_owned_sessions(cx);
+                }
             });
         })
         .detach();
@@ -473,7 +362,12 @@ impl PaneFlowApp {
             return;
         }
         let session = terminal.read(cx).terminal.session_id.clone();
-        self.request_close(CloseTarget::Session(session), Some(window), cx);
+        self.stop_listed_session(&session, cx);
+    }
+
+    pub(crate) fn sweep_live_orphans_on_next_refresh(&mut self, cx: &mut Context<Self>) {
+        self.owned_sessions.live_sweep_pending = true;
+        self.refresh_owned_sessions(cx);
     }
 
     pub(crate) fn refresh_owned_sessions(&mut self, cx: &mut Context<Self>) {
@@ -485,41 +379,68 @@ impl PaneFlowApp {
             let listed = executor
                 .spawn(async move { host_link::list_sessions(None) })
                 .await;
-            let rows = match listed {
-                Ok(sessions) => Some(
-                    sessions
-                        .into_iter()
-                        .filter(|row| row.owned)
-                        .map(|row| OwnedSession {
-                            session: row.session,
-                            generation: row.generation,
-                            workspace: row.workspace,
-                            title: row
-                                .title
-                                .as_deref()
-                                .and_then(crate::sidebar_title::clean_sidebar_title),
-                            cwd: row.cwd,
-                            live: row.live,
-                            lifecycle: row.lifecycle,
-                            updated_at_ms: row.updated_at_ms,
-                        })
-                        .collect::<Vec<_>>(),
-                ),
+            let records: Vec<ListedRecord> = match listed {
+                Ok(sessions) => sessions
+                    .into_iter()
+                    .map(|row| ListedRecord {
+                        session: row.session,
+                        generation: row.generation,
+                        owned: row.owned,
+                        live: row.live,
+                        lifecycle: row.lifecycle,
+                    })
+                    .collect(),
                 Err(error) => {
                     log::debug!("paneflow: session refresh kept the previous list: {error}");
-                    None
+                    return;
                 }
             };
             let _ = this.update(cx, |app, cx| {
                 if app.owned_sessions.refresh_generation != generation {
                     return;
                 }
-                if app.owned_sessions.apply_listing(rows) {
-                    cx.notify();
-                }
+                app.apply_session_listing(records, cx);
             });
         })
         .detach();
+    }
+
+    fn apply_session_listing(&mut self, records: Vec<ListedRecord>, cx: &mut Context<Self>) {
+        self.owned_sessions.rows = records
+            .iter()
+            .filter(|record| record.owned && record.live)
+            .map(|record| OwnedSession {
+                session: record.session.clone(),
+                generation: record.generation,
+            })
+            .collect();
+        if self.session_restore_failed {
+            return;
+        }
+        let sweep_live = std::mem::take(&mut self.owned_sessions.live_sweep_pending);
+        let sweep = orphan_sweep(
+            &records,
+            &self.held_session_ids(cx),
+            &self.owned_sessions.forgetting,
+            sweep_live,
+        );
+        self.forget_ended_sessions(sweep.forget, cx);
+        if sweep.stop.is_empty() {
+            return;
+        }
+        let Some(endpoint) = host_link::host_endpoint().map(|target| target.endpoint) else {
+            return;
+        };
+        log::info!(
+            "paneflow: stopping {} live session(s) no view holds after the restore",
+            sweep.stop.len()
+        );
+        let targets = sweep
+            .stop
+            .into_iter()
+            .map(|orphan| (endpoint.clone(), orphan.session, orphan.generation))
+            .collect();
+        self.stop_hosted_sessions(targets, cx);
     }
 
     pub(crate) fn attached_terminals(&self, cx: &App) -> Vec<Entity<TerminalView>> {
@@ -542,248 +463,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn live_owned_sessions(&self) -> impl Iterator<Item = &OwnedSession> {
-        self.owned_sessions.rows.iter().filter(|row| row.live)
-    }
-
-    pub(crate) fn owned_sessions_are_stale(&self) -> bool {
-        self.owned_sessions.stale
-    }
-
-    pub(crate) fn session_outcome_unknown(&self, session: &SessionId) -> bool {
-        self.owned_sessions.unknown.contains(session)
-    }
-
-    pub(crate) fn listed_session_label(&self, session: &SessionId) -> String {
-        self.owned_sessions
-            .rows
-            .iter()
-            .find(|row| &row.session == session)
-            .map(OwnedSession::label)
-            .unwrap_or_else(|| session.to_string())
-    }
-
-    pub(crate) fn ended_sessions_expanded(&self, ws: &Workspace) -> bool {
-        self.owned_sessions.expanded.contains(&ws.durable_id)
-    }
-
-    pub(crate) fn expand_ended_sessions(&mut self, workspace: WorkspaceId, cx: &mut Context<Self>) {
-        self.owned_sessions.expanded.insert(workspace);
-        cx.notify();
-    }
-
-    fn open_workspaces(&self) -> Vec<OpenWorkspace> {
-        self.workspaces
-            .iter()
-            .map(|ws| OpenWorkspace {
-                id: ws.durable_id.clone(),
-                root: PathBuf::from(&ws.cwd),
-            })
-            .collect()
-    }
-
-    pub(crate) fn owned_sessions_for_workspace(
-        &self,
-        ws: &Workspace,
-        cx: &App,
-    ) -> Vec<OwnedSession> {
-        if self.owned_sessions.rows.is_empty() {
-            return Vec::new();
-        }
-        let attached = self.sidebar_hidden_sessions(cx);
-        visible_session_rows(
-            &self.owned_sessions.rows,
-            &ws.durable_id,
-            &self.open_workspaces(),
-            &attached,
-            &self.owned_sessions.forgetting,
-        )
-    }
-
-    pub(crate) fn fallback_owned_sessions(&self, cx: &App) -> Vec<OwnedSession> {
-        if self.owned_sessions.rows.is_empty() {
-            return Vec::new();
-        }
-        let attached = self.sidebar_hidden_sessions(cx);
-        fallback_session_rows(
-            &self.owned_sessions.rows,
-            &self.open_workspaces(),
-            &attached,
-            &self.owned_sessions.forgetting,
-        )
-    }
-
-    pub(crate) fn fallback_sessions_expanded(&self) -> bool {
-        self.owned_sessions.fallback_expanded
-    }
-
-    pub(crate) fn expand_fallback_sessions(&mut self, cx: &mut Context<Self>) {
-        self.owned_sessions.fallback_expanded = true;
-        cx.notify();
-    }
-
-    pub(crate) fn open_listed_session(
-        &mut self,
-        scope: SessionRowScope,
-        listed: OwnedSession,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match scope {
-            SessionRowScope::Workspace(ws_idx) => {
-                self.open_session_in_layout_with(ws_idx, listed, false, window, cx);
-            }
-            SessionRowScope::Fallback => self.open_fallback_session(listed, false, window, cx),
-        }
-    }
-
-    fn open_fallback_session(
-        &mut self,
-        listed: OwnedSession,
-        restart: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(ws_idx) = self.shown_workspace_idx() {
-            self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
-            return;
-        }
-        let Some(cwd) = fallback_workspace_dir(&listed.cwd, dirs::home_dir()) else {
-            self.show_toast(
-                format!(
-                    "No accessible directory for this session: {} is missing and no home directory was found",
-                    listed.cwd
-                ),
-                cx,
-            );
-            return;
-        };
-        let ws_id = next_workspace_id_in(self.active_space.as_ref());
-        let terminal = cx.new(|cx| {
-            if restart {
-                TerminalView::attach_restarting(
-                    ws_id,
-                    Some(cwd.clone()),
-                    listed.session.clone(),
-                    Some(listed.generation),
-                    cx,
-                )
-            } else {
-                TerminalView::attach_existing(ws_id, Some(cwd.clone()), listed.session.clone(), cx)
-            }
-        });
-        if let Some(title) = listed.title.clone() {
-            terminal.update(cx, |view, _| view.terminal.title = title);
-        }
-        let surface_id = terminal.entity_id().as_u64();
-        let pane = self.create_pane(terminal, ws_id, cx);
-        let ws = Workspace::with_cwd_and_id(ws_id, listed.label(), cwd, pane.clone());
-        Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        self.active_idx = self.add_workspace(ws);
-        self.seed_surface_from_host(&listed.session, ws_id, surface_id, cx);
-        self.owned_sessions
-            .rows
-            .retain(|row| row.session != listed.session);
-        pane.read(cx).focus_handle(cx).focus(window, cx);
-        self.save_session(cx);
-        cx.notify();
-    }
-
-    fn open_session_in_layout_with(
-        &mut self,
-        ws_idx: usize,
-        listed: OwnedSession,
-        restart: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if ws_idx >= self.workspaces.len() {
-            return;
-        }
-        self.activate_workspace_at(
-            ws_idx,
-            crate::app::workspace_ops::WorkspaceFocusTarget::FirstPane,
-            window,
-            cx,
-        );
-        let ws_id = self.workspaces[ws_idx].id;
-        let cwd = std::path::PathBuf::from(&listed.cwd);
-        let terminal = cx.new(|cx| {
-            if restart {
-                TerminalView::attach_restarting(
-                    ws_id,
-                    Some(cwd),
-                    listed.session.clone(),
-                    Some(listed.generation),
-                    cx,
-                )
-            } else {
-                TerminalView::attach_existing(ws_id, Some(cwd), listed.session.clone(), cx)
-            }
-        });
-        if let Some(title) = listed.title.clone() {
-            terminal.update(cx, |view, _| view.terminal.title = title);
-        }
-        let surface_id = terminal.entity_id().as_u64();
-        let new_pane = self.create_pane(terminal, ws_id, cx);
-        self.seed_surface_from_host(&listed.session, ws_id, surface_id, cx);
-        let Some(ws) = self.workspaces.get_mut(ws_idx) else {
-            return;
-        };
-        if let Some(root) = &mut ws.active_tab_mut().root {
-            if !root.split_at_focused(SplitDirection::Horizontal, new_pane.clone(), window, cx) {
-                root.split_first_leaf(SplitDirection::Horizontal, new_pane.clone());
-            }
-        } else {
-            ws.active_tab_mut().root = Some(LayoutTree::Leaf(new_pane.clone()));
-        }
-        self.owned_sessions
-            .rows
-            .retain(|row| row.session != listed.session);
-        new_pane.read(cx).focus_handle(cx).focus(window, cx);
-        self.save_session(cx);
-        cx.notify();
-    }
-
-    pub(crate) fn resume_listed_session(
-        &mut self,
-        scope: SessionRowScope,
-        listed: OwnedSession,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let holder = self.attached_terminals(cx).into_iter().find(|terminal| {
-            let state = &terminal.read(cx).terminal;
-            state.session_id == listed.session && matches!(state.host_link, HostLinkState::Ended(_))
-        });
-        if let Some(terminal) = holder {
-            terminal.update(cx, |view, cx| view.resume_hosted_session(cx));
-            if let Some(pane) = self.pane_holding_terminal(&terminal, cx) {
-                pane.read(cx).focus_handle(cx).focus(window, cx);
-            }
-            self.owned_sessions
-                .rows
-                .retain(|row| row.session != listed.session);
-            cx.notify();
-            return;
-        }
-        let restart = !listed.live;
-        match scope {
-            SessionRowScope::Workspace(ws_idx) => {
-                self.open_session_in_layout_with(ws_idx, listed, restart, window, cx);
-            }
-            SessionRowScope::Fallback => self.open_fallback_session(listed, restart, window, cx),
-        }
-    }
-
-    fn pane_holding_terminal(
-        &self,
-        terminal: &Entity<TerminalView>,
-        cx: &App,
-    ) -> Option<Entity<Pane>> {
-        self.workspaces
-            .iter()
-            .flat_map(|ws| ws.collect_panes())
-            .find(|pane| pane.read(cx).contains_terminal(terminal))
+        self.owned_sessions.rows.iter()
     }
 
     pub(crate) fn track_resume_batch(
@@ -846,154 +526,91 @@ pub(crate) struct ResumeBatch {
 mod tests {
     use super::*;
 
-    fn row(live: bool, updated_at_ms: u64) -> OwnedSession {
-        OwnedSession {
+    fn record(owned: bool, lifecycle: SessionLifecycle) -> ListedRecord {
+        ListedRecord {
             session: SessionId::new(),
             generation: SessionGeneration::FIRST,
-            workspace: None,
-            title: None,
-            cwd: "/repo/web".to_string(),
-            live,
-            lifecycle: if live {
-                SessionLifecycle::Running
-            } else {
-                SessionLifecycle::Exited {
-                    code: 0,
-                    signal: None,
-                }
-            },
-            updated_at_ms,
+            owned,
+            live: matches!(lifecycle, SessionLifecycle::Running),
+            lifecycle,
+        }
+    }
+
+    fn exited() -> SessionLifecycle {
+        SessionLifecycle::Exited {
+            code: 0,
+            signal: None,
         }
     }
 
     #[test]
-    fn a_listing_that_repeats_the_shown_sessions_changes_nothing() {
-        let mut sessions = OwnedSessions::default();
-        let listed = vec![row(true, 1), row(false, 2)];
-        assert!(sessions.apply_listing(Some(listed.clone())));
-        assert!(!sessions.apply_listing(Some(listed.clone())));
-        assert!(sessions.apply_listing(None));
-        assert!(!sessions.apply_listing(None));
-        assert!(sessions.apply_listing(Some(listed.clone())));
-        sessions.unknown.insert(listed[0].session.clone());
-        assert!(sessions.apply_listing(Some(listed.clone())));
-        assert!(sessions.unknown.is_empty());
-        let mut touched = listed.clone();
-        touched[0].updated_at_ms = 10;
-        assert!(
-            !sessions.apply_listing(Some(touched.clone())),
-            "a live session's age is not shown"
-        );
-        touched[1].updated_at_ms = 20;
-        assert!(
-            sessions.apply_listing(Some(touched.clone())),
-            "an ended session shows its age"
-        );
-        let mut reordered = vec![row(true, 30), touched[0].clone(), touched[1].clone()];
-        assert!(sessions.apply_listing(Some(reordered.clone())));
-        reordered[1].updated_at_ms = 40;
-        assert!(
-            sessions.apply_listing(Some(reordered)),
-            "a live session that moves ahead of another changes the order shown"
-        );
-        let mut retitled = listed;
-        retitled[0].title = Some("renamed".to_string());
-        assert!(sessions.apply_listing(Some(retitled)));
-    }
-
-    #[test]
-    fn a_session_whose_workspace_is_gone_is_adopted_by_the_deepest_open_root_over_its_cwd() {
-        let repo = WorkspaceId::new();
-        let web = WorkspaceId::new();
-        let open = [
-            OpenWorkspace {
-                id: repo.clone(),
-                root: PathBuf::from("/repo"),
+    fn every_ended_record_no_view_holds_is_forgotten_whoever_owns_it() {
+        let held = record(true, exited());
+        let in_flight = record(true, exited());
+        let lost_from_a_previous_host = record(false, SessionLifecycle::Lost);
+        let failed = record(
+            true,
+            SessionLifecycle::Failed {
+                reason: "shell not found".to_string(),
             },
-            OpenWorkspace {
-                id: web.clone(),
-                root: PathBuf::from("/repo/web"),
+        );
+        let orphan = record(true, exited());
+        let unverified = record(
+            true,
+            SessionLifecycle::Unverified {
+                reason: "descendants unresolved".to_string(),
             },
-        ];
-        let mut orphan = row(true, 10);
-        orphan.workspace = Some(WorkspaceId::new());
-        let mut api = row(true, 20);
-        api.workspace = Some(WorkspaceId::new());
-        api.cwd = "/repo/api".to_string();
-        let mut elsewhere = row(true, 30);
-        elsewhere.workspace = Some(WorkspaceId::new());
-        elsewhere.cwd = "/tmp/scratch".to_string();
-        let mut owned_by_repo = row(true, 40);
-        owned_by_repo.workspace = Some(repo.clone());
-        let rows = vec![
+        );
+        let starting = record(true, SessionLifecycle::Starting);
+        let listed = vec![
+            held.clone(),
+            in_flight.clone(),
+            lost_from_a_previous_host.clone(),
+            failed.clone(),
             orphan.clone(),
-            api.clone(),
-            elsewhere.clone(),
-            owned_by_repo.clone(),
+            unverified,
+            starting,
         ];
 
-        let ids = |workspace: &WorkspaceId| -> Vec<SessionId> {
-            visible_session_rows(&rows, workspace, &open, &HashSet::new(), &HashSet::new())
-                .into_iter()
-                .map(|session| session.session)
-                .collect()
-        };
+        let sweep = orphan_sweep(
+            &listed,
+            &HashSet::from([held.session.clone()]),
+            &HashSet::from([in_flight.session.clone()]),
+            false,
+        );
+
         assert_eq!(
-            ids(&web),
-            vec![orphan.session.clone()],
-            "the deepest open root over the cwd adopts the session"
+            sweep.forget,
+            vec![
+                lost_from_a_previous_host.session,
+                failed.session,
+                orphan.session
+            ],
+            "a held or in-flight record stays, and an unverified or starting one may still own a process"
         );
-        assert_eq!(
-            ids(&repo),
-            vec![owned_by_repo.session.clone(), api.session.clone()],
-            "a session still bound to an open workspace stays there, whatever its cwd"
-        );
-        assert!(
-            path_contains(Path::new("/repo"), Path::new("/repo/web"))
-                && !path_contains(Path::new("/repo/we"), Path::new("/repo/web"))
-        );
+        assert!(sweep.stop.is_empty());
     }
 
     #[test]
-    fn a_session_whose_stop_is_in_flight_is_held_back_from_the_sidebar() {
-        let workspace = WorkspaceId::new();
-        let mut closing = row(true, 30);
-        closing.workspace = Some(workspace.clone());
-        let mut attached = row(true, 20);
-        attached.workspace = Some(workspace.clone());
-        let mut kept = row(false, 10);
-        kept.workspace = Some(workspace.clone());
-        let mut elsewhere = row(true, 40);
-        elsewhere.workspace = Some(WorkspaceId::new());
-        let rows = vec![
-            closing.clone(),
-            attached.clone(),
-            kept.clone(),
-            elsewhere.clone(),
-        ];
+    fn a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore() {
+        let attached = record(true, SessionLifecycle::Running);
+        let orphan = record(true, SessionLifecycle::Running);
+        let foreign = record(false, SessionLifecycle::Running);
+        let listed = vec![attached.clone(), orphan.clone(), foreign];
+        let held = HashSet::from([attached.session.clone()]);
 
-        let visible = visible_session_rows(
-            &rows,
-            &workspace,
-            &[
-                OpenWorkspace {
-                    id: workspace.clone(),
-                    root: PathBuf::from("/repo"),
-                },
-                OpenWorkspace {
-                    id: elsewhere.workspace.clone().unwrap(),
-                    root: PathBuf::from("/other"),
-                },
-            ],
-            &HashSet::from([attached.session.clone()]),
-            &HashSet::from([closing.session.clone()]),
-        );
-
-        let listed: Vec<_> = visible.into_iter().map(|session| session.session).collect();
         assert_eq!(
-            listed,
-            vec![kept.session.clone()],
-            "a session whose stop is in flight never flashes a row before it goes"
+            orphan_sweep(&listed, &held, &HashSet::new(), false),
+            OrphanSweep::default(),
+            "a routine refresh never stops a live session"
+        );
+        assert_eq!(
+            orphan_sweep(&listed, &held, &HashSet::new(), true).stop,
+            vec![OwnedSession {
+                session: orphan.session,
+                generation: orphan.generation,
+            }],
+            "only an owned live session that no view holds is stopped"
         );
     }
 
@@ -1053,7 +670,7 @@ mod tests {
         assert!(failures.is_empty(), "the stop reported no failure");
         assert!(
             !manifest.exists(),
-            "an explicit stop deletes the record instead of leaving an ended row"
+            "an explicit stop deletes the record instead of leaving an ended one"
         );
         let listed = client
             .call("session.list", serde_json::json!({}))
@@ -1063,149 +680,9 @@ mod tests {
                 .as_array()
                 .expect("a sessions array")
                 .is_empty(),
-            "the sidebar source has nothing left to list"
+            "the host has nothing left to list"
         );
         server.stop().expect("the host server stops");
-    }
-
-    #[test]
-    fn every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group() {
-        let repo = WorkspaceId::new();
-        let closed = WorkspaceId::new();
-        let open = vec![OpenWorkspace {
-            id: repo.clone(),
-            root: PathBuf::from("/repo"),
-        }];
-        let mut in_repo = row(true, 1);
-        in_repo.workspace = Some(repo.clone());
-        let mut closed_but_under_repo = row(true, 2);
-        closed_but_under_repo.workspace = Some(closed.clone());
-        let mut closed_elsewhere = row(true, 3);
-        closed_elsewhere.workspace = Some(closed);
-        closed_elsewhere.cwd = "/elsewhere/app".to_string();
-        let mut deleted_cwd = row(false, 4);
-        deleted_cwd.cwd = "/gone/project".to_string();
-        let mut attached = row(true, 5);
-        attached.cwd = "/elsewhere/attached".to_string();
-        let rows = vec![
-            in_repo.clone(),
-            closed_but_under_repo.clone(),
-            closed_elsewhere.clone(),
-            deleted_cwd.clone(),
-            attached.clone(),
-        ];
-        let attached_ids: HashSet<SessionId> = [attached.session.clone()].into_iter().collect();
-        let forgetting = HashSet::new();
-
-        let workspace_rows: Vec<SessionId> =
-            visible_session_rows(&rows, &repo, &open, &attached_ids, &forgetting)
-                .into_iter()
-                .map(|row| row.session)
-                .collect();
-        let fallback_rows: Vec<SessionId> =
-            fallback_session_rows(&rows, &open, &attached_ids, &forgetting)
-                .into_iter()
-                .map(|row| row.session)
-                .collect();
-
-        assert_eq!(
-            workspace_rows,
-            vec![
-                closed_but_under_repo.session.clone(),
-                in_repo.session.clone()
-            ]
-        );
-        assert_eq!(
-            fallback_rows,
-            vec![
-                closed_elsewhere.session.clone(),
-                deleted_cwd.session.clone()
-            ]
-        );
-        for row in &rows {
-            let shown = workspace_rows
-                .iter()
-                .filter(|id| **id == row.session)
-                .count()
-                + fallback_rows
-                    .iter()
-                    .filter(|id| **id == row.session)
-                    .count();
-            let expected = usize::from(!attached_ids.contains(&row.session));
-            assert_eq!(
-                shown, expected,
-                "US-010: {} is listed exactly once",
-                row.session
-            );
-        }
-
-        let no_workspaces: Vec<OpenWorkspace> = Vec::new();
-        let orphaned: Vec<SessionId> =
-            fallback_session_rows(&rows, &no_workspaces, &attached_ids, &forgetting)
-                .into_iter()
-                .map(|row| row.session)
-                .collect();
-        assert_eq!(
-            orphaned.len(),
-            4,
-            "US-010: with zero workspaces every unattached session lands in the fallback group"
-        );
-    }
-
-    #[test]
-    fn a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let recorded = temp.path().join("recorded");
-        let home = temp.path().join("home");
-        std::fs::create_dir_all(&recorded).expect("recorded dir");
-        std::fs::create_dir_all(&home).expect("home dir");
-
-        assert_eq!(
-            fallback_workspace_dir(&recorded.display().to_string(), Some(home.clone())),
-            Some(recorded.clone())
-        );
-        let deleted = temp.path().join("deleted");
-        assert_eq!(
-            fallback_workspace_dir(&deleted.display().to_string(), Some(home.clone())),
-            Some(home.clone())
-        );
-        assert_eq!(fallback_workspace_dir("", Some(home.clone())), Some(home));
-        assert_eq!(
-            fallback_workspace_dir(
-                &deleted.display().to_string(),
-                Some(temp.path().join("no-home"))
-            ),
-            None,
-            "US-010: without any accessible directory the row is kept and reported"
-        );
-        assert_eq!(
-            fallback_workspace_dir(&deleted.display().to_string(), None),
-            None
-        );
-    }
-
-    #[test]
-    fn live_sessions_come_first_then_the_most_recent_ended_ones() {
-        let mut rows = vec![row(false, 10), row(true, 5), row(false, 30), row(true, 40)];
-        let expected: Vec<_> = vec![
-            rows[3].session.clone(),
-            rows[1].session.clone(),
-            rows[2].session.clone(),
-            rows[0].session.clone(),
-        ];
-        order_session_rows(&mut rows);
-        let ordered: Vec<_> = rows.iter().map(|row| row.session.clone()).collect();
-        assert_eq!(ordered, expected);
-    }
-
-    #[test]
-    fn a_row_falls_back_to_its_directory_when_it_has_no_title() {
-        let mut listed = row(false, 0);
-        assert_eq!(listed.label(), "web");
-        listed.title = Some("   ".to_string());
-        assert_eq!(listed.label(), "web");
-        listed.title = Some("claude".to_string());
-        assert_eq!(listed.label(), "claude");
     }
 
     #[test]
@@ -1220,39 +697,5 @@ mod tests {
             resume_batch_failure_notice(0, 1).as_deref(),
             Some("1 of 1 panes could not be resumed")
         );
-    }
-
-    #[test]
-    fn ages_read_in_the_largest_unit_that_fits() {
-        assert_eq!(relative_age(1_000, 1_000), "just now");
-        assert_eq!(relative_age(120_000, 0), "2 min ago");
-        assert_eq!(relative_age(7_200_000, 0), "2 h ago");
-        assert_eq!(relative_age(172_800_000, 0), "2 d ago");
-        assert_eq!(relative_age(0, 5_000), "just now");
-    }
-
-    #[test]
-    fn a_lifecycle_sentence_names_the_exit_or_the_failure() {
-        assert_eq!(
-            lifecycle_sentence(&SessionLifecycle::Exited {
-                code: 1,
-                signal: None
-            }),
-            "Exited with code 1"
-        );
-        assert_eq!(
-            lifecycle_sentence(&SessionLifecycle::Exited {
-                code: 0,
-                signal: Some("SIGTERM".to_string())
-            }),
-            "Exited with code 0 (SIGTERM)"
-        );
-        assert_eq!(
-            lifecycle_sentence(&SessionLifecycle::Failed {
-                reason: "shell not found".to_string()
-            }),
-            "Failed to start: shell not found"
-        );
-        assert_eq!(lifecycle_sentence(&SessionLifecycle::Running), "Running");
     }
 }

@@ -252,6 +252,7 @@ impl PaneFlowApp {
                             Ok(backups) => {
                                 app.session_restore_failed = false;
                                 app.save_session(cx);
+                                app.sweep_live_orphans_on_next_refresh(cx);
                                 if let Some(directory) = backups.first().and_then(|path| path.parent()) {
                                     app.show_toast(format!("Previous session backups saved in {}", directory.display()), cx);
                                 }

@@ -762,10 +762,6 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_quit_dialog(window, cx));
         }
 
-        if self.close_dialog.is_some() {
-            app_content = app_content.child(self.render_close_dialog(window, cx));
-        }
-
         if self.unsaved_dialog.is_some() {
             app_content = app_content.child(self.render_unsaved_dialog(window, cx));
         }
@@ -779,10 +775,6 @@ impl Render for PaneFlowApp {
         {
             app_content =
                 app_content.child(self.render_workspace_context_menu(menu, ui, window, cx));
-        }
-
-        if let Some(menu) = self.session_menu_open.clone() {
-            app_content = app_content.child(self.render_session_context_menu(menu, ui, window, cx));
         }
 
         if let Some(menu) = self.tab_menu_open

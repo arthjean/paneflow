@@ -29,10 +29,6 @@ pub(crate) const ON_QUIT: SettingCopy = SettingCopy {
     title: "When quitting with sessions running",
     description: "Keep sessions running so they are back next time, or stop everything and end their processes.",
 };
-pub(crate) const ENDED_SESSIONS: SettingCopy = SettingCopy {
-    title: "Ended sessions listed per workspace",
-    description: "How many ended sessions the sidebar previews before the rest collapse under one row. Nothing is ever pruned.",
-};
 pub(crate) const NATIVE_NOTIFICATIONS: SettingCopy = SettingCopy {
     title: "Native OS notifications",
     description: "Alert you when an agent needs attention or finishes while Paneflow is unfocused.",
@@ -193,7 +189,6 @@ const GENERAL_COPIES: &[&SettingCopy] = &[
     &DEFAULT_EDITOR,
     &DEFAULT_SHELL,
     &ON_QUIT,
-    &ENDED_SESSIONS,
     &NATIVE_NOTIFICATIONS,
 ];
 #[cfg(target_os = "windows")]

@@ -145,7 +145,6 @@ impl PaneFlowApp {
                 lane,
                 &format!("ws-{ws_id}"),
                 |summary| sidebar_agent_status_tooltip(summary, &agent_status),
-                LaneSlot::BesideHoverAction,
                 ui,
             )
         });

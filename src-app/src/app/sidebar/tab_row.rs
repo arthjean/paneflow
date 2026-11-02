@@ -266,7 +266,6 @@ impl PaneFlowApp {
                 lane,
                 &format!("tab-{tab_id}"),
                 |summary| sidebar_agent_status_tooltip(summary, &agent_status),
-                LaneSlot::BesideHoverAction,
                 ui,
             )
         });
@@ -308,18 +307,6 @@ impl PaneFlowApp {
                 row.extend([body]);
             })
             .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
-        let hidden_rows = if tab_idx + 1 == ws.tab_count() {
-            self.render_session_rows(
-                SessionRowScope::Workspace(ws_idx),
-                title_indent,
-                row_inset,
-                content_width,
-                ui,
-                cx,
-            )
-        } else {
-            Vec::new()
-        };
 
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
@@ -332,7 +319,6 @@ impl PaneFlowApp {
             .gap(px(SIDEBAR_ROW_SPACING))
             .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)
-            .children(hidden_rows)
     }
 
     fn tab_row_checkout(

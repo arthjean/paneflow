@@ -445,7 +445,7 @@ full terminal runtime queue), `-32002` a timeout (the request did not start
 within 5 s, or the pane's terminal runtime did not answer in time), `-32003`
 the pane's terminal runtime is gone or failed (a read never reports any of
 these as empty text), `-32005` a
-close the UI would confirm first (busy agents, unsaved files), and `-32800`
+close that would discard unsaved files, and `-32800`
 a search superseded by a newer search on the same pane. Text budgets count the
 JSON-escaped size, so a reply always fits the 256 KiB frame.
 
@@ -947,8 +947,8 @@ drains the PTY for at most two seconds, retires the terminal, releases the
 tail after a one second grace, and keeps a completed record: exit outcome,
 final offset, completeness, and up to 512 KiB of final screen text in a
 `final-output.txt` cold file capped at 64 MiB per home. `session.text`
-serves that text, or says it is unavailable, without any launch; opening an
-ended record from the sidebar shows it read-only. A maintenance thread runs
+serves that text, or says it is unavailable, without any launch; a pane
+restored onto an ended record shows it read-only. A maintenance thread runs
 retention (24 h for finished records, 30 d for interrupted ones) at most
 once a minute.
 
@@ -970,63 +970,52 @@ unavailable states over the last rendered frame; Enter on an ended or
 unavailable terminal runs `resume_hosted_session`, which re-resolves the same
 `SessionId` with the `Resume` intent.
 
-### Close versus hide
+### Closing views
 
 Dropping a `TerminalState` only shuts the local runtime down; nothing in a
 `Drop` implementation calls `session.stop`, so a crash or `taskkill /F` leaves
-every session running on the host. Every close path resolves one shared policy
-in `app/close_policy.rs` before anything is removed: a `CloseTarget` names what
-the action closes, `session_close_decision` answers `Stop` for a session with
-no agent or a finished or errored one, `Ask` for a thinking or waiting agent,
-and `Unknown` when that session's host link is unavailable. `Ask` opens one
-dialog for the whole action; `Keep running` (Enter, the default) removes the
-views with the `Detach` intent and leaves the sessions listed, `Stop` removes
-them with the `Stop` intent, Escape cancels and nothing is removed. Every stop,
-from a close path or from the quit dialog, goes through the single call site
-`host_link::stop_session`, which a guard test in `terminal/host_link.rs`
-enforces.
+every session running on the host. Every close path goes through
+`app/close_policy.rs`: a `CloseTarget` names what the action closes, and the
+close happens at once, without a confirmation dialog. The only prompt left on
+that path is the unsaved files dialog, for a tab or workspace whose diff dock
+holds edited files. What is closed is never reopened, so its sessions are
+stopped and their records removed. Every stop, from a close path or from the
+quit dialog, goes through the single call site `host_link::stop_session`,
+which a guard test in `terminal/host_link.rs` enforces.
 
 | Action | Sessions |
 |---|---|
-| Close pane (shortcut, pane menu, detached window shortcut), close surface tab, close diff dock terminal | stopped and its record removed, or asked for when an agent is thinking or waiting |
-| Close tab, close workspace | every contained session stopped and its record removed, one dialog for the whole action |
+| Close pane by shortcut, close tab | stopped and removed after a 5 second undo window; undo (`Cmd/Ctrl+Shift+T`, or the tab toast) within that window reattaches the still running session |
+| Close pane by button or pane menu, close surface tab, close diff dock terminal, close workspace, worktree removal | every contained session stopped and its record removed at once |
 | Child exit | nothing closes: the surface stays as a passive final view (zero or nonzero code, with or without prior input) until the user closes it through one of the rows above |
 | Any close while the local host is unreachable | the views are removed, no stop is attempted and a toast says the session state is unknown |
 | Return a detached pane to its window | untouched |
 | Quit (`Quit` action, main window close, title bar close) with live sessions | asks: "Keep sessions running" (Enter, default) leaves them and the host untouched; "Stop everything and quit" stops each live session, then `host.shutdown`; the `on_quit` setting skips the dialog |
 | Quit with no live session | the idle host receives `host.shutdown` and the app exits |
 
-A stop whose outcome is unknown (connection lost mid-request) shows a toast
-and is reconciled from the next `session.list`; the desktop never marks
-sessions stopped optimistically. The workspace session list is every owned
-record of `session.list`, live or ended, whose id no attached view carries;
-the sidebar lists them under the workspace's last tab, live rows first and
-then ended rows by the most recent lifecycle change. A record the desktop
-cannot parse is skipped with a log line and the rest of the list renders; a
-failed listing keeps the previous rows and marks them stale. A record no open
-workspace claims, because its workspace is closed or its cwd lies outside
-every open root, lands once in an `Other sessions` group below the workspace
-rows, which also renders with zero workspaces. Opening a row from that group
-attaches in the active workspace or, with no workspace open, creates one on
-the recorded cwd when it still exists, else on the home directory; when
-neither is accessible, the row stays and a
-toast says why. Ended rows are
-dimmed, carry no agent lane, and the ones beyond `sidebar_ended_sessions`
-(default 5) collapse under one row. Left-click reopens a live row through
-`attach_existing` and resumes an ended one; right-click offers Open in layout
-and Stop session for a live row, Resume and Remove from list for an ended one.
-`Remove from list` calls `session.remove`, which the host refuses with
+A stop whose outcome is unknown (connection lost mid-request) shows a toast;
+the desktop never marks sessions stopped optimistically. Every stop the
+desktop issues chains `session.remove`, which the host refuses with
 `ERR_SESSION_LIVE` while the session runs and which otherwise deletes its
-manifest. Every stop the desktop issues chains that call, so a close forgets
-the session it stopped and leaves no row behind. The row is held back from the
-moment the stop is issued until its outcome lands, so a close never flashes
-one; a record whose stop failed comes back and is reconciled from the next
-listing. An ended row therefore comes from a session nobody stopped: one a
-`Keep running` close left behind, or one that outlived the app. Worktree
-teardown asks the host for the live session cwds first: a worktree that still
-contains a live session, attached or not, is kept;
-an unreachable host proceeds with the current rules; any other host error
-skips the teardown.
+manifest. A stop the host answers with `ERR_PROCESS_UNVERIFIED` (a `Lost`
+record that has no process left) falls back to that removal alone. A second
+stop for a session whose stop is still in flight is dropped.
+
+The sidebar lists no hosted session: a session is reachable only through the
+view that holds it. The desktop keeps a reduced listing of `session.list`
+(owned live sessions, for the quit dialog and worktree teardown) and runs an
+orphan sweep on every listing. Every ended record (`Exited`, `Failed` or
+`Lost`, owned or left by a previous host) whose id no attached view and no
+undo window holds is removed with `session.remove`; a record that may still
+own a process (`Starting`, `Unverified`, a pending launch) is never touched.
+The first listing after a successful restore, and the first one after the
+user starts a new session from a failed restore, also stops and removes every
+owned live session no view holds. Both sweeps are suspended while a failed
+restore is unresolved, because the preserved `session.json` may still
+reference those records. Worktree teardown asks the host for the live session
+cwds first: a worktree that still contains a live session, attached or not,
+is kept; an unreachable host proceeds with the current rules; any other host
+error skips the teardown.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated

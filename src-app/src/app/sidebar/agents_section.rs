@@ -500,7 +500,6 @@ fn render_agent_status(row: &AgentRow, ui: crate::theme::UiColors) -> Option<Any
             }),
             &format!("agent-{}", row.surface_id),
             agent_state_words(state).into(),
-            false,
             ui,
         )),
         AgentRowStatus::NoStatus => {

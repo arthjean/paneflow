@@ -200,7 +200,7 @@ fn test_command_with_shell_command() {
 }
 
 #[test]
-fn test_retired_agent_panel_and_tool_permission_keys_load_as_if_absent() {
+fn test_retired_keys_load_as_if_absent() {
     let without = r#"{
         "theme": "One Dark",
         "agent_panel": {"notify_when_agent_waiting": "AllScreens"}
@@ -214,7 +214,8 @@ fn test_retired_agent_panel_and_tool_permission_keys_load_as_if_absent() {
             "profiles": {"Write": {"agent": "codex", "tools": ["read"]}},
             "default_profile": "Write"
         },
-        "tool_permissions": {"read": {"always_allow": ["src/"], "always_deny": ["secrets/"]}}
+        "tool_permissions": {"read": {"always_allow": ["src/"], "always_deny": ["secrets/"]}},
+        "sidebar_ended_sessions": 5
     }"#;
     let dir = tempfile::tempdir().unwrap();
     let with_path = dir.path().join("with.json");

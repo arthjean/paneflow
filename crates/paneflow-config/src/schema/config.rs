@@ -76,8 +76,6 @@ pub struct PaneFlowConfig {
     pub ai_injection_fence: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub on_quit: Option<OnQuit>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub sidebar_ended_sessions: Option<u8>,
     #[serde(flatten, deserialize_with = "agent_button_visibility")]
     pub agent_button_visibility: BTreeMap<String, bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -445,12 +443,6 @@ impl PaneFlowConfig {
         self.on_quit.unwrap_or_default()
     }
 
-    pub fn resolved_sidebar_ended_sessions(&self) -> u8 {
-        self.sidebar_ended_sessions
-            .filter(|cap| ENDED_SESSION_CAPS.contains(cap))
-            .unwrap_or(DEFAULT_ENDED_SESSION_CAP)
-    }
-
     pub fn space(&self, id: &SpaceId) -> Option<&SpaceConfig> {
         self.spaces.iter().find(|space| &space.id == id)
     }
@@ -538,10 +530,6 @@ where
         },
     })
 }
-
-pub const ENDED_SESSION_CAPS: &[u8] = &[0, 3, 5, 10];
-
-pub const DEFAULT_ENDED_SESSION_CAP: u8 = 5;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -654,23 +642,6 @@ pub struct AgentProfileConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ended_session_cap_keeps_the_allowed_values_and_falls_back_to_five() {
-        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.resolved_sidebar_ended_sessions(), 5);
-        for cap in ENDED_SESSION_CAPS {
-            let config: PaneFlowConfig =
-                serde_json::from_str(&format!(r#"{{"sidebar_ended_sessions": {cap}}}"#)).unwrap();
-            assert_eq!(config.resolved_sidebar_ended_sessions(), *cap);
-        }
-        for rejected in ["7", "\"many\"", "-3", "999"] {
-            let config: PaneFlowConfig =
-                serde_json::from_str(&format!(r#"{{"sidebar_ended_sessions": {rejected}}}"#))
-                    .unwrap();
-            assert_eq!(config.resolved_sidebar_ended_sessions(), 5);
-        }
-    }
 
     #[test]
     fn on_quit_defaults_to_ask_and_tolerates_garbage() {

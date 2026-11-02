@@ -346,11 +346,11 @@ and the Desktop lifecycle and recovery actions.
 | D-01 | Close the desktop with Keep running, kill the host process, reopen the saved layout | Every pane shows the lost state with Retry; no shell launched; fixture PIDs unchanged or provably absent |
 | D-02 | Kill the worker while 10 fixtures run, let it restart, then type in a focused pane | Child identities and generations unchanged; the next input echoes once |
 | D-03 | Replace the worker binary with the candidate build while sessions run | Same as D-02 through the build-replacement route |
-| D-04 | Close the only workspace with Keep running | One fallback row under Other sessions; clicking it attaches without creating a shell |
-| D-05 | Delete the recorded cwd of a kept-running session, then open its row | Attachment through the home directory; the row survives and shows the prerequisite when no root is valid |
+| D-04 | Quit with Keep sessions running, create one more session with `paneflow-host session create`, reopen Paneflow | The restored panes reattach; the extra session, which no view holds, is stopped and `paneflow-host session list` no longer shows it |
+| D-05 | Close a pane restored onto a lost record (the D-01 state) | The pane closes at once without a "may still be running" toast; `paneflow-host session list` no longer shows the record |
 | D-06 | Let a fixture exit with code 0 and with code 3, with and without prior input, in a pane, a detached window, and the diff dock | Passive final view on every surface; no auto-close; explicit close removes it |
-| D-07 | Click an ended row | Bounded final text opens read-only; evicted text is reported as unavailable |
-| D-08 | Close a pane whose agent activity is stale | Confirmation asks; nothing is stopped implicitly |
+| D-07 | Reopen a saved layout whose session ended while Paneflow was closed | Bounded final text opens read-only in the pane; evicted text is reported as unavailable |
+| D-08 | Close a pane whose agent is working by shortcut, then a tab, then a workspace | Each closes at once without a dialog; `Cmd/Ctrl+Shift+T` within 5 s reattaches the pane or tab with its agent still running; afterwards `paneflow-host session list` shows none of the closed sessions |
 | D-09 | Stop everything and quit while one fixture ignores termination (`blocked-stdin` plus a held descendant) | Desktop stays open with the unresolved identity, Retry, Keep running and quit, Cancel |
 | D-10 | Stop everything and quit with the host data directory made read-only | Confirmed exits and unconfirmed durability are reported separately; Quit anyway exits only the desktop |
 | D-11 | Force-terminate the desktop process while 10 fixtures run, then reopen the saved layout | Fixture PIDs and generations unchanged; every pane reattaches without a create or restart RPC |
@@ -393,8 +393,8 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | A11 | `a_child_wait_failure_stays_unverified_without_a_fabricated_exit`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells |
 | A12 | `every_retained_end_state_restores_without_creating_a_process`, `restoration_and_stale_restart_do_not_launch_through_host_ipc`, `a_requested_session_id_is_created_once_and_never_silently_replaced` | D-01, D-07 |
 | A13 | `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds`, `a_forced_shutdown_with_unresolved_ownership_keeps_the_host_serving` | D-09, D-10 |
-| A14 | `an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell`, `an_unreachable_host_never_asks_and_never_stops_blindly` | D-08 |
-| A15 | `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group`, `a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home` | D-04, D-05 |
+| A14 | `a_stopped_session_leaves_no_record_behind` | D-08 |
+| A15 | `every_ended_record_no_view_holds_is_forgotten_whoever_owns_it`, `a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore` | D-04, D-05 |
 | A16 | `natural_exit_retains_the_final_view_on_every_branch`, `an_exit_without_output_ends_the_follower_and_leaves_an_empty_completed_text` | D-06 |
 | A17 | `a_scan_waiting_to_persist_cannot_overwrite_a_restarted_generation`, `a_marker_captured_under_generation_one_is_dropped_once_generation_two_runs`, `a_scan_waiting_to_persist_cannot_recreate_a_removed_record` | none required |
 | A18 | `h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit`, `descendants_remain_recoverable_after_the_parent_exits`, `a_held_open_descendant_bounds_the_final_drain_and_marks_the_output_incomplete`, `a_descendant_started_just_before_the_root_exits_stays_owned_until_the_stop` (Linux) | D-09, Linux L06 |
@@ -418,8 +418,8 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | FR-13 | `a_new_host_instance_marks_inherited_running_records_lost_and_never_signals_them`, `an_explicit_restart_starts_a_new_generation_as_an_ordinary_shell` | D-01 |
 | FR-14 | `host_status_reports_queue_capacities_and_reserved_control_slots`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures` | none required |
 | FR-15 | `every_retained_end_state_restores_without_creating_a_process`, `restoration_and_stale_restart_do_not_launch_through_host_ipc`, W04 `NFR-11.worker_cycles` | D-01, D-04, D-07 |
-| FR-16 | `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group`, `a_session_whose_workspace_is_gone_is_adopted_by_the_deepest_open_root_over_its_cwd` | D-04, D-05 |
-| FR-17 | `an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell`, `an_update_restart_never_pretends_sessions_can_be_kept`, `shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds` | D-08, D-09, D-10 |
+| FR-16 | `every_ended_record_no_view_holds_is_forgotten_whoever_owns_it`, `a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore` | D-04, D-05 |
+| FR-17 | `a_stopped_session_leaves_no_record_behind`, `an_update_restart_never_pretends_sessions_can_be_kept`, `shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds` | D-08, D-09, D-10 |
 
 ### Non-functional requirements
 
@@ -439,7 +439,7 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | NFR-12 | `NFR-12.host_shutdown`, `NFR-12.fixture_orphans` | W08 endurance rehearsal per OS |
 | NFR-13 | `an_oversized_control_frame_is_rejected_without_buffering_it`, `the_named_pipe_acl_has_no_world_or_authenticated_user_grant`, `the_unix_socket_is_owner_read_write_only`, `a_served_endpoint_is_never_taken_over_while_a_stale_one_is_reclaimed`, `an_unverifiable_pid_stays_non_resumable_and_is_never_signaled` | process-safety cells, Linux L02, L05 |
 | NFR-14 | this ledger | one row per required cell in each report |
-| NFR-15 | `every_retained_end_state_restores_without_creating_a_process`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `every_unattached_session_is_listed_exactly_once_across_workspaces_and_the_fallback_group` | D-01, D-04, D-09 |
+| NFR-15 | `every_retained_end_state_restores_without_creating_a_process`, `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore` | D-01, D-04, D-09 |
 
 ### Unhappy paths
 
@@ -462,13 +462,13 @@ Remove-Item Env:PANEFLOW_TEST_IDLE_SECS
 | 15 Over limit | `an_oversized_control_frame_is_rejected_without_buffering_it`, `oversized_terminal_dimensions_are_refused_before_reaching_the_engine`, `a_create_queued_behind_eight_stuck_launches_is_refused_at_its_admission_deadline`, `accepted_hook_frames_fit_the_reload_limit_and_oversized_events_never_commit` | none required |
 | 16 Concurrent create/restart/remove | `concurrent_restarts_of_one_generation_commit_at_most_one_new_generation`, `a_requested_session_id_is_created_once_and_never_silently_replaced` | none required |
 | 17 Permission revoked | `a_failed_final_revision_is_retained_and_retried_after_storage_recovers`, `a_lost_data_directory_reports_unavailable_text_without_blocking_retirement` | D-10 |
-| 18 Unknown agent during close | `an_unknown_agent_state_asks_instead_of_passing_for_an_idle_shell` | D-08 |
+| 18 Close of a busy agent | `a_stopped_session_leaves_no_record_behind` | D-08 |
 | 19 Hosted macOS runner unavailable | none; the qualification stays incomplete and is recorded in the macOS report | MAC cells |
 | 20 Runtime panic | `a_panicked_runtime_keeps_ownership_until_a_stop_confirms_the_exit`, `a_runtime_panic_keeps_the_child_owned_until_an_explicit_stop_confirms_its_exit` | none required |
 | 21 Restore absent/ended session | `every_retained_end_state_restores_without_creating_a_process`, `a_pane_restored_into_an_ended_session_resumes_without_an_attachment` | D-07 |
 | 22 Stop-all is incomplete | `a_stop_all_outcome_separates_unresolved_ownership_from_durability_failures`, `shutdown_keeps_unsaved_final_state_owned_until_retry_succeeds` | D-09, D-10 |
-| 23 Kept-running workspace unavailable | `a_session_whose_workspace_is_gone_is_adopted_by_the_deepest_open_root_over_its_cwd`, `a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home` | D-04, D-05 |
-| 24 Fallback attachment cannot open | `a_fallback_workspace_prefers_the_recorded_cwd_and_falls_back_to_home` | D-05 |
+| 23 Session no view holds | `every_ended_record_no_view_holds_is_forgotten_whoever_owns_it`, `a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore` | D-04, D-05 |
+| 24 Lost record closed | `every_ended_record_no_view_holds_is_forgotten_whoever_owns_it` | D-05 |
 | 25 Natural exit | `natural_exit_retains_the_final_view_on_every_branch`, `a_natural_exit_keeps_a_cold_record_releases_the_runtime_and_removal_drops_the_text` | D-06 |
 | 26 Worker restarts | `workload_worker_replacement` (`NFR-11.worker_cycles`), `a_host_restart_marks_a_busy_record_stale_instead_of_idle`, `revisioned_host_snapshots_recover_a_lost_notification_and_reject_queued_older_events` | D-02, D-03 |
 | 27 Detached list fails | `an_unreadable_record_is_skipped_and_the_rest_of_the_listing_survives` | none required |

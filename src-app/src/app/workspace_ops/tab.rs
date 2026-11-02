@@ -347,11 +347,13 @@ impl PaneFlowApp {
         });
         let tab = Tab::restored(title, title_source, Some(root), None);
         let restored_id = tab.id;
-        let ws = &mut self.workspaces[ws_idx];
-        if !ws.open_tab(tab) {
+        let terminals = crate::app::hosted_sessions::tab_terminals(&tab, cx);
+        if !self.workspaces[ws_idx].open_tab(tab) {
             log::warn!("tab undo: workspace refused the tab after the cap check");
+            self.stop_terminals(terminals, cx);
             return;
         }
+        let ws = &mut self.workspaces[ws_idx];
         let last = ws.tab_count().saturating_sub(1);
         ws.reorder_tab(last, tab_idx.min(last));
         ws.sidebar_expanded = true;

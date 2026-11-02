@@ -141,18 +141,6 @@ impl HostAgentView {
     pub(crate) fn row(&self, session: &SessionId) -> Option<&HostAgentRow> {
         self.rows.get(session)
     }
-
-    pub(crate) fn connected(&self) -> bool {
-        self.connected
-    }
-
-    pub(crate) fn disconnect_reason(&self) -> Option<&str> {
-        self.disconnect_reason.as_deref()
-    }
-
-    pub(crate) fn advertises(&self, capability: &str) -> bool {
-        self.capabilities.iter().any(|held| held == capability)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -928,26 +916,6 @@ impl PaneFlowApp {
     pub(crate) fn host_agent_row(&self, session: &SessionId) -> Option<&HostAgentRow> {
         self.host_agents.row(session)
     }
-
-    pub(crate) fn host_agents_are_stale(&self) -> bool {
-        self.host_agents.bootstrapped && !self.host_agents.connected()
-    }
-
-    pub(crate) fn host_agents_are_settled(&self) -> bool {
-        self.host_agents.bootstrapped && self.host_agents.connected()
-    }
-
-    pub(crate) fn host_agents_disconnect_reason(&self) -> Option<&str> {
-        self.host_agents.disconnect_reason()
-    }
-
-    pub(crate) fn worker_advertises(&self, capability: &str) -> bool {
-        self.host_agents.advertises(capability)
-    }
-
-    pub(crate) fn worker_is_reconnecting(&self) -> bool {
-        !self.host_agents.connected()
-    }
 }
 
 #[cfg(test)]
@@ -1598,16 +1566,6 @@ mod tests {
             "a wait that started in the past is not restarted on reopen"
         );
         assert!(waiting_since_instant(None) >= before);
-    }
-
-    #[test]
-    fn a_controller_reads_the_advertised_set_instead_of_probing_for_a_feature() {
-        let mut view = HostAgentView::default();
-        assert!(!view.advertises("agent.follow"));
-        view.capabilities = paneflow_serve::advertised_capabilities();
-        assert!(view.advertises("agent.follow"));
-        assert!(view.advertises("restart.recommendation"));
-        assert!(!view.advertises("screen.scan"));
     }
 
     #[test]

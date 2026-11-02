@@ -5,9 +5,24 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **`sidebar_ended_sessions` is ignored.** The setting only sized the ended session rows, which are gone. An existing value keeps loading without error; delete it from `paneflow.json` to silence the warning an editor shows against the schema.
+- **Scripts:** `workspace.close` and the panes `workspace.restore_layout` drops no longer answer `-32005` when an agent is busy; the close happens. `-32005` now only means the close would discard unsaved files.
+
 ### Added
 
 - **Choose what each Agents row shows.** A button at the right of the `Agents` header opens **Customize agent rows**, with the agent logo, the status and the workspace line, all on by default. Without the workspace line a row is one line tall. Stored in `sidebar_show.agent_logo`, `sidebar_show.agent_status` and `sidebar_show.agent_workspace`.
+
+### Changed
+
+- **Closing a pane, a tab or a workspace takes one click.** The dialog that asked whether to stop or keep running a busy agent is gone, along with **Keep running**: what you close is stopped and its record removed from the session host. `Cmd/Ctrl+Shift+T` within 5 seconds still brings back a pane or tab you closed with the keyboard, with its session still running. Files edited in the diff dock still ask before they are discarded.
+- **Ended sessions clean themselves up.** A session that ended and that no pane shows is removed from the session host as soon as Paneflow lists sessions, instead of staying for 24 hours (30 days for a lost one). A pane restored onto an ended session still shows its final output and **Restart**. When a restore succeeds, a running session that no pane holds is stopped. Closing a pane whose session the host lost no longer warns that it may still be running.
+- **Removing a worktree stops every session of the tabs and workspaces it closes**, not only the ones whose directory lies inside the worktree.
+
+### Removed
+
+- **Session rows are gone from the sidebar.** Ended sessions no longer appear under each workspace, the **Other sessions** group and the **N more ended sessions** row are removed, and so are the session context menu (**Open in layout**, **Stop session**, **Resume session**, **Remove from list**) and the **Ended sessions listed per workspace** setting in Settings and the command palette. The `stop_session` action still stops the session of the focused pane and keeps the pane.
 
 ## [0.19.0] - 2026-11-01
 

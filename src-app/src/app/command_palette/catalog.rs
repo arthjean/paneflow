@@ -50,7 +50,6 @@ pub(crate) enum Scope {
     DefaultShell,
     DefaultEditor,
     OnQuit,
-    EndedSessions,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -216,7 +215,6 @@ impl Scope {
             Scope::DefaultShell => "Shell",
             Scope::DefaultEditor => "Editor",
             Scope::OnQuit => "On quit",
-            Scope::EndedSessions => "Ended sessions",
         }
     }
 
@@ -266,7 +264,6 @@ impl Scope {
             Scope::DefaultShell => shell_values(app),
             Scope::DefaultEditor => editor_values(app),
             Scope::OnQuit => on_quit_values(app),
-            Scope::EndedSessions => ended_sessions_values(app),
         }
     }
 }
@@ -703,25 +700,6 @@ fn on_quit_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         },
     })
     .collect()
-}
-
-fn ended_sessions_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
-    let current = app.cached_config.sidebar_ended_sessions.unwrap_or(3);
-    (0..=10u8)
-        .map(|cap| ScopeValue {
-            label: match cap {
-                0 => "None".to_string(),
-                1 => "1 session".to_string(),
-                other => format!("{other} sessions"),
-            },
-            current: cap == current,
-            apply: Apply::Setting {
-                key: "sidebar_ended_sessions",
-                nested: false,
-                value: json!(cap),
-            },
-        })
-        .collect()
 }
 
 fn terminal_bool(
@@ -1446,14 +1424,6 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Scope(Scope::OnQuit),
     },
     Command {
-        label: "Ended sessions listed per workspace",
-        icon: Some("icons/palette/history.svg"),
-        keywords: "sidebar history limit",
-        needs: Needs::Always,
-        section: Section::Sidebar,
-        kind: Kind::Scope(Scope::EndedSessions),
-    },
-    Command {
         label: "Native OS notifications",
         icon: Some("icons/palette/notification-01.svg"),
         keywords: "alert agent waiting",
@@ -1692,7 +1662,6 @@ mod tests {
             Scope::DefaultShell,
             Scope::DefaultEditor,
             Scope::OnQuit,
-            Scope::EndedSessions,
         ];
         for scope in scopes {
             assert!(

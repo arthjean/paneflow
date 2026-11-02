@@ -7,6 +7,7 @@ use gpui::{
 use paneflow_config::schema::SessionId;
 
 use crate::PaneFlowApp;
+use crate::app::close_policy::{CloseIntent, CloseTarget};
 use crate::settings::components::{
     ModalKey, confirmation_list, confirmation_warning, destructive_button, modal_backdrop,
     modal_card, modal_footer, modal_header, modal_key, secondary_button,
@@ -416,7 +417,12 @@ impl PaneFlowApp {
             if let WorktreeBlocker::Tab { ws_id, tab_id, .. } = blocker
                 && let Some((ws_idx, tab_idx)) = self.tab_position(*ws_id, *tab_id)
             {
-                self.remove_workspace_tab(ws_idx, tab_idx, window, cx);
+                self.perform_close(
+                    CloseTarget::Tab { ws_idx, tab_idx },
+                    CloseIntent::Stop,
+                    Some(&mut *window),
+                    cx,
+                );
             }
         }
         crate::app::workspace_ops::settle_closed_sessions(
@@ -428,7 +434,12 @@ impl PaneFlowApp {
             if let WorktreeBlocker::Workspace { id, .. } = blocker
                 && let Some(idx) = self.workspaces.iter().position(|ws| ws.id == *id)
             {
-                self.remove_workspace(idx, Some(window), cx);
+                self.perform_close(
+                    CloseTarget::Workspace(idx),
+                    CloseIntent::Stop,
+                    Some(&mut *window),
+                    cx,
+                );
             }
         }
         let open_workspaces = self

@@ -49,7 +49,6 @@ fn test_serialization_roundtrip() {
         ai_unrestricted: None,
         ai_injection_fence: None,
         on_quit: None,
-        sidebar_ended_sessions: None,
         agent_button_visibility: BTreeMap::new(),
         telemetry: None,
         terminal: None,

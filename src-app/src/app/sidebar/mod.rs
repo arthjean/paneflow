@@ -7,7 +7,6 @@ pub(crate) mod keyboard;
 mod lane;
 mod meta;
 mod pull_request;
-mod session_rows;
 mod space_switcher;
 mod style;
 mod tab_row;
@@ -25,7 +24,7 @@ use crate::ui_primitives::squircle_skin;
 pub(crate) use agents_section::AgentsSection;
 use drop::*;
 pub(crate) use lane::SpinnerClock;
-use lane::{Lane, LaneSlot, infer_lane, render_lane_slot};
+use lane::{Lane, infer_lane, render_lane_slot};
 use meta::*;
 pub(crate) use space_switcher::{default_space_mark, space_mark};
 pub(crate) use style::*;
@@ -34,9 +33,6 @@ pub(crate) use tab_row::*;
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, TabKey, WorkspaceContextMenu,
     WorkspaceDrag, WorkspaceDragPreview, ai_types,
-    ai_types::AgentState,
-    app::host_agents::HostAgentRow,
-    app::hosted_sessions::{OwnedSession, SessionRowScope, lifecycle_sentence, relative_age},
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
     settings::components::with_alpha,
@@ -435,7 +431,6 @@ impl PaneFlowApp {
         }
 
         list = self.render_workspace_rows(list, ui, window, cx);
-        list = self.render_fallback_session_group(list, ui, cx);
         let agents_shown = self.cached_config.sidebar_show.agents_enabled();
         let bubble_top = self.usage.bubble_top();
         sidebar = sidebar.child(crate::ui_primitives::clip_below_line(

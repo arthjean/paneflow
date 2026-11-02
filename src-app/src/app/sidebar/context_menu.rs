@@ -8,16 +8,13 @@ use gpui::{
     Window, canvas, deferred, div, point, prelude::*, px, svg,
 };
 
-use crate::app::close_policy::CloseTarget;
 use crate::app::files_tree;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
     MENU_ROW_HEIGHT, menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
 };
 use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt};
-use crate::{
-    PaneContextMenu, PaneFlowApp, SessionContextMenu, TabContextMenu, WorkspaceContextMenu,
-};
+use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
     ("zed", "Open in Zed", "zed", "open_workspace_in_zed"),
@@ -543,93 +540,6 @@ impl PaneFlowApp {
             )
             .priority(4),
         )
-        .into_any_element()
-    }
-
-    pub(crate) fn render_session_context_menu(
-        &self,
-        menu: SessionContextMenu,
-        ui: crate::theme::UiColors,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let scope = menu.scope;
-        let session = *menu.session;
-        let menu_pos =
-            clamped_context_menu_position(menu.position, px(220.), menu_height(2., 0.), window);
-
-        let mut context_menu = select_menu("session-context-menu", ui)
-            .occlude()
-            .absolute()
-            .left(menu_pos.x)
-            .top(menu_pos.y)
-            .w(px(220.))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.session_menu_open = None;
-                cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-
-        if session.live {
-            let open = session.clone();
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "session-context-open".into(),
-                "Open in layout",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.session_menu_open = None;
-                    this.open_listed_session(scope, open.clone(), window, cx);
-                    cx.stop_propagation();
-                }),
-            ));
-            let stop = session.session.clone();
-            context_menu = context_menu.child(
-                self.render_select_menu_item(
-                    "session-context-stop".into(),
-                    "Stop session",
-                    self.shortcut_for_action("stop_session")
-                        .map(|s| SharedString::from(s.to_string())),
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.session_menu_open = None;
-                        this.request_close(CloseTarget::Session(stop.clone()), Some(window), cx);
-                        cx.stop_propagation();
-                    }),
-                ),
-            );
-        } else {
-            let resume = session.clone();
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "session-context-resume".into(),
-                "Resume session",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.session_menu_open = None;
-                    this.resume_listed_session(scope, resume.clone(), window, cx);
-                    cx.stop_propagation();
-                }),
-            ));
-            let remove = session.session.clone();
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "session-context-remove".into(),
-                "Remove from list",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.session_menu_open = None;
-                    this.remove_listed_session(remove.clone(), cx);
-                    cx.stop_propagation();
-                }),
-            ));
-        }
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "session-context-menu-reveal",
-            context_menu,
-        ))
-        .priority(3)
         .into_any_element()
     }
 

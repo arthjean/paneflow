@@ -9,9 +9,7 @@ use gpui::{
 use crate::app::pull_request::{PrState, PullRequest};
 use crate::ui_primitives::{TooltipDelayExt, animation_clock};
 
-use super::{
-    SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_LANE_GLYPH_SIZE, SidebarAgentState, SidebarAgentSummary,
-};
+use super::{SIDEBAR_LANE_GLYPH_SIZE, SidebarAgentState, SidebarAgentSummary};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lane {
@@ -127,7 +125,6 @@ pub(super) fn render_lane(
     lane: Lane,
     row_key: &str,
     tooltip: SharedString,
-    reserve_action_slot: bool,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     let (color, glyph) = lane_visual(lane, ui);
@@ -135,9 +132,6 @@ pub(super) fn render_lane(
         .id(SharedString::from(format!("lane-{row_key}")))
         .flex_none()
         .h(px(20.))
-        .when(reserve_action_slot, |slot| {
-            slot.min_w(px(SIDEBAR_ACTION_BUTTON_SIZE))
-        })
         .flex()
         .flex_row()
         .items_start()
@@ -209,42 +203,24 @@ pub(super) fn render_status_badge(label: String, key: &str, color: gpui::Hsla) -
     .into_any_element()
 }
 
-pub(super) enum LaneSlot {
-    UnderHoverAction(SharedString),
-    BesideHoverAction,
-}
-
 pub(super) fn render_lane_slot(
     lane: Option<Lane>,
     row_key: &str,
     tooltip: impl FnOnce(SidebarAgentSummary) -> SharedString,
-    slot: LaneSlot,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let hidden_by_hover_action = match slot {
-        LaneSlot::UnderHoverAction(group) => Some(group),
-        LaneSlot::BesideHoverAction => None,
-    };
     match lane {
         Some(lane) => {
             let tooltip = match lane {
                 Lane::Agent(summary) => tooltip(summary),
                 Lane::PullRequest(pr) => pull_request_tooltip(pr),
             };
-            let reserve_action_slot = hidden_by_hover_action.is_some();
             div()
                 .flex_none()
-                .when_some(hidden_by_hover_action, |slot, group| {
-                    slot.group_hover(group, |style| style.invisible())
-                })
-                .child(render_lane(lane, row_key, tooltip, reserve_action_slot, ui))
+                .child(render_lane(lane, row_key, tooltip, ui))
                 .into_any_element()
         }
-        None if hidden_by_hover_action.is_none() => div().flex_none().into_any_element(),
-        None => div()
-            .flex_none()
-            .w(px(SIDEBAR_ACTION_BUTTON_SIZE))
-            .into_any_element(),
+        None => div().flex_none().into_any_element(),
     }
 }
 

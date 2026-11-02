@@ -142,39 +142,13 @@ impl PaneFlowApp {
             cx,
         );
 
-        let ended_cap = config.resolved_sidebar_ended_sessions();
-        let ended_opts: Vec<SelectOption> = paneflow_config::schema::ENDED_SESSION_CAPS
-            .iter()
-            .map(|cap| {
-                (
-                    ended_cap_label(*cap),
-                    None,
-                    Value::Number((*cap).into()),
-                    *cap == ended_cap,
-                )
-            })
-            .collect();
-        let ended_label = ended_cap_label(ended_cap);
-        let ended_row = self.general_select_row(
-            GeneralDropdown::EndedSessions,
-            search::ENDED_SESSIONS.title,
-            search::ENDED_SESSIONS.description,
-            ended_label,
-            None,
-            ended_opts,
-            "sidebar_ended_sessions",
-            ui,
-            cx,
-        );
-
         let defaults_section = Block::new("Defaults")
             .child(section_header(ui, "Defaults"))
             .card(
                 SearchCard::new(ui)
                     .row(&search::DEFAULT_EDITOR, editor_row)
                     .row(&search::DEFAULT_SHELL, shell_row)
-                    .row(&search::ON_QUIT, quit_row)
-                    .row(&search::ENDED_SESSIONS, ended_row),
+                    .row(&search::ON_QUIT, quit_row),
             )
             .finish();
 
@@ -325,14 +299,6 @@ impl PaneFlowApp {
             .child(setting_text(ui, title, description))
             .child(div().flex_shrink_0().child(trigger))
             .into_any_element()
-    }
-}
-
-fn ended_cap_label(cap: u8) -> String {
-    match cap {
-        0 => "None".to_string(),
-        1 => "1 session".to_string(),
-        other => format!("{other} sessions"),
     }
 }
 

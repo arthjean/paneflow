@@ -97,7 +97,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_pane",
         factory: || Box::new(ClosePane),
         context: "",
-        description: "Close pane (stops its sessions, asks when an agent is busy)",
+        description: "Close pane (stops its sessions)",
         group: ShortcutGroup::Panes,
     },
     ActionMeta {
@@ -118,7 +118,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_workspace",
         factory: || Box::new(CloseWorkspace),
         context: "",
-        description: "Close workspace (stops its sessions, asks when an agent is busy)",
+        description: "Close workspace (stops its sessions)",
         group: ShortcutGroup::Workspaces,
     },
     ActionMeta {
@@ -307,7 +307,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         name: "close_tab",
         factory: || Box::new(CloseTab),
         context: "",
-        description: "Close tab (stops its sessions, asks when an agent is busy)",
+        description: "Close tab (stops its sessions)",
         group: ShortcutGroup::Tabs,
     },
     ActionMeta {

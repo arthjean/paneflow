@@ -8,8 +8,7 @@ why attachment is unavailable.
 
 **Restart** is a deliberate launch action. It starts the recorded shell once
 in a new generation, without replaying terminal input or the previous command.
-The existing **Resume** actions for ended sessions also request an explicit
-restart. A missing session needs a new-terminal action and a new identity.
+A missing session needs a new-terminal action and a new identity.
 
 A desktop and host from different application builds can attach when their
 control protocol and terminal snapshot format match. An incompatible host is

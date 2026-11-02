@@ -501,30 +501,6 @@ impl TerminalView {
         Self::attach_restored(workspace_id, cwd, None, session, cx)
     }
 
-    pub(crate) fn attach_restarting(
-        workspace_id: u64,
-        cwd: Option<std::path::PathBuf>,
-        session: paneflow_config::schema::SessionId,
-        expected: Option<paneflow_config::schema::SessionGeneration>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::open(
-            HostedLaunch {
-                workspace_id,
-                cwd,
-                initial_size: None,
-                user_env: None,
-                profile: TerminalSurfaceProfile::Normal,
-                confine_to: None,
-                fallback_to: None,
-                space_env: None,
-            },
-            SessionIntent::Restart { expected },
-            Some(session),
-            cx,
-        )
-    }
-
     fn open(
         mut launch: HostedLaunch,
         intent: SessionIntent,

@@ -89,7 +89,6 @@ pub(crate) enum GeneralDropdown {
     Editor,
     Shell,
     OnQuit,
-    EndedSessions,
     InterfaceStyle,
 }
 
@@ -103,13 +102,6 @@ pub(crate) struct WorkspaceContextMenu {
     pub(crate) idx: usize,
     pub(crate) position: Point<Pixels>,
     pub(crate) space_submenu_open: bool,
-}
-
-#[derive(Clone)]
-pub(crate) struct SessionContextMenu {
-    pub(crate) scope: crate::app::hosted_sessions::SessionRowScope,
-    pub(crate) session: Box<crate::app::hosted_sessions::OwnedSession>,
-    pub(crate) position: Point<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,5 +406,49 @@ mod tests {
         assert_eq!(owner.read_with(cx, |owner, _| owner.0.clone()), vec![id]);
         assert!(!crate::agents::notifications::is_window_active(id));
         assert!(cx.update(|cx| cx.windows().iter().all(|window| window.window_id() != id)));
+    }
+
+    #[gpui::test]
+    fn a_dismissed_dialog_returns_focus_to_the_pane_it_came_from(cx: &mut gpui::TestAppContext) {
+        use gpui::Focusable as _;
+
+        let cx = cx.add_empty_window();
+        let pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx))
+        };
+        let (a, b, c) = (pane(cx), pane(cx), pane(cx));
+        let dialog = cx.update(|_, cx| cx.focus_handle());
+        let handle = |pane: &gpui::Entity<crate::pane::Pane>, cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| pane.read(cx).focus_handle(cx))
+        };
+        let (a_focus, b_focus, c_focus) = (handle(&a, cx), handle(&b, cx), handle(&c, cx));
+
+        let mut origin = FocusReturn::default();
+        cx.update(|window, cx| {
+            window.focus(&c_focus, cx);
+            origin.capture_once(window, cx);
+            window.focus(&dialog, cx);
+            b_focus.focus(window, cx);
+            origin.capture_once(window, cx);
+            window.focus(&dialog, cx);
+        });
+
+        assert!(cx.update(|window, cx| origin.restore(window, cx)));
+        cx.update(|window, _| {
+            assert!(c_focus.is_focused(window));
+            assert!(!a_focus.is_focused(window));
+        });
+
+        let gone = cx.update(|window, cx| {
+            let closing = cx.focus_handle();
+            window.focus(&closing, cx);
+            FocusReturn::capture(window, cx)
+        });
+        cx.update(|window, cx| window.focus(&dialog, cx));
+        assert!(
+            !cx.update(|window, cx| gone.restore(window, cx)),
+            "a closed origin reports that the active pane must take focus"
+        );
     }
 }
