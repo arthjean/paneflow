@@ -51,6 +51,7 @@ permissions:
 concurrency:
   group: libghostty-bump
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always

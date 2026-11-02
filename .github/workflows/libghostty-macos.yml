@@ -12,8 +12,9 @@ on:
 permissions:
   contents: read
 
+# The nightly gets a group of its own, so a push to main never cancels it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('{0}-schedule', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 env:
@@ -257,7 +258,7 @@ jobs:
 
   validation-summary:
     name: libghostty macOS validation
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [changes, native-rebuild, consumer-qualification]
     runs-on: ubuntu-22.04
     steps:

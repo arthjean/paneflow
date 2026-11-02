@@ -46,9 +46,11 @@ concurrency:
   # Serialize repo publishes - two concurrent workflows racing on the
   # same R2 prefix would corrupt reprepro's db/ and produce undefined
   # final state. `cancel-in-progress: false` because we want the first
-  # one to finish cleanly rather than being interrupted half-way.
+  # one to finish cleanly rather than being interrupted half-way, and
+  # `queue: max` so a third publish waits instead of canceling the second.
   group: repo-publish
   cancel-in-progress: false
+  queue: max
 
 # -euo pipefail on every bash step, never -x: xtrace would echo secrets.
 defaults:

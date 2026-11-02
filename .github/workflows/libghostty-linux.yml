@@ -20,8 +20,9 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+# The nightly gets a group of its own, so a push to main never cancels it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('{0}-schedule', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 env:
@@ -595,7 +596,7 @@ jobs:
 
   validation-summary:
     name: libghostty validation
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [changes, native, bindings, fuzz, distro-smoke, supply-chain]
     runs-on: ubuntu-22.04
     steps:

@@ -1360,9 +1360,10 @@ jobs:
   # the `check_result` block below need editing. The required-status
   # check in branch protection stays pointed at `tests_pass` forever,
   # so PRs don't get stuck on stale required-check names after a
-  # workflow refactor. `if: always()` ensures the aggregator still
-  # reports even when upstream jobs fail, so the merge gate can see
-  # the red.
+  # workflow refactor. `if: ${{ !cancelled() }}` ensures the aggregator
+  # still reports even when upstream jobs fail, so the merge gate can see
+  # the red, while a run canceled by a newer push reports canceled rather
+  # than failure.
   #
   # `security_audit` is INCLUDED in the gate (since 2026-05-27). Its
   # warn-vs-deny graduation lives in deny.toml, not in CI flags, so
@@ -1383,7 +1384,7 @@ jobs:
       - windows_check
       - windows_render_smoke
       - linux_aarch64_check
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
       - name: Aggregate upstream results
