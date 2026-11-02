@@ -290,3 +290,5 @@ terminal.
 The manifest records the archive-member license inventory and pins
 `THIRD_PARTY_NOTICES.md`. Packaging must reject an artifact whose reviewed
 notice is absent, truncated, or stale.
+
+Probe line for probe/ep002-native-only, never merged.
