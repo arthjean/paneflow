@@ -306,3 +306,5 @@ runtime overrides the built-in text for one launch.
 PANEFLOW_UPDATE_EXPLANATION="Update Paneflow with your package manager: sudo pacman -Syu paneflow" \
   cargo build --release --locked -p paneflow-app
 ```
+
+Probe line for probe/ep002-docs-only, never merged.
