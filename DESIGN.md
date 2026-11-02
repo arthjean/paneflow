@@ -550,9 +550,10 @@ the Agents section behind a 13 px sparkles glyph (`sidebar_show.agents`, on by
 default).
 
 The Agents section sits between the workspace tree and the footer, with no
-separator. Its 36 px header (padding 8 horizontal) holds one 22 px button at
-radius 7, padding 7 leading and 6 trailing: `Agents` at 13 px `muted`, then a
-12 px `muted` chevron 8 px after it, both turning `text` under the pointer.
+separator. Its 36 px header (padding 8 horizontal) holds a 20 px toggle with
+no fill, Cerata's section header: the 12 px Hugeicons `arrow-down-01` chevron,
+then `Agents` at 12 px Medium 4 px after it, both `muted` and turning `text`
+under the pointer.
 At the header's trailing edge, a 22 px button at radius 7 holds the 15 px
 Hugeicons `preference-horizontal` glyph in `muted` (`Customize agent rows`).
 It opens a 172 px menu 10 px above itself, right-aligned, on the usage

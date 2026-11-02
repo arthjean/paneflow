@@ -35,6 +35,8 @@ const AGENT_RANK_SPACING: f32 = SIDEBAR_GROUP_SPACING - SIDEBAR_ROW_SPACING;
 const AGENT_LOGO_SIZE: f32 = 15.;
 const AGENT_META_ICON_SIZE: f32 = 12.;
 const AGENTS_CHEVRON_SIZE: f32 = 12.;
+const AGENTS_TOGGLE_HEIGHT: f32 = 20.;
+const AGENTS_TOGGLE_GAP: f32 = 4.;
 const AGENTS_CHEVRON_TURN_SECS: f32 = 0.18;
 const NO_STATUS_GRACE: Duration = Duration::from_secs(3);
 const AGENTS_TOGGLE_GROUP: &str = "agents-section-toggle-group";
@@ -441,11 +443,10 @@ fn render_agents_header(
     ui: crate::theme::UiColors,
     on_toggle: impl Fn(&mut Window, &mut App) + 'static,
 ) -> gpui::Div {
-    let hover_bg = crate::app::constants::sidebar_tab_hover_background();
     let chevron = svg()
         .size(px(AGENTS_CHEVRON_SIZE))
         .flex_none()
-        .path("icons/chevron-down.svg")
+        .path("icons/palette/arrow-down-01.svg")
         .text_color(ui.muted)
         .group_hover(AGENTS_TOGGLE_GROUP, move |style| style.text_color(ui.text))
         .with_transformation(gpui::Transformation::rotate(gpui::radians(
@@ -461,32 +462,27 @@ fn render_agents_header(
         .justify_between()
         .debug_selector(|| "agents-header".into())
         .child(
-            squircle_skin(
-                div()
-                    .id("agents-section-toggle")
-                    .h(px(SIDEBAR_ACTION_BUTTON_SIZE))
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(SIDEBAR_TITLE_ROW_GAP))
-                    .pl(px(SIDEBAR_ROW_PADDING_X))
-                    .pr(px(6.))
-                    .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                    .text_color(ui.muted)
-                    .group_hover(AGENTS_TOGGLE_GROUP, move |style| style.text_color(ui.text))
-                    .debug_selector(|| "agents-toggle".into()),
-                AGENTS_TOGGLE_GROUP,
-                px(7.),
-                None,
-                Some(hover_bg),
-            )
-            .role(Role::Button)
-            .aria_label("Agents")
-            .aria_expanded(!collapsed)
-            .on_click(move |_, window, cx| on_toggle(window, cx))
-            .child("Agents")
-            .child(chevron),
+            div()
+                .id("agents-section-toggle")
+                .group(AGENTS_TOGGLE_GROUP)
+                .h(px(AGENTS_TOGGLE_HEIGHT))
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(AGENTS_TOGGLE_GAP))
+                .text_size(crate::ui_primitives::BODY)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ui.muted)
+                .cursor_pointer()
+                .hover(move |style| style.text_color(ui.text))
+                .debug_selector(|| "agents-toggle".into())
+                .role(Role::Button)
+                .aria_label("Agents")
+                .aria_expanded(!collapsed)
+                .on_click(move |_, window, cx| on_toggle(window, cx))
+                .child(chevron)
+                .child("Agents"),
         )
         .children(display_button)
 }
@@ -2123,8 +2119,9 @@ mod tests {
         let header = cx.debug_bounds("agents-header").expect("header");
         assert_eq!(header.size.height, px(36.));
         let toggle = cx.debug_bounds("agents-toggle").expect("toggle");
-        assert_eq!(toggle.size.height, px(22.));
+        assert_eq!(toggle.size.height, px(20.));
         assert_eq!(toggle.left(), section.left() + px(8.));
+        assert_eq!(toggle.center().y, header.center().y);
 
         let first = cx.debug_bounds("agent-row-1").expect("row 1");
         let second = cx.debug_bounds("agent-row-2").expect("row 2");
