@@ -28,6 +28,51 @@ Hard-required means a failure blocks the release: the
 target as a best-effort leg; reopening one needs an artifact path, a signing
 path, a docs update, and a release-gate decision in the same change.
 
+## The `release` environment
+
+Every signing and publishing secret (`APPLE_*`, `AZURE_*`, `GPG_*`, `R2_*`,
+`CLOUDFLARE_*`, `HOMEBREW_TAP_DEPLOY_KEY`, and `MINISIGN_SECRET_KEY`) belongs
+to the `release` environment, which only the branch `main` and the tags `v*`
+may deploy to. The jobs that consume them declare the environment: `build`,
+`auto-update-e2e` and `release` in `release.yml`, `publish` in
+`repo_publish.yml`, `update-cask` in `update_cask.yml`. `build` declares it
+only on `main` or a `v*` tag, so a `release.yml` dispatch from any other
+branch runs with no environment, gets no signing secret, builds unsigned
+dry-run artifacts, skips the Windows MSI smokes and the auto-update e2e, and
+never reaches publication.
+
+`scripts/configure-release-environment.sh` holds the exact `gh api` calls.
+Apply the move once, in this order:
+
+```bash
+bash scripts/configure-release-environment.sh status
+bash scripts/configure-release-environment.sh policy
+```
+
+`status` is read-only: it prints the deployment policy and, for each secret,
+whether it lives in the repository, the environment, or both, followed by the
+remaining commands. Recreate each listed secret in the environment with the
+printed `gh secret set NAME --repo ... --env release`, which reads the value
+from stdin (`< file` for the P12 and the armored GPG key). Then:
+
+1. Dispatch `release.yml` from `main` and check that every leg signs with the
+   environment copies.
+2. Delete the repository copies with the `gh secret delete` commands `status`
+   prints. Until they are gone, a job with no environment still receives them,
+   so a branch dry-run would still sign.
+3. Dispatch `release.yml` from a scratch branch, for example
+   `gh workflow run release.yml --ref <branch> -f version=0.0.0-dryrun.1`, and
+   check that the build legs warn `Signing secrets unavailable on <ref>` and
+   that no job fails on the deployment policy.
+4. Dispatch `repo_publish.yml` from that branch and check that GitHub refuses
+   the `release` deployment. Run it only after `policy`: without the policy,
+   this dispatch publishes.
+
+The secrets only the publishing jobs read (`R2_*`, `CLOUDFLARE_*`,
+`HOMEBREW_TAP_DEPLOY_KEY`, `MINISIGN_SECRET_KEY`) are first exercised by the
+next real release, so watch that release's `repo_publish` and `update_cask`
+runs.
+
 ## Step 1 - Bump and commit
 
 Work on `main`, clean and current, with every change for the release

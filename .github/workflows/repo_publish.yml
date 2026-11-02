@@ -58,6 +58,7 @@ defaults:
 jobs:
   publish:
     runs-on: ubuntu-22.04
+    environment: release
     # US-003 chain guard. Three cases:
     #   (a) workflow_dispatch: operator-driven - always allow. No filter
     #       on prerelease markers, the maintainer chose this tag
@@ -90,12 +91,10 @@ jobs:
       TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag }}
       # rclone - env-var-only config. `NO_CHECK_BUCKET=true` is mandatory
       # for Cloudflare R2 (HEAD bucket returns 403 even with correct
-      # credentials, per Cloudflare's rclone guide).
+      # credentials, per Cloudflare's rclone guide). The R2 credentials
+      # themselves are only in the env of the two rclone steps.
       RCLONE_CONFIG_R2_TYPE: s3
       RCLONE_CONFIG_R2_PROVIDER: Cloudflare
-      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       RCLONE_CONFIG_R2_REGION: auto
       RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
 
@@ -250,6 +249,9 @@ jobs:
       - name: Pull current R2 repo state into local staging
         env:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
           set -euo pipefail
           mkdir -p ./staging/apt ./staging/rpm/Packages
@@ -412,6 +414,9 @@ jobs:
       - name: Sync local staging → R2
         env:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         run: |
           set -euo pipefail
           # Push ordering matters for client atomicity:

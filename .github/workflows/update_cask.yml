@@ -60,6 +60,7 @@ defaults:
 jobs:
   update-cask:
     runs-on: ubuntu-22.04
+    environment: release
     # Run on: (a) manual workflow_dispatch (always); (b) workflow_run
     # chained from release.yml, require event == 'push' (the tag-push that
     # cut the release; a dry-run release.yml is 'workflow_dispatch' and is

@@ -126,6 +126,11 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: verify_workspace_tests
     runs-on: ${{ matrix.runs-on }}
+    # Signing secrets live in the `release` environment, whose deployment
+    # policy admits only `main` and `v*` tags. Any other ref runs with no
+    # environment at all, so it gets no signing secret, builds unsigned
+    # dry-run artifacts, and never trips the policy.
+    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
     # Every matrix leg is hard-required. A failed Linux, macOS, or
     # Windows build must fail the whole release workflow and block
     # publishing.
@@ -400,15 +405,24 @@ jobs:
         shell: bash
         run: bash scripts/build-icons.sh
 
-      # Windows Application Control / Smart App Control evaluates the helper
-      # executable that actually runs from the PaneFlow terminal PATH. The
-      # outer `paneflow.exe` signature does not cover helper bytes after
-      # extraction, so sign the embedded helper artifacts before the app build
-      # ingests them via rust-embed.
-      - name: Prepare signed Windows embedded helpers
-        id: windows_helpers
+      # ─── Windows MSI/signing gate (early) ────────────────────────────────
+      # Detect whether the 6 Azure Trusted Signing secrets are populated
+      # BEFORE any MSI/packaging step runs. When any are missing, every
+      # subsequent Windows-only packaging step (Preflight WiX, Install
+      # cargo-wix, Produce MSI, Sign, Verify, Stage) is skipped - only
+      # the cargo fmt / clippy / test / Build release binary validation
+      # remains, which preserves cross-platform compile coverage without
+      # noisy red failures from cargo-wix or unsigned-MSI artifacts.
+      #
+      # Routing: secrets go through env: so an unset secret resolves to
+      # an empty string (not the literal `${{ secrets.NAME }}` placeholder
+      # which would always look "present"). The 6 names match what
+      # `scripts/sign-windows.ps1` reads at runtime - see
+      # `memory/project_windows_signing.md` for the canonical list.
+      - name: Detect Windows signing secrets
+        id: windows_signing
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -417,33 +431,59 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
         run: |
-          $required = @(
-            'AZURE_TENANT_ID',
-            'AZURE_CLIENT_ID',
-            'AZURE_CLIENT_SECRET',
-            'AZURE_TRUSTED_SIGNING_ENDPOINT',
-            'AZURE_TRUSTED_SIGNING_ACCOUNT',
-            'AZURE_TRUSTED_SIGNING_CERT_PROFILE'
-          )
-          $missing = $required | Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_)) }
-          if ($missing.Count -gt 0) {
-            Write-Warning "Skipping signed embedded helpers; missing Azure signing secret(s): $($missing -join ', ')"
-            "helpers_prepared=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            exit 0
-          }
+          set -euo pipefail
+          if [ -n "${AZURE_TENANT_ID:+set}" ] \
+             && [ -n "${AZURE_CLIENT_ID:+set}" ] \
+             && [ -n "${AZURE_CLIENT_SECRET:+set}" ] \
+             && [ -n "${AZURE_TRUSTED_SIGNING_ENDPOINT:+set}" ] \
+             && [ -n "${AZURE_TRUSTED_SIGNING_ACCOUNT:+set}" ] \
+             && [ -n "${AZURE_TRUSTED_SIGNING_CERT_PROFILE:+set}" ]; then
+              echo "All 6 Azure Trusted Signing secrets are present - will sign the EXE, then produce + sign + verify MSI."
+              echo "signing_available=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "::warning title=Windows signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
+              echo "::warning title=Windows MSI packaging skipped::One or more AZURE_* secrets are missing - skipping Preflight WiX / Install cargo-wix / Produce MSI / Sign / Verify / Stage. Build/test/clippy still run for cross-platform validation. See docs/release/windows-signing.md to enable."
+              echo "signing_available=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          $target = '${{ matrix.target }}'
+      # Windows Application Control / Smart App Control evaluates the helper
+      # executable that actually runs from the PaneFlow terminal PATH. The
+      # outer `paneflow.exe` signature does not cover helper bytes after
+      # extraction, so sign the embedded helper artifacts before the app build
+      # ingests them via rust-embed. The build and the signing are two steps
+      # so that no `cargo` process, and no build script it runs, ever sees an
+      # Azure signing secret.
+      - name: Build Windows embedded helpers
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
           $cargo = if ([string]::IsNullOrEmpty($env:CARGO)) { 'cargo' } else { $env:CARGO }
           & $cargo build `
             --profile release-min `
             --locked `
-            --target $target `
+            --target $env:TARGET `
             --target-dir target/embed-build `
             -p paneflow-shim `
             -p paneflow-ai-hook `
             -p paneflow-mcp
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Sign and stage Windows embedded helpers
+        id: windows_helpers
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+        run: |
+          $target = $env:TARGET
           $artifactDir = Join-Path 'target/embed-build' "$target/release-min"
           $embedDir = Join-Path 'src-app/target/embed/bin' $target
           $packagedHelperDir = Join-Path (Join-Path 'target' $target) 'release/paneflow-helpers'
@@ -664,7 +704,11 @@ jobs:
           set -euo pipefail
 
           # --- Fail-fast: secrets present? -----------------------------
-          if [ -z "${GPG_PRIVATE_KEY:-}" ] || [ -z "${GPG_KEY_ID:-}" ]; then
+          if [ -z "${GPG_PRIVATE_KEY:+set}" ] || [ -z "${GPG_KEY_ID:+set}" ]; then
+            if [ "${RELEASE_MODE}" = "dry-run" ]; then
+              echo "::warning title=GPG signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
+              exit 0
+            fi
             echo "::error title=GPG signing::GPG signing failed: key not loaded"
             echo "::error::GPG_PRIVATE_KEY and/or GPG_KEY_ID secrets are not populated." >&2
             exit 1
@@ -1022,6 +1066,7 @@ jobs:
                   echo "::error title=macOS signing required::One or more APPLE_* secrets are missing. Tag-push releases must sign and notarize the macOS artifact."
                   exit 1
               fi
+              echo "::warning title=macOS signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
               echo "::warning title=macOS signing skipped::One or more APPLE_* secrets are missing - emitting an UNSIGNED .app. See docs/release/macos-signing.md."
               echo "signing_available=false" >> "$GITHUB_OUTPUT"
           fi
@@ -1154,46 +1199,6 @@ jobs:
           cp "dist/${dmg}" "release-assets/${dmg}"
           ( cd release-assets && shasum -a 256 "${dmg}" > "${dmg}.sha256" )
           ls -la release-assets/
-
-      # ─── Windows MSI/signing gate (early) ────────────────────────────────
-      # Detect whether the 6 Azure Trusted Signing secrets are populated
-      # BEFORE any MSI/packaging step runs. When any are missing, every
-      # subsequent Windows-only packaging step (Preflight WiX, Install
-      # cargo-wix, Produce MSI, Sign, Verify, Stage) is skipped - only
-      # the cargo fmt / clippy / test / Build release binary validation
-      # remains, which preserves cross-platform compile coverage without
-      # noisy red failures from cargo-wix or unsigned-MSI artifacts.
-      #
-      # Routing: secrets go through env: so an unset secret resolves to
-      # an empty string (not the literal `${{ secrets.NAME }}` placeholder
-      # which would always look "present"). The 6 names match what
-      # `scripts/sign-windows.ps1` reads at runtime - see
-      # `memory/project_windows_signing.md` for the canonical list.
-      - name: Detect Windows signing secrets
-        id: windows_signing
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: |
-          set -euo pipefail
-          if [ -n "${AZURE_TENANT_ID:-}" ] \
-             && [ -n "${AZURE_CLIENT_ID:-}" ] \
-             && [ -n "${AZURE_CLIENT_SECRET:-}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_ENDPOINT:-}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_ACCOUNT:-}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_CERT_PROFILE:-}" ]; then
-              echo "All 6 Azure Trusted Signing secrets are present - will sign the EXE, then produce + sign + verify MSI."
-              echo "signing_available=true" >> "$GITHUB_OUTPUT"
-          else
-              echo "::warning title=Windows MSI packaging skipped::One or more AZURE_* secrets are missing - skipping Preflight WiX / Install cargo-wix / Produce MSI / Sign / Verify / Stage. Build/test/clippy still run for cross-platform validation. See docs/release/windows-signing.md to enable."
-              echo "signing_available=false" >> "$GITHUB_OUTPUT"
-          fi
 
       # ─── US-016 Windows MSI: toolchain preflight ─────────────────────────
       # Gated on `windows_signing.signing_available` (set above): when the
@@ -2416,6 +2421,8 @@ jobs:
   # diagnostics, removes its staged MSI, and requests a relaunch.
   smoke-test-windows-msi:
     name: Smoke test - Windows MSI install + relay
+    # Only `main` and `v*` tags can sign, and an unsigned leg produces no MSI.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: build
     runs-on: windows-2022
     defaults:
@@ -2997,7 +3004,7 @@ jobs:
   # dispatch with `msi_upgrade_version` while the source is not bumped yet.
   smoke-test-windows-msi-live-host:
     name: Smoke test - Windows MSI upgrade over a live host
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: build
     runs-on: windows-2022
     defaults:
@@ -3314,7 +3321,10 @@ jobs:
     runs-on: ubuntu-22.04
     # The E2E signs the NEW tarball before publish so it can remain a
     # hard `release.needs` gate. That requires the same minisign secret as
-    # the publish job, stored on the protected `release` environment.
+    # the publish job, stored on the protected `release` environment, which
+    # only `main` and `v*` tags may deploy to. Any other ref skips the job
+    # instead of failing on the deployment policy.
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     environment: release
     # Pre-refactor (≤ v0.3.3): this job did two full `cargo build
     # --release` (NEW from current tree, OLD from a worktree at the
