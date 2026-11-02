@@ -210,6 +210,17 @@ pub(crate) fn sidebar_tab_active_background() -> Hsla {
     sidebar_tab_background(SIDEBAR_TAB_ACTIVE_OPACITY)
 }
 
+pub(crate) fn sidebar_menu_background(
+    style: Option<paneflow_config::schema::InterfaceStyle>,
+    ui: crate::theme::UiColors,
+) -> Hsla {
+    if style.is_some_and(|style| style != paneflow_config::schema::InterfaceStyle::Themed) {
+        sidebar_tab_active_background()
+    } else {
+        crate::settings::components::select_menu_surface(ui)
+    }
+}
+
 pub(crate) fn sidebar_filter_icon_color() -> Hsla {
     gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
         0x000000

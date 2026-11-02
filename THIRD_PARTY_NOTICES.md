@@ -83,6 +83,7 @@ the GPUI asset loader expects.
 - `layout-sidebar-right.svg`
 - `plus.svg`
 - `pointer-2.svg`
+- `preference-horizontal.svg`
 - `settings.svg`
 - `sidebar.svg`
 - `sparkles.svg`

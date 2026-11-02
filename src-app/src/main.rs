@@ -277,6 +277,7 @@ struct PaneFlowApp {
     pub(crate) sidebar_customize_menu_open: bool,
     pub(crate) sidebar_show_submenu_open: bool,
     pub(crate) sidebar_space_menu_open: bool,
+    pub(crate) agents_display_menu_open: bool,
     tab_menu_open: Option<TabContextMenu>,
     pane_menu_open: Option<PaneContextMenu>,
     pending_pane_focus: Option<Entity<Pane>>,

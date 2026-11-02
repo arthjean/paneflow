@@ -553,8 +553,16 @@ The Agents section sits between the workspace tree and the footer, with no
 separator. Its 36 px header (padding 8 horizontal) holds one 22 px button at
 radius 7, padding 7 leading and 6 trailing: `Agents` at 13 px `muted`, then a
 12 px `muted` chevron 8 px after it, both turning `text` under the pointer.
-There is no counter and no sort control. Clicking the header collapses the
-section to that row, the chevron turning -90 degrees over 180 ms (cubic
+At the header's trailing edge, a 22 px button at radius 7 holds the 15 px
+Hugeicons `preference-horizontal` glyph in `muted` (`Customize agent rows`).
+It opens a 172 px menu 10 px above itself, right-aligned, on the usage
+bubble's fill (the active tab tint under Mica or Blended, the menu surface
+under Themed), that toggles the runtime logo, the status and the meta line
+(`sidebar_show.agent_logo`, `agent_status`, `agent_workspace`, all on by
+default). Without the logo the meta line starts under the title's leading
+edge; without the meta line a row is 32 px. There is no counter and no sort
+control. Clicking the header collapses the section to that row, the chevron
+turning -90 degrees over 180 ms (cubic
 ease-out, instant under `reduce_motion`); nothing expands it on its own, not
 even an agent turning blocked. Each row is one recognized agent session of the
 active space, on the tab row shell (margin 8, padding 7 by 6, radius 9, 55 px

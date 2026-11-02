@@ -119,6 +119,12 @@ pub struct SidebarShow {
     pub agents: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub usage: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agent_logo: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agent_status: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agent_workspace: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +230,18 @@ impl SidebarShow {
 
     pub fn usage_enabled(&self) -> bool {
         self.usage.unwrap_or(true)
+    }
+
+    pub fn agent_logo_enabled(&self) -> bool {
+        self.agent_logo.unwrap_or(true)
+    }
+
+    pub fn agent_status_enabled(&self) -> bool {
+        self.agent_status.unwrap_or(true)
+    }
+
+    pub fn agent_workspace_enabled(&self) -> bool {
+        self.agent_workspace.unwrap_or(true)
     }
 
     pub fn any_enabled(&self) -> bool {

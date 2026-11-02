@@ -13,11 +13,8 @@ use super::model::{
 };
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
-use paneflow_config::schema::InterfaceStyle;
 
-use crate::settings::components::{
-    menu_divider_color, menu_row, menu_surface_filled, select_menu_surface, with_alpha,
-};
+use crate::settings::components::{menu_divider_color, menu_row, menu_surface_filled, with_alpha};
 use crate::theme::UiColors;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::ring::{RingSize, level_color, ring};
@@ -192,15 +189,10 @@ impl PaneFlowApp {
                         .child(updated),
                 )
             });
-        let blended = self
-            .cached_config
-            .interface_style()
-            .is_some_and(|style| style != InterfaceStyle::Themed);
-        let fill = if blended {
-            crate::app::constants::sidebar_tab_active_background()
-        } else {
-            select_menu_surface(ui)
-        };
+        let fill = crate::app::constants::sidebar_menu_background(
+            self.cached_config.interface_style(),
+            ui,
+        );
         let top = self.usage.bubble_top();
         let bubble = menu_surface_filled(div().id("usage-bubble"), fill, ui)
             .child(

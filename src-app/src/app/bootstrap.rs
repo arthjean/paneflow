@@ -355,6 +355,7 @@ impl PaneFlowApp {
             sidebar_customize_menu_open: false,
             sidebar_show_submenu_open: false,
             sidebar_space_menu_open: false,
+            agents_display_menu_open: false,
             tab_menu_open: None,
             pane_menu_open: None,
             pending_pane_focus: None,

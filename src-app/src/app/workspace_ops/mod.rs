@@ -452,6 +452,7 @@ impl PaneFlowApp {
         self.sidebar_customize_menu_open = false;
         self.sidebar_show_submenu_open = false;
         self.sidebar_space_menu_open = false;
+        self.agents_display_menu_open = false;
         self.tab_menu_open = None;
         self.pane_menu_open = None;
         self.files_menu_open = None;

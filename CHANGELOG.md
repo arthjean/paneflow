@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- **Choose what each Agents row shows.** A button at the right of the `Agents` header opens **Customize agent rows**, with the agent logo, the status and the workspace line, all on by default. Without the workspace line a row is one line tall. Stored in `sidebar_show.agent_logo`, `sidebar_show.agent_status` and `sidebar_show.agent_workspace`.
+
 ## [0.19.0] - 2026-11-01
 
 ### Upgrade notes

@@ -32,8 +32,12 @@ impl PaneFlowApp {
     }
 
     fn toggle_sidebar_show(&mut self, line: SidebarShowLine, cx: &mut Context<Self>) {
-        self.sidebar_customize_menu_open = true;
-        self.sidebar_show_submenu_open = true;
+        if line.is_agent_row_detail() {
+            self.agents_display_menu_open = true;
+        } else {
+            self.sidebar_customize_menu_open = true;
+            self.sidebar_show_submenu_open = true;
+        }
 
         let mut show = self.cached_config.sidebar_show;
         match line {
@@ -45,6 +49,13 @@ impl PaneFlowApp {
             }
             SidebarShowLine::Agents => show.agents = Some(!show.agents_enabled()),
             SidebarShowLine::Usage => show.usage = Some(!show.usage_enabled()),
+            SidebarShowLine::AgentLogo => show.agent_logo = Some(!show.agent_logo_enabled()),
+            SidebarShowLine::AgentStatus => {
+                show.agent_status = Some(!show.agent_status_enabled());
+            }
+            SidebarShowLine::AgentWorkspace => {
+                show.agent_workspace = Some(!show.agent_workspace_enabled());
+            }
         }
         let value = sidebar_show_value(show);
         self.persist_setting(false, "sidebar_show", value, cx);
@@ -61,17 +72,32 @@ fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "indent_guide": show.indent_guide_enabled(),
         "agents": show.agents_enabled(),
         "usage": show.usage_enabled(),
+        "agent_logo": show.agent_logo_enabled(),
+        "agent_status": show.agent_status_enabled(),
+        "agent_workspace": show.agent_workspace_enabled(),
     })
 }
 
 #[derive(Clone, Copy)]
-enum SidebarShowLine {
+pub(super) enum SidebarShowLine {
     Branch,
     Diffstat,
     Pr,
     IndentGuide,
     Agents,
     Usage,
+    AgentLogo,
+    AgentStatus,
+    AgentWorkspace,
+}
+
+impl SidebarShowLine {
+    fn is_agent_row_detail(self) -> bool {
+        matches!(
+            self,
+            Self::AgentLogo | Self::AgentStatus | Self::AgentWorkspace
+        )
+    }
 }
 
 pub(super) fn render_customize_sidebar_button(
@@ -286,7 +312,7 @@ fn render_show_submenu(
     .into_any_element()
 }
 
-fn render_show_option(
+pub(super) fn render_show_option(
     label: &'static str,
     icon: &'static str,
     line: SidebarShowLine,
@@ -301,6 +327,9 @@ fn render_show_option(
         SidebarShowLine::IndentGuide => "sidebar-show-indent-guide",
         SidebarShowLine::Agents => "sidebar-show-agents",
         SidebarShowLine::Usage => "sidebar-show-usage",
+        SidebarShowLine::AgentLogo => "agents-show-logo",
+        SidebarShowLine::AgentStatus => "agents-show-status",
+        SidebarShowLine::AgentWorkspace => "agents-show-workspace",
     };
 
     menu_row(id, false, ui)
@@ -372,6 +401,9 @@ mod tests {
                 "indent_guide": false,
                 "agents": true,
                 "usage": true,
+                "agent_logo": true,
+                "agent_status": true,
+                "agent_workspace": true,
             })
         );
     }
@@ -393,6 +425,26 @@ mod tests {
 
         assert!(!next.sidebar_show.agents_enabled());
         assert_eq!(next.sidebar_show.indent_guide, Some(false));
+    }
+
+    #[test]
+    fn hiding_an_agent_row_detail_round_trips_through_the_config_writer() {
+        let config = PaneFlowConfig::default();
+        let mut show = config.sidebar_show;
+        show.agent_workspace = Some(false);
+
+        let next = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(show),
+        )
+        .expect("written");
+
+        assert!(!next.sidebar_show.agent_workspace_enabled());
+        assert!(next.sidebar_show.agent_logo_enabled());
+        assert!(next.sidebar_show.agent_status_enabled());
+        assert!(next.sidebar_show.agents_enabled());
     }
 
     #[test]

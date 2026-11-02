@@ -7,10 +7,12 @@ use gpui::{
 };
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
+use super::customize_menu::{SidebarShowLine, render_show_option};
 use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::settings::components::{MENU_PADDING, MENU_ROW_GAP, menu_surface_filled};
 use crate::window_state::AgentsSectionState;
 
 pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
@@ -28,6 +30,7 @@ const AGENTS_EMPTY_HEIGHT: f32 = 32.;
 const AGENTS_EMPTY_INSET: f32 = 15.;
 const AGENT_ROW_HEIGHT: f32 =
     SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT * 2. + SIDEBAR_ROW_GAP;
+const AGENT_ROW_COMPACT_HEIGHT: f32 = SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT;
 const AGENT_RANK_SPACING: f32 = SIDEBAR_GROUP_SPACING - SIDEBAR_ROW_SPACING;
 const AGENT_LOGO_SIZE: f32 = 15.;
 const AGENT_META_ICON_SIZE: f32 = 12.;
@@ -35,6 +38,9 @@ const AGENTS_CHEVRON_SIZE: f32 = 12.;
 const AGENTS_CHEVRON_TURN_SECS: f32 = 0.18;
 const NO_STATUS_GRACE: Duration = Duration::from_secs(3);
 const AGENTS_TOGGLE_GROUP: &str = "agents-section-toggle-group";
+const AGENTS_DISPLAY_GROUP: &str = "agents-display-group";
+const AGENTS_DISPLAY_MENU_WIDTH: f32 = 172.;
+const AGENTS_DISPLAY_MENU_GAP: f32 = 10.;
 
 type PickAgent = Rc<dyn Fn(u64, &mut Window, &mut App)>;
 type ResizeAgents = Rc<dyn Fn(AgentsResizeInput, &mut Window, &mut App)>;
@@ -198,6 +204,37 @@ pub(super) enum AgentRowStatus {
     Silent,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AgentRowDetails {
+    pub(super) logo: bool,
+    pub(super) status: bool,
+    pub(super) workspace: bool,
+}
+
+impl AgentRowDetails {
+    pub(super) const ALL: Self = Self {
+        logo: true,
+        status: true,
+        workspace: true,
+    };
+
+    pub(super) fn from_show(show: paneflow_config::schema::SidebarShow) -> Self {
+        Self {
+            logo: show.agent_logo_enabled(),
+            status: show.agent_status_enabled(),
+            workspace: show.agent_workspace_enabled(),
+        }
+    }
+
+    fn row_height(self) -> f32 {
+        if self.workspace {
+            AGENT_ROW_HEIGHT
+        } else {
+            AGENT_ROW_COMPACT_HEIGHT
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRow {
     pub(super) surface_id: u64,
@@ -208,6 +245,7 @@ pub(super) struct AgentRow {
     pub(super) active: bool,
     pub(super) starts_rank: bool,
     pub(super) status: AgentRowStatus,
+    pub(super) details: AgentRowDetails,
 }
 
 pub(super) struct AgentRows {
@@ -219,6 +257,7 @@ pub(super) fn agent_rows(
     workspaces: &[Workspace],
     active_space: Option<&paneflow_config::schema::SpaceId>,
     shown_workspace: Option<usize>,
+    details: AgentRowDetails,
     now: Instant,
     cx: &App,
 ) -> AgentRows {
@@ -263,6 +302,7 @@ pub(super) fn agent_rows(
                     && workspace.active_tab_idx() == candidate.tab_idx,
                 starts_rank,
                 status,
+                details,
             })
         })
         .collect();
@@ -285,7 +325,7 @@ pub(super) fn agents_content_height(rows: &[AgentRow]) -> f32 {
             } else {
                 0.
             };
-            AGENT_ROW_HEIGHT + spacing + rank_spacing
+            row.details.row_height() + spacing + rank_spacing
         })
         .sum()
 }
@@ -397,6 +437,7 @@ pub(super) fn agent_surface_location(
 fn render_agents_header(
     collapsed: bool,
     chevron_turn: f32,
+    display_button: Option<AnyElement>,
     ui: crate::theme::UiColors,
     on_toggle: impl Fn(&mut Window, &mut App) + 'static,
 ) -> gpui::Div {
@@ -417,6 +458,7 @@ fn render_agents_header(
         .flex()
         .flex_row()
         .items_center()
+        .justify_between()
         .debug_selector(|| "agents-header".into())
         .child(
             squircle_skin(
@@ -446,9 +488,13 @@ fn render_agents_header(
             .child("Agents")
             .child(chevron),
         )
+        .children(display_button)
 }
 
 fn render_agent_status(row: &AgentRow, ui: crate::theme::UiColors) -> Option<AnyElement> {
+    if !row.details.status {
+        return None;
+    }
     match row.status {
         AgentRowStatus::Lane(state) => Some(render_lane(
             Lane::Agent(SidebarAgentSummary {
@@ -561,16 +607,21 @@ fn render_agent_row(
         .gap(px(SIDEBAR_TITLE_ROW_GAP))
         .w_full()
         .min_w_0()
-        .child(logo)
+        .when(row.details.logo, |title_row| title_row.child(logo))
         .child(title)
         .children(render_agent_status(row, ui));
+    let meta_inset = if row.details.logo {
+        SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP
+    } else {
+        0.
+    };
     let meta = div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(SIDEBAR_ROW_GAP))
         .h(px(SIDEBAR_ROW_LINE_HEIGHT))
-        .pl(px(SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP))
+        .pl(px(meta_inset))
         .min_w_0()
         .child(
             svg()
@@ -614,7 +665,7 @@ fn render_agent_row(
             on_pick(surface_id, window, cx);
         })
         .child(title_row)
-        .child(meta)
+        .when(row.details.workspace, |shell| shell.child(meta))
         .when(cursor, |shell| {
             shell.child(
                 div()
@@ -763,6 +814,7 @@ pub(super) struct AgentsSectionFrame<'a> {
     pub(super) scroll: &'a ScrollHandle,
     pub(super) scrollbar: Option<AnyElement>,
     pub(super) resize_handle: Option<AnyElement>,
+    pub(super) display_button: Option<AnyElement>,
 }
 
 fn render_agents_list(
@@ -833,6 +885,7 @@ pub(super) fn render_agents_section(
         scroll,
         scrollbar,
         resize_handle,
+        display_button,
     } = frame;
     let section = div()
         .relative()
@@ -842,7 +895,13 @@ pub(super) fn render_agents_section(
         .flex()
         .flex_col()
         .debug_selector(|| "agents-section".into())
-        .child(render_agents_header(collapsed, chevron_turn, ui, on_toggle));
+        .child(render_agents_header(
+            collapsed,
+            chevron_turn,
+            display_button,
+            ui,
+            on_toggle,
+        ));
     if collapsed {
         return section;
     }
@@ -876,6 +935,7 @@ impl PaneFlowApp {
             &self.workspaces,
             self.active_space.as_ref(),
             self.shown_workspace_idx(),
+            AgentRowDetails::from_show(self.cached_config.sidebar_show),
             now,
             cx,
         );
@@ -952,6 +1012,7 @@ impl PaneFlowApp {
                 scroll: &scroll,
                 scrollbar,
                 resize_handle: Some(resize_handle),
+                display_button: Some(self.render_agents_display_button(ui, cx)),
             },
             ui,
             move |_, cx| {
@@ -1039,6 +1100,7 @@ impl PaneFlowApp {
             &self.workspaces,
             self.active_space.as_ref(),
             self.shown_workspace_idx(),
+            AgentRowDetails::ALL,
             Instant::now(),
             cx,
         );
@@ -1113,6 +1175,116 @@ impl PaneFlowApp {
             cx,
         );
     }
+
+    fn close_agents_display_menu(&mut self, cx: &mut Context<Self>) {
+        if self.agents_display_menu_open {
+            self.agents_display_menu_open = false;
+            cx.notify();
+        }
+    }
+
+    fn render_agents_display_button(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = self.agents_display_menu_open;
+        let hover = crate::app::constants::sidebar_tab_hover_background();
+        let show = self.cached_config.sidebar_show;
+        let fill = crate::app::constants::sidebar_menu_background(
+            self.cached_config.interface_style(),
+            ui,
+        );
+        squircle_skin(
+            div()
+                .id("agents-display")
+                .flex_none()
+                .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .debug_selector(|| "agents-display".into()),
+            AGENTS_DISPLAY_GROUP,
+            px(7.),
+            open.then_some(hover),
+            (!open).then_some(hover),
+        )
+        .role(Role::Button)
+        .aria_label("Customize agent rows")
+        .aria_expanded(open)
+        .delayed_tooltip(crate::ui_primitives::text_tooltip("Customize agent rows"))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            this.agents_display_menu_open = !open;
+            cx.notify();
+        }))
+        .child(
+            svg()
+                .size(px(SIDEBAR_HEADER_ICON_WIDTH))
+                .flex_none()
+                .path("icons/preference-horizontal.svg")
+                .text_color(ui.muted),
+        )
+        .when(open, |trigger| {
+            trigger.child(render_agents_display_menu(show, fill, ui, cx))
+        })
+        .into_any_element()
+    }
+}
+
+fn render_agents_display_menu(
+    show: paneflow_config::schema::SidebarShow,
+    fill: gpui::Hsla,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let menu = menu_surface_filled(div().id("agents-display-menu"), fill, ui)
+        .flex()
+        .flex_col()
+        .gap(MENU_ROW_GAP)
+        .p(MENU_PADDING)
+        .font_family("Geist")
+        .w(px(AGENTS_DISPLAY_MENU_WIDTH))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseUpEvent, _, cx| this.close_agents_display_menu(cx)),
+        )
+        .child(render_show_option(
+            "Agent logo",
+            "icons/sparkles.svg",
+            SidebarShowLine::AgentLogo,
+            show.agent_logo_enabled(),
+            ui,
+            cx,
+        ))
+        .child(render_show_option(
+            "Status",
+            "icons/palette/notification-01.svg",
+            SidebarShowLine::AgentStatus,
+            show.agent_status_enabled(),
+            ui,
+            cx,
+        ))
+        .child(render_show_option(
+            "Workspace",
+            "icons/folder.svg",
+            SidebarShowLine::AgentWorkspace,
+            show.agent_workspace_enabled(),
+            ui,
+            cx,
+        ));
+    gpui::deferred(crate::ui_primitives::menu_reveal(
+        "agents-display-menu-reveal",
+        div()
+            .absolute()
+            .bottom(px(SIDEBAR_ACTION_BUTTON_SIZE + AGENTS_DISPLAY_MENU_GAP))
+            .right(px(0.))
+            .occlude()
+            .child(menu),
+    ))
+    .with_priority(3)
+    .into_any_element()
 }
 
 #[cfg(test)]
@@ -1138,6 +1310,7 @@ mod tests {
             active: false,
             starts_rank: false,
             status,
+            details: AgentRowDetails::ALL,
         }
     }
 
@@ -1163,6 +1336,37 @@ mod tests {
         assert_eq!(agents_section_height(&rows, false, None), 36. + 177. + 4.);
         assert_eq!(agents_section_height(&rows[..1], false, None), 95.);
         assert_eq!(agents_section_height(&[], false, None), 36. + 32. + 4.);
+    }
+
+    #[test]
+    fn hiding_the_workspace_line_folds_each_row_to_one_line() {
+        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Done]);
+        for row in &mut rows {
+            row.details.workspace = false;
+        }
+        assert_eq!(AGENT_ROW_COMPACT_HEIGHT, 32.);
+        assert_eq!(agents_content_height(&rows), 32. + (10. + 32.));
+        assert_eq!(agents_section_height(&rows, false, None), 36. + 74. + 4.);
+    }
+
+    #[test]
+    fn the_row_details_follow_the_sidebar_show_config() {
+        let show = paneflow_config::schema::SidebarShow {
+            agent_status: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            AgentRowDetails::from_show(show),
+            AgentRowDetails {
+                logo: true,
+                status: false,
+                workspace: true,
+            }
+        );
+        assert_eq!(
+            AgentRowDetails::from_show(Default::default()),
+            AgentRowDetails::ALL
+        );
     }
 
     #[test]
@@ -1390,6 +1594,7 @@ mod tests {
                         scroll: &self.section.scroll,
                         scrollbar: None,
                         resize_handle: Some(handle),
+                        display_button: None,
                     },
                     crate::theme::ui_colors(),
                     |_, _| {},
@@ -1697,7 +1902,16 @@ mod tests {
         );
         let workspaces = vec![first, second];
 
-        let shown = cx.update(|_, cx| agent_rows(&workspaces, None, Some(0), Instant::now(), cx));
+        let shown = cx.update(|_, cx| {
+            agent_rows(
+                &workspaces,
+                None,
+                Some(0),
+                AgentRowDetails::ALL,
+                Instant::now(),
+                cx,
+            )
+        });
 
         assert_eq!(
             shown
@@ -1759,20 +1973,23 @@ mod tests {
         workspace.agent_sessions.insert(1, session);
         let mut workspaces = vec![workspace];
 
-        let young = cx.update(|_, cx| agent_rows(&workspaces, None, None, started, cx));
+        let young = cx
+            .update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, started, cx));
         assert_eq!(young.rows[0].rank, AgentRank::NoStatus);
         assert_eq!(young.rows[0].status, AgentRowStatus::Silent);
         assert_eq!(young.grace_deadline, Some(started + NO_STATUS_GRACE));
 
         let due = started + NO_STATUS_GRACE;
-        let grown = cx.update(|_, cx| agent_rows(&workspaces, None, None, due, cx));
+        let grown =
+            cx.update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, due, cx));
         assert_eq!(grown.rows[0].status, AgentRowStatus::NoStatus);
         assert_eq!(grown.grace_deadline, None);
 
         let session = workspaces[0].agent_sessions.get_mut(&1).expect("session");
         session.program_status_capable = true;
         session.state = AgentState::Thinking;
-        let capable = cx.update(|_, cx| agent_rows(&workspaces, None, None, due, cx));
+        let capable =
+            cx.update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, due, cx));
         assert_eq!(capable.rows[0].rank, AgentRank::Working);
         assert_eq!(
             capable.rows[0].status,
@@ -1846,6 +2063,7 @@ mod tests {
                         scroll: &self.scroll,
                         scrollbar: None,
                         resize_handle: None,
+                        display_button: None,
                     },
                     crate::theme::ui_colors(),
                     move |_, _| toggles.set(toggles.get() + 1),
@@ -2166,7 +2384,14 @@ mod tests {
     }
 
     fn loaded_section(workspaces: &[Workspace], cx: &App) -> gpui::Div {
-        let AgentRows { rows, .. } = agent_rows(workspaces, None, Some(0), Instant::now(), cx);
+        let AgentRows { rows, .. } = agent_rows(
+            workspaces,
+            None,
+            Some(0),
+            AgentRowDetails::ALL,
+            Instant::now(),
+            cx,
+        );
         render_agents_section(
             AgentsSectionFrame {
                 rows: &rows,
@@ -2177,6 +2402,7 @@ mod tests {
                 scroll: &ScrollHandle::new(),
                 scrollbar: None,
                 resize_handle: None,
+                display_button: None,
             },
             crate::theme::ui_colors(),
             |_, _| {},
@@ -2246,6 +2472,7 @@ mod tests {
                 &view.read(cx).workspaces,
                 None,
                 Some(0),
+                AgentRowDetails::ALL,
                 Instant::now(),
                 cx
             ))

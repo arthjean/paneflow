@@ -474,6 +474,9 @@ mod tests {
             indent_guide: Some(false),
             agents: None,
             usage: None,
+            agent_logo: None,
+            agent_status: None,
+            agent_workspace: None,
         }
     }
 

@@ -172,6 +172,7 @@ impl PaneFlowApp {
             || self.session_menu_open.is_some()
             || self.sidebar_customize_menu_open
             || self.sidebar_space_menu_open
+            || self.agents_display_menu_open
     }
 
     fn move_cursor_row(&mut self, row: SidebarRow, down: bool, cx: &mut Context<Self>) {
