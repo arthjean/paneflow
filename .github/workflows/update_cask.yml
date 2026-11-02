@@ -52,10 +52,10 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-# -euxo pipefail on every bash step. See release.yml comment.
+# -euo pipefail on every bash step, never -x: xtrace would echo secrets.
 defaults:
   run:
-    shell: bash -euxo pipefail {0}
+    shell: bash -euo pipefail {0}
 
 jobs:
   update-cask:
@@ -181,11 +181,7 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          # The job shell runs with `-x` (see `defaults.run.shell`), which
-          # would echo the private key when we write it. Disable xtrace for
-          # this whole step so no key material reaches the run log.
-          set +x
-          if [ -z "${DEPLOY_KEY:-}" ]; then
+          if [ -z "${DEPLOY_KEY:+set}" ]; then
             echo "::error::HOMEBREW_TAP_DEPLOY_KEY secret is not set - cannot push to tap repo. See packaging/homebrew/paneflow.rb header for setup steps."
             exit 1
           fi

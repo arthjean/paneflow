@@ -49,14 +49,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: false
 
-# Apply Zed's run_tests.yml shell convention to every implicit-bash step:
-# -e fail-on-error, -u error-on-unset, -x trace each command (CI logs
-# stay greppable), -o pipefail propagate pipe failures. Per-step
-# `shell: pwsh` overrides this default; the Windows-conditional steps
-# in this file already declare pwsh explicitly so they're unaffected.
+# Every implicit-bash step runs with -e fail-on-error, -u error-on-unset,
+# -o pipefail propagate pipe failures. Never -x: xtrace echoes secrets and
+# multi-line values into the public log, and scripts/check-workflows.sh
+# rejects it. Per-step `shell: pwsh` overrides this default.
 defaults:
   run:
-    shell: bash -euxo pipefail {0}
+    shell: bash -euo pipefail {0}
 
 env:
   CARGO_TERM_COLOR: always
@@ -716,7 +715,7 @@ jobs:
           # passphrase (`%no-protection`), GPG_PASSPHRASE is empty and we
           # skip - `gpg` accepts `--passphrase-file <(printf '')` as an
           # empty passphrase but it also ignores pinentry in that case.
-          if [ -n "${GPG_PASSPHRASE:-}" ]; then
+          if [ -n "${GPG_PASSPHRASE:+set}" ]; then
             printf 'prime' | gpg --batch --yes \
               --passphrase-file <(printf '%s' "$GPG_PASSPHRASE") \
               --pinentry-mode loopback \
@@ -1010,11 +1009,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [ -n "${APPLE_DEVELOPER_CERT_P12:-}" ] \
-             && [ -n "${APPLE_DEVELOPER_CERT_PASSWORD:-}" ] \
-             && [ -n "${APPLE_ID:-}" ] \
-             && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] \
-             && [ -n "${APPLE_TEAM_ID:-}" ]; then
+          if [ -n "${APPLE_DEVELOPER_CERT_P12:+set}" ] \
+             && [ -n "${APPLE_DEVELOPER_CERT_PASSWORD:+set}" ] \
+             && [ -n "${APPLE_ID:+set}" ] \
+             && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:+set}" ] \
+             && [ -n "${APPLE_TEAM_ID:+set}" ]; then
               echo "All 5 Apple signing secrets are present - will sign + notarize."
               echo "signing_available=true" >> "$GITHUB_OUTPUT"
           else
@@ -1806,7 +1805,7 @@ jobs:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+          if [ -z "${MINISIGN_SECRET_KEY:+set}" ]; then
             echo "::error::MINISIGN_SECRET_KEY is required. Clients with an embedded key refuse unsigned self-update assets."
             exit 1
           fi
@@ -3381,7 +3380,7 @@ jobs:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+          if [ -z "${MINISIGN_SECRET_KEY:+set}" ]; then
             echo "::error::MINISIGN_SECRET_KEY is required for auto-update e2e because OLD clients verify fail-closed."
             exit 1
           fi

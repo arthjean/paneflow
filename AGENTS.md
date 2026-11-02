@@ -15,6 +15,7 @@ cargo fmt --check                                   # mandatory before commit an
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo deny check advisories licenses sources        # only when dependencies change
+bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace
 ```
 
 **`cargo fmt --check` before every `git commit` and every `git push` that

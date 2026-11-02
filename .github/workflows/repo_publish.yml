@@ -50,10 +50,10 @@ concurrency:
   group: repo-publish
   cancel-in-progress: false
 
-# -euxo pipefail on every bash step. See release.yml comment.
+# -euo pipefail on every bash step, never -x: xtrace would echo secrets.
 defaults:
   run:
-    shell: bash -euxo pipefail {0}
+    shell: bash -euo pipefail {0}
 
 jobs:
   publish:
@@ -179,12 +179,12 @@ jobs:
         run: |
           set -euo pipefail
           missing=()
-          [ -z "${GPG_PRIVATE_KEY:-}"     ] && missing+=("GPG_PRIVATE_KEY")
-          [ -z "${GPG_PASSPHRASE:-}"      ] && missing+=("GPG_PASSPHRASE")
-          [ -z "${GPG_KEY_ID:-}"          ] && missing+=("GPG_KEY_ID")
-          [ -z "${R2_BUCKET:-}"           ] && missing+=("R2_BUCKET")
-          [ -z "${CLOUDFLARE_ZONE:-}"     ] && missing+=("CLOUDFLARE_ZONE")
-          [ -z "${CLOUDFLARE_AUTH_KEY:-}" ] && missing+=("CLOUDFLARE_AUTH_KEY")
+          [ -z "${GPG_PRIVATE_KEY:+set}"     ] && missing+=("GPG_PRIVATE_KEY")
+          [ -z "${GPG_PASSPHRASE:+set}"      ] && missing+=("GPG_PASSPHRASE")
+          [ -z "${GPG_KEY_ID:+set}"          ] && missing+=("GPG_KEY_ID")
+          [ -z "${R2_BUCKET:+set}"           ] && missing+=("R2_BUCKET")
+          [ -z "${CLOUDFLARE_ZONE:+set}"     ] && missing+=("CLOUDFLARE_ZONE")
+          [ -z "${CLOUDFLARE_AUTH_KEY:+set}" ] && missing+=("CLOUDFLARE_AUTH_KEY")
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing required secrets (US-017 + R2 + Cloudflare setup): ${missing[*]}" >&2
             exit 1

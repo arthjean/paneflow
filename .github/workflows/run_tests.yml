@@ -24,13 +24,13 @@ concurrency:
 permissions:
   contents: read
 
-# Match Zed's run_tests.yml: -e fail-on-error, -u error-on-unset, -x
-# trace each command (CI logs stay greppable), -o pipefail propagate
-# pipe failures. Per-step `shell: pwsh` overrides this default - the
-# Windows steps below already declare pwsh explicitly.
+# -e fail-on-error, -u error-on-unset, -o pipefail propagate pipe
+# failures. Never -x: xtrace echoes secrets and multi-line values into the
+# public log, and scripts/check-workflows.sh rejects it. Per-step
+# `shell: pwsh` overrides this default.
 defaults:
   run:
-    shell: bash -euxo pipefail {0}
+    shell: bash -euo pipefail {0}
 
 env:
   CARGO_TERM_COLOR: always
@@ -179,9 +179,10 @@ jobs:
           persist-credentials: false
 
       # Every third-party action in the release chain runs pinned to a
-      # full commit SHA; `actions/*` is exempt.
-      - name: Release workflow action pins
-        run: scripts/check-workflow-action-pins.sh
+      # full commit SHA (`actions/*` is exempt), and no workflow or
+      # composite action shell traces with -x.
+      - name: Workflow lint (action pins, no xtrace)
+        run: scripts/check-workflows.sh
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
@@ -1404,7 +1405,6 @@ jobs:
           RESULT_WINDOWS_RENDER_SMOKE: ${{ needs.windows_render_smoke.result }}
           RESULT_LINUX_AARCH64_CHECK: ${{ needs.linux_aarch64_check.result }}
         run: |
-          set +x
           EXIT_CODE=0
 
           check_result() {
