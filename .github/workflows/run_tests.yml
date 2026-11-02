@@ -466,23 +466,18 @@ jobs:
         # ${CARGO_HOME}/bin, so this is a no-op compile on a warm cache.
         run: cargo install cargo-deny --locked --version 0.19.8
 
-      - name: cargo deny check advisories licenses sources
-        # Retry once with 30s backoff on a DB-fetch failure (GitHub's
-        # RustSec mirror occasionally rate-limits). A second failure
-        # surfaces `cargo deny check advisories --help` for debugging
-        # alongside the RustSec advisory site URL in the job output.
-        # AC7: advisory DB unreachable must not silently pass.
+      # Only the network fetches are retried, and only on a transient network
+      # signature. The check runs offline and is never retried: a real
+      # advisory (`error[vulnerability]`, `error[unmaintained]`) fails once,
+      # immediately. An unreachable advisory database fails the fetch, so it
+      # can never silently pass.
+      - name: Fetch crates and the advisory database
         run: |
-          set -euo pipefail
-          if ! cargo deny check advisories licenses sources; then
-            echo "→ cargo-deny failed on first attempt - sleeping 30s and retrying once (probable RustSec DB rate-limit)" >&2
-            sleep 30
-            if ! cargo deny check advisories licenses sources; then
-              echo "::error::cargo-deny check failed after retry. See https://embarkstudios.github.io/cargo-deny/ and the --help output below."
-              cargo deny check advisories --help || true
-              exit 1
-            fi
-          fi
+          scripts/ci-retry-network.sh cargo fetch --locked
+          scripts/ci-retry-network.sh cargo deny fetch db
+
+      - name: cargo deny check advisories licenses sources
+        run: cargo deny --frozen check --disable-fetch advisories licenses sources
 
   # US-001 (prd-macos-port.md): smoke build on Apple Silicon so the PaneFlow
   # dependency closure at the pinned GPUI rev (0b984b5) is proven to compile
