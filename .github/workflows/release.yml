@@ -127,10 +127,12 @@ jobs:
     needs: verify_workspace_tests
     runs-on: ${{ matrix.runs-on }}
     # Signing secrets live in the `release` environment, whose deployment
-    # policy admits only `main` and `v*` tags. Any other ref runs with no
-    # environment at all, so it gets no signing secret, builds unsigned
-    # dry-run artifacts, and never trips the policy.
-    environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
+    # policy admits only `main` and `v*` tags. The policy checks the ref the
+    # run was dispatched from, not the `target_ref` it builds, so the build
+    # signs only a tag push or a dispatch from `main` that also builds `main`.
+    # Anything else runs with no environment at all, gets no signing secret,
+    # builds unsigned dry-run artifacts, and never trips the policy.
+    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
     # Every matrix leg is hard-required. A failed Linux, macOS, or
     # Windows build must fail the whole release workflow and block
     # publishing.
@@ -2421,8 +2423,8 @@ jobs:
   # diagnostics, removes its staged MSI, and requests a relaunch.
   smoke-test-windows-msi:
     name: Smoke test - Windows MSI install + relay
-    # Only `main` and `v*` tags can sign, and an unsigned leg produces no MSI.
-    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # Only the runs whose build signs (see `build.environment`) produce an MSI.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
     needs: build
     runs-on: windows-2022
     defaults:
@@ -3004,7 +3006,7 @@ jobs:
   # dispatch with `msi_upgrade_version` while the source is not bumped yet.
   smoke-test-windows-msi-live-host:
     name: Smoke test - Windows MSI upgrade over a live host
-    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main'
     needs: build
     runs-on: windows-2022
     defaults:
@@ -3322,9 +3324,10 @@ jobs:
     # The E2E signs the NEW tarball before publish so it can remain a
     # hard `release.needs` gate. That requires the same minisign secret as
     # the publish job, stored on the protected `release` environment, which
-    # only `main` and `v*` tags may deploy to. Any other ref skips the job
-    # instead of failing on the deployment policy.
-    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # only `main` and `v*` tags may deploy to. It runs exactly when the build
+    # signs (see `build.environment`), so a `target_ref` other than `main`
+    # never gets the minisign key, and no other ref fails on the policy.
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
     environment: release
     # Pre-refactor (≤ v0.3.3): this job did two full `cargo build
     # --release` (NEW from current tree, OLD from a worktree at the

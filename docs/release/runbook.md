@@ -36,10 +36,13 @@ to the `release` environment, which only the branch `main` and the tags `v*`
 may deploy to. The jobs that consume them declare the environment: `build`,
 `auto-update-e2e` and `release` in `release.yml`, `publish` in
 `repo_publish.yml`, `update-cask` in `update_cask.yml`. `build` declares it
-only on `main` or a `v*` tag, so a `release.yml` dispatch from any other
-branch runs with no environment, gets no signing secret, builds unsigned
-dry-run artifacts, skips the Windows MSI smokes and the auto-update e2e, and
-never reaches publication.
+only for a `v*` tag push, or for a dispatch from `main` whose `target_ref` is
+`main`. The deployment policy checks the dispatch ref, not the `target_ref`,
+so this second condition is what stops a dispatch from `main` from signing a
+branch. Any other `release.yml` run (a dispatch from another branch, from a
+tag, or with another `target_ref`) has no environment, gets no signing secret,
+builds unsigned dry-run artifacts, skips the Windows MSI smokes and the
+auto-update e2e, and never reaches publication.
 
 `scripts/configure-release-environment.sh` holds the exact `gh api` calls.
 Apply the move once, in this order:
