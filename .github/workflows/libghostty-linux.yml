@@ -39,8 +39,13 @@ jobs:
   changes:
     name: Detect libghostty inputs
     runs-on: ubuntu-latest
+    # `recipe` gates the engine lanes (reproducible rebuild, bindings, fuzz):
+    # only the manifest, the build scripts, the -sys crate and this workflow
+    # change what the engine build produces. `native` gates the consumer
+    # lanes, which link the published archive.
     outputs:
-      native: ${{ steps.filter.outputs.native }}
+      native: ${{ steps.filter.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      recipe: ${{ steps.filter.outputs.recipe == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -52,6 +57,7 @@ jobs:
           filters: |
             native:
               - '.github/actions/fetch-libghostty/action.yml'
+              - '.github/actions/libghostty-manifest/action.yml'
               - '.github/actions/linux-build-deps/action.yml'
               - '.github/workflows/libghostty-linux.yml'
               - '.github/workflows/release.yml'
@@ -77,14 +83,17 @@ jobs:
               - 'src-app/Cargo.toml'
               - 'src-app/src/terminal/**'
               - 'src-app/tests/dependency_source_policy.rs'
+            recipe:
+              - '.github/actions/libghostty-manifest/action.yml'
+              - '.github/workflows/libghostty-linux.yml'
+              - 'crates/paneflow-libghostty-sys/**'
+              - 'native/libghostty/**'
+              - 'scripts/*libghostty*'
 
   native:
     name: Native, tests, release, package (${{ matrix.arch }})
     needs: changes
-    if: >-
-      needs.changes.outputs.native == 'true' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.native == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -105,7 +114,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The engine steps (pins, Ghostty source, Zig, reproducible rebuild,
+      # comparison, upload) run only when the recipe changed or on the
+      # nightly. A consumer-only change links the published archive that
+      # fetch-libghostty places, exactly as run_tests.yml and release.yml do.
       - name: Checkout pinned Ghostty source
+        if: needs.changes.outputs.recipe == 'true'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: ghostty-org/ghostty
@@ -135,6 +149,7 @@ jobs:
           echo "workflow pins match native/libghostty/manifest.toml"
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        if: needs.changes.outputs.recipe == 'true'
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -162,6 +177,7 @@ jobs:
           cargo install cargo-generate-rpm --version 0.20.0 --locked
 
       - name: Prepare reproducible libghostty archive
+        if: needs.changes.outputs.recipe == 'true'
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: |
@@ -189,6 +205,7 @@ jobs:
       - uses: ./.github/actions/fetch-libghostty
 
       - name: Compare against the published archive
+        if: needs.changes.outputs.recipe == 'true'
         env:
           TARGET: ${{ matrix.target }}
         run: |
@@ -282,6 +299,7 @@ jobs:
           test -f "$extract_dir/squashfs-root/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md"
 
       - name: Upload prepared native input
+        if: needs.changes.outputs.recipe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libghostty-native-${{ matrix.target }}
@@ -303,10 +321,7 @@ jobs:
   bindings:
     name: Regenerated bindings and ABI
     needs: changes
-    if: >-
-      needs.changes.outputs.native == 'true' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.recipe == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -376,7 +391,8 @@ jobs:
 
   fuzz:
     name: Fuzz ${{ matrix.target }}
-    needs: native
+    needs: [changes, native]
+    if: needs.changes.outputs.recipe == 'true'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -560,7 +576,7 @@ jobs:
 
   supply-chain:
     name: Cargo and native supply chain
-    needs: [native, bindings]
+    needs: native
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -590,33 +606,35 @@ jobs:
     steps:
       - name: Require every automated check
         env:
-          # Fail-closed in both directions: when a libghostty input changed,
-          # every lane must be green; when none did, every lane must have
-          # actually skipped. `skipped` is never silently accepted, so a lane
-          # dropped because `native` failed still turns this job red.
-          EXPECTED_TO_RUN: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          # Fail-closed in both directions: a lane whose inputs changed must be
+          # green, and a lane whose inputs did not must have actually skipped.
+          # `skipped` is never silently accepted, so a lane dropped because
+          # `native` failed still turns this job red. The consumer lanes follow
+          # `native`, the engine lanes (bindings, fuzz) follow `recipe`.
+          CONSUMER_EXPECTED: ${{ needs.changes.outputs.native }}
+          ENGINE_EXPECTED: ${{ needs.changes.outputs.recipe }}
           NATIVE: ${{ needs.native.result }}
           BINDINGS: ${{ needs.bindings.result }}
           FUZZ: ${{ needs.fuzz.result }}
           DISTRO: ${{ needs.distro-smoke.result }}
           SUPPLY: ${{ needs.supply-chain.result }}
         run: |
-          if [ "$EXPECTED_TO_RUN" = true ]; then
-            want=success
-            note="All automated libghostty Linux checks passed."
-          else
-            want=skipped
-            note="No libghostty input changed; every lane correctly skipped."
-          fi
           status=0
-          for lane in "native:$NATIVE" "bindings:$BINDINGS" "fuzz:$FUZZ" \
-                      "distro-smoke:$DISTRO" "supply-chain:$SUPPLY"; do
+          for lane in "native:$CONSUMER_EXPECTED:$NATIVE" \
+                      "distro-smoke:$CONSUMER_EXPECTED:$DISTRO" \
+                      "supply-chain:$CONSUMER_EXPECTED:$SUPPLY" \
+                      "bindings:$ENGINE_EXPECTED:$BINDINGS" \
+                      "fuzz:$ENGINE_EXPECTED:$FUZZ"; do
             name="${lane%%:*}"
-            result="${lane#*:}"
+            rest="${lane#*:}"
+            expected="${rest%%:*}"
+            result="${rest#*:}"
+            if [ "$expected" = true ]; then want=success; else want=skipped; fi
             if [ "$result" != "$want" ]; then
               echo "::error::$name reported '$result', expected '$want'"
               status=1
             fi
+            echo "$name: $result (expected $want)"
           done
           [ "$status" -eq 0 ] || exit 1
-          echo "$note"
+          echo "Every libghostty Linux lane reported the expected result."

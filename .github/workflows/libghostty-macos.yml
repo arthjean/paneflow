@@ -209,8 +209,8 @@ jobs:
       #
       # clippy and `cargo test` used to run here too. They are exactly what
       # `run_tests.yml::macos_check` already runs on macos-15 against the same
-      # committed archive, and its `libghostty` path filter covers every path
-      # that triggers this workflow, so the copy was a second 14x runner for
+      # committed archive, and its `rust` path filter covers every path that
+      # triggers this workflow, so the copy was a second 14x runner for
       # the same answer. What is left below is what only this lane does: the
       # end-to-end PTY smoke and the static-link / notices contract.
       - name: Build the Ghostty release candidate

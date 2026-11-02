@@ -7,6 +7,8 @@ on:
       - "src-app/src/app/**"
       - "crates/paneflow-host/**"
       - "crates/paneflow-serve/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "native/libghostty/**"
       - "Cargo.lock"
   schedule:
     - cron: "17 3 * * *"
