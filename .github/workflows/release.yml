@@ -40,14 +40,16 @@ on:
 permissions:
   contents: read
 
-# Serialize releases by ref. A tag-push race (or a dry-run launched on
-# top of a real tag) shouldn't double-publish or interrupt a half-baked
-# upload - `cancel-in-progress: false` lets the first run finish
-# atomically. Grouped by `ref_name` so different tags don't block each
-# other. Mirrors Zed's release.yml pattern.
+# Serialize every release run, whatever its tag. A tag-push race (or a
+# dry-run launched on top of a real tag) shouldn't double-publish or
+# interrupt a half-baked upload - `cancel-in-progress: false` lets the first
+# run finish atomically. `queue: max` keeps every waiting run instead of the
+# default single pending slot, which cancels the older waiter: two tags
+# pushed a minute apart both publish, in the order they were pushed.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 # Every implicit-bash step runs with -e fail-on-error, -u error-on-unset,
 # -o pipefail propagate pipe failures. Never -x: xtrace echoes secrets and
