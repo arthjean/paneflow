@@ -52,10 +52,13 @@ ln -s /Applications "$STAGING/Applications"
 
 mkdir -p "$(dirname "$FINAL_DMG")"
 
-echo "Creating $FINAL_DMG (source: $(du -sh "$STAGING" | awk '{print $1}'))..."
+SOURCE_MB="$(du -sm "$STAGING" | awk '{print $1}')"
+IMAGE_MB=$((SOURCE_MB * 2 + 64))
+echo "Creating $FINAL_DMG (source: ${SOURCE_MB}M, image: ${IMAGE_MB}M)..."
 "$SCRIPT_DIR/retry-with-backoff.sh" hdiutil create \
     -volname "$VOLNAME" \
     -srcfolder "$STAGING" \
+    -size "${IMAGE_MB}m" \
     -ov \
     -format UDZO \
     "$FINAL_DMG" >/dev/null
