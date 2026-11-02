@@ -139,24 +139,24 @@ ignored test.
 
 ## Step 2 - Tag and push
 
-Before tagging a minor version (`X.Y.0`), two performance checks must hold,
-because no gate in `release.yml` catches a performance regression:
+`release.yml` publishes only a commit on which every required `run_tests`
+job is `success`: Style, Tests (Linux x86_64), Linux aarch64, macOS aarch64
+smoke build, Windows x86_64 libghostty check, Performance gates and the
+cargo-deny audit (the `ci-verdict` job, `scripts/require-ci-verdict.sh`). The
+push of Step 1 runs them, so wait for `run_tests` on the commit you are about
+to tag before tagging it:
 
-- `Performance gates (Linux x86_64)` (`perf_gates` in `run_tests.yml`) is green
-  on the exact commit you are about to tag:
+```bash
+gh run watch --exit-status "$(gh run list --workflow run_tests.yml --commit "$(git rev-parse HEAD)" \
+  --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
 
-  ```bash
-  gh run list --workflow run_tests.yml --commit "$(git rev-parse HEAD)" \
-    --json conclusion,databaseId
-  gh run view <databaseId> --json jobs \
-    --jq '.jobs[] | select(.name == "Performance gates (Linux x86_64)") | .conclusion'
-  ```
-
-- When the version changes rendering (GPUI elements, animations, the sidebar,
-  tabs, the terminal painter), the real hardware protocol of
-  [bench/README.md](../../bench/README.md#real-hardware-protocol) has been run
-  on this commit under Linux against the previous minor version, and its
-  results and summary are committed.
+Before tagging a minor version (`X.Y.0`), when the version changes rendering
+(GPUI elements, animations, the sidebar, tabs, the terminal painter), the real
+hardware protocol of
+[bench/README.md](../../bench/README.md#real-hardware-protocol) must also have
+been run on this commit under Linux against the previous minor version, with
+its results and summary committed. No CI gate covers it.
 
 ```bash
 git tag -a "v$VERSION" -m "Release v$VERSION"
@@ -170,6 +170,21 @@ skips `repo_publish` and `update_cask` by design.
 
 `gh run list --branch` does not match tag refs, so filter the tag-triggered
 run by event.
+
+The release resolves the tagged commit once, in `preflight`, and fails there
+within a minute when the tag is not `v` followed by the `Cargo.toml` version.
+`ci-verdict` runs beside the builds and waits, polling every 60 s for up to
+60 min, while `run_tests` is still running on that commit. It fails with the
+job name, its URL and the command to run when a required job is red, canceled
+or skipped, which happens when a path filter skipped the Rust jobs:
+
+```bash
+gh workflow run run_tests.yml --ref "v$VERSION"
+```
+
+Once that run is green, re-run the failed jobs of the release run. The
+publish job also refuses to run if the tag was moved to another commit while
+the release was in flight.
 
 ```bash
 gh run watch --exit-status "$(gh run list --workflow=release.yml --event=push --limit=1 --json databaseId --jq '.[0].databaseId')"
@@ -187,7 +202,8 @@ gh run view "$RUN_ID" --json jobs --jq '.jobs[] | "\(.name): \(.conclusion)"'
 `Dry-run artifact summary` is skipped on a tag push; that is expected.
 Read the annotations of a green `release` run: `ENOENT` from the
 `rust-cache` post step is noise, a `::warning::` on signing, `lintian`, or
-a GPG fingerprint is not.
+a GPG fingerprint is not, and neither is a `ci-verdict` failure, which no
+re-run of the build legs fixes.
 
 ## Step 4 - Verify the asset set
 
