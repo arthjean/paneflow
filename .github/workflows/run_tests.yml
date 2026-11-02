@@ -42,7 +42,11 @@ jobs:
   # expensive downstream leg on what the PR actually touched.
   #
   # Outputs:
-  #   - rust:             any Rust source or manifest changed
+  #   - rust:             any file the build reads changed: whole source
+  #                       directories, manifests, and the non-Rust inputs that
+  #                       scripts/check-ci-filter-coverage.sh finds cited by
+  #                       include_str!, include_bytes!, #[folder] and
+  #                       rerun-if-changed
   #   - rendering:        the GPUI paint / font / theme paths the visual
   #                       smoke jobs are designed to protect
   #
@@ -60,7 +64,6 @@ jobs:
     outputs:
       rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust }}
       rendering: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rendering }}
-      libghostty: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.libghostty }}
       ci: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ci }}
       security: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.security }}
       release_packaging: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.release_packaging }}
@@ -78,34 +81,25 @@ jobs:
         with:
           filters: |
             rust:
-              - 'src-app/**/*.rs'
-              - 'crates/**/*.rs'
+              - 'src-app/**'
+              - 'crates/**'
+              - 'native/**'
+              - 'skills/**'
+              - 'bench/baselines/**'
+              - 'bench/fixtures/**'
+              - 'protocol/**'
+              - 'schemas/**'
+              - 'examples/**'
+              - 'runtimes/**'
+              - 'mcps/**'
+              - 'fuzz/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'clippy.toml'
-              - 'native/conpty/**'
-              - 'scripts/fetch-conpty.ps1'
-              - 'schemas/**'
+              - 'assets/PaneFlow.ico'
+              - 'packaging/wix/main.wxs'
               - 'docs/user/configuration/schema.md'
-              - 'src-app/src/diff/queries/**'
-              - 'src-app/src/diff/fixtures/**'
-              - 'protocol/**'
-              - 'examples/**'
-              - 'src-app/tests/fixtures/**'
-              - 'runtimes/**'
-              - 'mcps/paneflow/tools/**'
-            # US-013: the native engine inputs. The `rust` filter above only
-            # matches `*.rs` and Cargo manifests, so a change to the pinned
-            # archive, its manifest, or a libghostty build script would
-            # otherwise skip `macos_check` - the only job that type-checks the
-            # Ghostty runtime against a Darwin target.
-            libghostty:
-              - 'native/libghostty/**'
-              - 'crates/paneflow-libghostty-sys/**'
-              - 'crates/paneflow-terminal-ghostty/**'
-              - 'src-app/src/terminal/**'
-              - 'scripts/*libghostty*'
             ci:
               - '.github/workflows/**'
               - '.github/actions/**'
@@ -123,7 +117,6 @@ jobs:
               - 'packaging/**'
               - 'assets/**'
               - 'scripts/**'
-              - 'docs/release/**'
             rendering:
               # GPUI Element + paint pipeline (where c3e2331 lived)
               - 'src-app/src/terminal/element/**'
@@ -183,6 +176,8 @@ jobs:
       # composite action shell traces with -x.
       - name: Workflow lint (action pins, no xtrace)
         run: scripts/check-workflows.sh
+      - name: Path filter covers every build input
+        run: scripts/check-ci-filter-coverage.sh
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
@@ -497,14 +492,14 @@ jobs:
     # short-circuits the 14× pricier macos-15 runner on docs-only /
     # non-workflow .github/** PRs.
     #
-    # US-013 adds the `libghostty` filter so a change to the pinned archive,
-    # its manifest, the -sys crate, the ghostty crate, or src-app/src/terminal
-    # also runs this job: it is the only PR gate that type-checks the Ghostty
-    # runtime against aarch64-apple-darwin. A docs-only PR still skips it.
+    # The `rust` filter matches whole directories (native/**, crates/**,
+    # src-app/**), so a change to the pinned archive, its manifest, the -sys
+    # crate or the ghostty crate also runs this job: it is the only PR gate
+    # that type-checks the Ghostty runtime against aarch64-apple-darwin. A
+    # docs-only PR still skips it.
     needs: orchestrate
     if: >-
       needs.orchestrate.outputs.rust == 'true' ||
-      needs.orchestrate.outputs.libghostty == 'true' ||
       needs.orchestrate.outputs.rendering == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
@@ -1365,9 +1360,10 @@ jobs:
   # the `check_result` block below need editing. The required-status
   # check in branch protection stays pointed at `tests_pass` forever,
   # so PRs don't get stuck on stale required-check names after a
-  # workflow refactor. `if: always()` ensures the aggregator still
-  # reports even when upstream jobs fail, so the merge gate can see
-  # the red.
+  # workflow refactor. `if: ${{ !cancelled() }}` ensures the aggregator
+  # still reports even when upstream jobs fail, so the merge gate can see
+  # the red, while a run canceled by a newer push reports canceled rather
+  # than failure.
   #
   # `security_audit` is INCLUDED in the gate (since 2026-05-27). Its
   # warn-vs-deny graduation lives in deny.toml, not in CI flags, so
@@ -1388,7 +1384,7 @@ jobs:
       - windows_check
       - windows_render_smoke
       - linux_aarch64_check
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
     steps:
       - name: Aggregate upstream results

@@ -40,14 +40,16 @@ on:
 permissions:
   contents: read
 
-# Serialize releases by ref. A tag-push race (or a dry-run launched on
-# top of a real tag) shouldn't double-publish or interrupt a half-baked
-# upload - `cancel-in-progress: false` lets the first run finish
-# atomically. Grouped by `ref_name` so different tags don't block each
-# other. Mirrors Zed's release.yml pattern.
+# Serialize every release run, whatever its tag. A tag-push race (or a
+# dry-run launched on top of a real tag) shouldn't double-publish or
+# interrupt a half-baked upload - `cancel-in-progress: false` lets the first
+# run finish atomically. `queue: max` keeps every waiting run instead of the
+# default single pending slot, which cancels the older waiter: two tags
+# pushed a minute apart both publish, in the order they were pushed.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 # Every implicit-bash step runs with -e fail-on-error, -u error-on-unset,
 # -o pipefail propagate pipe failures. Never -x: xtrace echoes secrets and
@@ -59,8 +61,6 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: 83fb95624b0439ee660c2679b43b38c8b63769cd
-  ZIG_VERSION: 0.17.0
   # US-003: synthesize the canonical TAG every downstream packaging
   # step already uses as its version source (every `cp`, sha256, .deb,
   # .rpm, .dmg, .msi name resolves through `${TAG#v}`). In tag-push
@@ -71,11 +71,6 @@ env:
   # (where `inputs.version` is null), so this is safe in both
   # contexts.
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
-  # Branch / ref to check out. Tag-push mode picks the tag through its
-  # fully qualified `refs/tags/<tag>` ref, so a branch sharing the tag's
-  # name can never be checked out in its place; dry-run uses the
-  # user-supplied target_ref (default: main).
-  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || format('refs/tags/{0}', github.ref_name) }}
   # A dry-run may need to exercise an upgrade from the latest release while
   # the checked-out source still reports that same version. The override only
   # changes the non-published MSI ProductVersion; real releases always use the
@@ -87,44 +82,79 @@ env:
   RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dry-run' || 'release' }}
 
 jobs:
-  verify_workspace_tests:
-    name: Release test gate (Linux x86_64)
+  # The commit this run builds is resolved once, here, and every other
+  # checkout uses `needs.preflight.outputs.sha`: a tag re-created or a push
+  # to `main` mid-run can no longer mix two commits in one release. The
+  # checkout below is the workflow's own commit (the tag's commit on a tag
+  # push), which only supplies the script. Every input and version invariant
+  # is checked here, in seconds, instead of 38 minutes into the MSI smoke.
+  preflight:
+    name: Resolve the release commit and check its inputs
     runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ github.sha }}
+          sparse-checkout: scripts
 
-      # Fail the whole release in its first job when the embedded update
-      # key is missing or malformed: every build leg bakes it into the
-      # binary, and a keyless build refuses every future update. Only the
-      # `_NEXT` rotation slot may be empty.
+      - name: Resolve the commit and check tag, version and MSI inputs
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          VERSION: ${{ inputs.version }}
+          MSI_UPGRADE_VERSION: ${{ inputs.msi_upgrade_version }}
+          MSI_SMOKES: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main') }}
+        run: scripts/release-preflight.sh
+
+      # Every build leg bakes the embedded update key into the binary, and a
+      # keyless build refuses every future update. Only the `_NEXT` rotation
+      # slot may be empty.
       - name: Verify minisign public keys
         env:
           PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
           PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
         run: scripts/check-minisign-pubkeys.sh
 
-      - uses: ./.github/actions/fetch-libghostty
-
-      - uses: ./.github/actions/linux-build-deps
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+  # fmt, clippy --all-targets and the tests of all four platforms already ran
+  # in `run_tests` on this exact commit. This job reads that verdict instead of
+  # re-running a Linux-only subset, in parallel with the builds, and the
+  # publish job needs it. It waits for a `run_tests` still in progress, and
+  # names the job and the command to re-run when one is red or skipped.
+  ci-verdict:
+    name: run_tests verdict on the release commit
+    needs: preflight
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          toolchain: "1.98.0"
+          persist-credentials: false
+          ref: ${{ needs.preflight.outputs.sha }}
+          sparse-checkout: |
+            .github/workflows
+            scripts
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: release-test-linux
-
-      - name: cargo test --workspace
-        run: cargo test --workspace --locked
+      - name: Require every run_tests job to be success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          RESUME_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || github.ref_name }}
+        run: scripts/require-ci-verdict.sh "$RELEASE_SHA" "$RESUME_REF"
 
   build:
     name: Build ${{ matrix.target }}
-    needs: verify_workspace_tests
+    needs: preflight
     runs-on: ${{ matrix.runs-on }}
     # Signing secrets live in the `release` environment, whose deployment
     # policy admits only `main` and `v*` tags. The policy checks the ref the
@@ -208,9 +238,12 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-          # US-003: dry-run runs check out `inputs.target_ref` (default
-          # `main`); tag-push runs check out `refs/tags/<tag>`.
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.preflight.outputs.sha }}
+
+      - name: Read libghostty pins
+        id: libghostty_pins
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/libghostty-manifest
 
       - name: Checkout pinned Ghostty source
         if: runner.os == 'Linux'
@@ -218,7 +251,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ghostty-org/ghostty
-          ref: ${{ env.GHOSTTY_SHA }}
+          ref: ${{ steps.libghostty_pins.outputs.source_sha }}
           path: .ghostty-source
           fetch-depth: 1
 
@@ -230,7 +263,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: ${{ env.ZIG_VERSION }}
+          version: ${{ steps.libghostty_pins.outputs.zig_version }}
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
@@ -353,54 +386,13 @@ jobs:
           scripts/build-libghostty-linux.sh --target "$TARGET" --verify-reproducible
           echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/$TARGET" >> "$GITHUB_ENV"
 
-      # --- Quality gates (defense-in-depth against shipping broken builds) ---
-      - name: cargo fmt --check
-        if: runner.os != 'Windows'
-        run: cargo fmt --check
-
-      - name: cargo fmt --check (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo fmt --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: cargo clippy (Linux)
-        if: runner.os == 'Linux'
-        run: >-
-          cargo clippy --workspace --locked
-          --target ${{ matrix.target }}
-          -- -D warnings
-
-      # US-016 AC3: release-time lint has to see the same cfg surface as the
-      # pull-request lint in `run_tests.yml`, otherwise `ghostty_native` code
-      # would first be linted at tag time, on the one run that cannot be
-      # cheaply retried.
-      - name: cargo clippy (macOS)
-        if: runner.os == 'macOS'
-        run: >-
-          cargo clippy --workspace --locked
-          --target ${{ matrix.target }} -- -D warnings
-
-      - name: cargo clippy (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # cargo test runs once in the `verify_workspace_tests` job before this
-      # matrix starts. The per-target legs keep fmt, clippy, build, packaging,
-      # signing, and smoke coverage focused on their platform.
-
       # Regenerate every icon asset (.png hicolor set, .icns, .ico,
       # rust-embed runtime icon) from the master PNGs under
       # `assets/icons/master/`. Script is a no-op when no master is present,
       # so this step is safe to land before the masters are committed.
-      # Placement rationale: runs AFTER the Rust quality gates (fmt/clippy/
-      # test surface failures fast) but BEFORE `Build release binary` and
-      # all packaging steps, so cargo-deb / cargo-generate-rpm / bundle-
-      # macos.sh / cargo-wix all see fresh icons from this same checkout.
+      # Placement rationale: runs BEFORE `Build release binary` and all
+      # packaging steps, so cargo-deb / cargo-generate-rpm / bundle-macos.sh
+      # / cargo-wix all see fresh icons from this same checkout.
       # `shell: bash` because the script is bash; on the Windows runner this
       # invokes Git Bash and consumes the preinstalled `magick` binary.
       - name: Regenerate icons from master
@@ -412,9 +404,9 @@ jobs:
       # BEFORE any MSI/packaging step runs. When any are missing, every
       # subsequent Windows-only packaging step (Preflight WiX, Install
       # cargo-wix, Produce MSI, Sign, Verify, Stage) is skipped - only
-      # the cargo fmt / clippy / test / Build release binary validation
-      # remains, which preserves cross-platform compile coverage without
-      # noisy red failures from cargo-wix or unsigned-MSI artifacts.
+      # the Build release binary step remains, which preserves the Windows
+      # release compile without noisy red failures from cargo-wix or
+      # unsigned-MSI artifacts.
       #
       # Routing: secrets go through env: so an unset secret resolves to
       # an empty string (not the literal `${{ secrets.NAME }}` placeholder
@@ -1574,9 +1566,9 @@ jobs:
       # ─── Record skipped Windows MSI packaging in job summary ────────────
       # When the Azure secrets aren't populated, the entire MSI chain
       # (Preflight WiX → Install cargo-wix → Produce MSI → Sign → Verify
-      # → Stage) is gated off. The leg still validates Windows code via
-      # cargo fmt / clippy / test / Build release binary, but produces
-      # no .msi artifact. This banner makes that visible in the run
+      # → Stage) is gated off. The leg still builds the Windows release
+      # binary, but produces no .msi artifact. This banner makes that
+      # visible in the run
       # summary so a release reviewer doesn't wonder where the MSI went.
       - name: Record skipped Windows MSI packaging in job summary
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available != 'true'
@@ -1777,9 +1769,10 @@ jobs:
   # GitHub Release exactly once with the merged file set.
   #
   # Atomic-release guarantee (PRD AC6): the publish job `needs:` list
-  # waits for the full build matrix plus every release smoke gate. A
-  # failed Linux x64, Linux aarch64, macOS aarch64, Windows x64, package
-  # smoke, MSI smoke, or auto-update E2E blocks publishing.
+  # waits for `ci-verdict`, the full build matrix and every release smoke
+  # gate. A red or skipped required `run_tests` job on the release commit,
+  # or a failed Linux x64, Linux aarch64, macOS aarch64, Windows x64,
+  # package smoke, MSI smoke, or auto-update E2E blocks publishing.
   release:
     name: Publish GitHub Release
     # US-003: skip the entire publish chain in dry-run mode. The
@@ -1814,6 +1807,8 @@ jobs:
     # it only runs for workflow_dispatch dry-runs, never for tag-push
     # release publishing.
     needs:
+      - preflight
+      - ci-verdict
       - build
       - smoke-test-ubuntu
       - smoke-test-fedora
@@ -1833,6 +1828,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      # AGENTS.md re-creates a tag at the fix commit when a tag build fails.
+      # A run still in flight for the old commit must not publish its
+      # binaries under a tag that now names another commit.
+      - name: Require the tag to still point at the built commit
+        env:
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: |
+          listing="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          tagged="$(awk -v r="refs/tags/$RELEASE_TAG^{}" '$2 == r { print $1; exit }' <<< "$listing")"
+          if [ -z "$tagged" ]; then
+            tagged="$(awk -v r="refs/tags/$RELEASE_TAG" '$2 == r { print $1; exit }' <<< "$listing")"
+          fi
+          if [ "$tagged" != "$RELEASE_SHA" ]; then
+            echo "::error::Tag $RELEASE_TAG now points to ${tagged:-nothing}, this run built $RELEASE_SHA. Re-run the release"
+            exit 1
+          fi
+          echo "$RELEASE_TAG still points to $RELEASE_SHA"
+
       - name: Download all release artifacts
         # `pattern` globs every `release-assets-*` workflow artifact
         # (x86_64 + aarch64 today, more later). `merge-multiple: true`
@@ -2425,7 +2438,7 @@ jobs:
     name: Smoke test - Windows MSI install + relay
     # Only the runs whose build signs (see `build.environment`) produce an MSI.
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
-    needs: build
+    needs: [preflight, build]
     runs-on: windows-2022
     defaults:
       run:
@@ -2434,7 +2447,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.preflight.outputs.sha }}
       - uses: ./.github/actions/fetch-libghostty
 
       - name: Download signed Windows MSI
@@ -3257,7 +3270,7 @@ jobs:
   dry-run-summary:
     name: Dry-run artifact summary
     if: github.event_name == 'workflow_dispatch'
-    needs: build
+    needs: [preflight, build]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all release-assets-* workflow artifacts
@@ -3270,7 +3283,7 @@ jobs:
       - name: Render artifact + SHA-256 table to job summary
         env:
           DRYRUN_TAG: ${{ env.RELEASE_TAG }}
-          DRYRUN_REF: ${{ env.RELEASE_REF }}
+          DRYRUN_REF: ${{ inputs.target_ref || 'main' }} at ${{ needs.preflight.outputs.sha }}
         run: |
           set -euo pipefail
           {
@@ -3319,7 +3332,7 @@ jobs:
   # current ~monthly release cadence.
   auto-update-e2e:
     name: Auto-update e2e (Linux x86_64)
-    needs: build
+    needs: [preflight, build]
     runs-on: ubuntu-22.04
     # The E2E signs the NEW tarball before publish so it can remain a
     # hard `release.needs` gate. That requires the same minisign secret as
@@ -3353,7 +3366,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.preflight.outputs.sha }}
           # Shallow checkout is enough now that the harness no longer
           # does `git worktree add` for the OLD source.
           fetch-depth: 1

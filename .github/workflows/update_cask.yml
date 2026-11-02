@@ -47,10 +47,12 @@ permissions:
 # `Casks/paneflow.rb` in the homebrew tap and one would lose. We never
 # want to interrupt a half-written formula either - `cancel-in-progress:
 # false`. Group by workflow (not tag) so back-to-back tag publishes
-# queue rather than overlap.
+# queue rather than overlap, and `queue: max` so every waiting publish runs
+# instead of the newest canceling the one already waiting.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 # -euo pipefail on every bash step, never -x: xtrace would echo secrets.
 defaults:

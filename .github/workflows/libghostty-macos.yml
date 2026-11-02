@@ -12,14 +12,13 @@ on:
 permissions:
   contents: read
 
+# The nightly gets a group of its own, so a push to main never cancels it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('{0}-schedule', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: 83fb95624b0439ee660c2679b43b38c8b63769cd
-  ZIG_VERSION: 0.17.0
   TARGET: aarch64-apple-darwin
 
 jobs:
@@ -83,49 +82,35 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read libghostty pins
+        id: pins
+        uses: ./.github/actions/libghostty-manifest
+
       - name: Checkout pinned Ghostty source
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: ghostty-org/ghostty
-          ref: ${{ env.GHOSTTY_SHA }}
+          ref: ${{ steps.pins.outputs.source_sha }}
           path: .ghostty-source
           fetch-depth: 1
           persist-credentials: false
 
-      # Fail loudly when a manifest bump forgets one of the three workflow
-      # copies of these pins.
-      - name: Verify workflow pins match the manifest
-        run: |
-          set -euo pipefail
-          manifest_string() {
-            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
-          }
-          for key in source_sha:"$GHOSTTY_SHA" zig_version:"$ZIG_VERSION"; do
-            name="${key%%:*}"
-            want="${key#*:}"
-            got="$(manifest_string "$name")"
-            if [ "$got" != "$want" ]; then
-              echo "::error::workflow pin $name is '$want' but the manifest says '$got'"
-              exit 1
-            fi
-          done
-          echo "workflow pins match native/libghostty/manifest.toml"
-
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          version: ${{ env.ZIG_VERSION }}
+          version: ${{ steps.pins.outputs.zig_version }}
 
       # `llvm-tools` carries llvm-strip / llvm-ar / llvm-nm / llvm-objdump at
       # exactly `macos_llvm_version` in the manifest. The build script refuses
       # any other LLVM, because the normalization recipe is version-sensitive.
       #
-      # This pin is deliberately NOT `rust-toolchain.toml`'s channel. It names
-      # the toolchain whose llvm-tools normalized the committed archive, so it
-      # moves only with `macos_llvm_version` and a fresh `archive_sha256`, not
-      # with a workspace toolchain bump. See docs/release/macos-libghostty.md.
+      # This toolchain is deliberately NOT `rust-toolchain.toml`'s channel. It
+      # is the one whose llvm-tools normalized the committed archive, read out
+      # of `macos_llvm_version`, so it moves only with that key and a fresh
+      # `archive_sha256`, not with a workspace toolchain bump. See
+      # docs/release/macos-libghostty.md.
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.96.1"
+          toolchain: ${{ steps.pins.outputs.macos_rust_toolchain }}
           components: llvm-tools
 
       # No native object cache: the canonical source and cache prefixes are
@@ -138,7 +123,7 @@ jobs:
           # sysroot`, and a directory `rust-toolchain.toml` outranks the
           # toolchain the step above made default. Only RUSTUP_TOOLCHAIN wins,
           # the same way the nightly fuzz job in libghostty-linux.yml pins its.
-          RUSTUP_TOOLCHAIN: "1.96.1"
+          RUSTUP_TOOLCHAIN: ${{ steps.pins.outputs.macos_rust_toolchain }}
         run: |
           scripts/ci-retry-network.sh \
             scripts/build-libghostty-macos.sh \
@@ -198,7 +183,7 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: v1-libghostty-macos-consumer
-          key: ${{ env.TARGET }}-${{ env.GHOSTTY_SHA }}
+          key: ${{ env.TARGET }}-${{ hashFiles('native/libghostty/manifest.toml') }}
 
       # `PANEFLOW_LIBGHOSTTY_DIR` is deliberately left unset for every cargo
       # step below, so `ArtifactBundle::resolve` falls back to
@@ -209,8 +194,8 @@ jobs:
       #
       # clippy and `cargo test` used to run here too. They are exactly what
       # `run_tests.yml::macos_check` already runs on macos-15 against the same
-      # committed archive, and its `libghostty` path filter covers every path
-      # that triggers this workflow, so the copy was a second 14x runner for
+      # committed archive, and its `rust` path filter covers every path that
+      # triggers this workflow, so the copy was a second 14x runner for
       # the same answer. What is left below is what only this lane does: the
       # end-to-end PTY smoke and the static-link / notices contract.
       - name: Build the Ghostty release candidate
@@ -257,7 +242,7 @@ jobs:
 
   validation-summary:
     name: libghostty macOS validation
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [changes, native-rebuild, consumer-qualification]
     runs-on: ubuntu-22.04
     steps:

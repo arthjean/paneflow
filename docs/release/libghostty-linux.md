@@ -74,11 +74,13 @@ verified archives, without requiring a local Ghostty checkout.
 
 ## Updating the pinned native input
 
-Update both `source_sha` in `native/libghostty/manifest.toml` and `GHOSTTY_SHA`
-in the three workflows that carry it: `libghostty-linux.yml`,
-`libghostty-macos.yml` and `release.yml` under `.github/workflows/`. Regenerate bindings and both native target
-directories, review ABI and behavioral differences, then replace the matching
-files under `native/libghostty/prebuilt/<target>`.
+Update `source_sha` in `native/libghostty/manifest.toml`; it is the only copy.
+Every workflow reads it, with `zig_version` and the LLVM and Rust toolchains
+of the engine build, through `.github/actions/libghostty-manifest`
+(`scripts/libghostty-manifest.sh <key>`), and `scripts/check-workflows.sh`
+rejects a literal `GHOSTTY_SHA:` in a workflow. Regenerate bindings and both
+native target directories, review ABI and behavioral differences, then replace
+the matching files under `native/libghostty/prebuilt/<target>`.
 
 The prebuilt directory for each target must contain (the `lib/` entry is
 fetched, the rest is committed):

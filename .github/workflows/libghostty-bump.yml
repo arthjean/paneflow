@@ -51,6 +51,7 @@ permissions:
 concurrency:
   group: libghostty-bump
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_TERM_COLOR: always
@@ -80,15 +81,8 @@ jobs:
           REQUESTED_SHA: ${{ inputs.source_sha }}
           RECIPE_REPIN: ${{ inputs.recipe_repin }}
         run: |
-          manifest_string() {
-            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
-          }
-          current="$(manifest_string source_sha)"
-          zig_version="$(manifest_string zig_version)"
-          if [ -z "$zig_version" ]; then
-            echo "::error::could not read zig_version from the manifest"
-            exit 1
-          fi
+          current="$(scripts/libghostty-manifest.sh source_sha)"
+          zig_version="$(scripts/libghostty-manifest.sh zig_version)"
           echo "zig_version=$zig_version" >> "$GITHUB_OUTPUT"
           if [ -n "$REQUESTED_SHA" ]; then
             case "$REQUESTED_SHA" in
@@ -153,10 +147,7 @@ jobs:
         env:
           SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: |
-          manifest_string() {
-            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
-          }
-          pinned_zig="$(manifest_string zig_version)"
+          pinned_zig="$(scripts/libghostty-manifest.sh zig_version)"
           upstream_zig="$(
             sed -nE 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
               "$SOURCE_DIR/build.zig.zon" | head -1
@@ -179,11 +170,7 @@ jobs:
           SHORT_SHA: ${{ steps.target.outputs.short_sha }}
           RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
         run: |
-          manifest_string() {
-            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
-          }
-
-          header_path="$(manifest_string header_path)"
+          header_path="$(scripts/libghostty-manifest.sh header_path)"
           header_sha="$(sha256sum "$SOURCE_DIR/$header_path" | awk '{print $1}')"
           epoch="$(git -C "$SOURCE_DIR" show -s --format=%ct HEAD)"
           app_version="$(
@@ -199,10 +186,11 @@ jobs:
           # *length* is part of the macOS recipe: debug sections embed absolute
           # paths, and llvm-strip leaves a hole whose size follows that length.
           # A same-width short id keeps the recipe intact.
-          old_short="$(manifest_string source_sha | cut -c1-8)"
-          macos_root="$(manifest_string macos_canonical_source_path)"
-          windows_root="$(manifest_string windows_canonical_source_path)"
-          api_version="$(manifest_string api_version)"
+          old_sha="$(scripts/libghostty-manifest.sh source_sha)"
+          old_short="$(printf '%s' "$old_sha" | cut -c1-8)"
+          macos_root="$(scripts/libghostty-manifest.sh macos_canonical_source_path)"
+          windows_root="$(scripts/libghostty-manifest.sh windows_canonical_source_path)"
+          api_version="$(scripts/libghostty-manifest.sh api_version)"
           short_app_sha="$(printf '%s' "$SOURCE_SHA" | cut -c1-9)"
 
           scripts/repin-libghostty-manifest.sh \
@@ -374,23 +362,16 @@ jobs:
       # committed archive: the recipe is LLVM-version-sensitive and the build
       # script refuses any other version. That toolchain is the one
       # macos_llvm_version names, and it is deliberately NOT
-      # rust-toolchain.toml's channel, so derive it from the manifest rather
-      # than duplicate a pin that a workspace bump would silently invalidate.
-      - name: Resolve the toolchain macos_llvm_version names
-        id: llvm
-        run: |
-          llvm="$(sed -n 's/^macos_llvm_version = "\(.*\)"$/\1/p' native/libghostty/manifest.toml)"
-          rust="$(printf '%s' "$llvm" | sed -n 's/^.*-rust-\(.*\)-stable$/\1/p')"
-          if [ -z "$rust" ]; then
-            echo "::error::could not read a Rust toolchain out of macos_llvm_version '$llvm'"
-            exit 1
-          fi
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
-          echo "macos_llvm_version $llvm needs Rust $rust"
+      # rust-toolchain.toml's channel, so read it from the staged manifest
+      # rather than duplicate a pin that a workspace bump would silently
+      # invalidate.
+      - name: Read the staged libghostty pins
+        id: pins
+        uses: ./.github/actions/libghostty-manifest
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: ${{ steps.llvm.outputs.rust }}
+          toolchain: ${{ steps.pins.outputs.macos_rust_toolchain }}
           components: llvm-tools
 
       - name: Build and prove reproducibility
@@ -400,7 +381,7 @@ jobs:
           # sysroot`, and the directory `rust-toolchain.toml` outranks the
           # toolchain the step above made default. Only RUSTUP_TOOLCHAIN wins,
           # the same way libghostty-macos.yml pins its own rebuild lane.
-          RUSTUP_TOOLCHAIN: ${{ steps.llvm.outputs.rust }}
+          RUSTUP_TOOLCHAIN: ${{ steps.pins.outputs.macos_rust_toolchain }}
         run: |
           scripts/ci-retry-network.sh \
             scripts/build-libghostty-macos.sh \
@@ -465,20 +446,19 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
+  # Every build step that consumes the rebuilt trees runs here, with the
+  # workflow's read-only token and no OIDC identity. `publish` below holds the
+  # write permissions and runs no build script: it only checks out, downloads
+  # what this job verified, attests, publishes, and pushes.
   assemble:
-    name: Publish the archives, attest them, and open the pull request
+    name: Stage the rebuilt archives and verify the re-pinned manifest
     needs: [resolve, bindings, linux, macos, windows]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    permissions:
-      contents: write
-      pull-requests: write
-      # actions/attest-build-provenance signs with the job's OIDC identity and
-      # stores the attestation on this repository.
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v4
         with:
@@ -573,11 +553,99 @@ jobs:
       - name: Verify the re-pinned repository artifact
         run: cargo build -p paneflow-libghostty-sys --locked
 
+      - name: Upload the re-pinned tree
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-repinned-tree
+          path: |
+            native/libghostty
+            !native/libghostty/prebuilt/*/lib
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: Upload the release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-release-assets
+          path: ${{ runner.temp }}/release-assets
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: Report the dry run
+        if: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### libghostty bump dry run"
+            echo
+            echo "Target commit \`${{ needs.resolve.outputs.source_sha }}\` built and verified on every target. No pull request was opened."
+          } >> "$GITHUB_STEP_SUMMARY"
+          git --no-pager diff --stat
+
+  publish:
+    name: Publish the archives, attest them, and open the pull request
+    needs: [resolve, assemble]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      # actions/attest-build-provenance signs with the job's OIDC identity and
+      # stores the attestation on this repository.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      # Never overwrite an existing bump branch: a human fixing a binding
+      # break works on exactly this branch, and a re-run must not throw that
+      # away. Checked before the attestation and the release, so a refused run
+      # publishes nothing.
+      - name: Refuse an existing bump branch or release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          BUMP_ID: ${{ needs.resolve.outputs.bump_id }}
+        run: |
+          branch="bot/libghostty-$BUMP_ID"
+          set +e
+          git ls-remote --exit-code --heads origin "$branch" >/dev/null
+          heads=$?
+          set -e
+          case "$heads" in
+            0)
+              echo "::error::$branch already exists. Delete it, or finish the bump that is already open."
+              exit 1
+              ;;
+            2) ;;
+            *)
+              echo "::error::could not list the branches of origin (git ls-remote exit $heads)"
+              exit 1
+              ;;
+          esac
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::release $RELEASE_TAG already exists. Delete it, or finish the bump that is already open."
+            exit 1
+          fi
+          echo "neither $branch nor the release $RELEASE_TAG exists yet"
+
+      - name: Replace the tree with the verified one
+        run: rm -rf native/libghostty
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-repinned-tree
+          path: native/libghostty
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-release-assets
+          path: ${{ runner.temp }}/release-assets
+
       # SLSA build provenance for the four archives, signed with this job's
       # OIDC identity. Consumers verify it with
       # `gh attestation verify <archive> --repo <owner>/paneflow`.
       - name: Attest the archives
-        if: ${{ !inputs.dry_run }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/release-assets/*
@@ -587,7 +655,6 @@ jobs:
       # pull request so its CI can fetch the archives; a bump that is closed
       # unmerged leaves this release behind, and it is deleted by hand.
       - name: Publish the archives as a pre-release
-        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -595,10 +662,6 @@ jobs:
           RELEASE_ASSETS: ${{ runner.temp }}/release-assets
         run: |
           tag="$RELEASE_TAG"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "::error::release $tag already exists. Delete it, or finish the bump that is already open."
-            exit 1
-          fi
           gh release create "$tag" \
             --prerelease \
             --target "$GITHUB_SHA" \
@@ -607,7 +670,6 @@ jobs:
             "$RELEASE_ASSETS"/*
 
       - name: Open the pull request
-        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -622,13 +684,6 @@ jobs:
             title="chore(libghostty): republish libghostty-vt $SHORT_SHA for the recipe at $(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
           else
             title="chore(libghostty): re-pin libghostty-vt to $SHORT_SHA"
-          fi
-          # Never overwrite an existing bump branch. A human fixing a binding
-          # break works on exactly this branch, and a re-run must not throw
-          # that away.
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            echo "::error::$branch already exists. Delete it, or finish the bump that is already open."
-            exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -674,12 +729,3 @@ jobs:
             --base main \
             --head "$branch"
 
-      - name: Report the dry run
-        if: ${{ inputs.dry_run }}
-        run: |
-          {
-            echo "### libghostty bump dry run"
-            echo
-            echo "Target commit \`${{ needs.resolve.outputs.source_sha }}\` built and verified on every target. No pull request was opened."
-          } >> "$GITHUB_STEP_SUMMARY"
-          git --no-pager diff --stat

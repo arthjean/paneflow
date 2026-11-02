@@ -20,13 +20,15 @@ bash scripts/check-workflows.sh                     # when .github/** changes: a
 
 **`cargo fmt --check` before every `git commit` and every `git push` that
 touches Rust code.** If it reports a diff, run `cargo fmt`, re-stage, then
-commit. The release pipeline runs the same check on all four Build jobs (Linux
-x86_64, Linux aarch64, macOS aarch64, Windows x86_64). One mis-formatted line
-fails all four legs, skips "Publish GitHub Release", and burns a 25 minute run
-for nothing. A dirty tag commit is worse: the tag has to be deleted and
-re-created at the fix commit, because the original tagged build cannot be
-salvaged. For a tag-push release, run `cargo fmt --check` one final time on the
-exact commit you are about to tag.
+commit. The release pipeline does not re-run fmt, clippy or the tests: its
+`ci-verdict` job requires every required `run_tests` job, `Style (fmt + clippy)`
+included, to be `success` on the exact commit being released, and "Publish
+GitHub Release" needs it. One mis-formatted line on that commit turns Style red
+and blocks the release. A dirty tag commit is worse: the tag has to be deleted
+and re-created at the fix commit, and the publish job refuses to run once the
+tag no longer points at the commit it built. For a tag-push release, run
+`cargo fmt --check` one final time on the exact commit you are about to tag,
+and wait for `run_tests` to be green on it.
 
 rustfmt output drifts between Rust point releases, so code that was clean last
 week can need re-formatting after a toolchain bump. Always run the real
