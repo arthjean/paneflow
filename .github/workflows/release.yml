@@ -456,6 +456,7 @@ jobs:
               throw "Expected helper artifact missing: $artifact"
             }
             pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $artifact
+            if ($LASTEXITCODE -ne 0) { throw "Signing failed for $artifact (exit $LASTEXITCODE)" }
             Copy-Item -LiteralPath $artifact -Destination (Join-Path $embedDir $name) -Force
           }
 
@@ -1295,6 +1296,7 @@ jobs:
                   throw "No Windows release executable found at $exe. The Build release binary step may have failed or emitted an unexpected path."
               }
               pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $exe
+              if ($LASTEXITCODE -ne 0) { throw "Signing failed for $exe (exit $LASTEXITCODE)" }
           }
 
       - name: Verify Windows libghostty release payload
@@ -1443,6 +1445,7 @@ jobs:
           # Quoted "$msi" so a path with spaces (unlikely with cargo-wix
           # defaults but defensive) is passed as one argv element.
           pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile "$msi"
+          if ($LASTEXITCODE -ne 0) { throw "Signing failed for $msi (exit $LASTEXITCODE)" }
 
       # ─── US-024 AC-6: Verify MSI signature at workflow level ─────────────
       # `sign-windows.ps1` already runs `signtool verify /pa /v` + an
@@ -1512,6 +1515,54 @@ jobs:
               throw "signtool verify did not emit 'Successfully verified' - AC-6 sentinel missing."
           }
           Write-Output "AC-6 sentinel 'Successfully verified' present."
+
+      # Every executable the MSI installs, and the MSI itself, must carry a
+      # valid Authenticode signature before anything is uploaded. The embedded
+      # helpers are checked at the copies rust-embed ingested, and every shim
+      # copy is checked where WiX picks it up.
+      - name: Verify Windows Authenticode signatures
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $releaseDir = Join-Path 'target' "$env:TARGET/release"
+          $embedDir = Join-Path 'src-app/target/embed/bin' $env:TARGET
+          $helperDir = Join-Path $releaseDir 'paneflow-helpers'
+          $files = [System.Collections.Generic.List[string]]::new()
+          $files.Add((Join-Path $releaseDir 'paneflow.exe'))
+          $files.Add((Join-Path $releaseDir 'paneflow-host.exe'))
+          foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe', 'paneflow-mcp.exe')) {
+              $files.Add((Join-Path $embedDir $name))
+          }
+          $packaged = @(Get-ChildItem -LiteralPath $helperDir -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+          if ($packaged.Count -eq 0) {
+              throw "No packaged helper executable found under $helperDir"
+          }
+          foreach ($helper in $packaged) { $files.Add($helper.FullName) }
+          $msis = @(Get-ChildItem -Path 'target/wix' -Filter 'paneflow-*.msi' -File)
+          if ($msis.Count -ne 1) {
+              throw "Expected exactly one MSI under target/wix/, found $($msis.Count)"
+          }
+          $files.Add($msis[0].FullName)
+
+          $failures = [System.Collections.Generic.List[string]]::new()
+          foreach ($file in $files) {
+              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                  $failures.Add("$file (missing)")
+                  continue
+              }
+              $signature = Get-AuthenticodeSignature -LiteralPath $file
+              Write-Output "$($signature.Status) $file"
+              if ($signature.Status -ne 'Valid') {
+                  $failures.Add("$file ($($signature.Status): $($signature.StatusMessage))")
+              }
+          }
+          if ($failures.Count -gt 0) {
+              foreach ($failure in $failures) { Write-Output "::error::Not validly signed: $failure" }
+              throw "$($failures.Count) of $($files.Count) Windows file(s) are not validly signed"
+          }
+          Write-Output "All $($files.Count) Windows executables and the MSI carry a valid Authenticode signature."
 
       # ─── Record skipped Windows MSI packaging in job summary ────────────
       # When the Azure secrets aren't populated, the entire MSI chain
