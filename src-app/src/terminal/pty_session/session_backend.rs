@@ -202,6 +202,10 @@ impl TerminalSessionBackend {
         self.ghostty.select_all_text()
     }
 
+    pub(crate) fn screen_text(&self) -> Option<String> {
+        self.ghostty.screen_text()
+    }
+
     pub(crate) fn take_selection_for_copy(&self) -> SelectionCopy {
         self.ghostty.take_selection_for_copy()
     }

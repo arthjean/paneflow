@@ -71,7 +71,6 @@ pub(super) enum RuntimeMessage {
     HyperlinkHover(ghostty::Point),
     #[cfg(test)]
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
-    #[cfg(test)]
     ScreenText(SyncSender<Result<String, String>>),
     RestoreScrollback {
         text: String,

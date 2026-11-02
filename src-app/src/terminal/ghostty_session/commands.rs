@@ -371,7 +371,6 @@ pub(super) fn handle_terminal_command(
                     .map_err(|error| error.to_string()),
             );
         }
-        #[cfg(test)]
         RuntimeMessage::ScreenText(reply) => {
             let _ = reply.send(
                 terminal

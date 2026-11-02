@@ -77,7 +77,7 @@ const SEARCH_RAIL_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
 const HIDDEN_PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
 const INTERACTIVE_OUTPUT_WINDOW: Duration = Duration::from_millis(100);
-const SELECT_ALL_TIMEOUT: Duration = Duration::from_secs(10);
+const WHOLE_BUFFER_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 const SMOOTH_SCROLL_OVERSCAN: (u16, u16) = (1, 1);
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
@@ -864,7 +864,7 @@ impl GhosttySession {
             self.invalidate_gesture(&mut gesture);
             gesture.kind = None;
         }
-        self.request_within(SELECT_ALL_TIMEOUT, RuntimeMessage::SelectAll)
+        self.request_within(WHOLE_BUFFER_TIMEOUT, RuntimeMessage::SelectAll)
             .and_then(Result::ok)
             .flatten()
     }
@@ -1161,9 +1161,8 @@ impl GhosttySession {
             .flatten()
     }
 
-    #[cfg(test)]
     pub(super) fn screen_text(&self) -> Option<String> {
-        self.request(RuntimeMessage::ScreenText)
+        self.request_within(WHOLE_BUFFER_TIMEOUT, RuntimeMessage::ScreenText)
             .and_then(Result::ok)
     }
 

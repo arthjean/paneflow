@@ -573,7 +573,7 @@ impl TerminalView {
         let backend = self.terminal.session_backend();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let baseline = smol::unblock(move || backend.select_all_text())
+                let baseline = smol::unblock(move || backend.screen_text())
                     .await
                     .map_or(0, |text| text.len());
                 let _ = this.update(cx, |view, cx| {
@@ -637,7 +637,7 @@ impl TerminalView {
                 loop {
                     smol::Timer::after(RESUME_FAILURE_POLL).await;
                     let scan_backend = backend.clone();
-                    let text = smol::unblock(move || scan_backend.select_all_text())
+                    let text = smol::unblock(move || scan_backend.screen_text())
                         .await
                         .unwrap_or_default();
                     let done = this.update(cx, |view, cx| {
@@ -1255,6 +1255,46 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(changes.get(), 1);
+    }
+
+    #[gpui::test]
+    fn the_failure_watch_reads_the_pane_without_selecting_its_content(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let view = view(cx);
+        let backend = view.read_with(cx, |view, _| view.terminal.session_backend());
+        backend.write_output_for_test(
+            format!(
+                "claude --resume\r\nNo conversation found with session ID: 0000\r\n{}",
+                "filler\r\n".repeat(60)
+            )
+            .as_bytes(),
+        );
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            view.watch_conversation_start(TerminalAgent::ClaudeCode, cx);
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while view.read_with(cx, |view, _| view.conversation_banner().is_none()) {
+            assert!(
+                Instant::now() < deadline,
+                "the failure watch never read the pane"
+            );
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            view.read_with(cx, |view, _| view.conversation_banner().cloned()),
+            Some(ConversationBanner::ResumeFailed {
+                reason: "No conversation found with session ID".to_string()
+            })
+        );
+        assert_eq!(
+            backend.selection_range(),
+            None,
+            "reading the pane must not leave its whole content selected"
+        );
     }
 
     #[gpui::test]
