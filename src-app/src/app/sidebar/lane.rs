@@ -431,7 +431,7 @@ mod tests {
         let working = SidebarAgentSummary {
             state: SidebarAgentState::Thinking,
             count: 1,
-            tint: None,
+            tint: crate::agent_launcher::TerminalAgent::ClaudeCode.accent(),
         };
         assert_eq!(
             infer_lane(Some(working), Some(pr(PrState::Open))),
@@ -441,6 +441,24 @@ mod tests {
             infer_lane(None, Some(pr(PrState::Open))),
             Some(Lane::PullRequest(pr(PrState::Open)))
         );
+    }
+
+    #[test]
+    fn the_working_matrix_takes_the_runtime_accent_and_falls_back_to_muted() {
+        let ui = crate::theme::ui_colors();
+        let accent = crate::agent_launcher::TerminalAgent::ClaudeCode
+            .accent()
+            .expect("Claude Code declares an accent");
+        let working = |tint| {
+            Lane::Agent(SidebarAgentSummary {
+                state: SidebarAgentState::Thinking,
+                count: 1,
+                tint,
+            })
+        };
+        let accent_color: gpui::Hsla = rgb(accent).into();
+        assert_eq!(lane_visual(working(Some(accent)), ui).0, accent_color);
+        assert_eq!(lane_visual(working(None), ui).0, ui.muted);
     }
 
     #[test]

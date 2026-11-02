@@ -1,5 +1,8 @@
 use super::*;
 
+use super::agents::AgentRank;
+use crate::agent_launcher::TerminalAgent;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SidebarAgentState {
     NeedsInput,
@@ -40,48 +43,96 @@ fn agent_status_sentence(count: usize, singular_state: &str, plural_state: &str)
     }
 }
 
-pub(super) fn sidebar_agent_summary<'a, I>(
+pub(super) fn lane_state(rank: AgentRank) -> Option<SidebarAgentState> {
+    match rank {
+        AgentRank::Blocked => Some(SidebarAgentState::NeedsInput),
+        AgentRank::Errored => Some(SidebarAgentState::Errored),
+        AgentRank::Done => Some(SidebarAgentState::Finished),
+        AgentRank::Working => Some(SidebarAgentState::Thinking),
+        AgentRank::Idle | AgentRank::NoStatus => None,
+    }
+}
+
+const SUMMARY_RANKS: [AgentRank; 4] = [
+    AgentRank::Blocked,
+    AgentRank::Errored,
+    AgentRank::Done,
+    AgentRank::Working,
+];
+
+pub(super) fn sidebar_agent_summary<'a, I, U>(
     sessions: I,
-    completion_unread: usize,
+    unread_results: U,
 ) -> Option<SidebarAgentSummary>
 where
     I: IntoIterator<Item = &'a ai_types::AgentSession>,
+    U: IntoIterator<Item = Option<u64>>,
 {
-    let mut counts = [0usize; 3];
+    let unread: Vec<Option<u64>> = unread_results.into_iter().collect();
+    let mut claimed = vec![false; unread.len()];
+    let mut counts = [0usize; SUMMARY_RANKS.len()];
+    let mut working_tool = None;
+    let mut mixed_working_tools = false;
+    let slot_of = |rank| SUMMARY_RANKS.iter().position(|&shown| shown == rank);
     for session in sessions {
-        let index = match session.state {
-            ai_types::AgentState::WaitingForInput => 0,
-            ai_types::AgentState::Errored => 1,
-            ai_types::AgentState::Thinking => 2,
-            ai_types::AgentState::Finished => continue,
-        };
-        counts[index] += 1;
-    }
-
-    let priority = [SidebarAgentState::NeedsInput, SidebarAgentState::Errored];
-    for (state, count) in priority.into_iter().zip(counts[..2].iter().copied()) {
-        if count > 0 {
-            return Some(SidebarAgentSummary {
-                state,
-                count,
-                tint: None,
-            });
+        let unread_at = session
+            .surface_id
+            .and_then(|surface_id| unread.iter().position(|key| *key == Some(surface_id)));
+        if let Some(slot) = unread_at.and_then(|at| claimed.get_mut(at)) {
+            *slot = true;
+        }
+        let rank = AgentRank::of(session, unread_at.is_some());
+        if rank == AgentRank::Working {
+            mixed_working_tools |= working_tool.is_some_and(|tool| tool != session.tool);
+            working_tool = Some(session.tool);
+        }
+        if let Some(at) = slot_of(rank) {
+            counts[at] += 1;
         }
     }
-
-    if completion_unread > 0 {
-        return Some(SidebarAgentSummary {
-            state: SidebarAgentState::Finished,
-            count: completion_unread,
-            tint: None,
-        });
+    if let Some(at) = slot_of(AgentRank::Done) {
+        counts[at] += claimed.iter().filter(|&&claimed| !claimed).count();
     }
 
-    (counts[2] > 0).then_some(SidebarAgentSummary {
-        state: SidebarAgentState::Thinking,
-        count: counts[2],
-        tint: None,
+    let (rank, count) = SUMMARY_RANKS
+        .into_iter()
+        .zip(counts)
+        .find(|&(_, count)| count > 0)?;
+    let tint = (rank == AgentRank::Working && !mixed_working_tools)
+        .then_some(working_tool)
+        .flatten()
+        .and_then(TerminalAgent::accent);
+    Some(SidebarAgentSummary {
+        state: lane_state(rank)?,
+        count,
+        tint,
     })
+}
+
+pub(super) fn tab_row_agent_summary(
+    workspace: &crate::workspace::Workspace,
+    surfaces: &std::collections::HashSet<u64>,
+) -> Option<SidebarAgentSummary> {
+    sidebar_agent_summary(
+        tab_row_sessions(workspace.agent_sessions.values(), surfaces),
+        workspace
+            .agent_completion_notification
+            .unread_results()
+            .filter(|key| key.is_some_and(|surface_id| surfaces.contains(&surface_id))),
+    )
+}
+
+pub(super) fn folder_row_agent_summary(
+    workspace: &crate::workspace::Workspace,
+    expanded: bool,
+) -> Option<SidebarAgentSummary> {
+    sidebar_agent_summary(
+        folder_row_sessions(workspace.agent_sessions.values(), expanded),
+        workspace
+            .agent_completion_notification
+            .unread_results()
+            .filter(|key| !expanded || key.is_none()),
+    )
 }
 
 pub(super) fn folder_row_sessions<'a, I>(
@@ -161,9 +212,28 @@ mod tests {
         AgentSession::new(TerminalAgent::ClaudeCode, state)
     }
 
+    fn on_surface(state: AgentState, surface_id: u64) -> AgentSession {
+        let mut session = session(state);
+        session.surface_id = Some(surface_id);
+        session.program_status_capable = true;
+        session
+    }
+
+    fn codex() -> TerminalAgent {
+        TerminalAgent::from_binary("codex").expect("codex runtime")
+    }
+
+    fn amp() -> TerminalAgent {
+        TerminalAgent::from_binary("amp").expect("amp runtime")
+    }
+
+    fn claude_tint() -> Option<u32> {
+        TerminalAgent::ClaudeCode.accent()
+    }
+
     #[test]
     fn sidebar_agent_summary_hides_idle_without_signal() {
-        assert_eq!(sidebar_agent_summary(std::iter::empty(), 0), None);
+        assert_eq!(sidebar_agent_summary(std::iter::empty(), []), None);
     }
 
     #[test]
@@ -174,7 +244,7 @@ mod tests {
             session(AgentState::WaitingForInput),
         ];
         assert_eq!(
-            sidebar_agent_summary(sessions.iter(), 0),
+            sidebar_agent_summary(sessions.iter(), []),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 2,
@@ -202,39 +272,132 @@ mod tests {
         for (states, expected) in cases {
             let sessions: Vec<_> = states.into_iter().map(session).collect();
             assert_eq!(
-                sidebar_agent_summary(sessions.iter(), 0).map(|summary| summary.state),
+                sidebar_agent_summary(sessions.iter(), []).map(|summary| summary.state),
                 Some(expected)
             );
         }
     }
 
     #[test]
+    fn each_session_is_ranked_with_the_unread_result_of_its_own_surface() {
+        let sessions = [
+            on_surface(AgentState::Finished, 1),
+            on_surface(AgentState::Finished, 2),
+            on_surface(AgentState::Thinking, 3),
+        ];
+        assert_eq!(
+            sidebar_agent_summary(sessions.iter(), [Some(1), Some(2)]),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Finished,
+                count: 2,
+                tint: None,
+            }),
+            "done outranks working and counts the sessions of its rank"
+        );
+        assert_eq!(
+            sidebar_agent_summary(sessions.iter(), [Some(2)]).map(|summary| summary.count),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn an_agent_back_at_work_over_an_unseen_result_reads_as_working() {
+        let sessions = [on_surface(AgentState::Thinking, 7)];
+        assert_eq!(
+            sidebar_agent_summary(sessions.iter(), [Some(7)]),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Thinking,
+                count: 1,
+                tint: claude_tint(),
+            })
+        );
+    }
+
+    #[test]
+    fn idle_and_no_status_sessions_produce_no_status() {
+        let idle = on_surface(AgentState::Finished, 1);
+        let mut no_status = on_surface(AgentState::Finished, 2);
+        no_status.program_status_capable = false;
+        assert_eq!(sidebar_agent_summary([&idle, &no_status], []), None);
+    }
+
+    #[test]
     fn sidebar_agent_summary_surfaces_unread_completion_without_live_session() {
         assert_eq!(
-            sidebar_agent_summary(std::iter::empty(), 1),
+            sidebar_agent_summary(std::iter::empty(), [None]),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Finished,
                 count: 1,
                 tint: None,
             })
         );
+        let elsewhere = [on_surface(AgentState::Thinking, 8)];
+        assert_eq!(
+            sidebar_agent_summary(elsewhere.iter(), [Some(9)]).map(|summary| summary.state),
+            Some(SidebarAgentState::Finished),
+            "a result whose session is gone still counts as done"
+        );
     }
 
     #[test]
     fn sidebar_agent_summary_hides_acknowledged_finished_session() {
         let sessions = [session(AgentState::Finished)];
-        assert_eq!(sidebar_agent_summary(sessions.iter(), 0), None);
+        assert_eq!(sidebar_agent_summary(sessions.iter(), []), None);
     }
 
     #[test]
     fn the_finished_count_is_the_number_of_unread_surfaces() {
         assert_eq!(
-            sidebar_agent_summary(std::iter::empty(), 3),
+            sidebar_agent_summary(std::iter::empty(), [Some(1), Some(2), None]),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Finished,
                 count: 3,
                 tint: None,
             })
+        );
+    }
+
+    #[test]
+    fn the_matrix_wears_the_accent_of_a_single_working_runtime() {
+        let mut first = on_surface(AgentState::Thinking, 1);
+        let mut second = on_surface(AgentState::Thinking, 2);
+        assert!(claude_tint().is_some());
+        assert_eq!(
+            sidebar_agent_summary([&first, &second], []).and_then(|summary| summary.tint),
+            claude_tint()
+        );
+
+        first.tool = codex();
+        second.tool = codex();
+        assert_eq!(codex().accent(), None);
+        assert_eq!(
+            sidebar_agent_summary([&first, &second], []).map(|summary| summary.tint),
+            Some(None),
+            "a runtime without an accent keeps the muted matrix"
+        );
+    }
+
+    #[test]
+    fn mixed_working_runtimes_keep_the_muted_matrix() {
+        let claude = on_surface(AgentState::Thinking, 1);
+        let mut other = on_surface(AgentState::Thinking, 2);
+        other.tool = amp();
+        assert!(amp().accent().is_some() && amp().accent() != claude_tint());
+        assert_eq!(
+            sidebar_agent_summary([&claude, &other], []),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Thinking,
+                count: 2,
+                tint: None,
+            })
+        );
+
+        let mut idle_other = on_surface(AgentState::Finished, 3);
+        idle_other.tool = amp();
+        assert_eq!(
+            sidebar_agent_summary([&claude, &idle_other], []).and_then(|summary| summary.tint),
+            claude_tint(),
+            "only the working sessions choose the accent"
         );
     }
 
@@ -252,7 +415,7 @@ mod tests {
         let sessions = attributed_sessions();
         let surfaces = HashSet::from([11u64]);
         assert_eq!(
-            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), 0),
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), []),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 1,
@@ -262,7 +425,7 @@ mod tests {
         );
 
         assert_eq!(
-            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &HashSet::new()), 0),
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &HashSet::new()), []),
             None
         );
     }
@@ -271,17 +434,17 @@ mod tests {
     fn expanded_folder_keeps_only_the_unattributed_sessions() {
         let sessions = attributed_sessions();
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), 0),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), []),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Thinking,
                 count: 1,
-                tint: None,
+                tint: claude_tint(),
             })
         );
 
         let resolved = [attributed_sessions()[0].clone()];
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), 0),
+            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), []),
             None
         );
     }
@@ -290,7 +453,7 @@ mod tests {
     fn collapsed_folder_re_aggregates_every_tab() {
         let sessions = attributed_sessions();
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), 0),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), []),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 1,
@@ -312,5 +475,33 @@ mod tests {
         let tab_after = tab_row_sessions(sessions.iter(), &surfaces).count();
         assert_eq!((folder_after, tab_after), (0, 2));
         assert_eq!(folder_before + tab_before, folder_after + tab_after);
+    }
+
+    fn working_summary() -> SidebarAgentSummary {
+        SidebarAgentSummary {
+            state: SidebarAgentState::Thinking,
+            count: 1,
+            tint: claude_tint(),
+        }
+    }
+
+    #[test]
+    fn the_tooltip_lists_each_tool_once_with_its_extra_sessions() {
+        let sessions = [session(AgentState::Thinking), session(AgentState::Errored)];
+        let status = ai_types::workspace_agent_status(sessions.iter(), &HashSet::new());
+        assert_eq!(
+            sidebar_agent_status_tooltip(working_summary(), &status).as_ref(),
+            "1 agent thinking · Claude Code +1"
+        );
+    }
+
+    #[test]
+    fn the_tooltip_names_a_detected_agent_without_a_hooked_session_as_running() {
+        let detected = HashSet::from([codex().binary().to_string()]);
+        let status = ai_types::workspace_agent_status(std::iter::empty(), &detected);
+        assert_eq!(
+            sidebar_agent_status_tooltip(working_summary(), &status).as_ref(),
+            format!("1 agent thinking · {} running", codex().display_name())
+        );
     }
 }

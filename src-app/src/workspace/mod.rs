@@ -62,8 +62,8 @@ impl AgentCompletionNotification {
         !self.unread.is_empty()
     }
 
-    pub(crate) fn has_unattributed_unread(&self) -> bool {
-        self.unread.contains(&None)
+    pub(crate) fn unread_results(&self) -> impl Iterator<Item = Option<u64>> + '_ {
+        self.unread.iter().copied()
     }
 
     pub(crate) fn is_unread_for(&self, surfaces: &std::collections::HashSet<u64>) -> bool {
@@ -859,7 +859,7 @@ mod tests {
         let both = HashSet::from([7u64, 8]);
         assert!(notification.is_unread_for(&owning_tab));
         assert!(!notification.is_unread_for(&sibling_tab));
-        assert!(!notification.has_unattributed_unread());
+        assert!(!notification.unread_results().any(|key| key.is_none()));
 
         notification.acknowledge(&sibling_tab, &both);
         assert!(notification.is_unread_for(&owning_tab));
@@ -873,7 +873,7 @@ mod tests {
         let mut notification = AgentCompletionNotification::default();
         notification.record_finished(false, None);
 
-        assert!(notification.has_unattributed_unread());
+        assert_eq!(notification.unread_results().collect::<Vec<_>>(), [None]);
         assert!(notification.is_unread());
         assert!(!notification.is_unread_for(&HashSet::from([7u64])));
 

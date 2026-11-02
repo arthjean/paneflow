@@ -74,12 +74,7 @@ impl PaneFlowApp {
 
         let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
         let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
-        let completion_unread = if is_expanded {
-            usize::from(ws.agent_completion_notification.has_unattributed_unread())
-        } else {
-            ws.agent_completion_notification.unread_count()
-        };
-        let row_agent_status = sidebar_agent_summary(folder_sessions(), completion_unread);
+        let row_agent_status = folder_row_agent_summary(ws, is_expanded);
         let lane = infer_lane(
             row_agent_status,
             (!is_expanded)

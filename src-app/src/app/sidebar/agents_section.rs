@@ -271,13 +271,9 @@ pub(super) fn agent_rows(
             let workspace = workspaces.get(candidate.workspace_idx)?;
             let session = workspace.agent_sessions.get(&candidate.session_key)?;
             let tab = workspace.tabs().get(candidate.tab_idx)?;
-            let status = match candidate.rank {
-                AgentRank::Blocked => AgentRowStatus::Lane(SidebarAgentState::NeedsInput),
-                AgentRank::Errored => AgentRowStatus::Lane(SidebarAgentState::Errored),
-                AgentRank::Done => AgentRowStatus::Lane(SidebarAgentState::Finished),
-                AgentRank::Working => AgentRowStatus::Lane(SidebarAgentState::Thinking),
-                AgentRank::Idle => AgentRowStatus::Silent,
-                AgentRank::NoStatus => {
+            let status = match (lane_state(candidate.rank), candidate.rank) {
+                (Some(state), _) => AgentRowStatus::Lane(state),
+                (None, AgentRank::NoStatus) => {
                     let due = session.started_at + NO_STATUS_GRACE;
                     if now >= due {
                         AgentRowStatus::NoStatus
@@ -286,6 +282,7 @@ pub(super) fn agent_rows(
                         AgentRowStatus::Silent
                     }
                 }
+                (None, _) => AgentRowStatus::Silent,
             };
             let title = if tab.title().trim().is_empty() {
                 session.tool.display_name().to_string()
@@ -1989,6 +1986,84 @@ mod tests {
         assert_eq!(
             capable.rows[0].status,
             AgentRowStatus::Lane(SidebarAgentState::Thinking)
+        );
+    }
+
+    #[gpui::test]
+    fn the_tree_and_the_section_read_the_same_state_for_every_session(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let states = [
+            AgentState::Thinking,
+            AgentState::WaitingForInput,
+            AgentState::Finished,
+            AgentState::Errored,
+        ];
+        let mut shown_by_both = 0;
+        for state in states {
+            for unread in [false, true] {
+                for capable in [false, true] {
+                    let (mut workspace, surfaces) =
+                        workspace_with_agents(cx, 1, "paneflow", &["Agent"]);
+                    workspace.agent_sessions.insert(
+                        1,
+                        agent(
+                            TerminalAgent::ClaudeCode,
+                            state,
+                            capable,
+                            surfaces[0],
+                            Duration::from_secs(10),
+                        ),
+                    );
+                    if unread {
+                        workspace
+                            .agent_completion_notification
+                            .record_finished(false, Some(surfaces[0]));
+                    }
+                    let workspaces = vec![workspace];
+                    let (section, tab, folder) = cx.update(|_, cx| {
+                        let shown = agent_rows(
+                            &workspaces,
+                            None,
+                            Some(0),
+                            AgentRowDetails::ALL,
+                            Instant::now(),
+                            cx,
+                        );
+                        let workspace = &workspaces[0];
+                        let tab_surfaces = workspace.tabs()[0].surface_ids(cx);
+                        (
+                            shown.rows,
+                            tab_row_agent_summary(workspace, &tab_surfaces),
+                            folder_row_agent_summary(workspace, false),
+                        )
+                    });
+                    let case = format!("{state:?} unread={unread} capable={capable}");
+                    assert_eq!(section.len(), 1, "{case}");
+                    let section_state = match section[0].status {
+                        AgentRowStatus::Lane(shown) => Some(shown),
+                        AgentRowStatus::NoStatus | AgentRowStatus::Silent => None,
+                    };
+                    let tab_state = tab.map(|summary| summary.state);
+                    let folder_state = folder.map(|summary| summary.state);
+                    assert_eq!(tab_state, section_state, "tab row, {case}");
+                    assert_eq!(
+                        folder_state, section_state,
+                        "collapsed workspace row, {case}"
+                    );
+                    if state == AgentState::Thinking {
+                        assert_eq!(
+                            section_state,
+                            Some(SidebarAgentState::Thinking),
+                            "an agent back at work reads as working everywhere, {case}"
+                        );
+                    }
+                    shown_by_both += usize::from(section_state.is_some());
+                }
+            }
+        }
+        assert_eq!(
+            shown_by_both, 14,
+            "only finished and seen sessions show no state"
         );
     }
 
