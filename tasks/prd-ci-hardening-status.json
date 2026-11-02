@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Les échecs silencieux deviennent bruyants",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 3
+      "stories_done": 4
     },
     {
       "id": "EP-002",
@@ -96,12 +96,12 @@
       "id": "US-004",
       "title": "Les secrets de signature vivent dans l'environnement release",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-02",
-      "completed_at": null,
+      "completed_at": "2026-11-02",
       "reviewed_at": "2026-11-02"
     },
     {
