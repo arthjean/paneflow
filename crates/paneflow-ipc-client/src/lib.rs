@@ -276,10 +276,10 @@ pub mod windows_pipe {
         )
     }
 
-    fn cancel_and_reap(handle: HANDLE, overlapped: &OVERLAPPED) {
+    fn cancel_and_reap(handle: HANDLE, overlapped: &OVERLAPPED) -> bool {
         let _ = unsafe { CancelIoEx(handle, overlapped) };
         let mut transferred = 0;
-        let _ = unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 1) };
+        unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 1) != 0 }
     }
 
     fn wait_for_completion(
@@ -290,13 +290,11 @@ pub mod windows_pipe {
         let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
         match unsafe { WaitForSingleObject(overlapped.hEvent, timeout_ms) } {
             WAIT_OBJECT_0 => Ok(()),
-            WAIT_TIMEOUT => {
-                cancel_and_reap(handle, overlapped);
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "paneflow named-pipe I/O timed out",
-                ))
-            }
+            WAIT_TIMEOUT if cancel_and_reap(handle, overlapped) => Ok(()),
+            WAIT_TIMEOUT => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "paneflow named-pipe I/O timed out",
+            )),
             WAIT_FAILED => {
                 let error = io::Error::last_os_error();
                 cancel_and_reap(handle, overlapped);

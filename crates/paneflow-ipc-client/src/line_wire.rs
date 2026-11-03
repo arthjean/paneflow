@@ -261,4 +261,52 @@ mod tests {
         drop(accepted);
         drop(held);
     }
+
+    #[test]
+    fn a_read_that_times_out_as_a_line_arrives_keeps_the_line() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = std::path::PathBuf::from(format!(
+            r"\\.\pipe\paneflow-wire-race-{}-{}",
+            std::process::id(),
+            home.path().file_name().unwrap().to_string_lossy()
+        ));
+        let listener = ListenerOptions::new()
+            .name(endpoint.as_path().to_fs_name::<GenericFilePath>().unwrap())
+            .create_sync()
+            .unwrap();
+        let lines = 4_000usize;
+        let writer = std::thread::spawn(move || {
+            let mut wire = Wire::new(listener.accept().unwrap(), 1024).unwrap();
+            for index in 0..lines {
+                let pause = std::time::Duration::from_micros(((index * 7919) % 1500) as u64);
+                let started = std::time::Instant::now();
+                while started.elapsed() < pause {
+                    std::hint::spin_loop();
+                }
+                wire.write_line_with_timeout(index.to_string().as_bytes(), Duration::from_secs(5))
+                    .unwrap();
+            }
+        });
+        let mut reader =
+            Wire::connect_with_timeout(&endpoint, 1024, Duration::from_secs(5)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let mut next = 0usize;
+        while next < lines {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "only {next} lines arrived"
+            );
+            match reader.read_line(Duration::from_millis(1)) {
+                Ok(LineRead::Line(line)) => {
+                    assert_eq!(line, next.to_string(), "line {next} was lost or torn");
+                    next += 1;
+                }
+                Ok(LineRead::Idle) => {}
+                Ok(other) => panic!("unexpected read {:?}", std::mem::discriminant(&other)),
+                Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
+                Err(error) => panic!("read failed: {error}"),
+            }
+        }
+        writer.join().unwrap();
+    }
 }
