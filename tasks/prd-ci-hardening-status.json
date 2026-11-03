@@ -25,7 +25,7 @@
     {
       "id": "EP-003",
       "title": "Les tests instables sont visibles, bornés et corrigés",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 5,
       "stories_done": 0
@@ -160,7 +160,7 @@
       "id": "US-009",
       "title": "Validate assumption: cargo-nextest exécute toute la suite sur les quatre legs",
       "epic": "EP-003",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
