@@ -132,8 +132,6 @@ pub struct SessionManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation_started_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub screen_changed_at_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub program_status_capable: bool,
@@ -422,7 +420,6 @@ mod tests {
             last_hook: None,
             hook_revision: 0,
             generation_started_at_ms: None,
-            screen_changed_at_ms: None,
             declared_status: None,
             program_status_capable: false,
             runtime: None,
@@ -550,6 +547,21 @@ mod tests {
             "{decoded_session}.json",
             decoded_session = decoded.session
         )));
+    }
+
+    #[test]
+    fn a_manifest_carrying_the_retired_screen_stamp_still_decodes() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = sample(SessionId::new());
+        let path = manifest_path(home.path(), &manifest.session);
+        let mut value = serde_json::to_value(&manifest).unwrap();
+        value.as_object_mut().unwrap().insert(
+            "screen_changed_at_ms".to_string(),
+            1_790_190_976_688u64.into(),
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(read_manifest(&path).unwrap(), manifest);
     }
 
     #[test]

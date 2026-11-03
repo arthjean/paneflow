@@ -523,19 +523,18 @@ stale code.
   not announced again. The decision rides on the `agent.event` frame as
   `notify`; the Controller decides whether the user already saw the pane and
   delivers it.
-- **The host viewport scan.**- **The host viewport scan.** Every 500 ms the host thread named
-  `paneflow-host-viewport` asks each live session for its rendered screen and
-  its foreground process group, then edge-writes three manifest fields:
-  `screen_changed_at_ms` when the screen text hash changes (coalesced to one
-  stamp per second, so an idle TUI repainting identical content costs zero
-  writes), `declared_status` with the session's current OSC 7501 record (state,
-  kind, progress, app, title, and a message bounded to 2,048 bytes), and
-  `observed_runtime` with the foreground runtime identity, dropped when the
-  runtime declares a `title_prefix` the pane title does not carry.
+- **The host viewport scan.** Every 500 ms the host thread named
+  `paneflow-host-viewport` asks each live session whose output moved for its
+  title, its OSC 7501 record and capability, and its foreground process group,
+  then edge-writes the manifest: `declared_status` with the session's current
+  OSC 7501 record (state, kind, progress, app, title, and a message bounded to
+  2,048 bytes), `program_status_capable`, and `observed_runtime` with the
+  foreground runtime identity, dropped when the runtime declares a
+  `title_prefix` the pane title does not carry.
   `declared_status` is written for every session, agent or not, and a typed key
   or a reset triggers a rescan even without new output, so a purged record
   leaves the manifest promptly. Nothing is written when nothing changed. The
-  screen text is never classified. The worker carries
+  scan never reads the screen text. The worker carries
   `declared_status` on each snapshot entry, so a program without an agent
   reaches the app too: its state shows in the pane header's progress chip,
   `blocked` and `error` count toward the hidden-space attention mark, and

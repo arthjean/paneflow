@@ -332,7 +332,6 @@ fn finished_manifest(
         last_hook: None,
         hook_revision: 0,
         generation_started_at_ms: None,
-        screen_changed_at_ms: None,
         declared_status: None,
         program_status_capable: false,
         runtime: None,
@@ -377,7 +376,6 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
             last_hook: None,
             hook_revision: 0,
             generation_started_at_ms: None,
-            screen_changed_at_ms: None,
             declared_status: None,
             program_status_capable: false,
             runtime: None,
@@ -720,28 +718,13 @@ fn an_answered_support_query_is_published_and_a_new_generation_starts_without_it
 }
 
 #[test]
-fn the_viewport_scan_stamps_the_screen_and_publishes_a_declared_status() {
+fn the_viewport_scan_publishes_a_declared_status() {
     let home = tempfile::tempdir().unwrap();
     let endpoint = home.path().join("host.sock");
     let host = SessionHost::open(home.path(), &endpoint).unwrap();
     let created = host.create(shell_request(100, 24)).unwrap();
     let session = created.manifest.session.clone();
-    assert!(created.manifest.screen_changed_at_ms.is_none());
     assert!(created.manifest.declared_status.is_none());
-
-    assert!(
-        wait_until(Duration::from_secs(15), || {
-            host.inspect(&session)
-                .is_ok_and(|summary| summary.manifest.screen_changed_at_ms.is_some())
-        }),
-        "the scan stamps the first painted screen"
-    );
-    let stamped = host.inspect(&session).unwrap().manifest;
-    assert!(stamped.declared_status.is_none());
-    assert!(
-        stamped.runtime.is_none(),
-        "a plain shell is never mistaken for an agent runtime"
-    );
 
     let manifest = Arc::clone(&host.lock_sessions()[&session].manifest);
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -780,8 +763,10 @@ fn the_viewport_scan_stamps_the_screen_and_publishes_a_declared_status() {
         }),
         "a declared status reaches the manifest without any hook"
     );
-    let asking = host.inspect(&session).unwrap().manifest;
-    assert!(asking.screen_changed_at_ms >= stamped.screen_changed_at_ms);
+    assert!(
+        host.inspect(&session).unwrap().manifest.runtime.is_none(),
+        "a plain shell is never mistaken for an agent runtime"
+    );
     entered_rx.recv_timeout(Duration::from_secs(15)).unwrap();
     let path = crate::manifest::manifest_path(home.path(), &session);
     let persisted_while_paused = blocked(&read_manifest(&path).unwrap());
@@ -1377,7 +1362,6 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
         last_hook: None,
         hook_revision: 0,
         generation_started_at_ms: None,
-        screen_changed_at_ms: None,
         declared_status: None,
         program_status_capable: false,
         runtime: None,
@@ -1700,7 +1684,6 @@ fn unlaunched_record(host: &SessionHost, session: &SessionId) -> SessionRecord {
         last_hook: None,
         hook_revision: 0,
         generation_started_at_ms: None,
-        screen_changed_at_ms: None,
         declared_status: None,
         program_status_capable: false,
         runtime: None,
@@ -2695,11 +2678,11 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
         .find(|target| target.session == session)
         .unwrap();
     assert_eq!(
-        host.commit_scan(&target, |record| record.screen_changed_at_ms = Some(42)),
+        host.commit_scan(&target, |record| record.program_status_capable = true),
         Some(true)
     );
     let observed = next_frame_of_type(&subscription, "session");
-    assert_eq!(observed["entry"]["screen_changed_at_ms"], 42);
+    assert_eq!(observed["entry"]["program_status_capable"], true);
 
     while subscription.frames.try_recv().is_ok() {}
     host.ingest_agent_event(&burst_event(&session, 0)).unwrap();

@@ -892,7 +892,6 @@ impl SessionHost {
                     cwd: Some(summary.manifest.current_cwd.unwrap_or(summary.manifest.cwd)),
                     last_hook: summary.manifest.last_hook,
                     generation_started_at_ms: summary.manifest.generation_started_at_ms,
-                    screen_changed_at_ms: summary.manifest.screen_changed_at_ms,
                     declared_status: summary.manifest.declared_status,
                     program_status_capable: summary.manifest.program_status_capable,
                     observed_runtime: summary
@@ -1250,7 +1249,6 @@ impl SessionHost {
             last_hook: None,
             hook_revision: 0,
             generation_started_at_ms: Some(created),
-            screen_changed_at_ms: None,
             declared_status: None,
             program_status_capable: false,
             runtime: None,
@@ -1478,7 +1476,6 @@ impl SessionHost {
             guard.current_cwd = None;
             guard.last_hook = None;
             guard.generation_started_at_ms = Some(now_ms());
-            guard.screen_changed_at_ms = None;
             guard.declared_status = None;
             guard.program_status_capable = false;
             guard.runtime = None;

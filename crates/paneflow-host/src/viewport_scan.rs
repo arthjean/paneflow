@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -7,7 +6,7 @@ use paneflow_config::schema::{SessionGeneration, SessionId};
 use paneflow_terminal_ghostty::ProgramStatusReport;
 
 use crate::host::{ScanTarget, SessionHost};
-use crate::manifest::{HostedSessionRuntime, now_ms};
+use crate::manifest::HostedSessionRuntime;
 use crate::process::ProcessIdentity;
 use crate::program_status::DeclaredStatus;
 use crate::runtime::ViewportScan;
@@ -18,44 +17,8 @@ pub const VIEWPORT_SCAN_INTERVAL: Duration = Duration::from_millis(500);
 const VIEWPORT_SCAN_BUDGET: Duration = Duration::from_millis(250);
 const OBSERVATION_SETTLE: Duration = Duration::from_millis(1_500);
 
-const SCREEN_STAMP_COALESCE_MS: u64 = 1_000;
-
-#[derive(Debug, Default)]
-struct ScreenChangeTracker {
-    last_hash: Option<u64>,
-    changed_at_ms: Option<u64>,
-    written_at_ms: Option<u64>,
-    last_write_ms: u64,
-}
-
-impl ScreenChangeTracker {
-    fn write_pending(&self) -> bool {
-        self.changed_at_ms
-            .is_some_and(|changed| Some(changed) != self.written_at_ms)
-    }
-
-    fn observe(&mut self, hash: u64, now_ms: u64) -> Option<u64> {
-        if self.last_hash != Some(hash) {
-            self.last_hash = Some(hash);
-            self.changed_at_ms = Some(now_ms);
-        }
-        let pending = self
-            .changed_at_ms
-            .filter(|changed| Some(*changed) != self.written_at_ms)?;
-        if self.written_at_ms.is_some()
-            && now_ms.saturating_sub(self.last_write_ms) < SCREEN_STAMP_COALESCE_MS
-        {
-            return None;
-        }
-        self.written_at_ms = Some(pending);
-        self.last_write_ms = now_ms;
-        Some(pending)
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct ViewportTracker {
-    screen: ScreenChangeTracker,
     declared_status: Option<DeclaredStatus>,
     program_status_capable: bool,
     scanned_input_at_ms: Option<u64>,
@@ -69,7 +32,6 @@ pub struct ViewportTracker {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScreenView<'a> {
-    pub screen: &'a str,
     pub title: Option<&'a str>,
     pub program_status: Option<&'a ProgramStatusReport>,
     pub program_status_capable: bool,
@@ -78,7 +40,6 @@ pub struct ScreenView<'a> {
 impl<'a> ScreenView<'a> {
     pub fn of(scan: &'a ViewportScan) -> Self {
         Self {
-            screen: &scan.screen,
             title: scan.title.as_deref(),
             program_status: scan.program_status.as_ref(),
             program_status_capable: scan.program_status_capable,
@@ -88,7 +49,6 @@ impl<'a> ScreenView<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewportEdges {
-    pub screen_changed_at_ms: Option<u64>,
     pub declared_status: Option<DeclaredStatus>,
     pub program_status_capable: bool,
     pub observed_runtime: Option<RuntimeObservation>,
@@ -103,7 +63,7 @@ impl ViewportTracker {
     }
 
     pub fn scan_due(&self, output_end: u64) -> bool {
-        self.scanned_output_end != Some(output_end) || self.screen.write_pending()
+        self.scanned_output_end != Some(output_end)
     }
 
     pub fn observe_foreground(
@@ -151,14 +111,11 @@ impl ViewportTracker {
         &mut self,
         view: ScreenView<'_>,
         observation: Option<RuntimeObservation>,
-        now_ms: u64,
     ) -> ViewportEdges {
-        let screen_changed_at_ms = self.screen.observe(screen_hash(view.screen), now_ms);
         let observation = observation.filter(|observed| observed.confirmed_by_title(view.title));
         let declared_status = view.program_status.map(DeclaredStatus::of);
 
-        let write_due = screen_changed_at_ms.is_some()
-            || declared_status != self.declared_status
+        let write_due = declared_status != self.declared_status
             || view.program_status_capable != self.program_status_capable
             || observation != self.observation;
 
@@ -167,19 +124,12 @@ impl ViewportTracker {
         self.observation.clone_from(&observation);
 
         ViewportEdges {
-            screen_changed_at_ms,
             declared_status,
             program_status_capable: view.program_status_capable,
             observed_runtime: observation,
             write_due,
         }
     }
-}
-
-fn screen_hash(screen: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    screen.hash(&mut hasher);
-    hasher.finish()
 }
 
 pub fn spawn(host: &Arc<SessionHost>) {
@@ -284,7 +234,7 @@ fn scan_target(
     let output_moved = tracker.scan_due(output_end);
     let observation =
         tracker.observe_foreground(target.runtime.process(), scan.foreground_process_group);
-    let edges = tracker.observe(ScreenView::of(&scan), observation, now_ms());
+    let edges = tracker.observe(ScreenView::of(&scan), observation);
     tracker.schedule_observation_settle(output_moved, now);
     tracker.record_scanned_output(output_end);
     tracker.record_scanned_terminal(input_at_ms, resets);
@@ -292,9 +242,6 @@ fn scan_target(
         return false;
     }
     host.commit_scan(target, |record| {
-        if let Some(stamp) = edges.screen_changed_at_ms {
-            record.screen_changed_at_ms = Some(stamp);
-        }
         record.declared_status = edges.declared_status;
         record.program_status_capable = edges.program_status_capable;
         let launch_binding = record
@@ -319,18 +266,9 @@ mod tests {
 
     fn observe(
         tracker: &mut ViewportTracker,
-        screen: &str,
         observation: Option<RuntimeObservation>,
-        now_ms: u64,
     ) -> ViewportEdges {
-        tracker.observe(
-            ScreenView {
-                screen,
-                ..ScreenView::default()
-            },
-            observation,
-            now_ms,
-        )
+        tracker.observe(ScreenView::default(), observation)
     }
 
     const CLAUDE: &str = "com.anthropic.claude-code";
@@ -349,18 +287,14 @@ mod tests {
 
     fn observe_declared(
         tracker: &mut ViewportTracker,
-        screen: &str,
         report: Option<&ProgramStatusReport>,
-        now_ms: u64,
     ) -> ViewportEdges {
         tracker.observe(
             ScreenView {
-                screen,
                 program_status: report,
                 ..ScreenView::default()
             },
             None,
-            now_ms,
         )
     }
 
@@ -371,7 +305,7 @@ mod tests {
         blocked.kind = Some(paneflow_terminal_ghostty::ProgramStatusKind::Permission);
         blocked.app = "terraform".to_string();
 
-        let edges = observe_declared(&mut tracker, "$ terraform apply", Some(&blocked), 1_000);
+        let edges = observe_declared(&mut tracker, Some(&blocked));
 
         assert_eq!(
             edges.declared_status,
@@ -386,18 +320,18 @@ mod tests {
         );
         assert!(edges.write_due);
 
-        let edges = observe_declared(&mut tracker, "$ terraform apply", Some(&blocked), 1_200);
+        let edges = observe_declared(&mut tracker, Some(&blocked));
         assert!(!edges.write_due, "an unchanged status is not written again");
 
         let working = declared(ProgramStatusState::Working, "");
-        let edges = observe_declared(&mut tracker, "$ terraform apply", Some(&working), 1_400);
+        let edges = observe_declared(&mut tracker, Some(&working));
         assert_eq!(
             edges.declared_status.map(|status| status.state),
             Some("working".to_string())
         );
         assert!(edges.write_due, "a status change alone is written");
 
-        let edges = observe_declared(&mut tracker, "$ terraform apply", None, 1_600);
+        let edges = observe_declared(&mut tracker, None);
         assert_eq!(edges.declared_status, None);
         assert!(edges.write_due, "a removed record is written");
     }
@@ -405,32 +339,30 @@ mod tests {
     #[test]
     fn a_capability_change_alone_is_published_and_written_once() {
         let mut tracker = ViewportTracker::default();
-        let observe_capable = |tracker: &mut ViewportTracker, capable: bool, now_ms: u64| {
+        let observe_capable = |tracker: &mut ViewportTracker, capable: bool| {
             tracker.observe(
                 ScreenView {
-                    screen: "$ claude",
                     program_status_capable: capable,
                     ..ScreenView::default()
                 },
                 None,
-                now_ms,
             )
         };
-        observe_capable(&mut tracker, false, 1_000);
+        observe_capable(&mut tracker, false);
 
-        let edges = observe_capable(&mut tracker, true, 1_200);
+        let edges = observe_capable(&mut tracker, true);
         assert!(edges.program_status_capable);
         assert_eq!(edges.declared_status, None);
         assert!(edges.write_due, "the answered query alone is written");
 
-        let edges = observe_capable(&mut tracker, true, 1_400);
+        let edges = observe_capable(&mut tracker, true);
         assert!(edges.program_status_capable);
         assert!(
             !edges.write_due,
             "an unchanged capability is not written again"
         );
 
-        let edges = observe_capable(&mut tracker, false, 1_600);
+        let edges = observe_capable(&mut tracker, false);
         assert!(!edges.program_status_capable);
         assert!(edges.write_due, "losing it at the next program is written");
     }
@@ -445,7 +377,7 @@ mod tests {
         );
 
         let working = declared(ProgramStatusState::Working, "");
-        observe_declared(&mut tracker, "$ ", Some(&working), 1_000);
+        observe_declared(&mut tracker, Some(&working));
         assert!(
             !tracker.declared_rescan_due(Some(20), 0),
             "a keystroke never releases working"
@@ -453,7 +385,7 @@ mod tests {
 
         for state in [ProgramStatusState::Done, ProgramStatusState::Error] {
             let finished = declared(state, "");
-            observe_declared(&mut tracker, "$ ", Some(&finished), 2_000);
+            observe_declared(&mut tracker, Some(&finished));
             tracker.record_scanned_terminal(Some(10), 0);
             assert!(!tracker.declared_rescan_due(Some(10), 0), "{state:?}");
             assert!(tracker.declared_rescan_due(Some(20), 0), "{state:?}");
@@ -466,7 +398,7 @@ mod tests {
     fn a_manual_reset_rescans_whatever_the_declared_state() {
         let mut tracker = ViewportTracker::default();
         let blocked = declared(ProgramStatusState::Blocked, "Apply?");
-        observe_declared(&mut tracker, "$ ", Some(&blocked), 1_000);
+        observe_declared(&mut tracker, Some(&blocked));
         tracker.record_scanned_terminal(None, 0);
         assert!(!tracker.declared_rescan_due(None, 0));
         assert!(tracker.declared_rescan_due(None, 1));
@@ -489,7 +421,7 @@ mod tests {
     fn a_session_without_new_output_is_not_rescanned_until_bytes_arrive() {
         let mut tracker = ViewportTracker::default();
         assert!(tracker.scan_due(0));
-        observe(&mut tracker, "$ ", None, 1_000);
+        observe(&mut tracker, None);
         tracker.record_scanned_output(0);
         assert!(!tracker.scan_due(0));
         assert!(tracker.scan_due(12));
@@ -498,62 +430,12 @@ mod tests {
     }
 
     #[test]
-    fn a_coalesced_screen_change_is_still_written_after_the_output_stops() {
+    fn a_steady_scan_costs_zero_manifest_writes() {
         let mut tracker = ViewportTracker::default();
-        assert_eq!(
-            observe(&mut tracker, "first", None, 1_000).screen_changed_at_ms,
-            Some(1_000)
-        );
-        tracker.record_scanned_output(5);
-        assert_eq!(
-            observe(&mut tracker, "second", None, 1_500).screen_changed_at_ms,
-            None
-        );
-        tracker.record_scanned_output(9);
-        assert!(
-            tracker.scan_due(9),
-            "the coalesced change is pending, so the quiet session is scanned again"
-        );
-        assert_eq!(
-            observe(&mut tracker, "second", None, 2_000).screen_changed_at_ms,
-            Some(1_500)
-        );
-        tracker.record_scanned_output(9);
-        assert!(!tracker.scan_due(9));
-    }
-
-    #[test]
-    fn an_idle_tui_repainting_identical_text_never_advances_the_stamp() {
-        let mut tracker = ViewportTracker::default();
-        let screen = "❯\n  ⏵⏵ auto mode on";
-        let first = observe(&mut tracker, screen, None, 1_000);
-        assert_eq!(first.screen_changed_at_ms, Some(1_000));
-        assert!(first.write_due);
-
-        let mut writes = 0;
-        for tick in 1..=20 {
-            let edges = observe(&mut tracker, screen, None, 1_000 + tick * 500);
-            assert_eq!(edges.screen_changed_at_ms, None);
-            if edges.write_due {
-                writes += 1;
-            }
-        }
-        assert_eq!(writes, 0, "a steady screen costs zero manifest writes");
-    }
-
-    #[test]
-    fn a_changing_screen_stamps_at_most_once_per_second() {
-        let mut tracker = ViewportTracker::default();
-        let mut stamps = Vec::new();
-        for tick in 0..20u64 {
-            let screen = format!("❯ frame {tick}");
-            let edges = observe(&mut tracker, &screen, None, tick * 100);
-            if let Some(stamp) = edges.screen_changed_at_ms {
-                stamps.push(stamp);
-            }
-        }
-        assert_eq!(stamps.len(), 2, "{stamps:?}");
-        assert!(stamps[1] - stamps[0] >= SCREEN_STAMP_COALESCE_MS);
+        let writes = (0..20)
+            .filter(|_| observe(&mut tracker, None).write_due)
+            .count();
+        assert_eq!(writes, 0);
     }
 
     fn fx_observation() -> RuntimeObservation {
@@ -570,30 +452,25 @@ mod tests {
     #[test]
     fn an_fx_process_whose_title_is_not_the_agent_title_is_not_an_agent() {
         let mut tracker = ViewportTracker::default();
-        let viewer = "{\n  \"name\": \"paneflow\",\n  \"ok\": true\n}\n┃";
         for title in [None, Some("fx data.json"), Some("~/projects/paneflow")] {
             let edges = tracker.observe(
                 ScreenView {
-                    screen: viewer,
                     title,
                     program_status: None,
                     program_status_capable: false,
                 },
                 Some(fx_observation()),
-                1_000,
             );
             assert_eq!(edges.observed_runtime, None, "{title:?}");
         }
 
         let agent = tracker.observe(
             ScreenView {
-                screen: "𝒇x v0.0.12 · Run /help for commands\n\n┃ hello\n\n• Thinking",
                 title: Some("fx v0.0.12 | paneflow"),
                 program_status: None,
                 program_status_capable: false,
             },
             Some(fx_observation()),
-            2_000,
         );
         assert_eq!(agent.observed_runtime, Some(fx_observation()));
         assert!(agent.write_due);
@@ -602,17 +479,16 @@ mod tests {
     #[test]
     fn an_unchanged_observation_is_not_an_edge_and_a_change_writes_once() {
         let mut tracker = ViewportTracker::default();
-        let screen = "❯";
-        observe(&mut tracker, screen, Some(claude_observation()), 1_000);
-        let steady = observe(&mut tracker, screen, Some(claude_observation()), 2_500);
+        observe(&mut tracker, Some(claude_observation()));
+        let steady = observe(&mut tracker, Some(claude_observation()));
         assert!(!steady.write_due);
 
         let mut moved = claude_observation();
         moved.pid = 43;
-        let changed = observe(&mut tracker, screen, Some(moved.clone()), 4_000);
+        let changed = observe(&mut tracker, Some(moved.clone()));
         assert!(changed.write_due);
         assert_eq!(changed.observed_runtime, Some(moved.clone()));
-        let settled = observe(&mut tracker, screen, Some(moved), 5_500);
+        let settled = observe(&mut tracker, Some(moved));
         assert!(!settled.write_due);
     }
 

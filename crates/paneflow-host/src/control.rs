@@ -792,7 +792,6 @@ mod tests {
                 last_hook: None,
                 hook_revision: 0,
                 generation_started_at_ms: None,
-                screen_changed_at_ms: None,
                 declared_status: None,
                 program_status_capable: false,
                 runtime: None,

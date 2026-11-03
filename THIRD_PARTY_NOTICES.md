@@ -27,9 +27,7 @@ start follow that design. Paneflow's launch binding, socket announce and
 Windows binary hook vehicle are its own.
 
 The foreground runtime matcher in `crates/paneflow-host/src/runtime_observer.rs`
-and the screen change tracker in `crates/paneflow-host/src/viewport_scan.rs`
-are ported from Unpeel's `crates/unpeel-core/src/runtime_observer.rs` and the
-`ScreenChangeTracker` of `crates/unpeel-core/src/session_host.rs` at commit
+is ported from Unpeel's `crates/unpeel-core/src/runtime_observer.rs` at commit
 `443877b`. The leader-first wrapper-aware runtime matcher follows that design.
 Paneflow's manifest fields, scan scheduling, Windows foreground implementation
 and Controller projection are its own.

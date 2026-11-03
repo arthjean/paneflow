@@ -112,7 +112,6 @@ pub struct Checkpoint {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewportScan {
-    pub screen: String,
     pub foreground_process_group: Option<i32>,
     pub cols: u16,
     pub rows: u16,
@@ -1500,12 +1499,10 @@ impl Session {
 
     fn viewport_scan(&mut self) -> Result<ViewportScan, RuntimeError> {
         let foreground_process_group = self.foreground_process_group();
-        let terminal = self.terminal.as_mut().ok_or(RuntimeError::NotLive)?;
-        let screen = terminal
-            .format(ghostty::FormatterOptions::plain_text())
-            .map_err(|e| RuntimeError::Engine(e.to_string()))?;
+        if self.terminal.is_none() {
+            return Err(RuntimeError::NotLive);
+        }
         Ok(ViewportScan {
-            screen,
             foreground_process_group,
             cols: self.cols,
             rows: self.rows,

@@ -940,7 +940,6 @@ mod tests {
             last_hook,
             hook_revision: 0,
             generation_started_at_ms: Some(LAUNCHED_AT),
-            screen_changed_at_ms: None,
             declared_status: None,
             program_status_capable: false,
             runtime: None,
