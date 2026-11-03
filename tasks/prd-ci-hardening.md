@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-02 | Arthur Jean | PRD initial, tiré de l'audit des 13 workflows du 2026-11-02 : échecs silencieux rendus bruyants, gates qui disent la vérité, tests instables visibles et corrigés (Phase 1), puis cache, doublons, supply chain, migration Ubuntu 22.04 et décomposition (Phase 2). 6 epics, 26 stories. |
 | 1.1 | 2026-11-02 | Arthur Jean | Aucune release Paneflow réelle pendant ce PRD : chaque critère se prouve par dry-run ou par un run qui ne publie rien. US-002 se prouve sur un dry-run de `release.yml`, et US-004 supprime les copies de secrets du dépôt après un dry-run signé sur `main`, sans attendre de tag. |
+| 1.2 | 2026-11-03 | Arthur Jean | US-010 : le profil `ci` passe à `retries = 1` avec `flaky-result = "fail"`. Avec `retries = 0`, nextest ne relance jamais un test, qui ne peut donc jamais être FLAKY, ce qui contredisait l'AC « échoue puis passe », FR-05 et l'edge case 6. Seul le test en échec est relancé une fois ; s'il passe, le job échoue quand même. |
 
 ## Problem Statement
 
@@ -307,7 +308,7 @@ Phase 1. Un job vert ne cache plus aucun échec. Un flaky hors quarantaine fait 
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] `.config/nextest.toml` définit un profil `ci` : `retries = 0`, `flaky-result = "fail"`, `fail-fast = false`, `slow-timeout = { period = "60s", terminate-after = 5 }` et un chemin JUnit.
+- [ ] `.config/nextest.toml` définit un profil `ci` : `retries = 1`, `flaky-result = "fail"`, `fail-fast = false`, `slow-timeout = { period = "60s", terminate-after = 5 }` et un chemin JUnit.
 - [ ] La quarantaine est faite d'overrides `[[profile.ci.overrides]]`, un par test, avec `retries = 2`, `flaky-result = "pass"` et le numéro de l'issue de suivi. Elle compte au plus 4 tests au départ : ceux qui ont échoué au moins 3 fois sur la fenêtre de l'audit et que US-011 et US-012 ne corrigent pas.
 - [ ] Les quatre legs de test de `run_tests.yml` lancent `cargo nextest run --workspace --locked --profile ci`, nextest étant installé par `taiki-e/install-action` épinglé par SHA. La boucle PowerShell de `run_tests.yml:993-1021` disparaît, et aucun appel ne passe `--retries` ni `NEXTEST_RETRIES`.
 - [ ] Given un test hors quarantaine qui échoue puis passe, when le run se termine, then le job échoue et une annotation `::error` nomme le test FLAKY.
@@ -599,7 +600,7 @@ Phase 2. La CI quitte les images Ubuntu 22.04 avant leurs brownouts, sans perdre
 
 - **Performance:** chemin critique d'une PR qui touche du Rust en 25 min au plus (28,8 min aujourd'hui pour le leg Windows) ; release dry-run en 30 min au plus (48,9 min) ; `ci-verdict` ajoute au plus 2 min quand `run_tests` est déjà terminé.
 - **Security:** 0 secret dans un log, mesuré par 0 ligne `***` issue d'un secret multi-ligne dans les logs de `repo_publish` et `release` ; 0 finding zizmor de sévérité haute non justifié (13 aujourd'hui) ; 100 % des actions épinglées sur un SHA de commit ; secrets de signature servis à 0 job hors de l'environnement `release`.
-- **Reliability:** au plus 2 retries par test en quarantaine, 0 retry hors quarantaine ; quarantaine de 4 tests au plus au départ et de 2 au plus après 6 mois ; timeout par test de 300 s (60 s × 5) ; chaque job déclare un `timeout-minutes` d'au plus 1,5 fois sa durée maximale observée ; 0 nightly libghostty annulé par un push (17 sur 19 aujourd'hui).
+- **Reliability:** au plus 2 retries par test en quarantaine ; hors quarantaine, un seul rerun du test en échec, qui sert à le nommer FLAKY et ne le fait jamais passer ; quarantaine de 4 tests au plus au départ et de 2 au plus après 6 mois ; timeout par test de 300 s (60 s × 5) ; chaque job déclare un `timeout-minutes` d'au plus 1,5 fois sa durée maximale observée ; 0 nightly libghostty annulé par un push (17 sur 19 aujourd'hui).
 - **Scalability:** cache Actions sous 8 GB pour un quota de 10 GB (11,24 GB aujourd'hui) ; au moins 80 % des jobs `run_tests` sur `main` restaurent un cache.
 - **Accessibility:** non applicable, aucune interface utilisateur. Les annotations et résumés d'étape nomment le test, le fichier et la commande de reprise en texte brut.
 

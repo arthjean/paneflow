@@ -97,6 +97,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'clippy.toml'
+              - '.config/nextest.toml'
               - 'assets/PaneFlow.ico'
               - 'packaging/wix/main.wxs'
               - 'docs/user/configuration/schema.md'
@@ -225,8 +226,25 @@ jobs:
           prefix-key: "v1-rust"
           key: run_tests_linux
 
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest@0.9.146
+
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo nextest run --workspace --locked --profile ci
+
+      - name: Report failing and flaky tests
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-report.sh target/nextest/ci/junit.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-linux-x86_64
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
   release_build_linux:
     name: Release build + binary-size budget (Linux x86_64)
@@ -591,9 +609,8 @@ jobs:
           cargo clippy --workspace --all-targets --locked
           --target aarch64-apple-darwin -- -D warnings
 
-      # AC2 - release build produces the expected binary path. It runs before
-      # the unit tests so a failing test still leaves macos_render_smoke a
-      # binary to render.
+      # The release build and its artifact come before the unit tests, so a
+      # failing test still leaves macos_render_smoke a binary to render.
       - name: cargo build --release (aarch64-apple-darwin)
         run: cargo build --release -p paneflow-app -p paneflow-host --locked --target aarch64-apple-darwin
 
@@ -621,15 +638,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # cargo test on the config crate (39 tests) + app crate (testable
-      # modules like keybindings / update::checker with 150+ tests).
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest@0.9.146
+
       # `--target` pins compilation to aarch64-apple-darwin so test
       # binaries are native Mach-O and the test run exercises the real
       # macOS codepath, not a Linux-host proxy.
-      - name: cargo test --workspace
+      - name: cargo nextest run --workspace
         run: >-
-          cargo test --workspace --locked
+          cargo nextest run --workspace --locked --profile ci
           --target aarch64-apple-darwin
+
+      - name: Report failing and flaky tests
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-report.sh target/nextest/ci/junit.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-macos-aarch64
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
       # AC1 - cargo check must exit 0 with no linker errors.
       - name: cargo check (aarch64-apple-darwin)
@@ -1028,38 +1060,31 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest@0.9.146
+
       # AC-2 step 3/4: tests. Ghostty is linked unconditionally, so the
       # workspace run executes the Windows backend corpus against the real
-      # engine.
-      - name: cargo test --workspace --target x86_64-pc-windows-msvc
-        # PTY/process/IO tests (PowerShell cold start, embedded-binary
-        # extraction, etc.) are timing-sensitive and flake intermittently on a
-        # loaded Windows runner - a different single test each run
-        # (output_generation, ai_hooks::ensure_binaries_extracted, ...).
-        # Deflaking each one won't converge, so retry the whole suite up to 3x:
-        # a flaky single failure clears on re-run; a real failure fails all
-        # three. Runs under the job's pwsh default shell.
-        run: |
-          # The runner prepends `$ErrorActionPreference = 'stop'` to every pwsh
-          # step. Whether that turns a non-zero native exit into a terminating
-          # error - which would abort this loop on the first failure and make
-          # the retry a no-op - depends on $PSNativeCommandUseErrorActionPreference.
-          # It defaults to False (verified on pwsh 7.4.2), but pin it rather than
-          # inherit it, so a future runner image cannot silently disable the retry.
-          $PSNativeCommandUseErrorActionPreference = $false
-          # Log every attempt, not just failures: one line in the log means the
-          # loop aborted early and the retry is not working.
-          $ok = $false
-          foreach ($attempt in 1..3) {
-            Write-Host "cargo test attempt $attempt/3"
-            # A stale value from an earlier native command must not be read as
-            # this attempt's result.
-            $global:LASTEXITCODE = 0
-            cargo test --workspace --locked --target x86_64-pc-windows-msvc
-            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
-            Write-Warning "cargo test attempt $attempt failed (likely a flaky PTY/IO test on a loaded runner); retrying"
-          }
-          if (-not $ok) { exit 1 }
+      # engine. nextest runs each test in its own process inside a job
+      # object, so a test killed at its timeout takes its children with it.
+      # Only the tests quarantined in .config/nextest.toml are retried.
+      - name: cargo nextest run --workspace --target x86_64-pc-windows-msvc
+        run: cargo nextest run --workspace --locked --profile ci --target x86_64-pc-windows-msvc
+
+      - name: Report failing and flaky tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: scripts/ci-test-report.sh target/nextest/ci/junit.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-windows-x86_64
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
       # AC-2 step 4/4: final check. Redundant with clippy in practice
       # (clippy is a superset), but kept as a belt-and-braces signal and
@@ -1361,8 +1386,25 @@ jobs:
       - name: cargo clippy (aarch64-unknown-linux-gnu)
         run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-gnu -- -D warnings
 
-      - name: cargo test --workspace (aarch64-unknown-linux-gnu)
-        run: cargo test --workspace --locked --target aarch64-unknown-linux-gnu
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest@0.9.146
+
+      - name: cargo nextest run --workspace (aarch64-unknown-linux-gnu)
+        run: cargo nextest run --workspace --locked --profile ci --target aarch64-unknown-linux-gnu
+
+      - name: Report failing and flaky tests
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-report.sh target/nextest/ci/junit.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results-linux-aarch64
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: cargo build --workspace --release (aarch64-unknown-linux-gnu)
         run: cargo build --workspace --release --locked --target aarch64-unknown-linux-gnu
