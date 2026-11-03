@@ -1,5 +1,5 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -27,6 +27,7 @@ use paneflow_agent_config::usage::accounts::UsageAgent;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const ACCEPT_WAKE_RETRY: Duration = Duration::from_millis(10);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 const IMPORT_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -430,13 +431,13 @@ impl ServerHandle {
 
     pub fn stop(mut self) -> io::Result<()> {
         self.worker.request_shutdown();
-        if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-            let _ = Stream::connect(name);
-        }
         match self.thread.take() {
-            Some(thread) => thread
-                .join()
-                .map_err(|_| io::Error::other("the worker accept thread panicked"))?,
+            Some(thread) => {
+                wake_until_finished(&self.endpoint, &thread);
+                thread
+                    .join()
+                    .map_err(|_| io::Error::other("the worker accept thread panicked"))?
+            }
             None => Ok(()),
         }
     }
@@ -446,15 +447,22 @@ impl Drop for ServerHandle {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
             self.worker.request_shutdown();
-            if let Ok(name) = self.endpoint.as_path().to_fs_name::<GenericFilePath>() {
-                let _ = Stream::connect(name);
-            }
+            wake_until_finished(&self.endpoint, &thread);
             let _ = thread.join();
         }
         #[cfg(unix)]
         {
             let _ = std::fs::remove_file(&self.endpoint);
         }
+    }
+}
+
+fn wake_until_finished(endpoint: &Path, thread: &JoinHandle<io::Result<()>>) {
+    while !thread.is_finished() {
+        if let Ok(name) = endpoint.to_fs_name::<GenericFilePath>() {
+            let _ = Stream::connect(name);
+        }
+        std::thread::sleep(ACCEPT_WAKE_RETRY);
     }
 }
 
