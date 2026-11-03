@@ -28,7 +28,7 @@
       "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -160,27 +160,27 @@
       "id": "US-009",
       "title": "Validate assumption: cargo-nextest exécute toute la suite sur les quatre legs",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-03",
+      "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-010",
       "title": "nextest remplace la boucle de retry, avec quarantaine et rapport",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-009"
       ],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-03",
+      "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-011",
@@ -192,7 +192,7 @@
       "blocked_by": [],
       "started_at": "2026-11-03",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-012",
@@ -204,19 +204,19 @@
       "blocked_by": [],
       "started_at": "2026-11-03",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-013",
       "title": "Le smoke visuel ne dépend plus des tests unitaires",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-03",
+      "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-014",
