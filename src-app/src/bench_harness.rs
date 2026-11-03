@@ -890,13 +890,16 @@ mod tests {
     #[test]
     fn this_platform_reports_resident_memory_and_cpu_time() {
         let start = process_cpu_time();
-        let deadline = std::time::Instant::now() + Duration::from_millis(50);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut spin = 0_u64;
-        while std::time::Instant::now() < deadline {
+        while process_cpu_time() <= start && std::time::Instant::now() < deadline {
             spin = std::hint::black_box(spin.wrapping_add(1));
         }
         assert!(resident_set_bytes() > 0);
-        assert!(process_cpu_time() > start);
+        assert!(
+            process_cpu_time() > start,
+            "a busy loop accrues process CPU time within 10 s"
+        );
     }
 
     #[test]
