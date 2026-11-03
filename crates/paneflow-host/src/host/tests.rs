@@ -3087,3 +3087,43 @@ fn a_manual_reset_retires_the_published_declared_status_without_new_output() {
     host.stop(&session, None).unwrap();
     host.remove(&session).unwrap();
 }
+
+#[test]
+fn the_final_text_is_served_while_its_cold_write_is_still_queued() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("final-text-queued")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let (marker, exit) = if cfg!(windows) {
+        ("echo FINAL_MAR^KER\r\n", "exit\r\n")
+    } else {
+        ("echo FINAL_MAR''KER\n", "exit\n")
+    };
+    host.input(&session, None, marker.as_bytes().to_vec())
+        .unwrap();
+    assert!(wait_until(Duration::from_secs(15), || {
+        host.text(&session)
+            .is_ok_and(|text| text.text.contains("FINAL_MARKER"))
+    }));
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    host.persistence.spawn_exclusive(move || {
+        let _ = release_rx.recv_timeout(Duration::from_secs(30));
+        Ok(())
+    });
+    host.input(&session, None, exit.as_bytes().to_vec())
+        .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(15), || {
+            host.text(&session).is_ok_and(|text| !text.live)
+        }),
+        "the session exits and its record completes"
+    );
+    let text = host.text(&session).unwrap();
+    release_tx.send(()).unwrap();
+    host.persistence.drain(Duration::from_secs(5)).unwrap();
+    assert!(
+        text.available && text.complete && text.text.contains("FINAL_MARKER"),
+        "a completed record serves its final text before the cold write lands: {text:?}"
+    );
+    let cold = host.text(&session).unwrap();
+    assert!(cold.available && cold.text == text.text);
+}

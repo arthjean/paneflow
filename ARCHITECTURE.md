@@ -946,7 +946,8 @@ drains the PTY for at most two seconds, retires the terminal, releases the
 tail after a one second grace, and keeps a completed record: exit outcome,
 final offset, completeness, and up to 512 KiB of final screen text in a
 `final-output.txt` cold file capped at 64 MiB per home. `session.text`
-serves that text, or says it is unavailable, without any launch; a pane
+serves that text, from memory until its cold write lands, or says it is
+unavailable, without any launch; a pane
 restored onto an ended record shows it read-only. A maintenance thread runs
 retention (24 h for finished records, 30 d for interrupted ones) at most
 once a minute.

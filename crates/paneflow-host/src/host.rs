@@ -97,10 +97,18 @@ struct CompletedRuntime {
     final_offset: u64,
 }
 
+struct QueuedFinalText {
+    generation: SessionGeneration,
+    text: Arc<str>,
+}
+
+type QueuedFinalTextSlot = Arc<Mutex<Option<QueuedFinalText>>>;
+
 struct SessionRecord {
     manifest: Arc<Mutex<SessionManifest>>,
     runtime: Option<Arc<SessionRuntime>>,
     completed: Option<CompletedRuntime>,
+    queued_final_text: QueuedFinalTextSlot,
     launch: Option<PendingLaunch>,
     seed: Arc<Mutex<SeedLedger>>,
     durability: Durability,
@@ -115,6 +123,7 @@ impl SessionRecord {
             manifest,
             runtime: None,
             completed: None,
+            queued_final_text: Arc::new(Mutex::new(None)),
             launch: None,
             seed: Arc::new(Mutex::new(SeedLedger::default())),
             durability: Arc::new(SessionPersistence::default()),
@@ -1869,6 +1878,10 @@ impl SessionHost {
             drop(guard);
             record.runtime = Some(Arc::clone(&runtime));
             record.completed = None;
+            *record
+                .queued_final_text
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             record.launch = None;
             cancelled
         };
@@ -2106,7 +2119,7 @@ impl SessionHost {
     }
 
     pub fn text(&self, session: &SessionId) -> Result<SessionText, HostError> {
-        let (runtime, final_output) = {
+        let (runtime, final_output, queued) = {
             let sessions = self.lock_sessions();
             let record = sessions
                 .get(session)
@@ -2115,13 +2128,18 @@ impl SessionHost {
                 return Err(HostError::LaunchPending(session.clone()));
             }
             let live = record.runtime.clone().filter(|runtime| !runtime.retired());
-            let final_output = record
+            let manifest = record
                 .manifest
                 .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let queued = record
+                .queued_final_text
+                .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .final_output
-                .clone();
-            (live, final_output)
+                .as_ref()
+                .filter(|queued| queued.generation == manifest.generation)
+                .map(|queued| Arc::clone(&queued.text));
+            (live, manifest.final_output.clone(), queued)
         };
         if let Some(runtime) = runtime {
             let text = runtime.text()?;
@@ -2137,7 +2155,10 @@ impl SessionHost {
         };
         let text = final_output
             .text_available
-            .then(|| crate::cold_text::read(&self.home, session))
+            .then(|| match queued {
+                Some(text) => Some(text.to_string()),
+                None => crate::cold_text::read(&self.home, session),
+            })
             .flatten();
         Ok(SessionText {
             available: text.is_some(),
@@ -2797,24 +2818,27 @@ impl SessionHost {
         durability: &Durability,
         record: CompletedRecord,
     ) {
-        let owned = {
+        let queued_slot = {
             let sessions = self.lock_sessions();
             sessions
                 .get(session)
-                .is_some_and(|held| Arc::ptr_eq(&held.manifest, manifest))
-                && manifest
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .generation
-                    == record.generation
+                .filter(|held| {
+                    Arc::ptr_eq(&held.manifest, manifest)
+                        && manifest
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .generation
+                            == record.generation
+                })
+                .map(|held| Arc::clone(&held.queued_final_text))
         };
-        if !owned {
+        let Some(queued_slot) = queued_slot else {
             log::debug!(
                 "paneflow-host: final output of session {session} generation {} dropped; the record moved on",
                 record.generation
             );
             return;
-        }
+        };
         let text_bytes = record.text.len() as u64;
         let text_available = !record.text.is_empty();
         let text_withdrawn = Arc::new(AtomicBool::new(false));
@@ -2826,9 +2850,26 @@ impl SessionHost {
             let text_durability = Arc::clone(durability);
             let withdrawn = Arc::clone(&text_withdrawn);
             let generation = record.generation;
-            let text = record.text;
+            let text: Arc<str> = Arc::from(record.text);
+            *queued_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(QueuedFinalText {
+                generation,
+                text: Arc::clone(&text),
+            });
             self.persistence.spawn_exclusive(move || {
-                if let Err(error) = crate::cold_text::write(&home, &text_session, &text) {
+                let written = crate::cold_text::write(&home, &text_session, &text);
+                let mut queued = queued_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if queued
+                    .as_ref()
+                    .is_some_and(|queued| Arc::ptr_eq(&queued.text, &text))
+                {
+                    *queued = None;
+                }
+                drop(queued);
+                if let Err(error) = written {
                     log::warn!(
                         "paneflow-host: final output of session {text_session} is not retained: {error}"
                     );
