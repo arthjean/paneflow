@@ -1286,6 +1286,7 @@ mod tests {
     use paneflow_ipc_client::line_wire::WRITE_DEADLINE;
 
     use std::sync::atomic::AtomicU64;
+    use std::sync::mpsc;
     use std::time::Instant;
 
     static NEXT_ENDPOINT: AtomicU64 = AtomicU64::new(0);
@@ -2340,7 +2341,7 @@ mod tests {
                 )
                 .unwrap()
                 .next_offset;
-            if String::from_utf8_lossy(&collected).contains(marker) {
+            if visible_text(&String::from_utf8_lossy(&collected)).contains(marker) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(30));
@@ -2369,10 +2370,12 @@ mod tests {
         generation: SessionGeneration,
         from: u64,
         pause_first_frame: Option<Duration>,
+        attached: Option<mpsc::Sender<()>>,
     ) -> JoinHandle<Result<(OutputEnd, String), HostClientError>> {
         std::thread::spawn(move || {
             let mut streamed = Vec::new();
             let mut paused = pause_first_frame;
+            let mut attached = attached;
             let end = client.output(
                 &session,
                 Some(generation),
@@ -2385,7 +2388,12 @@ mod tests {
                     streamed.extend_from_slice(bytes);
                     true
                 },
-                || true,
+                || {
+                    if let Some(attached) = attached.take() {
+                        let _ = attached.send(());
+                    }
+                    true
+                },
             )?;
             Ok((end, String::from_utf8_lossy(&streamed).into_owned()))
         })
@@ -2428,6 +2436,7 @@ mod tests {
                     generation,
                     from,
                     pause,
+                    None,
                 )
             })
             .collect();
@@ -2498,9 +2507,9 @@ mod tests {
         let mut control = HostClient::connect(server.endpoint(), &hello).unwrap();
         let follower_client = HostClient::connect(server.endpoint(), &hello).unwrap();
         #[cfg(windows)]
-        let (shell, args) = ("cmd.exe", vec!["/Q", "/D", "/C", "exit 0"]);
+        let (shell, args) = ("cmd.exe", vec!["/Q", "/D", "/C", "pause >nul"]);
         #[cfg(unix)]
-        let (shell, args) = ("/bin/sh", vec!["-c", "exit 0"]);
+        let (shell, args) = ("/bin/sh", vec!["-c", "stty -echo; read -r line"]);
         let created = control
             .create(
                 &serde_json::from_value(json!({
@@ -2515,7 +2524,23 @@ mod tests {
             .unwrap();
         let session = created.manifest.session.clone();
         let generation = created.manifest.generation;
-        let follower = spawn_follower(follower_client, session.clone(), generation, 0, None);
+        let (attached, follower_attached) = mpsc::channel();
+        let follower = spawn_follower(
+            follower_client,
+            session.clone(),
+            generation,
+            0,
+            None,
+            Some(attached),
+        );
+        follower_attached
+            .recv_timeout(Duration::from_secs(15))
+            .expect("the follower streams from offset 0 while the child still waits for its line");
+        let pressing = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < pressing && host.inspect(&session).is_ok_and(|s| s.live) {
+            let _ = control.input(&session, generation, &shell_line("exit", "exit"));
+            std::thread::sleep(Duration::from_millis(250));
+        }
         let summary = wait_ended(&host, &session, Duration::from_secs(15));
         assert!(matches!(
             summary.manifest.lifecycle,
@@ -2931,6 +2956,7 @@ mod tests {
             session.clone(),
             generation,
             from,
+            None,
             None,
         );
         std::thread::sleep(idle);
