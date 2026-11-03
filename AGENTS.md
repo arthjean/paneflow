@@ -13,7 +13,7 @@ Run from the repository root. The toolchain is pinned in `rust-toolchain.toml`
 ```bash
 cargo fmt --check                                   # mandatory before commit and push
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo nextest run --workspace --locked --profile ci  # the CI runner; cargo test --workspace --locked runs the same suite
 cargo deny check advisories licenses sources        # only when dependencies change
 bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
@@ -86,6 +86,13 @@ macOS and 4-vCPU Windows runners.
 new assertion that compares `elapsed()` to a `Duration` in test code. The
 existing ones are counted per test function in
 `scripts/wallclock-allowlist.txt`, and an entry may only go down.
+
+CI runs the tests with `cargo nextest run --profile ci`: one process per test,
+a 300 s timeout per test, and the JUnit report uploaded as `test-results-<leg>`
+on failure. A failing test is rerun once only to tell a flake from a
+regression: if it then passes it is reported FLAKY and the job still fails.
+Only the tests quarantined in `.config/nextest.toml`, each with its tracking
+issue, may pass on a retry, and the quarantine holds at most four.
 
 ## Cross-platform compatibility is mandatory
 
