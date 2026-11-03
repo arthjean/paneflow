@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Les tests instables sont visibles, bornés et corrigés",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 3
+      "stories_done": 5
     },
     {
       "id": "EP-004",
@@ -186,24 +186,24 @@
       "id": "US-011",
       "title": "Les tests Windows du host n'attendent plus une course",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
+      "completed_at": "2026-11-03",
       "reviewed_at": "2026-11-03"
     },
     {
       "id": "US-012",
       "title": "Pas de SLA temporel dans un test unitaire",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
+      "completed_at": "2026-11-03",
       "reviewed_at": "2026-11-03"
     },
     {
