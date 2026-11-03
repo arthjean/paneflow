@@ -330,7 +330,7 @@ Phase 1. Un job vert ne cache plus aucun échec. Un flaky hors quarantaine fait 
 - [ ] `read_until_marker` (`server.rs:2318`) cherche le marqueur dans le texte visible, hors des séquences OSC et de titre de fenêtre. `repeated_disconnects...` et `a_connection_lost...` passent.
 - [ ] Given la boucle de reproduction de `flaky-forensics.md` §5.1 (200 runs isolés, 30 runs du module `server::tests`) sur l'hôte Windows d'Arthur, then 0 échec des tests modifiés.
 - [ ] Given un host qui renverrait `-32024` à un follower attaché avant la sortie, then le test échoue : la violation de contrat reste détectée.
-- [ ] Aucune modification de `runtime.rs` ni de `host.rs`. Les changements restent dans `mod tests` de `server.rs`, et tout helper ajouté hors de ce module est déclaré avant lui (AGENTS.md, `items_after_test_module`).
+- [ ] Aucune modification de `runtime.rs` ni de `host.rs`. Les changements de `server.rs` restent dans `mod tests` ou dans du code `#[cfg(test)]`, absent du binaire livré, et tout helper ajouté hors de ce module est déclaré avant lui (AGENTS.md, `items_after_test_module`).
 
 #### US-012: Pas de SLA temporel dans un test unitaire
 **Description:** As a mainteneur, I want que les tests unitaires vérifient un résultat sous un délai généreux et que les budgets de latence vivent dans les perf gates so that le leg macOS cesse d'échouer sur des dépassements de 3 à 48 ms.
@@ -655,7 +655,7 @@ Phase 2. La CI quitte les images Ubuntu 22.04 avant leurs brownouts, sans perdre
 ## Files NOT to Modify
 
 - `crates/paneflow-host/src/runtime.rs`, `crates/paneflow-host/src/host.rs` : le contrat de libération de la tail et du record complété (`ARCHITECTURE.md:935-951`), dont dépendent les documents de qualification.
-- `crates/paneflow-host/src/server.rs` hors de `mod tests` : US-011 reste dans le module de tests.
+- `crates/paneflow-host/src/server.rs` hors de `mod tests` et du code `#[cfg(test)]` : US-011 ne change pas le comportement livré.
 - `src-app/build.rs` : construction des helpers `release-min` et plafond total de taille ; US-015 lit ses sorties sans le modifier.
 - `native/libghostty/manifest.toml` et `native/libghostty/prebuilt/**` : seul le bump les modifie.
 - Les quatre `rev` GPUI de `src-app/Cargo.toml` et `rust-toolchain.toml`.
