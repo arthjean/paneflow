@@ -248,6 +248,11 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
     );
 
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    let connected_by = Instant::now() + Duration::from_secs(10);
+    while worker.worker().snapshot_frame()["core_connected"] != true {
+        assert!(Instant::now() < connected_by, "the worker follows the core");
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let worker_endpoint = paneflow_home::serve_endpoint_path(home.path());
     let mut follower = HostControl::connect(&worker_endpoint, "worker-usage-follower").unwrap();
     let header = follower.request(METHOD_AGENT_FOLLOW, json!({})).unwrap();
