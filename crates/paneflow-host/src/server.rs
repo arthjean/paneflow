@@ -1916,7 +1916,11 @@ mod tests {
         let generation = created.manifest.generation;
 
         control
-            .input(&session, generation, b"echo FOLLOW_BEFORE\r\n")
+            .input(
+                &session,
+                generation,
+                &shell_line("echo FOLLOW_BEF^ORE", "echo FOLLOW_BEF''ORE"),
+            )
             .unwrap();
         let mut before = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -1994,7 +1998,7 @@ mod tests {
             "bytes after the checkpoint reach the follower: {text:?}"
         );
         assert!(
-            !text.contains("echo FOLLOW_BEFORE"),
+            !text.contains("FOLLOW_BEF"),
             "bytes before the checkpoint are never replayed: {text:?}"
         );
         assert!(end.next_offset >= resume_from + streamed.len() as u64);
