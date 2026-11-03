@@ -48,7 +48,21 @@ const CONTROL_IDLE_SLICE: Duration = Duration::from_secs(30);
 pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 
 #[cfg(test)]
-static DROP_CONNECTION_AFTER_INPUT: AtomicBool = AtomicBool::new(false);
+static DROP_CONNECTION_AFTER_INPUT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn drops_the_connection_after_this_input(params: &Value) -> bool {
+    let mut armed = DROP_CONNECTION_AFTER_INPUT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let targeted = armed
+        .as_deref()
+        .is_some_and(|session| params["session"].as_str() == Some(session));
+    if targeted {
+        *armed = None;
+    }
+    targeted
+}
 
 pub struct ServerHandle {
     endpoint: PathBuf,
@@ -577,9 +591,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                     }
                 };
                 #[cfg(test)]
-                if method == "session.input"
-                    && DROP_CONNECTION_AFTER_INPUT.swap(false, Ordering::AcqRel)
-                {
+                if method == "session.input" && drops_the_connection_after_this_input(&params) {
                     return;
                 }
                 match wire.write_json(&envelope) {
@@ -2485,8 +2497,9 @@ mod tests {
             match follower.join().unwrap() {
                 Ok((end, text)) => {
                     assert!(!end.live, "follower {index} sees the end of the stream");
+                    let visible = visible_text(&text);
                     assert!(
-                        text.contains("FLOOD-LINE-6000") && text.contains("FLOOD-END"),
+                        visible.contains("FLOOD-LINE-6000") && visible.contains("FLOOD-END"),
                         "follower {index} received the whole flood"
                     );
                 }
@@ -3085,7 +3098,7 @@ mod tests {
         );
         let mut pasting = HostClient::connect(server.endpoint(), &hello).unwrap();
         let paste = shell_line("echo PASTE-DELIV^ERED", "echo PASTE-DELIV''ERED");
-        DROP_CONNECTION_AFTER_INPUT.store(true, Ordering::Release);
+        *DROP_CONNECTION_AFTER_INPUT.lock().unwrap() = Some(session.to_string());
         let error = pasting
             .input(&session, generation, &paste)
             .expect_err("the peer vanished before acknowledging the paste");
@@ -3094,7 +3107,7 @@ mod tests {
             "a missing acknowledgement is a connection loss, not a refusal: {error}"
         );
         assert!(
-            !DROP_CONNECTION_AFTER_INPUT.load(Ordering::Acquire),
+            DROP_CONNECTION_AFTER_INPUT.lock().unwrap().is_none(),
             "the fault fired exactly once"
         );
         let text = read_until_marker(
