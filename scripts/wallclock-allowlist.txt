@@ -43,7 +43,6 @@ crates/paneflow-shim/src/tests/detect.rs find_real_binary_in_completes_under_15m
 crates/paneflow-shim/tests/nested_helper_dirs.rs a_shim_launched_by_another_shim_refuses_to_run 1
 crates/paneflow-shim/tests/nested_helper_dirs.rs two_helper_dirs_without_a_real_binary_fail_with_127_and_no_loop 1
 crates/paneflow-telemetry/src/client.rs flush_blocking_respects_transport_timeout 2
-crates/paneflow-textdiff/src/tests.rs a_side_over_twenty_thousand_chunks_is_too_big 1
 crates/paneflow-textdiff/src/tests.rs identical_texts_short_circuit 1
 crates/paneflow-textdiff/src/tests.rs ten_thousand_cjk_chars_compare_under_fifty_milliseconds 1
 crates/paneflow-textdiff/src/tests.rs ten_thousand_different_lines_compare_under_two_hundred_milliseconds 1

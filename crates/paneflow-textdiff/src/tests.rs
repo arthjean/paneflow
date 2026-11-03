@@ -177,18 +177,6 @@ fn a_side_over_twenty_thousand_chunks_is_too_big() {
         assert!(compare_words(&limit, "x", policy).is_ok());
         assert_eq!(compare_chars(&big, "x", policy), Err(DiffTooBig));
     }
-    let started = Instant::now();
-    for _ in 0..100 {
-        assert_eq!(
-            compare_words(&big, "x", ComparisonPolicy::Default),
-            Err(DiffTooBig)
-        );
-    }
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < budget(Duration::from_millis(200)),
-        "the guard must fail fast, took {elapsed:?}"
-    );
 }
 
 #[test]

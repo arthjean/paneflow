@@ -18,11 +18,6 @@ path = "src/main.rs"
 name = "paneflow-session-fixture"
 path = "src/bin/paneflow-session-fixture.rs"
 
-[[test]]
-name = "conpty"
-path = "tests/conpty.rs"
-harness = false
-
 [dependencies]
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }

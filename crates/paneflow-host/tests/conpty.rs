@@ -1,5 +1,11 @@
-#[cfg(windows)]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#![cfg(windows)]
+
+const TEST_NAME: &str =
+    "conpty_restores_the_cursor_before_forwarding_the_end_of_synchronized_output";
+
+#[test]
+fn conpty_restores_the_cursor_before_forwarding_the_end_of_synchronized_output()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
 
@@ -34,7 +40,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pixel_height: 160,
     })?;
     let mut command = CommandBuilder::new(std::env::current_exe()?);
-    command.arg("--cursor-child");
+    command.args([
+        TEST_NAME,
+        "--exact",
+        "--nocapture",
+        "--quiet",
+        "--color",
+        "never",
+        "--",
+        "--cursor-child",
+    ]);
     let mut child = pair.slave.spawn_command(command)?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader()?;
@@ -90,9 +105,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (4, 2),
         "ConPTY must restore the cursor before forwarding the synchronized-output end marker"
     );
-    println!("ConPTY synchronized cursor redraw passed");
     Ok(())
 }
-
-#[cfg(not(windows))]
-fn main() {}
