@@ -914,7 +914,7 @@ mod tests {
         let run_tests = workflow("run_tests.yml");
         let job = job_block(&run_tests, "perf_gates");
         assert!(job.contains("prefix-key: \"perf-gates-\""), "{job}");
-        assert!(job.contains("timeout-minutes: 30"), "{job}");
+        assert!(job.contains("timeout-minutes: 45"), "{job}");
         assert!(
             job.contains("uses: ./.github/actions/fetch-libghostty"),
             "{job}"
