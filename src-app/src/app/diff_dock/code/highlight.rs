@@ -1338,9 +1338,10 @@ mod tests {
         };
         assert!(h.apply_parsed(&d, parse.run()));
         assert!(
-            h.last_parse_cost() < HIGHLIGHT_FRAME_BUDGET,
+            h.last_parse_cost() < Duration::from_secs(1),
             "a completed parse must replace the estimate that caused the skip"
         );
+        h.set_last_parse_cost(HIGHLIGHT_FRAME_BUDGET / 2);
 
         let edit = d.insert(0, "y").expect("insert");
         assert!(

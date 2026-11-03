@@ -16,6 +16,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo deny check advisories licenses sources        # only when dependencies change
 bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace
+bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
 ```
 
 **`cargo fmt --check` before every `git commit` and every `git push` that
@@ -67,6 +68,24 @@ item order instead, and treat any file containing a `mod tests` as having a hard
 boundary after which nothing else may be declared. Where an item genuinely must
 follow the test module, add an `#[allow(clippy::items_after_test_module,
 reason = "...")]` on the module.
+
+## Unit tests assert outcomes, perf gates own latency
+
+A unit test asserts a result under a generous timeout: it waits for the outcome
+with a deadline measured in seconds and fails only when the outcome never
+comes. A latency budget (a p95, "within 200 ms") lives in the perf gates,
+`scripts/perf-gates.sh` with its budgets in
+`crates/paneflow-host/tests/persistent_baseline/gates.rs`, which run on one
+calibrated Linux x86_64 runner class. A unit test may write its measurement for
+them, as `host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions`
+does through `PANEFLOW_GATE_HOST_STATUS_OUT`. Wall-clock budgets in unit tests
+caused most of the flaky CI failures from 2026-09-28 to 2026-11-02, on 3-vCPU
+macOS and 4-vCPU Windows runners.
+
+`scripts/check-test-wallclock.sh`, run by `Style (fmt + clippy)`, fails on any
+new assertion that compares `elapsed()` to a `Duration` in test code. The
+existing ones are counted per test function in
+`scripts/wallclock-allowlist.txt`, and an entry may only go down.
 
 ## Cross-platform compatibility is mandatory
 
