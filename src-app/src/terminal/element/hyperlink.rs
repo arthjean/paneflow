@@ -522,7 +522,6 @@ pub fn detect_code_paths_on_line_mapped(
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::Instant;
 
     fn line0() -> crate::terminal::types::Line {
         crate::terminal::types::Line(0)
@@ -855,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn perf_scan_200_lines_under_budget() {
+    fn a_scan_of_200_lines_finds_every_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let md_path = write_md(tmp.path(), "perf.md");
         let target = canonical_display(&md_path);
@@ -873,28 +872,13 @@ mod tests {
                 line.push(' ');
             }
         }
-        let started = Instant::now();
         let mut total = 0usize;
         for line in &lines {
             let map = ascii_map(line);
             let zones = detect_file_paths_on_line_mapped(line, line0(), &map, None);
             total += zones.len();
         }
-        let elapsed = started.elapsed();
-        assert!(total >= 10, "expected at least 10 hits, got {}", total);
-        let budget_ms: u128 = if cfg!(debug_assertions) {
-            25
-        } else if cfg!(target_os = "windows") {
-            15
-        } else {
-            5
-        };
-        assert!(
-            elapsed.as_millis() < budget_ms,
-            "200×80 scan took {:?}, exceeds {} ms budget",
-            elapsed,
-            budget_ms
-        );
+        assert_eq!(total, 10, "one hit on every twentieth line");
     }
 
     #[test]

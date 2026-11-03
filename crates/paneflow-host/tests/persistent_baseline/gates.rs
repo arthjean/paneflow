@@ -26,6 +26,12 @@ pub(super) const HOOK_BURST: Scenario = Scenario {
     reproduce: "TMPDIR=/dev/shm cargo test --profile gates --locked -p paneflow-host --lib a_hook_burst_with_slow_durability -- --nocapture",
 };
 
+pub(super) const HOST_STATUS_FANOUT: Scenario = Scenario {
+    id: "host_status_fanout",
+    description: "host.status over 64 silent sessions whose runtimes stall for 3 s, so every memory read runs into the shared 500 ms deadline",
+    reproduce: "cargo test --profile gates --locked -p paneflow-host --lib host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions -- --exact --nocapture",
+};
+
 pub(super) const DESKTOP_IDLE: Scenario = Scenario {
     id: "desktop_idle",
     description: "release desktop under Xvfb with Mesa lavapipe, 4 idle panes, 30 s window",
@@ -173,6 +179,13 @@ pub(super) const BUDGETS: &[Budget] = &[
         unit: "events",
         scenario: &HOOK_BURST,
         margin: "no margin: every acknowledged hook is durable (US-023)",
+    },
+    Budget {
+        counter: "host.status.silent_sessions_ms",
+        limit: Limit::Below(600.0),
+        unit: "ms",
+        scenario: &HOST_STATUS_FANOUT,
+        margin: "the 500 ms MEMORY_USAGE_BUDGET plus 100 ms to wake 64 waiters and build the report; the unit test only bounds it by the budget plus 1 s, since 3-vCPU macOS runners measured 603 to 648 ms",
     },
     Budget {
         counter: "desktop.idle.root_renders",
@@ -717,7 +730,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 23 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 24 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -738,7 +751,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("23 budgets, 2 failed, 0 not measured."),
+            summary.contains("24 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(

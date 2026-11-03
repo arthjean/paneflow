@@ -1139,6 +1139,7 @@ fn perf_gates() {
     measurements["desktop_tui_30_workspaces"] =
         gate_runs::desktop_tui_30_workspaces(&mut client, &ledger, home.path(), &mut values);
     measurements["hook_burst"] = gate_runs::hook_burst(&inputs, &mut values);
+    measurements["host_status_fanout"] = gate_runs::host_status(&inputs, &mut values);
     measurements["desktop_startup"] = gate_runs::startup(&inputs, &mut values);
     measurements["terminal_trickle"] = gate_runs::trickle(&inputs, &mut values);
     drop(worker);

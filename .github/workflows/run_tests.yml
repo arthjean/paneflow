@@ -178,6 +178,8 @@ jobs:
         run: scripts/check-workflows.sh
       - name: Path filter covers every build input
         run: scripts/check-ci-filter-coverage.sh
+      - name: No new wall-clock budget in a unit test
+        run: scripts/check-test-wallclock.sh
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps

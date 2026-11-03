@@ -85,6 +85,11 @@ run_step hook-burst env TMPDIR=/dev/shm PANEFLOW_GATE_HOOK_BURST_OUT="$out/hook-
   host::tests::a_hook_burst_with_slow_durability_loses_nothing_and_never_queues_behind_the_lock \
   -- --exact --nocapture
 
+run_step host-status env PANEFLOW_GATE_HOST_STATUS_OUT="$out/host-status.json" \
+  cargo test --profile gates --locked -p paneflow-host --lib \
+  host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions \
+  -- --exact --nocapture
+
 cargo build --profile gates --locked -p paneflow-app -p paneflow-host
 harness=$(cargo test --profile gates --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
   | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')

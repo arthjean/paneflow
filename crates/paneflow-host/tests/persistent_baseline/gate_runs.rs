@@ -694,6 +694,30 @@ pub(super) fn hook_burst(inputs: &Path, values: &mut Values) -> Value {
     }
 }
 
+pub(super) fn host_status(inputs: &Path, values: &mut Values) -> Value {
+    let name = "host.status.silent_sessions_ms";
+    let path = inputs.join("host-status.json");
+    match read_json(&path) {
+        Ok(document) => {
+            values.insert(
+                name.to_string(),
+                document["elapsed_ms"].as_f64().map_or_else(
+                    || Measurement::Missing(format!("{} carries no elapsed_ms", path.display())),
+                    Measurement::Value,
+                ),
+            );
+            document
+        }
+        Err(error) => {
+            let reason = format!(
+                "the host.status fan-out test wrote no result, so it failed or did not run: {error}"
+            );
+            record_all(values, &[name], &reason);
+            json!({"failed": reason})
+        }
+    }
+}
+
 fn suite_metric<'a>(document: &'a Value, name: &str) -> Option<&'a Value> {
     document["metrics"]
         .as_array()?
@@ -968,9 +992,10 @@ mod tests {
         let empty = tempfile::tempdir().unwrap();
         let mut values = Values::new();
         hook_burst(empty.path(), &mut values);
+        host_status(empty.path(), &mut values);
         startup(empty.path(), &mut values);
         trickle(empty.path(), &mut values);
-        assert_eq!(values.len(), 4);
+        assert_eq!(values.len(), 5);
         assert!(
             values
                 .values()

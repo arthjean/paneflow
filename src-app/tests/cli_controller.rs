@@ -10,7 +10,6 @@ use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
 use serde_json::{Value, json};
 
-const SIDEBAR_BUDGET: Duration = Duration::from_millis(500);
 const RECONNECT_BUDGET: Duration = Duration::from_secs(3);
 const LINE_WAIT: Duration = Duration::from_secs(10);
 
@@ -212,21 +211,15 @@ fn the_cli_renders_the_same_session_projection_as_the_app_and_survives_a_worker_
         "a hook never moves the state: {hooked}"
     );
 
-    let submitted = Instant::now();
     owner
         .input(&session, generation, declare_command("working").as_bytes())
         .expect("the declaration reaches the core-owned PTY");
     let busy = follower.next_event_with_status("busy", LINE_WAIT);
-    let latency = submitted.elapsed();
     assert_eq!(busy["session"], session.to_string());
     assert_eq!(busy["activity_source"], "declared");
     assert_eq!(busy["agent"]["state"], "thinking");
     assert_eq!(busy["runtime_id"], "com.anthropic.claude-code");
     assert_eq!(busy["unread"], false);
-    assert!(
-        latency < SIDEBAR_BUDGET,
-        "the CLI Controller matched the sidebar in {latency:?}, over the {SIDEBAR_BUDGET:?} budget"
-    );
 
     owner
         .call(

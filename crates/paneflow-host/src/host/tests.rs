@@ -2919,10 +2919,23 @@ fn host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions() {
     let started = Instant::now();
     let report = host.resource_report();
     let elapsed = started.elapsed();
+    eprintln!("host.status: 64 silent sessions answered in {elapsed:?}");
+    if let Some(out) = std::env::var_os("PANEFLOW_GATE_HOST_STATUS_OUT") {
+        std::fs::write(
+            out,
+            serde_json::to_vec_pretty(&json!({
+                "sessions": sessions.len(),
+                "memory_budget_ms": crate::runtime::MEMORY_USAGE_BUDGET.as_secs_f64() * 1000.0,
+                "elapsed_ms": elapsed.as_secs_f64() * 1000.0,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
 
     assert!(
-        elapsed < Duration::from_millis(600),
-        "host.status took {elapsed:?} for 64 silent sessions"
+        elapsed < crate::runtime::MEMORY_USAGE_BUDGET + Duration::from_secs(1),
+        "host.status took {elapsed:?} for 64 silent sessions: one shared deadline bounds the memory reads"
     );
     for session in &sessions {
         let entry = report
