@@ -457,7 +457,9 @@ fn probes_never_rewrite_the_index_of_stat_dirty_files() {
 fn agent_commits_never_hit_index_lock_while_probes_run() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
+    let staging = tmp.path().join("staging");
     committed_repo(&root);
+    std::fs::create_dir(&staging).expect("staging dir outside the repository");
     let stop = Arc::new(AtomicBool::new(false));
     let probes = {
         let root = root.clone();
@@ -475,7 +477,10 @@ fn agent_commits_never_hit_index_lock_while_probes_run() {
     let mut failures = Vec::new();
     let started = Instant::now();
     for iteration in 0..500 {
-        std::fs::write(root.join("tracked.txt"), format!("{iteration}\n")).expect("edit");
+        let staged_edit = staging.join("tracked.txt");
+        std::fs::write(&staged_edit, format!("{iteration}\n")).expect("staged edit");
+        std::fs::rename(&staged_edit, root.join("tracked.txt"))
+            .expect("an atomic replace never truncates a file a git probe has mapped");
         let added = fixture::output(&root, &["add", "tracked.txt"]);
         let committed = commit(&root, &format!("agent {iteration}"));
         for out in [&added, &committed] {
