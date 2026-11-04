@@ -1,7 +1,6 @@
 <img alt="Paneflow" src="./src-app/assets/icons/paneflow.png" width="36" height="36">
 
 [![version](https://img.shields.io/github/v/release/arthjean/paneflow?sort=semver&style=flat&label=version&colorA=000000&colorB=000000)](https://github.com/arthjean/paneflow/releases/latest)
-[![users](https://img.shields.io/github/downloads/arthjean/paneflow/total.svg?style=flat&label=users&colorA=000000&colorB=000000)](https://github.com/arthjean/paneflow/releases)
 [![license](https://img.shields.io/github/license/arthjean/paneflow?style=flat&label=license&colorA=000000&colorB=000000)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
 [![discord](https://img.shields.io/badge/discord-join-000000?style=flat&colorA=000000&colorB=000000)](https://discord.gg/UqGM29Gvat)
