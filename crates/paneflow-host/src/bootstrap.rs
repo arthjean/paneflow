@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
+use paneflow_ipc_client::host_control::{SHORTEST_PROBE, answer_windows};
 use serde::{Deserialize, Serialize};
 
 use crate::client::{HostClient, HostClientError};
@@ -25,7 +26,6 @@ const LOCK_RETRY: Duration = Duration::from_millis(25);
 const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
 pub const PROBE_PATIENCE: Duration = crate::protocol::REQUEST_DEADLINE;
-const PROBE_FIRST_ANSWER_DEADLINE: Duration = Duration::from_secs(1);
 pub const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 
 #[cfg(windows)]
@@ -112,34 +112,24 @@ pub enum Probe {
 }
 
 pub fn probe(home: &Path, endpoint: &Path, hello: &ClientHello) -> Probe {
-    let mut attempts = probe_answer_deadlines().peekable();
+    probe_within(home, endpoint, hello, Instant::now() + PROBE_PATIENCE)
+}
+
+pub fn probe_within(home: &Path, endpoint: &Path, hello: &ClientHello, deadline: Instant) -> Probe {
+    let mut windows = answer_windows(deadline.saturating_duration_since(Instant::now())).peekable();
     loop {
-        let attempt = attempts.next().unwrap_or(PROBE_PATIENCE);
-        match HostClient::connect_within(endpoint, hello, attempt) {
-            Err(error) if error.is_unanswered() && attempts.peek().is_some() => {
+        let window = windows.next().unwrap_or(SHORTEST_PROBE);
+        match HostClient::connect_within(endpoint, hello, window) {
+            Err(error) if error.is_unanswered() && windows.peek().is_some() => {
                 log::debug!(
-                    "paneflow-host: {} completed no handshake within {attempt:?}; probing again",
-                    endpoint.display()
+                    "paneflow-host: {} completed no handshake within {} ms; probing again",
+                    endpoint.display(),
+                    window.as_millis()
                 );
             }
             connected => return classify_probe(home, endpoint, connected),
         }
     }
-}
-
-fn probe_answer_deadlines() -> impl Iterator<Item = Duration> {
-    let mut granted = Duration::ZERO;
-    let mut next = PROBE_FIRST_ANSWER_DEADLINE;
-    std::iter::from_fn(move || {
-        let left = PROBE_PATIENCE.saturating_sub(granted);
-        if left.is_zero() {
-            return None;
-        }
-        let attempt = next.min(left);
-        granted += attempt;
-        next = next.saturating_mul(2);
-        Some(attempt)
-    })
 }
 
 fn classify_probe(
@@ -265,7 +255,10 @@ pub fn stop_incompatible_host(home: &Path, endpoint: &Path) -> Result<(), String
     drop(client);
     let deadline = Instant::now() + RETIRE_WAIT;
     loop {
-        if matches!(probe(home, endpoint, &hello), Probe::Unreachable(_)) {
+        if matches!(
+            probe_within(home, endpoint, &hello, deadline),
+            Probe::Unreachable(_)
+        ) {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -344,7 +337,7 @@ pub fn ensure_host_running(
     let mut child = spawn_detached_host(&executable, home, &log)?;
     let started = Instant::now();
     loop {
-        match probe(home, &endpoint, &hello) {
+        match probe_within(home, &endpoint, &hello, started + STARTUP_WAIT) {
             Probe::Running(identity) => {
                 release_child(child);
                 return Ok(HostAdoption {
@@ -746,18 +739,6 @@ fn classify_spawn_error(executable: &Path, source: io::Error) -> BootstrapError 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn probe_attempts_start_short_double_and_spend_exactly_the_old_single_deadline() {
-        let attempts: Vec<Duration> = probe_answer_deadlines().collect();
-        assert_eq!(
-            attempts,
-            [1, 2, 4, 3].map(Duration::from_secs),
-            "a slow host still gets a 4 s answer window"
-        );
-        assert_eq!(attempts.iter().sum::<Duration>(), PROBE_PATIENCE);
-        assert_eq!(PROBE_PATIENCE, crate::protocol::REQUEST_DEADLINE);
-    }
 
     #[cfg(unix)]
     #[test]

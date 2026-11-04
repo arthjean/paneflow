@@ -116,6 +116,43 @@ pub enum ControlConnectError {
     Handshake(String),
 }
 
+pub const FIRST_ANSWER_WINDOW: Duration = Duration::from_secs(1);
+pub const SHORTEST_PROBE: Duration = Duration::from_millis(100);
+
+pub fn answer_windows(patience: Duration) -> impl Iterator<Item = Duration> {
+    let patience = patience.max(SHORTEST_PROBE);
+    let mut granted = Duration::ZERO;
+    let mut next = FIRST_ANSWER_WINDOW;
+    std::iter::from_fn(move || {
+        let left = patience.saturating_sub(granted);
+        if left.is_zero() {
+            return None;
+        }
+        let window = next.min(left);
+        granted += window;
+        next = next.saturating_mul(2);
+        Some(window)
+    })
+}
+
+#[derive(Debug)]
+pub enum ControlProbeError {
+    Absent(io::Error),
+    Unanswered(String),
+    Faulted(String),
+}
+
+fn probe_io_failure(during: &str, error: io::Error) -> ControlProbeError {
+    match error.kind() {
+        io::ErrorKind::TimedOut
+        | io::ErrorKind::WouldBlock
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::BrokenPipe => ControlProbeError::Unanswered(format!("{during}: {error}")),
+        _ => ControlProbeError::Faulted(format!("{during}: {error}")),
+    }
+}
+
 pub struct HostControl {
     wire: Wire,
     next_id: u64,
@@ -162,6 +199,73 @@ impl HostControl {
             )
             .map_err(ControlConnectError::Handshake)?;
         Ok(control)
+    }
+
+    pub fn probe_open(
+        endpoint: &Path,
+        client: &str,
+        window: Duration,
+    ) -> Result<Self, ControlProbeError> {
+        let started = std::time::Instant::now();
+        let wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, window).map_err(
+            |error| match error.kind() {
+                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
+                    ControlProbeError::Absent(error)
+                }
+                _ => probe_io_failure(&format!("connecting to {}", endpoint.display()), error),
+            },
+        )?;
+        let mut control = Self {
+            wire,
+            next_id: 1,
+            identity: Value::Null,
+        };
+        let answer = window.saturating_sub(started.elapsed()).max(SHORTEST_PROBE);
+        control.identity = control.hello_within(client, answer)?;
+        Ok(control)
+    }
+
+    fn hello_within(&mut self, client: &str, answer: Duration) -> Result<Value, ControlProbeError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let hello = request_frame(id, METHOD_HOST_HELLO, control_hello(client));
+        self.wire
+            .write_json_with_timeout(&hello, answer)
+            .map_err(|error| probe_io_failure("sending host.hello", error))?;
+        loop {
+            let line = match self.wire.read_line(answer) {
+                Ok(LineRead::Line(line)) => line,
+                Ok(LineRead::Idle) => {
+                    return Err(ControlProbeError::Unanswered(format!(
+                        "no host.hello answer within {} ms",
+                        answer.as_millis()
+                    )));
+                }
+                Ok(LineRead::Eof) => {
+                    return Err(ControlProbeError::Unanswered(
+                        "the endpoint closed the connection before answering host.hello".into(),
+                    ));
+                }
+                Ok(LineRead::TooLong) => {
+                    return Err(ControlProbeError::Faulted(
+                        "the endpoint oversized its host.hello answer".into(),
+                    ));
+                }
+                Err(error) => return Err(probe_io_failure("reading host.hello", error)),
+            };
+            let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
+                ControlProbeError::Faulted(format!("invalid host.hello answer: {error}"))
+            })?;
+            if value.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(message) = jsonrpc_error_message_from_value(&value) {
+                return Err(ControlProbeError::Faulted(message));
+            }
+            return value.get("result").cloned().ok_or_else(|| {
+                ControlProbeError::Faulted("host.hello answered without a result".into())
+            });
+        }
     }
 
     pub fn identity(&self) -> &Value {
@@ -350,6 +454,56 @@ impl IpcTransport for HostTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_windows_start_at_one_second_double_and_spend_exactly_the_patience() {
+        let windows = |patience| answer_windows(patience).collect::<Vec<_>>();
+        assert_eq!(
+            windows(REQUEST_DEADLINE),
+            [1, 2, 4, 3].map(Duration::from_secs),
+            "the former single 10 s deadline, split so a slow peer still gets 4 s"
+        );
+        assert_eq!(
+            windows(Duration::from_secs(5)),
+            [1, 2, 2].map(Duration::from_secs)
+        );
+        assert_eq!(
+            windows(Duration::from_millis(400)),
+            [Duration::from_millis(400)]
+        );
+        assert_eq!(
+            windows(Duration::ZERO),
+            [SHORTEST_PROBE],
+            "an exhausted caller still looks once"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_tells_an_absent_endpoint_from_a_silent_or_closing_one() {
+        let home = tempfile::tempdir().unwrap();
+        let absent = home.path().join("absent.sock");
+        assert!(matches!(
+            HostControl::probe_open(&absent, "probe-test", SHORTEST_PROBE),
+            Err(ControlProbeError::Absent(_))
+        ));
+
+        let silent_endpoint = home.path().join("silent.sock");
+        let _silent = std::os::unix::net::UnixListener::bind(&silent_endpoint).unwrap();
+        assert!(matches!(
+            HostControl::probe_open(&silent_endpoint, "probe-test", SHORTEST_PROBE),
+            Err(ControlProbeError::Unanswered(_))
+        ));
+
+        let closing_endpoint = home.path().join("closing.sock");
+        let closing = std::os::unix::net::UnixListener::bind(&closing_endpoint).unwrap();
+        let closer = std::thread::spawn(move || drop(closing.accept().unwrap()));
+        assert!(matches!(
+            HostControl::probe_open(&closing_endpoint, "probe-test", REQUEST_DEADLINE),
+            Err(ControlProbeError::Unanswered(_))
+        ));
+        closer.join().unwrap();
+    }
 
     #[test]
     fn only_surface_calls_by_alias_are_readdressed_to_their_session() {
