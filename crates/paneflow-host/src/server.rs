@@ -4,7 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
+#[cfg(unix)]
+use interprocess::local_socket::ListenerNonblockingMode;
 use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Stream, prelude::*};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
@@ -44,6 +48,12 @@ const _: () = assert!(
             + CONTROL_CALLS_IN_FLIGHT
 );
 const HANDSHAKE_DEADLINE: Duration = protocol::REQUEST_DEADLINE;
+#[cfg(unix)]
+const RETIREMENT_QUIET_WINDOW: Duration = Duration::from_millis(5);
+#[cfg(unix)]
+const RETIREMENT_POLL: Duration = Duration::from_millis(1);
+#[cfg(unix)]
+const RETIREMENT_DRAIN_LIMIT: Duration = Duration::from_millis(250);
 const CONTROL_IDLE_SLICE: Duration = Duration::from_secs(30);
 pub const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);
 
@@ -218,15 +228,55 @@ fn accept_loop(
     Ok(())
 }
 
-pub fn retire_listener(listener: Listener, endpoint: &Path) {
+pub fn retire_listener(mut listener: Listener, endpoint: &Path) {
+    listener.do_not_reclaim_name_on_drop();
+    unlink_then_drain(&listener, endpoint);
     drop(listener);
-    #[cfg(unix)]
-    {
-        let _ = std::fs::remove_file(endpoint);
-    }
-    #[cfg(not(unix))]
-    let _ = endpoint;
 }
+
+#[cfg(unix)]
+fn unlink_then_drain(listener: &Listener, endpoint: &Path) {
+    match std::fs::remove_file(endpoint) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!(
+            "paneflow: cannot unlink {} before closing its listener: {error}",
+            endpoint.display()
+        ),
+    }
+    if let Err(error) = listener.set_nonblocking(ListenerNonblockingMode::Accept) {
+        log::warn!(
+            "paneflow: cannot drain {} before closing it: {error}",
+            endpoint.display()
+        );
+        return;
+    }
+    let started = Instant::now();
+    let mut quiet_since = started;
+    let mut drained = 0_usize;
+    while quiet_since.elapsed() < RETIREMENT_QUIET_WINDOW
+        && started.elapsed() < RETIREMENT_DRAIN_LIMIT
+    {
+        match listener.accept() {
+            Ok(stream) => {
+                drop(stream);
+                drained += 1;
+                quiet_since = Instant::now();
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => std::thread::sleep(RETIREMENT_POLL),
+        }
+    }
+    if drained > 0 {
+        log::debug!(
+            "paneflow: closed {drained} connection(s) that reached {} while it retired",
+            endpoint.display()
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn unlink_then_drain(_listener: &Listener, _endpoint: &Path) {}
 
 fn serve_connections(
     listener: &Listener,
