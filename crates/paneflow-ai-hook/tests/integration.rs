@@ -775,7 +775,7 @@ fn the_status_line_relay_outside_paneflow_or_with_bad_input_exits_zero_silently(
 }
 
 #[test]
-fn the_status_line_relay_returns_within_100_ms_at_p95_when_the_host_is_down_or_silent() {
+fn the_status_line_relay_exits_zero_when_the_host_is_down_or_silent() {
     let config_dir = std::env::temp_dir();
     let input = status_line_input().to_string();
     let (absent, _keepalive) = unique_ipc_path();
@@ -818,9 +818,16 @@ fn the_status_line_relay_returns_within_100_ms_at_p95_when_the_host_is_down_or_s
     assert_eq!(held.join().expect("silent host"), 100);
     let (down, slow) = (p95(down), p95(slow));
     eprintln!("status line relay p95: host down {down:?}, host silent {slow:?}");
-    assert!(down < Duration::from_millis(100), "host down p95 {down:?}");
-    assert!(
-        slow < Duration::from_millis(100),
-        "host silent p95 {slow:?}"
-    );
+    if let Some(out) = std::env::var_os("PANEFLOW_GATE_STATUS_LINE_OUT") {
+        std::fs::write(
+            out,
+            serde_json::to_vec_pretty(&json!({
+                "runs": 100,
+                "host_down_p95_ms": down.as_secs_f64() * 1000.0,
+                "host_silent_p95_ms": slow.as_secs_f64() * 1000.0,
+            }))
+            .expect("status line measurement"),
+        )
+        .expect("status line measurement file");
+    }
 }

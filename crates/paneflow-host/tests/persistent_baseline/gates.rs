@@ -32,6 +32,12 @@ pub(super) const HOST_STATUS_FANOUT: Scenario = Scenario {
     reproduce: "cargo test --profile gates --locked -p paneflow-host --lib host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions -- --exact --nocapture",
 };
 
+pub(super) const STATUS_LINE_RELAY: Scenario = Scenario {
+    id: "status_line_relay",
+    description: "100 paneflow-ai-hook status line relays against an absent host endpoint, then 100 against a host that accepts and never reads, each timed from spawn to exit",
+    reproduce: "cargo test --profile gates --locked -p paneflow-ai-hook --test integration the_status_line_relay_exits_zero_when_the_host_is_down_or_silent -- --exact --nocapture",
+};
+
 pub(super) const DESKTOP_IDLE: Scenario = Scenario {
     id: "desktop_idle",
     description: "release desktop under Xvfb with Mesa lavapipe, 4 idle panes, 30 s window",
@@ -186,6 +192,20 @@ pub(super) const BUDGETS: &[Budget] = &[
         unit: "ms",
         scenario: &HOST_STATUS_FANOUT,
         margin: "the 500 ms MEMORY_USAGE_BUDGET plus 100 ms to wake 64 waiters and build the report; the unit test only bounds it by the budget plus 1 s, since 3-vCPU macOS runners measured 603 to 648 ms",
+    },
+    Budget {
+        counter: "ai_hook.status_line.host_down_p95_ms",
+        limit: Limit::Below(100.0),
+        unit: "ms",
+        scenario: &STATUS_LINE_RELAY,
+        margin: "the 40 ms relay deadline plus process spawn and exit; Claude Code waits on the status line command, so a down host must never stall its prompt. The unit test asserts only the exit, since a loaded Linux x86_64 test runner exceeded 100 ms",
+    },
+    Budget {
+        counter: "ai_hook.status_line.host_silent_p95_ms",
+        limit: Limit::Below(100.0),
+        unit: "ms",
+        scenario: &STATUS_LINE_RELAY,
+        margin: "the same bound against a host that accepts the connection and never reads, which runs into the 40 ms relay deadline",
     },
     Budget {
         counter: "desktop.idle.root_renders",
@@ -730,7 +750,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 24 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 26 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -751,7 +771,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("24 budgets, 2 failed, 0 not measured."),
+            summary.contains("26 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(

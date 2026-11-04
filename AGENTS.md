@@ -83,9 +83,9 @@ caused most of the flaky CI failures from 2026-09-28 to 2026-11-02, on 3-vCPU
 macOS and 4-vCPU Windows runners.
 
 `scripts/check-test-wallclock.sh`, run by `Style (fmt + clippy)`, fails on any
-new assertion that compares `elapsed()` to a `Duration` in test code. The
-existing ones are counted per test function in
-`scripts/wallclock-allowlist.txt`, and an entry may only go down.
+new assertion that compares `elapsed()`, or a percentile such as `p95(...)`,
+to a `Duration` in test code. The existing ones are counted per test function
+in `scripts/wallclock-allowlist.txt`, and an entry may only go down.
 
 CI runs the tests with `cargo nextest run --profile ci`: one process per test,
 a 300 s timeout per test, and the JUnit report uploaded as `test-results-<leg>`
