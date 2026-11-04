@@ -228,7 +228,9 @@ PowerShell comment-based help, and the three-line install notice at the top of
 `crates/paneflow-shim/assets/*.ts`. Text a tool consumes stays code, so clap
 help lives in `#[command(about = ...)]` and `#[arg(help = ...)]` attributes,
 never in `///`. Generated bindings under `native/libghostty/` keep whatever
-bindgen emits.
+bindgen emits. Vendored crates under `vendor/` keep their upstream text; before
+editing one or bumping its crates.io version, read the header of its
+`Cargo.toml`, which states the Paneflow change and when to drop the copy.
 
 ## Commits and pull requests
 

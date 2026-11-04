@@ -97,6 +97,9 @@ async-process = { git = "https://github.com/zed-industries/async-process.git", r
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+# Not a GPUI fork: portable-pty 0.9.0 with an atomic O_CLOEXEC openpty, see
+# vendor/portable-pty/Cargo.toml.
+portable-pty = { path = "vendor/portable-pty" }
 
 # The worker hashes its own executable for its build id; an unoptimized sha2
 # takes ~18 s on the debug binary and misses the 10 s worker startup window.

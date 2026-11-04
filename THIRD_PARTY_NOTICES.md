@@ -121,3 +121,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## portable-pty
+
+`vendor/portable-pty/` is portable-pty 0.9.0 by Wez Furlong, as published on
+crates.io from the wezterm repository (https://github.com/wezterm/wezterm,
+commit `f8921727a11b9f8b073e8c24821d72fd41283500`, directory `pty/`). Paneflow
+changed `openpty` in `src/unix.rs` to open both ends of the PTY with
+`O_CLOEXEC`, and left out the published examples. It is MIT licensed,
+Copyright (c) 2018 Wez Furlong; the full text is in
+[vendor/portable-pty/LICENSE.md](vendor/portable-pty/LICENSE.md).
