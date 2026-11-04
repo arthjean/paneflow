@@ -36,6 +36,7 @@ scan_roots = ["crates", "src-app"]
 string_literal = re.compile(r'r#*"(?:.|\n)*?"#*|"(?:[^"\\]|\\.)*"')
 function = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 elapsed_binding = re.compile(r"\b(?:let\s+(?:mut\s+)?)?([a-z_][a-z0-9_]*)\s*(?::[^=]+)?=[^=].*\.elapsed\(\)")
+percentile_binding = re.compile(r"\blet\s+(?:mut\s+)?\(?\s*([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)\s*\)?\s*(?::[^=]+)?=[^=].*\b(?:p[0-9]{2}|percentile)\s*\(")
 assertion_start = re.compile(r"\b(?:debug_)?assert!\s*\(")
 comparison = re.compile(r"(?<![-=<>])(?:<=|>=|<|>)(?![=<>])")
 duration_side = re.compile(r"\bDuration\b|\b[A-Z][A-Z0-9_]{2,}\b")
@@ -111,9 +112,9 @@ for scan_root in scan_roots:
                 if declared:
                     current = declared.group(1)
                     names = set()
-                bound = elapsed_binding.search(code)
-                if bound:
-                    names.add(bound.group(1))
+                for bound in (elapsed_binding.search(code), percentile_binding.search(code)):
+                    if bound:
+                        names.update(name.strip() for name in bound.group(1).split(","))
                 if assertion_start.search(code) and compares_elapsed(assertion_text(lines, index), names):
                     found.setdefault((relative, current), []).append(index + 1)
 
@@ -143,7 +144,7 @@ for key, occurrences in sorted(found.items()):
     status = 1
     for line in occurrences[limit:] if limit else occurrences:
         print(
-            f"::error file={relative},line={line}::{relative}:{line}: a unit test compares elapsed() to a Duration in {current}. "
+            f"::error file={relative},line={line}::{relative}:{line}: a unit test compares elapsed() or a percentile to a Duration in {current}. "
             "Assert the outcome under a generous timeout and move the latency budget to the perf gates "
             "(scripts/perf-gates.sh, crates/paneflow-host/tests/persistent_baseline/gates.rs)"
         )

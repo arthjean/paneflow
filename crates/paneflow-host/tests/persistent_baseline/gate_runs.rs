@@ -718,6 +718,38 @@ pub(super) fn host_status(inputs: &Path, values: &mut Values) -> Value {
     }
 }
 
+pub(super) fn status_line(inputs: &Path, values: &mut Values) -> Value {
+    let names = [
+        "ai_hook.status_line.host_down_p95_ms",
+        "ai_hook.status_line.host_silent_p95_ms",
+    ];
+    let path = inputs.join("status-line.json");
+    match read_json(&path) {
+        Ok(document) => {
+            for (name, field) in names
+                .into_iter()
+                .zip(["host_down_p95_ms", "host_silent_p95_ms"])
+            {
+                values.insert(
+                    name.to_string(),
+                    document[field].as_f64().map_or_else(
+                        || Measurement::Missing(format!("{} carries no {field}", path.display())),
+                        Measurement::Value,
+                    ),
+                );
+            }
+            document
+        }
+        Err(error) => {
+            let reason = format!(
+                "the status line relay test wrote no result, so it failed or did not run: {error}"
+            );
+            record_all(values, &names, &reason);
+            json!({"failed": reason})
+        }
+    }
+}
+
 fn suite_metric<'a>(document: &'a Value, name: &str) -> Option<&'a Value> {
     document["metrics"]
         .as_array()?
@@ -993,9 +1025,10 @@ mod tests {
         let mut values = Values::new();
         hook_burst(empty.path(), &mut values);
         host_status(empty.path(), &mut values);
+        status_line(empty.path(), &mut values);
         startup(empty.path(), &mut values);
         trickle(empty.path(), &mut values);
-        assert_eq!(values.len(), 5);
+        assert_eq!(values.len(), 7);
         assert!(
             values
                 .values()
