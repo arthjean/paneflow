@@ -15,9 +15,3 @@ path = "junit.xml"
 filter = "binary_id(paneflow-app::bin/paneflow) & test(=git_command::tests::agent_commits_never_hit_index_lock_while_probes_run)"
 retries = 2
 flaky-result = "pass"
-
-# https://github.com/arthjean/paneflow/issues/117
-[[profile.ci.overrides]]
-filter = "binary_id(paneflow-host::ownership_probes) & test(=h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit)"
-retries = 2
-flaky-result = "pass"

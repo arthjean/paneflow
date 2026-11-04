@@ -1,0 +1,97 @@
+# portable-pty 0.9.0 from crates.io (wezterm/wezterm f8921727a11b9f8b073e8c24821d72fd41283500,
+# path pty/), applied through the root `[patch.crates-io]`. The only change to
+# the published sources is `openpty` in src/unix.rs: the master and the slave
+# are opened with O_CLOEXEC instead of `libc::openpty` followed by fcntl, so a
+# process forked by another thread in that window cannot inherit them and hold
+# the slave open (https://github.com/arthjean/paneflow/issues/117). The
+# published examples and dev-dependencies are left out. Drop this copy once a
+# crates.io release opens the PTY atomically.
+
+[package]
+edition = "2018"
+name = "portable-pty"
+version = "0.9.0"
+authors = ["Wez Furlong"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Cross platform pty interface"
+documentation = "https://docs.rs/portable-pty"
+readme = false
+license = "MIT"
+repository = "https://github.com/wezterm/wezterm"
+publish = false
+resolver = "2"
+
+[lib]
+name = "portable_pty"
+path = "src/lib.rs"
+
+[dependencies.anyhow]
+version = "1.0"
+
+[dependencies.downcast-rs]
+version = "1.0"
+
+[dependencies.filedescriptor]
+version = "0.8.3"
+
+[dependencies.libc]
+version = "0.2"
+
+[dependencies.log]
+version = "0.4"
+
+[dependencies.nix]
+version = "0.28"
+features = [
+    "term",
+    "fs",
+]
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+
+[dependencies.serde_derive]
+version = "1.0"
+optional = true
+
+[dependencies.serial2]
+version = "0.2"
+
+[dependencies.shell-words]
+version = "1.1"
+
+[features]
+default = []
+serde_support = [
+    "serde",
+    "serde_derive",
+]
+
+[target."cfg(windows)".dependencies.bitflags]
+version = "1.3"
+
+[target."cfg(windows)".dependencies.lazy_static]
+version = "1.4"
+
+[target."cfg(windows)".dependencies.shared_library]
+version = "0.1"
+
+[target."cfg(windows)".dependencies.winapi]
+version = "0.3"
+features = [
+    "winuser",
+    "consoleapi",
+    "handleapi",
+    "fileapi",
+    "namedpipeapi",
+    "synchapi",
+]
+
+[target."cfg(windows)".dependencies.winreg]
+version = "0.10"
