@@ -399,11 +399,13 @@ pub fn spawn_detached(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);
+    let descriptor_limit = open_descriptor_limit();
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
+            close_inherited_descriptors_on_exec(descriptor_limit);
             Ok(())
         });
     }
@@ -411,6 +413,39 @@ pub fn spawn_detached(
         .spawn()
         .map(DetachedChild)
         .map_err(|source| classify_spawn_error(executable, source))
+}
+
+#[cfg(unix)]
+const FIRST_INHERITED_DESCRIPTOR: libc::c_int = 3;
+
+#[cfg(unix)]
+const FALLBACK_DESCRIPTOR_LIMIT: libc::c_int = 1024;
+
+#[cfg(unix)]
+fn open_descriptor_limit() -> libc::c_int {
+    match unsafe { libc::sysconf(libc::_SC_OPEN_MAX) } {
+        limit if limit > 0 => libc::c_int::try_from(limit).unwrap_or(libc::c_int::MAX),
+        _ => FALLBACK_DESCRIPTOR_LIMIT,
+    }
+}
+
+#[cfg(unix)]
+fn close_inherited_descriptors_on_exec(descriptor_limit: libc::c_int) {
+    #[cfg(target_os = "linux")]
+    if unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            FIRST_INHERITED_DESCRIPTOR as libc::c_uint,
+            libc::c_uint::MAX,
+            libc::CLOSE_RANGE_CLOEXEC,
+        )
+    } == 0
+    {
+        return;
+    }
+    for descriptor in FIRST_INHERITED_DESCRIPTOR..descriptor_limit {
+        unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
 }
 
 fn spawn_detached_host(
@@ -882,5 +917,49 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "the probe subprocess failed: {status}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_detached_child_inherits_no_descriptor_left_without_close_on_exec() {
+        use std::os::fd::{FromRawFd, OwnedFd};
+
+        let mut ends: [libc::c_int; 2] = [-1; 2];
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        let pipe: Vec<OwnedFd> = ends
+            .iter()
+            .map(|&end| unsafe { OwnedFd::from_raw_fd(end) })
+            .collect();
+        let pipe_target = std::fs::read_link(format!("/proc/self/fd/{}", ends[0])).unwrap();
+        let log_dir = tempfile::tempdir().unwrap();
+        let log = log_dir.path().join("child.log");
+        let mut child = spawn_detached(
+            Path::new("sh"),
+            &[
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new("echo ready >&2; exec sleep 600"),
+            ],
+            &log,
+        )
+        .unwrap();
+        let started = || std::fs::read_to_string(&log).is_ok_and(|text| text == "ready\n");
+        let deadline = Instant::now() + STARTUP_WAIT;
+        while !started() && Instant::now() < deadline {
+            std::thread::sleep(STARTUP_POLL);
+        }
+        let ready = started();
+        let inherited: Vec<PathBuf> = std::fs::read_dir(format!("/proc/{}/fd", child.0.id()))
+            .unwrap()
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .filter(|target| *target == pipe_target)
+            .collect();
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(pipe);
+        assert!(ready, "the detached child never reported that it started");
+        assert!(
+            inherited.is_empty(),
+            "the detached child inherited {inherited:?}"
+        );
     }
 }
