@@ -137,6 +137,15 @@ impl SessionRecord {
         self.runtime.as_deref().is_some_and(SessionRuntime::is_live)
     }
 
+    fn awaits_completed_record(&self) -> Option<SessionGeneration> {
+        let runtime = self.runtime.as_deref()?;
+        let generation = runtime.generation();
+        let recorded = self
+            .completed
+            .is_some_and(|completed| completed.generation == generation);
+        (runtime.exit().is_some() && !recorded).then_some(generation)
+    }
+
     fn owns_process(&self) -> bool {
         self.launch.is_some()
             || self
@@ -218,6 +227,7 @@ pub struct SessionHost {
     streaming_connections: AtomicUsize,
     sessions: Mutex<BTreeMap<SessionId, SessionRecord>>,
     launch_slots: std::sync::Condvar,
+    completed_records: std::sync::Condvar,
     shutdown_attempts: AtomicU64,
     agent_bus: AgentBus,
     agent_snapshots: crate::work_counters::Counter,
@@ -346,6 +356,7 @@ impl SessionHost {
             streaming_connections: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
             launch_slots: std::sync::Condvar::new(),
+            completed_records: std::sync::Condvar::new(),
             shutdown_attempts: AtomicU64::new(0),
             agent_bus: AgentBus::new(),
             agent_snapshots: crate::work_counters::Counter::new(),
@@ -2548,6 +2559,10 @@ impl SessionHost {
             })
             .collect();
         if remaining.is_empty() {
+            if let Err(error) = self.wait_for_completed_records(deadline) {
+                self.shutting_down.store(false, Ordering::Release);
+                return Err(error);
+            }
             let budget = deadline.saturating_duration_since(Instant::now());
             match self.persistence.drain(budget) {
                 Ok(()) => Ok(ShutdownReport { ended, unresolved }),
@@ -2897,6 +2912,17 @@ impl SessionHost {
             text_bytes,
             text_available,
         };
+        self.commit(
+            manifest,
+            durability,
+            Some(record.generation),
+            WriteClass::Final,
+            |guard| {
+                let mut final_output = final_output;
+                final_output.text_available &= !text_withdrawn.load(Ordering::Acquire);
+                guard.final_output = Some(final_output);
+            },
+        );
         {
             let mut sessions = self.lock_sessions();
             if let Some(held) = sessions
@@ -2909,18 +2935,36 @@ impl SessionHost {
                 });
             }
         }
-        self.commit(
-            manifest,
-            durability,
-            Some(record.generation),
-            WriteClass::Final,
-            |guard| {
-                let mut final_output = final_output;
-                final_output.text_available &= !text_withdrawn.load(Ordering::Acquire);
-                guard.final_output = Some(final_output);
-            },
-        );
+        self.completed_records.notify_all();
         self.release_retired_runtime(session, record.generation);
+    }
+
+    fn wait_for_completed_records(&self, deadline: Instant) -> Result<(), HostError> {
+        let mut sessions = self.lock_sessions();
+        loop {
+            let pending: Vec<String> = sessions
+                .iter()
+                .filter_map(|(session, record)| {
+                    record.awaits_completed_record().map(|generation| {
+                        format!(
+                            "session {session} generation {generation} has not recorded its final output"
+                        )
+                    })
+                })
+                .collect();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(HostError::Storage(pending.join("; ")));
+            }
+            sessions = self
+                .completed_records
+                .wait_timeout(sessions, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
     }
 
     fn release_retired_runtime(&self, session: &SessionId, generation: SessionGeneration) {

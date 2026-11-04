@@ -1029,8 +1029,9 @@ operation), `session.output` (contiguous bytes from an offset, optionally
 followed), `session.input`, `session.resize`, `session.workspace` (files
 a session under the workspace that now holds it, sent when a tab or pane
 moves between workspaces and again on every attach), `agent.snapshot` and
-`host.shutdown` (refused with the live session list while any session runs)
-follow. Control frames
+`host.shutdown` (refused with the live session list while any session runs,
+and answered only once every exited runtime has saved its completed record
+and final output) follow. Control frames
 are capped at 64 KiB, and output travels in 32 KiB data chunks inside those
 64 KiB frames; a checkpoint is capped at 64 MiB; an
 oversized frame or checkpoint is refused without unbounded allocation and
