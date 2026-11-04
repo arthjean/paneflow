@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use paneflow_host::bootstrap::{
     BootstrapError, MAX_INSTANCE_RECORD_BYTES, read_json_record, release_child, spawn_detached,
 };
-use paneflow_ipc_client::host_control::HostControl;
+use paneflow_ipc_client::host_control::{
+    ControlProbeError, HostControl, REQUEST_DEADLINE, SHORTEST_PROBE, answer_windows,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -13,6 +15,7 @@ use crate::protocol::{METHOD_WORKER_SHUTDOWN, WorkerIdentity};
 
 pub const STARTUP_WAIT: Duration = Duration::from_secs(10);
 pub const DRAIN_WAIT: Duration = Duration::from_secs(5);
+pub const PROBE_PATIENCE: Duration = REQUEST_DEADLINE;
 const STARTUP_POLL: Duration = Duration::from_millis(50);
 const CLIENT_NAME: &str = "paneflow-serve-bootstrap";
 
@@ -24,10 +27,34 @@ pub enum Probe {
 }
 
 pub fn probe(home: &Path, endpoint: &Path) -> Probe {
-    let control = match HostControl::connect(endpoint, CLIENT_NAME) {
-        Ok(control) => control,
-        Err(error) => return Probe::Unreachable(error),
-    };
+    probe_within(home, endpoint, Instant::now() + PROBE_PATIENCE)
+}
+
+pub fn probe_within(home: &Path, endpoint: &Path, deadline: Instant) -> Probe {
+    let mut windows = answer_windows(deadline.saturating_duration_since(Instant::now())).peekable();
+    loop {
+        let window = windows.next().unwrap_or(SHORTEST_PROBE);
+        match HostControl::probe_open(endpoint, CLIENT_NAME, window) {
+            Ok(control) => return identify(home, endpoint, &control),
+            Err(ControlProbeError::Absent(error)) => return Probe::Unreachable(error.to_string()),
+            Err(ControlProbeError::Unanswered(reason)) if windows.peek().is_some() => {
+                log::debug!(
+                    "paneflow-serve: {} gave no answer within {} ms ({reason}); probing again",
+                    endpoint.display(),
+                    window.as_millis()
+                );
+            }
+            Err(ControlProbeError::Unanswered(reason) | ControlProbeError::Faulted(reason)) => {
+                return Probe::Faulted(format!(
+                    "the endpoint {} is not answering as a worker: {reason}",
+                    endpoint.display()
+                ));
+            }
+        }
+    }
+}
+
+fn identify(home: &Path, endpoint: &Path, control: &HostControl) -> Probe {
     let identity: WorkerIdentity = match serde_json::from_value(control.identity().clone()) {
         Ok(identity) => identity,
         Err(error) => {
@@ -245,7 +272,7 @@ pub fn ensure_worker_running(
     )?;
     let started = Instant::now();
     loop {
-        match probe(home, &endpoint) {
+        match probe_within(home, &endpoint, started + STARTUP_WAIT) {
             Probe::Running(identity) => {
                 release_child(child);
                 return Ok(WorkerAdoption {
@@ -278,12 +305,21 @@ pub fn ensure_worker_running(
 
 pub fn stop_worker(home: &Path, drain: Duration) -> bool {
     let endpoint = paneflow_home::serve_endpoint_path(home);
-    if let Ok(mut control) = HostControl::connect(&endpoint, CLIENT_NAME) {
-        let _ = control.request(METHOD_WORKER_SHUTDOWN, json!({}));
-    }
     let deadline = Instant::now() + drain;
+    if let Ok(mut control) = HostControl::connect_with_deadline(&endpoint, CLIENT_NAME, drain) {
+        let _ = control.request_with_deadline(
+            METHOD_WORKER_SHUTDOWN,
+            json!({}),
+            deadline
+                .saturating_duration_since(Instant::now())
+                .max(SHORTEST_PROBE),
+        );
+    }
     loop {
-        if matches!(probe(home, &endpoint), Probe::Unreachable(_)) {
+        if matches!(
+            probe_within(home, &endpoint, deadline),
+            Probe::Unreachable(_)
+        ) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -339,5 +375,79 @@ mod tests {
             Probe::Unreachable(_)
         ));
         assert!(read_instance_record(home.path()).is_none());
+    }
+
+    #[cfg(unix)]
+    struct SilentWorker {
+        endpoint: PathBuf,
+        listener: Option<std::os::unix::net::UnixListener>,
+    }
+
+    #[cfg(unix)]
+    impl SilentWorker {
+        fn bind(home: &Path) -> Self {
+            let endpoint = paneflow_home::serve_endpoint_path(home);
+            if let Some(parent) = endpoint.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            let listener = std::os::unix::net::UnixListener::bind(&endpoint).unwrap();
+            Self {
+                endpoint,
+                listener: Some(listener),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SilentWorker {
+        fn drop(&mut self) {
+            drop(self.listener.take());
+            let _ = std::fs::remove_file(&self.endpoint);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_worker_that_never_answers_reports_it_still_running() {
+        let home = tempfile::tempdir().unwrap();
+        let _worker = SilentWorker::bind(home.path());
+        assert!(
+            !stop_worker(home.path(), Duration::from_secs(2)),
+            "a worker that accepts connections but never answers was reported stopped"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_that_never_answers_is_faulted_rather_than_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let worker = SilentWorker::bind(home.path());
+        let outcome = probe_within(
+            home.path(),
+            &worker.endpoint,
+            Instant::now() + Duration::from_secs(1),
+        );
+        assert!(matches!(outcome, Probe::Faulted(_)), "{outcome:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_gone_behind_an_unanswered_connection_probes_as_unreachable() {
+        let home = tempfile::tempdir().unwrap();
+        let mut worker = SilentWorker::bind(home.path());
+        let listener = worker.listener.take().unwrap();
+        let gone = worker.endpoint.clone();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let (held, _) = listener.accept().unwrap();
+            std::fs::remove_file(&gone).unwrap();
+            drop(listener);
+            let _ = released.recv();
+            drop(held);
+        });
+        let outcome = probe(home.path(), &worker.endpoint);
+        let _ = release.send(());
+        holder.join().unwrap();
+        assert!(matches!(outcome, Probe::Unreachable(_)), "{outcome:?}");
     }
 }

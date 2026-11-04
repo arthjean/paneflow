@@ -1044,13 +1044,23 @@ in-process host server, and the worker) retires it through
 `server::retire_listener`. On Unix it unlinks the socket path first, so a new
 connect finds no endpoint, then accepts and closes whatever still reaches the
 listener until 5 ms pass with no arrival (250 ms at most), and only then closes
-it. On macOS, a
-connect still inside the kernel when its listener closes stays attached to an
-orphaned peer that never sends an end of stream, even after the server process
-exits (#127). `bootstrap::probe` also never stakes its whole budget on one
-handshake: it retries an unanswered connection with answer windows of 1, 2, 4
-and 3 s, the former single 10 s deadline, so such an orphan costs one second
-instead of the caller's entire wait.
+it. On macOS, a connect still inside the kernel when its listener closes stays
+attached to an orphaned peer that never sends an end of stream, even after the
+server process exits (#127).
+
+The host and worker probes (`paneflow_host::bootstrap::probe` and
+`paneflow_serve::bootstrap::probe`) never stake a whole budget on one
+handshake either. Both split it into the answer windows of
+`host_control::answer_windows` (1, 2, 4 s, then the remainder) and retry only a
+connection that did not answer, so an orphan costs one second and a slow but
+live peer still gets a 4 s window. `probe_within` bounds those windows by the
+caller's own deadline, which keeps `stop_worker`'s drain, the startup waits and
+`stop_incompatible_host` to the time they announce. The worker probe reports
+an endpoint as unreachable only when it is missing or refuses connections; one
+that accepts and never answers is faulted, so it is never mistaken for a
+stopped worker and doubled by a second one. The worker being replaced still
+runs the previous release, which closes its listener without draining, so this
+client side is what covers the first upgrade.
 
 ## Self-update
 
