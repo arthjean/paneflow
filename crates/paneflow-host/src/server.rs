@@ -78,9 +78,10 @@ impl ServerHandle {
         let active = Arc::new(AtomicUsize::new(0));
         let flag = Arc::clone(&shutdown);
         let counter = Arc::clone(&active);
+        let retired = endpoint.clone();
         let thread = std::thread::Builder::new()
             .name("paneflow-host-accept".into())
-            .spawn(move || accept_loop(listener, host, flag, counter))?;
+            .spawn(move || accept_loop(listener, &retired, host, flag, counter))?;
         Ok(Self {
             endpoint,
             shutdown,
@@ -116,21 +117,18 @@ impl Drop for ServerHandle {
             wake_accept_loop(&self.endpoint);
             let _ = thread.join();
         }
-        #[cfg(unix)]
-        {
-            let _ = std::fs::remove_file(&self.endpoint);
-        }
     }
 }
 
 pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
     let listener = bind_owner_only(endpoint, "paneflow-host")?;
-    let served = accept_loop(listener, host, shutdown, Arc::new(AtomicUsize::new(0)));
-    #[cfg(unix)]
-    {
-        let _ = std::fs::remove_file(endpoint);
-    }
-    served
+    accept_loop(
+        listener,
+        endpoint,
+        host,
+        shutdown,
+        Arc::new(AtomicUsize::new(0)),
+    )
 }
 
 pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
@@ -210,10 +208,32 @@ fn ensure_unserved(endpoint: &Path) -> io::Result<()> {
 
 fn accept_loop(
     listener: Listener,
+    endpoint: &Path,
     host: Arc<SessionHost>,
     shutdown: Arc<AtomicBool>,
     active: Arc<AtomicUsize>,
 ) -> io::Result<()> {
+    serve_connections(&listener, host, shutdown, active);
+    retire_listener(listener, endpoint);
+    Ok(())
+}
+
+pub fn retire_listener(listener: Listener, endpoint: &Path) {
+    drop(listener);
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(endpoint);
+    }
+    #[cfg(not(unix))]
+    let _ = endpoint;
+}
+
+fn serve_connections(
+    listener: &Listener,
+    host: Arc<SessionHost>,
+    shutdown: Arc<AtomicBool>,
+    active: Arc<AtomicUsize>,
+) {
     for connection in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -244,7 +264,6 @@ fn accept_loop(
             log::warn!("paneflow-host: cannot start a connection thread: {error}");
         }
     }
-    Ok(())
 }
 
 pub struct ConnectionGuard(Arc<AtomicUsize>);
@@ -1691,6 +1710,54 @@ mod tests {
             0o600
         );
         drop(listener);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_client_racing_the_listener_retirement_reads_an_end_of_stream_instead_of_hanging() {
+        const RACES: u32 = 1000;
+        const ALIGNMENTS: u32 = 50;
+        const SPINS_PER_STEP: u32 = 20;
+        const ANSWER_DEADLINE: Duration = Duration::from_secs(5);
+        fn spin(steps: u32) {
+            for _ in 0..steps * SPINS_PER_STEP {
+                std::hint::spin_loop();
+            }
+        }
+        let home = tempfile::tempdir().unwrap();
+        let mut hung = Vec::new();
+        for race in 0..RACES {
+            let endpoint = test_endpoint(home.path());
+            let listener = bind_owner_only(&endpoint, "paneflow-host").unwrap();
+            let start = Arc::new(std::sync::Barrier::new(2));
+            let client_start = Arc::clone(&start);
+            let target = endpoint.clone();
+            let alignment = race % ALIGNMENTS;
+            let client = std::thread::spawn(move || {
+                client_start.wait();
+                spin(alignment);
+                let mut wire = match Wire::connect_with_timeout(
+                    &target,
+                    MAX_CONTROL_FRAME_BYTES,
+                    ANSWER_DEADLINE,
+                ) {
+                    Ok(wire) => wire,
+                    Err(error) => return error.kind() == io::ErrorKind::TimedOut,
+                };
+                let _ = wire.write_json(&json!({"id": 1, "method": "host.hello"}));
+                matches!(wire.read_line(ANSWER_DEADLINE), Ok(LineRead::Idle))
+            });
+            start.wait();
+            spin(ALIGNMENTS - 1 - alignment);
+            retire_listener(listener, &endpoint);
+            if client.join().unwrap() {
+                hung.push(race);
+            }
+        }
+        assert!(
+            hung.is_empty(),
+            "connections that raced the retirement never saw an end of stream: {hung:?}"
+        );
     }
 
     #[cfg(unix)]
