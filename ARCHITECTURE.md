@@ -1039,6 +1039,19 @@ without stopping the session. The host is the only responder to terminal
 queries; clipboard, bell and notification effects are not replayed from
 history.
 
+Every server that listens on a Paneflow endpoint (the detached host, the
+in-process host server, and the worker) retires it through
+`server::retire_listener`. On Unix it unlinks the socket path first, so a new
+connect finds no endpoint, then accepts and closes whatever still reaches the
+listener until 5 ms pass with no arrival (250 ms at most), and only then closes
+it. On macOS, a
+connect still inside the kernel when its listener closes stays attached to an
+orphaned peer that never sends an end of stream, even after the server process
+exits (#127). `bootstrap::probe` also never stakes its whole budget on one
+handshake: it retries an unanswered connection with answer windows of 1, 2, 4
+and 3 s, the former single 10 s deadline, so such an orphan costs one second
+instead of the caller's entire wait.
+
 ## Self-update
 
 A single background thread polls the GitHub releases feed at launch and then

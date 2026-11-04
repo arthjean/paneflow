@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
@@ -34,6 +35,14 @@ pub enum HostClientError {
 impl HostClientError {
     pub fn is_endpoint_absent(&self) -> bool {
         matches!(self, Self::Unreachable { source, .. } if matches!(source.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused))
+    }
+
+    pub fn is_unanswered(&self) -> bool {
+        matches!(
+            self,
+            Self::Unreachable { source, .. } | Self::Io(source)
+                if source.kind() == io::ErrorKind::TimedOut
+        )
     }
 
     pub fn code(&self) -> Option<i64> {
@@ -94,12 +103,20 @@ pub struct HostClient {
 
 impl HostClient {
     pub fn connect(endpoint: &Path, hello: &ClientHello) -> Result<Self, HostClientError> {
-        let wire = Wire::connect(endpoint, MAX_CONTROL_FRAME_BYTES).map_err(|source| {
-            HostClientError::Unreachable {
-                endpoint: endpoint.display().to_string(),
-                source,
-            }
-        })?;
+        Self::connect_within(endpoint, hello, REQUEST_DEADLINE)
+    }
+
+    pub fn connect_within(
+        endpoint: &Path,
+        hello: &ClientHello,
+        handshake_deadline: Duration,
+    ) -> Result<Self, HostClientError> {
+        let wire =
+            Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, handshake_deadline)
+                .map_err(|source| HostClientError::Unreachable {
+                    endpoint: endpoint.display().to_string(),
+                    source,
+                })?;
         let mut client = Self {
             wire,
             next_id: 1,
@@ -119,7 +136,7 @@ impl HostClient {
                 started_at_ms: 0,
             },
         };
-        let offered = match client.call("host.hello", to_value(hello)?) {
+        let offered = match client.call_within("host.hello", to_value(hello)?, handshake_deadline) {
             Ok(value) => value,
             Err(HostClientError::Rpc { code, message, .. })
                 if code == protocol::ERR_INCOMPATIBLE =>
@@ -151,16 +168,29 @@ impl HostClient {
     }
 
     pub fn call(&mut self, method: &str, params: Value) -> Result<Value, HostClientError> {
+        self.call_within(method, params, REQUEST_DEADLINE)
+    }
+
+    fn call_within(
+        &mut self,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value, HostClientError> {
         let id = self.next_id;
         self.next_id += 1;
         self.wire.write_json(&request(id, method, params))?;
-        let value = self.read_value()?;
+        let value = self.read_value_within(deadline)?;
         expect_id(&value, id)?;
         result_or_error(value)
     }
 
     fn read_value(&mut self) -> Result<Value, HostClientError> {
-        match self.wire.read_line(REQUEST_DEADLINE)? {
+        self.read_value_within(REQUEST_DEADLINE)
+    }
+
+    fn read_value_within(&mut self, deadline: Duration) -> Result<Value, HostClientError> {
+        match self.wire.read_line(deadline)? {
             LineRead::Line(line) => serde_json::from_str(&line)
                 .map_err(|e| HostClientError::Protocol(format!("invalid host frame: {e}"))),
             LineRead::Eof => Err(HostClientError::Protocol(
@@ -171,7 +201,7 @@ impl HostClient {
             )),
             LineRead::Idle => Err(HostClientError::Io(io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!("the host sent no frame within {REQUEST_DEADLINE:?}"),
+                format!("the host sent no frame within {deadline:?}"),
             ))),
         }
     }
