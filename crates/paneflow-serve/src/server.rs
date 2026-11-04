@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use interprocess::local_socket::{GenericFilePath, Listener, Stream, prelude::*};
 use paneflow_host::agent::AgentBus;
-use paneflow_host::server::{ConnectionGuard, bind_owner_only};
+use paneflow_host::server::{ConnectionGuard, bind_owner_only, retire_listener};
 use paneflow_host::work_counters::{Counter, counters_value};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
@@ -419,9 +419,14 @@ impl ServerHandle {
         let listener = bind_owner_only(&endpoint, "paneflow-serve")?;
         let flag = Arc::clone(&worker.shutdown);
         let accepting = Arc::clone(&worker);
+        let retired = endpoint.clone();
         let thread = std::thread::Builder::new()
             .name("paneflow-serve-accept".into())
-            .spawn(move || accept_loop(listener, accepting, flag))?;
+            .spawn(move || {
+                serve_connections(&listener, accepting, flag);
+                retire_listener(listener, &retired);
+                Ok(())
+            })?;
         Ok(Self {
             endpoint,
             worker,
@@ -450,10 +455,6 @@ impl Drop for ServerHandle {
             wake_until_finished(&self.endpoint, &thread);
             let _ = thread.join();
         }
-        #[cfg(unix)]
-        {
-            let _ = std::fs::remove_file(&self.endpoint);
-        }
     }
 }
 
@@ -479,11 +480,7 @@ pub fn snapshot_fingerprint(sessions: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-fn accept_loop(
-    listener: Listener,
-    worker: Arc<Worker>,
-    shutdown: Arc<AtomicBool>,
-) -> io::Result<()> {
+fn serve_connections(listener: &Listener, worker: Arc<Worker>, shutdown: Arc<AtomicBool>) {
     let active = Arc::new(AtomicUsize::new(0));
     for connection in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
@@ -522,7 +519,6 @@ fn accept_loop(
             log::warn!("paneflow-serve: cannot start a connection thread: {error}");
         }
     }
-    Ok(())
 }
 
 enum Flow {
