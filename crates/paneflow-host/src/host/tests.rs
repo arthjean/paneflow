@@ -2435,6 +2435,33 @@ fn a_data_directory_lost_mid_session_never_holds_the_final_state_or_the_quit() {
 }
 
 #[test]
+fn a_shutdown_answers_only_once_the_final_output_of_a_stopped_session_is_saved() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("shutdown-final-output")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    assert!(
+        wait_until(Duration::from_secs(15), || host
+            .text(&session)
+            .is_ok_and(|text| !text.text.trim().is_empty())),
+        "the shell prints before it is stopped, so its final output is not empty"
+    );
+    host.stop(&session, None).unwrap();
+    host.request_shutdown(false).unwrap();
+
+    assert!(
+        crate::cold_text::path(home.path(), &session).is_file(),
+        "the cold write of the final output lands before the shutdown answers"
+    );
+    let stored = read_manifest(&crate::manifest::manifest_path(home.path(), &session)).unwrap();
+    assert!(
+        stored
+            .final_output
+            .is_some_and(|final_output| final_output.text_available),
+        "the saved record points at the final output"
+    );
+}
+
+#[test]
 fn a_hook_without_a_tool_takes_the_runtime_the_pane_runs() {
     let home = tempfile::tempdir().unwrap();
     let host = SessionHost::open(home.path(), Path::new("pane-runtime-tool")).unwrap();
