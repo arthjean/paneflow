@@ -24,6 +24,8 @@ const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(15);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
 const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
+pub const PROBE_PATIENCE: Duration = crate::protocol::REQUEST_DEADLINE;
+const PROBE_FIRST_ANSWER_DEADLINE: Duration = Duration::from_secs(1);
 pub const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 
 #[cfg(windows)]
@@ -110,7 +112,42 @@ pub enum Probe {
 }
 
 pub fn probe(home: &Path, endpoint: &Path, hello: &ClientHello) -> Probe {
-    match HostClient::connect(endpoint, hello) {
+    let mut attempts = probe_answer_deadlines().peekable();
+    loop {
+        let attempt = attempts.next().unwrap_or(PROBE_PATIENCE);
+        match HostClient::connect_within(endpoint, hello, attempt) {
+            Err(error) if error.is_unanswered() && attempts.peek().is_some() => {
+                log::debug!(
+                    "paneflow-host: {} completed no handshake within {attempt:?}; probing again",
+                    endpoint.display()
+                );
+            }
+            connected => return classify_probe(home, endpoint, connected),
+        }
+    }
+}
+
+fn probe_answer_deadlines() -> impl Iterator<Item = Duration> {
+    let mut granted = Duration::ZERO;
+    let mut next = PROBE_FIRST_ANSWER_DEADLINE;
+    std::iter::from_fn(move || {
+        let left = PROBE_PATIENCE.saturating_sub(granted);
+        if left.is_zero() {
+            return None;
+        }
+        let attempt = next.min(left);
+        granted += attempt;
+        next = next.saturating_mul(2);
+        Some(attempt)
+    })
+}
+
+fn classify_probe(
+    home: &Path,
+    endpoint: &Path,
+    connected: Result<HostClient, HostClientError>,
+) -> Probe {
+    match connected {
         Ok(client) => {
             let identity = client.identity().clone();
             if paneflow_home::home_fingerprint(Path::new(&identity.home))
@@ -709,6 +746,46 @@ fn classify_spawn_error(executable: &Path, source: io::Error) -> BootstrapError 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_attempts_start_short_double_and_spend_exactly_the_old_single_deadline() {
+        let attempts: Vec<Duration> = probe_answer_deadlines().collect();
+        assert_eq!(
+            attempts,
+            [1, 2, 4, 3].map(Duration::from_secs),
+            "a slow host still gets a 4 s answer window"
+        );
+        assert_eq!(attempts.iter().sum::<Duration>(), PROBE_PATIENCE);
+        assert_eq!(PROBE_PATIENCE, crate::protocol::REQUEST_DEADLINE);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_connection_left_unanswered_does_not_hide_that_the_host_went_away() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("unanswered.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&endpoint).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let gone = endpoint.clone();
+        let holder = std::thread::spawn(move || {
+            let (held, _) = listener.accept().unwrap();
+            std::fs::remove_file(&gone).unwrap();
+            drop(listener);
+            let _ = released.recv();
+            drop(held);
+        });
+        let outcome = probe(
+            home.path(),
+            &endpoint,
+            &ClientHello::local("unanswered-probe"),
+        );
+        let _ = release.send(());
+        holder.join().unwrap();
+        assert!(
+            matches!(outcome, Probe::Unreachable(_)),
+            "a probe stuck on its first connection never saw the host leave: {outcome:?}"
+        );
+    }
 
     #[test]
     fn replacement_preflight_and_wrong_home_never_stop_live_sessions() {
