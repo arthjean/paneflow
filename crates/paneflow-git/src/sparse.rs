@@ -12,15 +12,7 @@ pub(crate) fn index_for_status(repo: &gix::Repository) -> Result<IndexPersistedO
     let index = repo
         .index_or_empty()
         .map_err(|error| Error::git("read the index", error))?;
-    let clears_present = clears_present_files(repo);
-    let workdir = repo.workdir().map(Path::to_path_buf);
-    let has_present = |state: &gix::index::State| {
-        clears_present
-            && workdir
-                .as_deref()
-                .is_some_and(|workdir| any_present_skip_worktree(state, workdir))
-    };
-    if !index.is_sparse() && !has_present(&index) {
+    if !index.is_sparse() && !has_skip_worktree(&index) {
         return Ok(IndexPersistedOrInMemory::Persisted(index));
     }
     let mut state = if index.is_sparse() {
@@ -28,9 +20,10 @@ pub(crate) fn index_for_status(repo: &gix::Repository) -> Result<IndexPersistedO
     } else {
         gix::index::State::clone(&index)
     };
-    if let (true, Some(workdir)) = (clears_present, workdir.as_deref()) {
+    if let (true, Some(workdir)) = (clears_present_files(repo), repo.workdir()) {
         clear_present_skip_worktree(&mut state, workdir);
     }
+    mark_skip_worktree_as_tracked(&mut state);
     Ok(IndexPersistedOrInMemory::InMemory(
         gix::index::File::from_state(state, index.path()),
     ))
@@ -51,10 +44,19 @@ fn present_in(workdir: &Path, path: &BStr) -> bool {
         .is_ok_and(|relative| std::fs::symlink_metadata(workdir.join(relative)).is_ok())
 }
 
-fn any_present_skip_worktree(state: &gix::index::State, workdir: &Path) -> bool {
-    state.entries().iter().any(|entry| {
-        entry.flags.contains(Flags::SKIP_WORKTREE) && present_in(workdir, entry.path(state))
-    })
+fn has_skip_worktree(state: &gix::index::State) -> bool {
+    state
+        .entries()
+        .iter()
+        .any(|entry| entry.flags.contains(Flags::SKIP_WORKTREE))
+}
+
+fn mark_skip_worktree_as_tracked(state: &mut gix::index::State) {
+    for entry in state.entries_mut() {
+        if entry.flags.contains(Flags::SKIP_WORKTREE) {
+            entry.flags.insert(Flags::UPTODATE);
+        }
+    }
 }
 
 fn clear_present_skip_worktree(state: &mut gix::index::State, workdir: &Path) {

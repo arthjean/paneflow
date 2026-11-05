@@ -23,6 +23,23 @@ pub fn matrix() -> Vec<Fixture> {
             must_include: &[(" M", "inside/edited.txt"), ("??", "outside/new.txt")],
         },
         Fixture {
+            name: "sparse_case_sensitive_clearing_present",
+            build: sparse_case_sensitive_clearing_present,
+            must_include: &[
+                (" M", "outside/hidden.txt"),
+                ("??", "outside/new.txt"),
+                ("??", "outside/deeper/fresh.txt"),
+            ],
+        },
+        Fixture {
+            name: "sparse_case_sensitive_expecting_files_outside",
+            build: sparse_case_sensitive_expecting_files_outside,
+            must_include: &[
+                ("??", "outside/new.txt"),
+                ("??", "outside/deeper/fresh.txt"),
+            ],
+        },
+        Fixture {
             name: "sparse_non_cone",
             build: sparse_non_cone,
             must_include: &[(" M", "inside/edited.txt"), ("??", "outside/new.txt")],
@@ -116,6 +133,31 @@ fn sparse_expecting_files_outside(root: &Path) -> Built {
         &["config", "sparse.expectFilesOutsideOfPatterns", "true"],
     );
     Ok(built)
+}
+
+fn sparse_case_sensitive(root: &Path, expect_files_outside: bool) -> Built {
+    let built = sparse(
+        root,
+        &["sparse-checkout", "init", "--cone"],
+        &["sparse-checkout", "set", "inside"],
+    )?;
+    git(root, &["config", "core.ignorecase", "false"]);
+    if expect_files_outside {
+        git(
+            root,
+            &["config", "sparse.expectFilesOutsideOfPatterns", "true"],
+        );
+    }
+    write(root, "outside/deeper/fresh.txt", b"fresh\n");
+    Ok(built)
+}
+
+fn sparse_case_sensitive_clearing_present(root: &Path) -> Built {
+    sparse_case_sensitive(root, false)
+}
+
+fn sparse_case_sensitive_expecting_files_outside(root: &Path) -> Built {
+    sparse_case_sensitive(root, true)
 }
 
 fn sparse_non_cone(root: &Path) -> Built {
