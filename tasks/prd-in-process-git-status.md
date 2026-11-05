@@ -217,7 +217,7 @@ Every difference between the CLI probes and the gix snapshot is caught by a test
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] One mapping function turns a snapshot into porcelain v1 records (XY code and path); the probes of EP-003 to EP-005 use that same function.
+- [x] One mapping function turns a snapshot into porcelain v1 records (XY code and path); the probes of EP-003 to EP-005 use that same function.
 - [x] The base matrix covers `core.autocrlf` false, true and input; `.gitattributes` `eol=crlf`, `text`, `-text` and `binary`; a staged addition, modification and deletion; staged then modified; a deletion from the worktree; a staged rename under `--no-renames`; nested untracked files; an ignored file; an unborn `HEAD`; intent to add; a type change; and each of the seven conflict kinds.
 - [x] Given every fixture, the multiset of (XY, path) records is equal between the CLI and gix, on the Linux, macOS and Windows legs.
 - [x] Given a divergence, the failure names the fixture, the path, the CLI code and the gix code.
