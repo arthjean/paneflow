@@ -434,7 +434,7 @@ pub(super) fn desktop_diff_stat(
             let focus = headless::focus_window(&desktop);
             std::thread::sleep(SETTLE);
             let (window, window_s) = desktop_window(&desktop, DIFF_STAT_WINDOW);
-            let probes = counter(&window, "git_spawns.by_subcommand.diff");
+            let probes = counter(&window, "git_spawns.by_subcommand.diff-index");
             let spawns = counter(&window, "git_spawns.total");
             let (probes, measurement) = match (&focus, probes, spawns) {
                 (Err(reason), _, _) => {
