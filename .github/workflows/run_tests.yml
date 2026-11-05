@@ -305,9 +305,15 @@ jobs:
       #   paneflow-shim     = 432 888 B   (meets soft 600 KB cap)
       #   paneflow-ai-hook  = 359 168 B   (50 KB over soft 300 KB cap)
       # Hard caps below reflect the as-measured reality plus ~6 %
-      # regression headroom. paneflow-ai-hook MUST be shrunk to the
-      # 300 KB soft cap before v0.3.0 ships - tracked as a US-001
-      # follow-up in memory and in the US-012 story summary.
+      # regression headroom. The ai-hook soft cap is out of reach on
+      # stable std: about 170 KB of every helper is std's backtrace
+      # symbolizer, which only `panic=immediate-abort` (nightly) removes.
+      #
+      # Margin warning: a helper within MARGIN_WARN bytes of its hard cap
+      # gets its own warning. A workspace version bump alone moves a
+      # helper by about 1.5 KB, so a margin under 4 KiB is one release
+      # bump plus one small feature away from a red job (#131: the
+      # ai-hook sat 768 B under its cap before anyone noticed).
       #
       # Caps are gated at x86_64 Linux only (matches the PRD Goals
       # measurement target). Other targets may drift slightly due to
@@ -334,17 +340,29 @@ jobs:
           # old 480 KiB cap without any shim code change. Keep the same
           # "measured + small slack" regression gate under the 600 KB soft cap.
           SHIM_HARD=524288   # 512 KiB  (measured 482 KiB + ~6 % slack)
-          HOOK_HARD=384000   # ~375 KB  (measured 351 KB + 6 % slack)
+          HOOK_HARD=384000   # 375 KiB  (set at 359,168 B + ~7 % slack; measured 378,536 B on 2026-11-05, #131)
           MCP_HARD=524288    # 512 KiB
           TOTAL_HARD=1835008 # Keep in sync with src-app/build.rs
           # Soft caps (PRD launch targets). Warn-only until met.
           SHIM_SOFT=614400   # 600 KB
           HOOK_SOFT=307200   # 300 KB
+          MARGIN_WARN=4096
 
-          echo "paneflow-shim     = ${SHIM_SIZE} B  (hard ${SHIM_HARD} / soft ${SHIM_SOFT})"
-          echo "paneflow-ai-hook  = ${HOOK_SIZE} B  (hard ${HOOK_HARD} / soft ${HOOK_SOFT})"
-          echo "paneflow-mcp      = ${MCP_SIZE} B  (hard ${MCP_HARD})"
-          echo "embedded helpers  = ${TOTAL_SIZE} B  (hard ${TOTAL_HARD})"
+          echo "paneflow-shim     = ${SHIM_SIZE} B  (hard ${SHIM_HARD}, margin $((SHIM_HARD - SHIM_SIZE)) / soft ${SHIM_SOFT})"
+          echo "paneflow-ai-hook  = ${HOOK_SIZE} B  (hard ${HOOK_HARD}, margin $((HOOK_HARD - HOOK_SIZE)) / soft ${HOOK_SOFT})"
+          echo "paneflow-mcp      = ${MCP_SIZE} B  (hard ${MCP_HARD}, margin $((MCP_HARD - MCP_SIZE)))"
+          echo "embedded helpers  = ${TOTAL_SIZE} B  (hard ${TOTAL_HARD}, margin $((TOTAL_HARD - TOTAL_SIZE)))"
+
+          near_hard_cap() {
+            local margin=$(($3 - $2))
+            if [ "$margin" -ge 0 ] && [ "$margin" -lt "$MARGIN_WARN" ]; then
+              echo "::warning::$1 is ${2} B, only ${margin} B under its HARD cap ${3}. A version bump alone moves a helper by about 1.5 KB: shrink it before the cap fails a release (#131)."
+            fi
+          }
+          near_hard_cap paneflow-shim "$SHIM_SIZE" "$SHIM_HARD"
+          near_hard_cap paneflow-ai-hook "$HOOK_SIZE" "$HOOK_HARD"
+          near_hard_cap paneflow-mcp "$MCP_SIZE" "$MCP_HARD"
+          near_hard_cap "the embedded helper total" "$TOTAL_SIZE" "$TOTAL_HARD"
 
           fail=0
           if [ "$SHIM_SIZE" -gt "$SHIM_HARD" ]; then
