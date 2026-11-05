@@ -184,6 +184,23 @@ pub fn compute_hunk_report(base: &str, new: &str, options: DiffOptions) -> HunkR
     }
 }
 
+pub fn hunk_line_counts(hunks: &[DiffHunk]) -> (u32, u32) {
+    hunks.iter().fold((0, 0), |(added, removed), hunk| {
+        (
+            added + (hunk.new_row_range.end - hunk.new_row_range.start),
+            removed + (hunk.base_row_range.end - hunk.base_row_range.start),
+        )
+    })
+}
+
+pub fn line_change_counts(base: &str, new: &str) -> (u32, u32) {
+    let options = DiffOptions {
+        highlight: HighlightPolicy::None,
+        ..DiffOptions::default()
+    };
+    hunk_line_counts(&compute_hunk_report(base, new, options).hunks)
+}
+
 fn push_unpaired_tail(
     hunks: &mut Vec<DiffHunk>,
     base_lines: u32,

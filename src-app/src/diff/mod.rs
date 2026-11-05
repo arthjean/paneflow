@@ -19,7 +19,7 @@ pub(crate) use element::{
 pub(crate) use engine::DiffHunk;
 #[cfg(test)]
 pub(crate) use engine::compute_hunks;
-pub(crate) use engine::{ComparisonPolicy, DiffOptions, HighlightPolicy};
+pub(crate) use engine::{ComparisonPolicy, DiffOptions, HighlightPolicy, line_change_counts};
 pub(crate) use git::FileDiff;
 pub(crate) use git::{
     HeadFile, MAX_FILE_BYTES as MAX_DIFF_FILE_BYTES, classify as classify_git_bytes,

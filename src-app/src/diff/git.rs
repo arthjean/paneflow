@@ -26,13 +26,7 @@ pub struct FileDiff {
 
 impl FileDiff {
     pub fn line_counts(&self) -> (u32, u32) {
-        let mut added = 0;
-        let mut removed = 0;
-        for h in &self.hunks {
-            added += h.new_row_range.end - h.new_row_range.start;
-            removed += h.base_row_range.end - h.base_row_range.start;
-        }
-        (added, removed)
+        super::engine::hunk_line_counts(&self.hunks)
     }
 }
 
