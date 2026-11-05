@@ -1,3 +1,4 @@
+pub mod engine;
 mod open;
 mod snapshot;
 mod submodule;
@@ -11,6 +12,8 @@ pub use snapshot::snapshot;
 pub const DEFAULT_THREAD_LIMIT: usize = 2;
 
 pub const DEFAULT_ENTRY_CAP: usize = 100_000;
+
+pub const DEFAULT_INDEX_ENTRY_THRESHOLD: Option<u32> = Some(30_000);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Untracked {

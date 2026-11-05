@@ -5200,6 +5200,7 @@ dependencies = [
  "open",
  "paneflow-agent-config",
  "paneflow-config",
+ "paneflow-git",
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
