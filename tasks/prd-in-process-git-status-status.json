@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "A parity oracle against the git CLI",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 2
+      "stories_done": 3
     },
     {
       "id": "EP-003",
@@ -136,12 +136,12 @@
       "id": "US-008",
       "title": "Sparse checkout, split index, untracked cache and ownership match the CLI",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-006"],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-05",
       "reviewed_at": "2026-11-05"
     },
     {
