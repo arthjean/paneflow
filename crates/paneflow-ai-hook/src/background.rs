@@ -33,10 +33,13 @@ pub(crate) fn record(
 }
 
 fn start(path: &Path, activity_id: &str, generation: u64) -> Result<(), String> {
-    let Some(parent) = path.parent() else {
+    let Some(generation_dir) = path.parent() else {
         return Ok(());
     };
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let background_dir = generation_dir.parent().unwrap_or(generation_dir);
+    for dir in [background_dir, generation_dir] {
+        create_dir_unless_present(dir)?;
+    }
     let marker = serde_json::json!({
         "activity_id": activity_id,
         "runtime_generation": generation,
@@ -44,6 +47,14 @@ fn start(path: &Path, activity_id: &str, generation: u64) -> Result<(), String> 
     let bytes = serde_json::to_vec(&marker).map_err(|error| error.to_string())?;
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(mut file) => file.write_all(&bytes).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn create_dir_unless_present(dir: &Path) -> Result<(), String> {
+    match fs::create_dir(dir) {
+        Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error.to_string()),
     }
@@ -172,6 +183,15 @@ mod tests {
         .unwrap();
         assert_eq!(markers(dir.path(), 2), vec!["child.json".to_string()]);
         assert!(markers(dir.path(), 3).is_empty());
+    }
+
+    #[test]
+    fn a_marker_never_recreates_a_vanished_session_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_dir = dir.path().join("gone");
+        let path = background_marker_path(&session_dir, 1, "child").unwrap();
+        assert!(start(&path, "child", 1).is_err());
+        assert!(!session_dir.exists());
     }
 
     #[test]
