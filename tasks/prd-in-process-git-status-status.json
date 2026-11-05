@@ -1,0 +1,232 @@
+{
+  "prd": {
+    "file": "tasks/prd-in-process-git-status.md",
+    "title": "In-process git status for the background probes",
+    "created_at": "2026-11-05",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "A read-only in-process git engine",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-002",
+      "title": "A parity oracle against the git CLI",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "The Files sidebar stops mapping agent files",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "The diff badge stops spawning git",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "The diff dock and the removal snapshot",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 3,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Vendor gix-status 0.37.0 with the short-read fix",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": "2026-11-05",
+      "completed_at": "2026-11-05",
+      "reviewed_at": "2026-11-05"
+    },
+    {
+      "id": "US-002",
+      "title": "Validate assumption: a gix status runs no program the repository configures",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-05",
+      "completed_at": null,
+      "reviewed_at": "2026-11-05"
+    },
+    {
+      "id": "US-003",
+      "title": "The paneflow-git crate returns a status snapshot",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-001", "US-002"],
+      "started_at": "2026-11-05",
+      "completed_at": null,
+      "reviewed_at": "2026-11-05"
+    },
+    {
+      "id": "US-004",
+      "title": "Validate assumption: an in-process probe costs no more than the CLI",
+      "epic": "EP-001",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-003"],
+      "started_at": "2026-11-05",
+      "completed_at": null,
+      "reviewed_at": "2026-11-05"
+    },
+    {
+      "id": "US-005",
+      "title": "The engine selector falls back to the git CLI",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-003", "US-004"],
+      "started_at": "2026-11-05",
+      "completed_at": "2026-11-05",
+      "reviewed_at": "2026-11-05"
+    },
+    {
+      "id": "US-006",
+      "title": "A differential harness compares both engines on the base fixture matrix",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-003"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Linked worktrees and submodules match the CLI",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-006"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Sparse checkout, split index, untracked cache and ownership match the CLI",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-006"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "A reusable race harness pins both mapping scenarios",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "files_git::read runs on the gix snapshot",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-005", "US-007", "US-008", "US-009"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "GitDiffStats lists changes and reads blobs in process",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": ["US-010"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "The perf gates count probes, not git spawns",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": ["US-011"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "The diff dock lists changes with renames in process",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "L",
+      "blocked_by": ["US-011"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "The diff dock reads base texts from the object database",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": ["US-013"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "is_clean uses gix and fails safe",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": ["US-007", "US-008", "US-010"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
