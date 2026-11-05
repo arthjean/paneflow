@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "A read-only in-process git engine",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 2
+      "stories_done": 5
     },
     {
       "id": "EP-002",
@@ -64,36 +64,36 @@
       "id": "US-002",
       "title": "Validate assumption: a gix status runs no program the repository configures",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-001"],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-05",
       "reviewed_at": "2026-11-05"
     },
     {
       "id": "US-003",
       "title": "The paneflow-git crate returns a status snapshot",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-001", "US-002"],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-05",
       "reviewed_at": "2026-11-05"
     },
     {
       "id": "US-004",
       "title": "Validate assumption: an in-process probe costs no more than the CLI",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-003"],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-05",
       "reviewed_at": "2026-11-05"
     },
     {
