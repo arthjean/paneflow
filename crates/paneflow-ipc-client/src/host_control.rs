@@ -56,6 +56,10 @@ fn request_frame(id: u64, method: &str, params: Value) -> Value {
     Value::Object(frame)
 }
 
+fn whole_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlTarget {
     Controller(PathBuf),
@@ -238,7 +242,7 @@ impl HostControl {
                 Ok(LineRead::Idle) => {
                     return Err(ControlProbeError::Unanswered(format!(
                         "no host.hello answer within {} ms",
-                        answer.as_millis()
+                        whole_millis(answer)
                     )));
                 }
                 Ok(LineRead::Eof) => {
@@ -304,7 +308,7 @@ impl HostControl {
                 Ok(LineRead::Idle) => {
                     return Err(format!(
                         "paneflow host request {method} timed out after {} ms",
-                        deadline.as_millis()
+                        whole_millis(deadline)
                     ));
                 }
                 Err(error) => {
@@ -571,6 +575,12 @@ mod tests {
             Some(ControlTarget::Host(endpoint))
         );
         assert_eq!(choose_control_target(None, false, None), None);
+    }
+
+    #[test]
+    fn a_timeout_reports_whole_milliseconds_and_saturates() {
+        assert_eq!(whole_millis(Duration::from_micros(350_900)), 350);
+        assert_eq!(whole_millis(Duration::MAX), u64::MAX);
     }
 
     #[test]

@@ -172,11 +172,20 @@ fn read_event_source_from(raw: Option<&str>) -> Option<LifecycleEventSource> {
 }
 
 pub(crate) fn read_stdin_bytes() -> Option<Vec<u8>> {
+    read_past_limit(std::io::stdin().lock(), MAX_STDIN_BYTES)
+}
+
+fn read_past_limit(mut reader: impl Read, limit: usize) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    std::io::stdin()
-        .take(MAX_STDIN_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    let mut chunk = [0u8; 8192];
+    while bytes.len() <= limit {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => bytes.extend_from_slice(chunk.get(..read)?),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
     Some(bytes)
 }
 
@@ -366,6 +375,46 @@ mod tests {
             Some(-1_073_741_510)
         );
         assert!(read_exit_code_from(Some("abc")).is_none());
+    }
+
+    #[test]
+    fn stdin_input_within_the_limit_is_read_whole() {
+        let input = vec![b'a'; 20_000];
+        assert_eq!(read_past_limit(input.as_slice(), 20_000), Some(input));
+        assert_eq!(read_past_limit(&b""[..], 16), Some(Vec::new()));
+    }
+
+    #[test]
+    fn an_endless_stdin_stops_one_chunk_past_the_limit() {
+        let bytes = read_past_limit(std::io::repeat(b'x'), 20_000).expect("readable");
+        assert!(bytes.len() > 20_000);
+        assert!(bytes.len() <= 20_000 + 8192);
+    }
+
+    #[test]
+    fn an_interrupted_stdin_read_is_retried_and_a_failed_one_reads_nothing() {
+        struct Scripted(std::collections::VecDeque<std::io::Result<&'static [u8]>>);
+        impl Read for Scripted {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                match self.0.pop_front() {
+                    None => Ok(0),
+                    Some(Ok(bytes)) => {
+                        buffer[..bytes.len()].copy_from_slice(bytes);
+                        Ok(bytes.len())
+                    }
+                    Some(Err(error)) => Err(error),
+                }
+            }
+        }
+        let interrupted_then_json =
+            Scripted([Err(std::io::ErrorKind::Interrupted.into()), Ok(&b"{}"[..])].into());
+        assert_eq!(
+            read_past_limit(interrupted_then_json, 16),
+            Some(b"{}".to_vec())
+        );
+        let broken_mid_payload =
+            Scripted([Ok(&b"{"[..]), Err(std::io::ErrorKind::BrokenPipe.into())].into());
+        assert_eq!(read_past_limit(broken_mid_payload, 16), None);
     }
 
     #[test]
