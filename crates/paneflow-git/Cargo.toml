@@ -1,0 +1,30 @@
+[package]
+name = "paneflow-git"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Read-only in-process git status for the Paneflow background probes, built on gix"
+
+[dependencies]
+gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1"] }
+log.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
+[lints]
+workspace = true
