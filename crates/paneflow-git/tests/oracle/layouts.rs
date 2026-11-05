@@ -40,6 +40,14 @@ pub fn matrix() -> Vec<Fixture> {
             ],
         },
         Fixture {
+            name: "sparse_missing_directory_sharing_a_prefix",
+            build: sparse_missing_directory_sharing_a_prefix,
+            must_include: &[
+                (" M", "outside/d10/edited.txt"),
+                (" M", "outside/hidden.txt"),
+            ],
+        },
+        Fixture {
             name: "sparse_non_cone",
             build: sparse_non_cone,
             must_include: &[(" M", "inside/edited.txt"), ("??", "outside/new.txt")],
@@ -158,6 +166,35 @@ fn sparse_case_sensitive_clearing_present(root: &Path) -> Built {
 
 fn sparse_case_sensitive_expecting_files_outside(root: &Path) -> Built {
     sparse_case_sensitive(root, true)
+}
+
+fn sparse_missing_directory_sharing_a_prefix(root: &Path) -> Built {
+    committed_repo(
+        root,
+        &[
+            ("inside/kept.txt", "inside\n"),
+            ("outside/d1/gone.txt", "outside\n"),
+            ("outside/d10/edited.txt", "outside\n"),
+            ("outside/hidden.txt", "outside\n"),
+        ],
+    );
+    git(root, &["sparse-checkout", "init", "--cone"]);
+    git(root, &["sparse-checkout", "set", "inside"]);
+    assert!(
+        !root.join("outside").exists(),
+        "the sparse checkout removed the directory outside its patterns"
+    );
+    write(
+        root,
+        "outside/d10/edited.txt",
+        b"outside reappeared and edited\n",
+    );
+    write(
+        root,
+        "outside/hidden.txt",
+        b"outside reappeared and edited\n",
+    );
+    Ok(root.to_path_buf())
 }
 
 fn sparse_non_cone(root: &Path) -> Built {

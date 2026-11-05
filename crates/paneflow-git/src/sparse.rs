@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use gix::bstr::{BStr, BString};
+use gix::bstr::{BStr, BString, ByteSlice};
 use gix::index::entry::{Flags, Stat};
 use gix::worktree::IndexPersistedOrInMemory;
 
@@ -60,11 +60,36 @@ fn mark_skip_worktree_as_tracked(state: &mut gix::index::State) {
 }
 
 fn clear_present_skip_worktree(state: &mut gix::index::State, workdir: &Path) {
+    let mut missing_dir: Option<BString> = None;
     for (entry, path) in state.entries_mut_with_paths() {
-        if entry.flags.contains(Flags::SKIP_WORKTREE) && present_in(workdir, path) {
+        if !entry.flags.contains(Flags::SKIP_WORKTREE) {
+            continue;
+        }
+        if missing_dir
+            .as_ref()
+            .is_some_and(|dir| path.starts_with(dir.as_slice()))
+        {
+            continue;
+        }
+        if present_in(workdir, path) {
             entry.flags.remove(Flags::SKIP_WORKTREE);
+        } else {
+            missing_dir = shallowest_missing_parent(workdir, path);
         }
     }
+}
+
+fn shallowest_missing_parent(workdir: &Path, path: &BStr) -> Option<BString> {
+    let mut missing = None;
+    let mut end = path.len();
+    while let Some(slash) = path[..end].rfind_byte(b'/') {
+        if present_in(workdir, path[..slash].as_bstr()) {
+            break;
+        }
+        missing = Some(BString::from(&path[..=slash]));
+        end = slash;
+    }
+    missing
 }
 
 fn expand(repo: &gix::Repository, sparse: &gix::index::File) -> Result<gix::index::State, Error> {
