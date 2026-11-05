@@ -148,11 +148,11 @@ Paneflow can compute a repository's status in process, without mapping worktree 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a fixture whose `.git/config` declares `filter.marker.clean`, `filter.marker.smudge`, `filter.marker.process`, `core.fsmonitor` and a `diff.marker.textconv`, each pointing at a program that creates a marker file, and whose `.gitattributes` assigns `filter=marker diff=marker` to every file, when a gix status runs on a stat-dirty tracked file, then the marker file never appears, on the Linux, macOS and Windows legs.
+- [x] Given a fixture whose `.git/config` declares `filter.marker.clean`, `filter.marker.smudge`, `filter.marker.process`, `core.fsmonitor` and a `diff.marker.textconv`, each pointing at a program that creates a marker file, and whose `.gitattributes` assigns `filter=marker diff=marker` to every file, when a gix status runs on a stat-dirty tracked file, then the marker file never appears, on the Linux, macOS and Windows legs.
 - [x] Given the same drivers reached through an `include.path` or `includeIf` in the repository config, when a gix status runs, then the marker file never appears.
 - [x] Given `filter.marker.required=true` in the repository config, when a gix status runs, then it succeeds and hashes the raw file, as the CLI probe does after `neutralize_repository_filters`.
 - [x] Given a driver declared in the global config (`GIT_CONFIG_GLOBAL` pointing at a fixture file), when both the CLI probe and a gix status run on the same stat-dirty file, then the driver runs in both or in neither, and both report the same status.
-- [ ] The chosen mechanism (`config_overrides`, or `gix_status::index_as_worktree` with a driver-free pipeline) and the rejected one are recorded with their test result in the PR and in `ARCHITECTURE.md`.
+- [x] The chosen mechanism (`config_overrides`, or `gix_status::index_as_worktree` with a driver-free pipeline) and the rejected one are recorded with their test result in the PR and in `ARCHITECTURE.md`.
 - [x] Given neither mechanism passes the first criterion, then the story is BLOCKED and the epic stops before US-003.
 
 #### US-003: The paneflow-git crate returns a status snapshot
@@ -169,7 +169,7 @@ Paneflow can compute a repository's status in process, without mapping worktree 
 - [x] Renames are disabled on both halves (`tree_index_track_renames(Disabled)`, `index_worktree_rewrites(None)`), and untracked files are listed one by one, sorted before any cap.
 - [x] The options carry a thread limit, an untracked mode (files or none), a submodule mode, an entry cap and an interrupt flag; the defaults are the values US-004 measures.
 - [x] Given a snapshot of a repository, the index file's bytes and modification time are unchanged afterwards, and nothing under `.git` is created or removed.
-- [ ] Given a writer that rewrites a 480 KiB tracked file at constant size while 200 snapshots run, then no snapshot fails and no write fails, on the Linux and Windows legs.
+- [x] Given a writer that rewrites a 480 KiB tracked file at constant size while 200 snapshots run, then no snapshot fails and no write fails, on the Linux and Windows legs.
 - [x] Given a path outside any repository, a bare repository, or an interrupt raised mid-walk, then the snapshot returns a distinct error for each instead of panicking.
 
 #### US-004: Validate assumption: an in-process probe costs no more than the CLI
@@ -181,7 +181,7 @@ Paneflow can compute a repository's status in process, without mapping worktree 
 
 **Acceptance Criteria:**
 - [x] A release-build measurement entry point (an example or a bench suite of the existing harness) reports p50 and p95 wall time, CPU time and peak memory over 200 probes for the gix snapshot and for `git --no-optional-locks status --porcelain=v1 -z -uall --no-renames`, on the Paneflow checkout and on a public repository of about 50,000 files.
-- [ ] Runs exist on Windows (Arthur's host) and Linux x86_64, each recorded with the machine, the load conditions and the commit in the PR.
+- [x] Runs exist on Windows (Arthur's host) and Linux x86_64, each recorded with the machine, the load conditions and the commit in the PR.
 - [x] The thread limit default is set from these numbers, at 1 or 2, with the reason in `ARCHITECTURE.md`.
 - [x] Peak memory on Linux is measured with heaptrack and compared with the peak RSS of the git process on the same repository.
 - [x] Given gix exceeds the CLI p50 or CPU time on the larger repository, then US-005 adds an index-entry threshold above which the CLI runs, set from the measured crossover.
