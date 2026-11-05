@@ -134,6 +134,9 @@ ureq.workspace = true
 # resolves a single version.
 imara-diff = { version = "0.2", default-features = false }
 paneflow-textdiff.workspace = true
+# Read-only in-process git status for the background probes
+# (prd-in-process-git-status.md, EP-001), kept out of the size-capped helpers.
+paneflow-git.workspace = true
 
 # Diff syntax highlighting (prd-diff-syntax-highlight-2026-Q3.md). Tree-sitter,
 # the same engine Zed uses - fast enough (ms-scale parse) that we highlight at

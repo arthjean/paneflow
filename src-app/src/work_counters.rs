@@ -122,7 +122,36 @@ pub(crate) fn counters() -> Value {
         "process_spawns".to_string(),
         json!(paneflow_process::spawn_count()),
     );
+    counters.insert(
+        "git_engine".to_string(),
+        git_engine_counters(&paneflow_git::engine::Selector::global().counters()),
+    );
     json!({ "counters": counters_value(counters) })
+}
+
+fn git_engine_counters(engine: &paneflow_git::engine::Counters) -> Value {
+    use paneflow_git::engine::{Engine, Fallback, Probe};
+    let mut probes = Map::new();
+    for probe in Probe::ALL {
+        let mut by_engine = Map::new();
+        for engine_kind in Engine::ALL {
+            by_engine.insert(
+                engine_kind.name().to_string(),
+                json!(engine.probes(probe, engine_kind)),
+            );
+        }
+        probes.insert(probe.name().to_string(), Value::Object(by_engine));
+    }
+    let mut fallbacks = Map::new();
+    for reason in Fallback::ALL {
+        fallbacks.insert(reason.name().to_string(), json!(engine.fallbacks(reason)));
+    }
+    json!({
+        "preferred": paneflow_git::engine::Selector::global().preferred().name(),
+        "probes": probes,
+        "fallbacks": fallbacks,
+        "pinned_directories": engine.pinned_directories,
+    })
 }
 
 #[cfg(test)]
@@ -148,6 +177,32 @@ mod tests {
             git_subcommand_counter(Some("status")),
             git_subcommand_counter(None)
         ));
+    }
+
+    #[test]
+    fn the_desktop_counters_expose_git_engine_probes_and_fallbacks_by_name() {
+        use paneflow_git::engine::{Engine, Fallback, Probe};
+        let value = counters();
+        let engine = &value["counters"]["git_engine"];
+        for probe in Probe::ALL {
+            for engine_kind in Engine::ALL {
+                assert!(
+                    engine["probes"][probe.name()][engine_kind.name()].is_u64(),
+                    "{}.{}: {engine}",
+                    probe.name(),
+                    engine_kind.name()
+                );
+            }
+        }
+        for reason in Fallback::ALL {
+            assert!(
+                engine["fallbacks"][reason.name()].is_u64(),
+                "{}: {engine}",
+                reason.name()
+            );
+        }
+        assert!(engine["pinned_directories"].is_u64(), "{engine}");
+        assert!(engine["preferred"].is_string(), "{engine}");
     }
 
     #[test]
