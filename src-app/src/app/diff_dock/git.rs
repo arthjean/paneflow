@@ -99,7 +99,7 @@ pub(super) fn build_diff_dock(
             u32::try_from(git_stats.deletions).unwrap_or(u32::MAX),
         )
     };
-    let file_count_capped = git_stats.untracked_capped;
+    let file_count_capped = git_stats.count_capped;
     Ok(DiffDockBuilt {
         unified,
         anchors_unified,

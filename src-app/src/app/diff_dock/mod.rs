@@ -265,7 +265,7 @@ impl PaneFlowApp {
                                     files_changed: built.file_count,
                                     insertions: built.added as usize,
                                     deletions: built.removed as usize,
-                                    untracked_capped: built.file_count_capped,
+                                    count_capped: built.file_count_capped,
                                     unavailable: false,
                                 };
                                 app.apply_git_stats_for_cwd(&cwd, stats);

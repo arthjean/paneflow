@@ -162,6 +162,26 @@ pub fn run_with_timeout_keeping_stdout_head(
     Ok((output, truncated))
 }
 
+pub fn run_with_timeout_feeding_stdin_keeping_stdout_head(
+    cmd: Command,
+    stdin: Vec<u8>,
+    deadline: Duration,
+    stdout_cap: u64,
+) -> Result<(BoundedOutput, bool), ProcError> {
+    let mut output = run_supervised_with_stdin(
+        cmd,
+        deadline,
+        stdout_cap,
+        Some(Box::new(|_: &[u8]| {})),
+        StdoutCapture::Head,
+        None,
+        Some(stdin),
+    )?;
+    let truncated = output.stdout.len() as u64 > stdout_cap;
+    output.stdout.truncate(validate_capture_cap(stdout_cap)?);
+    Ok((output, truncated))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StdoutCapture {
     Bounded,
@@ -202,19 +222,43 @@ pub fn run_cancelable_tapping_stderr(
 }
 
 fn run_supervised(
-    mut cmd: Command,
+    cmd: Command,
     deadline: Duration,
     stdout_cap: u64,
     stderr_tap: Option<StderrTap>,
     stdout_capture: StdoutCapture,
     cancel: Option<&AtomicBool>,
 ) -> Result<BoundedOutput, ProcError> {
+    run_supervised_with_stdin(
+        cmd,
+        deadline,
+        stdout_cap,
+        stderr_tap,
+        stdout_capture,
+        cancel,
+        None,
+    )
+}
+
+fn run_supervised_with_stdin(
+    mut cmd: Command,
+    deadline: Duration,
+    stdout_cap: u64,
+    stderr_tap: Option<StderrTap>,
+    stdout_capture: StdoutCapture,
+    cancel: Option<&AtomicBool>,
+    stdin_bytes: Option<Vec<u8>>,
+) -> Result<BoundedOutput, ProcError> {
     let stdout_cap = validate_capture_cap(stdout_cap)?;
     let stderr_cap = validate_capture_cap(STDERR_CAP)?;
 
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(if stdin_bytes.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
 
     #[cfg(windows)]
     {
@@ -239,6 +283,15 @@ fn run_supervised(
         .stderr
         .take()
         .ok_or_else(|| supervision_error("stderr capture pipe unavailable after spawn"))?;
+
+    if let Some(bytes) = stdin_bytes {
+        let stdin_pipe = process
+            .child_mut()?
+            .stdin
+            .take()
+            .ok_or_else(|| supervision_error("stdin pipe unavailable after spawn"))?;
+        spawn_stdin_feeder(stdin_pipe, bytes)?;
+    }
 
     let (reader_tx, reader_rx) = mpsc::channel();
     process.attach_reader(reader_rx);
@@ -544,6 +597,16 @@ impl ReaderMode {
             StdoutCapture::Head => Self::Head,
         }
     }
+}
+
+fn spawn_stdin_feeder(mut pipe: ChildStdin, bytes: Vec<u8>) -> Result<(), ProcError> {
+    thread::Builder::new()
+        .name("paneflow-process-stdin".to_string())
+        .spawn(move || {
+            let _ = pipe.write_all(&bytes);
+        })
+        .map(|_| ())
+        .map_err(ProcError::Supervision)
 }
 
 fn spawn_bounded_reader<R>(
@@ -1376,6 +1439,60 @@ mod tests {
             Some(b"got b".to_vec())
         );
         assert!(session.close(Duration::from_secs(10)));
+    }
+
+    #[cfg(unix)]
+    fn stdin_copy_command() -> Command {
+        sh("cat")
+    }
+
+    #[cfg(windows)]
+    fn stdin_copy_command() -> Command {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())",
+        ]);
+        c
+    }
+
+    #[test]
+    fn fed_stdin_larger_than_a_pipe_buffer_comes_back_whole_or_as_its_head() {
+        let input: Vec<u8> = (0..2 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+        let (whole, truncated) = run_with_timeout_feeding_stdin_keeping_stdout_head(
+            stdin_copy_command(),
+            input.clone(),
+            Duration::from_secs(60),
+            4 * 1024 * 1024,
+        )
+        .unwrap();
+        assert!(whole.status.success());
+        assert!(!truncated);
+        assert!(whole.stdout == input, "{} bytes back", whole.stdout.len());
+
+        let (head, truncated) = run_with_timeout_feeding_stdin_keeping_stdout_head(
+            stdin_copy_command(),
+            input.clone(),
+            Duration::from_secs(60),
+            1024,
+        )
+        .unwrap();
+        assert!(truncated);
+        assert!(head.stdout == input[..1024]);
+    }
+
+    #[test]
+    fn a_child_that_never_reads_its_fed_stdin_still_times_out() {
+        let result = run_with_timeout_feeding_stdin_keeping_stdout_head(
+            sleep_command(),
+            vec![b'x'; 4 * 1024 * 1024],
+            Duration::from_millis(500),
+            1024,
+        );
+        assert!(matches!(result, Err(ProcError::Timeout)), "{result:?}");
     }
 
     #[test]

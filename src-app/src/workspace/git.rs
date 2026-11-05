@@ -3,7 +3,7 @@ pub struct GitDiffStats {
     pub files_changed: usize,
     pub insertions: usize,
     pub deletions: usize,
-    pub untracked_capped: bool,
+    pub count_capped: bool,
     pub unavailable: bool,
 }
 
@@ -17,6 +17,10 @@ const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const GIT_DIFF_STAT_UNTRACKED_FILE_CAP: usize = 200;
 const GIT_DIFF_STAT_UNTRACKED_PATH_CAP: usize = 1000;
 const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
+const GIT_DIFF_STAT_TRACKED_FILE_CAP: usize = 200;
+const GIT_DIFF_STAT_BLOB_STDOUT_CAP: u64 = 8 * 1024 * 1024;
+const GIT_BINARY_SNIFF_BYTES: usize = 8000;
+const GITLINK_MODE: u32 = 0o160000;
 
 impl GitDiffStats {
     pub fn from_cwd(cwd: &str) -> Self {
@@ -27,21 +31,69 @@ impl GitDiffStats {
         let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
             return Self::unavailable();
         };
-        let base = match resolve_head(std::path::Path::new(cwd), remaining) {
-            Ok(Some(sha)) => sha,
-            Ok(None) => EMPTY_TREE_SHA.to_string(),
+        let (toplevel, base) = match resolve_toplevel_and_head(std::path::Path::new(cwd), remaining)
+        {
+            Ok((toplevel, Some(sha))) => (toplevel, sha),
+            Ok((toplevel, None)) => (toplevel, EMPTY_TREE_SHA.to_string()),
             Err(_) => return Self::unavailable(),
         };
-        let Some(shortstat) =
-            diff_stat_git_stdout(cwd, &["diff", "--shortstat", &base, "--"], deadline)
-        else {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
             return Self::unavailable();
         };
-        let mut stats = Self::parse_shortstat(&String::from_utf8_lossy(&shortstat));
-        if !stats.add_untracked(cwd, deadline) {
+        let Some((raw, truncated)) = git_stdout_head(
+            cwd,
+            &["diff-index", "--raw", "-z", &base, "--"],
+            remaining,
+            GIT_DIFF_STAT_STDOUT_CAP,
+        ) else {
+            return Self::unavailable();
+        };
+        let changes = parse_raw_changes(&raw, truncated);
+        let mut stats = Self {
+            count_capped: truncated,
+            ..Self::default()
+        };
+        if !stats.add_tracked(cwd, &toplevel, &changes, deadline)
+            || !stats.add_untracked(cwd, deadline)
+        {
             return Self::unavailable();
         }
         stats
+    }
+
+    fn add_tracked(
+        &mut self,
+        cwd: &str,
+        toplevel: &std::path::Path,
+        changes: &[RawChange],
+        deadline: std::time::Instant,
+    ) -> bool {
+        let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
+        let Some(blobs) = read_blobs(cwd, measured, deadline) else {
+            return false;
+        };
+        for (idx, change) in changes.iter().enumerate() {
+            if change.status == b'U' {
+                continue;
+            }
+            if idx >= GIT_DIFF_STAT_TRACKED_FILE_CAP || std::time::Instant::now() >= deadline {
+                self.files_changed += 1;
+                continue;
+            }
+            match (change.old_side(&blobs), change.new_side(toplevel, &blobs)) {
+                (SideText::Text(old), SideText::Text(new)) => {
+                    if change.status == b'M' && change.old_mode == change.new_mode && old == new {
+                        continue;
+                    }
+                    let (added, removed) = git_line_counts(old, new);
+                    self.files_changed += 1;
+                    self.insertions += added as usize;
+                    self.deletions += removed as usize;
+                }
+                _ => self.files_changed += 1,
+            }
+        }
+        true
     }
 
     fn unavailable() -> Self {
@@ -60,43 +112,13 @@ impl GitDiffStats {
     }
 
     pub fn files_changed_label(&self) -> String {
-        let plus = if self.untracked_capped { "+" } else { "" };
-        let plural = if self.files_changed == 1 && !self.untracked_capped {
+        let plus = if self.count_capped { "+" } else { "" };
+        let plural = if self.files_changed == 1 && !self.count_capped {
             ""
         } else {
             "s"
         };
         format!("{}{plus} file{plural}", self.files_changed)
-    }
-
-    fn parse_shortstat(text: &str) -> Self {
-        let mut files_changed = 0usize;
-        let mut insertions = 0usize;
-        let mut deletions = 0usize;
-
-        for part in text.split(',') {
-            let trimmed = part.trim();
-            if trimmed.contains("file") {
-                if let Some(n) = trimmed.split_whitespace().next() {
-                    files_changed = n.parse().unwrap_or(0);
-                }
-            } else if trimmed.contains("insertion") {
-                if let Some(n) = trimmed.split_whitespace().next() {
-                    insertions = n.parse().unwrap_or(0);
-                }
-            } else if trimmed.contains("deletion")
-                && let Some(n) = trimmed.split_whitespace().next()
-            {
-                deletions = n.parse().unwrap_or(0);
-            }
-        }
-
-        Self {
-            files_changed,
-            insertions,
-            deletions,
-            ..Self::default()
-        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -131,7 +153,7 @@ impl GitDiffStats {
             .filter(|record| !record.is_empty())
             .map(|record| String::from_utf8_lossy(record).into_owned())
             .collect();
-        self.untracked_capped = truncated || paths.len() > GIT_DIFF_STAT_UNTRACKED_PATH_CAP;
+        self.count_capped |= truncated || paths.len() > GIT_DIFF_STAT_UNTRACKED_PATH_CAP;
         for (idx, path) in paths
             .iter()
             .take(GIT_DIFF_STAT_UNTRACKED_PATH_CAP)
@@ -205,38 +227,305 @@ pub(crate) fn git_stdout(
     output.status.success().then_some(output.stdout)
 }
 
-fn diff_stat_git_stdout(cwd: &str, args: &[&str], deadline: std::time::Instant) -> Option<Vec<u8>> {
-    let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
-    git_stdout(cwd, args, remaining, GIT_DIFF_STAT_STDOUT_CAP)
+fn resolve_toplevel_and_head(
+    cwd: &std::path::Path,
+    deadline: std::time::Duration,
+) -> Result<(std::path::PathBuf, Option<String>), String> {
+    let mut cmd = crate::git_command::git(
+        crate::git_command::GitProfile::Probe,
+        [
+            "rev-parse",
+            "--show-toplevel",
+            "--verify",
+            "--quiet",
+            "HEAD^{commit}",
+        ],
+    );
+    cmd.current_dir(cwd);
+    let output = crate::git_command::run(cmd, deadline, 16 * 1024)
+        .map_err(|error| format!("git rev-parse HEAD failed: {error}"))?;
+    let mut lines = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .map(<[u8]>::trim_ascii_end);
+    let toplevel = lines
+        .next()
+        .filter(|line| !line.is_empty())
+        .map(path_from_git_output);
+    let sha = lines
+        .next()
+        .map(|line| String::from_utf8_lossy(line).trim().to_string())
+        .unwrap_or_default();
+    match (toplevel, output.status.code()) {
+        (Some(toplevel), Some(0)) if !sha.is_empty() => Ok((toplevel, Some(sha))),
+        (Some(toplevel), Some(1)) if sha.is_empty() && head_is_unborn(cwd, deadline) => {
+            Ok((toplevel, None))
+        }
+        _ => Err(format!(
+            "git could not read HEAD: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .last()
+                .unwrap_or("unknown error")
+        )),
+    }
 }
 
-fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {
+fn path_from_git_output(bytes: &[u8]) -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        std::path::PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawChange {
+    old_mode: u32,
+    new_mode: u32,
+    old_oid: String,
+    new_oid: String,
+    status: u8,
+    path: Vec<u8>,
+}
+
+fn is_null_oid(oid: &str) -> bool {
+    !oid.is_empty() && oid.bytes().all(|byte| byte == b'0')
+}
+
+fn subproject_line(oid: &str, dirty: bool) -> String {
+    format!(
+        "Subproject commit {oid}{}\n",
+        if dirty { "-dirty" } else { "" }
+    )
+}
+
+impl RawChange {
+    fn stored_blobs(&self) -> impl Iterator<Item = &str> {
+        [
+            (self.old_mode, &self.old_oid),
+            (self.new_mode, &self.new_oid),
+        ]
+        .into_iter()
+        .filter(|(mode, oid)| *mode != 0 && *mode != GITLINK_MODE && !is_null_oid(oid))
+        .map(|(_, oid)| oid.as_str())
+    }
+
+    fn old_side(&self, blobs: &std::collections::HashMap<String, SideText>) -> SideText {
+        match self.old_mode {
+            0 => SideText::Text(String::new()),
+            GITLINK_MODE => SideText::Text(subproject_line(&self.old_oid, false)),
+            _ => stored_side(blobs, &self.old_oid),
+        }
+    }
+
+    fn new_side(
+        &self,
+        toplevel: &std::path::Path,
+        blobs: &std::collections::HashMap<String, SideText>,
+    ) -> SideText {
+        match self.new_mode {
+            0 => SideText::Text(String::new()),
+            GITLINK_MODE if is_null_oid(&self.new_oid) => {
+                SideText::Text(subproject_line(&self.old_oid, true))
+            }
+            GITLINK_MODE => SideText::Text(subproject_line(&self.new_oid, false)),
+            _ if is_null_oid(&self.new_oid) => {
+                read_worktree_text(&toplevel.join(path_from_git_output(&self.path)))
+            }
+            _ => stored_side(blobs, &self.new_oid),
+        }
+    }
+}
+
+const MISSING_FINAL_NEWLINE: char = '\u{FFFF}';
+
+fn with_final_newline_marked(mut text: String) -> String {
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push(MISSING_FINAL_NEWLINE);
+        text.push('\n');
+    }
+    text
+}
+
+fn git_line_counts(old: String, new: String) -> (u32, u32) {
+    crate::diff::line_change_counts(
+        &with_final_newline_marked(old),
+        &with_final_newline_marked(new),
+    )
+}
+
+fn stored_side(blobs: &std::collections::HashMap<String, SideText>, oid: &str) -> SideText {
+    blobs.get(oid).cloned().unwrap_or(SideText::Unreadable)
+}
+
+fn parse_raw_changes(raw: &[u8], truncated: bool) -> Vec<RawChange> {
+    let complete = if truncated {
+        raw.iter()
+            .rposition(|byte| *byte == 0)
+            .map_or(&raw[..0], |last| &raw[..=last])
+    } else {
+        raw
+    };
+    let mut fields = complete
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut changes = Vec::new();
+    while let Some(header) = fields.next() {
+        let Some(change) = parse_raw_header(header, &mut fields) else {
+            break;
+        };
+        changes.push(change);
+    }
+    changes
+}
+
+fn parse_raw_header<'a>(
+    header: &[u8],
+    paths: &mut impl Iterator<Item = &'a [u8]>,
+) -> Option<RawChange> {
+    let header = std::str::from_utf8(header).ok()?.strip_prefix(':')?;
+    let mut parts = header.split(' ');
+    let old_mode = u32::from_str_radix(parts.next()?, 8).ok()?;
+    let new_mode = u32::from_str_radix(parts.next()?, 8).ok()?;
+    let old_oid = parts.next()?.to_string();
+    let new_oid = parts.next()?.to_string();
+    let status = *parts.next()?.as_bytes().first()?;
+    let mut path = paths.next()?;
+    if matches!(status, b'R' | b'C') {
+        path = paths.next()?;
+    }
+    Some(RawChange {
+        old_mode,
+        new_mode,
+        old_oid,
+        new_oid,
+        status,
+        path: path.to_vec(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SideText {
+    Text(String),
+    Binary,
+    TooLarge,
+    Unreadable,
+}
+
+fn stat_text(bytes: Vec<u8>) -> SideText {
+    if bytes[..bytes.len().min(GIT_BINARY_SNIFF_BYTES)].contains(&0) {
+        return SideText::Binary;
+    }
+    let text = String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+    SideText::Text(if text.contains("\r\n") {
+        text.replace("\r\n", "\n")
+    } else {
+        text
+    })
+}
+
+fn read_blobs(
+    cwd: &str,
+    changes: &[RawChange],
+    deadline: std::time::Instant,
+) -> Option<std::collections::HashMap<String, SideText>> {
+    let mut wanted: Vec<&str> = changes.iter().flat_map(RawChange::stored_blobs).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    if wanted.is_empty() {
+        return Some(std::collections::HashMap::new());
+    }
+    let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+    let stdin: Vec<u8> = wanted
+        .iter()
+        .flat_map(|oid| oid.bytes().chain(std::iter::once(b'\n')))
+        .collect();
+    let mut cmd = crate::git_command::git(
+        crate::git_command::GitProfile::Probe,
+        ["cat-file", "--batch"],
+    );
+    cmd.current_dir(cwd);
+    let (output, _) = crate::git_command::run_feeding_stdin_keeping_stdout_head(
+        cmd,
+        stdin,
+        remaining,
+        GIT_DIFF_STAT_BLOB_STDOUT_CAP,
+    )
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| parse_blob_batch(&output.stdout))
+}
+
+fn parse_blob_batch(mut rest: &[u8]) -> std::collections::HashMap<String, SideText> {
+    let mut blobs = std::collections::HashMap::new();
+    while let Some(eol) = rest.iter().position(|byte| *byte == b'\n') {
+        let header = String::from_utf8_lossy(&rest[..eol]).into_owned();
+        rest = &rest[eol + 1..];
+        let mut fields = header.split(' ');
+        let (Some(oid), Some(kind)) = (fields.next(), fields.next()) else {
+            break;
+        };
+        let Some(size) = fields.next().and_then(|size| size.parse::<usize>().ok()) else {
+            blobs.insert(oid.to_string(), SideText::Unreadable);
+            continue;
+        };
+        if rest.len() <= size {
+            break;
+        }
+        let content = &rest[..size];
+        rest = &rest[size + 1..];
+        let side = if kind != "blob" {
+            SideText::Unreadable
+        } else if size as u64 > GIT_DIFF_STAT_FILE_BYTES_CAP {
+            SideText::TooLarge
+        } else {
+            stat_text(content.to_vec())
+        };
+        blobs.insert(oid.to_string(), side);
+    }
+    blobs
+}
+
+fn read_worktree_text(path: &std::path::Path) -> SideText {
     use std::io::Read;
 
-    let path = std::path::Path::new(cwd).join(rel_path);
-    match std::fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(&path)
-            .map(|target| text_line_count(&target.to_string_lossy()))
-            .unwrap_or(0),
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(path)
+            .map(|target| SideText::Text(target.to_string_lossy().into_owned()))
+            .unwrap_or(SideText::Unreadable),
         Ok(_) => {
-            let Ok((file, _)) = paneflow_home::open_regular_for_reading(&path) else {
-                return 0;
+            let Ok((file, _)) = paneflow_home::open_regular_for_reading(path) else {
+                return SideText::Unreadable;
             };
             let mut bytes = Vec::new();
             if file
                 .take(GIT_DIFF_STAT_FILE_BYTES_CAP + 1)
                 .read_to_end(&mut bytes)
                 .is_err()
-                || bytes.len() as u64 > GIT_DIFF_STAT_FILE_BYTES_CAP
-                || bytes.contains(&0)
             {
-                return 0;
+                return SideText::Unreadable;
             }
-            String::from_utf8(bytes)
-                .map(|text| text_line_count(&text))
-                .unwrap_or(0)
+            if bytes.len() as u64 > GIT_DIFF_STAT_FILE_BYTES_CAP {
+                return SideText::TooLarge;
+            }
+            stat_text(bytes)
         }
-        Err(_) => 0,
+        Err(_) => SideText::Unreadable,
+    }
+}
+
+fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {
+    match read_worktree_text(&std::path::Path::new(cwd).join(rel_path)) {
+        SideText::Text(text) => text_line_count(&text),
+        SideText::Binary | SideText::TooLarge | SideText::Unreadable => 0,
     }
 }
 
@@ -773,21 +1062,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_shortstat_extracts_insertions_and_deletions() {
-        let stats =
-            GitDiffStats::parse_shortstat(" 3 files changed, 42 insertions(+), 7 deletions(-)");
-        assert_eq!(stats.files_changed, 3);
-        assert_eq!(stats.insertions, 42);
-        assert_eq!(stats.deletions, 7);
-        assert!(!stats.is_empty());
-
-        let single = GitDiffStats::parse_shortstat(" 1 file changed, 2 deletions(-)");
-        assert_eq!(single.files_changed, 1);
-        assert_eq!(single.insertions, 0);
-        assert_eq!(single.deletions, 2);
-    }
-
-    #[test]
     fn from_cwd_on_non_repo_yields_unavailable_default() {
         let dir = tempfile::tempdir().unwrap();
         let stats = GitDiffStats::from_cwd(dir.path().to_str().unwrap());
@@ -844,7 +1118,7 @@ mod tests {
         }
         let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
         assert_eq!(stats.files_changed, GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
-        assert!(stats.untracked_capped);
+        assert!(stats.count_capped);
         assert_eq!(stats.files_changed_label(), "1000+ files");
     }
 
@@ -864,7 +1138,7 @@ mod tests {
             }
         }
         let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
-        assert!(stats.untracked_capped, "{stats:?}");
+        assert!(stats.count_capped, "{stats:?}");
         assert!(!stats.unavailable);
         assert!(stats.files_changed > 0, "a byte cap never reads as 0 files");
         assert!(stats.files_changed <= GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
@@ -958,41 +1232,175 @@ mod tests {
         );
     }
 
+    fn git_shortstat(root: &std::path::Path) -> (usize, usize, usize) {
+        let out = fixture::run(root, &["diff", "--shortstat", "HEAD", "--"]);
+        let mut counts = (0, 0, 0);
+        for part in out.split(',') {
+            let number = part
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            if part.contains("file") {
+                counts.0 = number;
+            } else if part.contains("insertion") {
+                counts.1 = number;
+            } else if part.contains("deletion") {
+                counts.2 = number;
+            }
+        }
+        counts
+    }
+
+    fn make_stat_dirty(path: &std::path::Path) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(120))
+            .unwrap();
+    }
+
+    fn counts(stats: &GitDiffStats) -> (usize, usize, usize) {
+        (stats.files_changed, stats.insertions, stats.deletions)
+    }
+
     #[test]
-    fn shortstat_counts_survive_a_french_locale() {
+    fn tracked_counts_match_git_shortstat_for_every_kind_of_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(
+            root,
+            &[
+                ("edit.txt", "a\nb\nc\n"),
+                ("gone.txt", "x\ny\n"),
+                ("touched.txt", "same\n"),
+                ("blob.dat", "\0\u{1}\u{2}"),
+                ("staged.txt", "one\n"),
+                ("tail.txt", "no newline"),
+                ("sub/deep.txt", "1\n2\n3\n4\n"),
+            ],
+        );
+        std::fs::write(root.join("edit.txt"), "a\nB\nc\nd\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        make_stat_dirty(&root.join("touched.txt"));
+        std::fs::write(root.join("blob.dat"), "\0\u{1}\u{3}\u{4}").unwrap();
+        std::fs::write(root.join("staged.txt"), "one\ntwo\n").unwrap();
+        fixture::run(root, &["add", "staged.txt"]);
+        std::fs::write(root.join("staged.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(root.join("tail.txt"), "no newline\nnow two").unwrap();
+        std::fs::write(root.join("sub").join("deep.txt"), "1\n3\n").unwrap();
+        std::fs::write(root.join("added.txt"), "n1\nn2\n").unwrap();
+        fixture::run(root, &["add", "added.txt"]);
+
+        let stats = GitDiffStats::from_cwd(root.join("sub").to_str().unwrap());
+        assert!(!stats.unavailable);
+        assert_eq!(counts(&stats), git_shortstat(root));
+        assert_eq!(counts(&stats), (7, 8, 6));
+    }
+
+    #[test]
+    fn an_autocrlf_checkout_counts_line_endings_like_git() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fixture::init(root);
-        fixture::run(root, &["config", "core.autocrlf", "false"]);
-        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
-        fixture::run(root, &["add", "tracked.txt"]);
-        fixture::run(
-            root,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-m",
-                "init",
-            ],
-        );
-        std::fs::write(root.join("tracked.txt"), "one\nthree\n").unwrap();
+        fixture::run(root, &["config", "core.autocrlf", "true"]);
+        std::fs::write(root.join("untouched.txt"), "a\r\nb\r\n").unwrap();
+        std::fs::write(root.join("edited.txt"), "a\r\nb\r\n").unwrap();
+        commit_all(root, "crlf");
+        make_stat_dirty(&root.join("untouched.txt"));
+        std::fs::write(root.join("edited.txt"), "a\r\nB\r\n").unwrap();
 
-        let mut command = crate::git_command::git(
-            crate::git_command::GitProfile::Probe,
-            ["diff", "--shortstat", "HEAD", "--"],
-        );
-        command
-            .current_dir(root)
-            .env("LANG", "fr_FR.UTF-8")
-            .env("LC_MESSAGES", "fr_FR.UTF-8");
-        let out = crate::git_command::run(command, GIT_DIFF_STAT_DEADLINE, 4096).unwrap();
-        let stats = GitDiffStats::parse_shortstat(&String::from_utf8_lossy(&out.stdout));
+        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert_eq!(counts(&stats), git_shortstat(root));
+        assert_eq!(counts(&stats), (1, 1, 1));
+    }
+
+    #[test]
+    fn an_added_file_counts_the_same_lines_staged_or_untracked() {
+        for text in ["", "a", "a\n", "a\nb", "a\n\n", "\n", "a\r\nb\r\n"] {
+            let SideText::Text(normalized) = stat_text(text.as_bytes().to_vec()) else {
+                panic!("{text:?} is text");
+            };
+            assert_eq!(
+                git_line_counts(String::new(), normalized.clone()),
+                (text_line_count(&normalized) as u32, 0),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_nul_in_the_first_eight_thousand_bytes_makes_a_side_binary() {
+        assert_eq!(stat_text(b"a\0b".to_vec()), SideText::Binary);
+        let mut late_nul = vec![b'a'; GIT_BINARY_SNIFF_BYTES];
+        late_nul.push(0);
+        assert!(matches!(stat_text(late_nul), SideText::Text(_)));
         assert_eq!(
-            (stats.files_changed, stats.insertions, stats.deletions),
-            (1, 1, 1)
+            stat_text(b"caf\xe9\r\n".to_vec()),
+            SideText::Text("caf\u{fffd}\n".to_string())
         );
+    }
+
+    #[test]
+    fn a_truncated_raw_listing_keeps_only_its_complete_records() {
+        let oid = "1".repeat(40);
+        let null = "0".repeat(40);
+        let raw = format!(
+            ":100644 100644 {oid} {null} M\0a.txt\0:100644 100644 {oid} {oid} R087\0old.txt\0new.txt\0:100644 000000 {oid} {null} D\0cut-off"
+        );
+        let all = parse_raw_changes(raw.as_bytes(), false);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[1].path, b"new.txt");
+        assert_eq!(all[2].status, b'D');
+        let complete = parse_raw_changes(raw.as_bytes(), true);
+        assert_eq!(
+            complete
+                .iter()
+                .map(|change| change.path.as_slice())
+                .collect::<Vec<_>>(),
+            vec![b"a.txt".as_slice(), b"new.txt".as_slice()]
+        );
+    }
+
+    #[test]
+    fn a_blob_batch_reports_missing_large_and_cut_off_objects() {
+        let small = "1".repeat(40);
+        let missing = "2".repeat(40);
+        let large = "3".repeat(40);
+        let cut = "4".repeat(40);
+        let big_size = GIT_DIFF_STAT_FILE_BYTES_CAP as usize + 1;
+        let mut batch =
+            format!("{small} blob 3\nx\r\n\n{missing} missing\n{large} blob {big_size}\n")
+                .into_bytes();
+        batch.extend(std::iter::repeat_n(b'z', big_size));
+        batch.extend_from_slice(format!("\n{cut} blob 10\nshort").as_bytes());
+
+        let blobs = parse_blob_batch(&batch);
+        assert_eq!(blobs[&small], SideText::Text("x\n".to_string()));
+        assert_eq!(blobs[&missing], SideText::Unreadable);
+        assert_eq!(blobs[&large], SideText::TooLarge);
+        assert!(!blobs.contains_key(&cut));
+    }
+
+    #[test]
+    fn a_tracked_listing_past_its_byte_cap_is_shown_as_a_lower_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::init(root);
+        let long = "t".repeat(116);
+        let names: Vec<String> = (0..1300).map(|i| format!("{long}{i:04}")).collect();
+        for name in &names {
+            std::fs::write(root.join(name), "a\n").unwrap();
+        }
+        commit_all(root, "seed");
+        for name in &names {
+            std::fs::write(root.join(name), "b\n").unwrap();
+        }
+        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        assert!(!stats.unavailable);
+        assert!(stats.count_capped, "{stats:?}");
+        assert!(stats.files_changed > 0 && stats.files_changed < names.len());
+        assert!(stats.files_changed_label().ends_with("+ files"));
     }
 }

@@ -635,7 +635,7 @@ fn probe_status(
 }
 
 #[test]
-fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes() {
+fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_four_git_processes() {
     let tmp = tempfile::tempdir().expect("tempdir");
     committed_repo(tmp.path());
     std::fs::write(tmp.path().join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
@@ -650,12 +650,12 @@ fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_proces
 
     assert_eq!(
         after_first - before,
-        4,
-        "the first probe queries the filters once and its second worktree read reuses it"
+        5,
+        "rev-parse, diff-index, one blob batch and ls-files, plus one filter query reused by the second worktree read"
     );
     assert_eq!(
         after_second - after_first,
-        3,
+        4,
         "the second probe reuses the filter query"
     );
     assert_eq!(first, second);
@@ -946,5 +946,56 @@ fn a_config_written_in_one_workspace_reruns_the_filter_query_for_that_workspace_
         filter_queries_on_this_thread() - queries,
         1,
         "the new answer is served by the cache"
+    );
+}
+
+fn same_size_body(generation: usize) -> String {
+    format!("{generation:08}\n{}", "x\n".repeat(32 * 1024))
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("repo");
+    fixture::committed_repo(&root, &[("tracked.txt", &same_size_body(99_999_999))]);
+    let tracked = root.join("tracked.txt");
+    backdate(&tracked, 3600);
+    assert!(fixture::git_succeeds(&root, &["update-index", "--refresh"]));
+    let rounds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    const PROBE_ROUNDS: usize = 40;
+    let probes = {
+        let root = root.clone();
+        let rounds = rounds.clone();
+        std::thread::spawn(move || {
+            let cwd = root.to_str().expect("utf-8 test path").to_string();
+            let mut stats = Vec::new();
+            for _ in 0..PROBE_ROUNDS {
+                stats.push(crate::workspace::GitDiffStats::from_cwd(&cwd));
+                rounds.fetch_add(1, Ordering::Relaxed);
+            }
+            stats
+        })
+    };
+
+    let mut writes = 0usize;
+    let mut failures: std::collections::BTreeMap<Option<i32>, usize> = Default::default();
+    while rounds.load(Ordering::Relaxed) < PROBE_ROUNDS {
+        if let Err(error) = std::fs::write(&tracked, same_size_body(writes)) {
+            *failures.entry(error.raw_os_error()).or_default() += 1;
+        }
+        writes += 1;
+    }
+    let stats = probes.join().expect("probe thread");
+
+    assert!(writes > PROBE_ROUNDS, "the writer must overlap the probes");
+    assert!(
+        failures.is_empty(),
+        "{failures:?} failed writes out of {writes} (raw OS error 1224 is a mapped section)"
+    );
+    assert!(
+        stats
+            .iter()
+            .all(|stat| stat.files_changed == 1 && !stat.unavailable),
+        "every probe still sees the one rewritten file: {stats:?}"
     );
 }
