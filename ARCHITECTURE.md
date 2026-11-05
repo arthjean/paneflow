@@ -246,7 +246,12 @@ Files sidebar, the diff badge, the diff dock and `is_clean`.
   present in the worktree unless `sparse.expectFilesOutsideOfPatterns` is set;
   gix does not, which hid a modified file outside the sparse patterns, so the
   snapshot applies the same rule to its in-memory index when
-  `core.sparseCheckout` is on.
+  `core.sparseCheckout` is on. On a case-sensitive filesystem gix's directory
+  walk also skips a directory whose entries are all skip-worktree and none
+  up to date, hiding the untracked files git lists there, so the in-memory
+  index marks every remaining skip-worktree entry up to date; the index
+  status skips those entries either way. The `core.ignorecase=false` sparse
+  fixtures cover that branch on Windows too.
 - **Porcelain mapping and parity oracle.** `paneflow_git::porcelain::records`
   is the one mapping from a snapshot to porcelain v1 records (XY code and
   path), with `FILES_STATUS_ARGS` and `CLEAN_STATUS_ARGS` the CLI arguments

@@ -132,6 +132,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let global = tmp.path().join("gitconfig");
         std::fs::write(&global, "").expect("global config");
+        std::env::set_var("GIT_CONFIG_GLOBAL", &global);
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
         let root = tmp.path().join("repo");
         std::fs::create_dir_all(&root).expect("repo dir");
         assert!(git(&root, &global, &["init", "-q"], false).status.success());
