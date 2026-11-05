@@ -218,11 +218,11 @@ Every difference between the CLI probes and the gix snapshot is caught by a test
 
 **Acceptance Criteria:**
 - [ ] One mapping function turns a snapshot into porcelain v1 records (XY code and path); the probes of EP-003 to EP-005 use that same function.
-- [ ] The base matrix covers `core.autocrlf` false, true and input; `.gitattributes` `eol=crlf`, `text`, `-text` and `binary`; a staged addition, modification and deletion; staged then modified; a deletion from the worktree; a staged rename under `--no-renames`; nested untracked files; an ignored file; an unborn `HEAD`; intent to add; a type change; and each of the seven conflict kinds.
-- [ ] Given every fixture, the multiset of (XY, path) records is equal between the CLI and gix, on the Linux, macOS and Windows legs.
-- [ ] Given a divergence, the failure names the fixture, the path, the CLI code and the gix code.
-- [ ] The fixture config isolation (`git_fixture::isolate`) is shown to apply to gix: a fixture with a global `core.autocrlf` set outside the isolated files gives the same result in both engines.
-- [ ] Given a platform that cannot create a fixture (a symlink type change without the Windows privilege), the test reports that fixture as skipped by name instead of passing silently.
+- [x] The base matrix covers `core.autocrlf` false, true and input; `.gitattributes` `eol=crlf`, `text`, `-text` and `binary`; a staged addition, modification and deletion; staged then modified; a deletion from the worktree; a staged rename under `--no-renames`; nested untracked files; an ignored file; an unborn `HEAD`; intent to add; a type change; and each of the seven conflict kinds.
+- [x] Given every fixture, the multiset of (XY, path) records is equal between the CLI and gix, on the Linux, macOS and Windows legs.
+- [x] Given a divergence, the failure names the fixture, the path, the CLI code and the gix code.
+- [x] The fixture config isolation (`git_fixture::isolate`) is shown to apply to gix: a fixture with a global `core.autocrlf` set outside the isolated files gives the same result in both engines.
+- [x] Given a platform that cannot create a fixture (a symlink type change without the Windows privilege), the test reports that fixture as skipped by name instead of passing silently.
 
 #### US-007: Linked worktrees and submodules match the CLI
 **Description:** As a user of Paneflow worktrees and submodules, I want the in-process status to read the right index and report submodules like git does so that worktree tabs and superprojects show correct colors.
@@ -232,11 +232,11 @@ Every difference between the CLI probes and the gix snapshot is caught by a test
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given a linked worktree created by `git worktree add` and one created by Paneflow's own worktree flow, when both engines run from the linked path, then they report the linked worktree's index and changes, not the main worktree's.
-- [ ] Given submodules that are clean, checked out at a new commit, holding modified content, holding untracked content, and not initialized, then both engines give equal records with the files probe's arguments and with the `is_clean` arguments (`--ignore-submodules=none`).
-- [ ] Given `submodule.<name>.ignore` set to `dirty` and to `all`, then both engines give equal records.
-- [ ] Given a submodule whose git directory is missing, then the superproject status does not fail and both engines report the submodule the same way.
-- [ ] Given 10 submodules, a snapshot opens each submodule repository at most once.
+- [x] Given a linked worktree created by `git worktree add` and one created by Paneflow's own worktree flow, when both engines run from the linked path, then they report the linked worktree's index and changes, not the main worktree's.
+- [x] Given submodules that are clean, checked out at a new commit, holding modified content, holding untracked content, and not initialized, then both engines give equal records with the files probe's arguments and with the `is_clean` arguments (`--ignore-submodules=none`).
+- [x] Given `submodule.<name>.ignore` set to `dirty` and to `all`, then both engines give equal records.
+- [x] Given a submodule whose git directory is missing, then the superproject status does not fail and both engines report the submodule the same way.
+- [x] Given 10 submodules, a snapshot opens each submodule repository at most once.
 
 #### US-008: Sparse checkout, split index, untracked cache and ownership match the CLI
 **Description:** As a user of large or unusual repositories, I want the in-process status to handle every index layout git writes so that switching engines never hides a change.
@@ -246,10 +246,10 @@ Every difference between the CLI probes and the gix snapshot is caught by a test
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given cone sparse checkout without and with `index.sparse=true`, and non-cone sparse checkout, then both engines give equal records, including files outside the sparse set.
-- [ ] Given a split index (`git update-index --split-index`), an untracked cache (`git update-index --untracked-cache`), an fsmonitor extension written while `core.fsmonitor` was on, `index.skipHash=true`, and index version 4, then both engines give equal records.
-- [ ] Given an index with an unknown mandatory extension, then gix fails, the selector answers with the CLI, and the counters record the fallback.
-- [ ] Given a repository the CLI refuses for ownership (`safe.directory`), then the gix probe also returns no status, and a test of the trust decision covers the reduced-trust case on every platform.
+- [x] Given cone sparse checkout without and with `index.sparse=true`, and non-cone sparse checkout, then both engines give equal records, including files outside the sparse set.
+- [x] Given a split index (`git update-index --split-index`), an untracked cache (`git update-index --untracked-cache`), an fsmonitor extension written while `core.fsmonitor` was on, `index.skipHash=true`, and index version 4, then both engines give equal records.
+- [x] Given an index with an unknown mandatory extension, then gix fails, the selector answers with the CLI, and the counters record the fallback.
+- [x] Given a repository the CLI refuses for ownership (`safe.directory`), then the gix probe also returns no status, and a test of the trust decision covers the reduced-trust case on every platform.
 
 ---
 
