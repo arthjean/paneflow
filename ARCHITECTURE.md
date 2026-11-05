@@ -246,7 +246,13 @@ Files sidebar, the diff badge, the diff dock and `is_clean`.
   present in the worktree unless `sparse.expectFilesOutsideOfPatterns` is set;
   gix does not, which hid a modified file outside the sparse patterns, so the
   snapshot applies the same rule to its in-memory index when
-  `core.sparseCheckout` is on. On a case-sensitive filesystem gix's directory
+  `core.sparseCheckout` is on. Like git's `path_found`, it remembers the
+  shallowest missing directory and skips the lookup of every entry under it:
+  checking each file cost 520 to 590 ms against 14 to 31 ms for the CLI on
+  40,000 entries outside the patterns (Windows 11, release build), and 69 to
+  105 ms with the directory skipped. A sparse index passes the 30,000-entry
+  threshold on its collapsed count, so its expansion is not bounded by it.
+  On a case-sensitive filesystem gix's directory
   walk also skips a directory whose entries are all skip-worktree and none
   up to date, hiding the untracked files git lists there, so the in-memory
   index marks every remaining skip-worktree entry up to date; the index
