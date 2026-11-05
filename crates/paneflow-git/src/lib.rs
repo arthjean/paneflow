@@ -1,6 +1,8 @@
 pub mod engine;
 mod open;
+pub mod porcelain;
 mod snapshot;
+mod sparse;
 mod submodule;
 
 use std::path::PathBuf;
@@ -25,6 +27,7 @@ pub enum Untracked {
 pub enum Submodules {
     Ignore,
     Check,
+    CheckAll,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +112,7 @@ pub struct Snapshot {
     pub head: Head,
     pub entries: Vec<Entry>,
     pub truncated: bool,
+    pub submodules_opened: usize,
 }
 
 #[derive(Debug, thiserror::Error)]

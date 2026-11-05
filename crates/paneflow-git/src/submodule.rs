@@ -4,21 +4,25 @@ use std::sync::Arc;
 use gix::submodule::config::Ignore;
 
 use crate::snapshot::{collect, entry, Entries};
-use crate::{open, Error, Options, SubmoduleChange, Untracked, WorktreeChange};
+use crate::{open, Error, Options, SubmoduleChange, Submodules, Untracked, WorktreeChange};
 
 pub(crate) fn record(
     repo: &gix::Repository,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
     entries: &mut Entries,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let Some(submodules) = repo
         .submodules()
         .map_err(|error| Error::git("read the submodule configuration", error))?
     else {
-        return Ok(());
+        return Ok(0);
     };
-    let configured_ignore = superproject_ignore(repo)?;
+    let configured_ignore = match options.submodules {
+        Submodules::CheckAll => Some(Ignore::None),
+        Submodules::Check | Submodules::Ignore => superproject_ignore(repo)?,
+    };
+    let mut opened = 0;
     for submodule in submodules {
         let path = submodule
             .path()
@@ -34,7 +38,8 @@ pub(crate) fn record(
         if ignore == Ignore::All {
             continue;
         }
-        let change = status(&submodule, ignore, options, interrupt)?;
+        let (change, submodule_opens) = status(&submodule, ignore, options, interrupt)?;
+        opened += submodule_opens;
         if !change.is_dirty() {
             continue;
         }
@@ -43,7 +48,7 @@ pub(crate) fn record(
             entry.index_to_worktree = Some(WorktreeChange::Submodule(change));
         }
     }
-    Ok(())
+    Ok(opened)
 }
 
 fn superproject_ignore(repo: &gix::Repository) -> Result<Option<Ignore>, Error> {
@@ -63,24 +68,25 @@ fn status(
     ignore: Ignore,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
-) -> Result<SubmoduleChange, Error> {
+) -> Result<(SubmoduleChange, usize), Error> {
+    let unchanged = Ok((SubmoduleChange::default(), 0));
     let state = submodule
         .state()
         .map_err(|error| Error::git("read a submodule state", error))?;
     if !state.repository_exists || !state.worktree_checkout {
-        return Ok(SubmoduleChange::default());
+        return unchanged;
     }
     let Some(index_id) = submodule
         .index_id()
         .map_err(|error| Error::git("read a submodule index entry", error))?
     else {
-        return Ok(SubmoduleChange::default());
+        return unchanged;
     };
     let work_dir = submodule
         .work_dir()
         .map_err(|error| Error::git("locate a submodule worktree", error))?;
     let Ok(repo) = open::submodule(&work_dir, options.thread_limit) else {
-        return Ok(SubmoduleChange::default());
+        return Ok((SubmoduleChange::default(), 1));
     };
     let checked_out = repo.head_id().ok().map(gix::Id::detach);
     let mut change = SubmoduleChange {
@@ -88,7 +94,7 @@ fn status(
         ..SubmoduleChange::default()
     };
     if ignore == Ignore::Dirty {
-        return Ok(change);
+        return Ok((change, 1));
     }
     let content_options = Options {
         untracked: if ignore == Ignore::Untracked {
@@ -96,6 +102,7 @@ fn status(
         } else {
             Untracked::Files
         },
+        submodules: Submodules::Check,
         entry_cap: usize::MAX,
         interrupt: None,
         ..options.clone()
@@ -107,5 +114,5 @@ fn status(
             || entry.conflict.is_some()
     });
     change.untracked_content = content.entries.iter().any(|entry| entry.untracked);
-    Ok(change)
+    Ok((change, 1 + content.submodules_opened))
 }

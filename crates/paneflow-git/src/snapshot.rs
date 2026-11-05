@@ -13,8 +13,8 @@ use gix::status::{Item, Submodule, UntrackedFiles};
 use gix::submodule::config::Ignore;
 
 use crate::{
-    open, submodule, Conflict, Entry, Error, Head, IndexChange, Options, Snapshot, Submodules,
-    Untracked, WorktreeChange,
+    open, sparse, submodule, Conflict, Entry, Error, Head, IndexChange, Options, Snapshot,
+    Submodules, Untracked, WorktreeChange,
 };
 
 pub fn snapshot(path: &Path, options: &Options) -> Result<Snapshot, Error> {
@@ -40,6 +40,7 @@ pub(crate) fn collect(
     let status = repo
         .status(gix::progress::Discard)
         .map_err(|error| Error::git("prepare the status", error))?
+        .index(sparse::index_for_status(repo)?)
         .untracked_files(match options.untracked {
             Untracked::Files => UntrackedFiles::Files,
             Untracked::None => UntrackedFiles::None,
@@ -62,9 +63,12 @@ pub(crate) fn collect(
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
-    if options.submodules == Submodules::Check {
-        submodule::record(repo, options, interrupt, &mut entries)?;
-    }
+    let submodules_opened = match options.submodules {
+        Submodules::Ignore => 0,
+        Submodules::Check | Submodules::CheckAll => {
+            submodule::record(repo, options, interrupt, &mut entries)?
+        }
+    };
     for entry in entries.values_mut() {
         if entry.index_to_worktree == Some(WorktreeChange::IntentToAdd) {
             entry.head_to_index = None;
@@ -76,6 +80,7 @@ pub(crate) fn collect(
         head,
         entries,
         truncated,
+        submodules_opened,
     })
 }
 

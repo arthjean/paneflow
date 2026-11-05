@@ -102,3 +102,63 @@ fn configure_probe(repo: &mut gix::Repository, thread_limit: usize) -> Result<()
         .map_err(|error| Error::git("neutralize the repository filter drivers", error))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::process::{Command, Output};
+
+    use super::{classify_discovery_error, discover, open_options_by_trust};
+    use crate::porcelain::FILES_STATUS_ARGS;
+    use crate::Error;
+
+    fn git(root: &Path, global: &Path, args: &[&str], foreign_owner: bool) -> Output {
+        let mut command = Command::new("git");
+        command
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", global)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE");
+        if foreign_owner {
+            command.env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+        }
+        command.output().expect("git")
+    }
+
+    #[test]
+    fn a_repository_with_reduced_trust_gives_no_status_like_the_cli_refusing_its_owner() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let global = tmp.path().join("gitconfig");
+        std::fs::write(&global, "").expect("global config");
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(&root).expect("repo dir");
+        assert!(git(&root, &global, &["init", "-q"], false).status.success());
+
+        let refused = git(&root, &global, FILES_STATUS_ARGS, true);
+        assert!(!refused.status.success(), "the CLI refuses a foreign owner");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("dubious ownership"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+
+        let reduced = open_options_by_trust()
+            .reduced
+            .with(gix::sec::Trust::Reduced);
+        let error = gix::ThreadSafeRepository::open_opts(&root, reduced)
+            .map(|_| ())
+            .expect_err("the reduced-trust options refuse the repository");
+        let classified = classify_discovery_error(&root, error);
+        assert!(
+            matches!(classified, Error::Untrusted { .. }),
+            "{classified:?}"
+        );
+
+        assert!(
+            discover(&root, 1).is_ok(),
+            "the same repository opens with the full trust of its owner"
+        );
+    }
+}
