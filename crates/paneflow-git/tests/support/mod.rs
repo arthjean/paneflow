@@ -9,6 +9,8 @@ const FIXTURE_CONFIG: &[&str] = &[
     "commit.gpgsign=false",
     "tag.gpgsign=false",
     "init.defaultBranch=main",
+    "maintenance.auto=false",
+    "gc.auto=0",
 ];
 
 const FIXTURE_IDENTITY: &[(&str, &str)] = &[

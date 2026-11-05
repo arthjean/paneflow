@@ -4,7 +4,7 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use paneflow_git::{
@@ -458,8 +458,10 @@ fn a_constant_size_truncating_writer_never_fails_and_no_snapshot_fails() {
     commit_all(&root, "init");
     let path = root.join(RACE_FILE);
     let stop = Arc::new(AtomicBool::new(false));
+    let completed_writes = Arc::new(AtomicUsize::new(0));
     let writer = {
         let stop = Arc::clone(&stop);
+        let completed_writes = Arc::clone(&completed_writes);
         let path = path.clone();
         std::thread::spawn(move || {
             let contents = [vec![b'b'; RACE_FILE_BYTES], vec![b'c'; RACE_FILE_BYTES]];
@@ -471,22 +473,22 @@ fn a_constant_size_truncating_writer_never_fails_and_no_snapshot_fails() {
                     Err(error) => failures.push(error.raw_os_error()),
                 }
                 writes += 1;
+                completed_writes.store(writes, Ordering::Relaxed);
             }
             (writes, failures)
         })
     };
+    let mut snapshots = 0usize;
     let mut probe_errors = Vec::new();
-    for _ in 0..RACE_SNAPSHOTS {
+    while snapshots < RACE_SNAPSHOTS || completed_writes.load(Ordering::Relaxed) < RACE_SNAPSHOTS {
         if let Err(error) = snapshot(&root, &Options::default()) {
             probe_errors.push(error.to_string());
         }
+        snapshots += 1;
     }
     stop.store(true, Ordering::Relaxed);
     let (writes, write_failures) = writer.join().expect("writer");
-    assert!(
-        writes >= RACE_SNAPSHOTS,
-        "inconclusive: only {writes} writes overlapped {RACE_SNAPSHOTS} snapshots"
-    );
+    assert!(writes >= RACE_SNAPSHOTS && snapshots >= RACE_SNAPSHOTS);
     assert_eq!(write_failures, Vec::new(), "failed writes out of {writes}");
     assert_eq!(probe_errors, Vec::<String>::new(), "failed snapshots");
 }
