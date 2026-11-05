@@ -226,6 +226,45 @@ Files sidebar, the diff badge, the diff dock and `is_clean`.
   `git config` spawn per process, which `GIT_CONFIG_NOSYSTEM` skips.
 - **Ownership.** The open fails for a repository the current user does not own
   and `safe.directory` does not list (`Error::Untrusted`), as the CLI refuses it.
+  Both trust levels map to options that bail on an untrusted repository, so a
+  reduced-trust repository gives no status at all rather than a status from
+  gix's reduced trust; `open::tests` pins that decision against the CLI
+  refusing the same repository under `GIT_TEST_ASSUME_DIFFERENT_OWNER`.
+- **Submodules.** `Submodules::Check` honors `diff.ignoreSubmodules` and each
+  `submodule.<name>.ignore`, as the Files probe's arguments do;
+  `Submodules::CheckAll` ignores them, as `is_clean`'s
+  `--ignore-submodules=none` does. A submodule's own content is always checked
+  with its configured rules, as git's nested status is. A submodule whose
+  `.git` file points at a missing directory fails the snapshot, because the CLI
+  fails the same status with "not a git repository"; a submodule directory
+  without any `.git` is reported unchanged by both. `submodules_opened` counts
+  the submodule repositories a snapshot opened, once each.
+- **Sparse checkouts.** gix 0.90 cannot diff HEAD against a sparse index, so
+  the snapshot expands every sparse directory entry in memory from its tree,
+  as git's `ensure_full_index` does, and never writes the result. On every
+  read git (2.37 and later) also clears the skip-worktree bit of each file
+  present in the worktree unless `sparse.expectFilesOutsideOfPatterns` is set;
+  gix does not, which hid a modified file outside the sparse patterns, so the
+  snapshot applies the same rule to its in-memory index when
+  `core.sparseCheckout` is on.
+- **Porcelain mapping and parity oracle.** `paneflow_git::porcelain::records`
+  is the one mapping from a snapshot to porcelain v1 records (XY code and
+  path), with `FILES_STATUS_ARGS` and `CLEAN_STATUS_ARGS` the CLI arguments
+  the Files probe and `is_clean` run. `crates/paneflow-git/tests/parity.rs`
+  builds each fixture of `tests/oracle/` (line endings and attributes, staged
+  and worktree changes, untracked and ignored files, an unborn `HEAD`, intent
+  to add, type changes, the seven conflict kinds, linked worktrees including
+  Paneflow's detached checkout, submodules, sparse checkouts, split index,
+  untracked cache, fsmonitor extension, `index.skipHash`, index version 4),
+  runs the CLI with the probe's hardening and gix with the matching options,
+  and fails on any difference in the multiset of records, naming the fixture,
+  the path and both codes. Each fixture also asserts the CLI records it claims
+  to build, a fixture the platform cannot build (a symbolic link without the
+  Windows privilege) is reported skipped by name, and the fixtures where both
+  engines must fail are listed. `tests/oracle_isolation.rs` shows that the
+  fixture isolation (`GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`) hides a
+  polluting global and system `core.autocrlf` from both engines, and that
+  each engine reads it once the isolation is lifted.
 - **Engine selector.** `paneflow_git::engine::Selector::global()` answers each
   probe with gix or with the CLI closure the caller passes. It uses the CLI,
   without opening the repository with gix, when `PANEFLOW_GIT_ENGINE=cli`
