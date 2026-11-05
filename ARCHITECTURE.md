@@ -34,6 +34,7 @@ focused library crates:
 | `paneflow-mcp` | `crates/paneflow-mcp/` | Stdio MCP server exposing pane reads (`list_panes`, `read_pane`, `search_pane`) and `write_pane`, a relay to the host's human-approved `pane.write` |
 | `paneflow-mcp-install` | `crates/paneflow-mcp-install/` | GPU-free install engine behind `paneflow integrations` and `paneflow mcp`: hooks, MCP entry and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force` |
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
+| `paneflow-git` | `crates/paneflow-git/` | Read-only in-process git status on gix, with the engine selector that falls back to the git CLI; see [In-process git status](#in-process-git-status) |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
 
@@ -158,6 +159,89 @@ Closing or switching workspaces cancels the worker and pending publications.
 The closing animation keeps its last snapshot until it finishes, then releases
 the snapshot on a background executor. The rail keeps Paneflow's 300 px width,
 28 px rows, icons, indentation and full-width hover inside the 8 px edge insets.
+
+## In-process git status
+
+`crates/paneflow-git` computes a worktree's status without spawning git, so a
+background probe never maps an agent's file on Windows (#124, #130). It is
+built on gix `=0.90.0` (features `status`, `parallel`, `sha1`) and on the
+vendored `vendor/gix-status`, gix-status 0.37.0 with the short-read fix: a
+file that shrinks while it is hashed is reported modified instead of failing
+the whole status. `src-app` is its only dependent; the size-capped helpers
+never link it, which `crates/paneflow-git/tests/lockfile.rs` checks against
+`Cargo.lock`, together with the vendored patch still being used. No probe
+calls it yet: `prd-in-process-git-status.md` EP-003 to EP-005 switch the
+Files sidebar, the diff badge, the diff dock and `is_clean`.
+
+- **Snapshot.** `paneflow_git::snapshot(path, &Options)` discovers the
+  repository upward from `path`, opens a `ThreadSafeRepository` for that call
+  and drops it before returning: a cached gix repository once failed to find
+  objects after `git repack -a -d`. It returns the HEAD tree id (or unborn) and
+  the entries sorted by path bytes, each with an optional HEAD-to-index change,
+  index-to-worktree change, conflict kind and untracked flag. Renames are off
+  on both halves, untracked files are listed one by one and sorted, then cut
+  at `entry_cap` with `truncated` set. The engine never writes the index (no
+  `Outcome::write_changes`), creates nothing under `.git`, and reads worktree
+  files with plain reads.
+- **Threads.** The snapshot runs on the caller's thread, which is a worker
+  thread or `smol::unblock`, never the GPUI main thread. `thread_limit`
+  defaults to 2: it bounds the hashing threads and `index.threads`, on top of
+  gix's two producer threads. Measured on 2026-11-05 (200 probes, release,
+  `crates/paneflow-git/examples/probe_cost.rs`), 2 threads beat 1 in wall time
+  for the same CPU time: rust-lang/rust (64,264 files) on Linux 92 ms against
+  169 ms at 269 ms against 263 ms of CPU; the Paneflow checkout 5.1 ms against
+  6.2 ms on Linux, 16.7 ms against 16.9 ms on Windows. One thread per core
+  adds CPU time for little wall time.
+- **Cost against the CLI.** On the same runs, `git --no-optional-locks status
+  --porcelain=v1 -z -uall --no-renames` took 6.3 ms (3.9 ms CPU) on Linux and
+  23.3 ms (29.8 ms CPU) on Windows for the Paneflow checkout; gix with 2
+  threads 5.1 ms (7.2 ms CPU) and 16.7 ms (38.4 ms CPU). gix is faster in wall
+  time up to t3code (29,069 entries: 52.6 ms against 61.6 ms on Linux) but
+  slower on rust-lang/rust on Windows (236 ms against 92 ms), where the
+  untracked walk alone costs about 125 ms; it uses 1.3 to 2 times the CLI's CPU
+  time everywhere. So the selector sends a repository whose index holds more
+  than 30,000 entries to the CLI (`DEFAULT_INDEX_ENTRY_THRESHOLD`). Peak heap
+  measured by heaptrack on Linux is below git's on the Paneflow checkout (1.4
+  MiB against 3.3 MiB) and equal on rust-lang/rust (19.5 against 18.2 MiB);
+  resident memory is higher because gix maps the index and the packs.
+- **No repository program.** After opening, the engine removes from its
+  in-memory configuration every `filter.<name>` section whose driver is
+  declared in the repository's own local or worktree config, includes through
+  `include.path` and `includeIf` included, since gix gives an included section
+  the source of the file that includes it. That is the driver set
+  `neutralize_repository_filters` blanks for the CLI probe, so a repository
+  driver never runs, `required` ones included, and the raw file is hashed; a
+  system or global driver such as git-lfs runs as it does for the CLI. A status
+  runs no fsmonitor, hook or textconv. gix's own submodule status reopens each
+  submodule with the parent's options and would run the submodule's drivers,
+  so the snapshot asks gix for no submodule status and checks each submodule
+  itself through the same neutralized open, once per submodule. The rejected
+  mechanism, `gix::open::Options::config_overrides` with
+  `filter.<name>.clean=` and the other keys emptied, makes gix treat the empty
+  value as a program: every status of such a repository failed with "Could not
+  convert worktree file to Git format" in all five marker tests
+  (`crates/paneflow-git/tests/repository_programs.rs`), which pass with the
+  chosen mechanism and fail with "a repository-configured program ran"
+  without it. On Windows gix locates the Git for Windows system config with one
+  `git config` spawn per process, which `GIT_CONFIG_NOSYSTEM` skips.
+- **Ownership.** The open fails for a repository the current user does not own
+  and `safe.directory` does not list (`Error::Untrusted`), as the CLI refuses it.
+- **Engine selector.** `paneflow_git::engine::Selector::global()` answers each
+  probe with gix or with the CLI closure the caller passes. It uses the CLI,
+  without opening the repository with gix, when `PANEFLOW_GIT_ENGINE=cli`
+  (`forced`), when `HEAD` holds the reftable marker or
+  `extensions.refStorage=reftable` (`reftable`), when
+  `extensions.objectFormat` is not `sha1` (`object_format`), and above the
+  index-entry threshold (`size_threshold`). A gix error is answered by the CLI
+  in the same call (`error`); after two consecutive errors for one git
+  directory, keyed by the linked worktree's own git directory, that directory
+  stays on the CLI until Paneflow restarts and one warning names it with the
+  last error. An interrupted probe is answered by the CLI too but never counts
+  toward those two errors. `PANEFLOW_GIT_ENGINE` is read once: `gix` or unset prefers gix,
+  any other value prefers gix with one warning listing the accepted values.
+  `system.counters` reports `git_engine.probes.<probe>.<gix|cli>`,
+  `git_engine.fallbacks.<reason>`, `git_engine.pinned_directories` and
+  `git_engine.preferred`.
 
 ## Keystroke → pixel
 
