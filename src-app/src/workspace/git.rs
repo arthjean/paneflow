@@ -28,24 +28,13 @@ impl GitDiffStats {
     }
 
     fn from_cwd_until(cwd: &str, deadline: std::time::Instant) -> Self {
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+        if std::time::Instant::now() >= deadline {
+            return Self::unavailable();
+        }
+        let Some(toplevel) = worktree_toplevel(std::path::Path::new(cwd)) else {
             return Self::unavailable();
         };
-        let (toplevel, base) = match resolve_toplevel_and_head(std::path::Path::new(cwd), remaining)
-        {
-            Ok((toplevel, Some(sha))) => (toplevel, sha),
-            Ok((toplevel, None)) => (toplevel, EMPTY_TREE_SHA.to_string()),
-            Err(_) => return Self::unavailable(),
-        };
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-            return Self::unavailable();
-        };
-        let Some((raw, truncated)) = git_stdout_head(
-            cwd,
-            &["diff-index", "--raw", "-z", &base, "--"],
-            remaining,
-            GIT_DIFF_STAT_STDOUT_CAP,
-        ) else {
+        let Some((raw, truncated)) = list_changes_against_head(cwd, deadline) else {
             return Self::unavailable();
         };
         let changes = parse_raw_changes(&raw, truncated);
@@ -227,47 +216,29 @@ pub(crate) fn git_stdout(
     output.status.success().then_some(output.stdout)
 }
 
-fn resolve_toplevel_and_head(
-    cwd: &std::path::Path,
-    deadline: std::time::Duration,
-) -> Result<(std::path::PathBuf, Option<String>), String> {
-    let mut cmd = crate::git_command::git(
-        crate::git_command::GitProfile::Probe,
-        [
-            "rev-parse",
-            "--show-toplevel",
-            "--verify",
-            "--quiet",
-            "HEAD^{commit}",
-        ],
-    );
-    cmd.current_dir(cwd);
-    let output = crate::git_command::run(cmd, deadline, 16 * 1024)
-        .map_err(|error| format!("git rev-parse HEAD failed: {error}"))?;
-    let mut lines = output
-        .stdout
-        .split(|byte| *byte == b'\n')
-        .map(<[u8]>::trim_ascii_end);
-    let toplevel = lines
-        .next()
-        .filter(|line| !line.is_empty())
-        .map(path_from_git_output);
-    let sha = lines
-        .next()
-        .map(|line| String::from_utf8_lossy(line).trim().to_string())
-        .unwrap_or_default();
-    match (toplevel, output.status.code()) {
-        (Some(toplevel), Some(0)) if !sha.is_empty() => Ok((toplevel, Some(sha))),
-        (Some(toplevel), Some(1)) if sha.is_empty() && head_is_unborn(cwd, deadline) => {
-            Ok((toplevel, None))
-        }
-        _ => Err(format!(
-            "git could not read HEAD: {}",
-            String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .last()
-                .unwrap_or("unknown error")
-        )),
+fn worktree_toplevel(cwd: &std::path::Path) -> Option<std::path::PathBuf> {
+    cwd.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .map(std::path::Path::to_path_buf)
+}
+
+fn list_changes_against_head(cwd: &str, deadline: std::time::Instant) -> Option<(Vec<u8>, bool)> {
+    let list_against = |base: &str| {
+        let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+        git_stdout_head(
+            cwd,
+            &["diff-index", "--raw", "-z", base, "--"],
+            remaining,
+            GIT_DIFF_STAT_STDOUT_CAP,
+        )
+    };
+    if let Some(listing) = list_against("HEAD") {
+        return Some(listing);
+    }
+    let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+    match resolve_head(std::path::Path::new(cwd), remaining) {
+        Ok(None) => list_against(EMPTY_TREE_SHA),
+        Ok(Some(_)) | Err(_) => None,
     }
 }
 

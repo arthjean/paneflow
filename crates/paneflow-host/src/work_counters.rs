@@ -30,6 +30,8 @@ pub const DESKTOP_COUNTERS: &[&str] = &[
     "git_spawns.by_subcommand.config",
     "git_spawns.by_subcommand.status",
     "git_spawns.by_subcommand.diff",
+    "git_spawns.by_subcommand.diff-index",
+    "git_spawns.by_subcommand.cat-file",
     "process_spawns",
 ];
 

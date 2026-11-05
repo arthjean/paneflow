@@ -9,12 +9,14 @@ pub(crate) static HOST_AGENT_SNAPSHOTS_APPLIED: Counter = Counter::new();
 
 pub(crate) static SESSION_LIST_CALLS: Counter = Counter::new();
 
-pub(crate) const GIT_SUBCOMMANDS: [&str; 16] = [
+pub(crate) const GIT_SUBCOMMANDS: [&str; 18] = [
     "add",
     "branch",
+    "cat-file",
     "clone",
     "config",
     "diff",
+    "diff-index",
     "for-each-ref",
     "log",
     "ls-files",

@@ -882,7 +882,7 @@ Nested counters are addressed with dots, for example
 | desktop, `system.counters` | `sidebar_renders` | rebuilds of the workspace sidebar; a frame served from the sidebar view's cache does not count | `PaneFlowApp::render_sidebar` |
 | desktop, `system.counters` | `host_agent_snapshots_applied` | host agent snapshots applied; a snapshot identical to the last one applied is skipped unless it is the header of a new follow | `PaneFlowApp::apply_host_agent_snapshot` |
 | desktop, `system.counters` | `session_list_calls` | `session.list` calls to the host | `host_link::list_sessions` |
-| desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (16 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, the filter query, and the git clone |
+| desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (18 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, `run_feeding_stdin_keeping_stdout_head`, the filter query, and the git clone |
 | desktop, `system.counters` | `process_spawns` | processes spawned through `paneflow-process` | `paneflow_process::run_supervised` and `spawn_detached` |
 
 `system.counters` sits next to `system.identify` in the IPC server: same

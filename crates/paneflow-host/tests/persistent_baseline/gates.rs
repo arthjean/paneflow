@@ -257,7 +257,7 @@ pub(super) const BUDGETS: &[Budget] = &[
         limit: Limit::Exactly(3.0),
         unit: "git processes per probe",
         scenario: &DESKTOP_DIFF_STAT,
-        margin: "no margin: rev-parse, diff and ls-files, the filter query reused from its cache (US-009, FR-07)",
+        margin: "no margin: diff-index, the blob batch of the changed file and ls-files, the filter query reused from its cache (US-009, FR-07, #124)",
     },
     Budget {
         counter: "desktop.tui_30_workspaces.git_spawns_per_min",
