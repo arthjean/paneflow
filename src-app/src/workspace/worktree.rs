@@ -1078,16 +1078,11 @@ pub fn add_worktree(
     Ok(())
 }
 
-const CLEAN_STATUS_ARGS: &[&str] = &[
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-    "--ignore-submodules=none",
-];
-
 pub fn is_clean(worktree_path: &Path) -> Result<bool, String> {
-    let mut cmd = git(GitProfile::Probe, CLEAN_STATUS_ARGS);
+    let mut cmd = git(
+        GitProfile::Probe,
+        paneflow_git::porcelain::CLEAN_STATUS_ARGS,
+    );
     cmd.current_dir(worktree_path);
     let failed = |reason: String| {
         format!(

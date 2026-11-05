@@ -141,15 +141,7 @@ pub(crate) fn read(root: &Path) -> Option<GitStatuses> {
         .to_string();
     let stdout = git_stdout(
         root,
-        &[
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-            "--no-renames",
-            "-z",
-            "--",
-            ".",
-        ],
+        paneflow_git::porcelain::FILES_STATUS_ARGS,
         GIT_STATUS_DEADLINE,
         GIT_STATUS_STDOUT_CAP,
     )?;
