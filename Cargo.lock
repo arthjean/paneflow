@@ -8545,3 +8545,7 @@ dependencies = [
  "syn 3.0.4",
  "winnow 1.0.4",
 ]
+
+[[patch.unused]]
+name = "gix-status"
+version = "0.37.0"
