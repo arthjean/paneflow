@@ -216,7 +216,9 @@ when the run ends.
 (`tasks/prd-*-status.json`). Everything else under it, including every
 subdirectory, is local, untracked evidence and review scratch space: never
 assume another agent can read it, and a tracked document that names such a path
-must state that it is local evidence.
+must state that it is local evidence. When you implement a PRD in a separate
+worktree, Arthur still reads the copy in `C:\dev\paneflow`: copy every status
+change and every ticked acceptance criterion back to both files there.
 
 ## No comments in source code
 
