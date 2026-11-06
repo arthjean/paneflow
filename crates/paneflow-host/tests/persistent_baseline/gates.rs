@@ -261,10 +261,10 @@ pub(super) const BUDGETS: &[Budget] = &[
     },
     Budget {
         counter: "desktop.tui_30_workspaces.git_spawns_per_min",
-        limit: Limit::AtMost(30.0),
+        limit: Limit::Exactly(0.0),
         unit: "git processes per minute",
         scenario: &DESKTOP_TUI_30_WORKSPACES,
-        margin: "the PRD bound (FR-01): the shown workspace every 30 s and a tenth of the 29 others per poll, 3 processes per probe, so 24 per minute, 27 with the probe of the window activation; measured 24.0 (12 per 30 s window), 180 when every workspace was polled",
+        margin: "no margin: the diff-stat probe runs in process with gix (US-011), so the shown workspace every 30 s and a tenth of the 29 others per poll spawn nothing; measured 0.0 on run_tests 42215538883 (f88356ed1, ubuntu-24.04), 0 git processes in each 30 s window for 4 gix probes each, against 24.0 when each probe spawned 3 git processes and 180 when every workspace was polled; the PRD bound of 1 per minute (prd-in-process-git-status) holds with nothing to spare, and a probe answered by the CLI fails it",
     },
     Budget {
         counter: "desktop.tui_30_workspaces_inactive.git_spawns_per_window",

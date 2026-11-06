@@ -994,6 +994,20 @@ mod tests {
     }
 
     #[test]
+    fn a_single_git_process_in_the_thirty_workspace_windows_fails_its_budget() {
+        let verdict = |per_minute: f64| {
+            let mut values = Values::new();
+            values.insert(TUI_NAMES[2].to_string(), Measurement::Value(per_minute));
+            gates::verify(gates::BUDGETS, &values)
+                .into_iter()
+                .find(|verdict| verdict.counter == TUI_NAMES[2])
+                .unwrap()
+        };
+        assert!(!verdict(0.0).failed(), "{}", verdict(0.0).line());
+        assert!(verdict(1.0).failed(), "{}", verdict(1.0).line());
+    }
+
+    #[test]
     fn a_diff_stat_gate_run_that_fell_back_to_the_cli_fails_and_names_the_reason() {
         let fallen_back = diff_stat_window(0, 1, 1, 3);
         let (probes, per_probe) = diff_stat_measurements(&fallen_back, &Ok(()), 35.0);
