@@ -187,7 +187,11 @@ spawns would read as no probe at all. `desktop.diff_stat.git_spawns_per_probe`
 is exactly 0, and a window where any diff-stat probe was answered by the CLI,
 or where any `git_engine.fallbacks.<reason>` moved, is reported missing with
 the reasons and their counts, so a gate run on the CLI fails instead of
-passing with a stale budget. The
+passing with a stale budget. The first gate run on gix (run_tests
+42215538883, `f88356ed1`) measured 1 gix probe and 0 git processes in the
+35 s window, and 0 git processes per minute on 30 workspaces for 8 gix probes
+over the two 30 s windows, against 24.0 on the CLI, so
+`desktop.tui_30_workspaces.git_spawns_per_min` is now exactly 0 too. The
 second cost was the cursor blink: a focused window drew 1.85 root renders per
 second at rest and 13.0 while an agent thought, because the 530 ms blink and
 the 90 ms spinner drew separate frames. The blink now toggles every 540 ms on
