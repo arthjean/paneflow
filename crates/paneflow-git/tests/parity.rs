@@ -240,3 +240,29 @@ fn a_fixture_skipped_outside_the_allowed_list_fails_by_name() {
         "{message}"
     );
 }
+
+#[test]
+fn a_repository_that_hides_untracked_files_still_lists_them_like_the_cli_probes() {
+    support::isolate_process();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for setting in ["no", "normal", "all"] {
+        let root = tmp.path().join(setting);
+        support::committed_repo(&root, &[("tracked.txt", "tracked\n")]);
+        support::git(&root, &["config", "status.showUntrackedFiles", setting]);
+        support::write(&root, "src/agent.rs", b"fn main() {}\n");
+        for probe in [Probe::Files, Probe::Clean] {
+            let cli = oracle::cli_records(&root, probe).expect("cli records");
+            let gix = oracle::gix_records(&root, probe).expect("gix records");
+            assert_eq!(
+                cli,
+                vec![Record {
+                    code: porcelain::UNTRACKED_CODE,
+                    path: b"src/agent.rs".to_vec(),
+                }],
+                "{setting} ({})",
+                probe.name()
+            );
+            assert_eq!(gix, cli, "{setting} ({})", probe.name());
+        }
+    }
+}
