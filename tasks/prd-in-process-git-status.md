@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-05 | Arthur Jean | Initial PRD from the #130 spike and diagnosis: a read-only gix engine with a vendored short-read fix, a parity oracle against the git CLI, then the Files sidebar (P0), the diff badge (P1), the diff dock and the removal snapshot (P2) move in process behind a CLI fallback. 5 epics, 15 stories. |
+| 1.1 | 2026-11-06 | Arthur Jean | Done after #133 merged (`f8e9c4887`). Two gaps against this PRD are accepted: the Performance NFR's "CPU time per probe at or below the CLI's" is not met, since gix uses 1.3 to 2 times the CLI's CPU (US-004 measurements in `ARCHITECTURE.md`), and a repository whose index holds more than 30,000 entries stays on the CLI, which keeps the Windows mapping there: #134. One parity divergence is left: with `core.symlinks=false`, git reports a real symlink replacing a tracked file as a type change, and gix as a modification. |
 
 ## Problem Statement
 
