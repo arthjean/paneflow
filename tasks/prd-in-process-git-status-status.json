@@ -33,15 +33,15 @@
     {
       "id": "EP-004",
       "title": "The diff badge stops spawning git",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-005",
       "title": "The diff dock and the removal snapshot",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "stories_total": 3,
       "stories_done": 0
@@ -172,61 +172,61 @@
       "id": "US-011",
       "title": "GitDiffStats lists changes and reads blobs in process",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": ["US-010"],
       "started_at": "2026-11-06",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-06",
+      "reviewed_at": "2026-11-06"
     },
     {
       "id": "US-012",
       "title": "The perf gates count probes, not git spawns",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": ["US-011"],
       "started_at": "2026-11-06",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-06",
+      "reviewed_at": "2026-11-06"
     },
     {
       "id": "US-013",
       "title": "The diff dock lists changes with renames in process",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "L",
       "blocked_by": ["US-011"],
-      "started_at": null,
+      "started_at": "2026-11-06",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-06"
     },
     {
       "id": "US-014",
       "title": "The diff dock reads base texts from the object database",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "M",
       "blocked_by": ["US-013"],
-      "started_at": null,
+      "started_at": "2026-11-06",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-06"
     },
     {
       "id": "US-015",
       "title": "is_clean uses gix and fails safe",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P2",
       "size": "S",
       "blocked_by": ["US-007", "US-008", "US-010"],
-      "started_at": null,
+      "started_at": "2026-11-06",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-06"
     }
   ]
 }
