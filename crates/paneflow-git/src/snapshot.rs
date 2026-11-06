@@ -117,6 +117,9 @@ pub(crate) fn collect(
         if entry.index_to_worktree == Some(WorktreeChange::IntentToAdd) {
             entry.head_to_index = None;
         }
+        if entry.conflict.is_some() {
+            entry.untracked = false;
+        }
     }
     let truncated = entries.len() > options.entry_cap;
     let entries: Vec<Entry> = entries.into_values().take(options.entry_cap).collect();
