@@ -267,12 +267,14 @@ The dominant residual of #124 is gone: the Files sidebar computes its statuses i
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] A test helper races a probe against a writer that rewrites a 480 KiB tracked file at constant size and returns the write count, the failures by OS error and the probe errors.
-- [ ] The helper has two scenarios: a stat-dirty file (backdated, index refreshed, then rewritten), and a racy window (an index write aligned to the start of a wall-clock second, then same-size rewrites inside that second, over 5 rounds).
-- [ ] The existing `a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs` runs on the helper in the stat-dirty scenario and stays green, and the untracked listing gets the same test.
-- [ ] Given a run where the writer never overlaps a probe (fewer writes than probes), the helper fails the test as inconclusive instead of passing.
-- [ ] The PR records the helper's red counts on Arthur's Windows host against main for `files_git::read` and `is_clean` (stat-dirty) and for `GitDiffStats` and the dock listing (racy); those red tests land with their switch stories.
-- [ ] The helper makes no wall-clock assertion.
+- [x] A test helper races a probe against a writer that rewrites a 480 KiB tracked file at constant size and returns the write count, the failures by OS error and the probe errors.
+- [x] The helper has two scenarios: a stat-dirty file (backdated, index refreshed, then rewritten), and a racy window (an index write aligned to the start of a wall-clock second, then same-size rewrites inside that second, over 5 rounds).
+- [x] The existing `a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs` runs on the helper in the stat-dirty scenario and stays green, and the untracked listing gets the same test.
+- [x] Given a run where the writer never overlaps a probe (fewer writes than probes), the helper fails the test as inconclusive instead of passing.
+- [x] The PR records the helper's red counts on Arthur's Windows host against main for `files_git::read` and `is_clean` (stat-dirty) and for `GitDiffStats` and the dock listing (racy); those red tests land with their switch stories.
+- [x] The helper makes no wall-clock assertion.
+
+**Red baseline (2026-11-06, Arthur's Windows 11 26300 host, Git 2.53.0.windows.1, the CLI path that main runs, 3 runs each, copy into the PR):** `files_git::read` stat-dirty 9, 4 and 6 failed writes (all raw OS error 1224) out of 247, 251 and 253 over 40 probes, plus 1 probe with no statuses; `is_clean` stat-dirty 5, 5 and 2 out of 193, 185 and 186 over 40 probes; dock listing racy 1, 4 and 3 out of 394, 371 and 367 over 18 to 19 probes; `GitDiffStats` racy 0, 1 and 0 out of 381, 399 and 404 over 22 to 23 probes. The `GitDiffStats` racy race is red in only 1 run out of 3, so US-011 cannot take one green run as proof of its switch: it needs a red-before rate measured over several runs, or more probes per round. Green after US-010 on the same host: `a_truncating_agent_write_never_fails_while_the_files_status_probe_runs` passed in 4 conclusive runs out of 4 (0 failed writes, 0 probe errors, 0 git spawns). Still pending: the same test on the Windows CI leg, and the oracle comparison on the macOS leg, once the epic is pushed.
 
 #### US-010: files_git::read runs on the gix snapshot
 **Description:** As a Windows user running Codex or opencode, I want the Files sidebar to compute its statuses in process so that its refreshes never make my agent's edits fail.
@@ -282,12 +284,12 @@ The dominant residual of #124 is gone: the Files sidebar computes its statuses i
 **Dependencies:** Blocked by US-005, US-007, US-008, US-009
 
 **Acceptance Criteria:**
-- [ ] Given the selector picks gix, `files_git::read` builds `GitStatuses` from the snapshot through the US-006 mapping, scoped to the sidebar root as `-- .` is today, and spawns 0 git processes per refresh.
-- [ ] Given every oracle fixture, `GitStatuses` built from gix equals `GitStatuses` built from the CLI output.
-- [ ] Given the stat-dirty race test against `files_git::read`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
-- [ ] Given a status larger than today's 4 MiB stdout cap equivalent, then `read` returns `None` and the sidebar keeps its previous statuses, as today.
-- [ ] Given gix fails once on a refresh, then that refresh returns the CLI statuses and the counters record the fallback.
-- [ ] The probe still runs on the Files sidebar worker thread (`src-app/src/app/files_sidebar/worker.rs:178`), never on the GPUI main thread.
+- [x] Given the selector picks gix, `files_git::read` builds `GitStatuses` from the snapshot through the US-006 mapping, scoped to the sidebar root as `-- .` is today, and spawns 0 git processes per refresh.
+- [x] Given every oracle fixture, `GitStatuses` built from gix equals `GitStatuses` built from the CLI output.
+- [x] Given the stat-dirty race test against `files_git::read`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
+- [x] Given a status larger than today's 4 MiB stdout cap equivalent, then `read` returns `None` and the sidebar keeps its previous statuses, as today.
+- [x] Given gix fails once on a refresh, then that refresh returns the CLI statuses and the counters record the fallback.
+- [x] The probe still runs on the Files sidebar worker thread (`src-app/src/app/files_sidebar/worker.rs:178`), never on the GPUI main thread.
 
 ---
 
