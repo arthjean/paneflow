@@ -691,6 +691,7 @@ mod tests {
                 untracked: true,
                 ..paneflow_git::Entry::default()
             }],
+            sides: std::collections::BTreeMap::new(),
             truncated: true,
             submodules_opened: 0,
         };

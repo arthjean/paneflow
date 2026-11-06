@@ -21,6 +21,14 @@ const GIT_DIFF_STAT_TRACKED_FILE_CAP: usize = 200;
 const GIT_DIFF_STAT_BLOB_STDOUT_CAP: u64 = 8 * 1024 * 1024;
 const GIT_BINARY_SNIFF_BYTES: usize = 8000;
 const GITLINK_MODE: u32 = 0o160000;
+const OBJECT_TYPE_MASK: u32 = 0o170000;
+const RAW_RECORD_FRAMING: u64 = 100;
+const NUL_FRAMING: u64 = 1;
+const BLOB_HEADER_FRAMING: u64 = " blob \n".len() as u64;
+const MISSING_BLOB_FRAMING: u64 = " missing\n".len() as u64;
+const BLOB_TRAILER_FRAMING: u64 = 1;
+
+type Blobs = std::collections::HashMap<String, SideText>;
 
 impl GitDiffStats {
     pub fn from_cwd(cwd: &str) -> Self {
@@ -28,9 +36,53 @@ impl GitDiffStats {
     }
 
     fn from_cwd_until(cwd: &str, deadline: std::time::Instant) -> Self {
+        Self::through(paneflow_git::engine::Selector::global(), cwd, deadline)
+    }
+
+    fn through(
+        selector: &paneflow_git::engine::Selector,
+        cwd: &str,
+        deadline: std::time::Instant,
+    ) -> Self {
         if std::time::Instant::now() >= deadline {
             return Self::unavailable();
         }
+        selector.run(
+            paneflow_git::engine::Probe::DiffStats,
+            std::path::Path::new(cwd),
+            || Self::with_gix(cwd, deadline),
+            || Self::with_cli(cwd, deadline),
+        )
+    }
+
+    fn with_gix(cwd: &str, deadline: std::time::Instant) -> Result<Self, paneflow_git::Error> {
+        let result = paneflow_git::with_snapshot(
+            std::path::Path::new(cwd),
+            &paneflow_git::Options::diff_stats(),
+            |snapshot, objects| {
+                let Some(workdir) = objects.workdir() else {
+                    return Ok(Self::unavailable());
+                };
+                let (changes, truncated) = snapshot_changes(&snapshot, objects, workdir)?;
+                let mut stats = Self {
+                    count_capped: truncated || snapshot.truncated,
+                    ..Self::default()
+                };
+                let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
+                let blobs = read_blobs_in_process(objects, measured, deadline)?;
+                stats.add_tracked(workdir, &changes, &blobs, deadline);
+                let (paths, truncated) = snapshot_untracked_paths(&snapshot);
+                stats.add_untracked_paths(workdir, &paths, truncated, deadline);
+                Ok(stats)
+            },
+        );
+        match result {
+            Err(paneflow_git::Error::NotARepository { .. }) => Ok(Self::unavailable()),
+            other => other,
+        }
+    }
+
+    fn with_cli(cwd: &str, deadline: std::time::Instant) -> Self {
         let Some(toplevel) = worktree_toplevel(std::path::Path::new(cwd)) else {
             return Self::unavailable();
         };
@@ -42,9 +94,12 @@ impl GitDiffStats {
             count_capped: truncated,
             ..Self::default()
         };
-        if !stats.add_tracked(cwd, &toplevel, &changes, deadline)
-            || !stats.add_untracked(cwd, deadline)
-        {
+        let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
+        let Some(blobs) = read_blobs(cwd, measured, deadline) else {
+            return Self::unavailable();
+        };
+        stats.add_tracked(&toplevel, &changes, &blobs, deadline);
+        if !stats.add_untracked(cwd, deadline) {
             return Self::unavailable();
         }
         stats
@@ -52,15 +107,11 @@ impl GitDiffStats {
 
     fn add_tracked(
         &mut self,
-        cwd: &str,
         toplevel: &std::path::Path,
         changes: &[RawChange],
+        blobs: &Blobs,
         deadline: std::time::Instant,
-    ) -> bool {
-        let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
-        let Some(blobs) = read_blobs(cwd, measured, deadline) else {
-            return false;
-        };
+    ) {
         for (idx, change) in changes.iter().enumerate() {
             if change.status == b'U' {
                 continue;
@@ -69,7 +120,7 @@ impl GitDiffStats {
                 self.files_changed += 1;
                 continue;
             }
-            match (change.old_side(&blobs), change.new_side(toplevel, &blobs)) {
+            match (change.old_side(blobs), change.new_side(toplevel, blobs)) {
                 (SideText::Text(old), SideText::Text(new)) => {
                     if change.status == b'M' && change.old_mode == change.new_mode && old == new {
                         continue;
@@ -79,10 +130,13 @@ impl GitDiffStats {
                     self.insertions += added as usize;
                     self.deletions += removed as usize;
                 }
+                (SideText::Binary(old), SideText::Binary(new))
+                    if change.status == b'M'
+                        && change.old_mode == change.new_mode
+                        && old == new => {}
                 _ => self.files_changed += 1,
             }
         }
-        true
     }
 
     fn unavailable() -> Self {
@@ -137,11 +191,22 @@ impl GitDiffStats {
         if truncated || !out.ends_with(&[0]) {
             records.pop();
         }
-        let paths: Vec<String> = records
+        let paths: Vec<std::path::PathBuf> = records
             .into_iter()
             .filter(|record| !record.is_empty())
-            .map(|record| String::from_utf8_lossy(record).into_owned())
+            .map(path_from_git_output)
             .collect();
+        self.add_untracked_paths(std::path::Path::new(cwd), &paths, truncated, deadline);
+        true
+    }
+
+    fn add_untracked_paths(
+        &mut self,
+        base: &std::path::Path,
+        paths: &[std::path::PathBuf],
+        truncated: bool,
+        deadline: std::time::Instant,
+    ) {
         self.count_capped |= truncated || paths.len() > GIT_DIFF_STAT_UNTRACKED_PATH_CAP;
         for (idx, path) in paths
             .iter()
@@ -150,11 +215,191 @@ impl GitDiffStats {
         {
             self.files_changed += 1;
             if idx < GIT_DIFF_STAT_UNTRACKED_FILE_CAP && std::time::Instant::now() < deadline {
-                self.insertions += untracked_insertions(cwd, path);
+                self.insertions += untracked_insertions(&base.join(path));
             }
         }
-        true
     }
+}
+
+fn null_oid() -> String {
+    "0".repeat(40)
+}
+
+fn stored_side(stored: Option<&paneflow_git::Stored>) -> (u32, String) {
+    stored.map_or_else(
+        || (0, null_oid()),
+        |stored| (stored.mode, stored.id.clone()),
+    )
+}
+
+fn raw_change(old: (u32, String), new: (u32, String), path: &[u8]) -> Option<RawChange> {
+    let ((old_mode, old_oid), (new_mode, new_oid)) = (old, new);
+    let status = match (old_mode, new_mode) {
+        (0, 0) => return None,
+        (0, _) => b'A',
+        (_, 0) => b'D',
+        (old, new) if old & OBJECT_TYPE_MASK != new & OBJECT_TYPE_MASK => b'T',
+        _ => b'M',
+    };
+    Some(RawChange {
+        old_mode,
+        new_mode,
+        old_oid,
+        new_oid,
+        status,
+        path: path.to_vec(),
+    })
+}
+
+fn composed_change(entry: &paneflow_git::Entry, sides: &paneflow_git::Sides) -> Option<RawChange> {
+    use paneflow_git::{IndexChange, WorktreeChange};
+    let worktree = |mode: u32| (mode, null_oid());
+    let index_mode = sides.index.as_ref().map_or(0, |stored| stored.mode);
+    let new = match entry.index_to_worktree {
+        Some(WorktreeChange::Deleted) => (0, null_oid()),
+        Some(
+            WorktreeChange::Modified | WorktreeChange::TypeChange | WorktreeChange::IntentToAdd,
+        ) => worktree(sides.worktree_mode.unwrap_or(index_mode)),
+        Some(WorktreeChange::Submodule(change)) if change.commit_changed => worktree(GITLINK_MODE),
+        Some(WorktreeChange::Submodule(change))
+            if !change.modified_content && entry.head_to_index.is_none() =>
+        {
+            return None;
+        }
+        Some(WorktreeChange::Submodule(_)) | None => {
+            if entry.head_to_index == Some(IndexChange::Deleted) {
+                (0, null_oid())
+            } else {
+                stored_side(sides.index.as_ref())
+            }
+        }
+    };
+    raw_change(stored_side(sides.head.as_ref()), new, &entry.path)
+}
+
+fn worktree_mode_of(path: &std::path::Path, head_mode: u32) -> u32 {
+    const SYMLINK_MODE: u32 = 0o120000;
+    const REGULAR_MODE: u32 = 0o100644;
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => SYMLINK_MODE,
+        Ok(meta)
+            if meta.is_file()
+                && head_mode & OBJECT_TYPE_MASK == REGULAR_MODE & OBJECT_TYPE_MASK =>
+        {
+            head_mode
+        }
+        Ok(meta) if meta.is_file() => REGULAR_MODE,
+        Ok(_) | Err(_) => 0,
+    }
+}
+
+fn unmerged_change(
+    entry: &paneflow_git::Entry,
+    objects: &paneflow_git::Objects<'_>,
+    workdir: &std::path::Path,
+) -> Result<Option<RawChange>, paneflow_git::Error> {
+    let head = stored_side(objects.head_entry(&entry.path)?.as_ref());
+    let worktree_mode = worktree_mode_of(&workdir.join(path_from_git_output(&entry.path)), head.0);
+    Ok(raw_change(head, (worktree_mode, null_oid()), &entry.path))
+}
+
+fn snapshot_changes(
+    snapshot: &paneflow_git::Snapshot,
+    objects: &paneflow_git::Objects<'_>,
+    workdir: &std::path::Path,
+) -> Result<(Vec<RawChange>, bool), paneflow_git::Error> {
+    let mut changes = Vec::new();
+    let mut listed = 0u64;
+    let mut truncated = false;
+    for entry in &snapshot.entries {
+        let change = if entry.conflict.is_some() {
+            unmerged_change(entry, objects, workdir)?
+        } else if entry.head_to_index.is_none() && entry.index_to_worktree.is_none() {
+            None
+        } else {
+            let sides =
+                snapshot
+                    .sides
+                    .get(&entry.path)
+                    .ok_or_else(|| paneflow_git::Error::Git {
+                        context: "compose the change list",
+                        message: format!(
+                            "no object ids for {}",
+                            String::from_utf8_lossy(&entry.path)
+                        ),
+                    })?;
+            composed_change(entry, sides)
+        };
+        let Some(change) = change else {
+            continue;
+        };
+        listed += RAW_RECORD_FRAMING + change.path.len() as u64;
+        if listed > GIT_DIFF_STAT_STDOUT_CAP {
+            truncated = true;
+            break;
+        }
+        changes.push(change);
+    }
+    Ok((changes, truncated))
+}
+
+fn snapshot_untracked_paths(snapshot: &paneflow_git::Snapshot) -> (Vec<std::path::PathBuf>, bool) {
+    let mut paths = Vec::new();
+    let mut listed = 0u64;
+    for entry in snapshot.entries.iter().filter(|entry| entry.untracked) {
+        listed += entry.path.len() as u64 + NUL_FRAMING;
+        if listed > GIT_DIFF_STAT_STDOUT_CAP {
+            return (paths, true);
+        }
+        paths.push(path_from_git_output(&entry.path));
+    }
+    (paths, false)
+}
+
+fn read_blobs_in_process(
+    objects: &paneflow_git::Objects<'_>,
+    changes: &[RawChange],
+    deadline: std::time::Instant,
+) -> Result<Blobs, paneflow_git::Error> {
+    let mut blobs = Blobs::new();
+    let mut listed = 0u64;
+    for oid in wanted_blobs(changes) {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        let Some(header) = objects.header(oid)? else {
+            listed += oid.len() as u64 + MISSING_BLOB_FRAMING;
+            if listed > GIT_DIFF_STAT_BLOB_STDOUT_CAP {
+                break;
+            }
+            blobs.insert(oid.to_string(), SideText::Unreadable);
+            continue;
+        };
+        listed += oid.len() as u64
+            + BLOB_HEADER_FRAMING
+            + header.size.to_string().len() as u64
+            + header.size
+            + BLOB_TRAILER_FRAMING;
+        if listed > GIT_DIFF_STAT_BLOB_STDOUT_CAP {
+            break;
+        }
+        let side = if !header.is_blob {
+            SideText::Unreadable
+        } else if header.size > GIT_DIFF_STAT_FILE_BYTES_CAP {
+            SideText::TooLarge
+        } else {
+            objects.blob(oid)?.map_or(SideText::Unreadable, stat_text)
+        };
+        blobs.insert(oid.to_string(), side);
+    }
+    Ok(blobs)
+}
+
+fn wanted_blobs(changes: &[RawChange]) -> Vec<&str> {
+    let mut wanted: Vec<&str> = changes.iter().flat_map(RawChange::stored_blobs).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    wanted
 }
 
 pub(crate) fn resolve_head(
@@ -286,19 +531,15 @@ impl RawChange {
         .map(|(_, oid)| oid.as_str())
     }
 
-    fn old_side(&self, blobs: &std::collections::HashMap<String, SideText>) -> SideText {
+    fn old_side(&self, blobs: &Blobs) -> SideText {
         match self.old_mode {
             0 => SideText::Text(String::new()),
             GITLINK_MODE => SideText::Text(subproject_line(&self.old_oid, false)),
-            _ => stored_side(blobs, &self.old_oid),
+            _ => blob_side(blobs, &self.old_oid),
         }
     }
 
-    fn new_side(
-        &self,
-        toplevel: &std::path::Path,
-        blobs: &std::collections::HashMap<String, SideText>,
-    ) -> SideText {
+    fn new_side(&self, toplevel: &std::path::Path, blobs: &Blobs) -> SideText {
         match self.new_mode {
             0 => SideText::Text(String::new()),
             GITLINK_MODE if is_null_oid(&self.new_oid) => {
@@ -308,7 +549,7 @@ impl RawChange {
             _ if is_null_oid(&self.new_oid) => {
                 read_worktree_text(&toplevel.join(path_from_git_output(&self.path)))
             }
-            _ => stored_side(blobs, &self.new_oid),
+            _ => blob_side(blobs, &self.new_oid),
         }
     }
 }
@@ -330,7 +571,7 @@ fn git_line_counts(old: String, new: String) -> (u32, u32) {
     )
 }
 
-fn stored_side(blobs: &std::collections::HashMap<String, SideText>, oid: &str) -> SideText {
+fn blob_side(blobs: &Blobs, oid: &str) -> SideText {
     blobs.get(oid).cloned().unwrap_or(SideText::Unreadable)
 }
 
@@ -383,14 +624,14 @@ fn parse_raw_header<'a>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SideText {
     Text(String),
-    Binary,
+    Binary(Vec<u8>),
     TooLarge,
     Unreadable,
 }
 
 fn stat_text(bytes: Vec<u8>) -> SideText {
     if bytes[..bytes.len().min(GIT_BINARY_SNIFF_BYTES)].contains(&0) {
-        return SideText::Binary;
+        return SideText::Binary(bytes);
     }
     let text = String::from_utf8(bytes)
         .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
@@ -401,16 +642,10 @@ fn stat_text(bytes: Vec<u8>) -> SideText {
     })
 }
 
-fn read_blobs(
-    cwd: &str,
-    changes: &[RawChange],
-    deadline: std::time::Instant,
-) -> Option<std::collections::HashMap<String, SideText>> {
-    let mut wanted: Vec<&str> = changes.iter().flat_map(RawChange::stored_blobs).collect();
-    wanted.sort_unstable();
-    wanted.dedup();
+fn read_blobs(cwd: &str, changes: &[RawChange], deadline: std::time::Instant) -> Option<Blobs> {
+    let wanted = wanted_blobs(changes);
     if wanted.is_empty() {
-        return Some(std::collections::HashMap::new());
+        return Some(Blobs::new());
     }
     let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
     let stdin: Vec<u8> = wanted
@@ -435,8 +670,8 @@ fn read_blobs(
         .then(|| parse_blob_batch(&output.stdout))
 }
 
-fn parse_blob_batch(mut rest: &[u8]) -> std::collections::HashMap<String, SideText> {
-    let mut blobs = std::collections::HashMap::new();
+fn parse_blob_batch(mut rest: &[u8]) -> Blobs {
+    let mut blobs = Blobs::new();
     while let Some(eol) = rest.iter().position(|byte| *byte == b'\n') {
         let header = String::from_utf8_lossy(&rest[..eol]).into_owned();
         rest = &rest[eol + 1..];
@@ -493,10 +728,10 @@ fn read_worktree_text(path: &std::path::Path) -> SideText {
     }
 }
 
-fn untracked_insertions(cwd: &str, rel_path: &str) -> usize {
-    match read_worktree_text(&std::path::Path::new(cwd).join(rel_path)) {
+fn untracked_insertions(path: &std::path::Path) -> usize {
+    match read_worktree_text(path) {
         SideText::Text(text) => text_line_count(&text),
-        SideText::Binary | SideText::TooLarge | SideText::Unreadable => 0,
+        SideText::Binary(_) | SideText::TooLarge | SideText::Unreadable => 0,
     }
 }
 
@@ -721,6 +956,44 @@ mod tests {
 
     fn canonical_expectation(path: &std::path::Path) -> std::path::PathBuf {
         crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(path).unwrap())
+    }
+
+    use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
+
+    fn stats_through(engine: Engine, cwd: &std::path::Path) -> (GitDiffStats, Selector) {
+        let selector = Selector::new(engine, None);
+        let stats = GitDiffStats::through(
+            &selector,
+            cwd.to_str().unwrap(),
+            std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE,
+        );
+        (stats, selector)
+    }
+
+    fn on_both_engines(cwd: &std::path::Path) -> Vec<(Engine, GitDiffStats)> {
+        Engine::ALL
+            .into_iter()
+            .map(|engine| {
+                let (stats, selector) = stats_through(engine, cwd);
+                let counters = selector.counters();
+                assert_eq!(
+                    counters.probes(Probe::DiffStats, engine),
+                    1,
+                    "{} answered the probe: {counters:?}",
+                    engine.name()
+                );
+                assert_eq!(counters.fallbacks(Fallback::Error), 0, "{counters:?}");
+                (engine, stats)
+            })
+            .collect()
+    }
+
+    fn on_both_engines_equal(cwd: &std::path::Path) -> GitDiffStats {
+        let mut answers = on_both_engines(cwd).into_iter();
+        let (_, gix) = answers.next().unwrap();
+        let (_, cli) = answers.next().unwrap();
+        assert_eq!(gix, cli, "gix and the git CLI disagree");
+        gix
     }
 
     #[test]
@@ -1035,11 +1308,13 @@ mod tests {
     #[test]
     fn from_cwd_on_non_repo_yields_unavailable_default() {
         let dir = tempfile::tempdir().unwrap();
-        let stats = GitDiffStats::from_cwd(dir.path().to_str().unwrap());
-        assert!(
-            stats.is_empty(),
-            "non-repo should yield no stats, got {stats:?}"
-        );
+        for (engine, stats) in on_both_engines(dir.path()) {
+            assert!(
+                stats.is_empty() && stats.unavailable,
+                "{}: non-repo should yield no stats, got {stats:?}",
+                engine.name()
+            );
+        }
     }
 
     #[test]
@@ -1067,10 +1342,14 @@ mod tests {
         fixture::run(root, &["add", "tracked.txt"]);
         std::fs::write(root.join("untracked.txt"), "alpha\nbeta\n").unwrap();
 
-        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
-        assert_eq!(stats.files_changed, 2);
-        assert_eq!(stats.insertions, 3);
-        assert_eq!(stats.deletions, 0);
+        for (engine, stats) in on_both_engines(root) {
+            assert_eq!(
+                (stats.files_changed, stats.insertions, stats.deletions),
+                (2, 3, 0),
+                "{}",
+                engine.name()
+            );
+        }
     }
 
     fn commit_all(root: &std::path::Path, message: &str) {
@@ -1087,7 +1366,7 @@ mod tests {
         for i in 0..1005 {
             std::fs::write(root.join(format!("u{i:04}.txt")), "").unwrap();
         }
-        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        let stats = on_both_engines_equal(root);
         assert_eq!(stats.files_changed, GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
         assert!(stats.count_capped);
         assert_eq!(stats.files_changed_label(), "1000+ files");
@@ -1108,11 +1387,12 @@ mod tests {
                 std::fs::write(dir.join(format!("{long}{i:03}")), "").unwrap();
             }
         }
-        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
-        assert!(stats.count_capped, "{stats:?}");
-        assert!(!stats.unavailable);
-        assert!(stats.files_changed > 0, "a byte cap never reads as 0 files");
-        assert!(stats.files_changed <= GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
+        for (engine, stats) in on_both_engines(root) {
+            assert!(stats.count_capped, "{}: {stats:?}", engine.name());
+            assert!(!stats.unavailable, "{}", engine.name());
+            assert!(stats.files_changed > 0, "a byte cap never reads as 0 files");
+            assert!(stats.files_changed <= GIT_DIFF_STAT_UNTRACKED_PATH_CAP);
+        }
     }
 
     #[test]
@@ -1125,7 +1405,7 @@ mod tests {
         commit_all(root, "seed");
         std::fs::write(root.join("top.txt"), "a\nb\n").unwrap();
         std::fs::write(root.join("sub").join("inner.txt"), "c\n").unwrap();
-        let stats = GitDiffStats::from_cwd(root.join("sub").to_str().unwrap());
+        let stats = on_both_engines_equal(&root.join("sub"));
         assert_eq!((stats.files_changed, stats.insertions), (2, 3));
     }
 
@@ -1135,10 +1415,16 @@ mod tests {
         let root = dir.path();
         fixture::init(root);
         std::fs::write(root.join("new.txt"), "x\n").unwrap();
+        std::fs::write(root.join("staged.txt"), "s1\ns2\n").unwrap();
+        fixture::run(root, &["add", "staged.txt"]);
         assert_eq!(resolve_head(root, GIT_DIFF_STAT_DEADLINE), Ok(None));
-        let unborn = GitDiffStats::from_cwd(root.to_str().unwrap());
+        let unborn = on_both_engines_equal(root);
         assert!(!unborn.unavailable);
-        assert_eq!(unborn.files_changed, 1);
+        assert_eq!(
+            (unborn.files_changed, unborn.insertions, unborn.deletions),
+            (2, 3, 0),
+            "the staged file is compared with the empty tree"
+        );
 
         commit_all(root, "first");
         let branch = fixture::run(root, &["symbolic-ref", "--short", "HEAD"]);
@@ -1149,11 +1435,22 @@ mod tests {
             .join(branch.trim());
         std::fs::write(&head_ref, "not-a-sha\n").unwrap();
         assert!(resolve_head(root, GIT_DIFF_STAT_DEADLINE).is_err());
-        let broken = GitDiffStats::from_cwd(root.to_str().unwrap());
         assert!(
-            broken.unavailable,
-            "a broken HEAD is never shown as 0 files"
+            GitDiffStats::with_gix(
+                root.to_str().unwrap(),
+                std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE
+            )
+            .is_err(),
+            "gix reports the broken HEAD as an error, so the CLI answers"
         );
+        for engine in Engine::ALL {
+            let (broken, _) = stats_through(engine, root);
+            assert!(
+                broken.unavailable,
+                "{}: a broken HEAD is never shown as 0 files",
+                engine.name()
+            );
+        }
     }
 
     #[test]
@@ -1190,17 +1487,18 @@ mod tests {
         let root = dir.path();
         fixture::init(root);
         std::fs::write(root.join("untracked.txt"), "a\n").unwrap();
-        let started = std::time::Instant::now();
-        let stats = GitDiffStats::from_cwd_until(root.to_str().unwrap(), started);
-        assert!(
-            started.elapsed() < std::time::Duration::from_millis(500),
-            "no probe may start once the shared deadline has passed"
-        );
-        assert!(stats.is_empty());
-        assert_eq!(
-            GitDiffStats::from_cwd(root.to_str().unwrap()).files_changed,
-            1
-        );
+        for engine in Engine::ALL {
+            let selector = Selector::new(engine, None);
+            let started = std::time::Instant::now();
+            let stats = GitDiffStats::through(&selector, root.to_str().unwrap(), started);
+            assert!(
+                started.elapsed() < std::time::Duration::from_millis(500),
+                "no probe may start once the shared deadline has passed"
+            );
+            assert!(stats.is_empty(), "{}", engine.name());
+            assert_eq!(selector.counters().probes(Probe::DiffStats, engine), 0);
+        }
+        assert_eq!(on_both_engines_equal(root).files_changed, 1);
     }
 
     fn git_shortstat(root: &std::path::Path) -> (usize, usize, usize) {
@@ -1264,10 +1562,11 @@ mod tests {
         std::fs::write(root.join("added.txt"), "n1\nn2\n").unwrap();
         fixture::run(root, &["add", "added.txt"]);
 
-        let stats = GitDiffStats::from_cwd(root.join("sub").to_str().unwrap());
-        assert!(!stats.unavailable);
-        assert_eq!(counts(&stats), git_shortstat(root));
-        assert_eq!(counts(&stats), (7, 8, 6));
+        for (engine, stats) in on_both_engines(&root.join("sub")) {
+            assert!(!stats.unavailable, "{}", engine.name());
+            assert_eq!(counts(&stats), git_shortstat(root), "{}", engine.name());
+            assert_eq!(counts(&stats), (7, 8, 6), "{}", engine.name());
+        }
     }
 
     #[test]
@@ -1282,9 +1581,171 @@ mod tests {
         make_stat_dirty(&root.join("untouched.txt"));
         std::fs::write(root.join("edited.txt"), "a\r\nB\r\n").unwrap();
 
-        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
-        assert_eq!(counts(&stats), git_shortstat(root));
-        assert_eq!(counts(&stats), (1, 1, 1));
+        for (engine, stats) in on_both_engines(root) {
+            assert_eq!(counts(&stats), git_shortstat(root), "{}", engine.name());
+            assert_eq!(counts(&stats), (1, 1, 1), "{}", engine.name());
+        }
+    }
+
+    #[test]
+    fn a_path_staged_then_restored_to_its_head_content_is_not_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(root, &[("restored.txt", "a\nb\n"), ("kept.txt", "k\n")]);
+        std::fs::write(root.join("restored.txt"), "a\nB\nc\n").unwrap();
+        fixture::run(root, &["add", "restored.txt"]);
+        std::fs::write(root.join("restored.txt"), "a\nb\n").unwrap();
+
+        assert_eq!(git_shortstat(root), (0, 0, 0));
+        for (engine, stats) in on_both_engines(root) {
+            assert_eq!(counts(&stats), (0, 0, 0), "{}: {stats:?}", engine.name());
+            assert!(stats.is_empty() && !stats.unavailable, "{}", engine.name());
+        }
+    }
+
+    #[test]
+    fn a_missing_base_blob_counts_the_file_without_lines_on_both_engines() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(root, &[("kept.txt", "k\n")]);
+        let missing = "deadbeef".repeat(5);
+        fixture::run(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{missing},partial.txt"),
+            ],
+        );
+        let tree = fixture::run(root, &["write-tree", "--missing-ok"]);
+        let commit = fixture::run(
+            root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit-tree",
+                tree.trim(),
+                "-p",
+                "HEAD",
+                "-m",
+                "a blob the object database does not hold",
+            ],
+        );
+        fixture::run(root, &["update-ref", "HEAD", commit.trim()]);
+        std::fs::write(root.join("partial.txt"), "one\ntwo\n").unwrap();
+
+        let stats = on_both_engines_equal(root);
+        assert!(!stats.unavailable, "{stats:?}");
+        assert_eq!(
+            counts(&stats),
+            (1, 0, 0),
+            "the file is counted, its lines are unknown"
+        );
+    }
+
+    #[test]
+    fn a_diff_stats_probe_on_the_gix_path_spawns_no_git_process() {
+        use crate::work_counters::{counted_on_this_thread, git_profile_counter};
+        let spawns = || {
+            counted_on_this_thread(git_profile_counter(true))
+                + counted_on_this_thread(git_profile_counter(false))
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(root, &[("tracked.txt", "one\n"), ("gone.txt", "x\n")]);
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("new.txt"), "n\n").unwrap();
+
+        let before = spawns();
+        let (gix, selector) = stats_through(Engine::Gix, root);
+        assert_eq!(spawns() - before, 0, "the gix path spawns no git process");
+        assert_eq!(selector.counters().probes(Probe::DiffStats, Engine::Gix), 1);
+
+        let before = spawns();
+        let (cli, _) = stats_through(Engine::Cli, root);
+        assert!(
+            spawns() - before >= 3,
+            "the CLI path spawns diff-index, cat-file and ls-files"
+        );
+        assert_eq!(gix, cli);
+        assert_eq!(counts(&gix), (3, 2, 1));
+    }
+
+    #[test]
+    fn gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture() {
+        use paneflow_git::oracle::{Probe as OracleProbe, Skip, base, layouts, linked, submodules};
+        paneflow_git::support::isolate_process();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let matrices = [
+            ("base", base::matrix(), base::MAY_SKIP, &[][..]),
+            ("layouts", layouts::matrix(), &[][..], &[][..]),
+            ("linked", linked::matrix(), &[][..], &[][..]),
+            (
+                "submodules",
+                submodules::matrix(OracleProbe::Files),
+                &[][..],
+                submodules::MUST_FAIL,
+            ),
+        ];
+        let mut compared = 0usize;
+        let mut skipped = 0usize;
+        let mut total = 0usize;
+        let mut failures = Vec::new();
+        for (matrix, fixtures, may_skip, must_fail) in matrices {
+            for fixture in fixtures {
+                total += 1;
+                let root = tmp.path().join(matrix).join(fixture.name).join("repo");
+                let cwd = match (fixture.build)(&root) {
+                    Ok(cwd) => cwd,
+                    Err(Skip(reason)) if may_skip.contains(&fixture.name) => {
+                        eprintln!("oracle: SKIPPED fixture {}: {reason}", fixture.name);
+                        skipped += 1;
+                        continue;
+                    }
+                    Err(Skip(reason)) => {
+                        failures.push(format!(
+                            "fixture {} was skipped but is not allowed to skip: {reason}",
+                            fixture.name
+                        ));
+                        continue;
+                    }
+                };
+                let deadline = std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE;
+                let cwd = cwd.to_str().expect("utf-8 fixture path");
+                let cli = GitDiffStats::with_cli(cwd, deadline);
+                let gix = GitDiffStats::with_gix(cwd, deadline);
+                let expected_to_fail = must_fail.contains(&fixture.name);
+                match gix {
+                    Ok(gix) if !expected_to_fail && gix == cli => {}
+                    Err(_) if expected_to_fail && cli.unavailable => {}
+                    gix => failures.push(format!(
+                        "fixture {}: expected both engines to {}, got cli {cli:?} gix {gix:?}",
+                        fixture.name,
+                        if expected_to_fail {
+                            "fail"
+                        } else {
+                            "answer the same stats"
+                        }
+                    )),
+                }
+                compared += 1;
+            }
+        }
+        assert!(compared > 0);
+        assert_eq!(
+            compared + skipped,
+            total,
+            "every fixture is compared or skipped by name"
+        );
+        assert!(
+            failures.is_empty(),
+            "the diff stats differ between the git CLI and gix ({compared} fixtures):\n{}",
+            failures.join("\n")
+        );
     }
 
     #[test]
@@ -1303,7 +1764,10 @@ mod tests {
 
     #[test]
     fn only_a_nul_in_the_first_eight_thousand_bytes_makes_a_side_binary() {
-        assert_eq!(stat_text(b"a\0b".to_vec()), SideText::Binary);
+        assert_eq!(
+            stat_text(b"a\0b".to_vec()),
+            SideText::Binary(b"a\0b".to_vec())
+        );
         let mut late_nul = vec![b'a'; GIT_BINARY_SNIFF_BYTES];
         late_nul.push(0);
         assert!(matches!(stat_text(late_nul), SideText::Text(_)));
@@ -1368,7 +1832,7 @@ mod tests {
         for name in &names {
             std::fs::write(root.join(name), "b\n").unwrap();
         }
-        let stats = GitDiffStats::from_cwd(root.to_str().unwrap());
+        let stats = on_both_engines_equal(root);
         assert!(!stats.unavailable);
         assert!(stats.count_capped, "{stats:?}");
         assert!(stats.files_changed > 0 && stats.files_changed < names.len());
