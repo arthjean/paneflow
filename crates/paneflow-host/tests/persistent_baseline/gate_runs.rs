@@ -434,29 +434,7 @@ pub(super) fn desktop_diff_stat(
             let focus = headless::focus_window(&desktop);
             std::thread::sleep(SETTLE);
             let (window, window_s) = desktop_window(&desktop, DIFF_STAT_WINDOW);
-            let probes = counter(&window, "git_spawns.by_subcommand.diff-index");
-            let spawns = counter(&window, "git_spawns.total");
-            let (probes, measurement) = match (&focus, probes, spawns) {
-                (Err(reason), _, _) => {
-                    let reason = format!(
-                        "the window was never focused, and the git poll only runs while a window is active: {reason}"
-                    );
-                    (
-                        Measurement::Missing(reason.clone()),
-                        Measurement::Missing(reason),
-                    )
-                }
-                (Ok(()), Measurement::Value(0.0), _) => (
-                    Measurement::Value(0.0),
-                    Measurement::Missing(format!(
-                        "no diff-stat probe ran during the {window_s:.0} s window"
-                    )),
-                ),
-                (Ok(()), Measurement::Value(probes), spawns) => {
-                    (Measurement::Value(probes), per(spawns, probes))
-                }
-                (Ok(()), missing, _) => (missing.clone(), missing),
-            };
+            let (probes, measurement) = diff_stat_measurements(&window, &focus, window_s);
             values.insert(probes_name.to_string(), probes);
             values.insert(name.to_string(), measurement);
             json!({"window_s": window_s, "work_counters": window, "focus": focus.err(), "repository": repository.display().to_string()})
@@ -464,6 +442,72 @@ pub(super) fn desktop_diff_stat(
     };
     stop(client, &sessions);
     detail
+}
+
+fn diff_stat_fallbacks(window: &Value) -> Result<Vec<String>, Measurement> {
+    let mut fallbacks = Vec::new();
+    for name in paneflow_host::work_counters::GIT_ENGINE_FALLBACKS {
+        match counter(window, name) {
+            Measurement::Value(0.0) => {}
+            Measurement::Value(count) => fallbacks.push(format!(
+                "{} {count}",
+                name.trim_start_matches("git_engine.fallbacks.")
+            )),
+            missing => return Err(missing),
+        }
+    }
+    Ok(fallbacks)
+}
+
+pub(super) fn diff_stat_measurements(
+    window: &Value,
+    focus: &Result<(), String>,
+    window_s: f64,
+) -> (Measurement, Measurement) {
+    if let Err(reason) = focus {
+        let reason = format!(
+            "the window was never focused, and the git poll only runs while a window is active: {reason}"
+        );
+        return (
+            Measurement::Missing(reason.clone()),
+            Measurement::Missing(reason),
+        );
+    }
+    let [gix_name, cli_name] = paneflow_host::work_counters::DIFF_STAT_ENGINE_PROBES;
+    let (gix, cli) = match (counter(window, gix_name), counter(window, cli_name)) {
+        (Measurement::Value(gix), Measurement::Value(cli)) => (gix, cli),
+        (Measurement::Value(_), missing) | (missing, _) => return (missing.clone(), missing),
+    };
+    let probes = gix + cli;
+    if probes == 0.0 {
+        return (
+            Measurement::Value(0.0),
+            Measurement::Missing(format!(
+                "no diff-stat probe ran during the {window_s:.0} s window"
+            )),
+        );
+    }
+    let fallbacks = match diff_stat_fallbacks(window) {
+        Ok(fallbacks) => fallbacks,
+        Err(missing) => return (Measurement::Value(probes), missing),
+    };
+    if cli > 0.0 || !fallbacks.is_empty() {
+        return (
+            Measurement::Value(probes),
+            Measurement::Missing(format!(
+                "{cli} of {probes} diff-stat probes fell back to the git CLI, fallbacks by reason: {}",
+                if fallbacks.is_empty() {
+                    "none counted".to_string()
+                } else {
+                    fallbacks.join(", ")
+                }
+            )),
+        );
+    }
+    (
+        Measurement::Value(probes),
+        per(counter(window, "git_spawns.total"), probes),
+    )
 }
 
 pub(super) const TUI_WORKSPACES: usize = 30;
@@ -899,6 +943,78 @@ mod tests {
         assert!(!thinking_verdict(Measurement::Value(11.1)).failed());
         assert!(!thinking_verdict(Measurement::Value(10.0)).failed());
         assert!(!thinking_verdict(Measurement::Value(12.0)).failed());
+    }
+
+    fn diff_stat_window(gix: u64, cli: u64, forced: u64, git_spawns: u64) -> Value {
+        json!({
+            "git_engine.probes.diff_stats.gix": gix,
+            "git_engine.probes.diff_stats.cli": cli,
+            "git_engine.fallbacks.reftable": 0,
+            "git_engine.fallbacks.object_format": 0,
+            "git_engine.fallbacks.error": 0,
+            "git_engine.fallbacks.forced": forced,
+            "git_engine.fallbacks.size_threshold": 0,
+            "git_spawns.total": git_spawns,
+            "git_spawns.by_subcommand.diff-index": cli,
+        })
+    }
+
+    fn diff_stat_verdicts(window: &Value) -> Vec<gates::Verdict> {
+        let (probes, per_probe) = diff_stat_measurements(window, &Ok(()), 35.0);
+        let mut values = Values::new();
+        values.insert("desktop.diff_stat.probes".to_string(), probes);
+        values.insert(
+            "desktop.diff_stat.git_spawns_per_probe".to_string(),
+            per_probe,
+        );
+        gates::verify(gates::BUDGETS, &values)
+            .into_iter()
+            .filter(|verdict| verdict.counter.starts_with("desktop.diff_stat."))
+            .collect()
+    }
+
+    #[test]
+    fn the_diff_stat_gate_counts_probes_from_the_engine_counters_without_git_spawns() {
+        let verdicts = diff_stat_verdicts(&diff_stat_window(2, 0, 0, 0));
+        assert_eq!(verdicts.len(), 2);
+        for verdict in &verdicts {
+            assert!(!verdict.failed(), "{}", verdict.line());
+        }
+        assert_eq!(
+            diff_stat_measurements(&diff_stat_window(2, 0, 0, 0), &Ok(()), 35.0),
+            (Measurement::Value(2.0), Measurement::Value(0.0))
+        );
+        let spawning = diff_stat_verdicts(&diff_stat_window(1, 0, 0, 3));
+        assert!(
+            spawning.iter().any(
+                |verdict| verdict.counter.ends_with("git_spawns_per_probe") && verdict.failed()
+            ),
+            "a gix probe that spawns git fails the gate"
+        );
+    }
+
+    #[test]
+    fn a_diff_stat_gate_run_that_fell_back_to_the_cli_fails_and_names_the_reason() {
+        let fallen_back = diff_stat_window(0, 1, 1, 3);
+        let (probes, per_probe) = diff_stat_measurements(&fallen_back, &Ok(()), 35.0);
+        assert_eq!(probes, Measurement::Value(1.0));
+        assert!(
+            matches!(
+                &per_probe,
+                Measurement::Missing(reason) if reason.contains("fell back to the git CLI") && reason.contains("forced 1")
+            ),
+            "{per_probe:?}"
+        );
+        let verdict = diff_stat_verdicts(&fallen_back)
+            .into_iter()
+            .find(|verdict| verdict.counter.ends_with("git_spawns_per_probe"))
+            .unwrap();
+        assert!(verdict.failed(), "{}", verdict.line());
+        assert!(verdict.line().contains("forced 1"), "{}", verdict.line());
+        assert!(matches!(
+            diff_stat_measurements(&diff_stat_window(0, 0, 0, 0), &Ok(()), 35.0).1,
+            Measurement::Missing(reason) if reason.contains("no diff-stat probe ran")
+        ));
     }
 
     fn tui_window(root_renders: u64, git_spawns: u64) -> Value {
