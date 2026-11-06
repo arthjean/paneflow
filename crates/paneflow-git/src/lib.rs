@@ -181,6 +181,8 @@ pub enum Error {
     Untrusted { path: PathBuf },
     #[error("the status was interrupted")]
     Interrupted,
+    #[error("the status listed more than {cap} entries")]
+    TooManyEntries { cap: usize },
     #[error("{context}: {message}")]
     Git {
         context: &'static str,

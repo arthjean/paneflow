@@ -226,10 +226,10 @@ impl Selector {
                 answer
             }
             Err(error) => {
-                if let Some(layout) = layout.as_ref().filter(|_| !is_cancellation(&error)) {
+                if let Some(layout) = layout.as_ref().filter(|_| counts_toward_pinning(&error)) {
                     self.record_failure(&layout.git_dir, &error);
                 }
-                self.count_fallback(Fallback::Error);
+                self.count_fallback(fallback_for(&error));
                 self.answer_with_cli(probe, cli)
             }
         }
@@ -329,8 +329,15 @@ impl Selector {
     }
 }
 
-fn is_cancellation(error: &Error) -> bool {
-    matches!(error, Error::Interrupted)
+fn counts_toward_pinning(error: &Error) -> bool {
+    !matches!(error, Error::Interrupted | Error::TooManyEntries { .. })
+}
+
+fn fallback_for(error: &Error) -> Fallback {
+    match error {
+        Error::TooManyEntries { .. } => Fallback::SizeThreshold,
+        _ => Fallback::Error,
+    }
 }
 
 fn locate(cwd: &Path) -> Option<Layout> {

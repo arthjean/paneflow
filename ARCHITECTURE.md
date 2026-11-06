@@ -291,7 +291,9 @@ the diff dock and `is_clean` (EP-005) run on it.
   directory, keyed by the linked worktree's own git directory, that directory
   stays on the CLI until Paneflow restarts and one warning names it with the
   last error. An interrupted probe is answered by the CLI too but never counts
-  toward those two errors. `PANEFLOW_GIT_ENGINE` is read once: `gix` or unset prefers gix,
+  toward those two errors, and neither does a status over its entry cap
+  (`Error::TooManyEntries`, counted as `size_threshold`), which the dock
+  listing hands to the CLI because it cannot show a lower bound. `PANEFLOW_GIT_ENGINE` is read once: `gix` or unset prefers gix,
   any other value prefers gix with one warning listing the accepted values.
   `system.counters` reports `git_engine.probes.<probe>.<gix|cli>`,
   `git_engine.fallbacks.<reason>`, `git_engine.pinned_directories` and

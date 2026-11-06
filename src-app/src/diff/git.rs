@@ -405,7 +405,7 @@ fn head_diff_with_gix(
             toplevel.display()
         );
         let head_sha = objects.head_commit()?;
-        let listing = gix_listing(&snapshot, objects, &toplevel)?;
+        let listing = gix_listing(&snapshot, probe.entry_cap, objects, &toplevel)?;
         let base_ids = listing.base_ids;
         let untracked = listing.untracked;
         let mut diff = assemble_diff(
@@ -546,14 +546,12 @@ fn rename_candidates(tracked: &[RawChange]) -> (IndexedSides, IndexedSides) {
 
 fn gix_listing(
     snapshot: &paneflow_git::Snapshot,
+    entry_cap: usize,
     objects: &paneflow_git::Objects<'_>,
     workdir: &Path,
 ) -> Result<GixListing, paneflow_git::Error> {
     if snapshot.truncated {
-        return Err(paneflow_git::Error::Git {
-            context: "compose the dock listing",
-            message: "the status listed more entries than its cap".to_string(),
-        });
+        return Err(paneflow_git::Error::TooManyEntries { cap: entry_cap });
     }
     let tracked = tracked_changes(snapshot, objects, workdir)?;
     let (sources, destinations) = rename_candidates(&tracked);
@@ -1308,6 +1306,47 @@ mod tests {
         assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 1);
         assert_eq!(counters.fallbacks(Fallback::Error), 1);
         assert_eq!(dock_view(&diff), dock_view(&cli_dock(root)));
+    }
+
+    #[test]
+    fn a_listing_over_the_entry_cap_is_answered_by_the_cli_without_pinning_the_repository() {
+        use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(root, &[("one.txt", "one\n"), ("two.txt", "two\n")]);
+        std::fs::write(root.join("one.txt"), "one\nedited\n").unwrap();
+        std::fs::write(root.join("two.txt"), "two\nedited\n").unwrap();
+        std::fs::write(root.join("untracked.txt"), "u\n").unwrap();
+        let capped = paneflow_git::Options {
+            entry_cap: 1,
+            ..paneflow_git::Options::dock_listing()
+        };
+
+        let selector = Selector::new(Engine::Gix, None);
+        for _ in 0..3 {
+            let diff = compute_head_diff_through(&selector, &capped, root, DiffOptions::default());
+            assert_eq!(dock_view(&diff), dock_view(&cli_dock(root)));
+        }
+        let counters = selector.counters();
+        assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 3);
+        assert_eq!(counters.fallbacks(Fallback::SizeThreshold), 3);
+        assert_eq!(counters.fallbacks(Fallback::Error), 0);
+        assert_eq!(
+            counters.pinned_directories, 0,
+            "a large status is not a fault of the repository"
+        );
+        let diff = compute_head_diff_through(
+            &selector,
+            &paneflow_git::Options::dock_listing(),
+            root,
+            DiffOptions::default(),
+        );
+        assert_eq!(diff.files.len(), 3);
+        assert_eq!(
+            selector.counters().probes(Probe::DockListing, Engine::Gix),
+            1,
+            "the repository stays on gix"
+        );
     }
 
     #[test]
