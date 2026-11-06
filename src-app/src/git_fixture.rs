@@ -24,6 +24,17 @@ const FIXTURE_IDENTITY: &[(&str, &str)] = &[
 
 const EMPTY_GLOBAL_CONFIG_NAME: &str = "paneflow-tests-empty-gitconfig";
 
+pub(crate) fn isolate_process() {
+    static ISOLATED: OnceLock<()> = OnceLock::new();
+    ISOLATED.get_or_init(|| {
+        let global = empty_global_config();
+        unsafe {
+            std::env::set_var("GIT_CONFIG_GLOBAL", global);
+            std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        }
+    });
+}
+
 pub(crate) fn isolate(command: &mut Command) {
     command
         .env("GIT_CONFIG_GLOBAL", empty_global_config())
@@ -33,6 +44,7 @@ pub(crate) fn isolate(command: &mut Command) {
 }
 
 pub(crate) fn command(cwd: &Path, args: &[&str]) -> Command {
+    isolate_process();
     let mut fixture_args: Vec<&str> = Vec::with_capacity(FIXTURE_CONFIG.len() * 2 + args.len());
     for setting in FIXTURE_CONFIG {
         fixture_args.push("-c");

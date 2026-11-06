@@ -18,7 +18,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use paneflow_git::porcelain::{self, Record, CLEAN_STATUS_ARGS, FILES_STATUS_ARGS};
-use paneflow_git::{snapshot, Options, Submodules};
+use paneflow_git::{snapshot, Options};
 
 use crate::support;
 
@@ -59,11 +59,8 @@ impl Probe {
 
     pub fn options(self) -> Options {
         match self {
-            Probe::Files => Options::default(),
-            Probe::Clean => Options {
-                submodules: Submodules::CheckAll,
-                ..Options::default()
-            },
+            Probe::Files => Options::files_status(),
+            Probe::Clean => Options::is_clean(),
         }
     }
 }

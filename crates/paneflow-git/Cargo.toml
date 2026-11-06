@@ -8,9 +8,13 @@ authors.workspace = true
 repository.workspace = true
 description = "Read-only in-process git status for the Paneflow background probes, built on gix"
 
+[features]
+oracle = ["dep:tempfile"]
+
 [dependencies]
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1"] }
 log.workspace = true
+tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
