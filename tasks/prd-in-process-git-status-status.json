@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "The Files sidebar stops mapping agent files",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-004",
@@ -148,24 +148,24 @@
       "id": "US-009",
       "title": "A reusable race harness pins both mapping scenarios",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-06",
       "reviewed_at": "2026-11-06"
     },
     {
       "id": "US-010",
       "title": "files_git::read runs on the gix snapshot",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-005", "US-007", "US-008", "US-009"],
       "started_at": "2026-11-05",
-      "completed_at": null,
+      "completed_at": "2026-11-06",
       "reviewed_at": "2026-11-06"
     },
     {
