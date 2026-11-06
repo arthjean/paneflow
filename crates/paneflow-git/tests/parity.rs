@@ -17,6 +17,35 @@ fn the_cli_and_gix_report_equal_records_on_the_base_matrix() {
 }
 
 #[test]
+fn a_conflicted_path_is_never_reported_untracked() {
+    support::isolate_process();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut checked = 0;
+    for fixture in base::matrix()
+        .into_iter()
+        .filter(|fixture| fixture.name.contains("conflict"))
+    {
+        let root = tmp.path().join(fixture.name).join("repo");
+        let cwd = (fixture.build)(&root).unwrap_or_else(|skip| panic!("{skip:?}"));
+        let snapshot = snapshot(&cwd, &Options::diff_stats()).expect("snapshot");
+        for entry in snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.conflict.is_some())
+        {
+            checked += 1;
+            assert!(
+                !entry.untracked,
+                "{}: {} has index stages, so git never lists it as untracked",
+                fixture.name,
+                String::from_utf8_lossy(&entry.path)
+            );
+        }
+    }
+    assert!(checked >= 9, "{checked} conflicted entries were checked");
+}
+
+#[test]
 fn sparse_checkouts_and_index_layouts_match_the_cli() {
     oracle::run(&layouts::matrix(), Probe::Files).assert_parity(&[]);
 }
