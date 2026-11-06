@@ -33,7 +33,7 @@ Everywhere else, take the build for your machine from the [latest release](https
 
 [Install docs →](https://paneflow.dev/docs/installation)
 
-<img alt="Claude Code and fx running in parallel panes, the dock open on a Rust file beside the file tree, and project tabs in the Workspaces rail" src="./assets/images/demo-0.12.png" width="100%">
+<img alt="Claude Code working in a pane, the dock open on a Rust file beside the file tree, and the Workspaces rail listing projects, their worktree tabs, and agent sessions" src="./assets/images/demo-0.19.png" width="100%">
 
 ### 2. Install for agents
 
