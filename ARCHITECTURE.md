@@ -316,7 +316,11 @@ EP-005 switch the diff badge, the diff dock and `is_clean`.
   stat-dirty scenario (backdated, index refreshed, then rewritten) and in a
   racy-window scenario (an index write at the start of a wall-clock second,
   then same-size rewrites inside it, over 5 rounds); it fails as inconclusive
-  when the writer made no more writes than there were probes. Test fixtures
+  when the writer made no more writes than there were probes. In the
+  stat-dirty scenario each probe starts only once the writer is two writes
+  ahead of it, so a gix probe faster than a 480 KiB write still overlaps the
+  writer, and the writer stops as soon as the probe thread ends, so a
+  panicking probe fails the race instead of stalling it. Test fixtures
   built through `git_fixture` also point the process's `GIT_CONFIG_GLOBAL`
   at the empty fixture config and set `GIT_CONFIG_NOSYSTEM`, which is how
   gix, reading config in process, sees the isolation the CLI builder applies
