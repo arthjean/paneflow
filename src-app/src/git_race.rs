@@ -24,6 +24,8 @@ const SECOND_START_MARGIN: Duration = Duration::from_millis(5);
 
 const CLOSED_WINDOW_POLL: Duration = Duration::from_millis(1);
 
+const WRITES_AHEAD_OF_EACH_PROBE: usize = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scenario {
     StatDirty,
@@ -196,15 +198,20 @@ where
     P: Fn(&Path) -> Result<T, String> + Send + 'static,
 {
     let finished = Arc::new(AtomicUsize::new(0));
+    let written = Arc::new(AtomicUsize::new(0));
     let thread = {
         let root = root.to_path_buf();
         let finished = Arc::clone(&finished);
+        let written = Arc::clone(&written);
         std::thread::spawn(move || {
             let mut probes = Probes {
                 errors: Vec::new(),
                 answers: Vec::new(),
             };
-            for _ in 0..STAT_DIRTY_PROBES {
+            for index in 0..STAT_DIRTY_PROBES {
+                while written.load(Ordering::Acquire) < index + WRITES_AHEAD_OF_EACH_PROBE {
+                    std::thread::yield_now();
+                }
                 probes.record(probe(&root));
                 finished.fetch_add(1, Ordering::Release);
             }
@@ -212,8 +219,9 @@ where
         })
     };
     let mut writer = Writer::new();
-    while finished.load(Ordering::Acquire) < STAT_DIRTY_PROBES {
+    while finished.load(Ordering::Acquire) < STAT_DIRTY_PROBES && !thread.is_finished() {
         writer.rewrite(file);
+        written.store(writer.writes, Ordering::Release);
     }
     let probes = thread.join().expect("probe thread");
     outcome(scenario, writer, probes)
@@ -321,6 +329,44 @@ mod tests {
     }
 
     #[test]
+    fn a_probe_faster_than_the_writer_still_overlaps_it_in_the_stat_dirty_scenario() {
+        let outcome = race(Scenario::StatDirty, Raced::Tracked, |_root: &Path| Ok(()));
+        outcome.assert_no_failed_write();
+        assert_eq!(outcome.probes, STAT_DIRTY_PROBES);
+    }
+
+    #[test]
+    fn a_probe_that_panics_fails_the_race_instead_of_stalling_the_writer() {
+        let failure = std::panic::catch_unwind(|| {
+            race(
+                Scenario::StatDirty,
+                Raced::Tracked,
+                |_root: &Path| -> Result<(), String> { panic!("the probe broke") },
+            )
+        })
+        .expect_err("a panicking probe fails the race");
+        let message = failure
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| failure.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_default();
+        assert!(message.contains("probe thread"), "{message}");
+    }
+
+    fn git_probe(root: &Path, args: &[&str]) -> Result<String, String> {
+        let out = fixture::output(root, args);
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(format!(
+                "git {args:?} exited with {}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+
+    #[test]
     fn every_rewrite_keeps_the_size_of_the_raced_file() {
         let seeded = same_size_body(SEED_GENERATION).len();
         assert!(seeded > 480 * 1024);
@@ -331,10 +377,11 @@ mod tests {
     #[test]
     fn the_stat_dirty_scenario_leaves_the_raced_file_modified_against_a_refreshed_index() {
         let outcome = race(Scenario::StatDirty, Raced::Tracked, |root: &Path| {
-            Ok(fixture::run(root, &["diff", "--name-only"]))
+            git_probe(root, &["diff", "--name-only"])
         });
         outcome.assert_conclusive();
         assert_eq!(outcome.probes, STAT_DIRTY_PROBES);
+        assert!(!outcome.answers.is_empty(), "{}", outcome.summary());
         assert!(
             outcome
                 .answers
@@ -348,10 +395,7 @@ mod tests {
     #[test]
     fn the_racy_scenario_probes_only_inside_its_index_write_seconds() {
         let outcome = race(Scenario::RacyWindow, Raced::Tracked, |root: &Path| {
-            Ok(fixture::run(
-                root,
-                &["ls-files", "--stage", "--", RACED_FILE],
-            ))
+            git_probe(root, &["ls-files", "--stage", "--", RACED_FILE])
         });
         outcome.assert_conclusive();
         assert!(outcome.probes > 0, "{}", outcome.summary());
