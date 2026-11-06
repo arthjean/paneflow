@@ -179,7 +179,15 @@ did not change: `notify` 7 reports `IN_OPEN` on Linux, the git watcher took
 any event on `HEAD` or `index` as a change, and each probe opened both
 files, so it triggered the next one. The gate measured 15 probes in its 35 s
 window but only judged the 3 processes per probe. The watcher now ignores
-access events, and `desktop.diff_stat.probes` bounds the probe count. The
+access events, and `desktop.diff_stat.probes` bounds the probe count. Since
+US-012 the gate counts the probes from `git_engine.probes.diff_stats.gix` and
+`.cli` instead of `git_spawns.by_subcommand.diff-index`, because the probe
+runs in process with gix (US-011) and spawns nothing: a probe counted from its
+spawns would read as no probe at all. `desktop.diff_stat.git_spawns_per_probe`
+is exactly 0, and a window where any diff-stat probe was answered by the CLI,
+or where any `git_engine.fallbacks.<reason>` moved, is reported missing with
+the reasons and their counts, so a gate run on the CLI fails instead of
+passing with a stale budget. The
 second cost was the cursor blink: a focused window drew 1.85 root renders per
 second at rest and 13.0 while an agent thought, because the 530 ms blink and
 the 90 ms spinner drew separate frames. The blink now toggles every 540 ms on
@@ -884,6 +892,8 @@ Nested counters are addressed with dots, for example
 | desktop, `system.counters` | `session_list_calls` | `session.list` calls to the host | `host_link::list_sessions` |
 | desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (18 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, `run_feeding_stdin_keeping_stdout_head`, the filter query, and the git clone |
 | desktop, `system.counters` | `process_spawns` | processes spawned through `paneflow-process` | `paneflow_process::run_supervised` and `spawn_detached` |
+| desktop, `system.counters` | `git_engine.probes.diff_stats.gix`, `.cli` | diff-stat probes, by the engine that answered | `paneflow_git::engine::Selector::run`, once per `GitDiffStats::from_cwd` that passed its deadline check |
+| desktop, `system.counters` | `git_engine.fallbacks.<reason>` (`reftable`, `object_format`, `error`, `forced`, `size_threshold`) | probes of any kind answered by the git CLI, by reason | `Selector::run`, before the CLI closure runs |
 
 `system.counters` sits next to `system.identify` in the IPC server: same
 connection checks, served on the connection thread, listed in

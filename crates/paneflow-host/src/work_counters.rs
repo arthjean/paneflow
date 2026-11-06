@@ -33,6 +33,26 @@ pub const DESKTOP_COUNTERS: &[&str] = &[
     "git_spawns.by_subcommand.diff-index",
     "git_spawns.by_subcommand.cat-file",
     "process_spawns",
+    "git_engine.probes.diff_stats.gix",
+    "git_engine.probes.diff_stats.cli",
+    "git_engine.fallbacks.reftable",
+    "git_engine.fallbacks.object_format",
+    "git_engine.fallbacks.error",
+    "git_engine.fallbacks.forced",
+    "git_engine.fallbacks.size_threshold",
+];
+
+pub const DIFF_STAT_ENGINE_PROBES: [&str; 2] = [
+    "git_engine.probes.diff_stats.gix",
+    "git_engine.probes.diff_stats.cli",
+];
+
+pub const GIT_ENGINE_FALLBACKS: [&str; 5] = [
+    "git_engine.fallbacks.reftable",
+    "git_engine.fallbacks.object_format",
+    "git_engine.fallbacks.error",
+    "git_engine.fallbacks.forced",
+    "git_engine.fallbacks.size_threshold",
 ];
 
 #[derive(Debug, Default)]

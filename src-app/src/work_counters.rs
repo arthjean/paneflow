@@ -206,6 +206,33 @@ mod tests {
     }
 
     #[test]
+    fn the_perf_gates_read_the_diff_stat_probes_and_every_fallback_by_their_engine_names() {
+        use paneflow_git::engine::{Engine, Fallback, Probe};
+        use paneflow_host::work_counters::{
+            DESKTOP_COUNTERS, DIFF_STAT_ENGINE_PROBES, GIT_ENGINE_FALLBACKS,
+        };
+        let probes: Vec<String> = Engine::ALL
+            .into_iter()
+            .map(|engine| {
+                format!(
+                    "git_engine.probes.{}.{}",
+                    Probe::DiffStats.name(),
+                    engine.name()
+                )
+            })
+            .collect();
+        assert_eq!(DIFF_STAT_ENGINE_PROBES.to_vec(), probes);
+        let fallbacks: Vec<String> = Fallback::ALL
+            .into_iter()
+            .map(|reason| format!("git_engine.fallbacks.{}", reason.name()))
+            .collect();
+        assert_eq!(GIT_ENGINE_FALLBACKS.to_vec(), fallbacks);
+        for name in DIFF_STAT_ENGINE_PROBES.iter().chain(&GIT_ENGINE_FALLBACKS) {
+            assert!(DESKTOP_COUNTERS.contains(name), "{name}");
+        }
+    }
+
+    #[test]
     fn the_desktop_counters_name_every_counter_with_the_process_identity() {
         let value = counters();
         let sample = paneflow_host::work_counters::sample(

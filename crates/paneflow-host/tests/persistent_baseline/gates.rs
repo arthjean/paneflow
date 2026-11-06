@@ -254,10 +254,10 @@ pub(super) const BUDGETS: &[Budget] = &[
     },
     Budget {
         counter: "desktop.diff_stat.git_spawns_per_probe",
-        limit: Limit::Exactly(3.0),
+        limit: Limit::Exactly(0.0),
         unit: "git processes per probe",
         scenario: &DESKTOP_DIFF_STAT,
-        margin: "no margin: diff-index, the blob batch of the changed file and ls-files, the filter query reused from its cache (US-009, FR-07, #124)",
+        margin: "no margin: the probe lists the changes, reads the base blobs and lists the untracked files in process with gix (US-011), against diff-index, the blob batch and ls-files on the git CLI before; a probe answered by the CLI fails the gate with its fallback reason (US-012)",
     },
     Budget {
         counter: "desktop.tui_30_workspaces.git_spawns_per_min",
