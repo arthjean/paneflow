@@ -307,13 +307,15 @@ The diff badge leaves the racy window and the process cost behind: its listing, 
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given the selector picks gix, the HEAD-to-worktree change list comes from the snapshot (both halves composed per path, renames off) instead of `diff-index --raw`, base blobs come from the object database in the same open instead of `cat-file --batch`, and untracked files come from the snapshot instead of `ls-files --others`.
-- [ ] Given the probe runs, it spawns 0 git processes on the gix path, against 3 today.
-- [ ] `tracked_counts_match_git_shortstat_for_every_kind_of_change`, `an_autocrlf_checkout_counts_line_endings_like_git` and the other `workspace::git` tests pass for both engines.
-- [ ] Given a path staged then restored to the `HEAD` content in the worktree, then it is not counted, as today.
-- [ ] Given an unborn `HEAD`, the list compares against the empty tree; given a missing base blob (a partial clone), the file is handled like today's missing blob in `a_blob_batch_reports_missing_large_and_cut_off_objects`.
-- [ ] Given the racy-window race test against `GitDiffStats::from_cwd`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
-- [ ] The caps stay as today: 200 tracked and 1,000 untracked paths, 512 KiB per file, 8 MiB of blobs, a capped listing shown as a lower bound.
+- [x] Given the selector picks gix, the HEAD-to-worktree change list comes from the snapshot (both halves composed per path, renames off) instead of `diff-index --raw`, base blobs come from the object database in the same open instead of `cat-file --batch`, and untracked files come from the snapshot instead of `ls-files --others`.
+- [x] Given the probe runs, it spawns 0 git processes on the gix path, against 3 today.
+- [x] `tracked_counts_match_git_shortstat_for_every_kind_of_change`, `an_autocrlf_checkout_counts_line_endings_like_git` and the other `workspace::git` tests pass for both engines.
+- [x] Given a path staged then restored to the `HEAD` content in the worktree, then it is not counted, as today.
+- [x] Given an unborn `HEAD`, the list compares against the empty tree; given a missing base blob (a partial clone), the file is handled like today's missing blob in `a_blob_batch_reports_missing_large_and_cut_off_objects`.
+- [x] Given the racy-window race test against `GitDiffStats::from_cwd`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
+- [x] The caps stay as today: 200 tracked and 1,000 untracked paths, 512 KiB per file, 8 MiB of blobs, a capped listing shown as a lower bound.
+
+**Evidence (2026-11-06, Arthur's Windows 11 26300 host, Git 2.53.0.windows.1, uncommitted tree on `fdf0158a4`):** `a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window` run 10 times under `PANEFLOW_GIT_ENGINE=cli` is red in 7 runs out of 10: 2, 0, 0, 27, 2, 2, 3, 5, 2 and 0 failed writes (all raw OS error 1224) out of 345 to 555 writes over 16 to 26 probes, 43 failed writes in 3,671. The same test on gix passes in 10 conclusive runs out of 10, with 0 failed writes, 0 probe errors and 0 git spawns per probe. `gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture` passes on the full EP-002 matrix. It first found five divergences, all fixed on the gix side to follow `diff-index`, except one on the CLI side: an unmerged path compares its `HEAD` entry with the worktree file instead of being skipped, a submodule counts only when it checks out another commit, and a submodule with only untracked content is not listed; the CLI path counted a binary file whose stat changed but whose bytes did not, which `git diff --shortstat` does not count, so both engines now compare binary bytes. Linux and macOS: covered by the same tests on the CI legs, not yet run for this change.
 
 #### US-012: The perf gates count probes, not git spawns
 **Description:** As the maintainer, I want the perf gates to identify a diff-stat probe by a probe counter so that moving the probe in process does not make the gates report that no probe ran.
@@ -323,11 +325,13 @@ The diff badge leaves the racy window and the process cost behind: its listing, 
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] `crates/paneflow-host/tests/persistent_baseline/gate_runs.rs:437` counts diff-stat probes from the engine probe counter instead of `git_spawns.by_subcommand.diff-index`.
-- [ ] `desktop.diff_stat.git_spawns_per_probe` becomes 0 on the gix path, and the 30-workspace budget is re-derived from measured gix runs with the measurement in its margin text.
-- [ ] Given a gate run where the selector fell back to the CLI, the gate fails and names the fallback reason.
-- [ ] `the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes` becomes a test of 0 spawns on the gix path and keeps a CLI variant under `PANEFLOW_GIT_ENGINE=cli`.
-- [ ] `bench/README.md` describes the new counters and budgets.
+- [x] `crates/paneflow-host/tests/persistent_baseline/gate_runs.rs:437` counts diff-stat probes from the engine probe counter instead of `git_spawns.by_subcommand.diff-index`.
+- [x] `desktop.diff_stat.git_spawns_per_probe` becomes 0 on the gix path, and the 30-workspace budget is re-derived from measured gix runs with the measurement in its margin text.
+- [x] Given a gate run where the selector fell back to the CLI, the gate fails and names the fallback reason.
+- [x] `the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes` becomes a test of 0 spawns on the gix path and keeps a CLI variant under `PANEFLOW_GIT_ENGINE=cli`.
+- [x] `bench/README.md` describes the new counters and budgets.
+
+**Evidence (2026-11-06):** run_tests 42215538883 on `f88356ed1` (ubuntu-24.04 perf gates runner) is green on every leg, Windows x86_64, macOS aarch64, Linux x86_64 and Linux aarch64 included. Its perf gates measured, in the 35 s diff-stat window, 1 probe answered by gix, 0 by the CLI, 0 fallbacks and 0 git processes, so 0 per probe; on 30 workspaces, 0 git processes in each 30 s window for 4 gix probes each, so 0.0 per minute against 24.0 on the CLI, and 0 in the 60 s inactive window. `desktop.tui_30_workspaces.git_spawns_per_min` is re-derived from that run to `Exactly(0.0)`, with the measurement in its margin. Before the push, the WSL Linux gate caught one divergence the Windows host never showed: the gix directory walk also listed two conflicted paths as untracked, fixed in `f88356ed1`.
 
 ---
 

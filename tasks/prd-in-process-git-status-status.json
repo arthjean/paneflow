@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "The diff badge stops spawning git",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 2,
       "stories_done": 0
@@ -172,11 +172,11 @@
       "id": "US-011",
       "title": "GitDiffStats lists changes and reads blobs in process",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": ["US-010"],
-      "started_at": null,
+      "started_at": "2026-11-06",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -184,11 +184,11 @@
       "id": "US-012",
       "title": "The perf gates count probes, not git spawns",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": ["US-011"],
-      "started_at": null,
+      "started_at": "2026-11-06",
       "completed_at": null,
       "reviewed_at": null
     },
