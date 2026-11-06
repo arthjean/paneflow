@@ -160,6 +160,28 @@ fn interrupted_probes_never_pin_the_git_directory() {
 }
 
 #[test]
+fn a_status_over_the_entry_cap_is_a_size_fallback_that_never_pins_the_git_directory() {
+    let (_tmp, root) = repo();
+    let selector = Selector::new(Engine::Gix, None);
+    for _ in 0..3 {
+        let answer = run(&selector, &root, || Err(Error::TooManyEntries { cap: 1 }));
+        assert_eq!(answer, "cli");
+    }
+    let counters = selector.counters();
+    assert_eq!(counters.fallbacks(Fallback::SizeThreshold), 3);
+    assert_eq!(counters.fallbacks(Fallback::Error), 0);
+    assert_eq!(counters.pinned_directories, 0);
+    let calls = Cell::new(0);
+    assert_eq!(run(&selector, &root, failing_gix(&calls)), "cli");
+    assert_eq!(
+        selector.counters().pinned_directories,
+        0,
+        "a capped status does not count toward two consecutive failures"
+    );
+    assert_eq!(run(&selector, &root, answering_gix(&calls)), "gix");
+}
+
+#[test]
 fn a_success_between_failures_resets_the_count() {
     let (_tmp, root) = repo();
     let selector = Selector::new(Engine::Gix, None);
