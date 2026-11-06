@@ -221,18 +221,18 @@ impl GitDiffStats {
     }
 }
 
-fn null_oid() -> String {
+pub(crate) fn null_oid() -> String {
     "0".repeat(40)
 }
 
-fn stored_side(stored: Option<&paneflow_git::Stored>) -> (u32, String) {
+pub(crate) fn stored_side(stored: Option<&paneflow_git::Stored>) -> (u32, String) {
     stored.map_or_else(
         || (0, null_oid()),
         |stored| (stored.mode, stored.id.clone()),
     )
 }
 
-fn raw_change(old: (u32, String), new: (u32, String), path: &[u8]) -> Option<RawChange> {
+pub(crate) fn raw_change(old: (u32, String), new: (u32, String), path: &[u8]) -> Option<RawChange> {
     let ((old_mode, old_oid), (new_mode, new_oid)) = (old, new);
     let status = match (old_mode, new_mode) {
         (0, 0) => return None,
@@ -251,7 +251,10 @@ fn raw_change(old: (u32, String), new: (u32, String), path: &[u8]) -> Option<Raw
     })
 }
 
-fn composed_change(entry: &paneflow_git::Entry, sides: &paneflow_git::Sides) -> Option<RawChange> {
+pub(crate) fn composed_change(
+    entry: &paneflow_git::Entry,
+    sides: &paneflow_git::Sides,
+) -> Option<RawChange> {
     use paneflow_git::{IndexChange, WorktreeChange};
     let worktree = |mode: u32| (mode, null_oid());
     let index_mode = sides.index.as_ref().map_or(0, |stored| stored.mode);
@@ -277,7 +280,7 @@ fn composed_change(entry: &paneflow_git::Entry, sides: &paneflow_git::Sides) -> 
     raw_change(stored_side(sides.head.as_ref()), new, &entry.path)
 }
 
-fn worktree_mode_of(path: &std::path::Path, head_mode: u32) -> u32 {
+pub(crate) fn worktree_mode_of(path: &std::path::Path, head_mode: u32) -> u32 {
     const SYMLINK_MODE: u32 = 0o120000;
     const REGULAR_MODE: u32 = 0o100644;
     match std::fs::symlink_metadata(path) {
@@ -487,7 +490,7 @@ fn list_changes_against_head(cwd: &str, deadline: std::time::Instant) -> Option<
     }
 }
 
-fn path_from_git_output(bytes: &[u8]) -> std::path::PathBuf {
+pub(crate) fn path_from_git_output(bytes: &[u8]) -> std::path::PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -500,16 +503,16 @@ fn path_from_git_output(bytes: &[u8]) -> std::path::PathBuf {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RawChange {
-    old_mode: u32,
-    new_mode: u32,
-    old_oid: String,
-    new_oid: String,
-    status: u8,
-    path: Vec<u8>,
+pub(crate) struct RawChange {
+    pub(crate) old_mode: u32,
+    pub(crate) new_mode: u32,
+    pub(crate) old_oid: String,
+    pub(crate) new_oid: String,
+    pub(crate) status: u8,
+    pub(crate) path: Vec<u8>,
 }
 
-fn is_null_oid(oid: &str) -> bool {
+pub(crate) fn is_null_oid(oid: &str) -> bool {
     !oid.is_empty() && oid.bytes().all(|byte| byte == b'0')
 }
 

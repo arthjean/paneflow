@@ -110,6 +110,8 @@ fn status(
         submodules: Submodules::Check,
         entry_cap: usize::MAX,
         interrupt: None,
+        base: None,
+        stat_dirty: false,
         ..options.clone()
     };
     let content = collect(&repo, &content_options, interrupt)?;
