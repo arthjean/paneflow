@@ -949,56 +949,35 @@ fn a_config_written_in_one_workspace_reruns_the_filter_query_for_that_workspace_
     );
 }
 
-fn same_size_body(generation: usize) -> String {
-    format!(
-        "{generation:08}\n{}",
-        format!("{}\n", "x".repeat(1023)).repeat(480)
-    )
+fn diff_stats_probe(root: &Path) -> Result<crate::workspace::GitDiffStats, String> {
+    let stats = crate::workspace::GitDiffStats::from_cwd(root.to_str().expect("utf-8 test path"));
+    if stats.unavailable {
+        Err(format!("the diff stats are unavailable: {stats:?}"))
+    } else {
+        Ok(stats)
+    }
 }
 
 #[test]
 fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let root = tmp.path().join("repo");
-    fixture::committed_repo(&root, &[("tracked.txt", &same_size_body(99_999_999))]);
-    let tracked = root.join("tracked.txt");
-    backdate(&tracked, 3600);
-    assert!(fixture::git_succeeds(&root, &["update-index", "--refresh"]));
-    let rounds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    const PROBE_ROUNDS: usize = 40;
-    let probes = {
-        let root = root.clone();
-        let rounds = rounds.clone();
-        std::thread::spawn(move || {
-            let cwd = root.to_str().expect("utf-8 test path").to_string();
-            let mut stats = Vec::new();
-            for _ in 0..PROBE_ROUNDS {
-                stats.push(crate::workspace::GitDiffStats::from_cwd(&cwd));
-                rounds.fetch_add(1, Ordering::Relaxed);
-            }
-            stats
-        })
-    };
-
-    let mut writes = 0usize;
-    let mut failures: std::collections::BTreeMap<Option<i32>, usize> = Default::default();
-    while rounds.load(Ordering::Relaxed) < PROBE_ROUNDS {
-        if let Err(error) = std::fs::write(&tracked, same_size_body(writes)) {
-            *failures.entry(error.raw_os_error()).or_default() += 1;
-        }
-        writes += 1;
-    }
-    let stats = probes.join().expect("probe thread");
-
-    assert!(writes > PROBE_ROUNDS, "the writer must overlap the probes");
+    use crate::git_race::{Raced, Scenario, race};
+    let outcome = race(Scenario::StatDirty, Raced::Tracked, diff_stats_probe);
+    outcome.assert_no_failed_write();
     assert!(
-        failures.is_empty(),
-        "{failures:?} failed writes out of {writes} (raw OS error 1224 is a mapped section)"
+        outcome.answers.iter().any(|stats| stats.files_changed == 1),
+        "a probe still sees the one rewritten file: {:?}",
+        outcome.answers
     );
+}
+
+#[test]
+fn a_truncating_agent_write_to_an_untracked_file_never_fails_while_the_diff_stats_probe_runs() {
+    use crate::git_race::{Raced, Scenario, race};
+    let outcome = race(Scenario::StatDirty, Raced::Untracked, diff_stats_probe);
+    outcome.assert_no_failed_write();
     assert!(
-        stats
-            .iter()
-            .any(|stat| stat.files_changed == 1 && !stat.unavailable),
-        "a probe still sees the one rewritten file: {stats:?}"
+        outcome.answers.iter().any(|stats| stats.files_changed == 1),
+        "a probe still lists the one untracked file: {:?}",
+        outcome.answers
     );
 }
