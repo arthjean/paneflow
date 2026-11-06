@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use gix::bstr::BString;
+use gix::bstr::{BString, ByteSlice};
 use gix::dir::entry::{Kind as DiskKind, Status as DirStatus};
 use gix::index::entry::Mode;
 use gix::status::index_worktree::Item as WorktreeItem;
@@ -77,13 +77,28 @@ pub(crate) fn collect(
     options: &Options,
     interrupt: &Arc<AtomicBool>,
 ) -> Result<Snapshot, Error> {
-    let head = head(repo)?;
+    let base_tree = options
+        .base
+        .as_deref()
+        .map(|base| base_tree(repo, base))
+        .transpose()?;
+    let head = match base_tree {
+        Some(tree) => Head::Tree(tree.to_string()),
+        None => head(repo)?,
+    };
+    let stat_options = repo
+        .stat_options()
+        .map_err(|error| Error::git("read the stat options", error))?;
     let mut entries = Entries::new();
     let mut sides = SideMap::new();
     let thread_limit = options.thread_limit.max(1);
-    let status = repo
+    let mut status = repo
         .status(gix::progress::Discard)
-        .map_err(|error| Error::git("prepare the status", error))?
+        .map_err(|error| Error::git("prepare the status", error))?;
+    if let Some(tree) = base_tree {
+        status = status.head_tree(tree);
+    }
+    let status = status
         .index(sparse::index_for_status(repo)?)
         .untracked_files(match options.untracked {
             Untracked::Files => UntrackedFiles::Files,
@@ -97,15 +112,26 @@ pub(crate) fn collect(
         .tree_index_track_renames(TrackRenames::Disabled)
         .index_worktree_options_mut(|worktree| worktree.thread_limit = Some(thread_limit))
         .should_interrupt_owned(Arc::clone(interrupt));
-    let items = status
+    let mut items = status
         .into_iter(Vec::<BString>::new())
         .map_err(|error| Error::git("start the status", error))?;
-    for item in items {
+    for item in items.by_ref() {
         let item = item.map_err(|error| Error::git("compute the status", error))?;
         record(&mut entries, &mut sides, item);
     }
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
+    }
+    if options.stat_dirty {
+        if let Some(outcome) = items.into_outcome().filter(|outcome| outcome.has_changes()) {
+            record_stat_dirty(
+                repo,
+                &outcome.worktree_index,
+                stat_options,
+                &mut entries,
+                &mut sides,
+            );
+        }
     }
     let submodules_opened = match options.submodules {
         Submodules::Ignore => 0,
@@ -207,6 +233,20 @@ fn worktree_mode(
     }
 }
 
+fn base_tree(repo: &gix::Repository, base: &str) -> Result<gix::ObjectId, Error> {
+    let id = gix::ObjectId::from_hex(base.as_bytes())
+        .map_err(|error| Error::git("parse the base object id", error))?;
+    if id == gix::ObjectId::empty_tree(id.kind()) {
+        return Ok(id);
+    }
+    let tree = repo
+        .find_object(id)
+        .map_err(|error| Error::git("read the base object", error))?
+        .peel_to_tree()
+        .map_err(|error| Error::git("read the base tree", error))?;
+    Ok(tree.id)
+}
+
 fn head(repo: &gix::Repository) -> Result<Head, Error> {
     let head = repo
         .head()
@@ -225,6 +265,54 @@ pub(crate) fn entry<'a>(entries: &'a mut Entries, path: &[u8]) -> &'a mut Entry 
         path: path.to_vec(),
         ..Entry::default()
     })
+}
+
+fn record_stat_dirty(
+    repo: &gix::Repository,
+    index: &gix::index::State,
+    stat_options: gix::index::entry::stat::Options,
+    entries: &mut Entries,
+    sides: &mut SideMap,
+) {
+    use gix::index::entry::{Flags, Stage};
+    let Some(workdir) = repo.workdir() else {
+        return;
+    };
+    for index_entry in index.entries() {
+        if index_entry.stage() != Stage::Unconflicted
+            || index_entry.mode == Mode::COMMIT
+            || index_entry
+                .flags
+                .intersects(Flags::INTENT_TO_ADD | Flags::SKIP_WORKTREE)
+        {
+            continue;
+        }
+        let path: &[u8] = index_entry.path(index).as_ref();
+        if entries
+            .get(path)
+            .is_some_and(|entry| entry.index_to_worktree.is_some() || entry.conflict.is_some())
+        {
+            continue;
+        }
+        let Ok(relative) = gix::path::from_bstr(path.as_bstr()) else {
+            continue;
+        };
+        let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&workdir.join(relative))
+        else {
+            continue;
+        };
+        let Ok(stat) = gix::index::entry::Stat::from_fs(&metadata) else {
+            continue;
+        };
+        if stat.matches(&index_entry.stat, stat_options) {
+            continue;
+        }
+        entry(entries, path).stat_dirty = true;
+        let path_sides = side(sides, path);
+        if path_sides.index.is_none() {
+            path_sides.index = Some(stored(index_entry.mode, &index_entry.id));
+        }
+    }
 }
 
 fn record(entries: &mut Entries, sides: &mut SideMap, item: Item) {

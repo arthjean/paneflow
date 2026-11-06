@@ -7,6 +7,7 @@ mod open;
 #[path = "../tests/oracle/mod.rs"]
 pub mod oracle;
 pub mod porcelain;
+pub mod renames;
 mod snapshot;
 mod sparse;
 mod submodule;
@@ -48,6 +49,8 @@ pub struct Options {
     pub submodules: Submodules,
     pub entry_cap: usize,
     pub interrupt: Option<Arc<AtomicBool>>,
+    pub base: Option<String>,
+    pub stat_dirty: bool,
 }
 
 impl Default for Options {
@@ -58,6 +61,8 @@ impl Default for Options {
             submodules: Submodules::Check,
             entry_cap: DEFAULT_ENTRY_CAP,
             interrupt: None,
+            base: None,
+            stat_dirty: false,
         }
     }
 }
@@ -69,6 +74,13 @@ impl Options {
 
     pub fn diff_stats() -> Self {
         Self::default()
+    }
+
+    pub fn dock_listing() -> Self {
+        Self {
+            stat_dirty: true,
+            ..Self::default()
+        }
     }
 
     pub fn is_clean() -> Self {
@@ -127,6 +139,7 @@ pub struct Entry {
     pub index_to_worktree: Option<WorktreeChange>,
     pub conflict: Option<Conflict>,
     pub untracked: bool,
+    pub stat_dirty: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

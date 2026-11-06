@@ -12,7 +12,7 @@ pub struct Header {
 }
 
 pub struct Objects<'repo> {
-    repo: &'repo gix::Repository,
+    pub(crate) repo: &'repo gix::Repository,
 }
 
 impl<'repo> Objects<'repo> {
@@ -35,6 +35,35 @@ impl<'repo> Objects<'repo> {
         Ok(Some(Header {
             is_blob: header.kind() == Kind::Blob,
             size: header.size(),
+        }))
+    }
+
+    pub fn head_commit(&self) -> Result<Option<String>, Error> {
+        let head = self
+            .repo
+            .head()
+            .map_err(|error| Error::git("read HEAD", error))?;
+        if head.is_unborn() {
+            return Ok(None);
+        }
+        let commit = self
+            .repo
+            .head_commit()
+            .map_err(|error| Error::git("read the HEAD commit", error))?;
+        Ok(Some(commit.id.to_string()))
+    }
+
+    pub fn tree_entry(&self, tree: &str, path: &[u8]) -> Result<Option<Stored>, Error> {
+        let tree = self
+            .repo
+            .find_tree(parse(tree)?)
+            .map_err(|error| Error::git("read a tree", error))?;
+        let entry = tree
+            .lookup_entry(path.split(|byte| *byte == b'/'))
+            .map_err(|error| Error::git("look up a tree entry", error))?;
+        Ok(entry.map(|entry| Stored {
+            mode: u32::from(entry.mode().value()),
+            id: entry.object_id().to_string(),
         }))
     }
 

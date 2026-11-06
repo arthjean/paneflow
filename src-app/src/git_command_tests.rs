@@ -1062,3 +1062,39 @@ fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_r
         outcome.answers
     );
 }
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window() {
+    use crate::git_race::{RACED_FILE, Raced, Scenario, race};
+    assert_eq!(
+        paneflow_git::engine::Selector::global().preferred(),
+        paneflow_git::engine::Engine::Gix,
+        "run the dock listing race without PANEFLOW_GIT_ENGINE=cli"
+    );
+    let outcome = race(Scenario::RacyWindow, Raced::Tracked, |root: &Path| {
+        let before = git_spawns_on_this_thread();
+        let diff = crate::diff::compute_head_diff(root, crate::diff::DiffOptions::default());
+        if let Some(error) = diff.error {
+            return Err(format!("the dock listing failed: {error}"));
+        }
+        match git_spawns_on_this_thread() - before {
+            0 => Ok(diff
+                .files
+                .iter()
+                .map(|file| (file.change, file.path.clone()))
+                .collect::<Vec<_>>()),
+            spawned => Err(format!(
+                "the dock listing ran on the git CLI and spawned {spawned} git processes"
+            )),
+        }
+    });
+    outcome.assert_no_failed_write();
+    assert!(outcome.probes > 0, "{}", outcome.summary());
+    assert!(
+        outcome.answers.iter().all(
+            |files| files == &vec![(crate::diff::FileChange::Modified, RACED_FILE.to_string())]
+        ),
+        "every listing shows the one staged and rewritten file: {:?}",
+        outcome.answers
+    );
+}

@@ -354,6 +354,45 @@ EP-005 switch the diff badge, the diff dock and `is_clean`.
   stat changed. `gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture`
   compares both engines on the EP-002 matrix, and the racy-window race test
   proves the probe no longer blocks a truncating write after an index write.
+- **Diff dock probe.** `compute_head_diff`, called by the dock refresh off
+  the main thread, asks the selector for `dock_listing`. On gix one
+  `with_snapshot` open (`Options::dock_listing()`, or `Options::base` set to
+  another commit, whose tree replaces `HEAD`'s through gix's `head_tree`)
+  answers what the CLI path asked of four commands and one `git show` per
+  file: the worktree root, the `HEAD` commit (`Objects::head_commit`), the
+  `git diff -M <base>` listing, the untracked files and every base text, read
+  from the object database by the id the listing carries. The listing reuses
+  the badge's composition of the two halves and adds what porcelain
+  `git diff` shows and `diff-index` plumbing does not need: an unmerged path
+  is compared with the base tree's entry (`Objects::tree_entry`), and a file
+  whose stat differs from its index entry while its bytes do not is listed as
+  modified, because the probe profile's `diff.autoRefreshIndex=false` keeps
+  git from skipping it. gix keeps those entries to itself as pending index
+  updates, so with `Options::stat_dirty`, and only when the status outcome
+  reports pending updates (`has_changes`), the snapshot lstats each
+  unchanged index entry and marks it `stat_dirty` when its stat no longer
+  matches the entry under gix's stat options; a racily clean entry, whose
+  stat still matches, stays unlisted as it does for git.
+  Renames do not use gix's rewrite tracker, whose similarity is a line-diff
+  ratio and which only reads blobs from the object database:
+  `paneflow_git::renames` is a port of git 2.53's `diffcore-rename.c` and
+  `diffcore-delta.c`. It pairs deletions with additions by exact id first
+  (an unused source, then the same basename), then by unique basename at a
+  75 % score, then through the 4-best-per-destination matrix at 50 %, skips
+  that matrix, as git does, once the destinations times the sources left
+  after the basename pass exceed
+  `diff.renameLimit` squared (1000 by default, 0 unlimited), and scores with
+  git's 64-byte span hashing, CR of CRLF skipped unless the `diff` attribute,
+  a `diff.<driver>.binary` setting or a NUL in the first 8000 bytes makes the
+  file binary. A worktree side is read with plain reads and converted to git
+  through gix's filter pipeline, repository drivers removed. A missing or
+  oversized base blob reads as unreadable, as the `git show` failure path
+  does. `crates/paneflow-git/tests/renames.rs` checks the scores against
+  `git diff --cached -M` across the 50 % and 75 % thresholds, and
+  `gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture` compares the
+  whole dock on the EP-002 matrix. The editor's change markers
+  (`diff_dock/code/base.rs`) still read `HEAD:path` with `git show`, outside
+  this probe.
 
 ## Keystroke → pixel
 
