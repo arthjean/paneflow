@@ -36,6 +36,8 @@ mod fs_probe;
 mod git_command;
 #[cfg(test)]
 mod git_fixture;
+#[cfg(test)]
+mod git_race;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;
