@@ -170,8 +170,8 @@ file that shrinks while it is hashed is reported modified instead of failing
 the whole status. `src-app` is its only dependent; the size-capped helpers
 never link it, which `crates/paneflow-git/tests/lockfile.rs` checks against
 `Cargo.lock`, together with the vendored patch still being used. The Files
-sidebar runs on it (EP-003 of `prd-in-process-git-status.md`); EP-004 and
-EP-005 switch the diff badge, the diff dock and `is_clean`.
+sidebar (EP-003 of `prd-in-process-git-status.md`), the diff badge (EP-004),
+the diff dock and `is_clean` (EP-005) run on it.
 
 - **Snapshot.** `paneflow_git::snapshot(path, &Options)` discovers the
   repository upward from `path`, opens a `ThreadSafeRepository` for that call
@@ -393,6 +393,15 @@ EP-005 switch the diff badge, the diff dock and `is_clean`.
   whole dock on the EP-002 matrix. The editor's change markers
   (`diff_dock/code/base.rs`) still read `HEAD:path` with `git show`, outside
   this probe.
+- **Removal clean check.** `worktree::is_clean`, which guards a Paneflow
+  worktree removal, asks the selector for `is_clean`: gix answers from a
+  snapshot with `Options::is_clean()` (untracked files listed, submodule
+  content checked whatever `submodule.<name>.ignore` says, as
+  `--ignore-submodules=none` does), clean only when it holds no porcelain
+  record and was not truncated. A path that is not the root of its worktree
+  is a gix error, so gix never answers for a parent repository it found past
+  a pruned linked worktree. Any gix error or interrupt is answered by the
+  CLI, and a CLI failure is an error, never `Ok(true)`.
 
 ## Keystroke → pixel
 

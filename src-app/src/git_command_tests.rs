@@ -1064,6 +1064,32 @@ fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_r
 }
 
 #[test]
+fn a_truncating_agent_write_never_fails_while_the_clean_check_runs() {
+    use crate::git_race::{Raced, Scenario, race};
+    assert_eq!(
+        paneflow_git::engine::Selector::global().preferred(),
+        paneflow_git::engine::Engine::Gix,
+        "run the clean check race without PANEFLOW_GIT_ENGINE=cli"
+    );
+    let outcome = race(Scenario::StatDirty, Raced::Tracked, |root: &Path| {
+        let before = git_spawns_on_this_thread();
+        let clean = crate::workspace::worktree::is_clean(root)?;
+        match git_spawns_on_this_thread() - before {
+            0 => Ok(clean),
+            spawned => Err(format!(
+                "the clean check ran on the git CLI and spawned {spawned} git processes"
+            )),
+        }
+    });
+    outcome.assert_no_failed_write();
+    assert!(
+        outcome.answers.iter().any(|clean| !clean),
+        "a check still sees the rewritten file: {:?}",
+        outcome.answers
+    );
+}
+
+#[test]
 fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window() {
     use crate::git_race::{RACED_FILE, Raced, Scenario, race};
     assert_eq!(

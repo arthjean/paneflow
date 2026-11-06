@@ -98,8 +98,12 @@ pub(crate) fn collect(
     if let Some(tree) = base_tree {
         status = status.head_tree(tree);
     }
+    let dirwalk = repo
+        .dirwalk_options()
+        .map_err(|error| Error::git("prepare the directory walk", error))?;
     let status = status
         .index(sparse::index_for_status(repo)?)
+        .index_worktree_options_mut(|worktree| worktree.dirwalk_options = Some(dirwalk))
         .untracked_files(match options.untracked {
             Untracked::Files => UntrackedFiles::Files,
             Untracked::None => UntrackedFiles::None,
