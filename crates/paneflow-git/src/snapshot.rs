@@ -19,8 +19,10 @@ use crate::{
 
 pub fn snapshot(path: &Path, options: &Options) -> Result<Snapshot, Error> {
     let interrupt = options.interrupt.clone().unwrap_or_default();
-    let result = open::discover(path, options.thread_limit)
-        .and_then(|repo| collect(&repo, options, &interrupt));
+    let result = open::discover(path, options.thread_limit).and_then(|repo| {
+        let prefix = prefix(path, &repo)?;
+        collect(&repo, options, &interrupt).map(|snapshot| Snapshot { prefix, ..snapshot })
+    });
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
@@ -28,6 +30,30 @@ pub fn snapshot(path: &Path, options: &Options) -> Result<Snapshot, Error> {
 }
 
 pub(crate) type Entries = BTreeMap<Vec<u8>, Entry>;
+
+fn prefix(path: &Path, repo: &gix::Repository) -> Result<Vec<u8>, Error> {
+    let workdir = repo.workdir().ok_or_else(|| Error::Bare {
+        path: path.to_path_buf(),
+    })?;
+    let directory = std::fs::canonicalize(path)
+        .map_err(|error| Error::git("resolve the probed directory", error))?;
+    let workdir = std::fs::canonicalize(workdir)
+        .map_err(|error| Error::git("resolve the worktree directory", error))?;
+    let relative = directory.strip_prefix(&workdir).map_err(|_| {
+        Error::git(
+            "locate the probed directory in the worktree",
+            format!("{} is outside {}", directory.display(), workdir.display()),
+        )
+    })?;
+    let mut prefix = Vec::new();
+    for component in relative.components() {
+        let name = gix::path::os_str_into_bstr(component.as_os_str())
+            .map_err(|error| Error::git("encode the probed directory", error))?;
+        prefix.extend_from_slice(name);
+        prefix.push(b'/');
+    }
+    Ok(prefix)
+}
 
 pub(crate) fn collect(
     repo: &gix::Repository,
@@ -78,6 +104,7 @@ pub(crate) fn collect(
     let entries = entries.into_values().take(options.entry_cap).collect();
     Ok(Snapshot {
         head,
+        prefix: Vec::new(),
         entries,
         truncated,
         submodules_opened,

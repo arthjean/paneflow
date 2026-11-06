@@ -1,9 +1,17 @@
+extern crate self as paneflow_git;
+
 pub mod engine;
 mod open;
+#[cfg(feature = "oracle")]
+#[path = "../tests/oracle/mod.rs"]
+pub mod oracle;
 pub mod porcelain;
 mod snapshot;
 mod sparse;
 mod submodule;
+#[cfg(feature = "oracle")]
+#[path = "../tests/support/mod.rs"]
+pub mod support;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -47,6 +55,19 @@ impl Default for Options {
             submodules: Submodules::Check,
             entry_cap: DEFAULT_ENTRY_CAP,
             interrupt: None,
+        }
+    }
+}
+
+impl Options {
+    pub fn files_status() -> Self {
+        Self::default()
+    }
+
+    pub fn is_clean() -> Self {
+        Self {
+            submodules: Submodules::CheckAll,
+            ..Self::default()
         }
     }
 }
@@ -110,6 +131,7 @@ pub enum Head {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub head: Head,
+    pub prefix: Vec<u8>,
     pub entries: Vec<Entry>,
     pub truncated: bool,
     pub submodules_opened: usize,

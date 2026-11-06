@@ -169,16 +169,20 @@ vendored `vendor/gix-status`, gix-status 0.37.0 with the short-read fix: a
 file that shrinks while it is hashed is reported modified instead of failing
 the whole status. `src-app` is its only dependent; the size-capped helpers
 never link it, which `crates/paneflow-git/tests/lockfile.rs` checks against
-`Cargo.lock`, together with the vendored patch still being used. No probe
-calls it yet: `prd-in-process-git-status.md` EP-003 to EP-005 switch the
-Files sidebar, the diff badge, the diff dock and `is_clean`.
+`Cargo.lock`, together with the vendored patch still being used. The Files
+sidebar runs on it (EP-003 of `prd-in-process-git-status.md`); EP-004 and
+EP-005 switch the diff badge, the diff dock and `is_clean`.
 
 - **Snapshot.** `paneflow_git::snapshot(path, &Options)` discovers the
   repository upward from `path`, opens a `ThreadSafeRepository` for that call
   and drops it before returning: a cached gix repository once failed to find
   objects after `git repack -a -d`. It returns the HEAD tree id (or unborn) and
   the entries sorted by path bytes, each with an optional HEAD-to-index change,
-  index-to-worktree change, conflict kind and untracked flag. Renames are off
+  index-to-worktree change, conflict kind and untracked flag, plus `prefix`,
+  the probed directory relative to the worktree root with a trailing `/`
+  (what `git rev-parse --show-prefix` prints), computed from both paths
+  canonicalized because gix's own `Repository::prefix` is relative to the
+  process working directory. Renames are off
   on both halves, untracked files are listed one by one and sorted, then cut
   at `entry_cap` with `truncated` set. The engine never writes the index (no
   `Outcome::write_changes`), creates nothing under `.git`, and reads worktree
@@ -292,6 +296,31 @@ Files sidebar, the diff badge, the diff dock and `is_clean`.
   `system.counters` reports `git_engine.probes.<probe>.<gix|cli>`,
   `git_engine.fallbacks.<reason>`, `git_engine.pinned_directories` and
   `git_engine.preferred`.
+- **Files sidebar probe.** `files_git::read`, called on the Files sidebar
+  worker thread, asks the selector for `files_status`: gix takes a snapshot
+  with `Options::files_status()`, keeps the records under `prefix` (the CLI's
+  `-- .`), and builds `GitStatuses` through the same record aggregation the
+  CLI parser uses, so a refresh spawns no git process. A truncated snapshot,
+  or records whose porcelain size would pass the CLI's 4 MiB stdout cap,
+  return `None` and the sidebar keeps its previous statuses, as a CLI
+  overflow does. A root outside any repository is an answer, not an error:
+  gix returns no statuses and nothing is spawned or counted as a fallback,
+  since the CLI probe strips the same `GIT_DIR` family and walks up the same
+  way. Any other gix error is answered by `rev-parse --show-prefix` and
+  `git status` in the same call.
+  The `oracle` feature of `paneflow-git` exports the EP-002 fixture matrix
+  and its isolation helpers to `src-app` tests, where
+  `gix_and_cli_statuses_are_equal_on_every_oracle_fixture` compares the
+  `GitStatuses` of both engines. `src-app/src/git_race.rs` races a probe
+  against a writer that rewrites a 480 KiB file at constant size, in a
+  stat-dirty scenario (backdated, index refreshed, then rewritten) and in a
+  racy-window scenario (an index write at the start of a wall-clock second,
+  then same-size rewrites inside it, over 5 rounds); it fails as inconclusive
+  when the writer made no more writes than there were probes. Test fixtures
+  built through `git_fixture` also point the process's `GIT_CONFIG_GLOBAL`
+  at the empty fixture config and set `GIT_CONFIG_NOSYSTEM`, which is how
+  gix, reading config in process, sees the isolation the CLI builder applies
+  per command.
 
 ## Keystroke → pixel
 
