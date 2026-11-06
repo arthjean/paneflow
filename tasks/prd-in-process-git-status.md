@@ -333,6 +333,8 @@ The diff badge leaves the racy window and the process cost behind: its listing, 
 
 **Evidence (2026-11-06):** run_tests 42215538883 on `f88356ed1` (ubuntu-24.04 perf gates runner) is green on every leg, Windows x86_64, macOS aarch64, Linux x86_64 and Linux aarch64 included. Its perf gates measured, in the 35 s diff-stat window, 1 probe answered by gix, 0 by the CLI, 0 fallbacks and 0 git processes, so 0 per probe; on 30 workspaces, 0 git processes in each 30 s window for 4 gix probes each, so 0.0 per minute against 24.0 on the CLI, and 0 in the 60 s inactive window. `desktop.tui_30_workspaces.git_spawns_per_min` is re-derived from that run to `Exactly(0.0)`, with the measurement in its margin. Before the push, the WSL Linux gate caught one divergence the Windows host never showed: the gix directory walk also listed two conflicted paths as untracked, fixed in `f88356ed1`.
 
+**Review (2026-11-06, `1ac9bd5aa`, recorded in PR #133):** run_tests 42220428006 is green on every leg (Linux x86_64 4559/4559, Linux aarch64 4559/4559, macOS aarch64 4395/4395, Windows x86_64 4425/4425), and its perf gates measured 1 gix diff-stat probe with 0 git processes per probe and 0 per minute on 30 workspaces. A native `cargo nextest run --workspace --locked --profile ci --no-fail-fast` on Arthur's Windows 11 26300 host passed 4423/4425, with the racy-window race test and the diff-stats oracle green. The two failures, `server::tests::an_output_flood_reaches_every_follower_and_a_paused_follower_never_stalls_control` and `ownership_probes::the_fixture_modes_are_driven_through_the_real_host_ipc`, are host tests the epic does not touch; both passed twice alone and on the Windows CI leg. A throwaway probe of 12 layouts the oracle does not cover (a nested repository, `rm --cached`, staged then deleted, added then modified or deleted, file to directory and back, a staged mode change, CRLF without autocrlf, ignored and empty directories, a stat-dirty binary) found both engines equal on each.
+
 ---
 
 ### EP-005: The diff dock and the removal snapshot
@@ -349,11 +351,11 @@ The last two probes move in process: the dock lists HEAD-to-worktree changes wit
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given the selector picks gix, `compute_diff_against` (`src-app/src/diff/git.rs:366`) builds the base-to-worktree change list in process, with rename pairing equivalent to `git diff -M` (50 % similarity, base blobs from the object database, worktree texts read in Rust).
-- [ ] Given a pure rename, a rename with an edit above the threshold, an edit below it, and a type change, then the `FileChange` list and `old_path` values equal the CLI's.
-- [ ] Given more rename candidates than `diff.renameLimit`, then renames are skipped as git skips them.
-- [ ] Given a base other than `HEAD`, the list compares that commit's tree with the worktree, as `git diff <base>` does.
-- [ ] Given the racy-window race test against `compute_head_diff`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
+- [x] Given the selector picks gix, `compute_diff_against` (`src-app/src/diff/git.rs:366`) builds the base-to-worktree change list in process, with rename pairing equivalent to `git diff -M` (50 % similarity, base blobs from the object database, worktree texts read in Rust).
+- [x] Given a pure rename, a rename with an edit above the threshold, an edit below it, and a type change, then the `FileChange` list and `old_path` values equal the CLI's.
+- [x] Given more rename candidates than `diff.renameLimit`, then renames are skipped as git skips them.
+- [x] Given a base other than `HEAD`, the list compares that commit's tree with the worktree, as `git diff <base>` does.
+- [x] Given the racy-window race test against `compute_head_diff`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
 
 #### US-014: The diff dock reads base texts from the object database
 **Description:** As a user opening the diff dock, I want base texts read in process so that a dock refresh no longer spawns one `git show` per file.
@@ -363,10 +365,10 @@ The last two probes move in process: the dock lists HEAD-to-worktree changes wit
 **Dependencies:** Blocked by US-013
 
 **Acceptance Criteria:**
-- [ ] Given the selector picks gix, the base text of each file comes from the object database instead of `git show base:path` and the `ls-tree` fallback.
-- [ ] Given every dock fixture, including CRLF blobs, binary blobs and lockfiles, the texts equal what `git show` returns.
-- [ ] Given a refresh of 200 files, the dock spawns 0 git processes on the gix path.
-- [ ] Given a missing blob, the file shows the same error as today's `git show` failure path.
+- [x] Given the selector picks gix, the base text of each file comes from the object database instead of `git show base:path` and the `ls-tree` fallback.
+- [x] Given every dock fixture, including CRLF blobs, binary blobs and lockfiles, the texts equal what `git show` returns.
+- [x] Given a refresh of 200 files, the dock spawns 0 git processes on the gix path.
+- [x] Given a missing blob, the file shows the same error as today's `git show` failure path.
 
 #### US-015: is_clean uses gix and fails safe
 **Description:** As a user removing a worktree, I want the clean check computed in process and never wrong in the dangerous direction so that a removal can never discard uncommitted work.
@@ -376,11 +378,15 @@ The last two probes move in process: the dock lists HEAD-to-worktree changes wit
 **Dependencies:** Blocked by US-007, US-008, US-010
 
 **Acceptance Criteria:**
-- [ ] Given the selector picks gix, `is_clean` answers from a snapshot with untracked files listed and submodule content checked, matching `--ignore-submodules=none`.
-- [ ] Given every oracle fixture, `is_clean` gives the same answer for both engines, including dirty and untracked submodule content.
-- [ ] Given a gix error or an interrupt, the CLI answers; given the CLI also fails, `is_clean` returns an error and never `Ok(true)`.
-- [ ] Given the stat-dirty race test against `is_clean`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
-- [ ] Given a linked worktree whose admin directory was pruned, `is_clean` returns an error, as today.
+- [x] Given the selector picks gix, `is_clean` answers from a snapshot with untracked files listed and submodule content checked, matching `--ignore-submodules=none`.
+- [x] Given every oracle fixture, `is_clean` gives the same answer for both engines, including dirty and untracked submodule content.
+- [x] Given a gix error or an interrupt, the CLI answers; given the CLI also fails, `is_clean` returns an error and never `Ok(true)`.
+- [x] Given the stat-dirty race test against `is_clean`, then it fails on main on the Windows leg (recorded in US-009) and records 0 failed writes after this story.
+- [x] Given a linked worktree whose admin directory was pruned, `is_clean` returns an error, as today.
+
+**Evidence (2026-11-06, Arthur's Windows 11 26300 host, Git 2.53.0.windows.1, uncommitted tree on `1ac9bd5aa`):** the dock listing and `is_clean` run behind the selector (`dock_listing`, `is_clean`). Renames come from `paneflow_git::renames`, a port of git 2.53's `diffcore-rename.c` and `diffcore-delta.c`, because gix's rewrite tracker scores similarity with a line diff and cannot read a worktree side; `crates/paneflow-git/tests/renames.rs` finds the same pairs and the same `R` scores as `git diff --cached -M` across the 50 % and 75 % thresholds, CRLF, binary, a `-diff` attribute, duplicates, an empty file and `diff.renameLimit`. `gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture` and `is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture` pass on the full EP-002 matrix. Two divergences surfaced and were fixed on the gix side: the CLI dock lists a file whose stat changed but whose bytes did not (`diff.autoRefreshIndex=false`), which gix keeps as a private pending index update, so the dock snapshot now lstats unchanged entries when gix reports pending updates; and a repository with `status.showUntrackedFiles=no` made gix drop its directory walk, so `is_clean` answered `Ok(true)` with an untracked file present, and the Files sidebar and the badge hid untracked files, while the CLI forces `--untracked-files=all`. The snapshot now restores the walk, pinned by `a_repository_that_hides_untracked_files_still_lists_them_like_the_cli_probes`. `a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window` and `a_truncating_agent_write_never_fails_while_the_clean_check_runs` pass in 5 runs out of 5 with 0 failed writes, 0 probe errors and 0 git spawns, against the red baseline recorded in US-009. A native `cargo nextest run --workspace --locked --profile ci --no-fail-fast` passed 4447/4450; the three failures are outside this epic: `missing_session_is_an_immediate_no_op_without_files_or_network` (a 60 ms budget under load, green alone), `the_fixture_modes_are_driven_through_the_real_host_ipc` (green alone, the flake noted in the EP-004 review) and `windows_shell_matrix_preserves_unicode_environment_and_cwd`, red because `wsl.exe -e true` hangs on this host. One divergence is left open: with `core.symlinks=false`, git reports a real symlink replacing a tracked file as a type change while gix reports a modification, on every probe; the oracle pins `core.symlinks=true`. Linux and macOS: not run for this change, covered by the CI legs after a push.
+
+**Review (2026-11-06, uncommitted tree on `1ac9bd5aa`, Arthur's Windows 11 26300 host and WSL Ubuntu 26.04):** every criterion of US-013 to US-015 passes from its entry point: the dock refresh (`build_diff_dock` to `compute_head_diff`) and the worktree removal (`remove_worktree` snapshot to `is_clean`) both go through `Selector::global()`. The review found and fixed one composition defect: a dock listing whose snapshot passed the 100,000-entry cap returned a plain gix error, so two dock refreshes on a repository with that many untracked files pinned its git directory to the CLI for every probe, the Files sidebar and the badge included, which put them back on the mapping path. The snapshot now reports `Error::TooManyEntries`, which the selector answers with the CLI under `size_threshold` without counting it toward the two failures, pinned by `a_listing_over_the_entry_cap_is_answered_by_the_cli_without_pinning_the_repository` (through `compute_head_diff_through`) and `a_status_over_the_entry_cap_is_a_size_fallback_that_never_pins_the_git_directory`. Two git 2.53 probes confirmed the rename port: a deleted file copied to two new files gives one `R100` and one `A`, and the basename pass still pairs past `diff.renameLimit` while the matrix is skipped, which `ARCHITECTURE.md` now states. Gates after the last change: `cargo fmt --check`, workspace clippy with `-D warnings` and `scripts/check-test-wallclock.sh` pass on Windows; the native `cargo nextest run --workspace --locked --profile ci --no-fail-fast` ran 4452 tests with 5 failures outside the epic (`windows_shell_matrix_preserves_unicode_environment_and_cwd`, the `wsl.exe` hang, and four `paneflow-host` or `paneflow-serve` relay tests, crates that do not depend on `paneflow-git`) and first attempts of the three engine oracles and three badge tests lost to load (300 s timeouts, CLI deadline answers `unavailable`); a targeted rerun of 124 tests passed every epic test, the dock oracle in 222 s, the race tests for the dock and `is_clean` with 0 failed writes. In WSL, fmt and workspace clippy pass and 334 tests of `paneflow-git` and the dock, badge, worktree, Files and race modules pass, the type change included. Pending before `DONE`: run_tests on the committed tree, because macOS was not observed and the dock oracle runs at 222 s on 16 cores against the 300 s nextest timeout, a margin a 4-vCPU Windows runner may not keep.
 
 ---
 
