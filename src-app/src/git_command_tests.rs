@@ -635,7 +635,66 @@ fn probe_status(
 }
 
 #[test]
-fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes() {
+fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_no_git_process_on_gix() {
+    use paneflow_git::engine::{Engine, Probe, Selector};
+    assert_eq!(
+        Selector::global().preferred(),
+        Engine::Gix,
+        "run the diff stats tests without PANEFLOW_GIT_ENGINE=cli"
+    );
+    let tmp = tempfile::tempdir().expect("tempdir");
+    committed_repo(tmp.path());
+    std::fs::write(tmp.path().join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
+    backdate(&tmp.path().join(".git").join("config"), 60);
+    let cwd = tmp.path().to_str().expect("utf-8 test path");
+    let gix_probes = || {
+        Selector::global()
+            .counters()
+            .probes(Probe::DiffStats, Engine::Gix)
+    };
+
+    let probes_before = gix_probes();
+    let before = git_spawns_on_this_thread();
+    let first = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let after_first = git_spawns_on_this_thread();
+    let second = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let after_second = git_spawns_on_this_thread();
+
+    assert_eq!(after_first - before, 0, "the first probe spawns no git");
+    assert_eq!(
+        after_second - after_first,
+        0,
+        "the second probe spawns no git"
+    );
+    assert!(
+        gix_probes() >= probes_before + 2,
+        "gix answered both probes"
+    );
+    assert_eq!(first, second);
+    assert!(!second.is_empty());
+}
+
+const FORCED_CLI_DIFF_STAT_TEST: &str = "git_command::tests::the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes_under_a_forced_cli";
+
+#[test]
+fn the_second_diff_stat_probe_of_an_unchanged_repository_spawns_three_git_processes_under_a_forced_cli()
+ {
+    use paneflow_git::engine::{ENGINE_ENV, Engine, Selector};
+    if Selector::global().preferred() != Engine::Cli {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([FORCED_CLI_DIFF_STAT_TEST, "--exact", "--nocapture"])
+            .env(ENGINE_ENV, "cli")
+            .output()
+            .expect("rerun the test binary under the forced CLI");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "the forced-CLI run failed: {}\n{stdout}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     committed_repo(tmp.path());
     std::fs::write(tmp.path().join("tracked.txt"), "one\ntwo\nthree\n").expect("edit");
@@ -878,7 +937,7 @@ fn a_repository_created_just_before_its_first_probe_queries_its_filters_once_mor
     let cwd = tmp.path().to_str().expect("utf-8 test path");
 
     let created = filter_queries_on_this_thread();
-    let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let _ = probe_status(Path::new(cwd));
     assert!(
         cached_filter_drivers(tmp.path()).is_none(),
         "a config written by git init less than RACY_CONFIG_WINDOW ago is not cached"
@@ -887,7 +946,7 @@ fn a_repository_created_just_before_its_first_probe_queries_its_filters_once_mor
 
     backdate(&tmp.path().join(".git").join("config"), 300);
     let next_cycle = filter_queries_on_this_thread();
-    let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+    let _ = probe_status(Path::new(cwd));
     assert_eq!(
         filter_queries_on_this_thread() - next_cycle,
         1,
@@ -896,7 +955,7 @@ fn a_repository_created_just_before_its_first_probe_queries_its_filters_once_mor
 
     let settled = filter_queries_on_this_thread();
     for _ in 0..3 {
-        let _ = crate::workspace::GitDiffStats::from_cwd(cwd);
+        let _ = probe_status(Path::new(cwd));
     }
     assert_eq!(
         filter_queries_on_this_thread(),
@@ -917,8 +976,8 @@ fn a_config_written_in_one_workspace_reruns_the_filter_query_for_that_workspace_
     }
     let changed_cwd = changed.to_str().expect("utf-8 test path");
     let untouched_cwd = untouched.to_str().expect("utf-8 test path");
-    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
-    let _ = crate::workspace::GitDiffStats::from_cwd(untouched_cwd);
+    let _ = probe_status(Path::new(changed_cwd));
+    let _ = probe_status(Path::new(untouched_cwd));
     assert!(cached_filter_drivers(&changed).is_some());
     assert!(cached_filter_drivers(&untouched).is_some());
 
@@ -929,19 +988,19 @@ fn a_config_written_in_one_workspace_reruns_the_filter_query_for_that_workspace_
     backdate(&changed.join(".git").join("config"), 30);
 
     let queries = filter_queries_on_this_thread();
-    let _ = crate::workspace::GitDiffStats::from_cwd(untouched_cwd);
+    let _ = probe_status(Path::new(untouched_cwd));
     assert_eq!(
         filter_queries_on_this_thread(),
         queries,
         "the untouched workspace is still served by the cache"
     );
-    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
+    let _ = probe_status(Path::new(changed_cwd));
     assert_eq!(
         filter_queries_on_this_thread() - queries,
         1,
         "the written config reruns the query once"
     );
-    let _ = crate::workspace::GitDiffStats::from_cwd(changed_cwd);
+    let _ = probe_status(Path::new(changed_cwd));
     assert_eq!(
         filter_queries_on_this_thread() - queries,
         1,
@@ -978,6 +1037,28 @@ fn a_truncating_agent_write_to_an_untracked_file_never_fails_while_the_diff_stat
     assert!(
         outcome.answers.iter().any(|stats| stats.files_changed == 1),
         "a probe still lists the one untracked file: {:?}",
+        outcome.answers
+    );
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window() {
+    use crate::git_race::{Raced, Scenario, race};
+    let outcome = race(Scenario::RacyWindow, Raced::Tracked, |root: &Path| {
+        let before = git_spawns_on_this_thread();
+        let stats = diff_stats_probe(root)?;
+        match git_spawns_on_this_thread() - before {
+            0 => Ok(stats),
+            spawned => Err(format!(
+                "the diff stats probe ran on the git CLI and spawned {spawned} git processes"
+            )),
+        }
+    });
+    outcome.assert_no_failed_write();
+    assert!(outcome.probes > 0, "{}", outcome.summary());
+    assert!(
+        outcome.answers.iter().all(|stats| stats.files_changed == 1),
+        "every probe sees the one staged and rewritten file: {:?}",
         outcome.answers
     );
 }

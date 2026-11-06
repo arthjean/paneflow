@@ -325,6 +325,35 @@ EP-005 switch the diff badge, the diff dock and `is_clean`.
   at the empty fixture config and set `GIT_CONFIG_NOSYSTEM`, which is how
   gix, reading config in process, sees the isolation the CLI builder applies
   per command.
+- **Diff badge probe.** `GitDiffStats::from_cwd`, called off the main
+  thread by the workspace git poll, the cwd tracker and the diff dock, asks
+  the selector for `diff_stats`. On
+  gix, `paneflow_git::with_snapshot` takes one snapshot with
+  `Options::diff_stats()` and hands it, with an `Objects` reader on the same
+  open repository, to the caller before the repository is dropped. The
+  snapshot carries, per changed path, the `HEAD` and index object ids and
+  modes and the worktree mode (`Snapshot::sides`), so the probe composes the
+  two halves into the `HEAD`-to-worktree list `git diff-index --raw HEAD`
+  prints, renames off, and feeds the same counting code as the CLI: base
+  blobs come from the object database (`Objects::header` then
+  `Objects::blob`) instead of `cat-file --batch`, worktree sides are plain
+  reads, and untracked files come from the snapshot instead of
+  `ls-files --others`. The composition follows what `diff-index` does, which
+  the oracle pinned: an unmerged path compares its `HEAD` entry
+  (`Objects::head_entry`) with the worktree file, a submodule counts only
+  when it checks out another commit, a submodule with modified content is
+  listed with its index commit on both sides and so counts nothing, and a
+  submodule with only untracked content is not listed. The caps keep the
+  CLI's byte accounting: the raw listing and the untracked listing stop at
+  256 KiB of what the CLI would print, the blob reads at the 8 MiB the batch
+  would print, so a capped listing is the same lower bound on both engines.
+  A probe outside any repository is an answer on gix (unavailable, no
+  fallback); a broken `HEAD` is a gix error, answered by the CLI, which
+  reports the stats unavailable. A binary file whose bytes did not change is
+  no longer counted on the CLI path either, which `diff-index` lists when its
+  stat changed. `gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture`
+  compares both engines on the EP-002 matrix, and the racy-window race test
+  proves the probe no longer blocks a truncating write after an index write.
 
 ## Keystroke → pixel
 

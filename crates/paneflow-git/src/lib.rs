@@ -1,6 +1,7 @@
 extern crate self as paneflow_git;
 
 pub mod engine;
+mod objects;
 mod open;
 #[cfg(feature = "oracle")]
 #[path = "../tests/oracle/mod.rs"]
@@ -13,11 +14,13 @@ mod submodule;
 #[path = "../tests/support/mod.rs"]
 pub mod support;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-pub use snapshot::snapshot;
+pub use objects::{Header, Objects};
+pub use snapshot::{snapshot, with_snapshot};
 
 pub const DEFAULT_THREAD_LIMIT: usize = 2;
 
@@ -61,6 +64,10 @@ impl Default for Options {
 
 impl Options {
     pub fn files_status() -> Self {
+        Self::default()
+    }
+
+    pub fn diff_stats() -> Self {
         Self::default()
     }
 
@@ -129,10 +136,24 @@ pub enum Head {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stored {
+    pub mode: u32,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sides {
+    pub head: Option<Stored>,
+    pub index: Option<Stored>,
+    pub worktree_mode: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub head: Head,
     pub prefix: Vec<u8>,
     pub entries: Vec<Entry>,
+    pub sides: BTreeMap<Vec<u8>, Sides>,
     pub truncated: bool,
     pub submodules_opened: usize,
 }
