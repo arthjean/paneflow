@@ -5,6 +5,12 @@ use std::path::Path;
 
 const VENDORED_GIX_STATUS_VERSION: &str = "0.37.0";
 
+const VENDORED_GIX_NOTIFY_VERSION: &str = "0.1.0";
+
+const VENDORED_GIX_NOTIFY_COMMIT: &str = "1077036b45761f31a34da1e930f3163b7c502cb6";
+
+const GIX_RUNTIME_SHARED_WITH_GIX_NOTIFY: &[&str] = &["gix-error", "gix-parallel"];
+
 const SIZE_CAPPED_HELPERS: &[&str] = &["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"];
 
 #[derive(Debug, Default)]
@@ -132,6 +138,52 @@ fn the_vendored_gix_status_is_the_only_one_in_the_lockfile() {
             .iter()
             .any(|name| name == "gix-status"),
         "the gix-status patch is unused: the gix bump no longer depends on gix-status {VENDORED_GIX_STATUS_VERSION}, so drop or re-vendor vendor/gix-status"
+    );
+}
+
+fn packages_named<'a>(lockfile: &'a Lockfile, name: &str) -> Vec<&'a Package> {
+    lockfile
+        .packages
+        .iter()
+        .filter(|package| package.name == name)
+        .collect()
+}
+
+#[test]
+fn the_vendored_gix_notify_is_pinned_and_reuses_the_gix_runtime() {
+    let lockfile = lockfile();
+    let gix_notify = packages_named(&lockfile, "gix-notify");
+    assert_eq!(
+        gix_notify.len(),
+        1,
+        "exactly one gix-notify resolves: {gix_notify:?}"
+    );
+    assert_eq!(gix_notify[0].version, VENDORED_GIX_NOTIFY_VERSION);
+    assert_eq!(
+        gix_notify[0].source, None,
+        "gix-notify must resolve to vendor/gix-notify, not to a registry or a git source"
+    );
+    for shared in GIX_RUNTIME_SHARED_WITH_GIX_NOTIFY {
+        assert!(
+            gix_notify[0].dependencies.iter().any(|name| name == shared),
+            "gix-notify depends on {shared}"
+        );
+        let copies = packages_named(&lockfile, shared);
+        assert_eq!(
+            copies.len(),
+            1,
+            "gix-notify must reuse the {shared} that gix resolves, not a second copy: {copies:?}"
+        );
+    }
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/gix-notify/Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest).expect("vendor/gix-notify/Cargo.toml");
+    assert!(
+        manifest.contains(VENDORED_GIX_NOTIFY_COMMIT),
+        "the vendor/gix-notify header must name the pinned upstream commit {VENDORED_GIX_NOTIFY_COMMIT}"
+    );
+    assert!(
+        manifest.contains(&format!("version = \"{VENDORED_GIX_NOTIFY_VERSION}\"")),
+        "vendor/gix-notify drifted from version {VENDORED_GIX_NOTIFY_VERSION}"
     );
 }
 
