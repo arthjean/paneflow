@@ -6,7 +6,7 @@
     "status": "READY"
   },
   "epics": [
-    { "id": "EP-001", "title": "A change feed that reports every loss on Linux, macOS and Windows", "status": "IN_REVIEW", "priority": "P0", "stories_total": 4, "stories_done": 2 },
+    { "id": "EP-001", "title": "A change feed that reports every loss on Linux, macOS and Windows", "status": "DONE", "priority": "P0", "stories_total": 4, "stories_done": 4 },
     { "id": "EP-002", "title": "An incremental snapshot identical to the full one", "status": "TODO", "priority": "P0", "stories_total": 6, "stories_done": 0 },
     { "id": "EP-003", "title": "Consumers on one model per worktree, with a freshness contract", "status": "TODO", "priority": "P0", "stories_total": 3, "stories_done": 0 },
     { "id": "EP-004", "title": "Self-verification, degraded modes and evidence of the gain", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 },
@@ -15,8 +15,8 @@
   "stories": [
     { "id": "US-001", "title": "Validate assumption: gix-notify reports every loss and fences on Linux and macOS", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": [], "started_at": "2026-11-07", "completed_at": "2026-11-07", "reviewed_at": "2026-11-07" },
     { "id": "US-002", "title": "Vendor gix-notify as a pinned crate copy", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "S", "blocked_by": ["US-001"], "started_at": "2026-11-07", "completed_at": "2026-11-07", "reviewed_at": "2026-11-07" },
-    { "id": "US-003", "title": "A per-worktree change feed with an eligibility check", "epic": "EP-001", "status": "IN_REVIEW", "priority": "P0", "size": "M", "blocked_by": ["US-002"], "started_at": "2026-11-07", "completed_at": null, "reviewed_at": "2026-11-07" },
-    { "id": "US-004", "title": "Feed lifecycle bounds memory, watches and handles", "epic": "EP-001", "status": "IN_REVIEW", "priority": "P0", "size": "M", "blocked_by": ["US-003"], "started_at": "2026-11-07", "completed_at": null, "reviewed_at": "2026-11-07" },
+    { "id": "US-003", "title": "A per-worktree change feed with an eligibility check", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-002"], "started_at": "2026-11-07", "completed_at": "2026-11-07", "reviewed_at": "2026-11-07" },
+    { "id": "US-004", "title": "Feed lifecycle bounds memory, watches and handles", "epic": "EP-001", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-003"], "started_at": "2026-11-07", "completed_at": "2026-11-07", "reviewed_at": "2026-11-07" },
     { "id": "US-005", "title": "Validate assumption: a status limited to the dirty paths costs what the dirty paths cost", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "S", "blocked_by": [], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-006", "title": "Baseline and input identities", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "M", "blocked_by": ["US-003", "US-005"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-007", "title": "Incremental tracked pass", "epic": "EP-002", "status": "TODO", "priority": "P0", "size": "L", "blocked_by": ["US-006"], "started_at": null, "completed_at": null, "reviewed_at": null },
