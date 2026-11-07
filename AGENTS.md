@@ -34,6 +34,10 @@ and wait for `run_tests` to be green on it.
 rustfmt output drifts between Rust point releases, so code that was clean last
 week can need re-formatting after a toolchain bump. Always run the real
 `cargo fmt`, not an editor formatter, because `cargo fmt` is the CI gate.
+The `Windows x86_64 libghostty check` job runs `cargo fmt --all --check`,
+which also formats path dependencies such as a vendored crate that is not a
+workspace member: run it too when `vendor/**` changes, and give a vendored
+copy its upstream `rustfmt.toml` rather than reformatting upstream text.
 
 CI keeps every cargo invocation `--locked`. Never commit a change that requires
 a lockfile update you did not also commit.
