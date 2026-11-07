@@ -26,6 +26,7 @@ members = [
 # `-p` or the release-min profile); including them here would make `cargo
 # run` ambiguous across three binaries.
 default-members = ["src-app"]
+exclude = ["vendor/gix-notify"]
 
 [workspace.package]
 version = "0.19.0"

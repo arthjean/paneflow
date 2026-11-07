@@ -13,6 +13,7 @@ oracle = ["dep:tempfile"]
 
 [dependencies]
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1"] }
+gix-notify = { path = "../../vendor/gix-notify" }
 log.workspace = true
 tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
