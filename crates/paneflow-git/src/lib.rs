@@ -1,6 +1,7 @@
 extern crate self as paneflow_git;
 
 pub mod engine;
+pub mod feed;
 mod objects;
 mod open;
 #[cfg(feature = "oracle")]
