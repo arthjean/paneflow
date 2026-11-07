@@ -8,7 +8,9 @@
 # resolves, `lints.workspace = true` is dropped because it would inherit
 # Paneflow's lint policy, and the `notify` 8 dependency for targets other than
 # Linux, macOS and Windows is removed, so the `compat` backend does not build
-# there and Paneflow ships on none of them. Any Paneflow change to the sources
+# there and Paneflow ships on none of them. rustfmt.toml copies the gitoxide
+# workspace's `max_width = 120`, so `cargo fmt --all --check`, which reaches path
+# dependencies, accepts the upstream sources. Any Paneflow change to the sources
 # must carry a test and be listed here. Drop this copy at the first gix-notify
 # release on crates.io that gix-error and gix-parallel versions compatible with
 # the pinned gix can resolve (https://github.com/arthjean/paneflow/issues/134).
