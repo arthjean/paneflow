@@ -463,6 +463,47 @@ the diff dock and `is_clean` (EP-005) run on it.
   is a gix error, so gix never answers for a parent repository it found past
   a pruned linked worktree. Any gix error or interrupt is answered by the
   CLI, and a CLI failure is an error, never `Ok(true)`.
+- **Change feed.** `paneflow_git::feed::ChangeFeed` (EP-001 of
+  `prd-incremental-git-status.md`) watches one worktree and its git
+  directories through the vendored `vendor/gix-notify`, the unpublished
+  crate of the draft gitoxide #3153 pinned at `1077036b4`, and reports every
+  gap as a `Loss` the caller answers with a full snapshot. Linux registers one
+  non-recursive inotify watch per directory holding tracked or untracked
+  non-ignored content, plus each git dir, and none inside an ignored directory
+  without tracked entries; macOS and Windows register one recursive root
+  watch, plus a git dir outside the root, and drop events below ignored
+  directories. A feed refuses (`Ineligible`) network, FUSE, 9p and WSL drive
+  mounts, `\\wsl$` and `\\wsl.localhost` paths, any file system other than
+  the known local ones (NTFS and ReFS on Windows, APFS and HFS on macOS), and
+  on Linux any feed that would take Paneflow past half of
+  `max_user_watches`. Linux and macOS fence through `git-fence/` under the
+  Paneflow cache directory, created private; Windows has no fence.
+  `paneflow_git::feed::Feeds` drops a feed after 5 minutes without a probe and
+  remembers a refusal until then, so it logs once. A feed keeps its coverage
+  current: on Linux a directory created or moved in after the start, and on
+  every platform an edited `.gitignore` or `info/exclude`, makes it rescan;
+  a new watch set or a directory the rules no longer ignore is a
+  `WatchSetChanged` loss. After any other loss (an overflow drops the events
+  that would have extended the coverage) it rescans and re-registers at
+  once, and until that succeeds every
+  drain reports `BackendStopped`, so a dead backend is never read as
+  silence. The feed does not see `core.excludesFile` or an entry force-added
+  under an ignored directory: the monitor must restart the feed
+  (`Feeds::release`, then `acquire`) when those inputs change. Measured on 2026-11-07
+  with a throwaway harness (Windows 11 26300 NTFS, WSL2 Linux 6.18 ext4,
+  macOS 15.8.2 on `macos-15`): 20,000 creates without a drain were a loss in
+  10 of 10 runs per platform, a queue overflow (`Overflow`) by default and a
+  native overflow (`Rescan`) when the backend thread was stalled; a replaced
+  root was a loss before any event from the new directory in 10 of 10 runs
+  (`Rescan` at once on Linux and macOS, `BackendError` after the 1 s identity
+  check on Windows); a write preceding a fence was drained by it in 1,000 of
+  1,000 trials on Linux (tmpfs marker against an ext4 worktree) and on macOS
+  (a RAM-disk HFS+ marker against APFS), a fence costing 0.22 ms at p50 on
+  Linux and 12 ms on macOS. A same-size rewrite reached the drain after its
+  write returned in 60 us at p50 and 0.85 ms at p99 (max 6.4 ms) on Windows
+  under a looping 16-job `cargo build`, 47 us and 84 us on Linux, and 12.5 ms
+  and 18.7 ms on macOS. A gix-notify waker runs on the backend thread, so a
+  slow one stalls native delivery into a `Rescan`; keep it to a wake-up.
 
 ## Keystroke → pixel
 
