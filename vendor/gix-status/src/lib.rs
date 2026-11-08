@@ -45,6 +45,35 @@ pub(crate) type SharedListing = std::sync::Arc<gix_dir::walk::Listing>;
 #[cfg(not(feature = "worktree-rewrites"))]
 pub(crate) enum SharedListing {}
 
+/// Look `rela_path` up in `listing`: `None` if its directory was not listed, so the caller reads it
+/// live, and `Some(None)` if the directory was listed without usable metadata for the name.
+#[cfg(feature = "worktree-rewrites")]
+pub(crate) fn listed_metadata(
+    listing: &SharedListing,
+    rela_path: &bstr::BStr,
+) -> Option<Option<gix_index::fs::Metadata>> {
+    use bstr::ByteSlice;
+    let (dir, filename) = match rela_path.rfind_byte(b'/') {
+        Some(pos) => (rela_path[..pos].as_bstr(), rela_path[pos + 1..].as_bstr()),
+        None => (bstr::BStr::new(b""), rela_path),
+    };
+    let directory = listing.directory(dir)?;
+    Some(
+        directory
+            .get(filename)
+            .and_then(gix_dir::walk::ListedEntry::metadata)
+            .filter(|metadata| gix_index::entry::Stat::from_fs(metadata).is_ok()),
+    )
+}
+
+#[cfg(not(feature = "worktree-rewrites"))]
+pub(crate) fn listed_metadata(
+    listing: &SharedListing,
+    _rela_path: &bstr::BStr,
+) -> Option<Option<gix_index::fs::Metadata>> {
+    match *listing {}
+}
+
 #[cfg(feature = "worktree-rewrites")]
 pub mod index_as_worktree_with_renames;
 #[cfg(feature = "worktree-rewrites")]

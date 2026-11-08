@@ -164,10 +164,12 @@ the snapshot on a background executor. The rail keeps Paneflow's 300 px width,
 
 `crates/paneflow-git` computes a worktree's status without spawning git, so a
 background probe never maps an agent's file on Windows (#124, #130). It is
-built on gix `=0.90.0` (features `status`, `parallel`, `sha1`) and on the
-vendored `vendor/gix-status`, gix-status 0.37.0 with the short-read fix: a
-file that shrinks while it is hashed is reported modified instead of failing
-the whole status. `src-app` is its only dependent; the size-capped helpers
+built on gix `=0.90.0` (features `status`, `parallel`, `sha1`) and on three
+vendored crates: `vendor/gix-status`, gix-status 0.37.0 with the short-read
+fix (a file that shrinks while it is hashed is reported modified instead of
+failing the whole status) and the shared directory listing; `vendor/gix-dir`,
+gix-dir 0.32.0 with that listing and its pool; and `vendor/gix-index`,
+gix-index 0.58.0 with a no-follow stat conversion on unix. `src-app` is its only dependent; the size-capped helpers
 never link it, which `crates/paneflow-git/tests/lockfile.rs` checks against
 `Cargo.lock`, together with the vendored patch still being used. The Files
 sidebar (EP-003 of `prd-in-process-git-status.md`), the diff badge (EP-004),
@@ -195,55 +197,78 @@ the diff dock and `is_clean` (EP-005) run on it.
   and within that share one hashing thread per 10,000 index entries
   (`ENTRIES_PER_THREAD`), at most `PLATFORM_CAP`: 2 on Windows, 3 elsewhere,
   also used for `index.threads`. Past that cap the tracked-file pass stops
-  gaining: rust-lang/rust on Linux takes 90 ms at 2 threads, 80 ms at 3 and
-  81 to 87 ms at 4, and on Windows everything but the directory reads stays
-  at about 62 ms from 2 to 8 threads. Those reads run on the pool of the
-  vendored gix-dir instead (one rayon pool per process, half the cores and at
-  most 8 threads), which every listing shares: a lone probe gets all of it and
-  concurrent probes queue for it instead of oversubscribing the machine.
-  Measured on 2026-11-07 (Windows 11, 16 threads, release, rust-lang/rust,
-  concurrent probes in one process): 1 probe 79 ms (348 ms CPU), 4 at once
-  194 ms each (356 ms), 8 at once 367 ms (372 ms), against 151, 187 and 608 ms
-  with the former fixed 2 threads per probe, and 91, 250 and 567 ms for the
-  CLI.
-- **Cost against the CLI.** Measured on 2026-11-07 (2026-11-05 for the Paneflow
-  checkout on Linux). On the Paneflow checkout gix is the faster engine
-  on both platforms: on Windows 7.7 ms against 21 ms for `git
-  --no-optional-locks status --porcelain=v1 -z -uall --no-renames`, on Linux
-  5.1 ms (7.2 ms CPU) against 6.3 ms (3.9 ms CPU). On t3code (29,069 entries)
-  it takes 54 ms against 84 to 91 ms on Windows (250 against 300 ms CPU) and
-  52 ms against 61 ms on Linux (131 against 96 ms CPU); on rust-lang/rust
-  (64,264 entries) 78 to 87 ms against 91 to 93 ms on Windows at about the
-  CLI's CPU (335 to 363 against 334 to 359 ms), and 90 ms against 92 ms on
-  Linux, where it still uses 1.3 times the CLI's CPU (245 against 189 ms).
-  Every repository runs on gix whatever its size: until #134 an index over
-  30,000 entries went to the CLI, whose `git status` maps same-size
-  stat-dirty files and fails an agent's truncating write with error 1224 on
-  Windows.
+  gaining: rust-lang/rust takes 47 to 48 ms on Linux at 2, 3 or 4 threads,
+  and on Windows everything but the directory reads stays at about 62 ms
+  from 2 to 8 threads. The directory reads, the dominant cost, run on the
+  pool of the vendored gix-dir instead (one rayon pool per process, half the
+  cores and at most 8 threads), which every listing shares: a lone probe gets
+  all of it and concurrent probes queue for it instead of oversubscribing the
+  machine. Measured on 2026-11-07 (16 threads, release, rust-lang/rust,
+  concurrent probes in one process): on Windows 1 probe 75 to 79 ms (338 to
+  343 ms CPU), 4 at once 197 to 206 ms each (361 to 384 ms), 8 at once 373 to
+  375 ms (379 to 384 ms), against 151, 187 and 608 ms with the former fixed 2
+  threads per probe and 91, 250 and 567 ms for the CLI; on Linux 54, 117 and
+  219 ms (234 to 252 ms CPU) against 92, 129 and 165 ms for the CLI, whose 8
+  processes share no bound.
+- **Cost against the CLI.** Measured on 2026-11-07 (release, 40 probes per
+  mode, against `git --no-optional-locks status --porcelain=v1 -z -uall
+  --no-renames`). On small checkouts gix is the faster engine: the Paneflow
+  checkout on Windows 7.8 to 8.1 ms against 21 to 22 ms, gitoxide (3,303
+  entries) on Linux 6.3 to 6.5 ms against 10.5 to 11 ms, at 1.5 times the
+  CLI's CPU there (16.3 against 10.5 ms). On t3code (29,069 entries) 52 ms
+  against 86 to 90 ms on Windows (249 to 252 against 304 to 320 ms CPU) and
+  26 to 27 ms against 62 ms on Linux (114 to 119 against 91 to 94 ms CPU);
+  on rust-lang/rust (64,264 entries) 74 to 75 ms against 89 to 90 ms on
+  Windows at the CLI's CPU (334 to 340 against 333 to 345 ms), and 48 to 50
+  ms against 92 to 94 ms on Linux at 1.2 times its CPU (218 to 230 against
+  181 to 189 ms). Every repository runs on gix whatever its size: until #134
+  an index over 30,000 entries went to the CLI, whose `git status` maps
+  same-size stat-dirty files and fails an agent's truncating write with error
+  1224 on Windows. Like git, which since 2017 checks the index's trailing
+  SHA-1 only in `git fsck --cache`, the probe skips that full pass over the
+  index file (`index.skipHash`), which
+  `a_corrupted_index_checksum_is_ignored_as_git_ignores_it` pins.
 - **Staged half from the cache-tree.** gix's `tree_index_status` builds a
-  full index from the HEAD tree on every status (`index_from_tree`), while git
-  skips any subtree whose cache-tree (the index's `TREE` extension) records
-  the same tree id. `snapshot.rs` therefore takes gix's index-to-worktree
-  iterator alone when the root of the cache-tree is valid and equals the
-  compared tree (the base, or HEAD): 24 to 30 ms less CPU per probe on
-  rust-lang/rust on Linux, 20 to 24 ms on Windows. A stale cache-tree is
-  trusted exactly as far as git trusts it, which
-  `a_stale_cache_tree_is_trusted_exactly_as_far_as_git_trusts_it` pins.
-- **One directory read per status on Windows.** Git for Windows owes its speed
-  to `core.fscache`, which reads each directory once and serves every later
+  full index from the HEAD tree on every status (`index_from_tree`) and diffs
+  it against the index. `crates/paneflow-git/src/staged.rs` replaces it: it
+  walks the compared tree (the base, or HEAD) and the index together and
+  skips every subtree whose cache-tree node (the index's `TREE` extension) is
+  valid and records the same tree id, as git does, so it reads only the trees
+  along the paths `git add` invalidated, or the whole tree when the index has
+  no cache-tree. It reports what gix-diff's index comparison reports
+  (intent-to-add and unmerged entries are skipped) and runs on its own thread
+  beside the index-to-worktree pass. On rust-lang/rust it costs nothing
+  measurable beyond the index load, clean or with one staged file, where
+  gix's pass took 23 ms (Windows, 2026-11-07).
+  `crates/paneflow-git/tests/staged_diff.rs` replays 24 seeded scenarios of
+  random staged changes, with and without a cache-tree, against `git diff
+  --cached`, and a stale cache-tree is trusted exactly as far as git trusts
+  it (`a_stale_cache_tree_is_trusted_exactly_as_far_as_git_trusts_it`).
+- **One directory read per status.** Git for Windows owes its speed to
+  `core.fscache`, which reads each directory once and serves every later
   lookup from memory. gix 0.90 has a per-thread cache of its own for the
-  tracked-file pass, but its untracked walk read every directory again on one
-  thread: about 300 of the 355 ms a rust-lang/rust status took. With
-  `core.fsCache` (on by default on Windows), the vendored gix-status reads
-  every directory that holds index entries once, on the shared listing pool,
-  into a `gix_dir::walk::Listing` that both passes read; the vendored gix-dir
-  walk (`walk_with_listing`) then reads only the directories the index does
-  not hold. `crates/paneflow-git/tests/shared_listing.rs` covers the pool.
-  `crates/paneflow-git/tests/directory_listing.rs` fails if a gix bump loses
-  the listing. Peak heap
-  measured by heaptrack on Linux is below git's on the Paneflow checkout (1.4
-  MiB against 3.3 MiB) and equal on rust-lang/rust (19.5 against 18.2 MiB);
-  resident memory is higher because gix maps the index and the packs.
+  tracked-file pass on Windows, but its untracked walk read every directory
+  again on one thread: about 300 of the 355 ms a rust-lang/rust status took.
+  The vendored gix-status reads every directory that holds index entries
+  once, on the shared listing pool, into a `gix_dir::walk::Listing` that both
+  passes read (on Windows only with `core.fsCache`, on by default there); the
+  vendored gix-dir walk (`walk_with_listing`) then reads only the directories
+  the index does not hold. On Windows the enumeration carries every entry's
+  metadata. On Linux and macOS the listing opens each directory without
+  following a symlink and reads only the tracked names with `fstatat`
+  relative to it (rustix), handed to the tracked-file pass through the
+  vendored gix-index's `From<rustix::fs::Stat>`: the kernel no longer
+  resolves every tracked file's full path, and rust-lang/rust on Linux went
+  from 78 to 90 ms to 48 to 50 ms. macOS runs this POSIX path, verified by
+  cross-compilation only; its bulk `getattrlistbulk` enumeration, which would
+  drop the per-file stat as Windows does, is not used, since it needs unsafe
+  FFI that cannot run here. `crates/paneflow-git/tests/shared_listing.rs`
+  covers the pool and the listing, and
+  `crates/paneflow-git/tests/directory_listing.rs` fails on every platform if
+  a gix bump loses the listing. Peak heap measured by heaptrack on Linux is
+  below git's on the Paneflow checkout (1.4 MiB against 3.3 MiB) and equal on
+  rust-lang/rust (19.5 against 18.2 MiB, 2026-11-05); resident memory is
+  higher because gix maps the index and the packs.
 - **No repository program.** After opening, the engine removes from its
   in-memory configuration every `filter.<name>` section whose driver is
   declared in the repository's own local or worktree config, includes through

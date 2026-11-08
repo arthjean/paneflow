@@ -2398,6 +2398,7 @@ dependencies = [
  "gix-utils",
  "gix-worktree",
  "rayon",
+ "rustix",
 ]
 
 [[package]]
@@ -2523,8 +2524,6 @@ dependencies = [
 [[package]]
 name = "gix-index"
 version = "0.58.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06bfc736774a623307eda890c918d308ef5acd37402bde2d6768fccb1f6ecb5d"
 dependencies = [
  "bitflags 2.13.1",
  "bstr",

@@ -292,6 +292,50 @@ fn a_stale_cache_tree_is_trusted_exactly_as_far_as_git_trusts_it() {
 }
 
 #[test]
+fn a_corrupted_index_checksum_is_ignored_as_git_ignores_it() {
+    let (_tmp, root) = repo();
+    committed_repo(
+        &root,
+        &[
+            (
+                "kept.txt", "kept
+",
+            ),
+            (
+                "edited.txt",
+                "before
+",
+            ),
+        ],
+    );
+    write(
+        &root,
+        "edited.txt",
+        b"after
+",
+    );
+    let index_path = root.join(".git").join("index");
+    let mut bytes = std::fs::read(&index_path).expect("read the index");
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    std::fs::write(&index_path, bytes).expect("corrupt the index checksum");
+
+    assert_eq!(
+        porcelain(&root),
+        " M edited.txt
+",
+        "git reads the index without checking its checksum"
+    );
+    assert_eq!(
+        without_paths(entries_by_path(&root, &Options::default())),
+        vec![(
+            "edited.txt".into(),
+            tracked(None, Some(WorktreeChange::Modified))
+        )]
+    );
+}
+
+#[test]
 fn untracked_files_are_sorted_one_by_one_before_the_cap() {
     let (_tmp, root) = repo();
     committed_repo(&root, &[("kept.txt", "k\n")]);

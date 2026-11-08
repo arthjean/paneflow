@@ -3,7 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-const VENDORED_CRATES: &[(&str, &str)] = &[("gix-status", "0.37.0"), ("gix-dir", "0.32.0")];
+const VENDORED_CRATES: &[(&str, &str)] = &[
+    ("gix-status", "0.37.0"),
+    ("gix-dir", "0.32.0"),
+    ("gix-index", "0.58.0"),
+];
 
 const SIZE_CAPPED_HELPERS: &[&str] = &["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"];
 

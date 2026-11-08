@@ -8,13 +8,12 @@ use gix::dir::entry::{Kind as DiskKind, Status as DirStatus};
 use gix::index::entry::Mode;
 use gix::status::index_worktree::Item as WorktreeItem;
 use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
-use gix::status::tree_index::TrackRenames;
-use gix::status::{Item, Submodule, UntrackedFiles};
+use gix::status::{Submodule, UntrackedFiles};
 use gix::submodule::config::Ignore;
 
 use crate::{
-    open, sparse, submodule, threads, Conflict, Entry, Error, Head, IndexChange, Objects, Options,
-    Sides, Snapshot, Stored, Submodules, Untracked, WorktreeChange,
+    open, sparse, staged, submodule, threads, Conflict, Entry, Error, Head, IndexChange, Objects,
+    Options, Sides, Snapshot, Stored, Submodules, Untracked, WorktreeChange,
 };
 
 pub fn snapshot(path: &Path, options: &Options) -> Result<Snapshot, Error> {
@@ -95,18 +94,15 @@ pub(crate) fn collect(
         .map_err(|error| Error::git("read the stat options", error))?;
     let mut entries = Entries::new();
     let mut sides = SideMap::new();
-    let mut status = repo
+    let status = repo
         .status(gix::progress::Discard)
         .map_err(|error| Error::git("prepare the status", error))?;
-    if let Some(tree) = base_tree {
-        status = status.head_tree(tree);
-    }
     let dirwalk = repo
         .dirwalk_options()
         .map_err(|error| Error::git("prepare the directory walk", error))?;
     let index = sparse::index_for_status(repo)?;
     let thread_limit = options.threads.for_entries(share, index.entries().len());
-    let nothing_staged = compared_tree.is_some_and(|tree| index_matches_tree(&index, tree));
+    let staged_index = index.clone();
     let status = status
         .index(index)
         .index_worktree_options_mut(|worktree| worktree.dirwalk_options = Some(dirwalk))
@@ -119,26 +115,33 @@ pub(crate) fn collect(
             check_dirty: false,
         })
         .index_worktree_rewrites(None)
-        .tree_index_track_renames(TrackRenames::Disabled)
         .index_worktree_options_mut(|worktree| worktree.thread_limit = Some(thread_limit))
         .should_interrupt_owned(Arc::clone(interrupt));
-    let outcome = if nothing_staged {
-        let mut items = status
-            .into_index_worktree_iter(Vec::<BString>::new())
-            .map_err(|error| Error::git("start the status", error))?;
-        record_all(
-            items.by_ref().map(|item| item.map(Item::IndexWorktree)),
-            &mut entries,
-            &mut sides,
-        )?;
-        items.into_outcome()
-    } else {
-        let mut items = status
-            .into_iter(Vec::<BString>::new())
-            .map_err(|error| Error::git("start the status", error))?;
-        record_all(items.by_ref(), &mut entries, &mut sides)?;
-        items.into_outcome()
-    };
+    let staged_repo = repo.clone();
+    let (outcome, staged) = std::thread::scope(|scope| {
+        let staged = scope
+            .spawn(move || staged::changes(&staged_repo, &staged_index, compared_tree, interrupt));
+        let worktree = (|| {
+            let mut items = status
+                .into_index_worktree_iter(Vec::<BString>::new())
+                .map_err(|error| Error::git("start the status", error))?;
+            for item in items.by_ref() {
+                let item = item.map_err(|error| Error::git("compute the status", error))?;
+                record(&mut entries, &mut sides, item);
+            }
+            Ok(items.into_outcome())
+        })();
+        let staged = staged.join().unwrap_or_else(|_| {
+            Err(Error::git(
+                "compare the index with its tree",
+                "the comparison thread panicked",
+            ))
+        });
+        worktree.and_then(|outcome| staged.map(|staged| (outcome, staged)))
+    })?;
+    for change in staged {
+        record_staged(&mut entries, &mut sides, change);
+    }
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
@@ -209,29 +212,6 @@ pub(crate) fn gitlink(id: &gix::oid) -> Stored {
     stored(Mode::COMMIT, id)
 }
 
-fn record_tree_index_sides(sides: &mut SideMap, change: &gix::diff::index::Change) {
-    use gix::diff::index::ChangeRef;
-    let (head, index) = match change {
-        ChangeRef::Addition { entry_mode, id, .. } => (None, Some(stored(*entry_mode, id))),
-        ChangeRef::Deletion { entry_mode, id, .. } => (Some(stored(*entry_mode, id)), None),
-        ChangeRef::Modification {
-            previous_entry_mode,
-            previous_id,
-            entry_mode,
-            id,
-            ..
-        } => (
-            Some(stored(*previous_entry_mode, previous_id)),
-            Some(stored(*entry_mode, id)),
-        ),
-        ChangeRef::Rewrite { entry_mode, id, .. } => (None, Some(stored(*entry_mode, id))),
-    };
-    let recorded = sides.entry(change.location().to_vec()).or_default();
-    recorded.staged = true;
-    recorded.sides.head = head;
-    recorded.sides.index = index;
-}
-
 fn worktree_mode(
     index_mode: Mode,
     status: &EntryStatus<(), gix::submodule::Status>,
@@ -278,24 +258,6 @@ fn head_tree(repo: &gix::Repository) -> Result<Option<gix::ObjectId>, Error> {
         .head_tree_id()
         .map_err(|error| Error::git("read the HEAD tree", error))?;
     Ok(Some(tree.detach()))
-}
-
-fn index_matches_tree(index: &gix::index::State, tree: gix::ObjectId) -> bool {
-    index
-        .tree()
-        .is_some_and(|root| root.num_entries.is_some() && root.id == tree)
-}
-
-fn record_all<E: std::fmt::Display>(
-    items: impl Iterator<Item = Result<Item, E>>,
-    entries: &mut Entries,
-    sides: &mut SideMap,
-) -> Result<(), Error> {
-    for item in items {
-        let item = item.map_err(|error| Error::git("compute the status", error))?;
-        record(entries, sides, item);
-    }
-    Ok(())
 }
 
 pub(crate) fn entry<'a>(entries: &'a mut Entries, path: &[u8]) -> &'a mut Entry {
@@ -353,20 +315,14 @@ fn record_stat_dirty(
     }
 }
 
-fn record(entries: &mut Entries, sides: &mut SideMap, item: Item) {
+fn record(entries: &mut Entries, sides: &mut SideMap, item: WorktreeItem) {
     match item {
-        Item::TreeIndex(change) => {
-            let path = change.location().to_vec();
-            let kind = tree_index_change(&change);
-            entry(entries, &path).head_to_index = Some(kind);
-            record_tree_index_sides(sides, &change);
-        }
-        Item::IndexWorktree(WorktreeItem::Modification {
+        WorktreeItem::Modification {
             entry: index_entry,
             rela_path,
             status,
             ..
-        }) => {
+        } => {
             let path_sides = side(sides, &rela_path);
             if path_sides.index.is_none() {
                 path_sides.index = Some(stored(index_entry.mode, &index_entry.id));
@@ -376,7 +332,7 @@ fn record(entries: &mut Entries, sides: &mut SideMap, item: Item) {
             }
             record_worktree_status(entries, &rela_path, status);
         }
-        Item::IndexWorktree(WorktreeItem::DirectoryContents { entry: dir, .. }) => {
+        WorktreeItem::DirectoryContents { entry: dir, .. } => {
             if dir.status != DirStatus::Untracked {
                 return;
             }
@@ -389,7 +345,7 @@ fn record(entries: &mut Entries, sides: &mut SideMap, item: Item) {
             }
             entry(entries, &path).untracked = true;
         }
-        Item::IndexWorktree(WorktreeItem::Rewrite { .. }) => {}
+        WorktreeItem::Rewrite { .. } => {}
     }
 }
 
@@ -413,24 +369,20 @@ fn record_worktree_status(
     entry(entries, path).index_to_worktree = Some(change);
 }
 
-fn tree_index_change(change: &gix::diff::index::Change) -> IndexChange {
-    use gix::diff::index::ChangeRef;
-    match change {
-        ChangeRef::Addition { .. } => IndexChange::Added,
-        ChangeRef::Deletion { .. } => IndexChange::Deleted,
-        ChangeRef::Modification {
-            previous_entry_mode,
-            entry_mode,
-            ..
-        } => {
-            if object_kind(*previous_entry_mode) == object_kind(*entry_mode) {
-                IndexChange::Modified
-            } else {
-                IndexChange::TypeChange
-            }
+fn record_staged(entries: &mut Entries, sides: &mut SideMap, change: staged::Staged) {
+    let kind = match (change.head, change.index) {
+        (None, _) => IndexChange::Added,
+        (_, None) => IndexChange::Deleted,
+        (Some((head, _)), Some((index, _))) if object_kind(head) == object_kind(index) => {
+            IndexChange::Modified
         }
-        ChangeRef::Rewrite { .. } => IndexChange::Added,
-    }
+        (Some(_), Some(_)) => IndexChange::TypeChange,
+    };
+    entry(entries, &change.path).head_to_index = Some(kind);
+    let recorded = sides.entry(change.path.to_vec()).or_default();
+    recorded.staged = true;
+    recorded.sides.head = change.head.map(|(mode, id)| stored(mode, &id));
+    recorded.sides.index = change.index.map(|(mode, id)| stored(mode, &id));
 }
 
 #[derive(PartialEq, Eq)]

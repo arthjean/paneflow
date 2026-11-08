@@ -276,5 +276,5 @@ pub struct Outcome {
 mod classify;
 pub(crate) mod function;
 mod listing;
-pub use listing::{ListedDirectory, ListedEntry, Listing};
+pub use listing::{ListRequest, ListedDirectory, ListedEntry, Listing};
 mod readdir;

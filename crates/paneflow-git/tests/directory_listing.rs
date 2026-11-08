@@ -1,4 +1,3 @@
-#![cfg(windows)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod support;
@@ -59,7 +58,7 @@ fn status_reads(root: &Path) -> Reads {
 }
 
 #[test]
-fn a_windows_status_reads_each_tracked_directory_once_for_both_of_its_passes() {
+fn a_status_reads_each_tracked_directory_once_for_both_of_its_passes() {
     support::isolate_process();
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
@@ -85,7 +84,7 @@ fn a_windows_status_reads_each_tracked_directory_once_for_both_of_its_passes() {
 }
 
 #[test]
-fn a_windows_status_sees_a_file_deleted_from_a_listed_directory() {
+fn a_status_sees_a_file_deleted_from_a_listed_directory() {
     support::isolate_process();
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
