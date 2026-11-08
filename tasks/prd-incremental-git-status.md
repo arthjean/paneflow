@@ -194,10 +194,10 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given rust-lang/rust and `into_index_worktree_iter` with 1, 10, 100 and 1,000 literal paths, when each runs 40 times in release, then p50 wall time and CPU on Linux and Windows are recorded on #134 next to the full status (48 to 50 ms Linux, 74 to 75 ms Windows)
-- [ ] Given 10 dirty paths, when the limited status costs more than 3 ms p50 on Linux or 5 ms on Windows, then the story specifies an entry-subset entry point for the vendored gix-status (the index entries to check and the directories to walk) and measures a prototype of it
-- [ ] Given a limited status, then the directory-read counter used by `crates/paneflow-git/tests/directory_listing.rs` shows that only the directories of the listed paths were read
-- [ ] Given paths containing pathspec magic (`*`, `?`, `[`, a leading `:` or `!`), then the limited status treats them as literal paths, and the escaping rule is recorded
+- [x] Given rust-lang/rust and `into_index_worktree_iter` with 1, 10, 100 and 1,000 literal paths, when each runs 40 times in release, then p50 wall time and CPU on Linux and Windows are recorded on #134 next to the full status (48 to 50 ms Linux, 74 to 75 ms Windows)
+- [x] Given 10 dirty paths, when the limited status costs more than 3 ms p50 on Linux or 5 ms on Windows, then the story specifies an entry-subset entry point for the vendored gix-status (the index entries to check and the directories to walk) and measures a prototype of it
+- [x] Given a limited status, then the directory-read counter used by `crates/paneflow-git/tests/directory_listing.rs` shows that only the directories of the listed paths were read
+- [x] Given paths containing pathspec magic (`*`, `?`, `[`, a leading `:` or `!`), then the limited status treats them as literal paths, and the escaping rule is recorded
 
 #### US-006: Baseline and input identities
 **Description:** As the maintainer, I want the model to start from a full snapshot taken after the watches are installed, and to fingerprint every input that is not a worktree file, so that it never carries a verdict across a change no event reports.
@@ -207,11 +207,11 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** Blocked by US-003, US-005
 
 **Acceptance Criteria:**
-- [ ] Given a new feed, when the first probe runs, then watches are registered first and the full snapshot runs second, and an event received during the scan is applied after it, so a write in the middle of the scan shows in the next probe
-- [ ] Given the identities recorded at baseline (index file stat and trailing checksum; resolved HEAD and compared base; every `.gitignore` the walk read, `.git/info/exclude` and `core.excludesFile`; every `.gitattributes` and `info/attributes`; the repository, worktree, global and system config files; `.gitmodules`), when any of them changes without an event, then the next probe detects it by stat and re-baselines, except the index and HEAD, which US-009 carries
-- [ ] Given the model between probes, then it holds no gix `Repository`, `ThreadSafeRepository` or object-database handle, and each probe opens the repository fresh as `snapshot()` does
-- [ ] Given an interrupted probe (`Options::interrupt`), when it returns `Error::Interrupted`, then the model is unchanged and the next probe re-evaluates the same dirty set
-- [ ] Given a probe whose `Options::base` differs from the previous probe's, then only the staged half is recomputed through `staged.rs`, and the worktree half is shared
+- [x] Given a new feed, when the first probe runs, then watches are registered first and the full snapshot runs second, and an event received during the scan is applied after it, so a write in the middle of the scan shows in the next probe
+- [x] Given the identities recorded at baseline (index file stat and trailing checksum; resolved HEAD and compared base; every `.gitignore` the walk read, `.git/info/exclude` and `core.excludesFile`; every `.gitattributes` and `info/attributes`; the repository, worktree, global and system config files; `.gitmodules`), when any of them changes without an event, then the next probe detects it by stat and re-baselines, except the index and HEAD, which US-009 carries
+- [x] Given the model between probes, then it holds no gix `Repository`, `ThreadSafeRepository` or object-database handle, and each probe opens the repository fresh as `snapshot()` does
+- [x] Given an interrupted probe (`Options::interrupt`), when it returns `Error::Interrupted`, then the model is unchanged and the next probe re-evaluates the same dirty set
+- [x] Given a probe whose `Options::base` differs from the previous probe's, then only the staged half is recomputed through `staged.rs`, and the worktree half is shared
 
 #### US-007: Incremental tracked pass
 **Description:** As a developer whose agent edits a few files, I want a probe to re-check only the tracked paths that events named, so that the Files sidebar costs milliseconds on a 64,000-entry repository.
@@ -221,13 +221,13 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given a baseline and an edit to one tracked file, when the next probe runs, then only that entry is stat'ed (and hashed when its stat differs), every other entry keeps its verdict, and the result equals `snapshot()`
-- [ ] Given a tracked file deleted, replaced by a directory, replaced by a symlink, or made executable, when the next probe runs, then its change kind equals the full snapshot's
-- [ ] Given a directory created, removed or renamed above tracked entries, when the next probe runs, then every tracked entry under both rename endpoints is re-checked
-- [ ] Given a case-only rename on a case-insensitive file system (APFS default, NTFS), then both spellings are re-checked and the result equals the full snapshot's
-- [ ] Given an event for a path the index does not hold, then the tracked pass skips it and hands it to the untracked pass
-- [ ] Given a tracked file that vanishes between its event and its stat, then the probe reports it deleted as the full snapshot would, never an error
-- [ ] Given a dirty path inside a submodule, then that submodule is re-probed with the same `Submodules` option as the full snapshot uses
+- [x] Given a baseline and an edit to one tracked file, when the next probe runs, then only that entry is stat'ed (and hashed when its stat differs), every other entry keeps its verdict, and the result equals `snapshot()`
+- [x] Given a tracked file deleted, replaced by a directory, replaced by a symlink, or made executable, when the next probe runs, then its change kind equals the full snapshot's
+- [x] Given a directory created, removed or renamed above tracked entries, when the next probe runs, then every tracked entry under both rename endpoints is re-checked
+- [x] Given a case-only rename on a case-insensitive file system (APFS default, NTFS), then both spellings are re-checked and the result equals the full snapshot's
+- [x] Given an event for a path the index does not hold, then the tracked pass skips it and hands it to the untracked pass
+- [x] Given a tracked file that vanishes between its event and its stat, then the probe reports it deleted as the full snapshot would, never an error
+- [x] Given a dirty path inside a submodule, then that submodule is re-probed with the same `Submodules` option as the full snapshot uses
 
 #### US-008: Incremental untracked pass
 **Description:** As a developer, I want untracked files to appear and disappear from a walk of the touched directories only, so that untracked listings stay exact without walking the tree.
@@ -237,12 +237,12 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given a new untracked file in a tracked directory, when the next probe runs, then only that directory is re-listed, and the file appears in the order the full snapshot gives it
-- [ ] Given a new untracked directory tree (`a/b/c/f`), when the next probe runs, then its subtree is walked and each file is listed one by one, as the full snapshot lists them
-- [ ] Given an untracked file deleted or an untracked directory removed, then its entries disappear
-- [ ] Given more untracked entries than `entry_cap`, then `truncated` is set exactly as the full snapshot sets it, and no lower bound is ever reported as a total
-- [ ] Given a change to any ignore source, then the probe re-baselines instead of re-walking
-- [ ] Given an event inside an ignored directory that holds no tracked entry, then no directory is re-listed
+- [x] Given a new untracked file in a tracked directory, when the next probe runs, then only that directory is re-listed, and the file appears in the order the full snapshot gives it
+- [x] Given a new untracked directory tree (`a/b/c/f`), when the next probe runs, then its subtree is walked and each file is listed one by one, as the full snapshot lists them
+- [x] Given an untracked file deleted or an untracked directory removed, then its entries disappear
+- [x] Given more untracked entries than `entry_cap`, then `truncated` is set exactly as the full snapshot sets it, and no lower bound is ever reported as a total
+- [x] Given a change to any ignore source, then the probe re-baselines instead of re-walking
+- [x] Given an event inside an ignored directory that holds no tracked entry, then no directory is re-listed
 
 #### US-009: Carry the model across index and HEAD rewrites
 **Description:** As a developer whose agent runs `git status`, `git add` and `git commit` all the time, I want an index rewrite to re-check only the entries it changed, so that agent git commands do not turn every probe back into a full status.
@@ -252,12 +252,12 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** Blocked by US-007, US-008
 
 **Acceptance Criteria:**
-- [ ] Given `git status` rewriting the index with refreshed stat data and unchanged ids, when the next probe runs, then the index is read once, no worktree file is hashed, and the result equals `snapshot()`
-- [ ] Given `git add` of 3 files, when the next probe runs, then exactly the entries whose id, mode, flags or stage changed are re-evaluated, and the staged half is recomputed through `staged.rs`
-- [ ] Given `git commit` (HEAD moves and the index is rewritten), then the staged half is recomputed against the new HEAD tree, worktree verdicts carry over, and the result equals `snapshot()`
-- [ ] Given `git checkout` of another branch, when more than 10 % of the index entries changed or the feed reported a loss, then the probe re-baselines instead of splicing
-- [ ] Given a change of index format (split index, sparse index) or of skip-worktree flags, then the probe re-baselines
-- [ ] Given a conflicted merge (stages 1 to 3), then the conflict kinds equal the full snapshot's
+- [x] Given `git status` rewriting the index with refreshed stat data and unchanged ids, when the next probe runs, then the index is read once, no worktree file is hashed, and the result equals `snapshot()`
+- [x] Given `git add` of 3 files, when the next probe runs, then exactly the entries whose id, mode, flags or stage changed are re-evaluated, and the staged half is recomputed through `staged.rs`
+- [x] Given `git commit` (HEAD moves and the index is rewritten), then the staged half is recomputed against the new HEAD tree, worktree verdicts carry over, and the result equals `snapshot()`
+- [x] Given `git checkout` of another branch, when more than 10 % of the index entries changed or the feed reported a loss, then the probe re-baselines instead of splicing
+- [x] Given a change of index format (split index, sparse index) or of skip-worktree flags, then the probe re-baselines
+- [x] Given a conflicted merge (stages 1 to 3), then the conflict kinds equal the full snapshot's
 
 #### US-010: Differential test against the full snapshot on every leg
 **Description:** As the maintainer, I want a seeded random test that applies real operations between probes and compares the monitor's snapshot with a fresh full one after each step, so that a stale-status bug fails CI on the platform that has it.
@@ -267,12 +267,12 @@ A vendored `gix-notify` watcher covers one worktree and its git directories, ref
 **Dependencies:** Blocked by US-007, US-008
 
 **Acceptance Criteria:**
-- [ ] Given 24 seeded scenarios of 12 operations drawn from: edit, same-size rewrite, delete, create file, create nested directory, rename file, rename directory, case-only rename, chmod, symlink swap, `.gitignore` edit, `git add`, `git rm --cached`, `git commit`, `git checkout` of another branch, submodule edit, and write inside an ignored directory, when each step is followed by a fenced probe (Linux, macOS), then the monitor's snapshot equals `snapshot()` field by field
-- [ ] Given Windows, when each step is followed by converging probes, then the monitor's snapshot equals `snapshot()` within a deadline of 10 s, and the test fails if it does not
-- [ ] Given an injected loss (a forced overflow, a replaced root), then the next probe re-baselines and still equals `snapshot()`
-- [ ] Given a same-size rewrite within the second of the index's mtime (a racy entry), then the monitor's verdict equals the full snapshot's
-- [ ] Given a mismatch, then the failure names the seed, the step, the operation and the differing paths
-- [ ] Given the PR's CI run, then its JUnit reports show the test ran on the Linux, macOS and Windows legs
+- [x] Given 24 seeded scenarios of 12 operations drawn from: edit, same-size rewrite, delete, create file, create nested directory, rename file, rename directory, case-only rename, chmod, symlink swap, `.gitignore` edit, `git add`, `git rm --cached`, `git commit`, `git checkout` of another branch, submodule edit, and write inside an ignored directory, when each step is followed by a fenced probe (Linux, macOS), then the monitor's snapshot equals `snapshot()` field by field
+- [x] Given Windows, when each step is followed by converging probes, then the monitor's snapshot equals `snapshot()` within a deadline of 10 s, and the test fails if it does not
+- [x] Given an injected loss (a forced overflow, a replaced root), then the next probe re-baselines and still equals `snapshot()`
+- [x] Given a same-size rewrite within the second of the index's mtime (a racy entry), then the monitor's verdict equals the full snapshot's
+- [x] Given a mismatch, then the failure names the seed, the step, the operation and the differing paths
+- [x] Given the PR's CI run, then its JUnit reports show the test ran on the Linux, macOS and Windows legs
 
 ---
 
