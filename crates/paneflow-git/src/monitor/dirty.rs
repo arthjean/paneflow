@@ -11,11 +11,14 @@ use crate::snapshot::Worktree;
 
 const DOT_GIT: &[u8] = b".git";
 
+const INDEX_FILES: [&str; 2] = ["index", "index.lock"];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Pending {
     pub(crate) paths: BTreeMap<Vec<u8>, bool>,
     pub(crate) loss: Option<Loss>,
     pub(crate) foreign_git_dirs: bool,
+    pub(crate) index_written: bool,
 }
 
 impl Pending {
@@ -28,6 +31,11 @@ impl Pending {
                 Origin::GitDir => {
                     if !own_git_dirs.contains(&change.root) {
                         self.foreign_git_dirs = true;
+                    } else if INDEX_FILES
+                        .iter()
+                        .any(|name| change.relative == Path::new(name))
+                    {
+                        self.index_written = true;
                     }
                 }
                 Origin::Worktree => {

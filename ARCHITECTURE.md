@@ -524,7 +524,12 @@ the diff dock and `is_clean` (EP-005) run on it.
   its entries, more than 256 paths to walk, or a worktree-dependent sparse
   checkout (`core.sparseCheckout` without
   `sparse.expectFilesOutsideOfPatterns`, which always takes `snapshot()`).
-  Otherwise it re-checks only the index entries the events or the index carry
+  The index is re-read when its stat or trailing checksum changed, and also
+  when the feed names `index` or `index.lock` and the trailer holds no
+  checksum: with `index.skipHash` (which `feature.manyFiles` turns on) a
+  same-size rewrite within one timestamp tick keeps the stat of a Windows
+  file, which has no inode or ctime to tell the two apart.
+  When nothing forces a re-baseline, it re-checks only the index entries the events or the index carry
   named, by feeding a sub-index of them to the same gix status, and walks only
   the paths no tracked file explains, through `Repository::dirwalk` with
   `:(top,literal)` pathspecs. The 2026-11-08 spike on rust-lang/rust (64,264

@@ -364,7 +364,9 @@ impl Monitor {
         }
         let index_stamp = IndexStamp::read(model.index.path());
         let mut index_read = false;
-        let (index, carried, format) = if index_stamp == model.index_stamp {
+        let unchanged = index_stamp == model.index_stamp
+            && (index_stamp.vouches_for_content() || !self.pending.index_written);
+        let (index, carried, format) = if unchanged {
             (Arc::clone(&model.index), Carried::default(), model.format)
         } else {
             index_read = true;
