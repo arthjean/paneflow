@@ -20,6 +20,21 @@ pub(crate) fn discover(path: &Path, thread_limit: usize) -> Result<gix::Reposito
     into_worktree_repository(path, repo, thread_limit)
 }
 
+pub(crate) fn discover_with_config(
+    path: &Path,
+    thread_limit: usize,
+) -> Result<(gix::Repository, Vec<u8>), Error> {
+    let repo = gix::ThreadSafeRepository::discover_opts(
+        path,
+        upwards::Options::default(),
+        open_options_by_trust(),
+    )
+    .map_err(|error| classify_discovery_error(path, error))?
+    .to_thread_local();
+    let config = repo.config_snapshot().plumbing().to_bstring().into();
+    Ok((into_worktree_repository(path, repo, thread_limit)?, config))
+}
+
 pub(crate) fn submodule(work_dir: &Path, thread_limit: usize) -> Result<gix::Repository, Error> {
     let repo = gix::ThreadSafeRepository::open_opts(work_dir, open_options())
         .map_err(|error| Error::git("open the submodule repository", error))?

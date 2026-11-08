@@ -48,7 +48,7 @@ impl Default for FeedOptions {
             cache_dir: None,
             max_events: MAX_QUEUED_EVENTS,
             max_bytes: MAX_QUEUED_BYTES,
-            thread_limit: crate::DEFAULT_THREAD_LIMIT,
+            thread_limit: crate::PLATFORM_CAP,
             watch_limit: None,
         }
     }
@@ -257,6 +257,10 @@ impl ChangeFeed {
 
     pub fn set_waker(&mut self, wake: impl Fn() + Send + Sync + 'static) {
         self.watcher.set_waker(wake);
+    }
+
+    pub fn invalidate_coverage(&mut self) {
+        self.stale = true;
     }
 
     pub fn drain(&mut self) -> Batch {
