@@ -32,15 +32,34 @@ pub fn with_snapshot<T>(
     let interrupt = options.interrupt.clone().unwrap_or_default();
     let lease = threads::PROBES.enter(threads::budget());
     let share = lease.share();
-    let result = open::discover(path, options.threads.before_index(share)).and_then(|repo| {
-        let prefix = prefix(path, &repo)?;
-        let snapshot = collect(&repo, options, &interrupt, share)?;
-        read(Snapshot { prefix, ..snapshot }, &Objects::new(&repo))
-    });
+    let result = discover_and_collect(path, options, &interrupt, share)
+        .and_then(|(snapshot, repo)| read(snapshot, &Objects::new(&repo)));
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
     result
+}
+
+pub(crate) fn full(path: &Path, options: &Options) -> Result<(Snapshot, gix::Repository), Error> {
+    let interrupt = options.interrupt.clone().unwrap_or_default();
+    let lease = threads::PROBES.enter(threads::budget());
+    let result = discover_and_collect(path, options, &interrupt, lease.share());
+    if interrupt.load(Ordering::Relaxed) {
+        return Err(Error::Interrupted);
+    }
+    result
+}
+
+fn discover_and_collect(
+    path: &Path,
+    options: &Options,
+    interrupt: &Arc<AtomicBool>,
+    share: usize,
+) -> Result<(Snapshot, gix::Repository), Error> {
+    let repo = open::discover(path, options.threads.before_index(share))?;
+    let prefix = prefix(path, &repo)?;
+    let snapshot = collect(&repo, options, interrupt, share)?;
+    Ok((Snapshot { prefix, ..snapshot }, repo))
 }
 
 pub(crate) type Entries = BTreeMap<Vec<u8>, Entry>;

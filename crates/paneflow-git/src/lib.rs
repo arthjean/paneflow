@@ -24,7 +24,9 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-pub use monitor::{Monitor, ProbeKind, ProbeReport, Reason};
+pub use monitor::{
+    worktree_root, Freshness, Monitor, ProbeKind, ProbeReport, Probed, Reason, FENCE_TIMEOUT,
+};
 pub use objects::{Header, Objects};
 pub use snapshot::{snapshot, with_snapshot};
 pub use threads::{Threads, ENTRIES_PER_THREAD, PLATFORM_CAP};
