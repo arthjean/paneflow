@@ -14,6 +14,7 @@ mod submodule;
 #[cfg(feature = "oracle")]
 #[path = "../tests/support/mod.rs"]
 pub mod support;
+mod threads;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,12 +23,9 @@ use std::sync::Arc;
 
 pub use objects::{Header, Objects};
 pub use snapshot::{snapshot, with_snapshot};
-
-pub const DEFAULT_THREAD_LIMIT: usize = 2;
+pub use threads::{Threads, ENTRIES_PER_THREAD, PLATFORM_CAP};
 
 pub const DEFAULT_ENTRY_CAP: usize = 100_000;
-
-pub const DEFAULT_INDEX_ENTRY_THRESHOLD: Option<u32> = Some(30_000);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Untracked {
@@ -44,7 +42,7 @@ pub enum Submodules {
 
 #[derive(Clone, Debug)]
 pub struct Options {
-    pub thread_limit: usize,
+    pub threads: Threads,
     pub untracked: Untracked,
     pub submodules: Submodules,
     pub entry_cap: usize,
@@ -56,7 +54,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            thread_limit: DEFAULT_THREAD_LIMIT,
+            threads: Threads::Scheduled,
             untracked: Untracked::Files,
             submodules: Submodules::Check,
             entry_cap: DEFAULT_ENTRY_CAP,

@@ -41,6 +41,11 @@ pub use index_as_worktree::function::index_as_worktree;
 pub(crate) mod fscache;
 
 #[cfg(feature = "worktree-rewrites")]
+pub(crate) type SharedListing = std::sync::Arc<gix_dir::walk::Listing>;
+#[cfg(not(feature = "worktree-rewrites"))]
+pub(crate) enum SharedListing {}
+
+#[cfg(feature = "worktree-rewrites")]
 pub mod index_as_worktree_with_renames;
 #[cfg(feature = "worktree-rewrites")]
 pub use index_as_worktree_with_renames::function::index_as_worktree_with_renames;

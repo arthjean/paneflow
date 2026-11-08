@@ -85,7 +85,7 @@ fn an_unknown_mandatory_index_extension_fails_gix_and_the_selector_answers_with_
         oracle::cli_records(&root, Probe::Files).expect_err("git refuses the unknown extension");
     assert!(cli_error.contains("zzzz"), "{cli_error}");
 
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let answer = selector.run(
         engine::Probe::FilesStatus,
         &root,

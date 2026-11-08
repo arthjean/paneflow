@@ -13,8 +13,8 @@ use gix::status::{Item, Submodule, UntrackedFiles};
 use gix::submodule::config::Ignore;
 
 use crate::{
-    open, sparse, submodule, Conflict, Entry, Error, Head, IndexChange, Objects, Options, Sides,
-    Snapshot, Stored, Submodules, Untracked, WorktreeChange,
+    open, sparse, submodule, threads, Conflict, Entry, Error, Head, IndexChange, Objects, Options,
+    Sides, Snapshot, Stored, Submodules, Untracked, WorktreeChange,
 };
 
 pub fn snapshot(path: &Path, options: &Options) -> Result<Snapshot, Error> {
@@ -27,9 +27,11 @@ pub fn with_snapshot<T>(
     read: impl FnOnce(Snapshot, &Objects<'_>) -> Result<T, Error>,
 ) -> Result<T, Error> {
     let interrupt = options.interrupt.clone().unwrap_or_default();
-    let result = open::discover(path, options.thread_limit).and_then(|repo| {
+    let lease = threads::PROBES.enter(threads::budget());
+    let share = lease.share();
+    let result = open::discover(path, options.threads.before_index(share)).and_then(|repo| {
         let prefix = prefix(path, &repo)?;
-        let snapshot = collect(&repo, options, &interrupt)?;
+        let snapshot = collect(&repo, options, &interrupt, share)?;
         read(Snapshot { prefix, ..snapshot }, &Objects::new(&repo))
     });
     if interrupt.load(Ordering::Relaxed) {
@@ -76,22 +78,23 @@ pub(crate) fn collect(
     repo: &gix::Repository,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
+    share: usize,
 ) -> Result<Snapshot, Error> {
     let base_tree = options
         .base
         .as_deref()
         .map(|base| base_tree(repo, base))
         .transpose()?;
-    let head = match base_tree {
-        Some(tree) => Head::Tree(tree.to_string()),
-        None => head(repo)?,
+    let compared_tree = match base_tree {
+        Some(tree) => Some(tree),
+        None => head_tree(repo)?,
     };
+    let head = compared_tree.map_or(Head::Unborn, |tree| Head::Tree(tree.to_string()));
     let stat_options = repo
         .stat_options()
         .map_err(|error| Error::git("read the stat options", error))?;
     let mut entries = Entries::new();
     let mut sides = SideMap::new();
-    let thread_limit = options.thread_limit.max(1);
     let mut status = repo
         .status(gix::progress::Discard)
         .map_err(|error| Error::git("prepare the status", error))?;
@@ -101,8 +104,11 @@ pub(crate) fn collect(
     let dirwalk = repo
         .dirwalk_options()
         .map_err(|error| Error::git("prepare the directory walk", error))?;
+    let index = sparse::index_for_status(repo)?;
+    let thread_limit = options.threads.for_entries(share, index.entries().len());
+    let nothing_staged = compared_tree.is_some_and(|tree| index_matches_tree(&index, tree));
     let status = status
-        .index(sparse::index_for_status(repo)?)
+        .index(index)
         .index_worktree_options_mut(|worktree| worktree.dirwalk_options = Some(dirwalk))
         .untracked_files(match options.untracked {
             Untracked::Files => UntrackedFiles::Files,
@@ -116,18 +122,28 @@ pub(crate) fn collect(
         .tree_index_track_renames(TrackRenames::Disabled)
         .index_worktree_options_mut(|worktree| worktree.thread_limit = Some(thread_limit))
         .should_interrupt_owned(Arc::clone(interrupt));
-    let mut items = status
-        .into_iter(Vec::<BString>::new())
-        .map_err(|error| Error::git("start the status", error))?;
-    for item in items.by_ref() {
-        let item = item.map_err(|error| Error::git("compute the status", error))?;
-        record(&mut entries, &mut sides, item);
-    }
+    let outcome = if nothing_staged {
+        let mut items = status
+            .into_index_worktree_iter(Vec::<BString>::new())
+            .map_err(|error| Error::git("start the status", error))?;
+        record_all(
+            items.by_ref().map(|item| item.map(Item::IndexWorktree)),
+            &mut entries,
+            &mut sides,
+        )?;
+        items.into_outcome()
+    } else {
+        let mut items = status
+            .into_iter(Vec::<BString>::new())
+            .map_err(|error| Error::git("start the status", error))?;
+        record_all(items.by_ref(), &mut entries, &mut sides)?;
+        items.into_outcome()
+    };
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
     if options.stat_dirty {
-        if let Some(outcome) = items.into_outcome().filter(|outcome| outcome.has_changes()) {
+        if let Some(outcome) = outcome.filter(|outcome| outcome.has_changes()) {
             record_stat_dirty(
                 repo,
                 &outcome.worktree_index,
@@ -140,7 +156,7 @@ pub(crate) fn collect(
     let submodules_opened = match options.submodules {
         Submodules::Ignore => 0,
         Submodules::Check | Submodules::CheckAll => {
-            submodule::record(repo, options, interrupt, &mut entries, &mut sides)?
+            submodule::record(repo, options, interrupt, share, &mut entries, &mut sides)?
         }
     };
     for entry in entries.values_mut() {
@@ -251,17 +267,35 @@ fn base_tree(repo: &gix::Repository, base: &str) -> Result<gix::ObjectId, Error>
     Ok(tree.id)
 }
 
-fn head(repo: &gix::Repository) -> Result<Head, Error> {
+fn head_tree(repo: &gix::Repository) -> Result<Option<gix::ObjectId>, Error> {
     let head = repo
         .head()
         .map_err(|error| Error::git("read HEAD", error))?;
     if head.is_unborn() {
-        return Ok(Head::Unborn);
+        return Ok(None);
     }
     let tree = repo
         .head_tree_id()
         .map_err(|error| Error::git("read the HEAD tree", error))?;
-    Ok(Head::Tree(tree.to_string()))
+    Ok(Some(tree.detach()))
+}
+
+fn index_matches_tree(index: &gix::index::State, tree: gix::ObjectId) -> bool {
+    index
+        .tree()
+        .is_some_and(|root| root.num_entries.is_some() && root.id == tree)
+}
+
+fn record_all<E: std::fmt::Display>(
+    items: impl Iterator<Item = Result<Item, E>>,
+    entries: &mut Entries,
+    sides: &mut SideMap,
+) -> Result<(), Error> {
+    for item in items {
+        let item = item.map_err(|error| Error::git("compute the status", error))?;
+        record(entries, sides, item);
+    }
+    Ok(())
 }
 
 pub(crate) fn entry<'a>(entries: &'a mut Entries, path: &[u8]) -> &'a mut Entry {

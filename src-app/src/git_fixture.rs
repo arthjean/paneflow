@@ -80,6 +80,24 @@ pub(crate) fn run(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+pub(crate) fn run_feeding(cwd: &Path, args: &[&str], stdin: Vec<u8>) -> String {
+    let (out, _) = paneflow_process::run_with_timeout_feeding_stdin_keeping_stdout_head(
+        command(cwd, args),
+        stdin,
+        FIXTURE_DEADLINE,
+        FIXTURE_STDOUT_CAP,
+    )
+    .unwrap_or_else(|error| panic!("git {args:?} in {} failed: {error}", cwd.display()));
+    assert!(
+        out.status.success(),
+        "git {args:?} in {} exited with {}: {}",
+        cwd.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 pub(crate) fn init(root: &Path) {
     init_with(root, &[]);
 }

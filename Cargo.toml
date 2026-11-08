@@ -102,8 +102,12 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 # Not a GPUI fork: portable-pty 0.9.0 with an atomic O_CLOEXEC openpty, see
 # vendor/portable-pty/Cargo.toml.
 portable-pty = { path = "vendor/portable-pty" }
-# gix-status 0.37.0 with the short-read fix, see vendor/gix-status/Cargo.toml.
+# gix-status 0.37.0 with the short-read fix and the shared Windows directory listing,
+# see vendor/gix-status/Cargo.toml.
 gix-status = { path = "vendor/gix-status" }
+# gix-dir 0.32.0 with a walk that reuses prefetched directory listings, see
+# vendor/gix-dir/Cargo.toml.
+gix-dir = { path = "vendor/gix-dir" }
 
 # The worker hashes its own executable for its build id; an unoptimized sha2
 # takes ~18 s on the debug binary and misses the 10 s worker startup window.

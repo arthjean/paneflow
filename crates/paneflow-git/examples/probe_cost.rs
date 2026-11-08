@@ -119,7 +119,7 @@ fn cli_probe(repository: &Path) -> Result<Sample, String> {
 
 fn gix_probe(repository: &Path, threads: usize) -> Result<Sample, String> {
     let options = Options {
-        thread_limit: threads,
+        threads: paneflow_git::Threads::Fixed(threads),
         ..Options::default()
     };
     let cpu_before = process::self_cpu();
