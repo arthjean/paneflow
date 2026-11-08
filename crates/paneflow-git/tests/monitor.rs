@@ -562,6 +562,43 @@ fn git_add_of_three_files_rechecks_exactly_those_entries() {
 }
 
 #[test]
+fn a_skip_hash_index_rewritten_with_the_same_size_and_mtime_is_still_read() {
+    let fixture = fixture();
+    git(&fixture.root, &["config", "index.skipHash", "true"]);
+    git(&fixture.root, &["rm", "-q", "--cached", "top.txt"]);
+    git(&fixture.root, &["add", "top.txt"]);
+    let index = fixture.root.join(".git").join("index");
+    let bytes = std::fs::read(&index).expect("read the index");
+    assert!(
+        bytes[bytes.len() - 20..].iter().all(|byte| *byte == 0),
+        "index.skipHash leaves a zero trailer"
+    );
+    let mut monitor = baselined(&fixture);
+    write(&fixture.root, "dir0/file0.txt", b"CONTENT 0\n");
+    git(&fixture.root, &["add", "dir0/file0.txt"]);
+    write(&fixture.root, "dir0/file0.txt", b"Content 0\n");
+    settled(&mut monitor, &Options::default());
+    let before = std::fs::metadata(&index).expect("index metadata");
+    git(&fixture.root, &["add", "dir0/file0.txt"]);
+    std::fs::File::options()
+        .write(true)
+        .open(&index)
+        .and_then(|file| file.set_modified(before.modified()?))
+        .expect("give the rewritten index the previous mtime");
+    assert_eq!(
+        std::fs::metadata(&index).expect("index metadata").len(),
+        before.len(),
+        "staging a same-size edit keeps the index size"
+    );
+    let after = settled(&mut monitor, &Options::default());
+    assert_eq!(
+        change_of(after.snapshot.as_ref().unwrap(), "dir0/file0.txt")
+            .map(|entry| (entry.head_to_index, entry.index_to_worktree)),
+        Some((Some(IndexChange::Modified), None))
+    );
+}
+
+#[test]
 fn git_commit_recomputes_the_staged_half_and_carries_worktree_verdicts() {
     let fixture = fixture();
     let mut monitor = baselined(&fixture);

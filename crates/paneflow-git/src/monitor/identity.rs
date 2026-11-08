@@ -12,6 +12,7 @@ const IGNORE_FILE: &[u8] = b".gitignore";
 const ATTRIBUTES_FILE: &[u8] = b".gitattributes";
 const GITMODULES: &str = ".gitmodules";
 const TRAILER_BYTES: i64 = 32;
+const CHECKSUM_BYTES: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Input {
@@ -66,6 +67,13 @@ impl IndexStamp {
         let file = stamp(path);
         let trailer = trailer(path).unwrap_or_default();
         Self { file, trailer }
+    }
+
+    pub(crate) fn vouches_for_content(&self) -> bool {
+        self.trailer.len() >= CHECKSUM_BYTES
+            && self.trailer[self.trailer.len() - CHECKSUM_BYTES..]
+                .iter()
+                .any(|byte| *byte != 0)
     }
 }
 
