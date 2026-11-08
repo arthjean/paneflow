@@ -1,12 +1,13 @@
 mod carry;
 mod dirty;
 mod identity;
+mod setting;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gix::bstr::{BString, ByteSlice};
 use gix::dir::walk::EmissionMode;
@@ -14,16 +15,19 @@ use gix::worktree::IndexPersistedOrInMemory;
 use gix::ObjectId;
 
 pub use identity::Input;
+pub use setting::{
+    monitor_enabled, parse_monitor_setting, MonitorSetting, ACCEPTED_MONITOR_VALUES, MONITOR_ENV,
+};
 
 use crate::feed::{ChangeFeed, FeedOptions, FenceError, Ineligible, Loss};
 use crate::snapshot::{
-    assemble, compared_tree, head_of, prefix, record_dirwalk_entry, stat_mismatches, worktree_pass,
-    Parts, StatDirty, Worktree, WorktreeWork,
+    assemble, compared_tree, full, head_of, prefix, record_dirwalk_entry, stat_mismatches,
+    worktree_pass, Parts, StatDirty, Worktree, WorktreeWork,
 };
 use crate::sparse::{self, IndexFormat};
 use crate::staged::{self, Staged};
 use crate::submodule::{self, SubmoduleResult};
-use crate::{open, snapshot, threads, Error, Options, Snapshot, Submodules, Untracked};
+use crate::{open, threads, Error, Objects, Options, Snapshot, Submodules, Untracked};
 use carry::{carry, Carried, Refused};
 use dirty::{Pending, Plan, Planner, Unplannable};
 use identity::{IndexStamp, Inputs};
@@ -33,6 +37,14 @@ pub const DIRTY_WALK_LIMIT: usize = 256;
 pub const DIRTY_RECHECK_FLOOR: usize = 1024;
 
 const STAGED_CACHE_LIMIT: usize = 4;
+
+pub const FENCE_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Freshness {
+    Fenced,
+    Converging,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -54,6 +66,17 @@ pub enum ProbeKind {
     Baseline(Reason),
     Full(Ineligible),
     WorktreeDependentIndex,
+    MonitorError(String),
+    Disabled,
+}
+
+impl ProbeKind {
+    pub fn fell_back(&self) -> bool {
+        matches!(
+            self,
+            ProbeKind::Full(_) | ProbeKind::WorktreeDependentIndex | ProbeKind::MonitorError(_)
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,8 +145,49 @@ impl SubmodulesKey {
 }
 
 enum Step {
-    Done(Snapshot),
+    Done(Snapshot, Box<gix::Repository>),
     Rebaseline(Reason),
+}
+
+enum Answer {
+    Modeled(Snapshot, Box<gix::Repository>),
+    Full,
+}
+
+pub struct Probed {
+    snapshot: Snapshot,
+    repo: Box<gix::Repository>,
+}
+
+impl std::fmt::Debug for Probed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Probed")
+            .field("snapshot", &self.snapshot)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Probed {
+    pub fn snapshot(&self) -> &Snapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> Snapshot {
+        self.snapshot
+    }
+
+    pub fn read<T>(
+        self,
+        read: impl FnOnce(Snapshot, &Objects<'_>) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        read(self.snapshot, &Objects::new(&self.repo))
+    }
+}
+
+pub fn worktree_root(path: &Path) -> Option<PathBuf> {
+    let (location, _trust) = gix::discover::upwards(path).ok()?;
+    let (_git_dir, work_dir) = location.into_repository_and_work_tree_directories();
+    std::path::absolute(work_dir?).ok()
 }
 
 pub struct Monitor {
@@ -135,6 +199,7 @@ pub struct Monitor {
     model: Option<Model>,
     pending: Pending,
     report: ProbeReport,
+    enabled: bool,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -149,6 +214,10 @@ impl std::fmt::Debug for Monitor {
 
 impl Monitor {
     pub fn new(path: &Path, feed_options: FeedOptions) -> Self {
+        Self::configured(path, feed_options, monitor_enabled())
+    }
+
+    pub fn configured(path: &Path, feed_options: FeedOptions, enabled: bool) -> Self {
         Self {
             path: path.to_path_buf(),
             feed_options,
@@ -158,7 +227,12 @@ impl Monitor {
             model: None,
             pending: Pending::default(),
             report: ProbeReport::default(),
+            enabled,
         }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 
     pub fn path(&self) -> &Path {
@@ -193,7 +267,8 @@ impl Monitor {
     }
 
     pub fn snapshot(&mut self, options: &Options) -> Result<Snapshot, Error> {
-        self.probe(options, None)
+        let path = self.path.clone();
+        self.run(&path, options, None).map(Probed::into_snapshot)
     }
 
     pub fn fenced_snapshot(
@@ -201,23 +276,82 @@ impl Monitor {
         options: &Options,
         deadline: Instant,
     ) -> Result<Snapshot, Error> {
-        self.probe(options, Some(deadline))
+        let path = self.path.clone();
+        self.run(&path, options, Some(deadline))
+            .map(Probed::into_snapshot)
     }
 
-    fn probe(&mut self, options: &Options, deadline: Option<Instant>) -> Result<Snapshot, Error> {
+    pub fn probe(
+        &mut self,
+        cwd: &Path,
+        options: &Options,
+        freshness: Freshness,
+    ) -> Result<Probed, Error> {
+        let deadline = match freshness {
+            Freshness::Fenced => Some(Instant::now() + FENCE_TIMEOUT),
+            Freshness::Converging => None,
+        };
+        self.run(cwd, options, deadline)
+    }
+
+    fn run(
+        &mut self,
+        cwd: &Path,
+        options: &Options,
+        deadline: Option<Instant>,
+    ) -> Result<Probed, Error> {
+        if !self.enabled {
+            self.report = ProbeReport {
+                kind: ProbeKind::Disabled,
+                ..ProbeReport::default()
+            };
+            return full_at(cwd, options);
+        }
         let interrupted = options.interrupt.clone().unwrap_or_default();
         let result = self.probe_once(options, deadline);
         if interrupted.load(Ordering::Relaxed) {
             return Err(Error::Interrupted);
         }
-        result
+        let modeled = result.and_then(|answer| match answer {
+            Answer::Modeled(snapshot, repo) => {
+                let prefix = prefix(cwd, &repo)?;
+                Ok(Some(Probed {
+                    snapshot: Snapshot { prefix, ..snapshot },
+                    repo,
+                }))
+            }
+            Answer::Full => Ok(None),
+        });
+        match modeled {
+            Ok(Some(probed)) => Ok(probed),
+            Ok(None) => full_at(cwd, options),
+            Err(Error::Interrupted) => Err(Error::Interrupted),
+            Err(error) => {
+                log::warn!(
+                    "the incremental git status of {} failed, this probe takes a full snapshot and the monitor restarts: {error}",
+                    self.path.display()
+                );
+                self.reset();
+                self.report = ProbeReport {
+                    kind: ProbeKind::MonitorError(error.to_string()),
+                    ..ProbeReport::default()
+                };
+                full_at(cwd, options)
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.model = None;
+        self.pending = Pending::default();
+        self.feed = FeedState::Idle;
     }
 
     fn probe_once(
         &mut self,
         options: &Options,
         deadline: Option<Instant>,
-    ) -> Result<Snapshot, Error> {
+    ) -> Result<Answer, Error> {
         self.start_feed();
         let feed = match &mut self.feed {
             FeedState::Live(feed) => feed,
@@ -226,9 +360,9 @@ impl Monitor {
                     kind: ProbeKind::Full(reason.clone()),
                     ..ProbeReport::default()
                 };
-                return snapshot(&self.path, options);
+                return Ok(Answer::Full);
             }
-            FeedState::Idle => return snapshot(&self.path, options),
+            FeedState::Idle => return Ok(Answer::Full),
         };
         let fence_error = match deadline.map(|deadline| feed.fence(deadline)) {
             Some(Ok(batch)) => {
@@ -254,7 +388,7 @@ impl Monitor {
             return self.baseline(options, reason);
         }
         match self.incremental(options)? {
-            Step::Done(snapshot) => Ok(snapshot),
+            Step::Done(snapshot, repo) => Ok(Answer::Modeled(snapshot, repo)),
             Step::Rebaseline(reason) => self.baseline(options, reason),
         }
     }
@@ -276,7 +410,7 @@ impl Monitor {
         };
     }
 
-    fn baseline(&mut self, options: &Options, reason: Reason) -> Result<Snapshot, Error> {
+    fn baseline(&mut self, options: &Options, reason: Reason) -> Result<Answer, Error> {
         self.pending = Pending::default();
         self.model = None;
         let interrupt = options.interrupt.clone().unwrap_or_default();
@@ -292,7 +426,7 @@ impl Monitor {
                 kind: ProbeKind::WorktreeDependentIndex,
                 ..ProbeReport::default()
             };
-            return snapshot(&self.path, options);
+            return Ok(Answer::Full);
         }
         self.own_git_dirs = own_git_dirs(&repo);
         let index_stamp = IndexStamp::read(read.index.path());
@@ -345,7 +479,7 @@ impl Monitor {
             submodules_opened: snapshot.submodules_opened,
         };
         self.model = Some(model);
-        Ok(snapshot)
+        Ok(Answer::Modeled(snapshot, Box::new(repo)))
     }
 
     fn incremental(&mut self, options: &Options) -> Result<Step, Error> {
@@ -453,7 +587,7 @@ impl Monitor {
         };
         self.model = Some(next);
         self.pending = Pending::default();
-        Ok(Step::Done(snapshot))
+        Ok(Step::Done(snapshot, Box::new(repo)))
     }
 
     fn newly_tracked_under_ignored(&self, carried: &Carried) -> bool {
@@ -467,6 +601,13 @@ impl Monitor {
             })
         })
     }
+}
+
+fn full_at(cwd: &Path, options: &Options) -> Result<Probed, Error> {
+    full(cwd, options).map(|(snapshot, repo)| Probed {
+        snapshot,
+        repo: Box::new(repo),
+    })
 }
 
 fn refresh_coverage(feed: &mut FeedState) {
