@@ -290,11 +290,11 @@ The Files sidebar, the diff badge, the diff dock and `is_clean` probe through on
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given `Freshness::Fenced` on Linux or macOS, when the probe runs, then it fences through the marker directory before draining and answers incrementally, and a fence timeout of 500 ms or `CoverageLost` makes it take the full snapshot
-- [ ] Given `Freshness::Fenced` on Windows, then the probe takes the full snapshot (until EP-005)
-- [ ] Given `Freshness::Converging`, when the probe runs, then it drains without fencing and answers incrementally, and every event delivered after it wakes the consumer through the feed's waker
-- [ ] Given a converging consumer and a write whose event arrives after its probe, then the consumer shows the change within the p99 delivery latency measured in US-001 plus its own debounce
-- [ ] Given `PANEFLOW_GIT_MONITOR=off`, then every probe takes the full snapshot and no feed starts
+- [x] Given `Freshness::Fenced` on Linux or macOS, when the probe runs, then it fences through the marker directory before draining and answers incrementally, and a fence timeout of 500 ms or `CoverageLost` makes it take the full snapshot
+- [x] Given `Freshness::Fenced` on Windows, then the probe takes the full snapshot (until EP-005)
+- [x] Given `Freshness::Converging`, when the probe runs, then it drains without fencing and answers incrementally, and every event delivered after it wakes the consumer through the feed's waker
+- [x] Given a converging consumer and a write whose event arrives after its probe, then the consumer shows the change within the p99 delivery latency measured in US-001 plus its own debounce
+- [x] Given `PANEFLOW_GIT_MONITOR=off`, then every probe takes the full snapshot and no feed starts
 
 #### US-012: One monitor per worktree, and the Files sidebar on it
 **Description:** As a developer, I want the Files sidebar to read its status from the worktree's monitor, so that an agent's one-file edit costs milliseconds instead of a full scan.
@@ -304,11 +304,11 @@ The Files sidebar, the diff badge, the diff dock and `is_clean` probe through on
 **Dependencies:** Blocked by US-004, US-010, US-011
 
 **Acceptance Criteria:**
-- [ ] Given a registry in `src-app` keyed by the canonical worktree root, when the sidebar, the badge and the dock probe the same worktree, then they share one monitor and one feed
-- [ ] Given the files worker's dirty mark (`worker.rs:238`) and its 40 to 160 ms debounce, when an agent edits a tracked file, then the sidebar probes through the monitor with `Converging` and returns the same `GitStatuses` as before
-- [ ] Given an ineligible feed or a monitor error, then the sidebar falls back to `snapshot()` and then to the CLI exactly as today, and the engine counters record the reason under a new `Fallback` variant
-- [ ] Given the GPUI main thread, then no monitor call runs on it
-- [ ] Given the race harness (`src-app/src/git_race.rs`), then the sidebar scenarios still report 0 failed truncating writes on the Windows leg
+- [x] Given a registry in `src-app` keyed by the canonical worktree root, when the sidebar, the badge and the dock probe the same worktree, then they share one monitor and one feed
+- [x] Given the files worker's dirty mark (`worker.rs:238`) and its 40 to 160 ms debounce, when an agent edits a tracked file, then the sidebar probes through the monitor with `Converging` and returns the same `GitStatuses` as before
+- [x] Given an ineligible feed or a monitor error, then the sidebar falls back to `snapshot()` and then to the CLI exactly as today, and the engine counters record the reason under a new `Fallback` variant
+- [x] Given the GPUI main thread, then no monitor call runs on it
+- [x] Given the race harness (`src-app/src/git_race.rs`), then the sidebar scenarios still report 0 failed truncating writes on the Windows leg
 
 #### US-013: Diff badge, diff dock and is_clean on the monitor
 **Description:** As a user with several workspaces, I want the diff badge to follow worktree edits and the dock to build from one status, so that the badge is never 30 s behind a shown workspace and the dock never computes the same status twice.
@@ -318,11 +318,11 @@ The Files sidebar, the diff badge, the diff dock and `is_clean` probe through on
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given a shown workspace and an edit to a tracked file, when the feed's waker fires, then the badge re-probes through the monitor within its existing debounce (300 ms, capped at 2 s) instead of waiting for the 30 s poll
-- [ ] Given a dock build, then `compute_head_diff` and the dock's stats read one monitor snapshot instead of two
-- [ ] Given `is_clean` before a worktree removal, then it probes with `Fenced` through the monitor, and any error still refuses the removal
-- [ ] Given a hidden workspace whose monitor was evicted, then its badge keeps the 5-minute hidden poll and starts no feed
-- [ ] Given the public shapes `GitStatuses`, `GitDiffStats`, `WorktreeDiff`, `FileChange`, `GitSummary` and `TrackedSummary`, then none of them changes
+- [x] Given a shown workspace and an edit to a tracked file, when the feed's waker fires, then the badge re-probes through the monitor within its existing debounce (300 ms, capped at 2 s) instead of waiting for the 30 s poll
+- [x] Given a dock build, then `compute_head_diff` and the dock's stats read one monitor snapshot instead of two
+- [x] Given `is_clean` before a worktree removal, then it probes with `Fenced` through the monitor, and any error still refuses the removal
+- [x] Given a hidden workspace whose monitor was evicted, then its badge keeps the 5-minute hidden poll and starts no feed
+- [x] Given the public shapes `GitStatuses`, `GitDiffStats`, `WorktreeDiff`, `FileChange`, `GitSummary` and `TrackedSummary`, then none of them changes
 
 ---
 
