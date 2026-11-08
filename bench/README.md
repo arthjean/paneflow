@@ -897,7 +897,7 @@ Nested counters are addressed with dots, for example
 | desktop, `system.counters` | `git_spawns.total`, `.probe`, `.user_action`, `.by_subcommand.<name>` | git processes, by profile and subcommand (18 named, the rest under `other`), filter queries included | `git_command::record_spawn`, called before each spawn in `git_command::run`, `run_keeping_stdout_head`, `run_feeding_stdin_keeping_stdout_head`, the filter query, and the git clone |
 | desktop, `system.counters` | `process_spawns` | processes spawned through `paneflow-process` | `paneflow_process::run_supervised` and `spawn_detached` |
 | desktop, `system.counters` | `git_engine.probes.diff_stats.gix`, `.cli` | diff-stat probes, by the engine that answered | `paneflow_git::engine::Selector::run`, once per `GitDiffStats::from_cwd` that passed its deadline check |
-| desktop, `system.counters` | `git_engine.fallbacks.<reason>` (`reftable`, `object_format`, `error`, `forced`, `size_threshold`) | probes of any kind answered by the git CLI, by reason | `Selector::run`, before the CLI closure runs |
+| desktop, `system.counters` | `git_engine.fallbacks.<reason>` (`reftable`, `object_format`, `error`, `forced`, `entry_cap`) | probes of any kind answered by the git CLI, by reason | `Selector::run`, before the CLI closure runs |
 
 `system.counters` sits next to `system.identify` in the IPC server: same
 connection checks, served on the connection thread, listed in

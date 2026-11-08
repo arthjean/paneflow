@@ -1042,18 +1042,61 @@ fn a_truncating_agent_write_to_an_untracked_file_never_fails_while_the_diff_stat
 }
 
 #[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_a_large_repository() {
+    use crate::git_race::{Raced, Repository, Scenario, race_in};
+    let outcome = race_in(
+        Repository::Large,
+        Scenario::StatDirty,
+        Raced::Tracked,
+        diff_stats_probe_on_gix,
+    );
+    outcome.assert_no_failed_write();
+    assert!(
+        outcome.answers.iter().any(|stats| stats.files_changed == 1),
+        "a probe still sees the one rewritten file: {:?}",
+        outcome.answers
+    );
+}
+
+fn diff_stats_probe_on_gix(root: &Path) -> Result<crate::workspace::GitDiffStats, String> {
+    let before = git_spawns_on_this_thread();
+    let stats = diff_stats_probe(root)?;
+    match git_spawns_on_this_thread() - before {
+        0 => Ok(stats),
+        spawned => Err(format!(
+            "the diff stats probe ran on the git CLI and spawned {spawned} git processes"
+        )),
+    }
+}
+
+#[test]
 fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window() {
-    use crate::git_race::{Raced, Scenario, race};
-    let outcome = race(Scenario::RacyWindow, Raced::Tracked, |root: &Path| {
-        let before = git_spawns_on_this_thread();
-        let stats = diff_stats_probe(root)?;
-        match git_spawns_on_this_thread() - before {
-            0 => Ok(stats),
-            spawned => Err(format!(
-                "the diff stats probe ran on the git CLI and spawned {spawned} git processes"
-            )),
-        }
-    });
+    assert_the_racy_diff_stats_race_never_fails_a_write(crate::git_race::Repository::Small);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window_in_a_large_repository()
+ {
+    assert_the_racy_diff_stats_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+fn assert_the_racy_diff_stats_race_never_fails_a_write(repository: crate::git_race::Repository) {
+    use crate::git_race::{Raced, Scenario, race_in};
+    let outcome = race_in(
+        repository,
+        Scenario::RacyWindow,
+        Raced::Tracked,
+        |root: &Path| {
+            let before = git_spawns_on_this_thread();
+            let stats = diff_stats_probe(root)?;
+            match git_spawns_on_this_thread() - before {
+                0 => Ok(stats),
+                spawned => Err(format!(
+                    "the diff stats probe ran on the git CLI and spawned {spawned} git processes"
+                )),
+            }
+        },
+    );
     outcome.assert_no_failed_write();
     assert!(outcome.probes > 0, "{}", outcome.summary());
     assert!(
@@ -1065,22 +1108,36 @@ fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_r
 
 #[test]
 fn a_truncating_agent_write_never_fails_while_the_clean_check_runs() {
-    use crate::git_race::{Raced, Scenario, race};
+    assert_the_clean_check_race_never_fails_a_write(crate::git_race::Repository::Small);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_clean_check_runs_in_a_large_repository() {
+    assert_the_clean_check_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+fn assert_the_clean_check_race_never_fails_a_write(repository: crate::git_race::Repository) {
+    use crate::git_race::{Raced, Scenario, race_in};
     assert_eq!(
         paneflow_git::engine::Selector::global().preferred(),
         paneflow_git::engine::Engine::Gix,
         "run the clean check race without PANEFLOW_GIT_ENGINE=cli"
     );
-    let outcome = race(Scenario::StatDirty, Raced::Tracked, |root: &Path| {
-        let before = git_spawns_on_this_thread();
-        let clean = crate::workspace::worktree::is_clean(root)?;
-        match git_spawns_on_this_thread() - before {
-            0 => Ok(clean),
-            spawned => Err(format!(
-                "the clean check ran on the git CLI and spawned {spawned} git processes"
-            )),
-        }
-    });
+    let outcome = race_in(
+        repository,
+        Scenario::StatDirty,
+        Raced::Tracked,
+        |root: &Path| {
+            let before = git_spawns_on_this_thread();
+            let clean = crate::workspace::worktree::is_clean(root)?;
+            match git_spawns_on_this_thread() - before {
+                0 => Ok(clean),
+                spawned => Err(format!(
+                    "the clean check ran on the git CLI and spawned {spawned} git processes"
+                )),
+            }
+        },
+    );
     outcome.assert_no_failed_write();
     assert!(
         outcome.answers.iter().any(|clean| !clean),
@@ -1091,29 +1148,44 @@ fn a_truncating_agent_write_never_fails_while_the_clean_check_runs() {
 
 #[test]
 fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window() {
-    use crate::git_race::{RACED_FILE, Raced, Scenario, race};
+    assert_the_racy_dock_listing_race_never_fails_a_write(crate::git_race::Repository::Small);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window_in_a_large_repository()
+ {
+    assert_the_racy_dock_listing_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+fn assert_the_racy_dock_listing_race_never_fails_a_write(repository: crate::git_race::Repository) {
+    use crate::git_race::{RACED_FILE, Raced, Scenario, race_in};
     assert_eq!(
         paneflow_git::engine::Selector::global().preferred(),
         paneflow_git::engine::Engine::Gix,
         "run the dock listing race without PANEFLOW_GIT_ENGINE=cli"
     );
-    let outcome = race(Scenario::RacyWindow, Raced::Tracked, |root: &Path| {
-        let before = git_spawns_on_this_thread();
-        let diff = crate::diff::compute_head_diff(root, crate::diff::DiffOptions::default());
-        if let Some(error) = diff.error {
-            return Err(format!("the dock listing failed: {error}"));
-        }
-        match git_spawns_on_this_thread() - before {
-            0 => Ok(diff
-                .files
-                .iter()
-                .map(|file| (file.change, file.path.clone()))
-                .collect::<Vec<_>>()),
-            spawned => Err(format!(
-                "the dock listing ran on the git CLI and spawned {spawned} git processes"
-            )),
-        }
-    });
+    let outcome = race_in(
+        repository,
+        Scenario::RacyWindow,
+        Raced::Tracked,
+        |root: &Path| {
+            let before = git_spawns_on_this_thread();
+            let diff = crate::diff::compute_head_diff(root, crate::diff::DiffOptions::default());
+            if let Some(error) = diff.error {
+                return Err(format!("the dock listing failed: {error}"));
+            }
+            match git_spawns_on_this_thread() - before {
+                0 => Ok(diff
+                    .files
+                    .iter()
+                    .map(|file| (file.change, file.path.clone()))
+                    .collect::<Vec<_>>()),
+                spawned => Err(format!(
+                    "the dock listing ran on the git CLI and spawned {spawned} git processes"
+                )),
+            }
+        },
+    );
     outcome.assert_no_failed_write();
     assert!(outcome.probes > 0, "{}", outcome.summary());
     assert!(

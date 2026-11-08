@@ -1,12 +1,17 @@
 # gix-status 0.37.0 from crates.io (GitoxideLabs/gitoxide dd39fb66e3b1551c9fe849043e39b357a9799ca1,
-# path gix-status/), applied through the root `[patch.crates-io]`. The only change to
-# the published sources is in src/index_as_worktree/traits.rs, from arthjean/gitoxide
+# path gix-status/), applied through the root `[patch.crates-io]`, with two changes to the
+# published sources. First, in src/index_as_worktree/traits.rs, from arthjean/gitoxide
 # 6eb1980e2 and ac15bc058: when a worktree file shrinks while it is hashed, `FastEq`
 # reports it modified and `HashEq` hashes it again with its current size, up to three
 # times, instead of failing the whole status with "failed to fill whole buffer"
 # (https://github.com/arthjean/paneflow/issues/130,
-# https://github.com/GitoxideLabs/gitoxide/pull/3161). The published dev-dependencies
-# are left out. Drop this copy at the first gix-status release that contains the fix.
+# https://github.com/GitoxideLabs/gitoxide/pull/3161). Second, on Windows with
+# `core.fsCache`, `index_as_worktree_with_renames` reads every directory that holds index
+# entries once, in parallel, into a `gix_dir::walk::Listing` that both the tracked-file pass
+# (src/fscache.rs) and the untracked walk (the vendored gix-dir) read from, instead of the
+# walk reading every directory again on one thread
+# (https://github.com/arthjean/paneflow/issues/134). The published dev-dependencies are
+# left out. Drop this copy once a gix-status release contains both changes.
 
 [package]
 edition = "2024"

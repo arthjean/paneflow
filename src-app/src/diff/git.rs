@@ -1243,7 +1243,7 @@ mod tests {
             std::fs::write(root.join(name), "one\ntwo\n").unwrap();
         }
 
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
         let before = git_spawns_on_this_thread();
         let gix = compute_head_diff_through(
             &selector,
@@ -1264,7 +1264,7 @@ mod tests {
         assert_eq!(gix.files.len(), 200);
         assert!(gix.files.iter().all(|file| file.base_text == "one\n"));
 
-        let selector = Selector::new(Engine::Cli, None);
+        let selector = Selector::new(Engine::Cli);
         let before = git_spawns_on_this_thread();
         let cli = compute_head_diff_through(
             &selector,
@@ -1295,7 +1295,7 @@ mod tests {
         bytes[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
         std::fs::write(&index, &bytes).unwrap();
 
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
         let diff = compute_head_diff_through(
             &selector,
             &paneflow_git::Options::dock_listing(),
@@ -1322,14 +1322,14 @@ mod tests {
             ..paneflow_git::Options::dock_listing()
         };
 
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
         for _ in 0..3 {
             let diff = compute_head_diff_through(&selector, &capped, root, DiffOptions::default());
             assert_eq!(dock_view(&diff), dock_view(&cli_dock(root)));
         }
         let counters = selector.counters();
         assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 3);
-        assert_eq!(counters.fallbacks(Fallback::SizeThreshold), 3);
+        assert_eq!(counters.fallbacks(Fallback::EntryCap), 3);
         assert_eq!(counters.fallbacks(Fallback::Error), 0);
         assert_eq!(
             counters.pinned_directories, 0,

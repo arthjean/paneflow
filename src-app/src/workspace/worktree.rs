@@ -2726,7 +2726,7 @@ mod tests {
         engine: paneflow_git::engine::Engine,
         path: &Path,
     ) -> (Result<bool, String>, paneflow_git::engine::Counters, u64) {
-        let selector = paneflow_git::engine::Selector::new(engine, None);
+        let selector = paneflow_git::engine::Selector::new(engine);
         let before = git_spawns_on_this_thread();
         let answer = is_clean_through(&selector, path, is_clean_with_gix);
         (
@@ -2872,7 +2872,7 @@ mod tests {
             },
         ];
         for failure in failures {
-            let selector = Selector::new(Engine::Gix, None);
+            let selector = Selector::new(Engine::Gix);
             let answer = is_clean_through(&selector, &repo_root, |_| failure());
             assert_eq!(answer, Ok(false), "the CLI answers the same call");
             let counters = selector.counters();
@@ -2884,14 +2884,14 @@ mod tests {
         let outside = tmp.path().join("not-a-repo");
         std::fs::create_dir_all(&outside).expect("plain dir");
         for failure in failures {
-            let selector = Selector::new(Engine::Gix, None);
+            let selector = Selector::new(Engine::Gix);
             let answer = is_clean_through(&selector, &outside, |_| failure());
             assert!(
                 answer.is_err(),
                 "both engines failed, so the check is an error: {answer:?}"
             );
         }
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
         assert!(is_clean_through(&selector, &outside, is_clean_with_gix).is_err());
     }
 

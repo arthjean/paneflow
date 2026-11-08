@@ -585,7 +585,7 @@ mod tests {
         let root = dir.path();
         committed_repo(root);
         std::fs::write(root.join("README.md"), "changed\n").expect("edit");
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
 
         let statuses = read_through(&selector, root, |_| {
             Err(paneflow_git::Error::Git {
@@ -620,7 +620,7 @@ mod tests {
             None,
             "the CLI sees no repository either"
         );
-        let selector = Selector::new(Engine::Gix, None);
+        let selector = Selector::new(Engine::Gix);
 
         let before = spawns_on_this_thread();
         let statuses = read_through(&selector, root, |root| {
@@ -643,7 +643,7 @@ mod tests {
         let root = dir.path();
         committed_repo(root);
         std::fs::write(root.join("README.md"), "changed\n").expect("edit");
-        let selector = Selector::new(Engine::Cli, None);
+        let selector = Selector::new(Engine::Cli);
         let asked_gix = std::cell::Cell::new(false);
 
         let before = spawns_on_this_thread();
@@ -741,20 +741,35 @@ mod tests {
 
     #[test]
     fn a_truncating_agent_write_never_fails_while_the_files_status_probe_runs() {
-        use crate::git_race::{RACED_FILE, Raced, Scenario, race};
+        assert_the_files_status_race_never_fails_a_write(crate::git_race::Repository::Small);
+    }
+
+    #[test]
+    fn a_truncating_agent_write_never_fails_while_the_files_status_probe_runs_in_a_large_repository()
+     {
+        assert_the_files_status_race_never_fails_a_write(crate::git_race::Repository::Large);
+    }
+
+    fn assert_the_files_status_race_never_fails_a_write(repository: crate::git_race::Repository) {
+        use crate::git_race::{RACED_FILE, Raced, Scenario, race_in};
         assert_the_global_selector_prefers_gix();
-        let outcome = race(Scenario::StatDirty, Raced::Tracked, |root: &Path| {
-            let before = spawns_on_this_thread();
-            let summary = read(root)
-                .map(|statuses| statuses.summary(&root.join(RACED_FILE)))
-                .ok_or_else(|| "the Files sidebar probe returned no statuses".to_string())?;
-            match spawns_on_this_thread() - before {
-                0 => Ok(summary),
-                spawned => Err(format!(
-                    "the probe fell back to the CLI and spawned {spawned} git processes"
-                )),
-            }
-        });
+        let outcome = race_in(
+            repository,
+            Scenario::StatDirty,
+            Raced::Tracked,
+            |root: &Path| {
+                let before = spawns_on_this_thread();
+                let summary = read(root)
+                    .map(|statuses| statuses.summary(&root.join(RACED_FILE)))
+                    .ok_or_else(|| "the Files sidebar probe returned no statuses".to_string())?;
+                match spawns_on_this_thread() - before {
+                    0 => Ok(summary),
+                    spawned => Err(format!(
+                        "the probe fell back to the CLI and spawned {spawned} git processes"
+                    )),
+                }
+            },
+        );
         outcome.assert_no_failed_write();
         assert!(
             outcome

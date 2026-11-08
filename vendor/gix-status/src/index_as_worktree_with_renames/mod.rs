@@ -6,6 +6,34 @@ mod recorder;
 pub use recorder::Recorder;
 
 pub(super) mod function {
+    fn listed_directories(index: &gix_index::State, entries: &[gix_index::Entry]) -> Vec<bstr::BString> {
+        let mut directories = std::collections::BTreeSet::from([bstr::BString::default()]);
+        let mut previous_parent: Option<&bstr::BStr> = None;
+        for entry in entries {
+            if entry.flags.contains(gix_index::entry::Flags::SKIP_WORKTREE) {
+                continue;
+            }
+            let path = entry.path(index);
+            let Some(separator) = path.rfind_byte(b'/') else {
+                continue;
+            };
+            let parent = path[..separator].as_bstr();
+            if previous_parent == Some(parent) {
+                continue;
+            }
+            previous_parent = Some(parent);
+            let mut directory = parent;
+            while !directories.contains(directory) {
+                directories.insert(directory.to_owned());
+                match directory.rfind_byte(b'/') {
+                    Some(separator) => directory = directory[..separator].as_bstr(),
+                    None => break,
+                }
+            }
+        }
+        directories.into_iter().collect()
+    }
+
     use gix_error::Result;
     use std::{borrow::Cow, path::Path};
 
@@ -64,6 +92,21 @@ pub(super) mod function {
     {
         let mut tracked_file_modifications = options.tracked_file_modifications;
         tracked_file_modifications.fscache = options.fscache;
+        let listing = (cfg!(windows) && options.fscache)
+            .then_some(options.dirwalk.as_ref())
+            .flatten()
+            .map(|dirwalk| {
+                let range = index
+                    .prefixed_entries_range(ctx.pathspec.common_prefix())
+                    .unwrap_or(0..index.entries().len());
+                std::sync::Arc::new(gix_dir::walk::Listing::read(
+                    worktree,
+                    &listed_directories(index, &index.entries()[range]),
+                    dirwalk.precompose_unicode,
+                    Some(ctx.should_interrupt),
+                ))
+            });
+        let shared_listing = listing.as_deref();
         let mut excludes = options
             .dirwalk
             .and_then(|_| match ctx.resource_cache.attr_stack.state() {
@@ -108,7 +151,7 @@ pub(super) mod function {
                                     .then(|| ctx.resource_cache.attr_stack.clone());
                                 let mut pathspec = ctx.pathspec.clone();
                                 move || {
-                                    gix_dir::walk(
+                                    gix_dir::walk_with_listing(
                                         worktree,
                                         gix_dir::walk::Context {
                                             should_interrupt: Some(ctx.should_interrupt),
@@ -132,6 +175,7 @@ pub(super) mod function {
                                         },
                                         options,
                                         &mut collect,
+                                        shared_listing,
                                     )
                                 }
                             }),
@@ -159,8 +203,9 @@ pub(super) mod function {
                         let objects = objects.clone();
                         let stack = ctx.resource_cache.attr_stack.clone();
                         let filter = ctx.resource_cache.filter.worktree_filter.clone();
+                        let listing = listing.clone();
                         move || {
-                            crate::index_as_worktree(
+                            crate::index_as_worktree::function::index_as_worktree_sharing(
                                 index,
                                 worktree,
                                 &mut collect,
@@ -175,6 +220,7 @@ pub(super) mod function {
                                     should_interrupt: ctx.should_interrupt,
                                 },
                                 tracked_file_modifications,
+                                listing,
                             )
                         }
                     }),

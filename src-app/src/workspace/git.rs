@@ -964,7 +964,7 @@ mod tests {
     use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
 
     fn stats_through(engine: Engine, cwd: &std::path::Path) -> (GitDiffStats, Selector) {
-        let selector = Selector::new(engine, None);
+        let selector = Selector::new(engine);
         let stats = GitDiffStats::through(
             &selector,
             cwd.to_str().unwrap(),
@@ -1491,7 +1491,7 @@ mod tests {
         fixture::init(root);
         std::fs::write(root.join("untracked.txt"), "a\n").unwrap();
         for engine in Engine::ALL {
-            let selector = Selector::new(engine, None);
+            let selector = Selector::new(engine);
             let started = std::time::Instant::now();
             let stats = GitDiffStats::through(&selector, root.to_str().unwrap(), started);
             assert!(

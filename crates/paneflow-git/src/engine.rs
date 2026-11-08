@@ -74,7 +74,7 @@ pub enum Fallback {
     ObjectFormat,
     Error,
     Forced,
-    SizeThreshold,
+    EntryCap,
 }
 
 impl Fallback {
@@ -83,7 +83,7 @@ impl Fallback {
         Fallback::ObjectFormat,
         Fallback::Error,
         Fallback::Forced,
-        Fallback::SizeThreshold,
+        Fallback::EntryCap,
     ];
 
     pub fn name(self) -> &'static str {
@@ -92,7 +92,7 @@ impl Fallback {
             Fallback::ObjectFormat => "object_format",
             Fallback::Error => "error",
             Fallback::Forced => "forced",
-            Fallback::SizeThreshold => "size_threshold",
+            Fallback::EntryCap => "entry_cap",
         }
     }
 
@@ -164,7 +164,6 @@ struct Failures {
 
 pub struct Selector {
     preferred: Engine,
-    index_entry_threshold: Option<u32>,
     failures: Mutex<HashMap<PathBuf, Failures>>,
     probes: [[AtomicU64; 2]; Probe::ALL.len()],
     fallbacks: [AtomicU64; Fallback::ALL.len()],
@@ -178,10 +177,9 @@ struct Layout {
 }
 
 impl Selector {
-    pub fn new(preferred: Engine, index_entry_threshold: Option<u32>) -> Self {
+    pub fn new(preferred: Engine) -> Self {
         Self {
             preferred,
-            index_entry_threshold,
             failures: Mutex::new(HashMap::new()),
             probes: [const { [const { AtomicU64::new(0) }; 2] }; Probe::ALL.len()],
             fallbacks: [const { AtomicU64::new(0) }; Fallback::ALL.len()],
@@ -197,7 +195,7 @@ impl Selector {
             if let Some(warning) = &setting.warning {
                 log::warn!("{warning}");
             }
-            Selector::new(setting.preferred, crate::DEFAULT_INDEX_ENTRY_THRESHOLD)
+            Selector::new(setting.preferred)
         })
     }
 
@@ -272,13 +270,7 @@ impl Selector {
         if !uses_sha1_objects(layout) {
             return Some(Fallback::ObjectFormat);
         }
-        if self.is_pinned(&layout.git_dir) {
-            return Some(Fallback::Error);
-        }
-        let threshold = self.index_entry_threshold?;
-        index_entry_count(&layout.git_dir)
-            .filter(|count| *count > threshold)
-            .map(|_| Fallback::SizeThreshold)
+        self.is_pinned(&layout.git_dir).then_some(Fallback::Error)
     }
 
     fn answer_with_cli<T>(&self, probe: Probe, cli: impl FnOnce() -> T) -> T {
@@ -335,7 +327,7 @@ fn counts_toward_pinning(error: &Error) -> bool {
 
 fn fallback_for(error: &Error) -> Fallback {
     match error {
-        Error::TooManyEntries { .. } => Fallback::SizeThreshold,
+        Error::TooManyEntries { .. } => Fallback::EntryCap,
         _ => Fallback::Error,
     }
 }
@@ -389,19 +381,4 @@ fn uses_reftable(layout: &Layout) -> bool {
 fn uses_sha1_objects(layout: &Layout) -> bool {
     repository_extension(layout, "extensions.objectFormat")
         .is_none_or(|format| format == SHA1_OBJECT_FORMAT)
-}
-
-fn index_entry_count(git_dir: &Path) -> Option<u32> {
-    use std::io::Read;
-    let mut header = [0u8; 12];
-    std::fs::File::open(git_dir.join("index"))
-        .ok()?
-        .read_exact(&mut header)
-        .ok()?;
-    if &header[..4] != b"DIRC" {
-        return None;
-    }
-    Some(u32::from_be_bytes([
-        header[8], header[9], header[10], header[11],
-    ]))
 }

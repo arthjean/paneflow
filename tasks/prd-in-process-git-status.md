@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-05 | Arthur Jean | Initial PRD from the #130 spike and diagnosis: a read-only gix engine with a vendored short-read fix, a parity oracle against the git CLI, then the Files sidebar (P0), the diff badge (P1), the diff dock and the removal snapshot (P2) move in process behind a CLI fallback. 5 epics, 15 stories. |
 | 1.1 | 2026-11-06 | Arthur Jean | Done after #133 merged (`f8e9c4887`). Two gaps against this PRD are accepted: the Performance NFR's "CPU time per probe at or below the CLI's" is not met, since gix uses 1.3 to 2 times the CLI's CPU (US-004 measurements in `ARCHITECTURE.md`), and a repository whose index holds more than 30,000 entries stays on the CLI, which keeps the Windows mapping there: #134. One parity divergence is left: with `core.symlinks=false`, git reports a real symlink replacing a tracked file as a type change, and gix as a modification. |
+| 1.2 | 2026-11-07 | Arthur Jean | Amended by #134: the 30,000-entry threshold is gone, every repository runs on gix. The Performance NFR's "at most 2 hashing threads per probe" becomes a schedule (`crates/paneflow-git/src/threads.rs`): a probe takes its share of half the cores, one hashing thread per 10,000 index entries, at most 2 on Windows and 3 elsewhere, and every directory listing runs on one shared pool of at most 8 threads per process. The CPU gap of 1.1 now holds on Linux only (about 1.3 times the CLI on rust-lang/rust). |
 
 ## Problem Statement
 
@@ -411,7 +412,7 @@ The last two probes move in process: the dock lists HEAD-to-worktree changes wit
 
 ## Non-Functional Requirements
 
-- **Performance:** a gix Files sidebar probe p50 at or below the CLI p50 on the Paneflow checkout (spike reference: 22.9 ms CLI on Windows 11, 6.6 ms on WSL Linux), with CPU time per probe at or below the CLI's; at most 2 hashing threads per probe plus gix's 2 producer threads.
+- **Performance:** a gix Files sidebar probe p50 at or below the CLI p50 on the Paneflow checkout (spike reference: 22.9 ms CLI on Windows 11, 6.6 ms on WSL Linux), with CPU time per probe at or below the CLI's; hashing threads per probe follow the schedule of `crates/paneflow-git/src/threads.rs` (at most 2 on Windows, 3 elsewhere, amended in 1.2) plus gix's 2 producer threads, and directory listings share one pool of at most 8 threads per process.
 - **Reliability:** 0 failed truncating writes in at least 1,000 writes per race scenario per probe; 0 probe errors in 600 probes under the truncating writer; fallbacks on less than 1 % of probes over one week of the maintainer's use, read from the counters.
 - **Memory:** peak memory of a gix probe at or below the peak RSS of the git process it replaces on the same repository, measured with heaptrack on Linux.
 - **Size:** the stripped release `paneflow` binary grows by at most 4 MB on Linux x86_64 and Windows x64; the three helper binaries stay byte-identical in dependencies and within their caps; a clean release build takes at most 10 % longer on the Linux x86_64 CI runner.

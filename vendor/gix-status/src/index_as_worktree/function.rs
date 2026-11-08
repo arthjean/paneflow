@@ -16,7 +16,7 @@ use gix_parallel::{Reduce, in_parallel_if};
 use crate::fscache::FsCache;
 use crate::index_as_worktree::types::ConflictIndexEntry;
 use crate::{
-    AtomicU64, SymlinkCheck,
+    AtomicU64, SharedListing, SymlinkCheck,
     index_as_worktree::{
         Change, Conflict, Context, EntryStatus, Outcome, VisitEntry, traits,
         traits::{CompareBlobs, SubmoduleStatus, read_data::Stream},
@@ -61,12 +61,7 @@ pub fn index_as_worktree<'index, T, U, Find>(
     submodule: impl SubmoduleStatus<Output = U> + Send + Clone,
     objects: Find,
     progress: &mut dyn gix_utils::progress::Progress,
-    Context {
-        pathspec,
-        stack,
-        filter,
-        should_interrupt,
-    }: Context<'_>,
+    ctx: Context<'_>,
     options: Options,
 ) -> Result<Outcome>
 where
@@ -74,6 +69,36 @@ where
     U: Send,
     Find: gix_object::Find + Send + Clone,
 {
+    index_as_worktree_sharing(
+        index, worktree, collector, compare, submodule, objects, progress, ctx, options, None,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn index_as_worktree_sharing<'index, T, U, Find>(
+    index: &'index gix_index::State,
+    worktree: &Path,
+    collector: &mut impl VisitEntry<'index, ContentChange = T, SubmoduleStatus = U>,
+    compare: impl CompareBlobs<Output = T> + Send + Clone,
+    submodule: impl SubmoduleStatus<Output = U> + Send + Clone,
+    objects: Find,
+    progress: &mut dyn gix_utils::progress::Progress,
+    Context {
+        pathspec,
+        stack,
+        filter,
+        should_interrupt,
+    }: Context<'_>,
+    options: Options,
+    listing: Option<SharedListing>,
+) -> Result<Outcome>
+where
+    T: Send,
+    U: Send,
+    Find: gix_object::Find + Send + Clone,
+{
+    #[cfg(not(windows))]
+    drop(listing);
     // the order is absolutely critical here we use the old timestamp to detect racy index entries
     // (modified at or after the last index update) during the index update we then set those
     // entries size to 0 (see below) to ensure they keep showing up as racy and reset the timestamp.
@@ -125,7 +150,7 @@ where
                     filter,
                     options,
                     #[cfg(windows)]
-                    fscache: options.fscache.then(|| FsCache::new(worktree)),
+                    fscache: options.fscache.then(|| FsCache::new(worktree, listing.clone())),
 
                     skipped_by_pathspec,
                     skipped_by_entry_flags,
@@ -397,18 +422,18 @@ impl<'index> State<'_, 'index> {
         #[cfg(windows)]
         let cached = self.fscache.as_mut().and_then(|c| c.get(rela_path));
         #[cfg(not(windows))]
-        let cached: Option<&gix_index::fs::Metadata> = None;
-        let live;
-        let metadata = if let Some(cached) = cached {
-            cached
-        } else {
-            self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
-            live = match live_metadata(worktree_path)? {
-                Some(md) => md,
-                None => return Ok(Some(Change::Removed.into())),
-            };
-            &live
+        let cached: Option<gix_index::fs::Metadata> = None;
+        let metadata = match cached {
+            Some(cached) => cached,
+            None => {
+                self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
+                match live_metadata(worktree_path)? {
+                    Some(md) => md,
+                    None => return Ok(Some(Change::Removed.into())),
+                }
+            }
         };
+        let metadata = &metadata;
 
         // Handle directory: index entries are normally only for files/symlinks.
         // If a file turned into a directory it was removed.

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-const VENDORED_GIX_STATUS_VERSION: &str = "0.37.0";
+const VENDORED_CRATES: &[(&str, &str)] = &[("gix-status", "0.37.0"), ("gix-dir", "0.32.0")];
 
 const SIZE_CAPPED_HELPERS: &[&str] = &["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"];
 
@@ -109,30 +109,29 @@ fn dependency_closure(lockfile: &Lockfile, root: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn the_vendored_gix_status_is_the_only_one_in_the_lockfile() {
+fn every_vendored_gix_crate_is_the_only_one_in_the_lockfile() {
     let lockfile = lockfile();
-    let gix_status: Vec<&Package> = lockfile
-        .packages
-        .iter()
-        .filter(|package| package.name == "gix-status")
-        .collect();
-    assert_eq!(
-        gix_status.len(),
-        1,
-        "exactly one gix-status resolves: {gix_status:?}"
-    );
-    assert_eq!(gix_status[0].version, VENDORED_GIX_STATUS_VERSION);
-    assert_eq!(
-        gix_status[0].source, None,
-        "gix-status must resolve to vendor/gix-status, not to a registry"
-    );
-    assert!(
-        !lockfile
-            .unused_patches
+    for (name, version) in VENDORED_CRATES {
+        let resolved: Vec<&Package> = lockfile
+            .packages
             .iter()
-            .any(|name| name == "gix-status"),
-        "the gix-status patch is unused: the gix bump no longer depends on gix-status {VENDORED_GIX_STATUS_VERSION}, so drop or re-vendor vendor/gix-status"
-    );
+            .filter(|package| package.name == *name)
+            .collect();
+        assert_eq!(
+            resolved.len(),
+            1,
+            "exactly one {name} resolves: {resolved:?}"
+        );
+        assert_eq!(resolved[0].version, *version, "{name}");
+        assert_eq!(
+            resolved[0].source, None,
+            "{name} must resolve to vendor/{name}, not to a registry"
+        );
+        assert!(
+            !lockfile.unused_patches.iter().any(|unused| unused == name),
+            "the {name} patch is unused: the gix bump no longer depends on {name} {version}, so drop or re-vendor vendor/{name}"
+        );
+    }
 }
 
 #[test]

@@ -10,6 +10,7 @@ pub(crate) fn record(
     repo: &gix::Repository,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
+    share: usize,
     entries: &mut Entries,
     sides: &mut SideMap,
 ) -> Result<usize, Error> {
@@ -39,7 +40,8 @@ pub(crate) fn record(
         if ignore == Ignore::All {
             continue;
         }
-        let (change, submodule_opens, index_id) = status(&submodule, ignore, options, interrupt)?;
+        let (change, submodule_opens, index_id) =
+            status(&submodule, ignore, options, interrupt, share)?;
         opened += submodule_opens;
         let Some(index_id) = index_id.filter(|_| change.is_dirty()) else {
             continue;
@@ -73,6 +75,7 @@ fn status(
     ignore: Ignore,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
+    share: usize,
 ) -> Result<(SubmoduleChange, usize, Option<gix::ObjectId>), Error> {
     let unchanged = Ok((SubmoduleChange::default(), 0, None));
     let state = submodule
@@ -90,7 +93,7 @@ fn status(
     let work_dir = submodule
         .work_dir()
         .map_err(|error| Error::git("locate a submodule worktree", error))?;
-    let Ok(repo) = open::submodule(&work_dir, options.thread_limit) else {
+    let Ok(repo) = open::submodule(&work_dir, options.threads.before_index(share)) else {
         return Ok((SubmoduleChange::default(), 1, None));
     };
     let checked_out = repo.head_id().ok().map(gix::Id::detach);
@@ -114,7 +117,7 @@ fn status(
         stat_dirty: false,
         ..options.clone()
     };
-    let content = collect(&repo, &content_options, interrupt)?;
+    let content = collect(&repo, &content_options, interrupt, share)?;
     change.modified_content = content.entries.iter().any(|entry| {
         entry.head_to_index.is_some()
             || entry.index_to_worktree.is_some()

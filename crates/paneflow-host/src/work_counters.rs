@@ -39,7 +39,7 @@ pub const DESKTOP_COUNTERS: &[&str] = &[
     "git_engine.fallbacks.object_format",
     "git_engine.fallbacks.error",
     "git_engine.fallbacks.forced",
-    "git_engine.fallbacks.size_threshold",
+    "git_engine.fallbacks.entry_cap",
 ];
 
 pub const DIFF_STAT_ENGINE_PROBES: [&str; 2] = [
@@ -52,7 +52,7 @@ pub const GIT_ENGINE_FALLBACKS: [&str; 5] = [
     "git_engine.fallbacks.object_format",
     "git_engine.fallbacks.error",
     "git_engine.fallbacks.forced",
-    "git_engine.fallbacks.size_threshold",
+    "git_engine.fallbacks.entry_cap",
 ];
 
 #[derive(Debug, Default)]

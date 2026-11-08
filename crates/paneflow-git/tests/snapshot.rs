@@ -11,7 +11,10 @@ use paneflow_git::{
     snapshot, Conflict, Entry, Error, Head, IndexChange, Options, SubmoduleChange, Submodules,
     Untracked, WorktreeChange,
 };
-use support::{backdate, commit_all, committed_repo, git, init, marker_program, write};
+use support::{
+    backdate, commit_all, committed_repo, forward_slashes, git, init, marker_program, porcelain,
+    write,
+};
 
 const RACE_FILE: &str = "agent-edit.bin";
 const RACE_FILE_BYTES: usize = 480 * 1024;
@@ -223,6 +226,68 @@ fn an_unborn_head_compares_the_index_with_nothing() {
             ("loose.txt".into(), untracked()),
             ("staged.txt".into(), tracked(Some(IndexChange::Added), None)),
         ]
+    );
+}
+
+#[test]
+fn a_base_other_than_head_is_compared_even_when_the_index_matches_head() {
+    let (_tmp, root) = repo();
+    committed_repo(
+        &root,
+        &[("kept.txt", "kept\n"), ("changed.txt", "before\n")],
+    );
+    let base = git(&root, &["rev-parse", "HEAD"]).trim().to_string();
+    write(&root, "changed.txt", b"after\n");
+    write(&root, "added.txt", b"added\n");
+    commit_all(&root, "second");
+    let options = Options {
+        base: Some(base.clone()),
+        ..Options::default()
+    };
+
+    let snapshot = snapshot(&root, &options).expect("snapshot");
+
+    let base_tree = git(&root, &["rev-parse", &format!("{base}^{{tree}}")]);
+    assert_eq!(snapshot.head, Head::Tree(base_tree.trim().to_string()));
+    assert_eq!(
+        without_paths(entries_by_path(&root, &options)),
+        vec![
+            ("added.txt".into(), tracked(Some(IndexChange::Added), None)),
+            (
+                "changed.txt".into(),
+                tracked(Some(IndexChange::Modified), None)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_stale_cache_tree_is_trusted_exactly_as_far_as_git_trusts_it() {
+    let (tmp, root) = repo();
+    committed_repo(&root, &[("kept.txt", "kept\n"), ("src/lib.rs", "lib\n")]);
+    let blob = tmp.path().join("staged.txt");
+    std::fs::write(&blob, b"lib staged\n").expect("write the staged blob");
+    let staged = git(&root, &["hash-object", "-w", &forward_slashes(&blob)]);
+    backdate(&root.join("src/lib.rs"));
+    git(&root, &["update-index", "--refresh"]);
+    let repository = gix::open(&root).expect("open the fixture");
+    let mut index = repository.open_index().expect("read the index");
+    index
+        .entry_mut_by_path_and_stage("src/lib.rs".into(), gix::index::entry::Stage::Unconflicted)
+        .expect("the tracked entry")
+        .id = gix::ObjectId::from_hex(staged.trim().as_bytes()).expect("a blob id");
+    index
+        .write(gix::index::write::Options::default())
+        .expect("rewrite the index entry without invalidating its cache-tree");
+
+    assert_eq!(
+        porcelain(&root),
+        "",
+        "git skips the staged diff of a tree its cache-tree marks as unchanged"
+    );
+    assert_eq!(
+        without_paths(entries_by_path(&root, &Options::default())),
+        Vec::new()
     );
 }
 

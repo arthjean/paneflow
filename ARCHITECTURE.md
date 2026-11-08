@@ -188,23 +188,59 @@ the diff dock and `is_clean` (EP-005) run on it.
   `Outcome::write_changes`), creates nothing under `.git`, and reads worktree
   files with plain reads.
 - **Threads.** The snapshot runs on the caller's thread, which is a worker
-  thread or `smol::unblock`, never the GPUI main thread. `thread_limit`
-  defaults to 2: it bounds the hashing threads and `index.threads`, on top of
-  gix's two producer threads. Measured on 2026-11-05 (200 probes, release,
-  `crates/paneflow-git/examples/probe_cost.rs`), 2 threads beat 1 in wall time
-  for the same CPU time: rust-lang/rust (64,264 files) on Linux 92 ms against
-  169 ms at 269 ms against 263 ms of CPU; the Paneflow checkout 5.1 ms against
-  6.2 ms on Linux, 16.7 ms against 16.9 ms on Windows. One thread per core
-  adds CPU time for little wall time.
-- **Cost against the CLI.** On the same runs, `git --no-optional-locks status
-  --porcelain=v1 -z -uall --no-renames` took 6.3 ms (3.9 ms CPU) on Linux and
-  23.3 ms (29.8 ms CPU) on Windows for the Paneflow checkout; gix with 2
-  threads 5.1 ms (7.2 ms CPU) and 16.7 ms (38.4 ms CPU). gix is faster in wall
-  time up to t3code (29,069 entries: 52.6 ms against 61.6 ms on Linux) but
-  slower on rust-lang/rust on Windows (236 ms against 92 ms), where the
-  untracked walk alone costs about 125 ms; it uses 1.3 to 2 times the CLI's CPU
-  time everywhere. So the selector sends a repository whose index holds more
-  than 30,000 entries to the CLI (`DEFAULT_INDEX_ENTRY_THRESHOLD`). Peak heap
+  thread or `smol::unblock`, never the GPUI main thread. `Options::threads`
+  is `Threads::Scheduled` unless a bench pins `Threads::Fixed(n)`. A scheduled
+  probe takes its share of a budget of half the cores, the budget divided by
+  the probes running at that moment (`crates/paneflow-git/src/threads.rs`),
+  and within that share one hashing thread per 10,000 index entries
+  (`ENTRIES_PER_THREAD`), at most `PLATFORM_CAP`: 2 on Windows, 3 elsewhere,
+  also used for `index.threads`. Past that cap the tracked-file pass stops
+  gaining: rust-lang/rust on Linux takes 90 ms at 2 threads, 80 ms at 3 and
+  81 to 87 ms at 4, and on Windows everything but the directory reads stays
+  at about 62 ms from 2 to 8 threads. Those reads run on the pool of the
+  vendored gix-dir instead (one rayon pool per process, half the cores and at
+  most 8 threads), which every listing shares: a lone probe gets all of it and
+  concurrent probes queue for it instead of oversubscribing the machine.
+  Measured on 2026-11-07 (Windows 11, 16 threads, release, rust-lang/rust,
+  concurrent probes in one process): 1 probe 79 ms (348 ms CPU), 4 at once
+  194 ms each (356 ms), 8 at once 367 ms (372 ms), against 151, 187 and 608 ms
+  with the former fixed 2 threads per probe, and 91, 250 and 567 ms for the
+  CLI.
+- **Cost against the CLI.** Measured on 2026-11-07 (2026-11-05 for the Paneflow
+  checkout on Linux). On the Paneflow checkout gix is the faster engine
+  on both platforms: on Windows 7.7 ms against 21 ms for `git
+  --no-optional-locks status --porcelain=v1 -z -uall --no-renames`, on Linux
+  5.1 ms (7.2 ms CPU) against 6.3 ms (3.9 ms CPU). On t3code (29,069 entries)
+  it takes 54 ms against 84 to 91 ms on Windows (250 against 300 ms CPU) and
+  52 ms against 61 ms on Linux (131 against 96 ms CPU); on rust-lang/rust
+  (64,264 entries) 78 to 87 ms against 91 to 93 ms on Windows at about the
+  CLI's CPU (335 to 363 against 334 to 359 ms), and 90 ms against 92 ms on
+  Linux, where it still uses 1.3 times the CLI's CPU (245 against 189 ms).
+  Every repository runs on gix whatever its size: until #134 an index over
+  30,000 entries went to the CLI, whose `git status` maps same-size
+  stat-dirty files and fails an agent's truncating write with error 1224 on
+  Windows.
+- **Staged half from the cache-tree.** gix's `tree_index_status` builds a
+  full index from the HEAD tree on every status (`index_from_tree`), while git
+  skips any subtree whose cache-tree (the index's `TREE` extension) records
+  the same tree id. `snapshot.rs` therefore takes gix's index-to-worktree
+  iterator alone when the root of the cache-tree is valid and equals the
+  compared tree (the base, or HEAD): 24 to 30 ms less CPU per probe on
+  rust-lang/rust on Linux, 20 to 24 ms on Windows. A stale cache-tree is
+  trusted exactly as far as git trusts it, which
+  `a_stale_cache_tree_is_trusted_exactly_as_far_as_git_trusts_it` pins.
+- **One directory read per status on Windows.** Git for Windows owes its speed
+  to `core.fscache`, which reads each directory once and serves every later
+  lookup from memory. gix 0.90 has a per-thread cache of its own for the
+  tracked-file pass, but its untracked walk read every directory again on one
+  thread: about 300 of the 355 ms a rust-lang/rust status took. With
+  `core.fsCache` (on by default on Windows), the vendored gix-status reads
+  every directory that holds index entries once, on the shared listing pool,
+  into a `gix_dir::walk::Listing` that both passes read; the vendored gix-dir
+  walk (`walk_with_listing`) then reads only the directories the index does
+  not hold. `crates/paneflow-git/tests/shared_listing.rs` covers the pool.
+  `crates/paneflow-git/tests/directory_listing.rs` fails if a gix bump loses
+  the listing. Peak heap
   measured by heaptrack on Linux is below git's on the Paneflow checkout (1.4
   MiB against 3.3 MiB) and equal on rust-lang/rust (19.5 against 18.2 MiB);
   resident memory is higher because gix maps the index and the packs.
@@ -254,9 +290,7 @@ the diff dock and `is_clean` (EP-005) run on it.
   shallowest missing directory and skips the lookup of every entry under it:
   checking each file cost 520 to 590 ms against 14 to 31 ms for the CLI on
   40,000 entries outside the patterns (Windows 11, release build), and 69 to
-  105 ms with the directory skipped. A sparse index passes the 30,000-entry
-  threshold on its collapsed count, so its expansion is not bounded by it.
-  On a case-sensitive filesystem gix's directory
+  105 ms with the directory skipped. On a case-sensitive filesystem gix's directory
   walk also skips a directory whose entries are all skip-worktree and none
   up to date, hiding the untracked files git lists there, so the in-memory
   index marks every remaining skip-worktree entry up to date; the index
@@ -285,14 +319,14 @@ the diff dock and `is_clean` (EP-005) run on it.
   without opening the repository with gix, when `PANEFLOW_GIT_ENGINE=cli`
   (`forced`), when `HEAD` holds the reftable marker or
   `extensions.refStorage=reftable` (`reftable`), when
-  `extensions.objectFormat` is not `sha1` (`object_format`), and above the
-  index-entry threshold (`size_threshold`). A gix error is answered by the CLI
+  `extensions.objectFormat` is not `sha1` (`object_format`). A gix error is
+  answered by the CLI
   in the same call (`error`); after two consecutive errors for one git
   directory, keyed by the linked worktree's own git directory, that directory
   stays on the CLI until Paneflow restarts and one warning names it with the
   last error. An interrupted probe is answered by the CLI too but never counts
   toward those two errors, and neither does a status over its entry cap
-  (`Error::TooManyEntries`, counted as `size_threshold`), which the dock
+  (`Error::TooManyEntries`, counted as `entry_cap`), which the dock
   listing hands to the CLI because it cannot show a lower bound. `PANEFLOW_GIT_ENGINE` is read once: `gix` or unset prefers gix,
   any other value prefers gix with one warning listing the accepted values.
   `system.counters` reports `git_engine.probes.<probe>.<gix|cli>`,

@@ -55,7 +55,7 @@ fn run(
 fn a_reftable_repository_is_answered_by_the_cli_without_opening_gix() {
     let (_tmp, root) = repo();
     std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/.invalid\n").expect("HEAD");
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     assert_eq!(run(&selector, &root, answering_gix(&calls)), "cli");
     assert_eq!(calls.get(), 0, "no gix open for a reftable repository");
@@ -70,7 +70,7 @@ fn a_ref_storage_extension_routes_the_repository_to_the_cli() {
     let (_tmp, root) = repo();
     git(&root, &["config", "core.repositoryformatversion", "1"]);
     git(&root, &["config", "extensions.refStorage", "reftable"]);
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     assert_eq!(run(&selector, &root, answering_gix(&calls)), "cli");
     assert_eq!(calls.get(), 0);
@@ -85,7 +85,7 @@ fn a_sha256_repository_is_answered_by_the_cli_without_opening_gix() {
     std::fs::create_dir_all(&root).expect("dir");
     git(&root, &["init", "-q", "--object-format=sha256"]);
     write(&root, "file.txt", b"f\n");
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     assert_eq!(run(&selector, &root, answering_gix(&calls)), "cli");
     assert_eq!(calls.get(), 0, "no gix open for a SHA-256 repository");
@@ -95,7 +95,7 @@ fn a_sha256_repository_is_answered_by_the_cli_without_opening_gix() {
 #[test]
 fn a_failed_gix_probe_is_answered_by_the_cli_in_the_same_call() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     assert_eq!(run(&selector, &root, failing_gix(&calls)), "cli");
     assert_eq!(calls.get(), 1);
@@ -109,7 +109,7 @@ fn a_failed_gix_probe_is_answered_by_the_cli_in_the_same_call() {
 fn a_real_snapshot_error_falls_back_to_the_cli() {
     let (_tmp, root) = repo();
     std::fs::write(root.join(".git").join("index"), b"DIRC\0\0\0\x09garbage").expect("index");
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let answer = selector.run(
         Probe::IsClean,
         &root,
@@ -123,7 +123,7 @@ fn a_real_snapshot_error_falls_back_to_the_cli() {
 #[test]
 fn two_consecutive_failures_pin_the_git_directory_to_the_cli() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     run(&selector, &root, failing_gix(&calls));
     run(&selector, &root, failing_gix(&calls));
@@ -144,7 +144,7 @@ fn two_consecutive_failures_pin_the_git_directory_to_the_cli() {
 #[test]
 fn interrupted_probes_never_pin_the_git_directory() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     for _ in 0..3 {
         assert_eq!(run(&selector, &root, interrupted_gix(&calls)), "cli");
@@ -160,15 +160,15 @@ fn interrupted_probes_never_pin_the_git_directory() {
 }
 
 #[test]
-fn a_status_over_the_entry_cap_is_a_size_fallback_that_never_pins_the_git_directory() {
+fn a_status_over_the_entry_cap_is_an_entry_cap_fallback_that_never_pins_the_git_directory() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     for _ in 0..3 {
         let answer = run(&selector, &root, || Err(Error::TooManyEntries { cap: 1 }));
         assert_eq!(answer, "cli");
     }
     let counters = selector.counters();
-    assert_eq!(counters.fallbacks(Fallback::SizeThreshold), 3);
+    assert_eq!(counters.fallbacks(Fallback::EntryCap), 3);
     assert_eq!(counters.fallbacks(Fallback::Error), 0);
     assert_eq!(counters.pinned_directories, 0);
     let calls = Cell::new(0);
@@ -184,7 +184,7 @@ fn a_status_over_the_entry_cap_is_a_size_fallback_that_never_pins_the_git_direct
 #[test]
 fn a_success_between_failures_resets_the_count() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     run(&selector, &root, failing_gix(&calls));
     assert_eq!(run(&selector, &root, answering_gix(&calls)), "gix");
@@ -197,7 +197,7 @@ fn a_success_between_failures_resets_the_count() {
 fn failures_are_counted_per_git_directory() {
     let (_tmp, first) = repo();
     let (_other_tmp, second) = repo();
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     run(&selector, &first, failing_gix(&calls));
     run(&selector, &second, failing_gix(&calls));
@@ -220,7 +220,7 @@ fn a_linked_worktree_is_pinned_apart_from_its_main_worktree() {
             &support::forward_slashes(&linked),
         ],
     );
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
     run(&selector, &linked, failing_gix(&calls));
     run(&selector, &linked, failing_gix(&calls));
@@ -231,7 +231,7 @@ fn a_linked_worktree_is_pinned_apart_from_its_main_worktree() {
 #[test]
 fn the_forced_cli_never_reaches_gix() {
     let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Cli, None);
+    let selector = Selector::new(Engine::Cli);
     let calls = Cell::new(0);
     for probe in Probe::ALL {
         assert_eq!(
@@ -251,22 +251,10 @@ fn the_forced_cli_never_reaches_gix() {
 }
 
 #[test]
-fn an_index_above_the_entry_threshold_is_answered_by_the_cli() {
-    let (_tmp, root) = repo();
-    let selector = Selector::new(Engine::Gix, Some(0));
-    let calls = Cell::new(0);
-    assert_eq!(run(&selector, &root, answering_gix(&calls)), "cli");
-    assert_eq!(calls.get(), 0);
-    assert_eq!(selector.counters().fallbacks(Fallback::SizeThreshold), 1);
-    let roomy = Selector::new(Engine::Gix, Some(1));
-    assert_eq!(run(&roomy, &root, answering_gix(&calls)), "gix");
-}
-
-#[test]
 fn a_path_outside_any_repository_still_asks_gix_first() {
     support::isolate_process();
     let tmp = tempfile::tempdir().expect("tempdir");
-    let selector = Selector::new(Engine::Gix, None);
+    let selector = Selector::new(Engine::Gix);
     let answer = selector.run(
         Probe::FilesStatus,
         tmp.path(),

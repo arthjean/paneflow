@@ -26,6 +26,18 @@ const CLOSED_WINDOW_POLL: Duration = Duration::from_millis(1);
 
 const WRITES_AHEAD_OF_EACH_PROBE: usize = 2;
 
+pub(crate) const LARGE_INDEX_ENTRIES: usize = 30_500;
+
+const BULK_ENTRIES_PER_DIRECTORY: usize = 1000;
+
+const BULK_BLOB: &[u8] = b"bulk\n";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Repository {
+    Small,
+    Large,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scenario {
     StatDirty,
@@ -101,20 +113,71 @@ where
     T: Send + 'static,
     P: Fn(&Path) -> Result<T, String> + Send + 'static,
 {
+    race_in(Repository::Small, scenario, raced, probe)
+}
+
+pub(crate) fn race_in<T, P>(
+    repository: Repository,
+    scenario: Scenario,
+    raced: Raced,
+    probe: P,
+) -> Outcome<T>
+where
+    T: Send + 'static,
+    P: Fn(&Path) -> Result<T, String> + Send + 'static,
+{
     let tmp = tempfile::tempdir().expect("race tempdir");
     let root = tmp.path().join("repo");
-    let file = prepare(&root, scenario, raced);
+    let file = prepare(&root, repository, scenario, raced);
     match scenario {
         Scenario::StatDirty => race_stat_dirty(scenario, &root, &file, probe),
         Scenario::RacyWindow => race_racy_window(scenario, &root, &file, probe),
     }
 }
 
-fn prepare(root: &Path, scenario: Scenario, raced: Raced) -> PathBuf {
+pub(crate) fn index_entry_count(root: &Path) -> usize {
+    fixture::run(root, &["ls-files", "--cached"])
+        .lines()
+        .count()
+}
+
+fn fill_a_large_index(root: &Path) {
+    let blob = fixture::run_feeding(root, &["hash-object", "-w", "--stdin"], BULK_BLOB.to_vec());
+    let blob = blob.trim();
+    let paths: Vec<String> = (0..LARGE_INDEX_ENTRIES)
+        .map(|entry| {
+            format!(
+                "bulk/{:03}/{entry:05}.txt",
+                entry / BULK_ENTRIES_PER_DIRECTORY
+            )
+        })
+        .collect();
+    let index_info: String = paths
+        .iter()
+        .map(|path| format!("100644 {blob}\t{path}\n"))
+        .collect();
+    fixture::run_feeding(
+        root,
+        &["update-index", "--index-info"],
+        index_info.into_bytes(),
+    );
+    let listed: String = paths.iter().map(|path| format!("{path}\n")).collect();
+    fixture::run_feeding(
+        root,
+        &["update-index", "--skip-worktree", "--stdin"],
+        listed.into_bytes(),
+    );
+    fixture::run(root, &["commit", "-q", "--no-verify", "-m", "bulk"]);
+}
+
+fn prepare(root: &Path, repository: Repository, scenario: Scenario, raced: Raced) -> PathBuf {
     let file = root.join(RACED_FILE);
     match raced {
         Raced::Tracked => {
             fixture::committed_repo(root, &[(RACED_FILE, &same_size_body(SEED_GENERATION))]);
+            if repository == Repository::Large {
+                fill_a_large_index(root);
+            }
             if scenario == Scenario::StatDirty {
                 set_modified(&file, SystemTime::now() - STAT_DIRTY_AGE);
                 fixture::run(root, &["update-index", "--refresh"]);
@@ -127,6 +190,9 @@ fn prepare(root: &Path, scenario: Scenario, raced: Raced) -> PathBuf {
                 "an untracked file has no index entry to make racily clean"
             );
             fixture::committed_repo(root, &[("committed.txt", "committed\n")]);
+            if repository == Repository::Large {
+                fill_a_large_index(root);
+            }
             std::fs::write(&file, same_size_body(SEED_GENERATION)).expect("untracked file");
         }
     }
@@ -387,6 +453,29 @@ mod tests {
                 .answers
                 .iter()
                 .all(|names| names.trim() == RACED_FILE),
+            "{:?}",
+            outcome.answers
+        );
+    }
+
+    #[test]
+    fn the_large_repository_indexes_every_bulk_entry_and_shows_only_the_raced_file() {
+        let outcome = race_in(
+            Repository::Large,
+            Scenario::StatDirty,
+            Raced::Tracked,
+            |root: &Path| {
+                Ok((
+                    index_entry_count(root),
+                    git_probe(root, &["diff", "HEAD", "--name-only"])?,
+                ))
+            },
+        );
+        outcome.assert_conclusive();
+        assert!(
+            outcome.answers.iter().all(|(entries, names)| {
+                *entries == LARGE_INDEX_ENTRIES + 1 && names.trim() == RACED_FILE
+            }),
             "{:?}",
             outcome.answers
         );

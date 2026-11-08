@@ -953,7 +953,7 @@ mod tests {
             "git_engine.fallbacks.object_format": 0,
             "git_engine.fallbacks.error": 0,
             "git_engine.fallbacks.forced": forced,
-            "git_engine.fallbacks.size_threshold": 0,
+            "git_engine.fallbacks.entry_cap": 0,
             "git_spawns.total": git_spawns,
             "git_spawns.by_subcommand.diff-index": cli,
         })

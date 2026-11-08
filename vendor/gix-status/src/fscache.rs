@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use bstr::{BStr, BString, ByteSlice};
 
 /// Metadata for one enumerated directory, keyed by direct filename.
-type DirectoryEntries = hashbrown::HashMap<BString, gix_index::fs::Metadata>;
+type DirectoryEntries = hashbrown::HashMap<BString, std::fs::Metadata>;
 
 /// Thread-local, lazily populated worktree metadata cache.
 ///
@@ -57,21 +57,23 @@ pub struct FsCache {
     /// the Windows API result shape: first resolve the parent directory, then
     /// look up the requested basename in that listing.
     directories: hashbrown::HashMap<BString, Option<DirectoryEntries>>,
+    shared: Option<crate::SharedListing>,
 }
 
 impl FsCache {
     /// Create an empty cache rooted at `worktree`.
-    pub fn new(worktree: &Path) -> Self {
+    pub fn new(worktree: &Path, shared: Option<crate::SharedListing>) -> Self {
         FsCache {
             worktree: worktree.to_owned(),
             directories: Default::default(),
+            shared,
         }
     }
 
     /// Return cached metadata for `rela_path`, populating its parent directory
     /// on first use. `None` means the cache couldn't help and callers should
     /// fall back to a live `lstat`.
-    pub(crate) fn get(&mut self, rela_path: &BStr) -> Option<&gix_index::fs::Metadata> {
+    pub(crate) fn get(&mut self, rela_path: &BStr) -> Option<gix_index::fs::Metadata> {
         let (dir, filename) = match rela_path.rfind_byte(b'/') {
             Some(pos) => (&rela_path[..pos], &rela_path[pos + 1..]),
             None => (BStr::new(b""), rela_path),
@@ -80,12 +82,27 @@ impl FsCache {
             return None;
         }
 
+        #[cfg(feature = "worktree-rewrites")]
+        if let Some(directory) = self.shared.as_ref().and_then(|listing| listing.directory(dir)) {
+            return directory
+                .get(filename)
+                .and_then(|entry| entry.metadata.clone())
+                .and_then(usable);
+        }
+
         self.directories
             .entry_ref(dir)
             .or_insert_with(|| directory_entries(&self.worktree, dir))
             .as_ref()?
             .get(filename)
+            .cloned()
+            .and_then(usable)
     }
+}
+
+fn usable(metadata: std::fs::Metadata) -> Option<gix_index::fs::Metadata> {
+    let metadata = gix_index::fs::Metadata::from(metadata);
+    gix_index::entry::Stat::from_fs(&metadata).is_ok().then_some(metadata)
 }
 
 /// Read direct entries, retaining usable results even if individual entries fail.
@@ -104,13 +121,6 @@ fn directory_entries(worktree: &Path, rel_dir: &BStr) -> Option<DirectoryEntries
         // On Windows this reuses the directory-enumeration result, without a
         // per-entry metadata syscall, and does not follow symlinks or junctions.
         let Ok(metadata) = entry.metadata() else { continue };
-        let metadata = gix_index::fs::Metadata::from(metadata);
-        // Use shared index normalization to reject unusable timestamps and retain
-        // the live fallback for them. Unavailable timestamps use the epoch, just
-        // like live metadata; pre-epoch timestamps remain errors on Windows.
-        if gix_index::entry::Stat::from_fs(&metadata).is_err() {
-            continue;
-        }
         entries.insert(filename.as_bytes().into(), metadata);
     }
     Some(entries)
