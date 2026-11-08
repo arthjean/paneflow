@@ -257,3 +257,37 @@ fn a_failed_git_status_keeps_the_previous_statuses() {
     assert!(Arc::ptr_eq(&scanner.git, &previous));
     assert_eq!(scanner.git.summary(&tracked).worktree.modified, 1);
 }
+
+#[test]
+fn an_edit_in_a_collapsed_directory_reaches_the_sidebar_through_the_monitor_wake() {
+    fixture::isolate_process();
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("repo");
+    let nested = root.join("deep").join("nested");
+    std::fs::create_dir_all(&nested).expect("nested directory");
+    fixture::init(&root);
+    std::fs::write(nested.join("file.txt"), "committed\n").expect("tracked file");
+    fixture::commit_all(&root, "initial");
+    let root = std::fs::canonicalize(&root).expect("canonical root");
+    let file = root.join("deep").join("nested").join("file.txt");
+    let (worker, updates) = FilesWorker::start(root.clone(), Vec::new());
+    let first = smol::block_on(updates.recv()).expect("the first update");
+    assert!(first.git.summary(&file).is_unchanged());
+
+    std::fs::write(&file, "edited by an agent\n").expect("edit");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let update = smol::block_on(smol::future::or(
+            async { updates.recv().await.ok() },
+            async {
+                smol::Timer::at(deadline).await;
+                None
+            },
+        ))
+        .expect("the sidebar shows the edit before the deadline");
+        if update.git.summary(&file).worktree.modified == 1 {
+            break;
+        }
+    }
+    drop(worker);
+}

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -8,6 +9,7 @@ use smol::channel::{Receiver, Sender};
 
 use crate::app::files_git::{self, GitStatuses};
 use crate::app::files_tree::{FilesTreeState, read_dir_sorted};
+use crate::git_monitors::{GitMonitors, Subscription};
 
 const DEBOUNCE: Duration = Duration::from_millis(40);
 const MAX_LATENCY: Duration = Duration::from_millis(160);
@@ -27,6 +29,12 @@ pub(super) struct FilesWorker {
 enum Request {
     Expanded(u64, Vec<PathBuf>),
     Changed(notify::Result<Event>),
+    GitChanged,
+}
+
+struct GitWake {
+    _subscription: Subscription,
+    pending: Arc<AtomicBool>,
 }
 
 impl FilesWorker {
@@ -66,6 +74,8 @@ struct Scanner {
     git: Arc<GitStatuses>,
     git_dir: Option<PathBuf>,
     git_dirty: bool,
+    git_events: Option<Sender<Request>>,
+    git_wake: Option<GitWake>,
 }
 
 impl Scanner {
@@ -78,7 +88,40 @@ impl Scanner {
             git: Arc::default(),
             git_dir: None,
             git_dirty: true,
+            git_events: None,
+            git_wake: None,
         }
+    }
+
+    fn subscribe_git(&mut self) {
+        if self.git_wake.is_some() {
+            return;
+        }
+        let Some(events) = self.git_events.clone() else {
+            return;
+        };
+        let pending = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&pending);
+        self.git_wake = GitMonitors::global()
+            .subscribe(
+                &self.tree.root,
+                Arc::new(move || {
+                    if !flag.swap(true, Ordering::AcqRel) {
+                        let _ = events.try_send(Request::GitChanged);
+                    }
+                }),
+            )
+            .map(|subscription| GitWake {
+                _subscription: subscription,
+                pending,
+            });
+    }
+
+    fn git_changed(&mut self) {
+        if let Some(wake) = &self.git_wake {
+            wake.pending.store(false, Ordering::Release);
+        }
+        self.git_dirty = true;
     }
 
     fn set_expanded(&mut self, expanded: Vec<PathBuf>) {
@@ -175,6 +218,7 @@ impl Scanner {
         {
             self.watched.insert(git_dir);
         }
+        self.subscribe_git();
         match files_git::read(&self.tree.root) {
             Some(statuses) => self.git = Arc::new(statuses),
             None if self.git_dir.is_none() => self.git = Arc::default(),
@@ -280,6 +324,7 @@ async fn run(
     events: Sender<Request>,
 ) {
     scanner.set_expanded(expanded);
+    scanner.git_events = Some(events.clone());
     let mut revision = 0;
     let mut ready = true;
     let mut first_event: Option<Instant> = None;
@@ -338,6 +383,12 @@ async fn run(
                             let first = *first_event.get_or_insert(now);
                             deadline = (now + DEBOUNCE).min(first + MAX_LATENCY);
                         }
+                    }
+                    Some(Request::GitChanged) => {
+                        scanner.git_changed();
+                        let now = Instant::now();
+                        let first = *first_event.get_or_insert(now);
+                        deadline = (now + DEBOUNCE).min(first + MAX_LATENCY);
                     }
                     None => break,
                     _ => {}

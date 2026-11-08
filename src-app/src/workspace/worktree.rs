@@ -669,6 +669,7 @@ pub fn snapshot_and_remove(
         true => None,
         false => Some(snapshot_worktree(repo_root, worktree_path)?),
     };
+    crate::git_monitors::GitMonitors::global().release(worktree_path);
     let path_s = worktree_path.to_string_lossy();
     retry_while_held(REMOVE_ATTEMPTS, REMOVE_RETRY_DELAY, || {
         run_git(
@@ -1100,7 +1101,14 @@ fn is_clean_through(
 }
 
 fn is_clean_with_gix(worktree_path: &Path) -> Result<bool, paneflow_git::Error> {
-    let snapshot = paneflow_git::snapshot(worktree_path, &paneflow_git::Options::is_clean())?;
+    let snapshot = crate::git_monitors::GitMonitors::global().with_snapshot(
+        paneflow_git::engine::Selector::global(),
+        worktree_path,
+        &paneflow_git::Options::is_clean(),
+        paneflow_git::Freshness::Fenced,
+        crate::git_monitors::Keep::IfLive,
+        |snapshot, _| Ok(snapshot),
+    )?;
     if !snapshot.prefix.is_empty() {
         return Err(paneflow_git::Error::Git {
             context: "check a worktree for uncommitted work",
@@ -1920,6 +1928,39 @@ mod tests {
             branch_exists(&repo_root, "feat/clean"),
             "removing the checkout never deletes the branch"
         );
+    }
+
+    #[test]
+    fn a_checkout_served_by_a_live_monitor_is_checked_fenced_and_still_removed() {
+        use crate::git_monitors::{GitMonitors, Keep};
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        init_test_repo(&repo_root);
+        let path = create_branch_checkout(&repo_root, "feat/watched", None)
+            .expect("create")
+            .path;
+        GitMonitors::global()
+            .with_snapshot(
+                paneflow_git::engine::Selector::global(),
+                &path,
+                &paneflow_git::Options::files_status(),
+                paneflow_git::Freshness::Converging,
+                Keep::Alive,
+                |snapshot, _| Ok(snapshot),
+            )
+            .expect("a live monitor serves the checkout");
+        assert_eq!(is_clean(&path), Ok(true));
+        std::fs::write(path.join("README.md"), "edited in the checkout\n").expect("edit");
+        assert_eq!(
+            is_clean(&path),
+            Ok(false),
+            "the fenced probe sees a write that completed before it"
+        );
+        let snapshot = snapshot_and_remove(&repo_root, &path)
+            .expect("a checkout with a live monitor is still removed");
+        assert!(snapshot.is_some());
+        assert!(!path.exists());
     }
 
     #[test]

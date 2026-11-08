@@ -75,15 +75,17 @@ pub enum Fallback {
     Error,
     Forced,
     EntryCap,
+    Monitor,
 }
 
 impl Fallback {
-    pub const ALL: [Fallback; 5] = [
+    pub const ALL: [Fallback; 6] = [
         Fallback::Reftable,
         Fallback::ObjectFormat,
         Fallback::Error,
         Fallback::Forced,
         Fallback::EntryCap,
+        Fallback::Monitor,
     ];
 
     pub fn name(self) -> &'static str {
@@ -93,6 +95,7 @@ impl Fallback {
             Fallback::Error => "error",
             Fallback::Forced => "forced",
             Fallback::EntryCap => "entry_cap",
+            Fallback::Monitor => "monitor",
         }
     }
 
@@ -284,6 +287,10 @@ impl Selector {
             .position(|known| *known == engine)
             .unwrap_or_default();
         self.probes[probe.index()][engine_index].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_fallback(&self, reason: Fallback) {
+        self.count_fallback(reason);
     }
 
     fn count_fallback(&self, reason: Fallback) {

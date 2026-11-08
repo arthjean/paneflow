@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::Hsla;
+use paneflow_git::Freshness;
 use paneflow_git::engine::{Probe, Selector};
 use paneflow_git::porcelain::{self, Record};
 
+use crate::git_monitors::{GitMonitors, Keep};
 use crate::theme::UiColors;
 use crate::workspace::git::git_stdout;
 
@@ -189,7 +191,24 @@ fn read_through(
 }
 
 fn read_with_gix(root: &Path, stdout_cap: u64) -> Result<Option<GitStatuses>, paneflow_git::Error> {
-    match paneflow_git::snapshot(root, &paneflow_git::Options::files_status()) {
+    read_with_gix_through(GitMonitors::global(), Selector::global(), root, stdout_cap)
+}
+
+fn read_with_gix_through(
+    monitors: &GitMonitors,
+    selector: &Selector,
+    root: &Path,
+    stdout_cap: u64,
+) -> Result<Option<GitStatuses>, paneflow_git::Error> {
+    let probed = monitors.with_snapshot(
+        selector,
+        root,
+        &paneflow_git::Options::files_status(),
+        Freshness::Converging,
+        Keep::Alive,
+        |snapshot, _| Ok(snapshot),
+    );
+    match probed {
         Ok(snapshot) => Ok(GitStatuses::from_snapshot(root, &snapshot, stdout_cap)),
         Err(paneflow_git::Error::NotARepository { .. }) => Ok(None),
         Err(error) => Err(error),

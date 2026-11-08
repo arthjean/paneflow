@@ -387,7 +387,7 @@ the diff dock and `is_clean` (EP-005) run on it.
   gix, reading config in process, sees the isolation the CLI builder applies
   per command.
 - **Diff badge probe.** `GitDiffStats::from_cwd`, called off the main
-  thread by the workspace git poll, the cwd tracker and the diff dock, asks
+  thread by the workspace git poll and the cwd tracker, asks
   the selector for `diff_stats`. On
   gix, `paneflow_git::with_snapshot` takes one snapshot with
   `Options::diff_stats()` and hands it, with an `Objects` reader on the same
@@ -415,8 +415,10 @@ the diff dock and `is_clean` (EP-005) run on it.
   stat changed. `gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture`
   compares both engines on the EP-002 matrix, and the racy-window race test
   proves the probe no longer blocks a truncating write after an index write.
-- **Diff dock probe.** `compute_head_diff`, called by the dock refresh off
-  the main thread, asks the selector for `dock_listing`. On gix one
+- **Diff dock probe.** `compute_head_diff_and_stats`, called by the dock
+  refresh off the main thread, asks the selector for `dock_listing`, and the
+  dock's file and line counts come from the same snapshot
+  (`GitDiffStats::from_probe`) instead of a second status. On gix one
   `with_snapshot` open (`Options::dock_listing()`, or `Options::base` set to
   another commit, whose tree replaces `HEAD`'s through gix's `head_tree`)
   answers what the CLI path asked of four commands and one `git show` per
@@ -541,6 +543,38 @@ the diff dock and `is_clean` (EP-005) run on it.
   built only when a walk is needed. `tests/monitor_differential.rs` drives 24
   seeded scenarios of 12 operations and compares every probe with a fresh
   `snapshot()`, fenced on Linux and macOS, converging within 10 s on Windows.
+- **Freshness and the monitor registry.** Every monitor probe
+  (`Monitor::probe`, EP-003) names a `Freshness`. `Fenced` fences the feed
+  through its marker directory before draining, so the answer reflects every
+  write that completed before the probe started; a fence that misses its
+  500 ms deadline (`FENCE_TIMEOUT`) or loses coverage takes the full
+  snapshot, and Windows, which has no fence, always does. `Converging`
+  drains without a fence, and the feed's waker reports every later event, so
+  the consumer probes again within its own debounce. A probe returns
+  `Probed`: the snapshot and the repository it opened, so the caller reads
+  objects after the monitor is unlocked and no repository outlives the
+  call. A monitor error restarts the monitor and answers that probe from
+  the full snapshot (`ProbeKind::MonitorError`); an ineligible feed answers
+  from it too (`ProbeKind::Full`). `PANEFLOW_GIT_MONITOR=off`, read once and
+  honored in release builds, makes every probe take the full snapshot
+  without starting a feed. `src-app/src/git_monitors.rs` holds one monitor
+  per worktree, keyed by the canonical root that `worktree_root` resolves
+  from any directory inside it, and opened by the absolute path git
+  discovers, so `Objects::workdir` keeps the spelling `snapshot()` gives.
+  The Files sidebar (on its worker thread), the shown workspaces' badges
+  and the dock probe `Converging` and keep their monitor alive
+  (`Keep::Alive`); hidden workspaces' badges, the cwd tracker and
+  `is_clean` use a monitor only if one is already live (`Keep::IfLive`) and
+  otherwise take the full snapshot, so a hidden workspace never starts a
+  feed. `is_clean` probes `Fenced`, and a removal releases the worktree's
+  monitor before `git worktree remove` so no watch handle outlives it. The
+  registry drops a monitor 5 minutes after its last `Keep::Alive` probe,
+  checked on each probe and on the 30 s git poll. Subscribers (the sidebar
+  worker and each shown badge cwd) get one coalesced wake per feed event:
+  the sidebar marks its statuses dirty under its 40 to 160 ms debounce, and
+  the badge re-probes under the 300 ms debounce capped at 2 s, instead of
+  waiting for the 30 s poll. A probe that falls back from the monitor to the
+  full snapshot is counted as `git_engine.fallbacks.monitor`.
 
 ## Keystroke → pixel
 
