@@ -1,16 +1,20 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use gix::bstr::{BString, ByteSlice};
 use gix::dir::entry::{Kind as DiskKind, Status as DirStatus};
+use gix::dir::walk::EmissionMode;
 use gix::index::entry::Mode;
-use gix::status::index_worktree::Item as WorktreeItem;
+use gix::status::index_worktree::{BuiltinSubmoduleStatus, Item as WorktreeItem};
+use gix::status::plumbing::index_as_worktree::traits::FastEq;
 use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
-use gix::status::{Submodule, UntrackedFiles};
+use gix::status::plumbing::index_as_worktree_with_renames::{Entry as VisitedEntry, VisitEntry};
+use gix::status::Submodule;
 use gix::submodule::config::Ignore;
 
+use crate::submodule::SubmoduleResult;
 use crate::{
     open, sparse, staged, submodule, threads, Conflict, Entry, Error, Head, IndexChange, Objects,
     Options, Sides, Snapshot, Stored, Submodules, Untracked, WorktreeChange,
@@ -41,7 +45,7 @@ pub fn with_snapshot<T>(
 
 pub(crate) type Entries = BTreeMap<Vec<u8>, Entry>;
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Recorded {
     sides: Sides,
     staged: bool,
@@ -49,7 +53,42 @@ pub(crate) struct Recorded {
 
 pub(crate) type SideMap = BTreeMap<Vec<u8>, Recorded>;
 
-fn prefix(path: &Path, repo: &gix::Repository) -> Result<Vec<u8>, Error> {
+pub(crate) type StatDirty = BTreeMap<Vec<u8>, Stored>;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Worktree {
+    pub(crate) tracked: Entries,
+    pub(crate) sides: SideMap,
+    pub(crate) untracked: BTreeSet<Vec<u8>>,
+    pub(crate) refresh: BTreeSet<Vec<u8>>,
+}
+
+impl Worktree {
+    pub(crate) fn forget_tracked(&mut self, path: &[u8]) {
+        self.tracked.remove(path);
+        self.sides.remove(path);
+        self.refresh.remove(path);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WorktreeWork {
+    pub(crate) entries_processed: usize,
+    pub(crate) symlink_metadata_calls: usize,
+    pub(crate) files_hashed: usize,
+    pub(crate) read_dir_calls: usize,
+}
+
+pub(crate) struct Parts<'a> {
+    pub(crate) head: Head,
+    pub(crate) worktree: &'a Worktree,
+    pub(crate) staged: &'a [staged::Staged],
+    pub(crate) stat_dirty: Option<&'a StatDirty>,
+    pub(crate) submodules: &'a [SubmoduleResult],
+    pub(crate) submodules_opened: usize,
+}
+
+pub(crate) fn prefix(path: &Path, repo: &gix::Repository) -> Result<Vec<u8>, Error> {
     let workdir = repo.workdir().ok_or_else(|| Error::Bare {
         path: path.to_path_buf(),
     })?;
@@ -79,57 +118,18 @@ pub(crate) fn collect(
     interrupt: &Arc<AtomicBool>,
     share: usize,
 ) -> Result<Snapshot, Error> {
-    let base_tree = options
-        .base
-        .as_deref()
-        .map(|base| base_tree(repo, base))
-        .transpose()?;
-    let compared_tree = match base_tree {
-        Some(tree) => Some(tree),
-        None => head_tree(repo)?,
-    };
-    let head = compared_tree.map_or(Head::Unborn, |tree| Head::Tree(tree.to_string()));
-    let stat_options = repo
-        .stat_options()
-        .map_err(|error| Error::git("read the stat options", error))?;
-    let mut entries = Entries::new();
-    let mut sides = SideMap::new();
-    let status = repo
-        .status(gix::progress::Discard)
-        .map_err(|error| Error::git("prepare the status", error))?;
-    let dirwalk = repo
-        .dirwalk_options()
-        .map_err(|error| Error::git("prepare the directory walk", error))?;
+    let compared_tree = compared_tree(repo, options)?;
     let index = sparse::index_for_status(repo)?;
     let thread_limit = options.threads.for_entries(share, index.entries().len());
-    let staged_index = index.clone();
-    let status = status
-        .index(index)
-        .index_worktree_options_mut(|worktree| worktree.dirwalk_options = Some(dirwalk))
-        .untracked_files(match options.untracked {
-            Untracked::Files => UntrackedFiles::Files,
-            Untracked::None => UntrackedFiles::None,
-        })
-        .index_worktree_submodules(Submodule::Given {
-            ignore: Ignore::All,
-            check_dirty: false,
-        })
-        .index_worktree_rewrites(None)
-        .index_worktree_options_mut(|worktree| worktree.thread_limit = Some(thread_limit))
-        .should_interrupt_owned(Arc::clone(interrupt));
     let staged_repo = repo.clone();
-    let (outcome, staged) = std::thread::scope(|scope| {
-        let staged = scope
-            .spawn(move || staged::changes(&staged_repo, &staged_index, compared_tree, interrupt));
+    let (worktree, staged) = std::thread::scope(|scope| {
+        let index = &index;
+        let staged =
+            scope.spawn(move || staged::changes(&staged_repo, index, compared_tree, interrupt));
         let worktree = (|| {
-            let mut items = status
-                .into_index_worktree_iter(Vec::<BString>::new())
-                .map_err(|error| Error::git("start the status", error))?;
-            for item in items.by_ref() {
-                let item = item.map_err(|error| Error::git("compute the status", error))?;
-                record(&mut entries, &mut sides, item);
-            }
-            Ok(items.into_outcome())
+            let (worktree, _) =
+                worktree_pass(repo, index, options.untracked, thread_limit, interrupt)?;
+            Ok(worktree)
         })();
         let staged = staged.join().unwrap_or_else(|_| {
             Err(Error::git(
@@ -137,31 +137,78 @@ pub(crate) fn collect(
                 "the comparison thread panicked",
             ))
         });
-        worktree.and_then(|outcome| staged.map(|staged| (outcome, staged)))
+        worktree.and_then(|worktree| staged.map(|staged| (worktree, staged)))
     })?;
-    for change in staged {
-        record_staged(&mut entries, &mut sides, change);
-    }
     if interrupt.load(Ordering::Relaxed) {
         return Err(Error::Interrupted);
     }
-    if options.stat_dirty {
-        if let Some(outcome) = outcome.filter(|outcome| outcome.has_changes()) {
-            record_stat_dirty(
-                repo,
-                &outcome.worktree_index,
-                stat_options,
-                &mut entries,
-                &mut sides,
-            );
-        }
-    }
-    let submodules_opened = match options.submodules {
-        Submodules::Ignore => 0,
+    let stat_dirty = (options.stat_dirty && !worktree.refresh.is_empty())
+        .then(|| stat_mismatches(repo, &index, &worktree, None))
+        .transpose()?;
+    let submodules = match options.submodules {
+        Submodules::Ignore => Vec::new(),
         Submodules::Check | Submodules::CheckAll => {
-            submodule::record(repo, options, interrupt, share, &mut entries, &mut sides)?
+            submodule::evaluate(repo, options, interrupt, share, |_, _| None)?
         }
     };
+    let submodules_opened = submodules.iter().map(|result| result.opened).sum();
+    Ok(assemble(
+        Parts {
+            head: head_of(compared_tree),
+            worktree: &worktree,
+            staged: &staged,
+            stat_dirty: stat_dirty.as_ref(),
+            submodules: &submodules,
+            submodules_opened,
+        },
+        options,
+    ))
+}
+
+pub(crate) fn head_of(compared_tree: Option<gix::ObjectId>) -> Head {
+    compared_tree.map_or(Head::Unborn, |tree| Head::Tree(tree.to_string()))
+}
+
+pub(crate) fn compared_tree(
+    repo: &gix::Repository,
+    options: &Options,
+) -> Result<Option<gix::ObjectId>, Error> {
+    match options.base.as_deref() {
+        Some(base) => base_tree(repo, base).map(Some),
+        None => head_tree(repo),
+    }
+}
+
+pub(crate) fn assemble(parts: Parts<'_>, options: &Options) -> Snapshot {
+    let mut entries = parts.worktree.tracked.clone();
+    let mut sides = parts.worktree.sides.clone();
+    if options.untracked == Untracked::Files {
+        for path in &parts.worktree.untracked {
+            entry(&mut entries, path).untracked = true;
+        }
+    }
+    for change in parts.staged {
+        record_staged(&mut entries, &mut sides, change);
+    }
+    if options.stat_dirty && !parts.worktree.refresh.is_empty() {
+        if let Some(stat_dirty) = parts.stat_dirty {
+            for (path, stored) in stat_dirty {
+                if entries.get(path).is_some_and(|entry| {
+                    entry.index_to_worktree.is_some() || entry.conflict.is_some()
+                }) {
+                    continue;
+                }
+                entry(&mut entries, path).stat_dirty = true;
+                let path_sides = side(&mut sides, path);
+                if path_sides.index.is_none() {
+                    path_sides.index = Some(stored.clone());
+                }
+            }
+        }
+    }
+    if options.submodules != Submodules::Ignore {
+        submodule::apply(parts.submodules, &mut entries, &mut sides);
+    }
     for entry in entries.values_mut() {
         if entry.index_to_worktree == Some(WorktreeChange::IntentToAdd) {
             entry.head_to_index = None;
@@ -173,14 +220,98 @@ pub(crate) fn collect(
     let truncated = entries.len() > options.entry_cap;
     let entries: Vec<Entry> = entries.into_values().take(options.entry_cap).collect();
     let sides = kept_sides(&entries, sides);
-    Ok(Snapshot {
-        head,
+    Snapshot {
+        head: parts.head,
         prefix: Vec::new(),
         entries,
         sides,
         truncated,
-        submodules_opened,
-    })
+        submodules_opened: parts.submodules_opened,
+    }
+}
+
+pub(crate) fn worktree_pass(
+    repo: &gix::Repository,
+    index: &gix::index::State,
+    untracked: Untracked,
+    thread_limit: usize,
+    interrupt: &AtomicBool,
+) -> Result<(Worktree, WorktreeWork), Error> {
+    let dirwalk_options = match untracked {
+        Untracked::Files => Some(
+            repo.dirwalk_options()
+                .map_err(|error| Error::git("prepare the directory walk", error))?
+                .emit_untracked(EmissionMode::Matching),
+        ),
+        Untracked::None => None,
+    };
+    let submodule = BuiltinSubmoduleStatus::new(
+        repo.clone().into_sync(),
+        Submodule::Given {
+            ignore: Ignore::All,
+            check_dirty: false,
+        },
+    )
+    .map_err(|error| Error::git("prepare the status", error))?;
+    let mut visit = Visit::default();
+    let outcome = repo
+        .index_worktree_status(
+            index,
+            Vec::<BString>::new(),
+            &mut visit,
+            FastEq,
+            submodule,
+            &mut gix::progress::Discard,
+            interrupt,
+            gix::status::index_worktree::Options {
+                sorting: None,
+                dirwalk_options,
+                rewrites: None,
+                thread_limit: Some(thread_limit),
+            },
+        )
+        .map_err(|error| Error::git("compute the status", error))?;
+    if interrupt.load(Ordering::Relaxed) {
+        return Err(Error::Interrupted);
+    }
+    let tracked = &outcome.tracked_file_modification;
+    let work = WorktreeWork {
+        entries_processed: tracked.entries_processed,
+        symlink_metadata_calls: tracked.symlink_metadata_calls,
+        files_hashed: tracked.worktree_files_read,
+        read_dir_calls: outcome
+            .dirwalk
+            .map_or(0, |walk| walk.read_dir_calls as usize),
+    };
+    Ok((visit.worktree, work))
+}
+
+#[derive(Default)]
+struct Visit {
+    worktree: Worktree,
+}
+
+impl<'index> VisitEntry<'index> for Visit {
+    type ContentChange = ();
+    type SubmoduleStatus = gix::submodule::Status;
+
+    fn visit_entry(&mut self, entry: VisitedEntry<'index, (), gix::submodule::Status>) {
+        record(&mut self.worktree, WorktreeItem::from(entry));
+    }
+}
+
+pub(crate) fn record_dirwalk_entry(worktree: &mut Worktree, dir: &gix::dir::Entry) {
+    if dir.status != DirStatus::Untracked {
+        return;
+    }
+    let mut path = dir.rela_path.to_vec();
+    if matches!(
+        dir.disk_kind,
+        Some(DiskKind::Directory | DiskKind::Repository)
+    ) {
+        path.push(b'/');
+    }
+    worktree.untracked.insert(path);
 }
 
 fn kept_sides(entries: &[Entry], mut recorded: SideMap) -> BTreeMap<Vec<u8>, Sides> {
@@ -267,16 +398,19 @@ pub(crate) fn entry<'a>(entries: &'a mut Entries, path: &[u8]) -> &'a mut Entry 
     })
 }
 
-fn record_stat_dirty(
+pub(crate) fn stat_mismatches(
     repo: &gix::Repository,
     index: &gix::index::State,
-    stat_options: gix::index::entry::stat::Options,
-    entries: &mut Entries,
-    sides: &mut SideMap,
-) {
+    worktree: &Worktree,
+    only: Option<&BTreeSet<Vec<u8>>>,
+) -> Result<StatDirty, Error> {
     use gix::index::entry::{Flags, Stage};
+    let stat_options = repo
+        .stat_options()
+        .map_err(|error| Error::git("read the stat options", error))?;
+    let mut mismatches = StatDirty::new();
     let Some(workdir) = repo.workdir() else {
-        return;
+        return Ok(mismatches);
     };
     for index_entry in index.entries() {
         if index_entry.stage() != Stage::Unconflicted
@@ -288,7 +422,11 @@ fn record_stat_dirty(
             continue;
         }
         let path: &[u8] = index_entry.path(index).as_ref();
-        if entries
+        if only.is_some_and(|only| !only.contains(path)) {
+            continue;
+        }
+        if worktree
+            .tracked
             .get(path)
             .is_some_and(|entry| entry.index_to_worktree.is_some() || entry.conflict.is_some())
         {
@@ -307,15 +445,12 @@ fn record_stat_dirty(
         if stat.matches(&index_entry.stat, stat_options) {
             continue;
         }
-        entry(entries, path).stat_dirty = true;
-        let path_sides = side(sides, path);
-        if path_sides.index.is_none() {
-            path_sides.index = Some(stored(index_entry.mode, &index_entry.id));
-        }
+        mismatches.insert(path.to_vec(), stored(index_entry.mode, &index_entry.id));
     }
+    Ok(mismatches)
 }
 
-fn record(entries: &mut Entries, sides: &mut SideMap, item: WorktreeItem) {
+fn record(worktree: &mut Worktree, item: WorktreeItem) {
     match item {
         WorktreeItem::Modification {
             entry: index_entry,
@@ -323,27 +458,30 @@ fn record(entries: &mut Entries, sides: &mut SideMap, item: WorktreeItem) {
             status,
             ..
         } => {
-            let path_sides = side(sides, &rela_path);
+            if matches!(
+                status,
+                EntryStatus::NeedsUpdate(_)
+                    | EntryStatus::Change(Change::Modification {
+                        set_entry_stat_size_zero: true,
+                        ..
+                    })
+            ) {
+                worktree.refresh.insert(rela_path.to_vec());
+            }
+            if matches!(status, EntryStatus::NeedsUpdate(_)) {
+                return;
+            }
+            let path_sides = side(&mut worktree.sides, &rela_path);
             if path_sides.index.is_none() {
                 path_sides.index = Some(stored(index_entry.mode, &index_entry.id));
             }
             if let Some(mode) = worktree_mode(index_entry.mode, &status) {
                 path_sides.worktree_mode = Some(mode);
             }
-            record_worktree_status(entries, &rela_path, status);
+            record_worktree_status(&mut worktree.tracked, &rela_path, status);
         }
         WorktreeItem::DirectoryContents { entry: dir, .. } => {
-            if dir.status != DirStatus::Untracked {
-                return;
-            }
-            let mut path = dir.rela_path.to_vec();
-            if matches!(
-                dir.disk_kind,
-                Some(DiskKind::Directory | DiskKind::Repository)
-            ) {
-                path.push(b'/');
-            }
-            entry(entries, &path).untracked = true;
+            record_dirwalk_entry(worktree, &dir);
         }
         WorktreeItem::Rewrite { .. } => {}
     }
@@ -369,7 +507,7 @@ fn record_worktree_status(
     entry(entries, path).index_to_worktree = Some(change);
 }
 
-fn record_staged(entries: &mut Entries, sides: &mut SideMap, change: staged::Staged) {
+fn record_staged(entries: &mut Entries, sides: &mut SideMap, change: &staged::Staged) {
     let kind = match (change.head, change.index) {
         (None, _) => IndexChange::Added,
         (_, None) => IndexChange::Deleted,

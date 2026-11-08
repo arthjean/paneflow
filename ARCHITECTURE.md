@@ -488,8 +488,9 @@ the diff dock and `is_clean` (EP-005) run on it.
   once, and until that succeeds every
   drain reports `BackendStopped`, so a dead backend is never read as
   silence. The feed does not see `core.excludesFile` or an entry force-added
-  under an ignored directory: the monitor must restart the feed
-  (`Feeds::release`, then `acquire`) when those inputs change. Measured on 2026-11-07
+  under an ignored directory: the monitor calls
+  `ChangeFeed::invalidate_coverage` when those inputs change, so the next
+  drain rescans. Measured on 2026-11-07
   with a throwaway harness (Windows 11 26300 NTFS, WSL2 Linux 6.18 ext4,
   macOS 15.8.2 on `macos-15`): 20,000 creates without a drain were a loss in
   10 of 10 runs per platform, a queue overflow (`Overflow`) by default and a
@@ -504,6 +505,37 @@ the diff dock and `is_clean` (EP-005) run on it.
   under a looping 16-job `cargo build`, 47 us and 84 us on Linux, and 12.5 ms
   and 18.7 ms on macOS. A gix-notify waker runs on the backend thread, so a
   slow one stalls native delivery into a `Rescan`; keep it to a wake-up.
+- **Incremental monitor.** `paneflow_git::Monitor` (EP-002 of
+  `prd-incremental-git-status.md`) owns one `ChangeFeed` and a model of
+  derived data, never a gix `Repository`: the decoded index, the
+  index-to-worktree verdicts and the untracked set (one `snapshot::Worktree`
+  layer computed with untracked files on, whatever the probe asks), the
+  staged half per compared tree, the stat-dirty set once a dock probe needs
+  it, and one cached result per submodule and `Submodules` mode. `snapshot()`
+  and the monitor build their answer through the same `snapshot::assemble`,
+  so the two cannot drift apart in how they merge the layers. The first probe
+  starts the feed, then takes the full snapshot; every later one drains the
+  feed (or fences it, `fenced_snapshot`), opens the repository fresh, and
+  re-baselines from a full snapshot on any loss, a failed fence, a changed
+  input (the raw config bytes, `info/exclude`, `core.excludesFile`,
+  attributes files and every `.gitignore`, `.gitattributes` and
+  `.gitmodules` it saw, compared by stat), an index whose format or
+  skip-worktree flags changed, an index rewrite touching more than 10 % of
+  its entries, more than 256 paths to walk, or a worktree-dependent sparse
+  checkout (`core.sparseCheckout` without
+  `sparse.expectFilesOutsideOfPatterns`, which always takes `snapshot()`).
+  Otherwise it re-checks only the index entries the events or the index carry
+  named, by feeding a sub-index of them to the same gix status, and walks only
+  the paths no tracked file explains, through `Repository::dirwalk` with
+  `:(top,literal)` pathspecs. The 2026-11-08 spike on rust-lang/rust (64,264
+  entries, release) set that design: a pathspec-limited status over the full
+  index costs O(index) as soon as the paths share no prefix (10 paths 29 ms
+  Linux, 57 ms Windows, against 48 and 73 ms for the full snapshot), while
+  the sub-index plus literal walk costs 3.2 ms Linux and 13.6 ms Windows for
+  10 scattered paths, 5.8 ms of which is gix's case-insensitive index lookup,
+  built only when a walk is needed. `tests/monitor_differential.rs` drives 24
+  seeded scenarios of 12 operations and compares every probe with a fresh
+  `snapshot()`, fenced on Linux and macOS, converging within 10 s on Windows.
 
 ## Keystroke → pixel
 

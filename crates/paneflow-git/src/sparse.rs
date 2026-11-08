@@ -8,10 +8,56 @@ use crate::Error;
 
 const EXPECT_FILES_OUTSIDE_OF_PATTERNS: &str = "sparse.expectFilesOutsideOfPatterns";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct IndexFormat {
+    pub(crate) sparse: bool,
+    pub(crate) split: bool,
+    pub(crate) skip_worktree: bool,
+    pub(crate) version: u8,
+}
+
+pub(crate) struct ReadIndex {
+    pub(crate) index: IndexPersistedOrInMemory,
+    pub(crate) format: IndexFormat,
+    pub(crate) depends_on_worktree: bool,
+}
+
 pub(crate) fn index_for_status(repo: &gix::Repository) -> Result<IndexPersistedOrInMemory, Error> {
+    read_index(repo).map(|read| read.index)
+}
+
+pub(crate) fn read_index(repo: &gix::Repository) -> Result<ReadIndex, Error> {
     let index = repo
         .index_or_empty()
         .map_err(|error| Error::git("read the index", error))?;
+    let format = IndexFormat {
+        sparse: index.is_sparse(),
+        split: header_entries(index.path()).is_some_and(|count| count != index.entries().len()),
+        skip_worktree: has_skip_worktree(&index),
+        version: index.version() as u8,
+    };
+    let depends_on_worktree = format.skip_worktree && clears_present_files(repo);
+    Ok(ReadIndex {
+        index: expanded(repo, index)?,
+        format,
+        depends_on_worktree,
+    })
+}
+
+fn header_entries(path: &Path) -> Option<usize> {
+    use std::io::Read;
+    let mut header = [0u8; 12];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .ok()?;
+    let count: [u8; 4] = header[8..12].try_into().ok()?;
+    usize::try_from(u32::from_be_bytes(count)).ok()
+}
+
+fn expanded(
+    repo: &gix::Repository,
+    index: gix::worktree::Index,
+) -> Result<IndexPersistedOrInMemory, Error> {
     if !index.is_sparse() && !has_skip_worktree(&index) {
         return Ok(IndexPersistedOrInMemory::Persisted(index));
     }

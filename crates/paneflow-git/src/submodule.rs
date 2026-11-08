@@ -6,25 +6,40 @@ use gix::submodule::config::Ignore;
 use crate::snapshot::{collect, entry, gitlink, side, Entries, SideMap};
 use crate::{open, Error, Options, SubmoduleChange, Submodules, Untracked, WorktreeChange};
 
-pub(crate) fn record(
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SubmoduleResult {
+    pub(crate) path: Vec<u8>,
+    pub(crate) ignore: Ignore,
+    pub(crate) gitlink: Option<gix::ObjectId>,
+    pub(crate) index_id: Option<gix::ObjectId>,
+    pub(crate) change: SubmoduleChange,
+    pub(crate) opened: usize,
+}
+
+impl SubmoduleResult {
+    fn dirty_gitlink(&self) -> Option<gix::ObjectId> {
+        self.index_id.filter(|_| self.change.is_dirty())
+    }
+}
+
+pub(crate) fn evaluate(
     repo: &gix::Repository,
     options: &Options,
     interrupt: &Arc<AtomicBool>,
     share: usize,
-    entries: &mut Entries,
-    sides: &mut SideMap,
-) -> Result<usize, Error> {
+    mut reuse: impl FnMut(&[u8], Ignore) -> Option<SubmoduleResult>,
+) -> Result<Vec<SubmoduleResult>, Error> {
     let Some(submodules) = repo
         .submodules()
         .map_err(|error| Error::git("read the submodule configuration", error))?
     else {
-        return Ok(0);
+        return Ok(Vec::new());
     };
     let configured_ignore = match options.submodules {
         Submodules::CheckAll => Some(Ignore::None),
         Submodules::Check | Submodules::Ignore => superproject_ignore(repo)?,
     };
-    let mut opened = 0;
+    let mut results = Vec::new();
     for submodule in submodules {
         let path = submodule
             .path()
@@ -40,22 +55,45 @@ pub(crate) fn record(
         if ignore == Ignore::All {
             continue;
         }
-        let (change, submodule_opens, index_id) =
-            status(&submodule, ignore, options, interrupt, share)?;
-        opened += submodule_opens;
-        let Some(index_id) = index_id.filter(|_| change.is_dirty()) else {
+        let gitlink = submodule
+            .index_id()
+            .map_err(|error| Error::git("read a submodule index entry", error))?;
+        if let Some(reused) = reuse(&path, ignore)
+            .filter(|reused| reused.gitlink == gitlink && reused.ignore == ignore)
+        {
+            results.push(SubmoduleResult {
+                opened: 0,
+                ..reused
+            });
+            continue;
+        }
+        let (change, opened, index_id) = status(&submodule, ignore, options, interrupt, share)?;
+        results.push(SubmoduleResult {
+            path,
+            ignore,
+            gitlink,
+            index_id,
+            change,
+            opened,
+        });
+    }
+    Ok(results)
+}
+
+pub(crate) fn apply(results: &[SubmoduleResult], entries: &mut Entries, sides: &mut SideMap) {
+    for result in results {
+        let Some(index_id) = result.dirty_gitlink() else {
             continue;
         };
-        let entry = entry(entries, &path);
+        let entry = entry(entries, &result.path);
         if entry.index_to_worktree.is_none() {
-            entry.index_to_worktree = Some(WorktreeChange::Submodule(change));
-            let path_sides = side(sides, &path);
+            entry.index_to_worktree = Some(WorktreeChange::Submodule(result.change));
+            let path_sides = side(sides, &result.path);
             if path_sides.index.is_none() {
                 path_sides.index = Some(gitlink(&index_id));
             }
         }
     }
-    Ok(opened)
 }
 
 fn superproject_ignore(repo: &gix::Repository) -> Result<Option<Ignore>, Error> {

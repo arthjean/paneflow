@@ -2,6 +2,7 @@ extern crate self as paneflow_git;
 
 pub mod engine;
 pub mod feed;
+pub mod monitor;
 mod objects;
 mod open;
 #[cfg(feature = "oracle")]
@@ -23,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+pub use monitor::{Monitor, ProbeKind, ProbeReport, Reason};
 pub use objects::{Header, Objects};
 pub use snapshot::{snapshot, with_snapshot};
 pub use threads::{Threads, ENTRIES_PER_THREAD, PLATFORM_CAP};
