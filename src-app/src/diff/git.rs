@@ -3,6 +3,8 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use super::engine::{DiffHunk, DiffOptions, compute_hunk_report};
+use crate::git_monitors::{GitMonitors, Keep};
+use crate::workspace::GitDiffStats;
 use crate::workspace::git::RawChange;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -341,6 +343,7 @@ const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 pub(crate) const NOT_A_GIT_REPOSITORY: &str = "Not a Git repository";
 
+#[cfg(test)]
 pub fn compute_head_diff(worktree_dir: &Path, options: DiffOptions) -> WorktreeDiff {
     compute_head_diff_through(
         paneflow_git::engine::Selector::global(),
@@ -350,17 +353,44 @@ pub fn compute_head_diff(worktree_dir: &Path, options: DiffOptions) -> WorktreeD
     )
 }
 
+pub fn compute_head_diff_and_stats(
+    worktree_dir: &Path,
+    options: DiffOptions,
+) -> (WorktreeDiff, GitDiffStats) {
+    head_diff_and_stats_through(
+        paneflow_git::engine::Selector::global(),
+        &paneflow_git::Options::dock_listing(),
+        worktree_dir,
+        options,
+    )
+}
+
+#[cfg(test)]
 fn compute_head_diff_through(
     selector: &paneflow_git::engine::Selector,
     probe: &paneflow_git::Options,
     worktree_dir: &Path,
     options: DiffOptions,
 ) -> WorktreeDiff {
+    head_diff_and_stats_through(selector, probe, worktree_dir, options).0
+}
+
+fn head_diff_and_stats_through(
+    selector: &paneflow_git::engine::Selector,
+    probe: &paneflow_git::Options,
+    worktree_dir: &Path,
+    options: DiffOptions,
+) -> (WorktreeDiff, GitDiffStats) {
     selector.run(
         paneflow_git::engine::Probe::DockListing,
         worktree_dir,
-        || head_diff_with_gix(worktree_dir, probe, options),
-        || head_diff_with_cli(worktree_dir, options),
+        || head_diff_and_stats_with_gix(worktree_dir, probe, options),
+        || {
+            (
+                head_diff_with_cli(worktree_dir, options),
+                GitDiffStats::from_cwd(&worktree_dir.to_string_lossy()),
+            )
+        },
     )
 }
 
@@ -390,47 +420,79 @@ fn head_diff_with_cli(worktree_dir: &Path, options: DiffOptions) -> WorktreeDiff
     diff
 }
 
+#[cfg(test)]
 fn head_diff_with_gix(
     worktree_dir: &Path,
     probe: &paneflow_git::Options,
     options: DiffOptions,
 ) -> Result<WorktreeDiff, paneflow_git::Error> {
-    let result = paneflow_git::with_snapshot(worktree_dir, probe, |snapshot, objects| {
-        let Some(workdir) = objects.workdir() else {
-            return Ok(failed_diff(NOT_A_GIT_REPOSITORY.to_string()));
-        };
-        let toplevel = std::path::absolute(workdir).unwrap_or_else(|_| workdir.to_path_buf());
-        log::debug!(
-            "git: compute_head_diff in process dir={}",
-            toplevel.display()
-        );
-        let head_sha = objects.head_commit()?;
-        let listing = gix_listing(&snapshot, probe.entry_cap, objects, &toplevel)?;
-        let base_ids = listing.base_ids;
-        let untracked = listing.untracked;
-        let mut diff = assemble_diff(
-            &toplevel,
-            listing.changes,
-            |limit| take_limited(untracked, limit),
-            |index, path| {
-                gix_base_text(
-                    objects,
-                    base_ids.get(index).and_then(Option::as_deref),
-                    path,
-                )
-            },
-            options,
-        );
-        diff.toplevel = Some(toplevel);
-        diff.head_sha = head_sha;
-        Ok(diff)
-    });
+    head_diff_and_stats_with_gix(worktree_dir, probe, options).map(|(diff, _)| diff)
+}
+
+fn head_diff_and_stats_with_gix(
+    worktree_dir: &Path,
+    probe: &paneflow_git::Options,
+    options: DiffOptions,
+) -> Result<(WorktreeDiff, GitDiffStats), paneflow_git::Error> {
+    let result = GitMonitors::global().with_snapshot(
+        paneflow_git::engine::Selector::global(),
+        worktree_dir,
+        probe,
+        paneflow_git::Freshness::Converging,
+        Keep::Alive,
+        |snapshot, objects| {
+            let stats = GitDiffStats::from_probe(&snapshot, objects);
+            let diff = head_diff_from_snapshot(snapshot, probe, objects, options)?;
+            Ok((diff, stats))
+        },
+    );
     match result {
-        Err(paneflow_git::Error::NotARepository { .. }) => {
-            Ok(failed_diff(NOT_A_GIT_REPOSITORY.to_string()))
-        }
-        other => other,
+        Ok((diff, stats)) => Ok((
+            diff,
+            stats.unwrap_or_else(|_| GitDiffStats::from_cwd(&worktree_dir.to_string_lossy())),
+        )),
+        Err(paneflow_git::Error::NotARepository { .. }) => Ok((
+            failed_diff(NOT_A_GIT_REPOSITORY.to_string()),
+            GitDiffStats::unavailable(),
+        )),
+        Err(error) => Err(error),
     }
+}
+
+fn head_diff_from_snapshot(
+    snapshot: paneflow_git::Snapshot,
+    probe: &paneflow_git::Options,
+    objects: &paneflow_git::Objects<'_>,
+    options: DiffOptions,
+) -> Result<WorktreeDiff, paneflow_git::Error> {
+    let Some(workdir) = objects.workdir() else {
+        return Ok(failed_diff(NOT_A_GIT_REPOSITORY.to_string()));
+    };
+    let toplevel = std::path::absolute(workdir).unwrap_or_else(|_| workdir.to_path_buf());
+    log::debug!(
+        "git: compute_head_diff in process dir={}",
+        toplevel.display()
+    );
+    let head_sha = objects.head_commit()?;
+    let listing = gix_listing(&snapshot, probe.entry_cap, objects, &toplevel)?;
+    let base_ids = listing.base_ids;
+    let untracked = listing.untracked;
+    let mut diff = assemble_diff(
+        &toplevel,
+        listing.changes,
+        |limit| take_limited(untracked, limit),
+        |index, path| {
+            gix_base_text(
+                objects,
+                base_ids.get(index).and_then(Option::as_deref),
+                path,
+            )
+        },
+        options,
+    );
+    diff.toplevel = Some(toplevel);
+    diff.head_sha = head_sha;
+    Ok(diff)
 }
 
 type Listed = (FileChange, String, Option<String>);
@@ -1208,6 +1270,41 @@ mod tests {
         assert!(partial.is_binary, "a missing blob reads as unreadable");
         assert!(partial.base_text.is_empty());
         assert_eq!(file("plain.txt").base_text, "plain\n");
+    }
+
+    #[test]
+    fn a_dock_build_reads_its_listing_and_its_stats_from_one_snapshot() {
+        use paneflow_git::engine::{Engine, Probe, Selector};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fixture::committed_repo(root, &[("kept.txt", "one\ntwo\n"), ("gone.txt", "g\n")]);
+        std::fs::write(root.join("kept.txt"), "one\nthree\nfour\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("new.txt"), "n\n").unwrap();
+        let selector = Selector::new(Engine::Gix);
+
+        let (diff, stats) = head_diff_and_stats_through(
+            &selector,
+            &paneflow_git::Options::dock_listing(),
+            root,
+            DiffOptions::default(),
+        );
+
+        let counters = selector.counters();
+        assert_eq!(counters.probes(Probe::DockListing, Engine::Gix), 1);
+        for engine in Engine::ALL {
+            assert_eq!(counters.probes(Probe::DiffStats, engine), 0);
+        }
+        assert!(diff.error.is_none(), "{:?}", diff.error);
+        assert_eq!(
+            diff.toplevel.as_deref(),
+            Some(std::path::absolute(root).unwrap().as_path())
+        );
+        assert!(stats.files_changed > 0);
+        assert_eq!(
+            stats,
+            crate::workspace::GitDiffStats::from_cwd(root.to_str().unwrap())
+        );
     }
 
     #[test]

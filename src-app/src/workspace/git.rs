@@ -7,6 +7,8 @@ pub struct GitDiffStats {
     pub unavailable: bool,
 }
 
+use crate::git_monitors::{GitMonitors, Keep};
+
 const REFTABLE_HEAD: &str = "ref: refs/heads/.invalid";
 
 const GIT_DIFF_STAT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -32,17 +34,32 @@ type Blobs = std::collections::HashMap<String, SideText>;
 
 impl GitDiffStats {
     pub fn from_cwd(cwd: &str) -> Self {
-        Self::from_cwd_until(cwd, std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE)
+        Self::from_cwd_kept(cwd, Keep::IfLive)
     }
 
-    fn from_cwd_until(cwd: &str, deadline: std::time::Instant) -> Self {
-        Self::through(paneflow_git::engine::Selector::global(), cwd, deadline)
+    pub(crate) fn from_cwd_kept(cwd: &str, keep: Keep) -> Self {
+        Self::through_kept(
+            paneflow_git::engine::Selector::global(),
+            cwd,
+            std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE,
+            keep,
+        )
     }
 
+    #[cfg(test)]
     fn through(
         selector: &paneflow_git::engine::Selector,
         cwd: &str,
         deadline: std::time::Instant,
+    ) -> Self {
+        Self::through_kept(selector, cwd, deadline, Keep::IfLive)
+    }
+
+    fn through_kept(
+        selector: &paneflow_git::engine::Selector,
+        cwd: &str,
+        deadline: std::time::Instant,
+        keep: Keep,
     ) -> Self {
         if std::time::Instant::now() >= deadline {
             return Self::unavailable();
@@ -50,36 +67,60 @@ impl GitDiffStats {
         selector.run(
             paneflow_git::engine::Probe::DiffStats,
             std::path::Path::new(cwd),
-            || Self::with_gix(cwd, deadline),
+            || Self::with_gix(cwd, deadline, keep),
             || Self::with_cli(cwd, deadline),
         )
     }
 
-    fn with_gix(cwd: &str, deadline: std::time::Instant) -> Result<Self, paneflow_git::Error> {
-        let result = paneflow_git::with_snapshot(
+    fn with_gix(
+        cwd: &str,
+        deadline: std::time::Instant,
+        keep: Keep,
+    ) -> Result<Self, paneflow_git::Error> {
+        let result = GitMonitors::global().with_snapshot(
+            paneflow_git::engine::Selector::global(),
             std::path::Path::new(cwd),
             &paneflow_git::Options::diff_stats(),
-            |snapshot, objects| {
-                let Some(workdir) = objects.workdir() else {
-                    return Ok(Self::unavailable());
-                };
-                let (changes, truncated) = snapshot_changes(&snapshot, objects, workdir)?;
-                let mut stats = Self {
-                    count_capped: truncated || snapshot.truncated,
-                    ..Self::default()
-                };
-                let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
-                let blobs = read_blobs_in_process(objects, measured, deadline)?;
-                stats.add_tracked(workdir, &changes, &blobs, deadline);
-                let (paths, truncated) = snapshot_untracked_paths(&snapshot);
-                stats.add_untracked_paths(workdir, &paths, truncated, deadline);
-                Ok(stats)
-            },
+            paneflow_git::Freshness::Converging,
+            keep,
+            |snapshot, objects| Self::from_snapshot_until(&snapshot, objects, deadline),
         );
         match result {
             Err(paneflow_git::Error::NotARepository { .. }) => Ok(Self::unavailable()),
             other => other,
         }
+    }
+
+    pub(crate) fn from_probe(
+        snapshot: &paneflow_git::Snapshot,
+        objects: &paneflow_git::Objects<'_>,
+    ) -> Result<Self, paneflow_git::Error> {
+        Self::from_snapshot_until(
+            snapshot,
+            objects,
+            std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE,
+        )
+    }
+
+    fn from_snapshot_until(
+        snapshot: &paneflow_git::Snapshot,
+        objects: &paneflow_git::Objects<'_>,
+        deadline: std::time::Instant,
+    ) -> Result<Self, paneflow_git::Error> {
+        let Some(workdir) = objects.workdir() else {
+            return Ok(Self::unavailable());
+        };
+        let (changes, truncated) = snapshot_changes(snapshot, objects, workdir)?;
+        let mut stats = Self {
+            count_capped: truncated || snapshot.truncated,
+            ..Self::default()
+        };
+        let measured = &changes[..changes.len().min(GIT_DIFF_STAT_TRACKED_FILE_CAP)];
+        let blobs = read_blobs_in_process(objects, measured, deadline)?;
+        stats.add_tracked(workdir, &changes, &blobs, deadline);
+        let (paths, truncated) = snapshot_untracked_paths(snapshot);
+        stats.add_untracked_paths(workdir, &paths, truncated, deadline);
+        Ok(stats)
     }
 
     fn with_cli(cwd: &str, deadline: std::time::Instant) -> Self {
@@ -139,7 +180,7 @@ impl GitDiffStats {
         }
     }
 
-    fn unavailable() -> Self {
+    pub(crate) fn unavailable() -> Self {
         Self {
             unavailable: true,
             ..Self::default()
@@ -1441,7 +1482,8 @@ mod tests {
         assert!(
             GitDiffStats::with_gix(
                 root.to_str().unwrap(),
-                std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE
+                std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE,
+                Keep::IfLive
             )
             .is_err(),
             "gix reports the broken HEAD as an error, so the CLI answers"
@@ -1720,7 +1762,7 @@ mod tests {
                 let deadline = std::time::Instant::now() + GIT_DIFF_STAT_DEADLINE;
                 let cwd = cwd.to_str().expect("utf-8 fixture path");
                 let cli = GitDiffStats::with_cli(cwd, deadline);
-                let gix = GitDiffStats::with_gix(cwd, deadline);
+                let gix = GitDiffStats::with_gix(cwd, deadline, Keep::IfLive);
                 let expected_to_fail = must_fail.contains(&fixture.name);
                 match gix {
                     Ok(gix) if !expected_to_fail && gix == cli => {}

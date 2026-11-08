@@ -40,6 +40,7 @@ pub const DESKTOP_COUNTERS: &[&str] = &[
     "git_engine.fallbacks.error",
     "git_engine.fallbacks.forced",
     "git_engine.fallbacks.entry_cap",
+    "git_engine.fallbacks.monitor",
 ];
 
 pub const DIFF_STAT_ENGINE_PROBES: [&str; 2] = [
@@ -47,12 +48,13 @@ pub const DIFF_STAT_ENGINE_PROBES: [&str; 2] = [
     "git_engine.probes.diff_stats.cli",
 ];
 
-pub const GIT_ENGINE_FALLBACKS: [&str; 5] = [
+pub const GIT_ENGINE_FALLBACKS: [&str; 6] = [
     "git_engine.fallbacks.reftable",
     "git_engine.fallbacks.object_format",
     "git_engine.fallbacks.error",
     "git_engine.fallbacks.forced",
     "git_engine.fallbacks.entry_cap",
+    "git_engine.fallbacks.monitor",
 ];
 
 #[derive(Debug, Default)]

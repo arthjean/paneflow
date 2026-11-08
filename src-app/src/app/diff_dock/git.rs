@@ -5,9 +5,8 @@ use super::code::save::FileStamp;
 use crate::diff::{
     DiffOptions, DiffSyntax, DisplayRow, FileDiff, FileRowCache, RowKind, SplitRow,
     build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches,
-    compute_head_diff,
+    compute_head_diff_and_stats,
 };
-use crate::workspace::GitDiffStats;
 
 pub(super) struct DiffDockBuilt {
     pub(super) unified: Vec<DisplayRow>,
@@ -50,7 +49,7 @@ pub(super) fn build_diff_dock(
     options: DiffOptions,
 ) -> Result<DiffDockBuilt, String> {
     let options = options.for_cached_rows();
-    let diff = compute_head_diff(Path::new(cwd), options);
+    let (diff, git_stats) = compute_head_diff_and_stats(Path::new(cwd), options);
     if let Some(e) = diff.error {
         return Err(e);
     }
@@ -89,7 +88,6 @@ pub(super) fn build_diff_dock(
         let (fa, fr) = f.line_counts();
         (a + fa, r + fr)
     });
-    let git_stats = GitDiffStats::from_cwd(cwd);
     let (file_count, added, removed) = if git_stats.is_empty() && !diff.files.is_empty() {
         (diff.files.len(), hunk_added, hunk_removed)
     } else {

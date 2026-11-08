@@ -5,6 +5,8 @@ mod tab;
 mod template_launch;
 pub(crate) mod templates;
 
+pub(crate) use git_watch::GitWakes;
+
 use std::collections::HashSet;
 use std::time::Instant;
 
