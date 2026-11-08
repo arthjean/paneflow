@@ -82,12 +82,12 @@ impl FsCache {
             return None;
         }
 
-        #[cfg(feature = "worktree-rewrites")]
-        if let Some(directory) = self.shared.as_ref().and_then(|listing| listing.directory(dir)) {
-            return directory
-                .get(filename)
-                .and_then(|entry| entry.metadata.clone())
-                .and_then(usable);
+        if let Some(found) = self
+            .shared
+            .as_ref()
+            .and_then(|listing| crate::listed_metadata(listing, rela_path))
+        {
+            return found;
         }
 
         self.directories

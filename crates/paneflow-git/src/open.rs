@@ -98,6 +98,9 @@ fn configure_probe(repo: &mut gix::Repository, thread_limit: usize) -> Result<()
         )
         .map_err(|error| Error::git("limit the index decoding threads", error))?;
     config
+        .set_value(&gix::config::tree::Index::SKIP_HASH, "true")
+        .map_err(|error| Error::git("skip the index checksum like git", error))?;
+    config
         .commit()
         .map_err(|error| Error::git("neutralize the repository filter drivers", error))?;
     Ok(())

@@ -10,6 +10,7 @@ pub mod porcelain;
 pub mod renames;
 mod snapshot;
 mod sparse;
+mod staged;
 mod submodule;
 #[cfg(feature = "oracle")]
 #[path = "../tests/support/mod.rs"]

@@ -6,32 +6,62 @@ mod recorder;
 pub use recorder::Recorder;
 
 pub(super) mod function {
-    fn listed_directories(index: &gix_index::State, entries: &[gix_index::Entry]) -> Vec<bstr::BString> {
-        let mut directories = std::collections::BTreeSet::from([bstr::BString::default()]);
-        let mut previous_parent: Option<&bstr::BStr> = None;
+    fn listed_directories<'a>(
+        index: &'a gix_index::State,
+        entries: &'a [gix_index::Entry],
+    ) -> Vec<gix_dir::walk::ListRequest<'a>> {
+        let root = bstr::BStr::new(b"");
+        let mut requests = vec![gix_dir::walk::ListRequest {
+            directory: root,
+            stat_names: Vec::new(),
+        }];
+        let mut by_directory = std::collections::HashMap::from([(root, 0)]);
+        let mut previous: Option<(&bstr::BStr, usize)> = None;
         for entry in entries {
             if entry.flags.contains(gix_index::entry::Flags::SKIP_WORKTREE) {
                 continue;
             }
             let path = entry.path(index);
-            let Some(separator) = path.rfind_byte(b'/') else {
-                continue;
+            let (parent, name) = match path.rfind_byte(b'/') {
+                Some(separator) => (path[..separator].as_bstr(), path[separator + 1..].as_bstr()),
+                None => (root, path),
             };
-            let parent = path[..separator].as_bstr();
-            if previous_parent == Some(parent) {
-                continue;
-            }
-            previous_parent = Some(parent);
-            let mut directory = parent;
-            while !directories.contains(directory) {
-                directories.insert(directory.to_owned());
-                match directory.rfind_byte(b'/') {
-                    Some(separator) => directory = directory[..separator].as_bstr(),
-                    None => break,
+            let slot = match previous {
+                Some((directory, slot)) if directory == parent => slot,
+                _ => {
+                    let slot = request_slot(parent, &mut requests, &mut by_directory);
+                    previous = Some((parent, slot));
+                    slot
                 }
+            };
+            requests[slot].stat_names.push(name);
+        }
+        requests
+    }
+
+    fn request_slot<'a>(
+        directory: &'a bstr::BStr,
+        requests: &mut Vec<gix_dir::walk::ListRequest<'a>>,
+        by_directory: &mut std::collections::HashMap<&'a bstr::BStr, usize>,
+    ) -> usize {
+        if let Some(slot) = by_directory.get(directory) {
+            return *slot;
+        }
+        let mut missing = directory;
+        loop {
+            by_directory.insert(missing, requests.len());
+            requests.push(gix_dir::walk::ListRequest {
+                directory: missing,
+                stat_names: Vec::new(),
+            });
+            match missing.rfind_byte(b'/') {
+                Some(separator) if !by_directory.contains_key(missing[..separator].as_bstr()) => {
+                    missing = missing[..separator].as_bstr();
+                }
+                _ => break,
             }
         }
-        directories.into_iter().collect()
+        by_directory[directory]
     }
 
     use gix_error::Result;
@@ -92,7 +122,7 @@ pub(super) mod function {
     {
         let mut tracked_file_modifications = options.tracked_file_modifications;
         tracked_file_modifications.fscache = options.fscache;
-        let listing = (cfg!(windows) && options.fscache)
+        let listing = (!cfg!(windows) || options.fscache)
             .then_some(options.dirwalk.as_ref())
             .flatten()
             .map(|dirwalk| {

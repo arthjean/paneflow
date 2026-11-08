@@ -79,7 +79,7 @@ pub(super) fn recursive(
             current_bstr,
             if prev_len == 0 { 0 } else { prev_len + 1 },
             None,
-            || entry.file_type().map(Into::into),
+            || entry.kind(),
             opts,
             ctx,
         )?;
@@ -161,10 +161,10 @@ impl Seen<'_> {
         }
     }
 
-    fn file_type(&self) -> Option<std::fs::FileType> {
+    fn kind(&self) -> Option<crate::entry::Kind> {
         match self {
-            Seen::Read(entry) => entry.file_type().ok(),
-            Seen::Listed(entry) => entry.file_type,
+            Seen::Read(entry) => entry.file_type().ok().map(Into::into),
+            Seen::Listed(entry) => entry.kind(),
         }
     }
 }

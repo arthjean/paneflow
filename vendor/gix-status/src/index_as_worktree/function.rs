@@ -97,8 +97,6 @@ where
     U: Send,
     Find: gix_object::Find + Send + Clone,
 {
-    #[cfg(not(windows))]
-    drop(listing);
     // the order is absolutely critical here we use the old timestamp to detect racy index entries
     // (modified at or after the last index update) during the index update we then set those
     // entries size to 0 (see below) to ensure they keep showing up as racy and reset the timestamp.
@@ -151,6 +149,8 @@ where
                     options,
                     #[cfg(windows)]
                     fscache: options.fscache.then(|| FsCache::new(worktree, listing.clone())),
+                    #[cfg(not(windows))]
+                    listing: listing.clone(),
 
                     skipped_by_pathspec,
                     skipped_by_entry_flags,
@@ -269,6 +269,10 @@ struct State<'a, 'b> {
     /// Lookups happen before falling back to per-file syscalls.
     #[cfg(windows)]
     fscache: Option<FsCache>,
+    /// The directories the status listed up front, whose entries answer the per-file metadata
+    /// lookups before falling back to a live `lstat`.
+    #[cfg(not(windows))]
+    listing: Option<SharedListing>,
 
     skipped_by_pathspec: &'a AtomicUsize,
     skipped_by_entry_flags: &'a AtomicUsize,
@@ -416,13 +420,17 @@ impl<'index> State<'_, 'index> {
             }
         };
 
-        // Acquire metadata. On Windows we consult the cached metadata first and
-        // only fall back to a syscall on miss; on other platforms per-file
-        // `lstat` is already fast, so we just do the syscall directly.
+        // Acquire metadata. The directories listed up front answer first (on Windows
+        // the per-thread cache may also list a directory lazily), and only a miss
+        // falls back to a syscall.
         #[cfg(windows)]
         let cached = self.fscache.as_mut().and_then(|c| c.get(rela_path));
         #[cfg(not(windows))]
-        let cached: Option<gix_index::fs::Metadata> = None;
+        let cached = self
+            .listing
+            .as_ref()
+            .and_then(|listing| crate::listed_metadata(listing, rela_path))
+            .flatten();
         let metadata = match cached {
             Some(cached) => cached,
             None => {

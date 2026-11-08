@@ -3,10 +3,13 @@
 # published sources adds src/walk/listing.rs and `walk_with_listing()`: a `Listing` reads a
 # set of directories once, on a rayon pool that every listing of the process shares, and the
 # walk takes the entries of every directory it holds from it instead of reading the directory
-# again. `walk()` is unchanged. The vendored
-# gix-status builds the listing on Windows, so a status reads each tracked directory once
-# (https://github.com/arthjean/paneflow/issues/134). The published dev-dependencies are
-# left out. Drop this copy once a gix-dir release offers the same hook.
+# again. On Windows the enumeration carries every entry's metadata; on unix the listing reads
+# each requested name with `fstatat` relative to the directory it opened (rustix), and
+# `ListedEntry` exposes a gix `entry::Kind` and a `gix_index::fs::Metadata` on both. `walk()`
+# is unchanged. The vendored gix-status builds the listing on every platform, so a status
+# reads each tracked directory once (https://github.com/arthjean/paneflow/issues/134). The
+# published dev-dependencies are left out. Drop this copy once a gix-dir release offers the
+# same hook.
 
 [package]
 edition = "2024"
@@ -90,6 +93,14 @@ default-features = false
 
 [dependencies.rayon]
 version = "1.12.0"
+
+[target."cfg(unix)".dependencies.rustix]
+version = "1.1.2"
+features = [
+    "std",
+    "fs",
+]
+default-features = false
 
 [lints.clippy]
 assert_is_empty = "allow"
