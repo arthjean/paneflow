@@ -544,6 +544,7 @@ impl Monitor {
         let consumed = std::mem::take(&mut self.pending);
         restored.index_written |= consumed.index_written;
         restored.foreign_git_dirs |= consumed.foreign_git_dirs;
+        restored.children.extend(consumed.children);
         for (path, modify_only) in consumed.paths {
             restored
                 .paths
@@ -767,11 +768,16 @@ impl Monitor {
             .filesystem_options()
             .map_err(|error| Error::git("read the file system options", error))?
             .ignore_case;
+        let ignored = match &self.feed {
+            FeedState::Live(feed) => Some(&feed.coverage().ignored),
+            FeedState::Idle | FeedState::Refused(_) | FeedState::Backoff { .. } => None,
+        };
         let planner = Planner {
             index: &index,
             worktree: &model.worktree,
             workdir: &workdir,
             ignore_case,
+            ignored,
         };
         let plan = match planner.plan(&self.pending, &carried) {
             Ok(plan) => plan,

@@ -52,6 +52,12 @@ pub const DESKTOP_COUNTERS: &[&str] = &[
     "git_engine.monitor.loss_backend_stopped",
     "git_engine.monitor.recovering",
     "git_engine.monitor.fence",
+    "git_engine.monitor.journal_missing",
+    "git_engine.monitor.journal_replaced",
+    "git_engine.monitor.journal_wrapped",
+    "git_engine.monitor.journal_read",
+    "git_engine.monitor.journal_volumes",
+    "git_engine.monitor.journal_overflow",
     "git_engine.monitor.drain_gap",
     "git_engine.monitor.input",
     "git_engine.monitor.index_format",
@@ -92,7 +98,7 @@ pub const GIT_ENGINE_FALLBACKS: [&str; 6] = [
     "git_engine.fallbacks.monitor",
 ];
 
-pub const GIT_MONITOR_COUNTERS: [&str; 35] = [
+pub const GIT_MONITOR_COUNTERS: [&str; 41] = [
     "git_engine.monitor.incremental",
     "git_engine.monitor.deferred",
     "git_engine.monitor.first_probe",
@@ -104,6 +110,12 @@ pub const GIT_MONITOR_COUNTERS: [&str; 35] = [
     "git_engine.monitor.loss_backend_stopped",
     "git_engine.monitor.recovering",
     "git_engine.monitor.fence",
+    "git_engine.monitor.journal_missing",
+    "git_engine.monitor.journal_replaced",
+    "git_engine.monitor.journal_wrapped",
+    "git_engine.monitor.journal_read",
+    "git_engine.monitor.journal_volumes",
+    "git_engine.monitor.journal_overflow",
     "git_engine.monitor.drain_gap",
     "git_engine.monitor.input",
     "git_engine.monitor.index_format",

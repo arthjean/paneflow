@@ -381,3 +381,150 @@ fn repeated_losses_rebaseline_at_most_once_per_spacing_and_wake_the_consumer_aft
     );
     assert_eq!(answered, full(&fixture));
 }
+
+#[cfg(windows)]
+mod journal {
+    use super::*;
+    use crate::feed::{FenceError, JournalError};
+
+    fn fenced(monitor: &mut Monitor) -> Snapshot {
+        let root = monitor.path().to_path_buf();
+        monitor
+            .probe(&root, &Options::default(), Freshness::Fenced)
+            .expect("fenced probe")
+            .into_snapshot()
+    }
+
+    fn live_feed(monitor: &mut Monitor) -> &mut ChangeFeed {
+        match &mut monitor.feed {
+            FeedState::Live(feed) => feed,
+            FeedState::Idle | FeedState::Refused(_) | FeedState::Backoff { .. } => {
+                panic!("the monitor has a live feed")
+            }
+        }
+    }
+
+    fn assert_rebaselines_then_recovers(
+        fault: impl FnOnce(&mut ChangeFeed),
+        expected: impl Fn(&JournalError) -> bool,
+    ) {
+        let fixture = fixture();
+        let mut monitor = monitor(&fixture, Timing::default());
+        fenced(&mut monitor);
+        support::write(&fixture.root, "top.txt", b"edited\n");
+        fault(live_feed(&mut monitor));
+        let probed = fenced(&mut monitor);
+        match kind(&monitor) {
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(error))) => {
+                assert!(expected(&error), "{error:?}");
+            }
+            other => panic!("a faulted journal re-baselines the fenced probe: {other:?}"),
+        }
+        assert_eq!(probed.entries, full(&fixture).entries);
+        assert!(modified(&probed, "top.txt"));
+        support::write(&fixture.root, "src/lib.rs", b"edited too\n");
+        let next = fenced(&mut monitor);
+        assert_eq!(
+            kind(&monitor),
+            ProbeKind::Incremental,
+            "the journal re-armed"
+        );
+        assert!(modified(&next, "src/lib.rs"));
+    }
+
+    #[test]
+    fn a_file_deleted_and_recreated_rechecks_it_and_not_its_whole_directory() {
+        let fixture = fixture();
+        for index in 0..40 {
+            support::write(
+                &fixture.root,
+                &format!("src/file{index}.txt"),
+                format!("file {index}\n").as_bytes(),
+            );
+        }
+        support::git(&fixture.root, &["add", "-A"]);
+        support::git(
+            &fixture.root,
+            &["commit", "-q", "--no-verify", "-m", "files"],
+        );
+        support::git(&fixture.root, &["status", "--porcelain"]);
+        let mut monitor = monitor(&fixture, Timing::default());
+        fenced(&mut monitor);
+        let path = fixture.root.join("src").join("file7.txt");
+        std::fs::remove_file(&path).expect("delete");
+        std::fs::write(&path, b"recreated\n").expect("recreate");
+        let probed = fenced(&mut monitor);
+        assert_eq!(kind(&monitor), ProbeKind::Incremental);
+        assert!(
+            monitor.last_probe().rechecked_entries <= 2,
+            "{:?}",
+            monitor.last_probe()
+        );
+        assert!(modified(&probed, "src/file7.txt"));
+        assert_eq!(probed.entries, full(&fixture).entries);
+    }
+
+    #[test]
+    fn a_fenced_probe_on_windows_answers_incrementally_from_the_journal() {
+        let fixture = fixture();
+        let mut monitor = monitor(&fixture, Timing::default());
+        fenced(&mut monitor);
+        support::write(&fixture.root, "src/lib.rs", b"edited\n");
+        let probed = fenced(&mut monitor);
+        assert_eq!(kind(&monitor), ProbeKind::Incremental);
+        assert_eq!(probed.entries, full(&fixture).entries);
+    }
+
+    #[test]
+    fn a_journal_wrap_rebaselines_the_fenced_probe_and_rearms() {
+        assert_rebaselines_then_recovers(ChangeFeed::rewind_journal_for_test, |error| {
+            *error == JournalError::Wrapped
+        });
+    }
+
+    #[test]
+    fn a_replaced_journal_rebaselines_the_fenced_probe_and_rearms() {
+        assert_rebaselines_then_recovers(ChangeFeed::replace_journal_id_for_test, |error| {
+            *error == JournalError::Replaced
+        });
+    }
+
+    #[test]
+    fn a_journal_read_error_rebaselines_the_fenced_probe_and_rearms() {
+        assert_rebaselines_then_recovers(ChangeFeed::break_journal_reads_for_test, |error| {
+            matches!(error, JournalError::Read(_))
+        });
+    }
+
+    #[test]
+    fn a_volume_without_a_journal_answers_every_fenced_probe_with_the_full_snapshot() {
+        let fixture = fixture();
+        let mut monitor = monitor(&fixture, Timing::default());
+        fenced(&mut monitor);
+        live_feed(&mut monitor).remove_journal_for_test();
+        for edit in 0..2 {
+            support::write(
+                &fixture.root,
+                "top.txt",
+                format!("edit {edit}\n").as_bytes(),
+            );
+            let probed = fenced(&mut monitor);
+            assert_eq!(
+                kind(&monitor),
+                ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Missing)))
+            );
+            assert_eq!(
+                kind(&monitor).counter(),
+                crate::engine::MonitorCounter::JournalMissing
+            );
+            assert_eq!(probed.entries, full(&fixture).entries);
+        }
+        let converging = probe(&mut monitor, Visibility::Shown);
+        assert_eq!(
+            kind(&monitor),
+            ProbeKind::Incremental,
+            "converging probes keep the feed"
+        );
+        assert_eq!(converging.entries, full(&fixture).entries);
+    }
+}

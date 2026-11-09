@@ -479,7 +479,8 @@ the diff dock and `is_clean` (EP-005) run on it.
   the known local ones (NTFS and ReFS on Windows, APFS and HFS on macOS), and
   on Linux any feed that would take Paneflow past half of
   `max_user_watches`. Linux and macOS fence through `git-fence/` under the
-  Paneflow cache directory, created private; Windows has no fence.
+  Paneflow cache directory, created private; Windows fences through the
+  volume's change journal (see "Windows change-journal fence").
   `paneflow_git::feed::Feeds` drops a feed after 5 minutes without a probe and
   remembers a refusal until then, so it logs once. A feed keeps its coverage
   current: on Linux a directory created or moved in after the start, and on
@@ -543,13 +544,14 @@ the diff dock and `is_clean` (EP-005) run on it.
   10 scattered paths, 5.8 ms of which is gix's case-insensitive index lookup,
   built only when a walk is needed. `tests/monitor_differential.rs` drives 24
   seeded scenarios of 12 operations and compares every probe with a fresh
-  `snapshot()`, fenced on Linux and macOS, converging within 10 s on Windows.
+  `snapshot()` after a fenced probe on every platform, Windows included.
 - **Freshness and the monitor registry.** Every monitor probe
   (`Monitor::probe`, EP-003) names a `Freshness`. `Fenced` fences the feed
-  through its marker directory before draining, so the answer reflects every
-  write that completed before the probe started; a fence that misses its
-  500 ms deadline (`FENCE_TIMEOUT`) or loses coverage takes the full
-  snapshot, and Windows, which has no fence, always does. `Converging`
+  before draining (through its marker directory on Linux and macOS, through
+  the change journal on Windows), so the answer reflects every write that
+  completed before the probe started; a fence that misses its 500 ms
+  deadline (`FENCE_TIMEOUT`), loses coverage, or finds the journal unable
+  to vouch takes the full snapshot. `Converging`
   drains without a fence, and the feed's waker reports every later event, so
   the consumer probes again within its own debounce. A probe returns
   `Probed`: the snapshot and the repository it opened, so the caller reads
@@ -601,13 +603,75 @@ the diff dock and `is_clean` (EP-005) run on it.
   storm costs at most one full snapshot per window; a fenced probe never
   takes that answer. Every probe outcome lands on its own engine counter,
   `git_engine.monitor.<reason>` (`engine::MonitorCounter`: each loss kind,
-  each ineligibility, an input change, the index carry limit, a
-  verification, a drift, a deferral), which the host lists in
+  each ineligibility, each reason a journal cannot fence, an input change,
+  the index carry limit, a verification, a drift, a deferral), which the
+  host lists in
   `GIT_MONITOR_COUNTERS`. Probes only read: `tests/monitor_self_check.rs`
   probes an idle worktree 100 times and sees no wake and nothing re-read. The
   gix-notify fence still writes and deletes its marker, and the watcher wakes
   on every published batch before the feed drops the marker's paths, so a
   fenced probe can wake subscribers once; only `is_clean` fences.
+- **Windows change-journal fence.** (EP-005.) A non-elevated process cannot
+  open `\\.\C:` for reading, but `FSCTL_QUERY_USN_JOURNAL` and
+  `FSCTL_READ_UNPRIVILEGED_USN_JOURNAL` work on any handle to a directory of
+  the volume opened with no access right; the privileged
+  `FSCTL_READ_USN_JOURNAL` is denied, and the unprivileged read strips every
+  file name. On Windows every `ChangeFeed` arms a `feed::journal::Journal`:
+  it reads the journal's `NextUsn` before the coverage scan, then maps the
+  128-bit id of every covered directory, and of every directory of each git
+  dir except `objects/` and `lfs/`, to its path. Each drain reads the records
+  up to the `NextUsn` it queries first, keeps those whose parent directory
+  is mapped, and resolves each named file or directory to its current path
+  with `OpenFileById` and `GetFinalPathNameByHandleW`. A record that leaves a
+  name behind (a rename's old name, a delete, a hard-link change) or a file
+  that no longer resolves marks its parent with `ChangeKind::Children`: the
+  planner then re-lists that one directory, re-checks its direct tracked
+  entries, and walks every name the model and the listing disagree on. A
+  file inside a git dir is never opened, since any open handle, even one
+  sharing delete, makes git's `MoveFileEx` replace of `index` fail with
+  "unable to write new index file": its directory is marked `Children`
+  instead, which at a git dir's root counts as an index write. The
+  created, moved or renamed directories of one drain are all resolved
+  first, then the map is rebuilt from its state before the drain, so a
+  directory swapped into a path another one just left keeps its own path. NTFS
+  adds a record only when a reason is first set since the file's last close,
+  so a file stays held, and is re-checked by every drain, from its first
+  record until its `CLOSE` record, which comes when the last handle closes;
+  the feed seeds that set at arming from the whole journal (283,254 records,
+  16 to 54 ms on `C:`). A fence is then one more drain, so a fenced probe
+  answers incrementally. A journal whose id changed (`Replaced`), whose
+  oldest record passed the feed's position (`Wrapped`), that fails a read
+  (`Read`), or that names more than `JOURNAL_RESOLVE_LIMIT` (2,048) paths in
+  one drain (`Overflow`) faults: converging probes go on with the native
+  watcher, and the next fenced probe re-baselines from the full snapshot and
+  re-arms the journal. A volume without a journal (`Missing`, which covers
+  `ERROR_JOURNAL_NOT_ACTIVE` and the redirectors' `ERROR_INVALID_FUNCTION`
+  and `ERROR_NOT_SUPPORTED`) or a worktree spanning two volumes (`Volumes`)
+  keeps every fenced probe on the full snapshot until the feed restarts. Each
+  reason has its own `git_engine.monitor.journal_*` counter. Measured on
+  2026-11-09 (Windows 11 26300 NTFS, non-elevated, throwaway probe): a
+  write's record lay below the `NextUsn` read after the write returned in
+  1,000 of 1,000 trials idle and 1,000 of 1,000 with a writer on the volume;
+  a query costs 2.0 us at p50 (26.9 us at p99 under load) and a read of the
+  window 3.0 us (22.5 us); resolving a file and its parent 84.5 us at p50
+  and 188 us at p99; a store through a mapped view adds no record before
+  `FlushViewOfFile`, which a full snapshot, comparing stat data, does not
+  see sooner either. Not covered: a file kept open and written since before
+  the journal's oldest record, and a second name of a hard-linked file
+  written through the first; the periodic verification repairs both. A ReFS
+  Dev Drive (Windows 11 26300, created from Settings) comes with no journal:
+  every handle answers `ERROR_JOURNAL_NOT_ACTIVE`, so its fenced probes take
+  the full snapshot (`baseline-fence` for 112 of 112 `--fenced` probes on the
+  Paneflow checkout cloned there, 0 mismatches) until an administrator runs
+  `fsutil usn createjournal m=33554432 a=4194304 <drive>:`. With a journal,
+  ReFS behaves like NTFS for a non-elevated process (same access table,
+  128-bit ids, no names, 1,000 of 1,000 writes below the `NextUsn` read
+  after them, query 1.8 us and read 3.7 us at p50, one record per reason
+  per open, `CLOSE` at the last handle), except that a store through a
+  mapped view adds no data record even after `FlushViewOfFile`: only the
+  `CLOSE` record, 20 ms after the last handle, names the file. The
+  `paneflow-git` suite passes 188 of 188 with its repositories on that
+  drive. Cost on rust-lang/rust, `monitor_cost` release, Windows 11 26300, two runs of HEAD against two of the journal build, monitor p50 wall: no change 7.75 to 8.14 ms before, 7.39 to 8.80 after; one edit 8.76 to 9.51 before, 8.41 to 9.37 after; 100 edits 28.4 to 29.2 before, 34.0 to 36.5 after (about 60 us to resolve each file); a checkout of 100 files 141 to 144 ms before, 170 to 192 after (75 to 94 ms CPU against 39 to 47: each rewrite is a delete and a create, so the planner also re-lists each touched directory); `git add` and `git commit` unchanged. `--fenced` probes, which took the full snapshot on Windows before (69 to 86 ms in the same runs), answer incrementally at the converging cost: one edit 8.41 to 9.37 ms, 0 mismatches against `snapshot()` in every scenario. The baseline varied too much between runs (0.6 to 5.3 s wall, the first read of the clone) to isolate the journal's own arming cost.
 - **Incremental status, measured 2026-11-08.** (US-016.) Release builds of
   `cargo run --release -p paneflow-git --example monitor_cost -- <repo>` on
   one 16-thread machine, Windows 11 26300 NTFS and WSL2 Linux 6.18 ext4, idle.

@@ -6,7 +6,7 @@ mod support;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use monitor_support::{canonical, differences, feed_options, FENCED};
+use monitor_support::{canonical, differences, feed_options, MARKER_FENCE};
 use paneflow_git::{snapshot, Freshness, Monitor, Options, ProbeKind};
 
 const GATE_OUT_ENV: &str = "PANEFLOW_GATE_GIT_MONITOR_OUT";
@@ -43,7 +43,7 @@ fn generated_repo(root: &Path) {
 }
 
 fn settle_stragglers(monitor: &mut Monitor, root: &Path, options: &Options) {
-    if FENCED {
+    if MARKER_FENCE {
         monitor
             .fenced_snapshot(options, Instant::now() + DELIVERY_DEADLINE)
             .expect("fenced settle");
@@ -122,7 +122,7 @@ fn a_one_edit_probe_of_a_twenty_thousand_entry_worktree_rechecks_one_entry() {
         let differing = differences(&probed, &full);
         assert!(differing.is_empty(), "edit {edit}: {differing:?}");
     }
-    if FENCED {
+    if MARKER_FENCE {
         assert_eq!(rechecked_max, 1, "each one-edit probe re-checks one entry");
     } else {
         assert!(

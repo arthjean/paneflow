@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Instant;
 
-use monitor_support::{canonical, differences, feed_options, CONVERGENCE_DEADLINE, FENCED};
+use monitor_support::{canonical, differences, feed_options, CONVERGENCE_DEADLINE, MARKER_FENCE};
 use paneflow_git::feed::FENCE_DIRECTORY_NAME;
 use paneflow_git::{
     snapshot, worktree_root, Freshness, Monitor, Options, ProbeKind, Reason, WorktreeChange,
@@ -82,21 +82,47 @@ fn a_fenced_probe_sees_a_write_that_completed_before_it_started() {
     let full = snapshot(&fixture.root, &Options::default()).expect("full");
     assert!(differences(&probed, &full).is_empty());
     assert!(modified(&probed, "src/deep/inner.rs"), "{probed:?}");
-    if FENCED {
-        assert_eq!(monitor.last_probe().kind, ProbeKind::Incremental);
-        assert_eq!(monitor.last_probe().rechecked_entries, 1);
-    } else {
-        assert_eq!(
-            monitor.last_probe().kind,
-            ProbeKind::Baseline(Reason::Fence(paneflow_git::feed::FenceError::Unsupported)),
-            "a platform without a fence answers a fenced probe with the full snapshot"
-        );
-    }
+    assert_eq!(monitor.last_probe().kind, ProbeKind::Incremental);
+    assert_eq!(monitor.last_probe().rechecked_entries, 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_fenced_probe_sees_a_second_write_on_a_handle_that_never_closed() {
+    use std::io::{Seek, SeekFrom, Write};
+    let fixture = fixture();
+    let mut monitor = baselined(&fixture);
+    let mut handle = std::fs::OpenOptions::new()
+        .write(true)
+        .open(fixture.root.join("top.txt"))
+        .expect("open for writing");
+    handle.write_all(b"held\n").expect("first write");
+    let first = monitor
+        .probe(&fixture.root, &Options::default(), Freshness::Fenced)
+        .expect("fenced probe")
+        .into_snapshot();
+    assert!(modified(&first, "top.txt"), "{first:?}");
+    handle.seek(SeekFrom::Start(0)).expect("rewind");
+    handle.write_all(b"top\n").expect("second write");
+    handle.set_len(4).expect("truncate");
+    let second = monitor
+        .probe(&fixture.root, &Options::default(), Freshness::Fenced)
+        .expect("fenced probe")
+        .into_snapshot();
+    assert_eq!(monitor.last_probe().kind, ProbeKind::Incremental);
+    let full = snapshot(&fixture.root, &Options::default()).expect("full");
+    assert!(
+        differences(&second, &full).is_empty(),
+        "{:?}",
+        differences(&second, &full)
+    );
+    assert!(!modified(&second, "top.txt"), "{second:?}");
+    drop(handle);
 }
 
 #[test]
 fn a_fence_past_its_deadline_takes_the_full_snapshot() {
-    if !FENCED {
+    if !MARKER_FENCE {
         return;
     }
     let fixture = fixture();
@@ -120,7 +146,7 @@ fn a_fence_past_its_deadline_takes_the_full_snapshot() {
 
 #[test]
 fn a_fence_whose_marker_directory_vanished_takes_the_full_snapshot() {
-    if !FENCED {
+    if !MARKER_FENCE {
         return;
     }
     let fixture = fixture();

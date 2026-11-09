@@ -117,6 +117,12 @@ pub enum MonitorCounter {
     LossBackendStopped,
     Recovering,
     Fence,
+    JournalMissing,
+    JournalReplaced,
+    JournalWrapped,
+    JournalRead,
+    JournalVolumes,
+    JournalOverflow,
     DrainGap,
     Input,
     IndexFormat,
@@ -144,7 +150,7 @@ pub enum MonitorCounter {
 }
 
 impl MonitorCounter {
-    pub const ALL: [MonitorCounter; 35] = [
+    pub const ALL: [MonitorCounter; 41] = [
         MonitorCounter::Incremental,
         MonitorCounter::Deferred,
         MonitorCounter::FirstProbe,
@@ -156,6 +162,12 @@ impl MonitorCounter {
         MonitorCounter::LossBackendStopped,
         MonitorCounter::Recovering,
         MonitorCounter::Fence,
+        MonitorCounter::JournalMissing,
+        MonitorCounter::JournalReplaced,
+        MonitorCounter::JournalWrapped,
+        MonitorCounter::JournalRead,
+        MonitorCounter::JournalVolumes,
+        MonitorCounter::JournalOverflow,
         MonitorCounter::DrainGap,
         MonitorCounter::Input,
         MonitorCounter::IndexFormat,
@@ -195,6 +207,12 @@ impl MonitorCounter {
             MonitorCounter::LossBackendStopped => "loss_backend_stopped",
             MonitorCounter::Recovering => "recovering",
             MonitorCounter::Fence => "fence",
+            MonitorCounter::JournalMissing => "journal_missing",
+            MonitorCounter::JournalReplaced => "journal_replaced",
+            MonitorCounter::JournalWrapped => "journal_wrapped",
+            MonitorCounter::JournalRead => "journal_read",
+            MonitorCounter::JournalVolumes => "journal_volumes",
+            MonitorCounter::JournalOverflow => "journal_overflow",
             MonitorCounter::DrainGap => "drain_gap",
             MonitorCounter::Input => "input",
             MonitorCounter::IndexFormat => "index_format",
