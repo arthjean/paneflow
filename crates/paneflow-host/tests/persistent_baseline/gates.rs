@@ -38,6 +38,12 @@ pub(super) const STATUS_LINE_RELAY: Scenario = Scenario {
     reproduce: "cargo test --profile gates --locked -p paneflow-ai-hook --test integration the_status_line_relay_exits_zero_when_the_host_is_down_or_silent -- --exact --nocapture",
 };
 
+pub(super) const GIT_MONITOR_ONE_EDIT: Scenario = Scenario {
+    id: "git_monitor_one_edit",
+    description: "40 one-file edits of a generated 20,000-entry worktree (400 directories of 50 files), each answered by a converging probe of a baselined monitor once its event is delivered",
+    reproduce: "cargo test --profile gates --locked -p paneflow-git --test monitor_gate a_one_edit_probe_of_a_twenty_thousand_entry_worktree_rechecks_one_entry -- --exact --nocapture",
+};
+
 pub(super) const DESKTOP_IDLE: Scenario = Scenario {
     id: "desktop_idle",
     description: "release desktop under Xvfb with Mesa lavapipe, 4 idle panes, 30 s window",
@@ -206,6 +212,20 @@ pub(super) const BUDGETS: &[Budget] = &[
         unit: "ms",
         scenario: &STATUS_LINE_RELAY,
         margin: "the same bound against a host that accepts the connection and never reads, which runs into the 40 ms relay deadline",
+    },
+    Budget {
+        counter: "git.monitor.one_edit_p50_ms",
+        limit: Limit::AtMost(5.0),
+        unit: "ms",
+        scenario: &GIT_MONITOR_ONE_EDIT,
+        margin: "the PRD bound for a one-edit probe (prd-incremental-git-status NFR, 5 ms p50); measured 1.19 to 1.25 ms over three runs on an idle WSL2 Linux 6.18 (16 threads, gates profile) against 10.4 to 10.5 ms for the full snapshot of the same worktree, so a probe that falls back to a full status fails it",
+    },
+    Budget {
+        counter: "git.monitor.one_edit_rechecked_max",
+        limit: Limit::Exactly(1.0),
+        unit: "entries per probe",
+        scenario: &GIT_MONITOR_ONE_EDIT,
+        margin: "no margin: a fenced one-file edit re-checks exactly its own entry (US-007); a probe that re-reads the index or rescans the tree re-checks thousands",
     },
     Budget {
         counter: "desktop.idle.root_renders",
@@ -750,7 +770,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 26 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 28 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -771,7 +791,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("26 budgets, 2 failed, 0 not measured."),
+            summary.contains("28 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(
@@ -779,6 +799,35 @@ mod tests {
             "{summary}"
         );
         assert_eq!(verdicts_json(&verdicts)["failed"], 2);
+    }
+
+    #[test]
+    fn a_one_edit_probe_that_regresses_to_a_full_status_fails_with_both_values() {
+        let mut measurements = passing();
+        measurements.insert(
+            "git.monitor.one_edit_p50_ms".to_string(),
+            Measurement::Value(12.4),
+        );
+        measurements.insert(
+            "git.monitor.one_edit_rechecked_max".to_string(),
+            Measurement::Value(20000.0),
+        );
+        let verdicts = verify(BUDGETS, &measurements);
+        let report = failure_report(&verdicts).expect("a regressed probe fails the gate");
+        assert!(
+            report.contains("git.monitor.one_edit_p50_ms | 12.400 ms | <= 5 ms | +7.400 (+148.00 %) | git_monitor_one_edit:"),
+            "{report}"
+        );
+        assert!(
+            report.contains("git.monitor.one_edit_rechecked_max | 20000 entries per probe | = 1 entries per probe | +19999"),
+            "{report}"
+        );
+        assert!(
+            report.contains(
+                "cargo test --profile gates --locked -p paneflow-git --test monitor_gate"
+            ),
+            "{report}"
+        );
     }
 
     #[test]

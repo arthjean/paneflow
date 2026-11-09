@@ -90,6 +90,11 @@ run_step host-status env PANEFLOW_GATE_HOST_STATUS_OUT="$out/host-status.json" \
   host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions \
   -- --exact --nocapture
 
+run_step git-monitor env PANEFLOW_GATE_GIT_MONITOR_OUT="$out/git-monitor.json" \
+  cargo test --profile gates --locked -p paneflow-git --test monitor_gate \
+  a_one_edit_probe_of_a_twenty_thousand_entry_worktree_rechecks_one_entry \
+  -- --exact --nocapture
+
 run_step status-line env PANEFLOW_GATE_STATUS_LINE_OUT="$out/status-line.json" \
   cargo test --profile gates --locked -p paneflow-ai-hook --test integration \
   the_status_line_relay_exits_zero_when_the_host_is_down_or_silent \
