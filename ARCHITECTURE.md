@@ -489,7 +489,8 @@ the diff dock and `is_clean` (EP-005) run on it.
   that would have extended the coverage) it rescans and re-registers at
   once, and until that succeeds every
   drain reports `BackendStopped`, so a dead backend is never read as
-  silence. The feed does not see `core.excludesFile` or an entry force-added
+  silence; the monitor then drops the feed and restarts it with a backoff
+  (see "Self-verification and degraded modes"). The feed does not see `core.excludesFile` or an entry force-added
   under an ignored directory: the monitor calls
   `ChangeFeed::invalidate_coverage` when those inputs change, so the next
   drain rescans. Measured on 2026-11-07
@@ -575,6 +576,87 @@ the diff dock and `is_clean` (EP-005) run on it.
   the badge re-probes under the 300 ms debounce capped at 2 s, instead of
   waiting for the 30 s poll. A probe that falls back from the monitor to the
   full snapshot is counted as `git_engine.fallbacks.monitor`.
+- **Self-verification and degraded modes.** (EP-004.) A probe of a shown
+  worktree (`Visibility::Shown`, which the registry maps from `Keep::Alive`)
+  takes a full snapshot once 5 minutes or 500 incremental probes have passed
+  since the last one (`monitor::Timing`), and compares it with the answer the
+  model just gave. A difference returns the full snapshot, re-baselines, and
+  logs one `warn` line with the number of differing paths and the kinds the
+  full snapshot gives them, never a path or a content
+  (`ProbeKind::Baseline(Reason::Drift(n))`); a difference while events arrived
+  during the verification is a race, re-baselined without a drift. A hidden
+  probe never verifies. `tests/monitor_self_check.rs` proves the repair with a
+  `MAP_SHARED` write on Linux, which inotify reports only when the mapping's
+  last reference goes, at `munmap`. `Loss::BackendError` or `BackendStopped`
+  (and a fence that finds the watcher stopped) drops the feed, answers from the
+  full snapshot (`ProbeKind::Stopped`, then `Recovering` while it waits) and
+  restarts it after 1 s, doubling up to 5 minutes for every restart that fails
+  or stops again before an incremental probe succeeds; the restarted feed
+  baselines as `Reason::Recovered`. More than 60 s of wall-clock time between
+  two drains (`SystemTime`, so a system sleep counts, and a clock stepped back
+  too) re-baselines as `Reason::DrainGap`. A converging probe that meets a
+  loss within 160 ms of the last re-baseline (`REBASELINE_SPACING`, no shorter
+  than the sidebar's 160 ms debounce cap) answers from the model, keeps the
+  loss due, and schedules one wake at the end of that window, so an overflow
+  storm costs at most one full snapshot per window; a fenced probe never
+  takes that answer. Every probe outcome lands on its own engine counter,
+  `git_engine.monitor.<reason>` (`engine::MonitorCounter`: each loss kind,
+  each ineligibility, an input change, the index carry limit, a
+  verification, a drift, a deferral), which the host lists in
+  `GIT_MONITOR_COUNTERS`. Probes only read: `tests/monitor_self_check.rs`
+  probes an idle worktree 100 times and sees no wake and nothing re-read. The
+  gix-notify fence still writes and deletes its marker, and the watcher wakes
+  on every published batch before the feed drops the marker's paths, so a
+  fenced probe can wake subscribers once; only `is_clean` fences.
+- **Incremental status, measured 2026-11-08.** (US-016.) Release builds of
+  `cargo run --release -p paneflow-git --example monitor_cost -- <repo>` on
+  one 16-thread machine, Windows 11 26300 NTFS and WSL2 Linux 6.18 ext4, idle.
+  The harness clones the repository `--shared` into a scratch directory,
+  baselines one monitor, then times converging probes 150 ms after each
+  change (40 per scenario, 10 for the git ones) against `snapshot()` and
+  `git status --porcelain=v1 -uall`, rotating which engine reads first, and
+  checks each monitor answer against the full snapshot: 0 mismatches in every
+  run. p50 wall, monitor against full snapshot against CLI, on rust-lang/rust
+  (64,264 entries): Linux no change 2.16 / 49.4 / 108.3 ms, one edit 2.54 /
+  49.5 / 108.8 ms (2.36 ms CPU against 225 and 198), 100 edits 4.40 / 50.3 /
+  110.3, `git add` of 3 files 3.75 / 45.9 / 92.9, `git commit` 3.19 / 45.0 /
+  87.9, a checkout touching 100 files 7.68 / 45.2 / 93.9, and 8 consumers at
+  once 17.0 / 219 / 170 ms (25 ms CPU against 1,889 and 1,624); Windows no
+  change 7.91 / 94.6 / 123.5, one edit 8.88 / 90.3 / 122.8 (9.4 ms CPU
+  against 354 and 393), 100 edits 29.0 / 90.5 / 124.1, `git add` 15.7 / 76.7
+  / 99.9, `git commit` 21.0 / 70.0 / 91.9, and 8 consumers 59.0 / 370 / 496
+  (69 ms CPU against 3,028 and 3,332). The monitor's p95 on rust-lang/rust:
+  no change 3.33 ms, one edit 2.87, 8 consumers 44.3 on Linux; 8.84, 9.36
+  and 68.6 on Windows. t3code (29,069 entries), one edit:
+  2.86 / 82.0 / 434 ms on Linux, 10.4 / 58.2 / 90.5 on Windows. The Paneflow
+  checkout (about 1,700 entries), one edit: 2.11 / 50.5 / 125 on Linux, 6.4 /
+  51.2 / 85.6 on Windows, where 8 consumers take 40.2 ms against 34.2 for 8
+  parallel full snapshots, since the shared monitor serializes them (42 ms
+  CPU against 253). A Windows checkout costs the monitor 149 ms (47 ms CPU)
+  because git leaves the 100 rewritten files racily clean and the first status
+  that hashes them pays the first read of fresh files, whoever runs it: a new
+  monitor's full baseline right after the checkout took 297 to 620 ms for the
+  same 101 hashes, and the monitor probe after it 31 ms. Against the PRD: a
+  one-edit probe meets 5 ms on Linux and 10 ms on Windows, and 10 ms of CPU;
+  a no-change probe misses its 2 ms on Linux by 0.16 ms and on Windows by
+  6 ms, where it opens the repository (about 2.3 ms), stats every ignore,
+  attributes and config input (about 27 us each, 151 on t3code) and resolves
+  HEAD (about 1.2 ms). Peak heap over 40 one-edit probes of rust-lang/rust,
+  counted by the bench's global allocator because heaptrack 1.5.0 aborts in
+  `heaptrack_interpret` (`std::bad_alloc`) on this WSL, live and offline, on
+  the stripped release build and the unstripped `bench` build alike: the
+  monitor peaks at 37.9 MiB on Linux against 32.5 MiB for the full snapshot
+  (+5.4 MiB, the target is +32), at its own baseline, and keeps a 14.7 MiB
+  model (Windows 32.9 against 32.2 MiB, 10.1 MiB kept; t3code on Linux +5.3
+  MiB, 10.4 MiB kept). The truncated traces heaptrack leaves before it aborts
+  agree: `heaptrack_print` reads a 37.98M peak for the monitor against 34.77M
+  for the full snapshot (re-measured 2026-11-08 at review), a lower bound
+  since the trace stops early. A Linux feed holds 4,843 inotify watches on
+  rust-lang/rust (4,108 on t3code), a Windows feed one recursive watch. The
+  perf gate `git.monitor.one_edit_p50_ms` (at most 5 ms) runs
+  `tests/monitor_gate.rs` on a generated 20,000-entry worktree, 1.19 to
+  1.25 ms on an idle WSL2 against 10.4 ms for its full snapshot, and
+  `git.monitor.one_edit_rechecked_max` must stay at 1 entry.
 
 ## Keystroke → pixel
 
