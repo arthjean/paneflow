@@ -291,3 +291,8 @@ fn an_edit_in_a_collapsed_directory_reaches_the_sidebar_through_the_monitor_wake
     }
     drop(worker);
 }
+
+#[test]
+fn the_monitor_spaces_its_rebaselines_by_at_least_the_sidebar_debounce_window() {
+    assert!(paneflow_git::monitor::REBASELINE_SPACING >= MAX_LATENCY);
+}

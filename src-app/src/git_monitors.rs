@@ -4,14 +4,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use paneflow_git::engine::{Fallback, Selector};
+use paneflow_git::engine::{Fallback, MonitorCounter, Selector};
 use paneflow_git::feed::{FeedOptions, IDLE_EVICTION};
-use paneflow_git::{Error, Freshness, Monitor, Objects, Options, Snapshot};
+use paneflow_git::{Error, Freshness, Monitor, Objects, Options, Snapshot, Timing, Visibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Keep {
     Alive,
     IfLive,
+}
+
+impl Keep {
+    fn visibility(self) -> Visibility {
+        match self {
+            Keep::Alive => Visibility::Shown,
+            Keep::IfLive => Visibility::Hidden,
+        }
+    }
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -54,6 +63,7 @@ pub(crate) struct GitMonitors {
     enabled: bool,
     idle: Duration,
     feed_options: FeedOptions,
+    timing: Timing,
     slots: Mutex<HashMap<PathBuf, Arc<Slot>>>,
     fanouts: Mutex<HashMap<PathBuf, Arc<Fanout>>>,
 }
@@ -64,9 +74,16 @@ impl GitMonitors {
             enabled,
             idle,
             feed_options,
+            timing: Timing::default(),
             slots: Mutex::new(HashMap::new()),
             fanouts: Mutex::new(HashMap::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_timing(mut self, timing: Timing) -> Self {
+        self.timing = timing;
+        self
     }
 
     pub(crate) fn global() -> &'static GitMonitors {
@@ -90,13 +107,20 @@ impl GitMonitors {
         read: impl FnOnce(Snapshot, &Objects<'_>) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let Some(slot) = self.slot(cwd, keep) else {
+            if !self.enabled {
+                selector.record_monitor(MonitorCounter::Disabled);
+            }
             return paneflow_git::with_snapshot(cwd, options, read);
         };
         let probed = {
             let mut monitor = lock(&slot.monitor);
-            let probed = monitor.probe(cwd, options, freshness);
-            if probed.is_ok() && monitor.last_probe().kind.fell_back() {
-                selector.record_fallback(Fallback::Monitor);
+            let probed = monitor.probe_as(cwd, options, freshness, keep.visibility());
+            if probed.is_ok() {
+                let kind = &monitor.last_probe().kind;
+                selector.record_monitor(kind.counter());
+                if kind.fell_back() {
+                    selector.record_fallback(Fallback::Monitor);
+                }
             }
             probed
         }?;
@@ -159,7 +183,8 @@ impl GitMonitors {
     }
 
     fn new_slot(&self, key: &Path, root: &Path, now: Instant) -> Slot {
-        let mut monitor = Monitor::configured(root, self.feed_options.clone(), true);
+        let mut monitor =
+            Monitor::configured(root, self.feed_options.clone(), true).with_timing(self.timing);
         let fanout = self.fanout(key);
         monitor.set_waker(move || fanout.wake_all());
         Slot {
