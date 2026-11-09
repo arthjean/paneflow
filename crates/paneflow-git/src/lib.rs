@@ -25,7 +25,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 pub use monitor::{
-    worktree_root, Freshness, Monitor, ProbeKind, ProbeReport, Probed, Reason, FENCE_TIMEOUT,
+    worktree_root, Freshness, Monitor, ProbeKind, ProbeReport, Probed, Reason, Timing, Visibility,
+    FENCE_TIMEOUT,
 };
 pub use objects::{Header, Objects};
 pub use snapshot::{snapshot, with_snapshot};

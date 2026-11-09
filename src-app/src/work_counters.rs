@@ -130,7 +130,7 @@ pub(crate) fn counters() -> Value {
 }
 
 fn git_engine_counters(engine: &paneflow_git::engine::Counters) -> Value {
-    use paneflow_git::engine::{Engine, Fallback, Probe};
+    use paneflow_git::engine::{Engine, Fallback, MonitorCounter, Probe};
     let mut probes = Map::new();
     for probe in Probe::ALL {
         let mut by_engine = Map::new();
@@ -146,10 +146,15 @@ fn git_engine_counters(engine: &paneflow_git::engine::Counters) -> Value {
     for reason in Fallback::ALL {
         fallbacks.insert(reason.name().to_string(), json!(engine.fallbacks(reason)));
     }
+    let mut monitor = Map::new();
+    for counter in MonitorCounter::ALL {
+        monitor.insert(counter.name().to_string(), json!(engine.monitor(counter)));
+    }
     json!({
         "preferred": paneflow_git::engine::Selector::global().preferred().name(),
         "probes": probes,
         "fallbacks": fallbacks,
+        "monitor": monitor,
         "pinned_directories": engine.pinned_directories,
     })
 }
@@ -228,6 +233,20 @@ mod tests {
             .collect();
         assert_eq!(GIT_ENGINE_FALLBACKS.to_vec(), fallbacks);
         for name in DIFF_STAT_ENGINE_PROBES.iter().chain(&GIT_ENGINE_FALLBACKS) {
+            assert!(DESKTOP_COUNTERS.contains(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_host_reads_every_monitor_fallback_reason_by_its_engine_name() {
+        use paneflow_git::engine::MonitorCounter;
+        use paneflow_host::work_counters::{DESKTOP_COUNTERS, GIT_MONITOR_COUNTERS};
+        let names: Vec<String> = MonitorCounter::ALL
+            .into_iter()
+            .map(|counter| format!("git_engine.monitor.{}", counter.name()))
+            .collect();
+        assert_eq!(GIT_MONITOR_COUNTERS.to_vec(), names);
+        for name in &GIT_MONITOR_COUNTERS {
             assert!(DESKTOP_COUNTERS.contains(name), "{name}");
         }
     }

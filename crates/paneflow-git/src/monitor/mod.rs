@@ -1,13 +1,16 @@
 mod carry;
+mod counter;
 mod dirty;
+mod drift;
 mod identity;
 mod setting;
+mod timing;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use gix::bstr::{BString, ByteSlice};
 use gix::dir::walk::EmissionMode;
@@ -17,6 +20,10 @@ use gix::ObjectId;
 pub use identity::Input;
 pub use setting::{
     monitor_enabled, parse_monitor_setting, MonitorSetting, ACCEPTED_MONITOR_VALUES, MONITOR_ENV,
+};
+pub use timing::{
+    Timing, Visibility, DRAIN_GAP, REBASELINE_SPACING, RECOVERY_FIRST, RECOVERY_MAX,
+    VERIFY_AFTER_PROBES, VERIFY_EVERY,
 };
 
 use crate::feed::{ChangeFeed, FeedOptions, FenceError, Ineligible, Loss};
@@ -30,7 +37,9 @@ use crate::submodule::{self, SubmoduleResult};
 use crate::{open, threads, Error, Objects, Options, Snapshot, Submodules, Untracked};
 use carry::{carry, Carried, Refused};
 use dirty::{Pending, Plan, Planner, Unplannable};
+use drift::Drift;
 use identity::{IndexStamp, Inputs};
+use timing::{drain_gap_exceeded, SinceFull};
 
 pub const DIRTY_WALK_LIMIT: usize = 256;
 
@@ -49,8 +58,10 @@ pub enum Freshness {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reason {
     FirstProbe,
+    Recovered,
     Loss(Loss),
     Fence(FenceError),
+    DrainGap,
     Input(Input),
     IndexFormat,
     IndexCarryLimit,
@@ -58,13 +69,18 @@ pub enum Reason {
     DirtyLimit,
     WorktreeRoot,
     Coverage,
+    Verification,
+    Drift(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeKind {
     Incremental,
+    Deferred(Reason),
     Baseline(Reason),
     Full(Ineligible),
+    Stopped(Loss),
+    Recovering(Loss),
     WorktreeDependentIndex,
     MonitorError(String),
     Disabled,
@@ -74,7 +90,11 @@ impl ProbeKind {
     pub fn fell_back(&self) -> bool {
         matches!(
             self,
-            ProbeKind::Full(_) | ProbeKind::WorktreeDependentIndex | ProbeKind::MonitorError(_)
+            ProbeKind::Full(_)
+                | ProbeKind::Stopped(_)
+                | ProbeKind::Recovering(_)
+                | ProbeKind::WorktreeDependentIndex
+                | ProbeKind::MonitorError(_)
         )
     }
 }
@@ -114,6 +134,7 @@ enum FeedState {
     Idle,
     Live(Box<ChangeFeed>),
     Refused(Ineligible),
+    Backoff { retry_at: Instant, loss: Loss },
 }
 
 #[derive(Clone)]
@@ -200,6 +221,13 @@ pub struct Monitor {
     pending: Pending,
     report: ProbeReport,
     enabled: bool,
+    timing: Timing,
+    since_full: Option<SinceFull>,
+    last_drain: Option<SystemTime>,
+    last_baseline: Option<Instant>,
+    recovery: Option<Duration>,
+    restarting: bool,
+    wake_scheduled: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -228,7 +256,23 @@ impl Monitor {
             pending: Pending::default(),
             report: ProbeReport::default(),
             enabled,
+            timing: Timing::default(),
+            since_full: None,
+            last_drain: None,
+            last_baseline: None,
+            recovery: None,
+            restarting: false,
+            wake_scheduled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn with_timing(mut self, timing: Timing) -> Self {
+        self.timing = timing;
+        self
+    }
+
+    pub fn timing(&self) -> &Timing {
+        &self.timing
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -246,14 +290,21 @@ impl Monitor {
     pub fn feed(&self) -> Option<&ChangeFeed> {
         match &self.feed {
             FeedState::Live(feed) => Some(feed),
-            FeedState::Idle | FeedState::Refused(_) => None,
+            FeedState::Idle | FeedState::Refused(_) | FeedState::Backoff { .. } => None,
         }
     }
 
     pub fn ineligible(&self) -> Option<&Ineligible> {
         match &self.feed {
             FeedState::Refused(reason) => Some(reason),
-            FeedState::Idle | FeedState::Live(_) => None,
+            FeedState::Idle | FeedState::Live(_) | FeedState::Backoff { .. } => None,
+        }
+    }
+
+    pub fn recovering(&self) -> Option<(Loss, Instant)> {
+        match &self.feed {
+            FeedState::Backoff { retry_at, loss } => Some((*loss, *retry_at)),
+            FeedState::Idle | FeedState::Live(_) | FeedState::Refused(_) => None,
         }
     }
 
@@ -268,7 +319,8 @@ impl Monitor {
 
     pub fn snapshot(&mut self, options: &Options) -> Result<Snapshot, Error> {
         let path = self.path.clone();
-        self.run(&path, options, None).map(Probed::into_snapshot)
+        self.run(&path, options, None, Visibility::Shown)
+            .map(Probed::into_snapshot)
     }
 
     pub fn fenced_snapshot(
@@ -277,7 +329,7 @@ impl Monitor {
         deadline: Instant,
     ) -> Result<Snapshot, Error> {
         let path = self.path.clone();
-        self.run(&path, options, Some(deadline))
+        self.run(&path, options, Some(deadline), Visibility::Shown)
             .map(Probed::into_snapshot)
     }
 
@@ -287,11 +339,21 @@ impl Monitor {
         options: &Options,
         freshness: Freshness,
     ) -> Result<Probed, Error> {
+        self.probe_as(cwd, options, freshness, Visibility::Shown)
+    }
+
+    pub fn probe_as(
+        &mut self,
+        cwd: &Path,
+        options: &Options,
+        freshness: Freshness,
+        visibility: Visibility,
+    ) -> Result<Probed, Error> {
         let deadline = match freshness {
             Freshness::Fenced => Some(Instant::now() + FENCE_TIMEOUT),
             Freshness::Converging => None,
         };
-        self.run(cwd, options, deadline)
+        self.run(cwd, options, deadline, visibility)
     }
 
     fn run(
@@ -299,6 +361,7 @@ impl Monitor {
         cwd: &Path,
         options: &Options,
         deadline: Option<Instant>,
+        visibility: Visibility,
     ) -> Result<Probed, Error> {
         if !self.enabled {
             self.report = ProbeReport {
@@ -308,7 +371,7 @@ impl Monitor {
             return full_at(cwd, options);
         }
         let interrupted = options.interrupt.clone().unwrap_or_default();
-        let result = self.probe_once(options, deadline);
+        let result = self.probe_once(options, deadline, visibility);
         if interrupted.load(Ordering::Relaxed) {
             return Err(Error::Interrupted);
         }
@@ -345,13 +408,19 @@ impl Monitor {
         self.model = None;
         self.pending = Pending::default();
         self.feed = FeedState::Idle;
+        self.since_full = None;
+        self.last_drain = None;
     }
 
     fn probe_once(
         &mut self,
         options: &Options,
         deadline: Option<Instant>,
+        visibility: Visibility,
     ) -> Result<Answer, Error> {
+        if self.waiting_to_recover() {
+            return Ok(Answer::Full);
+        }
         self.start_feed();
         let feed = match &mut self.feed {
             FeedState::Live(feed) => feed,
@@ -362,7 +431,7 @@ impl Monitor {
                 };
                 return Ok(Answer::Full);
             }
-            FeedState::Idle => return Ok(Answer::Full),
+            FeedState::Idle | FeedState::Backoff { .. } => return Ok(Answer::Full),
         };
         let fence_error = match deadline.map(|deadline| feed.fence(deadline)) {
             Some(Ok(batch)) => {
@@ -378,19 +447,175 @@ impl Monitor {
                 None
             }
         };
+        let drained_at = SystemTime::now();
+        let gap = drain_gap_exceeded(self.last_drain, drained_at, self.timing.drain_gap);
+        self.last_drain = Some(drained_at);
+        let stopped = match (self.pending.loss, fence_error) {
+            (Some(loss @ (Loss::BackendError | Loss::BackendStopped)), _) => Some(loss),
+            (_, Some(FenceError::Stopped)) => Some(Loss::BackendStopped),
+            _ => None,
+        };
+        if let Some(loss) = stopped {
+            self.back_off(loss);
+            self.report.kind = ProbeKind::Stopped(loss);
+            return Ok(Answer::Full);
+        }
+        let restarted = std::mem::take(&mut self.restarting);
+        let first = if restarted {
+            Reason::Recovered
+        } else {
+            Reason::FirstProbe
+        };
         let forced = self
             .model
             .is_none()
-            .then_some(Reason::FirstProbe)
+            .then_some(first)
             .or(fence_error.map(Reason::Fence))
-            .or(self.pending.loss.map(Reason::Loss));
+            .or(self.pending.loss.map(Reason::Loss))
+            .or(gap.then_some(Reason::DrainGap));
         if let Some(reason) = forced {
+            if deadline.is_none() && matches!(reason, Reason::Loss(_)) && self.rebaselined_lately()
+            {
+                return self.defer(options, reason);
+            }
             return self.baseline(options, reason);
         }
+        let verify = visibility == Visibility::Shown
+            && self
+                .since_full
+                .is_some_and(|since| since.verification_due(&self.timing));
         match self.incremental(options)? {
+            Step::Done(snapshot, repo) if verify => {
+                drop(repo);
+                self.verify(options, snapshot)
+            }
             Step::Done(snapshot, repo) => Ok(Answer::Modeled(snapshot, repo)),
             Step::Rebaseline(reason) => self.baseline(options, reason),
         }
+    }
+
+    fn waiting_to_recover(&mut self) -> bool {
+        let FeedState::Backoff { retry_at, loss } = self.feed else {
+            return false;
+        };
+        if Instant::now() < retry_at {
+            self.report = ProbeReport {
+                kind: ProbeKind::Recovering(loss),
+                ..ProbeReport::default()
+            };
+            return true;
+        }
+        self.feed = FeedState::Idle;
+        self.restarting = true;
+        false
+    }
+
+    fn back_off(&mut self, loss: Loss) {
+        let delay = self.timing.next_recovery(self.recovery);
+        self.recovery = Some(delay);
+        log::warn!(
+            "the git change feed of {} stopped ({loss:?}), probes take full statuses and the feed restarts in {} ms",
+            self.path.display(),
+            delay.as_millis()
+        );
+        self.reset();
+        self.restarting = false;
+        self.feed = FeedState::Backoff {
+            retry_at: Instant::now() + delay,
+            loss,
+        };
+        self.report = ProbeReport {
+            kind: ProbeKind::Recovering(loss),
+            ..ProbeReport::default()
+        };
+    }
+
+    fn rebaselined_lately(&self) -> bool {
+        self.model.is_some()
+            && self
+                .last_baseline
+                .is_some_and(|at| at.elapsed() < self.timing.rebaseline_spacing)
+    }
+
+    fn defer(&mut self, options: &Options, reason: Reason) -> Result<Answer, Error> {
+        let held = std::mem::take(&mut self.pending);
+        let step = self.incremental(options);
+        let mut restored = held;
+        let consumed = std::mem::take(&mut self.pending);
+        restored.index_written |= consumed.index_written;
+        restored.foreign_git_dirs |= consumed.foreign_git_dirs;
+        for (path, modify_only) in consumed.paths {
+            restored
+                .paths
+                .entry(path)
+                .and_modify(|only| *only &= modify_only)
+                .or_insert(modify_only);
+        }
+        self.pending = restored;
+        match step? {
+            Step::Done(snapshot, repo) => {
+                self.report.kind = ProbeKind::Deferred(reason);
+                if let Some(at) = self.last_baseline {
+                    self.schedule_wake(at + self.timing.rebaseline_spacing);
+                }
+                Ok(Answer::Modeled(snapshot, repo))
+            }
+            Step::Rebaseline(other) => self.baseline(options, other),
+        }
+    }
+
+    fn schedule_wake(&self, at: Instant) {
+        let Some(wake) = self.waker.clone() else {
+            return;
+        };
+        if self.wake_scheduled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let scheduled = Arc::clone(&self.wake_scheduled);
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-git-monitor-wake".to_string())
+            .spawn(move || {
+                std::thread::sleep(at.saturating_duration_since(Instant::now()));
+                scheduled.store(false, Ordering::Release);
+                wake();
+            });
+        if spawned.is_err() {
+            self.wake_scheduled.store(false, Ordering::Release);
+        }
+    }
+
+    fn verify(&mut self, options: &Options, modeled: Snapshot) -> Result<Answer, Error> {
+        let answer = self.baseline(options, Reason::Verification)?;
+        let Answer::Modeled(full, repo) = answer else {
+            return Ok(answer);
+        };
+        let drift = Drift::between(&modeled, &full);
+        if drift.is_empty() {
+            return Ok(Answer::Modeled(full, repo));
+        }
+        if self.raced_since_verification() {
+            log::debug!(
+                "the verification of the git status of {} raced a write ({drift}), the monitor re-baselines without counting a drift",
+                self.path.display()
+            );
+            return Ok(Answer::Modeled(full, repo));
+        }
+        log::warn!(
+            "the incremental git status of {} drifted from a full snapshot: {drift}; this probe answers from the full snapshot and the monitor re-baselines",
+            self.path.display()
+        );
+        self.report.kind = ProbeKind::Baseline(Reason::Drift(drift.paths));
+        Ok(Answer::Modeled(full, repo))
+    }
+
+    fn raced_since_verification(&mut self) -> bool {
+        let FeedState::Live(feed) = &mut self.feed else {
+            return false;
+        };
+        let batch = feed.drain();
+        let raced = batch.loss.is_some() || !batch.changes.is_empty();
+        self.pending.absorb(batch, &self.own_git_dirs);
+        raced
     }
 
     fn start_feed(&mut self) {
@@ -398,6 +623,7 @@ impl Monitor {
             return;
         }
         self.model = None;
+        self.last_drain = None;
         self.feed = match ChangeFeed::start(&self.path, &self.feed_options) {
             Ok(mut feed) => {
                 if let Some(wake) = &self.waker {
@@ -406,6 +632,14 @@ impl Monitor {
                 }
                 FeedState::Live(Box::new(feed))
             }
+            Err(reason) if self.restarting => {
+                log::warn!(
+                    "the git change feed of {} could not restart: {reason}",
+                    self.path.display()
+                );
+                self.back_off(Loss::BackendStopped);
+                return;
+            }
             Err(reason) => FeedState::Refused(reason),
         };
     }
@@ -413,6 +647,8 @@ impl Monitor {
     fn baseline(&mut self, options: &Options, reason: Reason) -> Result<Answer, Error> {
         self.pending = Pending::default();
         self.model = None;
+        self.since_full = None;
+        self.last_baseline = Some(Instant::now());
         let interrupt = options.interrupt.clone().unwrap_or_default();
         let lease = threads::PROBES.enter(threads::budget());
         let share = lease.share();
@@ -479,6 +715,7 @@ impl Monitor {
             submodules_opened: snapshot.submodules_opened,
         };
         self.model = Some(model);
+        self.since_full = Some(SinceFull::now());
         Ok(Answer::Modeled(snapshot, Box::new(repo)))
     }
 
@@ -587,6 +824,10 @@ impl Monitor {
         };
         self.model = Some(next);
         self.pending = Pending::default();
+        self.recovery = None;
+        if let Some(since) = self.since_full.as_mut() {
+            since.probes += 1;
+        }
         Ok(Step::Done(snapshot, Box::new(repo)))
     }
 
@@ -828,3 +1069,6 @@ fn finish(
         ..snapshot
     }
 }
+
+#[cfg(test)]
+mod tests;

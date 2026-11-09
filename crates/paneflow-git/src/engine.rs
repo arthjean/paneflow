@@ -104,6 +104,129 @@ impl Fallback {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MonitorCounter {
+    Incremental,
+    Deferred,
+    FirstProbe,
+    Recovered,
+    LossWatchSetChanged,
+    LossRescan,
+    LossOverflow,
+    LossBackendError,
+    LossBackendStopped,
+    Recovering,
+    Fence,
+    DrainGap,
+    Input,
+    IndexFormat,
+    IndexCarryLimit,
+    SkipWorktree,
+    DirtyLimit,
+    WorktreeRoot,
+    Coverage,
+    Verification,
+    Drift,
+    IneligibleNetworkFileSystem,
+    IneligibleFuse,
+    IneligibleWslDrive,
+    IneligibleWslNetworkPath,
+    IneligibleUnsupportedFileSystem,
+    IneligibleUnidentified,
+    IneligibleNoCacheDirectory,
+    IneligibleMarkerDirectory,
+    IneligibleWatchBudget,
+    IneligibleScan,
+    IneligibleRegistration,
+    WorktreeDependentIndex,
+    MonitorError,
+    Disabled,
+}
+
+impl MonitorCounter {
+    pub const ALL: [MonitorCounter; 35] = [
+        MonitorCounter::Incremental,
+        MonitorCounter::Deferred,
+        MonitorCounter::FirstProbe,
+        MonitorCounter::Recovered,
+        MonitorCounter::LossWatchSetChanged,
+        MonitorCounter::LossRescan,
+        MonitorCounter::LossOverflow,
+        MonitorCounter::LossBackendError,
+        MonitorCounter::LossBackendStopped,
+        MonitorCounter::Recovering,
+        MonitorCounter::Fence,
+        MonitorCounter::DrainGap,
+        MonitorCounter::Input,
+        MonitorCounter::IndexFormat,
+        MonitorCounter::IndexCarryLimit,
+        MonitorCounter::SkipWorktree,
+        MonitorCounter::DirtyLimit,
+        MonitorCounter::WorktreeRoot,
+        MonitorCounter::Coverage,
+        MonitorCounter::Verification,
+        MonitorCounter::Drift,
+        MonitorCounter::IneligibleNetworkFileSystem,
+        MonitorCounter::IneligibleFuse,
+        MonitorCounter::IneligibleWslDrive,
+        MonitorCounter::IneligibleWslNetworkPath,
+        MonitorCounter::IneligibleUnsupportedFileSystem,
+        MonitorCounter::IneligibleUnidentified,
+        MonitorCounter::IneligibleNoCacheDirectory,
+        MonitorCounter::IneligibleMarkerDirectory,
+        MonitorCounter::IneligibleWatchBudget,
+        MonitorCounter::IneligibleScan,
+        MonitorCounter::IneligibleRegistration,
+        MonitorCounter::WorktreeDependentIndex,
+        MonitorCounter::MonitorError,
+        MonitorCounter::Disabled,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MonitorCounter::Incremental => "incremental",
+            MonitorCounter::Deferred => "deferred",
+            MonitorCounter::FirstProbe => "first_probe",
+            MonitorCounter::Recovered => "recovered",
+            MonitorCounter::LossWatchSetChanged => "loss_watch_set_changed",
+            MonitorCounter::LossRescan => "loss_rescan",
+            MonitorCounter::LossOverflow => "loss_overflow",
+            MonitorCounter::LossBackendError => "loss_backend_error",
+            MonitorCounter::LossBackendStopped => "loss_backend_stopped",
+            MonitorCounter::Recovering => "recovering",
+            MonitorCounter::Fence => "fence",
+            MonitorCounter::DrainGap => "drain_gap",
+            MonitorCounter::Input => "input",
+            MonitorCounter::IndexFormat => "index_format",
+            MonitorCounter::IndexCarryLimit => "index_carry_limit",
+            MonitorCounter::SkipWorktree => "skip_worktree",
+            MonitorCounter::DirtyLimit => "dirty_limit",
+            MonitorCounter::WorktreeRoot => "worktree_root",
+            MonitorCounter::Coverage => "coverage",
+            MonitorCounter::Verification => "verification",
+            MonitorCounter::Drift => "drift",
+            MonitorCounter::IneligibleNetworkFileSystem => "ineligible_network_file_system",
+            MonitorCounter::IneligibleFuse => "ineligible_fuse",
+            MonitorCounter::IneligibleWslDrive => "ineligible_wsl_drive",
+            MonitorCounter::IneligibleWslNetworkPath => "ineligible_wsl_network_path",
+            MonitorCounter::IneligibleUnsupportedFileSystem => "ineligible_unsupported_file_system",
+            MonitorCounter::IneligibleUnidentified => "ineligible_unidentified",
+            MonitorCounter::IneligibleNoCacheDirectory => "ineligible_no_cache_directory",
+            MonitorCounter::IneligibleMarkerDirectory => "ineligible_marker_directory",
+            MonitorCounter::IneligibleWatchBudget => "ineligible_watch_budget",
+            MonitorCounter::IneligibleScan => "ineligible_scan",
+            MonitorCounter::IneligibleRegistration => "ineligible_registration",
+            MonitorCounter::WorktreeDependentIndex => "worktree_dependent_index",
+            MonitorCounter::MonitorError => "monitor_error",
+            MonitorCounter::Disabled => "disabled",
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EngineSetting {
     pub preferred: Engine,
@@ -140,10 +263,18 @@ pub fn parse_engine_setting(value: Option<&str>) -> EngineSetting {
 pub struct Counters {
     pub probes: Vec<(Probe, Engine, u64)>,
     pub fallbacks: Vec<(Fallback, u64)>,
+    pub monitor: Vec<(MonitorCounter, u64)>,
     pub pinned_directories: u64,
 }
 
 impl Counters {
+    pub fn monitor(&self, counter: MonitorCounter) -> u64 {
+        self.monitor
+            .iter()
+            .find(|(c, _)| *c == counter)
+            .map_or(0, |(_, count)| *count)
+    }
+
     pub fn probes(&self, probe: Probe, engine: Engine) -> u64 {
         self.probes
             .iter()
@@ -170,6 +301,7 @@ pub struct Selector {
     failures: Mutex<HashMap<PathBuf, Failures>>,
     probes: [[AtomicU64; 2]; Probe::ALL.len()],
     fallbacks: [AtomicU64; Fallback::ALL.len()],
+    monitor: [AtomicU64; MonitorCounter::ALL.len()],
     pinned_directories: AtomicU64,
 }
 
@@ -186,6 +318,7 @@ impl Selector {
             failures: Mutex::new(HashMap::new()),
             probes: [const { [const { AtomicU64::new(0) }; 2] }; Probe::ALL.len()],
             fallbacks: [const { AtomicU64::new(0) }; Fallback::ALL.len()],
+            monitor: [const { AtomicU64::new(0) }; MonitorCounter::ALL.len()],
             pinned_directories: AtomicU64::new(0),
         }
     }
@@ -258,6 +391,15 @@ impl Selector {
                     )
                 })
                 .collect(),
+            monitor: MonitorCounter::ALL
+                .into_iter()
+                .map(|counter| {
+                    (
+                        counter,
+                        self.monitor[counter.index()].load(Ordering::Relaxed),
+                    )
+                })
+                .collect(),
             pinned_directories: self.pinned_directories.load(Ordering::Relaxed),
         }
     }
@@ -291,6 +433,10 @@ impl Selector {
 
     pub fn record_fallback(&self, reason: Fallback) {
         self.count_fallback(reason);
+    }
+
+    pub fn record_monitor(&self, counter: MonitorCounter) {
+        self.monitor[counter.index()].fetch_add(1, Ordering::Relaxed);
     }
 
     fn count_fallback(&self, reason: Fallback) {

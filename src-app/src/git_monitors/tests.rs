@@ -143,6 +143,13 @@ fn the_kill_switch_keeps_every_probe_off_the_monitors() {
     let selector = Selector::new(Engine::Gix);
     let answered = probe(&monitors, &selector, &repo.root, Keep::Alive);
     assert_eq!(monitors.monitors(), 0);
+    assert_eq!(
+        selector
+            .counters()
+            .monitor(paneflow_git::engine::MonitorCounter::Disabled),
+        1,
+        "the kill switch is counted"
+    );
     assert!(monitors.subscribe(&repo.root, Arc::new(|| {})).is_none());
     assert_eq!(
         answered,
@@ -221,4 +228,51 @@ fn objects_read_through_a_monitor_see_the_worktree_as_the_probe_spelled_it() {
     .expect("full");
     assert_eq!(read(&monitors), full, "the first probe");
     assert_eq!(read(&monitors), full, "an incremental probe");
+}
+
+#[test]
+fn a_shown_worktree_verifies_through_the_registry_and_a_hidden_probe_never_does() {
+    use paneflow_git::engine::MonitorCounter;
+    let repo = repo();
+    let monitors = registry(&repo, IDLE_EVICTION).with_timing(Timing {
+        verify_after_probes: 1,
+        ..Timing::default()
+    });
+    let selector = Selector::new(Engine::Gix);
+    probe(&monitors, &selector, &repo.root, Keep::Alive);
+    probe(&monitors, &selector, &repo.root, Keep::Alive);
+    for _ in 0..3 {
+        probe(&monitors, &selector, &repo.root, Keep::IfLive);
+    }
+    let counters = selector.counters();
+    assert_eq!(counters.monitor(MonitorCounter::FirstProbe), 1);
+    assert_eq!(counters.monitor(MonitorCounter::Incremental), 4);
+    assert_eq!(counters.monitor(MonitorCounter::Verification), 0);
+    let verified = probe(&monitors, &selector, &repo.root, Keep::Alive);
+    assert_eq!(selector.counters().monitor(MonitorCounter::Verification), 1);
+    assert_eq!(
+        verified,
+        paneflow_git::snapshot(&repo.root, &Options::files_status()).expect("full")
+    );
+}
+
+#[test]
+fn an_ineligible_feed_records_its_reason_on_the_engine_counters() {
+    use paneflow_git::engine::MonitorCounter;
+    let repo = repo();
+    let monitors = GitMonitors::new(
+        FeedOptions {
+            cache_dir: Some(repo.cache.clone()),
+            max_events: 0,
+            ..FeedOptions::default()
+        },
+        true,
+        IDLE_EVICTION,
+    );
+    let selector = Selector::new(Engine::Gix);
+    probe(&monitors, &selector, &repo.root, Keep::Alive);
+    probe(&monitors, &selector, &repo.root, Keep::Alive);
+    let counters = selector.counters();
+    assert_eq!(counters.monitor(MonitorCounter::IneligibleRegistration), 2);
+    assert_eq!(counters.fallbacks(Fallback::Monitor), 2);
 }

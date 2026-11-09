@@ -518,8 +518,11 @@ fn a_replaced_root_rebaselines_and_still_equals_a_full_snapshot() {
         settled
             .reports
             .iter()
-            .any(|report| matches!(report.kind, paneflow_git::ProbeKind::Baseline(_))),
-        "a replaced root re-baselines: {:?}",
+            .any(|report| matches!(
+                report.kind,
+                paneflow_git::ProbeKind::Baseline(_) | paneflow_git::ProbeKind::Stopped(_)
+            )),
+        "a replaced root re-baselines, or answers from the full snapshot while its stopped feed backs off: {:?}",
         settled.reports
     );
 }
