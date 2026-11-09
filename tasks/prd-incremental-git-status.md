@@ -340,10 +340,10 @@ The monitor detects and repairs drift on its own, counts every fallback, turns a
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given a visible worktree with a live monitor, when 5 minutes or 500 incremental probes have passed since the last full snapshot, then the next probe takes a full snapshot and compares it with the model
-- [ ] Given a difference, then the probe returns the full snapshot, re-baselines, logs one `warn` line with the number of differing paths and their change kinds (never file contents), and increments a drift counter
-- [ ] Given a tracked file rewritten through a memory-mapped write on Linux, which inotify does not report, then the next verification repairs the status
-- [ ] Given a hidden worktree, then no verification runs
+- [x] Given a visible worktree with a live monitor, when 5 minutes or 500 incremental probes have passed since the last full snapshot, then the next probe takes a full snapshot and compares it with the model
+- [x] Given a difference, then the probe returns the full snapshot, re-baselines, logs one `warn` line with the number of differing paths and their change kinds (never file contents), and increments a drift counter
+- [x] Given a tracked file rewritten through a memory-mapped write on Linux, which inotify does not report, then the next verification repairs the status
+- [x] Given a hidden worktree, then no verification runs
 
 #### US-015: Degraded modes and recovery
 **Description:** As a user, I want the status to stay exact when the watcher fails, so that a lost event stream costs speed and never correctness.
@@ -353,11 +353,11 @@ The monitor detects and repairs drift on its own, counts every fallback, turns a
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given `Loss::BackendError` or `Loss::BackendStopped`, then the probe answers from the full snapshot and the feed retries registration with exponential backoff from 1 s to 5 minutes
-- [ ] Given more than 60 s of wall-clock time between two drains, as after a system sleep, then the next probe re-baselines
-- [ ] Given each fallback reason (each loss kind, each ineligibility, an input identity change, the index carry limit, a verification mismatch), then the engine counters read by `crates/paneflow-host/src/work_counters.rs` record it
-- [ ] Given an idle worktree probed 100 times in a row, then the probes' own reads produce no event that schedules another probe
-- [ ] Given repeated overflows from a busy directory that is not ignored, then full snapshots for that worktree run at most once per consumer debounce window
+- [x] Given `Loss::BackendError` or `Loss::BackendStopped`, then the probe answers from the full snapshot and the feed retries registration with exponential backoff from 1 s to 5 minutes
+- [x] Given more than 60 s of wall-clock time between two drains, as after a system sleep, then the next probe re-baselines
+- [x] Given each fallback reason (each loss kind, each ineligibility, an input identity change, the index carry limit, a verification mismatch), then the engine counters read by `crates/paneflow-host/src/work_counters.rs` record it
+- [x] Given an idle worktree probed 100 times in a row, then the probes' own reads produce no event that schedules another probe
+- [x] Given repeated overflows from a busy directory that is not ignored, then full snapshots for that worktree run at most once per consumer debounce window
 
 #### US-016: Benchmarks, memory and a perf gate
 **Description:** As the maintainer, I want the incremental status measured against the full snapshot and the CLI, and its one-edit latency guarded on the calibrated runner, so that the gain is evidence and stays.
@@ -367,11 +367,11 @@ The monitor detects and repairs drift on its own, counts every fallback, turns a
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given rust-lang/rust, t3code and the Paneflow checkout, when the bench runs a no-change probe, one edit, 100 edits, `git add`, `git commit`, a branch checkout and 8 concurrent consumers, then p50 and p95 wall time and CPU on Linux and Windows are recorded against the full snapshot and the CLI
-- [ ] Given a monitor on rust-lang/rust, then its peak heap measured by heaptrack on Linux is recorded, with a target of at most 32 MiB above the full snapshot's peak
-- [ ] Given the perf gates (`scripts/perf-gates.sh`, budgets in `crates/paneflow-host/tests/persistent_baseline/gates.rs`), then a one-edit incremental probe budget is added for the calibrated Linux runner, written by a test through an output variable as `PANEFLOW_GATE_HOST_STATUS_OUT` is
-- [ ] Given a regression past that budget, then the gate fails and prints the measured and budgeted values
-- [ ] Given Linux, then the inotify watch count of a rust-lang/rust monitor is recorded (expected about 4,828)
+- [x] Given rust-lang/rust, t3code and the Paneflow checkout, when the bench runs a no-change probe, one edit, 100 edits, `git add`, `git commit`, a branch checkout and 8 concurrent consumers, then p50 and p95 wall time and CPU on Linux and Windows are recorded against the full snapshot and the CLI
+- [x] Given a monitor on rust-lang/rust, then its peak heap measured by heaptrack on Linux is recorded, with a target of at most 32 MiB above the full snapshot's peak
+- [x] Given the perf gates (`scripts/perf-gates.sh`, budgets in `crates/paneflow-host/tests/persistent_baseline/gates.rs`), then a one-edit incremental probe budget is added for the calibrated Linux runner, written by a test through an output variable as `PANEFLOW_GATE_HOST_STATUS_OUT` is
+- [x] Given a regression past that budget, then the gate fails and prints the measured and budgeted values
+- [x] Given Linux, then the inotify watch count of a rust-lang/rust monitor is recorded (expected about 4,828)
 
 ---
 
