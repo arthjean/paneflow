@@ -9,7 +9,7 @@
     { "id": "EP-001", "title": "A change feed that reports every loss on Linux, macOS and Windows", "status": "DONE", "priority": "P0", "stories_total": 4, "stories_done": 4 },
     { "id": "EP-002", "title": "An incremental snapshot identical to the full one", "status": "DONE", "priority": "P0", "stories_total": 6, "stories_done": 6 },
     { "id": "EP-003", "title": "Consumers on one model per worktree, with a freshness contract", "status": "DONE", "priority": "P0", "stories_total": 3, "stories_done": 3 },
-    { "id": "EP-004", "title": "Self-verification, degraded modes and evidence of the gain", "status": "TODO", "priority": "P1", "stories_total": 3, "stories_done": 0 },
+    { "id": "EP-004", "title": "Self-verification, degraded modes and evidence of the gain", "status": "IN_REVIEW", "priority": "P1", "stories_total": 3, "stories_done": 0 },
     { "id": "EP-005", "title": "A fenced incremental status on Windows", "status": "TODO", "priority": "P2", "stories_total": 2, "stories_done": 0 }
   ],
   "stories": [
@@ -26,9 +26,9 @@
     { "id": "US-011", "title": "Freshness contract: Fenced or Converging", "epic": "EP-003", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-006"], "started_at": "2026-11-08", "completed_at": "2026-11-08", "reviewed_at": "2026-11-08" },
     { "id": "US-012", "title": "One monitor per worktree, and the Files sidebar on it", "epic": "EP-003", "status": "DONE", "priority": "P0", "size": "M", "blocked_by": ["US-004", "US-010", "US-011"], "started_at": "2026-11-08", "completed_at": "2026-11-08", "reviewed_at": "2026-11-08" },
     { "id": "US-013", "title": "Diff badge, diff dock and is_clean on the monitor", "epic": "EP-003", "status": "DONE", "priority": "P1", "size": "M", "blocked_by": ["US-012"], "started_at": "2026-11-08", "completed_at": "2026-11-08", "reviewed_at": "2026-11-08" },
-    { "id": "US-014", "title": "Periodic verification and drift reports", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "S", "blocked_by": ["US-012"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-015", "title": "Degraded modes and recovery", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "M", "blocked_by": ["US-012"], "started_at": null, "completed_at": null, "reviewed_at": null },
-    { "id": "US-016", "title": "Benchmarks, memory and a perf gate", "epic": "EP-004", "status": "TODO", "priority": "P1", "size": "M", "blocked_by": ["US-012"], "started_at": null, "completed_at": null, "reviewed_at": null },
+    { "id": "US-014", "title": "Periodic verification and drift reports", "epic": "EP-004", "status": "IN_REVIEW", "priority": "P1", "size": "S", "blocked_by": ["US-012"], "started_at": "2026-11-08", "completed_at": null, "reviewed_at": "2026-11-08" },
+    { "id": "US-015", "title": "Degraded modes and recovery", "epic": "EP-004", "status": "IN_REVIEW", "priority": "P1", "size": "M", "blocked_by": ["US-012"], "started_at": "2026-11-08", "completed_at": null, "reviewed_at": "2026-11-08" },
+    { "id": "US-016", "title": "Benchmarks, memory and a perf gate", "epic": "EP-004", "status": "IN_REVIEW", "priority": "P1", "size": "M", "blocked_by": ["US-012"], "started_at": "2026-11-08", "completed_at": null, "reviewed_at": "2026-11-08" },
     { "id": "US-017", "title": "Validate assumption: the USN journal fences without elevation", "epic": "EP-005", "status": "TODO", "priority": "P2", "size": "M", "blocked_by": ["US-001"], "started_at": null, "completed_at": null, "reviewed_at": null },
     { "id": "US-018", "title": "Fenced incremental status on Windows through the USN journal", "epic": "EP-005", "status": "TODO", "priority": "P2", "size": "L", "blocked_by": ["US-017"], "started_at": null, "completed_at": null, "reviewed_at": null }
   ]
