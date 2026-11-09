@@ -37,7 +37,7 @@ fn generated_repo(root: &Path) {
         }
     }
     support::init(root);
-    support::git(root, &["add", "-A"]);
+    support::git(root, &["-c", "core.bigFileThreshold=1", "add", "-A"]);
     support::git(root, &["commit", "-q", "-m", "generated"]);
     support::git(root, &["status", "--porcelain"]);
 }
