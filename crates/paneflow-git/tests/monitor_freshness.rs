@@ -76,9 +76,8 @@ fn a_fenced_probe_sees_a_write_that_completed_before_it_started() {
         b"edited before the probe\n",
     );
     let probed = monitor
-        .probe(&fixture.root, &Options::default(), Freshness::Fenced)
-        .expect("fenced probe")
-        .into_snapshot();
+        .fenced_snapshot(&Options::default(), Instant::now() + CONVERGENCE_DEADLINE)
+        .expect("fenced probe");
     let full = snapshot(&fixture.root, &Options::default()).expect("full");
     assert!(differences(&probed, &full).is_empty());
     assert!(modified(&probed, "src/deep/inner.rs"), "{probed:?}");
@@ -98,17 +97,15 @@ fn a_fenced_probe_sees_a_second_write_on_a_handle_that_never_closed() {
         .expect("open for writing");
     handle.write_all(b"held\n").expect("first write");
     let first = monitor
-        .probe(&fixture.root, &Options::default(), Freshness::Fenced)
-        .expect("fenced probe")
-        .into_snapshot();
+        .fenced_snapshot(&Options::default(), Instant::now() + CONVERGENCE_DEADLINE)
+        .expect("fenced probe");
     assert!(modified(&first, "top.txt"), "{first:?}");
     handle.seek(SeekFrom::Start(0)).expect("rewind");
     handle.write_all(b"top\n").expect("second write");
     handle.set_len(4).expect("truncate");
     let second = monitor
-        .probe(&fixture.root, &Options::default(), Freshness::Fenced)
-        .expect("fenced probe")
-        .into_snapshot();
+        .fenced_snapshot(&Options::default(), Instant::now() + CONVERGENCE_DEADLINE)
+        .expect("fenced probe");
     assert_eq!(monitor.last_probe().kind, ProbeKind::Incremental);
     let full = snapshot(&fixture.root, &Options::default()).expect("full");
     assert!(
