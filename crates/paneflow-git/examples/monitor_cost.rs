@@ -89,7 +89,9 @@ const CLI_ARGS: &[&str] = &[
     "--no-renames",
 ];
 
-const USAGE: &str = "usage: monitor_cost <repository> [iterations] [git-iterations]\n       monitor_cost <repository> --heap <monitor|full> [iterations]";
+const FENCED_FLAG: &str = "--fenced";
+
+const USAGE: &str = "usage: monitor_cost <repository> [iterations] [git-iterations] [--fenced]\n       monitor_cost <repository> --heap <monitor|full> [iterations]";
 
 const DEFAULT_ITERATIONS: usize = 40;
 
@@ -139,6 +141,7 @@ struct Bench {
     work: PathBuf,
     monitor: Mutex<Monitor>,
     options: Options,
+    freshness: Freshness,
     edits: Vec<String>,
     originals: BTreeMap<String, Vec<u8>>,
     revision: usize,
@@ -146,6 +149,12 @@ struct Bench {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let freshness = if args.iter().any(|arg| arg == FENCED_FLAG) {
+        Freshness::Fenced
+    } else {
+        Freshness::Converging
+    };
+    let args: Vec<String> = args.into_iter().filter(|arg| arg != FENCED_FLAG).collect();
     let Some(repository) = args.first().map(PathBuf::from) else {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
@@ -165,6 +174,7 @@ fn main() -> ExitCode {
             &repository,
             number(args.get(1), DEFAULT_ITERATIONS),
             number(args.get(2), DEFAULT_GIT_ITERATIONS),
+            freshness,
         )
     };
     match result {
@@ -183,11 +193,16 @@ fn number(value: Option<&String>, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn run(repository: &Path, iterations: usize, git_iterations: usize) -> Result<(), String> {
-    let mut bench = Bench::prepare(repository)?;
+fn run(
+    repository: &Path,
+    iterations: usize,
+    git_iterations: usize,
+    freshness: Freshness,
+) -> Result<(), String> {
+    let mut bench = Bench::prepare(repository, freshness)?;
     let baseline = bench.baseline()?;
     println!(
-        "repository={} entries={} baseline_wall_ms={:.2} baseline_cpu_ms={:.2}{}",
+        "repository={} freshness={freshness:?} entries={} baseline_wall_ms={:.2} baseline_cpu_ms={:.2}{}",
         repository.display(),
         bench.entries()?,
         millis(baseline.wall),
@@ -216,7 +231,7 @@ fn run(repository: &Path, iterations: usize, git_iterations: usize) -> Result<()
 }
 
 fn heap(repository: &Path, monitored: bool, iterations: usize) -> Result<(), String> {
-    let mut bench = Bench::prepare(repository)?;
+    let mut bench = Bench::prepare(repository, Freshness::Converging)?;
     heap::reset_peak();
     let start = heap::current();
     if monitored {
@@ -249,7 +264,7 @@ fn mebibytes_usize(bytes: usize) -> f64 {
 }
 
 impl Bench {
-    fn prepare(repository: &Path) -> Result<Self, String> {
+    fn prepare(repository: &Path, freshness: Freshness) -> Result<Self, String> {
         let head = git_output(repository, &["rev-parse", "HEAD"])?;
         let scratch = tempfile::tempdir().map_err(|error| format!("scratch: {error}"))?;
         let work = scratch.path().join("work");
@@ -287,6 +302,7 @@ impl Bench {
             work,
             monitor: Mutex::new(monitor),
             options: Options::files_status(),
+            freshness,
             edits,
             originals,
             revision: 0,
@@ -329,7 +345,7 @@ impl Bench {
         let cpu = process::self_cpu();
         let started = Instant::now();
         let snapshot = monitor
-            .probe(&self.work, &self.options, Freshness::Converging)
+            .probe(&self.work, &self.options, self.freshness)
             .map_err(|error| format!("monitor probe: {error}"))?
             .into_snapshot();
         let wall = started.elapsed();
@@ -599,6 +615,11 @@ fn same(left: &Snapshot, right: &Snapshot) -> bool {
 fn kind_name(kind: &ProbeKind) -> String {
     match kind {
         ProbeKind::Incremental => "incremental".to_string(),
+        ProbeKind::Baseline(reason) => format!("baseline-{reason:?}")
+            .split(['(', ' '])
+            .next()
+            .unwrap_or("baseline")
+            .to_lowercase(),
         other => format!("{other:?}")
             .split(['(', ' '])
             .next()

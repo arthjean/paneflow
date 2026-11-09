@@ -1,5 +1,7 @@
 mod coverage;
 mod eligibility;
+#[cfg(windows)]
+mod journal;
 mod registry;
 
 use std::ffi::OsStr;
@@ -10,6 +12,8 @@ pub use coverage::Coverage;
 #[cfg(target_os = "linux")]
 pub use eligibility::inotify_watches_in_use;
 pub use eligibility::{check_file_system, Ineligible};
+#[cfg(windows)]
+pub use journal::RESOLVE_LIMIT as JOURNAL_RESOLVE_LIMIT;
 pub use registry::{Feeds, IDLE_EVICTION};
 
 pub const MAX_QUEUED_EVENTS: usize = 4096;
@@ -88,6 +92,7 @@ pub enum ChangeKind {
     Modify,
     Remove,
     Rename,
+    Children,
 }
 
 impl From<gix_notify::EventKind> for ChangeKind {
@@ -142,6 +147,31 @@ pub enum FenceError {
     Stopped,
     #[error("an earlier fence is still pending")]
     Busy,
+    #[error("the change journal cannot fence: {0}")]
+    Journal(JournalError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum JournalError {
+    #[error("the volume keeps no change journal")]
+    Missing,
+    #[error("the change journal was deleted or recreated")]
+    Replaced,
+    #[error("the change journal wrapped past the feed's position")]
+    Wrapped,
+    #[error("the change journal could not be read (os error {0})")]
+    Read(u32),
+    #[error("the worktree spans more than one volume")]
+    Volumes,
+    #[error("the change journal named more paths than one pass resolves")]
+    Overflow,
+}
+
+#[cfg(windows)]
+enum JournalSlot {
+    Live(Box<journal::Journal>),
+    Faulted(JournalError),
+    Unavailable(JournalError),
 }
 
 impl From<gix_notify::SynchronizeError> for FenceError {
@@ -170,6 +200,8 @@ pub struct ChangeFeed {
     thread_limit: usize,
     watch_limit: Option<usize>,
     stale: bool,
+    #[cfg(windows)]
+    journal: JournalSlot,
 }
 
 impl std::fmt::Debug for ChangeFeed {
@@ -198,6 +230,8 @@ impl ChangeFeed {
             cause: format!("resolve {}: {error}", worktree.display()),
         })?;
         check_file_system(&requested)?;
+        #[cfg(windows)]
+        let armed = journal::Journal::arm(&requested);
         let coverage =
             Coverage::scan(&requested, options.thread_limit).map_err(|error| Ineligible::Scan {
                 cause: error.to_string(),
@@ -228,6 +262,8 @@ impl ChangeFeed {
             .map_err(|error| Ineligible::Registration {
                 cause: format!("{error:#}"),
             })?;
+        #[cfg(windows)]
+        let journal = indexed_journal(armed, &coverage);
         Ok(Self {
             watcher,
             coverage,
@@ -236,7 +272,45 @@ impl ChangeFeed {
             thread_limit: options.thread_limit,
             watch_limit: options.watch_limit,
             stale: false,
+            #[cfg(windows)]
+            journal,
         })
+    }
+
+    #[cfg(windows)]
+    pub fn journal_status(&self) -> Result<(), JournalError> {
+        match &self.journal {
+            JournalSlot::Live(_) => Ok(()),
+            JournalSlot::Faulted(error) | JournalSlot::Unavailable(error) => Err(*error),
+        }
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn rewind_journal_for_test(&mut self) {
+        if let JournalSlot::Live(journal) = &mut self.journal {
+            if let Ok(state) = journal.state() {
+                journal.cursor = state.first.max(state.lowest_valid) - 1;
+            }
+        }
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn remove_journal_for_test(&mut self) {
+        self.journal = JournalSlot::Unavailable(JournalError::Missing);
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn replace_journal_id_for_test(&mut self) {
+        if let JournalSlot::Live(journal) = &mut self.journal {
+            journal.id ^= 1;
+        }
+    }
+
+    #[cfg(all(windows, test))]
+    pub(crate) fn break_journal_reads_for_test(&mut self) {
+        if let JournalSlot::Live(journal) = &mut self.journal {
+            journal.buffer.clear();
+        }
     }
 
     pub fn coverage(&self) -> &Coverage {
@@ -265,6 +339,8 @@ impl ChangeFeed {
 
     pub fn drain(&mut self) -> Batch {
         let mut batch = self.drain_native();
+        #[cfg(windows)]
+        self.drain_journal(&mut batch);
         if batch.loss.is_some_and(|loss| loss != Loss::WatchSetChanged) {
             self.stale = true;
         }
@@ -356,7 +432,64 @@ impl ChangeFeed {
             self.watches = watches;
         }
         self.coverage = coverage;
+        #[cfg(windows)]
+        self.cover_journal();
         Ok(rewatch || unignored)
+    }
+
+    #[cfg(windows)]
+    fn cover_journal(&mut self) {
+        let JournalSlot::Live(journal) = &mut self.journal else {
+            return;
+        };
+        if let Err(error) = journal.cover(&self.coverage) {
+            self.journal = JournalSlot::Faulted(error);
+        }
+    }
+
+    #[cfg(windows)]
+    fn drain_journal(&mut self, batch: &mut Batch) {
+        let read = match &mut self.journal {
+            JournalSlot::Live(journal) => journal.read(&self.coverage),
+            JournalSlot::Faulted(_) | JournalSlot::Unavailable(_) => return,
+        };
+        match read {
+            Ok(changes) => {
+                for change in changes {
+                    match self.classify(&change.path, change.kind) {
+                        Some((origin, root, relative)) => batch.changes.push(Change {
+                            origin,
+                            root,
+                            relative,
+                            kind: change.kind,
+                            directory: change.directory,
+                        }),
+                        None => batch.dropped += 1,
+                    }
+                }
+            }
+            Err(error) => {
+                log::debug!(
+                    "the change journal of {} stopped vouching for its feed, the next fenced probe takes a full snapshot: {error}",
+                    self.coverage.worktree.display()
+                );
+                self.journal = JournalSlot::Faulted(error);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn rearm_journal(&mut self) {
+        let armed = journal::Journal::arm(&self.coverage.worktree);
+        if let Err(reason) = self.rescan() {
+            log::debug!(
+                "the change journal of {} could not re-arm: {reason}",
+                self.coverage.worktree.display()
+            );
+            self.stale = true;
+            return;
+        }
+        self.journal = indexed_journal(armed, &self.coverage);
     }
 
     fn drain_native(&mut self) -> Batch {
@@ -397,6 +530,21 @@ impl ChangeFeed {
         }
     }
 
+    #[cfg(windows)]
+    pub fn fence(&mut self, _deadline: Instant) -> Result<Batch, FenceError> {
+        let batch = self.drain();
+        match &self.journal {
+            JournalSlot::Live(_) => Ok(batch),
+            JournalSlot::Faulted(error) => {
+                let error = *error;
+                self.rearm_journal();
+                Err(FenceError::Journal(error))
+            }
+            JournalSlot::Unavailable(error) => Err(FenceError::Journal(*error)),
+        }
+    }
+
+    #[cfg(not(windows))]
     pub fn fence(&mut self, deadline: Instant) -> Result<Batch, FenceError> {
         let Some(marker) = self.marker.clone() else {
             return Err(FenceError::Unsupported);
@@ -446,6 +594,24 @@ impl ChangeFeed {
             self.coverage.worktree.clone(),
             relative.to_path_buf(),
         ))
+    }
+}
+
+#[cfg(windows)]
+fn indexed_journal(
+    armed: Result<journal::Journal, JournalError>,
+    coverage: &Coverage,
+) -> JournalSlot {
+    let indexed = armed.and_then(|mut journal| journal.index(coverage).map(|()| journal));
+    match indexed {
+        Ok(journal) => JournalSlot::Live(Box::new(journal)),
+        Err(error) => {
+            log::warn!(
+                "the change journal of {} cannot fence, fenced probes take full statuses: {error}",
+                coverage.worktree.display()
+            );
+            JournalSlot::Unavailable(error)
+        }
     }
 }
 

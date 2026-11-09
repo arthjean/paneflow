@@ -220,11 +220,16 @@ fn a_linked_worktree_covers_its_own_git_dir_and_the_common_dir() {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn a_fence_certifies_every_write_that_completed_before_it() {
     let fixture = fixture();
     let mut feed = ChangeFeed::start(&fixture.root, &options(&fixture.cache)).expect("feed");
+    #[cfg(windows)]
+    assert_eq!(
+        feed.journal_status(),
+        Ok(()),
+        "the volume of the temporary directory keeps a change journal"
+    );
     settle(&mut feed);
     for trial in 0..50 {
         let name = format!("u/fenced-{trial}.txt");
@@ -245,14 +250,26 @@ fn a_fence_certifies_every_write_that_completed_before_it() {
 
 #[cfg(windows)]
 #[test]
-fn windows_has_no_fence_yet() {
+fn windows_fences_through_the_change_journal_without_a_marker_directory() {
     let fixture = fixture();
     let mut feed = ChangeFeed::start(&fixture.root, &options(&fixture.cache)).expect("feed");
-    assert_eq!(
-        feed.fence(Instant::now() + OUTCOME_DEADLINE).map(|_| ()),
-        Err(paneflow_git::feed::FenceError::Unsupported)
-    );
     assert_eq!(feed.fence_directory(), None);
+    settle(&mut feed);
+    let name = "u/journal-delete.txt";
+    write(&fixture.root, name, b"doomed\n");
+    feed.fence(Instant::now() + OUTCOME_DEADLINE)
+        .expect("fence");
+    std::fs::remove_file(fixture.root.join(name)).expect("delete");
+    let batch = feed
+        .fence(Instant::now() + OUTCOME_DEADLINE)
+        .expect("fence");
+    assert!(
+        batch.changes.iter().any(
+            |change| change.kind == paneflow_git::feed::ChangeKind::Children
+                && change.relative == std::path::Path::new("u")
+        ),
+        "a delete the journal cannot name marks its directory: {batch:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -357,7 +374,11 @@ fn feeds_drain_and_time_out_without_blocking_their_thread() {
     );
     let expired = feed.fence(Instant::now()).map(|_| ());
     if cfg!(windows) {
-        assert_eq!(expired, Err(paneflow_git::feed::FenceError::Unsupported));
+        assert_eq!(
+            expired,
+            Ok(()),
+            "the journal fence reads up to its position without waiting"
+        );
     } else {
         assert_eq!(expired, Err(paneflow_git::feed::FenceError::TimedOut));
     }

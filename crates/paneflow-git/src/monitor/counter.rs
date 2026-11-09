@@ -1,6 +1,6 @@
 use super::{ProbeKind, Reason};
 use crate::engine::MonitorCounter;
-use crate::feed::{Ineligible, Loss};
+use crate::feed::{FenceError, Ineligible, JournalError, Loss};
 
 impl ProbeKind {
     pub fn counter(&self) -> MonitorCounter {
@@ -24,6 +24,7 @@ impl Reason {
             Reason::FirstProbe => MonitorCounter::FirstProbe,
             Reason::Recovered => MonitorCounter::Recovered,
             Reason::Loss(loss) => loss_counter(*loss),
+            Reason::Fence(FenceError::Journal(error)) => journal_counter(*error),
             Reason::Fence(_) => MonitorCounter::Fence,
             Reason::DrainGap => MonitorCounter::DrainGap,
             Reason::Input(_) => MonitorCounter::Input,
@@ -46,6 +47,17 @@ fn loss_counter(loss: Loss) -> MonitorCounter {
         Loss::Overflow => MonitorCounter::LossOverflow,
         Loss::BackendError => MonitorCounter::LossBackendError,
         Loss::BackendStopped => MonitorCounter::LossBackendStopped,
+    }
+}
+
+fn journal_counter(error: JournalError) -> MonitorCounter {
+    match error {
+        JournalError::Missing => MonitorCounter::JournalMissing,
+        JournalError::Replaced => MonitorCounter::JournalReplaced,
+        JournalError::Wrapped => MonitorCounter::JournalWrapped,
+        JournalError::Read(_) => MonitorCounter::JournalRead,
+        JournalError::Volumes => MonitorCounter::JournalVolumes,
+        JournalError::Overflow => MonitorCounter::JournalOverflow,
     }
 }
 
@@ -89,6 +101,12 @@ mod tests {
             ProbeKind::Stopped(Loss::BackendStopped),
             ProbeKind::Recovering(Loss::BackendStopped),
             ProbeKind::Baseline(Reason::Fence(FenceError::TimedOut)),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Missing))),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Replaced))),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Wrapped))),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Read(5)))),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Volumes))),
+            ProbeKind::Baseline(Reason::Fence(FenceError::Journal(JournalError::Overflow))),
             ProbeKind::Baseline(Reason::DrainGap),
             ProbeKind::Baseline(Reason::Input(Input::Excludes)),
             ProbeKind::Baseline(Reason::IndexFormat),

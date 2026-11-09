@@ -16,6 +16,7 @@ const INDEX_FILES: [&str; 2] = ["index", "index.lock"];
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Pending {
     pub(crate) paths: BTreeMap<Vec<u8>, bool>,
+    pub(crate) children: BTreeSet<Vec<u8>>,
     pub(crate) loss: Option<Loss>,
     pub(crate) foreign_git_dirs: bool,
     pub(crate) index_written: bool,
@@ -31,12 +32,17 @@ impl Pending {
                 Origin::GitDir => {
                     if !own_git_dirs.contains(&change.root) {
                         self.foreign_git_dirs = true;
+                    } else if change.kind == ChangeKind::Children {
+                        self.index_written |= change.relative.as_os_str().is_empty();
                     } else if INDEX_FILES
                         .iter()
                         .any(|name| change.relative == Path::new(name))
                     {
                         self.index_written = true;
                     }
+                }
+                Origin::Worktree if change.kind == ChangeKind::Children => {
+                    self.children.insert(relative_bytes(&change.relative));
                 }
                 Origin::Worktree => {
                     let path = relative_bytes(&change.relative);
@@ -86,6 +92,7 @@ pub(crate) struct Planner<'a> {
     pub(crate) worktree: &'a Worktree,
     pub(crate) workdir: &'a Path,
     pub(crate) ignore_case: bool,
+    pub(crate) ignored: Option<&'a BTreeSet<PathBuf>>,
 }
 
 impl Planner<'_> {
@@ -97,6 +104,9 @@ impl Planner<'_> {
         };
         for (path, modify_only) in &pending.paths {
             self.plan_event(path, *modify_only, &mut plan)?;
+        }
+        for directory in &pending.children {
+            self.plan_children(directory, &mut plan)?;
         }
         for path in &carried.changed {
             plan.forget.insert(path.clone());
@@ -153,6 +163,121 @@ impl Planner<'_> {
             self.plan_walk(&path, plan);
         }
         Ok(())
+    }
+
+    fn plan_children(&self, directory: &[u8], plan: &mut Plan) -> Result<(), Unplannable> {
+        if !directory.is_empty() {
+            if let Some(gitlink) = self.gitlink_at_or_above(directory) {
+                plan.submodules.insert(gitlink);
+                return Ok(());
+            }
+            let mut collapsed = directory.to_vec();
+            collapsed.push(b'/');
+            if self.collapsed_ancestor(directory).is_some()
+                || self.worktree.untracked.contains(&collapsed)
+            {
+                self.plan_walk(directory, plan);
+                return Ok(());
+            }
+        }
+        let Some(listing) = self.listing(directory) else {
+            if directory.is_empty() {
+                return Err(Unplannable::WorktreeRoot);
+            }
+            return self.plan_event(directory, false, plan);
+        };
+        let prefix = child_prefix(directory);
+        let entries = if prefix.is_empty() {
+            self.index.entries()
+        } else {
+            self.index
+                .prefixed_entries_range(prefix.as_bstr())
+                .map_or(&[][..], |range| &self.index.entries()[range])
+        };
+        let mut known = BTreeSet::new();
+        let mut tracked_directories = BTreeSet::new();
+        for entry in entries {
+            let path = entry.path(self.index).as_bytes();
+            let rest = &path[prefix.len()..];
+            match rest.find_byte(b'/') {
+                None => {
+                    let on_disk_as_directory = entry.mode == Mode::COMMIT;
+                    if listing.get(rest) != Some(&on_disk_as_directory) {
+                        plan.recheck.insert(path.to_vec());
+                        plan.forget.insert(path.to_vec());
+                        if on_disk_as_directory {
+                            plan.submodules.insert(path.to_vec());
+                        }
+                    }
+                    known.insert(rest.to_vec());
+                }
+                Some(end) => {
+                    tracked_directories.insert(rest[..end].to_vec());
+                }
+            }
+        }
+        for name in tracked_directories {
+            if listing.get(&name) != Some(&true) {
+                self.plan_event(&child_path(directory, &name), false, plan)?;
+            }
+            known.insert(name);
+        }
+        let mut untracked = BTreeMap::new();
+        for path in self
+            .worktree
+            .untracked
+            .range(prefix.clone()..)
+            .take_while(|path| path.starts_with(&prefix))
+        {
+            let rest = &path[prefix.len()..];
+            let (name, is_directory) = match rest.find_byte(b'/') {
+                None => (rest, false),
+                Some(end) => (&rest[..end], true),
+            };
+            untracked.insert(name.to_vec(), is_directory);
+        }
+        for (name, is_directory) in untracked {
+            if listing.get(&name) != Some(&is_directory) {
+                self.plan_walk(&child_path(directory, &name), plan);
+            }
+            known.insert(name);
+        }
+        for name in listing.keys() {
+            if known.contains(name) || (directory.is_empty() && name.as_slice() == DOT_GIT) {
+                continue;
+            }
+            let path = child_path(directory, name);
+            if self.is_covered_as_ignored(&path) {
+                continue;
+            }
+            self.plan_walk(&path, plan);
+        }
+        Ok(())
+    }
+
+    fn listing(&self, directory: &[u8]) -> Option<BTreeMap<Vec<u8>, bool>> {
+        let relative = gix::path::from_byte_slice(directory).ok()?;
+        let entries = std::fs::read_dir(self.workdir.join(relative)).ok()?;
+        let mut listing = BTreeMap::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Ok(name) = gix::path::os_str_into_bstr(&name) else {
+                continue;
+            };
+            let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            listing.insert(name.to_vec(), is_directory);
+        }
+        Some(listing)
+    }
+
+    fn is_covered_as_ignored(&self, path: &[u8]) -> bool {
+        let (Some(ignored), Ok(relative)) = (self.ignored, gix::path::from_byte_slice(path)) else {
+            return false;
+        };
+        relative
+            .ancestors()
+            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            .any(|ancestor| ignored.contains(ancestor))
     }
 
     fn plan_walk(&self, path: &[u8], plan: &mut Plan) {
@@ -252,6 +377,20 @@ enum DiskKind {
     Directory,
     Other,
     Missing,
+}
+
+fn child_prefix(directory: &[u8]) -> Vec<u8> {
+    let mut prefix = directory.to_vec();
+    if !prefix.is_empty() {
+        prefix.push(b'/');
+    }
+    prefix
+}
+
+fn child_path(directory: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut path = child_prefix(directory);
+    path.extend_from_slice(name);
+    path
 }
 
 fn ancestors_and_self(path: &[u8]) -> impl Iterator<Item = &[u8]> {

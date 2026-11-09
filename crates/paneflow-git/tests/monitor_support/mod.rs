@@ -7,13 +7,11 @@ use std::time::{Duration, Instant};
 use paneflow_git::feed::FeedOptions;
 use paneflow_git::{snapshot, Monitor, Options, ProbeReport, Snapshot};
 
-pub const FENCED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+pub const MARKER_FENCE: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
 pub const CONVERGENCE_DEADLINE: Duration = Duration::from_secs(10);
 
 const FENCE_DEADLINE: Duration = Duration::from_secs(5);
-
-const CONVERGENCE_PAUSE: Duration = Duration::from_millis(25);
 
 pub fn feed_options(cache: &Path) -> FeedOptions {
     FeedOptions {
@@ -62,36 +60,17 @@ impl Settled {
 pub fn settle(monitor: &mut Monitor, options: &Options) -> Result<Settled, String> {
     let root = monitor.path().to_path_buf();
     let mut settled = Settled::default();
-    if FENCED {
-        let probed = monitor
-            .fenced_snapshot(options, Instant::now() + FENCE_DEADLINE)
-            .map_err(|error| format!("fenced probe: {error}"))?;
-        settled.reports.push(monitor.last_probe().clone());
-        let full = snapshot(&root, options).map_err(|error| format!("full snapshot: {error}"))?;
-        let differences = differences(&probed, &full);
-        settled.snapshot = Some(probed);
-        if differences.is_empty() {
-            return Ok(settled);
-        }
-        return Err(differences.join("\n"));
+    let probed = monitor
+        .fenced_snapshot(options, Instant::now() + FENCE_DEADLINE)
+        .map_err(|error| format!("fenced probe: {error}"))?;
+    settled.reports.push(monitor.last_probe().clone());
+    let full = snapshot(&root, options).map_err(|error| format!("full snapshot: {error}"))?;
+    let differences = differences(&probed, &full);
+    settled.snapshot = Some(probed);
+    if differences.is_empty() {
+        return Ok(settled);
     }
-    let deadline = Instant::now() + CONVERGENCE_DEADLINE;
-    loop {
-        let probed = monitor
-            .snapshot(options)
-            .map_err(|error| format!("converging probe: {error}"))?;
-        settled.reports.push(monitor.last_probe().clone());
-        let full = snapshot(&root, options).map_err(|error| format!("full snapshot: {error}"))?;
-        let differences = differences(&probed, &full);
-        settled.snapshot = Some(probed);
-        if differences.is_empty() {
-            return Ok(settled);
-        }
-        if Instant::now() >= deadline {
-            return Err(differences.join("\n"));
-        }
-        std::thread::sleep(CONVERGENCE_PAUSE);
-    }
+    Err(differences.join("\n"))
 }
 
 pub fn settled(monitor: &mut Monitor, options: &Options) -> Settled {

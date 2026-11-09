@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use monitor_support::{canonical, monitor, paths, settled, FENCED};
+use monitor_support::{canonical, monitor, paths, settled, MARKER_FENCE};
 use paneflow_git::monitor::Input;
 use paneflow_git::{
     snapshot, Error, IndexChange, Monitor, Options, ProbeKind, Reason, Submodules, WorktreeChange,
@@ -200,28 +200,18 @@ fn an_interrupted_probe_leaves_the_model_and_its_dirty_set_for_the_next_probe() 
     let fixture = fixture();
     let mut monitor = baselined(&fixture);
     write(&fixture.root, "dir3/file3.txt", b"edited\n");
-    if FENCED {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        monitor
-            .fenced_snapshot(
-                &Options {
-                    interrupt: Some(Arc::new(AtomicBool::new(true))),
-                    ..Options::default()
-                },
-                deadline,
-            )
-            .map(|_| ())
-            .map_err(|error| assert!(matches!(error, Error::Interrupted), "{error}"))
-            .expect_err("an interrupted probe fails");
-    } else {
-        let error = monitor
-            .snapshot(&Options {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    monitor
+        .fenced_snapshot(
+            &Options {
                 interrupt: Some(Arc::new(AtomicBool::new(true))),
                 ..Options::default()
-            })
-            .expect_err("an interrupted probe fails");
-        assert!(matches!(error, Error::Interrupted), "{error}");
-    }
+            },
+            deadline,
+        )
+        .map(|_| ())
+        .map_err(|error| assert!(matches!(error, Error::Interrupted), "{error}"))
+        .expect_err("an interrupted probe fails");
     let after = settled(&mut monitor, &Options::default());
     assert_eq!(
         change_of(after.snapshot.as_ref().unwrap(), "dir3/file3.txt")
@@ -518,6 +508,12 @@ fn git_status_refreshing_stat_data_reads_the_index_once_and_hashes_nothing() {
         seen += settled(&mut monitor, &Options::default()).rechecked();
     }
     assert!(seen >= 3, "the three mtime changes reach the monitor");
+    while settled(&mut monitor, &Options::default()).rechecked() > 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "late duplicates of the three mtime changes never stopped"
+        );
+    }
     git(&fixture.root, &["status", "--porcelain"]);
     let after = settled(&mut monitor, &Options::default());
     assert!(after.incremental(), "{:?}", after.reports);
@@ -770,7 +766,7 @@ fn an_ineligible_monitor_answers_with_full_snapshots() {
     );
     let probed = monitor.snapshot(&Options::default()).expect("probe");
     let full = snapshot(&fixture.root, &Options::default()).expect("full");
-    if FENCED {
+    if MARKER_FENCE {
         assert!(matches!(monitor.last_probe().kind, ProbeKind::Full(_)));
         assert!(monitor.feed().is_none());
     }
