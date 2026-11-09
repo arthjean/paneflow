@@ -150,6 +150,46 @@ fn submodules_match_the_cli_with_the_is_clean_arguments() {
         .assert_parity_with_failures(&[], submodules::MUST_FAIL);
 }
 
+fn in_sha256_repositories(run: impl FnOnce() -> oracle::Report) -> oracle::Report {
+    support::with_object_format(support::SHA256, run)
+}
+
+#[test]
+fn an_oracle_fixture_built_for_sha256_stores_sha256_objects() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = base::matrix().into_iter().next().expect("a base fixture");
+    let cwd = support::with_object_format(support::SHA256, || {
+        (fixture.build)(&tmp.path().join("repo"))
+    })
+    .unwrap_or_else(|skip| panic!("{skip:?}"));
+    assert_eq!(
+        support::git(&cwd, &["rev-parse", "--show-object-format"]).trim(),
+        support::SHA256
+    );
+}
+
+#[test]
+fn the_cli_and_gix_report_equal_records_on_the_base_matrix_in_sha256_repositories() {
+    in_sha256_repositories(|| oracle::run(&base::matrix(), Probe::Files))
+        .assert_parity(base::MAY_SKIP);
+}
+
+#[test]
+fn sparse_checkouts_and_index_layouts_match_the_cli_in_sha256_repositories() {
+    in_sha256_repositories(|| oracle::run(&layouts::matrix(), Probe::Files)).assert_parity(&[]);
+}
+
+#[test]
+fn a_linked_worktree_reports_its_own_index_in_sha256_repositories() {
+    in_sha256_repositories(|| oracle::run(&linked::matrix(), Probe::Files)).assert_parity(&[]);
+}
+
+#[test]
+fn submodules_match_the_cli_in_sha256_repositories() {
+    in_sha256_repositories(|| oracle::run(&submodules::matrix(Probe::Files), Probe::Files))
+        .assert_parity_with_failures(&[], submodules::MUST_FAIL);
+}
+
 #[test]
 fn a_snapshot_opens_each_of_ten_submodules_once() {
     support::isolate_process();

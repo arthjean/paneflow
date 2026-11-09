@@ -36,6 +36,16 @@ const BULK_BLOB: &[u8] = b"bulk\n";
 pub(crate) enum Repository {
     Small,
     Large,
+    Sha256,
+}
+
+impl Repository {
+    fn init_args(self) -> &'static [&'static str] {
+        match self {
+            Repository::Small | Repository::Large => &[],
+            Repository::Sha256 => &["--object-format=sha256"],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,7 +184,11 @@ fn prepare(root: &Path, repository: Repository, scenario: Scenario, raced: Raced
     let file = root.join(RACED_FILE);
     match raced {
         Raced::Tracked => {
-            fixture::committed_repo(root, &[(RACED_FILE, &same_size_body(SEED_GENERATION))]);
+            fixture::committed_repo_with(
+                root,
+                repository.init_args(),
+                &[(RACED_FILE, &same_size_body(SEED_GENERATION))],
+            );
             if repository == Repository::Large {
                 fill_a_large_index(root);
             }
@@ -189,7 +203,11 @@ fn prepare(root: &Path, repository: Repository, scenario: Scenario, raced: Raced
                 Scenario::StatDirty,
                 "an untracked file has no index entry to make racily clean"
             );
-            fixture::committed_repo(root, &[("committed.txt", "committed\n")]);
+            fixture::committed_repo_with(
+                root,
+                repository.init_args(),
+                &[("committed.txt", "committed\n")],
+            );
             if repository == Repository::Large {
                 fill_a_large_index(root);
             }
@@ -476,6 +494,25 @@ mod tests {
             outcome.answers.iter().all(|(entries, names)| {
                 *entries == LARGE_INDEX_ENTRIES + 1 && names.trim() == RACED_FILE
             }),
+            "{:?}",
+            outcome.answers
+        );
+    }
+
+    #[test]
+    fn the_sha256_repository_stores_its_objects_with_sha256() {
+        let outcome = race_in(
+            Repository::Sha256,
+            Scenario::StatDirty,
+            Raced::Tracked,
+            |root: &Path| git_probe(root, &["rev-parse", "--show-object-format"]),
+        );
+        outcome.assert_conclusive();
+        assert!(
+            outcome
+                .answers
+                .iter()
+                .all(|format| format.trim() == "sha256"),
             "{:?}",
             outcome.answers
         );

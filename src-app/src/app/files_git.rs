@@ -504,6 +504,18 @@ mod tests {
 
     #[test]
     fn gix_and_cli_statuses_are_equal_on_every_oracle_fixture() {
+        assert_gix_and_cli_statuses_are_equal_on_every_oracle_fixture();
+    }
+
+    #[test]
+    fn gix_and_cli_statuses_are_equal_on_every_oracle_fixture_in_sha256_repositories() {
+        paneflow_git::support::with_object_format(
+            paneflow_git::support::SHA256,
+            assert_gix_and_cli_statuses_are_equal_on_every_oracle_fixture,
+        );
+    }
+
+    fn assert_gix_and_cli_statuses_are_equal_on_every_oracle_fixture() {
         use paneflow_git::oracle::{Probe, Skip, base, layouts, linked, submodules};
         paneflow_git::support::isolate_process();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -767,6 +779,12 @@ mod tests {
     fn a_truncating_agent_write_never_fails_while_the_files_status_probe_runs_in_a_large_repository()
      {
         assert_the_files_status_race_never_fails_a_write(crate::git_race::Repository::Large);
+    }
+
+    #[test]
+    fn a_truncating_agent_write_never_fails_while_the_files_status_probe_runs_in_a_sha256_repository()
+     {
+        assert_the_files_status_race_never_fails_a_write(crate::git_race::Repository::Sha256);
     }
 
     fn assert_the_files_status_race_never_fails_a_write(repository: crate::git_race::Repository) {

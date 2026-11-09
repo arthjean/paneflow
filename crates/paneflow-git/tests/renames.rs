@@ -64,8 +64,16 @@ fn cli_pairs(root: &Path, config: &[&str]) -> BTreeSet<Pair> {
 
 fn gix_pairs(root: &Path) -> BTreeSet<Pair> {
     let (sources, destinations) = staged_sides(root);
+    gix_pairs_of(root, &sources, &destinations)
+}
+
+fn gix_pairs_of(
+    root: &Path,
+    sources: &[RenameSide],
+    destinations: &[RenameSide],
+) -> BTreeSet<Pair> {
     with_snapshot(root, &Options::default(), |_, objects| {
-        let renames = objects.track_renames(&sources, &destinations, objects.rename_limit())?;
+        let renames = objects.track_renames(sources, destinations, objects.rename_limit())?;
         Ok(renames
             .into_iter()
             .map(|rename| {
@@ -255,4 +263,49 @@ fn renames_past_the_configured_limit_keep_only_exact_matches_like_git() {
     git(&root, &["config", "diff.renameLimit", "3"]);
     assert_eq!(cli_pairs(&root, &[]), unlimited);
     assert_eq!(gix_pairs(&root), unlimited);
+}
+
+#[test]
+fn an_exact_rename_read_from_the_worktree_pairs_past_the_limit_in_a_sha256_repository() {
+    support::isolate_process();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().join("repo");
+    support::with_object_format(support::SHA256, || init(&root));
+    write(&root, "old/exact.txt", numbered("exact", 20).as_bytes());
+    for index in 0..2 {
+        let case = format!("edited{index}");
+        write(
+            &root,
+            &format!("old/{case}.txt"),
+            numbered(&case, 20).as_bytes(),
+        );
+    }
+    commit_all(&root, "base");
+    std::fs::rename(root.join("old/exact.txt"), root.join("new-exact.txt")).expect("move");
+    for index in 0..2 {
+        let case = format!("edited{index}");
+        std::fs::remove_file(root.join(format!("old/{case}.txt"))).expect("remove");
+        write(
+            &root,
+            &format!("new-{case}.txt"),
+            edited(&case, 20, 18).as_bytes(),
+        );
+    }
+    git(&root, &["add", "-A"]);
+    git(&root, &["config", "diff.renameLimit", "1"]);
+    let (sources, mut destinations) = staged_sides(&root);
+    assert_eq!(sources[0].id.as_ref().map(String::len), Some(64));
+    for destination in &mut destinations {
+        destination.id = None;
+    }
+
+    assert_eq!(
+        gix_pairs_of(&root, &sources, &destinations),
+        BTreeSet::from([(
+            "old/exact.txt".to_string(),
+            "new-exact.txt".to_string(),
+            100
+        )]),
+        "a worktree side hashes with the repository's object format"
+    );
 }

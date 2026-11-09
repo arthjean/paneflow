@@ -2803,6 +2803,19 @@ mod tests {
 
     #[test]
     fn is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture() {
+        assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture();
+    }
+
+    #[test]
+    fn is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture_in_sha256_repositories()
+     {
+        paneflow_git::support::with_object_format(
+            paneflow_git::support::SHA256,
+            assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture,
+        );
+    }
+
+    fn assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture() {
         use paneflow_git::oracle::{Probe as OracleProbe, Skip, base, layouts, linked, submodules};
         paneflow_git::support::isolate_process();
         let tmp = tempfile::tempdir().expect("tempdir");
