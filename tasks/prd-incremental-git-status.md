@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-07 | Arthur Jean | Initial PRD for Stage C of #134: a long-lived per-worktree status model in `paneflow-git`, fed by a vendored `gix-notify` watcher, that re-reads only what changed and falls back to the full Stage B snapshot on any loss. A freshness contract separates fenced answers (Linux, macOS, and full statuses on Windows) from converging ones. 5 epics, 18 stories. |
+| 1.1 | 2026-11-09 | Arthur Jean | Done: every epic certified, delivered by #135 (rebase-merged as `312029844`), `run_tests` 42631047242 green on every leg at `fe30b96a7`, the same tree. Windows fences through the volume change journal (EP-005), so `is_clean` answers incrementally there too. Gaps against this PRD, accepted: a no-change probe misses its 2 ms (2.16 ms on Linux, 7.4 to 8.8 ms on Windows, where opening the repository and resolving HEAD cost about 3.5 ms); a Windows checkout rewriting 100 files costs the monitor more than a full snapshot (143 to 192 ms against 87 ms), since git leaves the files racily clean and the first status pays their first read; a new ReFS Dev Drive has no change journal, so its fenced probes take the full snapshot until an administrator creates one; peak heap was counted by the bench's allocator because heaptrack 1.5.0 aborts on this WSL. |
 
 ## Problem Statement
 
@@ -389,9 +390,9 @@ Windows gets the fenced incremental answers Linux and macOS have, through the NT
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a non-elevated process on Windows 11 NTFS and on a ReFS Dev Drive, when it queries the worktree volume's journal (`FSCTL_QUERY_USN_JOURNAL`, and `FSCTL_READ_UNPRIVILEGED_USN_JOURNAL` where available), then the outcome, the access the volume handle needs, and the behavior with the journal disabled are recorded
-- [ ] Given a readable journal, when a write returns and the journal's `NextUsn` is read afterwards, then the write's record lies below that USN in 1,000 of 1,000 trials, and the cost of query and read is recorded
-- [ ] Given that the read requires elevation or that default installs have no journal on the system volume, then the story records it on #134 and US-018 becomes `CANCELLED`
+- [x] Given a non-elevated process on Windows 11 NTFS and on a ReFS Dev Drive, when it queries the worktree volume's journal (`FSCTL_QUERY_USN_JOURNAL`, and `FSCTL_READ_UNPRIVILEGED_USN_JOURNAL` where available), then the outcome, the access the volume handle needs, and the behavior with the journal disabled are recorded
+- [x] Given a readable journal, when a write returns and the journal's `NextUsn` is read afterwards, then the write's record lies below that USN in 1,000 of 1,000 trials, and the cost of query and read is recorded
+- [x] Given that the read requires elevation or that default installs have no journal on the system volume, then the story records it on #134 and US-018 becomes `CANCELLED`
 
 #### US-018: Fenced incremental status on Windows through the USN journal
 **Description:** As a Windows user, I want `is_clean` and every fenced probe to answer incrementally, so that Windows stops paying a full status for exact answers.
@@ -401,10 +402,10 @@ Windows gets the fenced incremental answers Linux and macOS have, through the NT
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given `Freshness::Fenced` on Windows with a readable journal, when the probe runs, then it reads journal records up to the current `NextUsn`, maps them to worktree paths, and answers incrementally
-- [ ] Given a journal wrap (the model's USN below `LowestValidUsn`), a changed journal id, or a volume without a journal, then the probe re-baselines from the full snapshot
-- [ ] Given the differential test (US-010) on the Windows leg, then it runs with fenced probes and passes
-- [ ] Given a journal read error, then the probe takes the full snapshot and the engine counters record the reason
+- [x] Given `Freshness::Fenced` on Windows with a readable journal, when the probe runs, then it reads journal records up to the current `NextUsn`, maps them to worktree paths, and answers incrementally
+- [x] Given a journal wrap (the model's USN below `LowestValidUsn`), a changed journal id, or a volume without a journal, then the probe re-baselines from the full snapshot
+- [x] Given the differential test (US-010) on the Windows leg, then it runs with fenced probes and passes
+- [x] Given a journal read error, then the probe takes the full snapshot and the engine counters record the reason
 
 ---
 
