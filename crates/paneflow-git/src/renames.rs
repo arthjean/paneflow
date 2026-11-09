@@ -599,7 +599,7 @@ impl Contents for RepositoryContents<'_, '_> {
             ),
             None => match self.read_worktree(side)? {
                 Some(data) => {
-                    let id = gix::objs::compute_hash(gix::hash::Kind::Sha1, Kind::Blob, &data)
+                    let id = gix::objs::compute_hash(self.repo.object_hash(), Kind::Blob, &data)
                         .map_err(|error| Error::git("hash a worktree file", error))?;
                     let prepared = &mut self.prepared[slot(role)][index];
                     prepared.size = Some(Some(data.len() as u64));

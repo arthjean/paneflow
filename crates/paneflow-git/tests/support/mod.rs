@@ -1,5 +1,6 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -33,6 +34,21 @@ const INHERITED_REPOSITORY_ENV: &[&str] = &[
 ];
 
 static GLOBAL_CONFIG: OnceLock<PathBuf> = OnceLock::new();
+
+const DEFAULT_HASH_ENV: &str = "GIT_DEFAULT_HASH";
+
+pub const SHA256: &str = "sha256";
+
+thread_local! {
+    static OBJECT_FORMAT: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
+
+pub fn with_object_format<T>(format: &'static str, build: impl FnOnce() -> T) -> T {
+    let previous = OBJECT_FORMAT.replace(Some(format));
+    let built = build();
+    OBJECT_FORMAT.set(previous);
+    built
+}
 
 pub fn isolate_process() -> &'static Path {
     isolate_process_with("")
@@ -72,6 +88,10 @@ pub fn command(cwd: &Path, args: &[&str]) -> Command {
     for key in INHERITED_REPOSITORY_ENV {
         command.env_remove(key);
     }
+    match OBJECT_FORMAT.get() {
+        Some(format) => command.env(DEFAULT_HASH_ENV, format),
+        None => command.env_remove(DEFAULT_HASH_ENV),
+    };
     command
 }
 

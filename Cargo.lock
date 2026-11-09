@@ -2485,6 +2485,7 @@ dependencies = [
  "gix-error",
  "gix-utils",
  "sha1dc",
+ "sha2 0.11.0",
 ]
 
 [[package]]

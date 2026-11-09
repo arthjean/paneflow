@@ -164,7 +164,7 @@ the snapshot on a background executor. The rail keeps Paneflow's 300 px width,
 
 `crates/paneflow-git` computes a worktree's status without spawning git, so a
 background probe never maps an agent's file on Windows (#124, #130). It is
-built on gix `=0.90.0` (features `status`, `parallel`, `sha1`) and on three
+built on gix `=0.90.0` (features `status`, `parallel`, `sha1`, `sha256`) and on three
 vendored crates: `vendor/gix-status`, gix-status 0.37.0 with the short-read
 fix (a file that shrinks while it is hashed is reported modified instead of
 failing the whole status) and the shared directory listing; `vendor/gix-dir`,
@@ -344,7 +344,17 @@ the diff dock and `is_clean` (EP-005) run on it.
   without opening the repository with gix, when `PANEFLOW_GIT_ENGINE=cli`
   (`forced`), when `HEAD` holds the reftable marker or
   `extensions.refStorage=reftable` (`reftable`), when
-  `extensions.objectFormat` is not `sha1` (`object_format`). A gix error is
+  `extensions.objectFormat` is neither `sha1` nor `sha256` (`object_format`).
+  SHA-256 repositories run on gix: the EP-002 oracle matrices, the four
+  probes' engine comparisons and the `git_race` races also run on SHA-256
+  repositories (`support::with_object_format`, `Repository::Sha256`), and a
+  packed SHA-256 repository is read like the CLI reads it. Every CLI answer
+  keeps the residual of #124 on Windows: `git status` maps a same-size
+  stat-dirty file of 32 KiB or more, and `diff-index` and `diff
+  --name-status` map a racily clean one, so an agent's truncating write can
+  fail with error 1224 there. Only the gix path never maps a worktree file. A
+  reftable repository is the one layout a default probe still sends to the
+  CLI, and Git 3.0 makes reftable the default for new repositories (#138). A gix error is
   answered by the CLI
   in the same call (`error`); after two consecutive errors for one git
   directory, keyed by the linked worktree's own git directory, that directory

@@ -1058,6 +1058,23 @@ fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_a_lar
     );
 }
 
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_a_sha256_repository() {
+    use crate::git_race::{Raced, Repository, Scenario, race_in};
+    let outcome = race_in(
+        Repository::Sha256,
+        Scenario::StatDirty,
+        Raced::Tracked,
+        diff_stats_probe_on_gix,
+    );
+    outcome.assert_no_failed_write();
+    assert!(
+        outcome.answers.iter().any(|stats| stats.files_changed == 1),
+        "a probe still sees the one rewritten file: {:?}",
+        outcome.answers
+    );
+}
+
 fn diff_stats_probe_on_gix(root: &Path) -> Result<crate::workspace::GitDiffStats, String> {
     let before = git_spawns_on_this_thread();
     let stats = diff_stats_probe(root)?;
@@ -1078,6 +1095,12 @@ fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_r
 fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window_in_a_large_repository()
  {
     assert_the_racy_diff_stats_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_diff_stats_probe_runs_in_the_racy_window_in_a_sha256_repository()
+ {
+    assert_the_racy_diff_stats_race_never_fails_a_write(crate::git_race::Repository::Sha256);
 }
 
 fn assert_the_racy_diff_stats_race_never_fails_a_write(repository: crate::git_race::Repository) {
@@ -1114,6 +1137,11 @@ fn a_truncating_agent_write_never_fails_while_the_clean_check_runs() {
 #[test]
 fn a_truncating_agent_write_never_fails_while_the_clean_check_runs_in_a_large_repository() {
     assert_the_clean_check_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_clean_check_runs_in_a_sha256_repository() {
+    assert_the_clean_check_race_never_fails_a_write(crate::git_race::Repository::Sha256);
 }
 
 fn assert_the_clean_check_race_never_fails_a_write(repository: crate::git_race::Repository) {
@@ -1155,6 +1183,12 @@ fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_
 fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window_in_a_large_repository()
  {
     assert_the_racy_dock_listing_race_never_fails_a_write(crate::git_race::Repository::Large);
+}
+
+#[test]
+fn a_truncating_agent_write_never_fails_while_the_dock_listing_runs_in_the_racy_window_in_a_sha256_repository()
+ {
+    assert_the_racy_dock_listing_race_never_fails_a_write(crate::git_race::Repository::Sha256);
 }
 
 fn assert_the_racy_dock_listing_race_never_fails_a_write(repository: crate::git_race::Repository) {

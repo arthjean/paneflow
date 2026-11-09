@@ -13,7 +13,7 @@ pub const PINNING_FAILURE_COUNT: u32 = 2;
 
 const REFTABLE_HEAD: &str = "ref: refs/heads/.invalid";
 
-const SHA1_OBJECT_FORMAT: &str = "sha1";
+const SUPPORTED_OBJECT_FORMATS: &[&str] = &["sha1", "sha256"];
 
 const REFTABLE_REF_STORAGE: &str = "reftable";
 
@@ -430,7 +430,7 @@ impl Selector {
         if uses_reftable(layout) {
             return Some(Fallback::Reftable);
         }
-        if !uses_sha1_objects(layout) {
+        if !uses_supported_object_format(layout) {
             return Some(Fallback::ObjectFormat);
         }
         self.is_pinned(&layout.git_dir).then_some(Fallback::Error)
@@ -549,7 +549,7 @@ fn uses_reftable(layout: &Layout) -> bool {
             == Some(REFTABLE_REF_STORAGE)
 }
 
-fn uses_sha1_objects(layout: &Layout) -> bool {
+fn uses_supported_object_format(layout: &Layout) -> bool {
     repository_extension(layout, "extensions.objectFormat")
-        .is_none_or(|format| format == SHA1_OBJECT_FORMAT)
+        .is_none_or(|format| SUPPORTED_OBJECT_FORMATS.contains(&format.as_str()))
 }

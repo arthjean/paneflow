@@ -339,8 +339,6 @@ fn stub_file(path: String, change: FileChange) -> FileDiff {
     }
 }
 
-const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
 pub(crate) const NOT_A_GIT_REPOSITORY: &str = "Not a Git repository";
 
 #[cfg(test)]
@@ -413,7 +411,13 @@ fn head_diff_with_cli(worktree_dir: &Path, options: DiffOptions) -> WorktreeDiff
         Ok(head) => head,
         Err(error) => return failed_diff(error),
     };
-    let base = head.clone().unwrap_or_else(|| EMPTY_TREE_SHA.to_string());
+    let base = match &head {
+        Some(head) => head.clone(),
+        None => match crate::workspace::git::empty_tree(worktree_dir, GIT_DEADLINE) {
+            Ok(tree) => tree,
+            Err(error) => return failed_diff(error),
+        },
+    };
     let mut diff = compute_diff_against(worktree_dir, &base, options);
     diff.toplevel = Some(toplevel);
     diff.head_sha = head;
@@ -1134,6 +1138,33 @@ mod tests {
     }
 
     #[test]
+    fn a_packed_sha256_repository_lists_the_same_dock_on_both_engines() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("repo");
+        fixture::packed_sha256_repo(
+            &root,
+            &[
+                ("kept.txt", "one\ntwo\n"),
+                ("moved.txt", "a\nb\nc\nd\n"),
+                ("gone.txt", "x\n"),
+            ],
+        );
+        std::fs::write(root.join("kept.txt"), "one\nthree\n").expect("edit");
+        fixture::run(&root, &["mv", "moved.txt", "renamed.txt"]);
+        std::fs::remove_file(root.join("gone.txt")).expect("delete");
+        std::fs::write(root.join("new.txt"), "n\n").expect("untracked");
+
+        let diff = equal_on_both_engines(&root);
+
+        assert_eq!(diff.files.len(), 4, "{:?}", dock_view(&diff));
+        assert!(
+            diff.files.iter().any(|file| file.base_text == "one\ntwo\n"),
+            "the base text is read from the pack: {:?}",
+            dock_view(&diff)
+        );
+    }
+
+    #[test]
     fn renames_past_the_rename_limit_are_skipped_like_git() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1448,6 +1479,18 @@ mod tests {
 
     #[test]
     fn gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture() {
+        assert_gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture();
+    }
+
+    #[test]
+    fn gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture_in_sha256_repositories() {
+        paneflow_git::support::with_object_format(
+            paneflow_git::support::SHA256,
+            assert_gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture,
+        );
+    }
+
+    fn assert_gix_and_cli_dock_listings_are_equal_on_every_oracle_fixture() {
         use paneflow_git::oracle::{Probe as OracleProbe, Skip, base, layouts, linked, submodules};
         paneflow_git::support::isolate_process();
         let tmp = tempfile::tempdir().expect("tempdir");

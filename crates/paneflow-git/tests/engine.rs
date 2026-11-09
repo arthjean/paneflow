@@ -78,7 +78,7 @@ fn a_ref_storage_extension_routes_the_repository_to_the_cli() {
 }
 
 #[test]
-fn a_sha256_repository_is_answered_by_the_cli_without_opening_gix() {
+fn a_sha256_repository_is_answered_by_gix() {
     support::isolate_process();
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
@@ -87,8 +87,21 @@ fn a_sha256_repository_is_answered_by_the_cli_without_opening_gix() {
     write(&root, "file.txt", b"f\n");
     let selector = Selector::new(Engine::Gix);
     let calls = Cell::new(0);
+    assert_eq!(run(&selector, &root, answering_gix(&calls)), "gix");
+    assert_eq!(calls.get(), 1);
+    assert_eq!(selector.counters().fallbacks(Fallback::ObjectFormat), 0);
+    assert!(snapshot(&root, &Options::files_status()).is_ok());
+}
+
+#[test]
+fn an_object_format_gix_cannot_read_is_answered_by_the_cli_without_opening_gix() {
+    let (_tmp, root) = repo();
+    git(&root, &["config", "core.repositoryFormatVersion", "1"]);
+    git(&root, &["config", "extensions.objectFormat", "sha3"]);
+    let selector = Selector::new(Engine::Gix);
+    let calls = Cell::new(0);
     assert_eq!(run(&selector, &root, answering_gix(&calls)), "cli");
-    assert_eq!(calls.get(), 0, "no gix open for a SHA-256 repository");
+    assert_eq!(calls.get(), 0, "no gix open for an unknown object format");
     assert_eq!(selector.counters().fallbacks(Fallback::ObjectFormat), 1);
 }
 

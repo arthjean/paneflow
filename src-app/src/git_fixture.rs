@@ -117,7 +117,11 @@ pub(crate) fn commit_all(root: &Path, message: &str) {
 }
 
 pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
-    init(root);
+    committed_repo_with(root, &[], files);
+}
+
+pub(crate) fn committed_repo_with(root: &Path, init_args: &[&str], files: &[(&str, &str)]) {
+    init_with(root, init_args);
     for (name, content) in files {
         let path = root.join(name);
         if let Some(parent) = path.parent() {
@@ -128,6 +132,18 @@ pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
             .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
     }
     commit_all(root, "init");
+}
+
+pub(crate) fn packed_sha256_repo(root: &Path, files: &[(&str, &str)]) {
+    committed_repo_with(root, &["--object-format=sha256"], files);
+    run(root, &["gc", "--prune=now", "--quiet"]);
+    assert!(
+        run(root, &["count-objects", "-v"])
+            .lines()
+            .any(|line| line.trim() == "count: 0"),
+        "every object of {} is packed",
+        root.display()
+    );
 }
 
 pub(crate) fn private_temp_root() -> &'static Path {

@@ -15,7 +15,13 @@ const GIT_DIFF_STAT_DEADLINE: std::time::Duration = std::time::Duration::from_se
 
 const GIT_DIFF_STAT_STDOUT_CAP: u64 = 256 * 1024;
 
-const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const EMPTY_TREES: &[(&str, &str)] = &[
+    ("sha1", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"),
+    (
+        "sha256",
+        "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321",
+    ),
+];
 const GIT_DIFF_STAT_UNTRACKED_FILE_CAP: usize = 200;
 const GIT_DIFF_STAT_UNTRACKED_PATH_CAP: usize = 1000;
 const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
@@ -526,9 +532,26 @@ fn list_changes_against_head(cwd: &str, deadline: std::time::Instant) -> Option<
     }
     let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
     match resolve_head(std::path::Path::new(cwd), remaining) {
-        Ok(None) => list_against(EMPTY_TREE_SHA),
+        Ok(None) => {
+            let remaining = deadline.checked_duration_since(std::time::Instant::now())?;
+            list_against(&empty_tree(std::path::Path::new(cwd), remaining).ok()?)
+        }
         Ok(Some(_)) | Err(_) => None,
     }
+}
+
+pub(crate) fn empty_tree(
+    cwd: &std::path::Path,
+    deadline: std::time::Duration,
+) -> Result<String, String> {
+    let format = git_stdout(cwd, &["rev-parse", "--show-object-format"], deadline, 4096)
+        .ok_or_else(|| "git could not read the object format".to_string())?;
+    let format = String::from_utf8_lossy(&format).trim().to_string();
+    EMPTY_TREES
+        .iter()
+        .find(|(known, _)| *known == format)
+        .map(|(_, tree)| (*tree).to_string())
+        .ok_or_else(|| format!("no empty tree is known for the {format} object format"))
 }
 
 pub(crate) fn path_from_git_output(bytes: &[u8]) -> std::path::PathBuf {
@@ -1038,6 +1061,18 @@ mod tests {
         let (_, cli) = answers.next().unwrap();
         assert_eq!(gix, cli, "gix and the git CLI disagree");
         gix
+    }
+
+    #[test]
+    fn a_packed_sha256_repository_counts_the_same_diff_stats_on_both_engines() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        fixture::packed_sha256_repo(&root, &[("tracked.txt", "one\n"), ("gone.txt", "x\n")]);
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("new.txt"), "n\n").unwrap();
+
+        assert_eq!(counts(&on_both_engines_equal(&root)), (3, 2, 1));
     }
 
     #[test]
@@ -1722,6 +1757,18 @@ mod tests {
 
     #[test]
     fn gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture() {
+        assert_gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture();
+    }
+
+    #[test]
+    fn gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture_in_sha256_repositories() {
+        paneflow_git::support::with_object_format(
+            paneflow_git::support::SHA256,
+            assert_gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture,
+        );
+    }
+
+    fn assert_gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture() {
         use paneflow_git::oracle::{Probe as OracleProbe, Skip, base, layouts, linked, submodules};
         paneflow_git::support::isolate_process();
         let tmp = tempfile::tempdir().expect("tempdir");
