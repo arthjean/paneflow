@@ -8,6 +8,7 @@
 | 1.0 | 2026-11-02 | Arthur Jean | PRD initial, tiré de l'audit des 13 workflows du 2026-11-02 : échecs silencieux rendus bruyants, gates qui disent la vérité, tests instables visibles et corrigés (Phase 1), puis cache, doublons, supply chain, migration Ubuntu 22.04 et décomposition (Phase 2). 6 epics, 26 stories. |
 | 1.1 | 2026-11-02 | Arthur Jean | Aucune release Paneflow réelle pendant ce PRD : chaque critère se prouve par dry-run ou par un run qui ne publie rien. US-002 se prouve sur un dry-run de `release.yml`, et US-004 supprime les copies de secrets du dépôt après un dry-run signé sur `main`, sans attendre de tag. |
 | 1.2 | 2026-11-03 | Arthur Jean | US-010 : le profil `ci` passe à `retries = 1` avec `flaky-result = "fail"`. Avec `retries = 0`, nextest ne relance jamais un test, qui ne peut donc jamais être FLAKY, ce qui contredisait l'AC « échoue puis passe », FR-05 et l'edge case 6. Seul le test en échec est relancé une fois ; s'il passe, le job échoue quand même. |
+| 1.3 | 2026-11-10 | Arthur Jean | Revue d'EP-004. US-015 : le release build de la lane `native` de `libghostty-linux.yml` reste, car il qualifie l'archive reconstruite et aucun autre job ne construit ce binaire avant un tag ; seuls `cargo test --workspace` et cargo-deny en sortent. US-017 : le timeout d'un job vaut au plus le plus grand de 10 min et de 1,5 fois la durée maximale observée, et le build moteur Windows passe par `scripts/ci-retry-network.ps1`, jumeau PowerShell qui lit la liste de signatures du script bash. |
 
 ## Problem Statement
 
@@ -397,7 +398,7 @@ Phase 2. La CI et la release ne paient plus deux fois le même travail, et le ca
 **Acceptance Criteria:**
 - [ ] `release_build_linux` (`run_tests.yml:233-354`) disparaît. Les plafonds de taille par helper sont vérifiés par un script après les tests de `run_tests_linux`, sur les binaires `release-min` que `src-app/build.rs` construit déjà. La ligne d'AGENTS.md sur le budget de taille nomme le nouveau job.
 - [ ] Given un helper qui dépasse son plafond, when `run_tests_linux` s'exécute, then il échoue en nommant le binaire, sa taille et le plafond.
-- [ ] `libghostty-linux.yml` ne lance plus ni `cargo test --workspace`, ni release build, ni cargo-deny (`:207-221`, `:561-583`) : ces gates restent dans `run_tests.yml` et `audit.yml`.
+- [ ] `libghostty-linux.yml` ne lance plus ni `cargo test --workspace`, ni cargo-deny (`:207-221`, `:561-583`) : ces gates restent dans `run_tests.yml` et `audit.yml`. Le release build de la lane `native` reste : il lie l'archive que la recette vient de reconstruire et alimente le stress PTY, le contrôle de lien statique, les quatre formats de paquets et les smokes distro, et aucun autre job ne construit ce binaire avant un tag.
 - [ ] La lane consommatrice de `libghostty-macos.yml` (`:216-219`) réutilise l'artifact de `macos_check` ou disparaît, et la lane `bindings` ne fait plus de troisième build Zig (`libghostty-linux.yml:367-375`).
 - [ ] cargo-deny s'installe en binaire précompilé (version et checksum épinglés), depuis une seule source de version partagée par `run_tests.yml` et `audit.yml`.
 - [ ] Given une PR sans effet sur le code, then les checks requis `libghostty validation` restent verts.
@@ -424,9 +425,9 @@ Phase 2. La CI et la release ne paient plus deux fois le même travail, et le ca
 **Dependencies:** Blocked by US-002
 
 **Acceptance Criteria:**
-- [ ] Chaque job de `.github/workflows/` déclare `timeout-minutes`, au plus 1,5 fois la durée maximale observée sur la fenêtre de l'audit, et 60 min par défaut pour un job sans historique. `scripts/check-workflows.sh` échoue sur un job qui n'en déclare pas.
+- [ ] Chaque job de `.github/workflows/` déclare `timeout-minutes`, au plus le plus grand de 10 min et de 1,5 fois la durée maximale observée sur la fenêtre de l'audit, et 60 min par défaut pour un job sans historique. `scripts/check-workflows.sh` échoue sur un job qui n'en déclare pas.
 - [ ] `scripts/fetch-libghostty.sh` et `.ps1` appellent curl avec `--retry 5 --retry-all-errors`, plus `--ssl-revoke-best-effort` sous Windows, pour le cas `CRYPT_E_REVOCATION_OFFLINE` du run 36606332042.
-- [ ] Le motif `TRANSIENT` de `scripts/ci-retry-network.sh:7` couvre `ReadFailed` et `ProtocolError` de Zig, et les fetchs de paquets Zig des builds moteur passent par ce script.
+- [ ] Le motif `TRANSIENT` de `scripts/ci-retry-network.sh:7` couvre `ReadFailed` et `ProtocolError` de Zig, et les fetchs de paquets Zig des builds moteur passent par ce script. Le build moteur Windows passe par `scripts/ci-retry-network.ps1`, qui lit la même liste de signatures, parce que ce build échoue sous Git Bash.
 - [ ] `.github/actions/linux-build-deps` configure `Acquire::Retries=3` pour apt, et les appels apt et dnf de `release.yml` passent par `scripts/ci-retry-network.sh`.
 - [ ] Un test de script lance `scripts/ci-retry-network.sh` contre une commande factice qui émet chaque motif transitoire puis réussit. Il vérifie que le motif est retenté, et qu'une erreur non transitoire ne l'est pas.
 - [ ] Given un step bloqué, then le job est tué à son timeout et l'agrégateur rapporte l'échec.
