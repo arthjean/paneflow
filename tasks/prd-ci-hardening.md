@@ -9,6 +9,7 @@
 | 1.1 | 2026-11-02 | Arthur Jean | Aucune release Paneflow réelle pendant ce PRD : chaque critère se prouve par dry-run ou par un run qui ne publie rien. US-002 se prouve sur un dry-run de `release.yml`, et US-004 supprime les copies de secrets du dépôt après un dry-run signé sur `main`, sans attendre de tag. |
 | 1.2 | 2026-11-03 | Arthur Jean | US-010 : le profil `ci` passe à `retries = 1` avec `flaky-result = "fail"`. Avec `retries = 0`, nextest ne relance jamais un test, qui ne peut donc jamais être FLAKY, ce qui contredisait l'AC « échoue puis passe », FR-05 et l'edge case 6. Seul le test en échec est relancé une fois ; s'il passe, le job échoue quand même. |
 | 1.3 | 2026-11-10 | Arthur Jean | Revue d'EP-004. US-015 : le release build de la lane `native` de `libghostty-linux.yml` reste, car il qualifie l'archive reconstruite et aucun autre job ne construit ce binaire avant un tag ; seuls `cargo test --workspace` et cargo-deny en sortent. US-017 : le timeout d'un job vaut au plus le plus grand de 10 min et de 1,5 fois la durée maximale observée, et le build moteur Windows passe par `scripts/ci-retry-network.ps1`, jumeau PowerShell qui lit la liste de signatures du script bash. |
+| 1.4 | 2026-11-10 | Arthur Jean | Certification d'EP-004. La mesure du cache se fait sur les premiers runs de `main` après la livraison ; celle à une semaine devient un contrôle de suivi. La cible de 8 GB devient le quota de 10 GB : chaque entrée rust-cache embarque environ 0,85 GB de registre et de dépôts git cargo, six entrées pesaient 9,9 GB, et `check_style` et `perf_gates` perdent donc leur cache (5,3 et 3,6 min gagnées pour 1,1 et 1,4 GB). Le taux de 80 % porte sur les jobs qui déclarent un cache. US-014 : un `workflow_dispatch` de `run_tests` sur `main` tient lieu de second push. |
 
 ## Problem Statement
 
@@ -48,7 +49,7 @@ Décisions clés, avec leur preuve dans l'audit :
 | Plus aucun échec silencieux | 100 % des advisories RUSTSEC ouvrent ou commentent une issue en moins de 24 h ; 0 ligne de secret multi-ligne tracée dans un log | Inchangé |
 | Une release ne publie que du vert | 0 release publiée sur un SHA dont un job requis de `run_tests` n'est pas `success` | Inchangé |
 | Tests instables visibles et rares | 0 retry caché ; part des runs en échec ne portant que des flaky inférieure à 15 % | Inférieure à 5 %, quarantaine de 2 tests au plus |
-| CI et release plus rapides | Le cache est restauré par au moins 80 % des jobs `run_tests` sur `main` | Release en 30 min au plus ; cache total sous 8 GB |
+| CI et release plus rapides | Le cache est restauré par au moins 80 % des jobs `run_tests` sur `main` | Release en 30 min au plus ; cache total sous le quota de 10 GB |
 | Prêt pour le retrait d'Ubuntu 22.04 | Spike conteneur conclu | 0 `runs-on` sur une image 22.04 avant le 2027-03-23 |
 
 ## Target Users
@@ -368,7 +369,7 @@ Phase 1. Un job vert ne cache plus aucun échec. Un flaky hors quarantaine fait 
 Phase 2. La CI et la release ne paient plus deux fois le même travail, et le cache est restauré au lieu d'être évincé.
 
 **Definition of Done:**
-- Au moins 80 % des jobs `run_tests` sur `main` restaurent un cache, et le cache total reste sous 8 GB une semaine après la livraison.
+- Au moins 80 % des jobs `run_tests` sur `main` qui déclarent un cache le restaurent, et le cache total reste sous le quota de 10 GB du dépôt, entrée de `perf-ab.yml` comprise, mesurés sur les premiers runs de `main` après la livraison. La même mesure une semaine après est un contrôle de suivi, pas une condition de `DONE`.
 - Une release dry-run sur `main` tient en 30 min au plus.
 - Chaque job de chaque workflow déclare `timeout-minutes`.
 - Aucune suite de tests n'est exécutée par deux workflows.
@@ -386,7 +387,7 @@ Phase 2. La CI et la release ne paient plus deux fois le même travail, et le ca
 - [ ] `release.yml` déclare `cache-mode: none` au niveau du workflow, et ses steps `rust-cache` (`:118-121`, `:324-327`) disparaissent. Les findings zizmor `cache-poisoning` de `release.yml:118,225,324` disparaissent aussi.
 - [ ] Les caches de `audit.yml:53-62` et `perf-ab.yml:68-78` sont soit restaurés (clés alignées pour que `main` les relise), soit supprimés.
 - [ ] Given un run de PR, when `rust-cache` termine, then aucune entrée de cache n'est créée pour la ref de la PR (vérifié par `gh api repos/{owner}/{repo}/actions/caches`).
-- [ ] Given deux pushes successifs sur `main` après livraison, then chaque job `run_tests` du second affiche « Cache restored » dans son log.
+- [ ] Given deux pushes successifs sur `main` après livraison, then chaque job `run_tests` du second affiche « Cache restored » dans son log. Un `workflow_dispatch` de `run_tests` sur `main` tient lieu de second push : même ref, mêmes clés de cache, tous les jobs tournent.
 
 #### US-015: Une suite ne tourne qu'une fois
 **Description:** As a mainteneur, I want supprimer les jobs qui refont ce qu'un autre workflow fait déjà so that environ 7 000 runner-minutes par 8 semaines (estimation de `libghostty.md`) ne soient plus dépensées en double (T-05, T-08, L-07, L-08, L-11).
@@ -602,7 +603,7 @@ Phase 2. La CI quitte les images Ubuntu 22.04 avant leurs brownouts, sans perdre
 - **Performance:** chemin critique d'une PR qui touche du Rust en 25 min au plus (28,8 min aujourd'hui pour le leg Windows) ; release dry-run en 30 min au plus (48,9 min) ; `ci-verdict` ajoute au plus 2 min quand `run_tests` est déjà terminé.
 - **Security:** 0 secret dans un log, mesuré par 0 ligne `***` issue d'un secret multi-ligne dans les logs de `repo_publish` et `release` ; 0 finding zizmor de sévérité haute non justifié (13 aujourd'hui) ; 100 % des actions épinglées sur un SHA de commit ; secrets de signature servis à 0 job hors de l'environnement `release`.
 - **Reliability:** au plus 2 retries par test en quarantaine ; hors quarantaine, un seul rerun du test en échec, qui sert à le nommer FLAKY et ne le fait jamais passer ; quarantaine de 4 tests au plus au départ et de 2 au plus après 6 mois ; timeout par test de 300 s (60 s × 5) ; chaque job déclare un `timeout-minutes` d'au plus 1,5 fois sa durée maximale observée ; 0 nightly libghostty annulé par un push (17 sur 19 aujourd'hui).
-- **Scalability:** cache Actions sous 8 GB pour un quota de 10 GB (11,24 GB aujourd'hui) ; au moins 80 % des jobs `run_tests` sur `main` restaurent un cache.
+- **Scalability:** cache Actions sous le quota de 10 GB (11,24 GB aujourd'hui) ; au moins 80 % des jobs `run_tests` sur `main` qui déclarent un cache le restaurent.
 - **Accessibility:** non applicable, aucune interface utilisateur. Les annotations et résumés d'étape nomment le test, le fichier et la commande de reprise en texte brut.
 
 ## Edge Cases & Error States
@@ -622,7 +623,7 @@ Phase 2. La CI quitte les images Ubuntu 22.04 avant leurs brownouts, sans perdre
 | 11 | Erreur réseau transitoire | `CRYPT_E_REVOCATION_OFFLINE`, Zig `ReadFailed`, apt 5xx | Retry, jusqu'à 5 tentatives pour curl | None |
 | 12 | Asset de release remplacé | Asset modifié après publication, release mutable | `repo_publish` échoue sur minisign avant toute écriture R2 | "Signature check failed for <asset>: not publishing" |
 | 13 | Rendu du cask raté | Le template change et le `sed` ne matche plus | `update_cask` échoue avant le push | "Cask version is <found>, expected <tag>" |
-| 14 | Quota de cache dépassé | Nouveaux jobs ou nouvelles clés | Éviction LRU ; les seules sauvegardes venant de `main`, le total reste sous 8 GB | None |
+| 14 | Quota de cache dépassé | Nouveaux jobs ou nouvelles clés | Éviction LRU ; les seules sauvegardes venant de `main`, le total reste sous le quota de 10 GB | None |
 | 15 | Deux releases rapprochées | Deux tags poussés à moins d'une minute | `queue: max` les sérialise sans en remplacer | None |
 | 16 | Bump sur une branche existante | La branche de bump existe déjà | Échec avant de publier la release et l'attestation | "<branch> already exists. Delete it, or finish the bump that is already open." |
 
@@ -682,7 +683,7 @@ Phase 2. La CI quitte les images Ubuntu 22.04 avant leurs brownouts, sans perdre
 | Releases publiées sur un SHA rouge | 1 (v0.19.0) | 0 | Month-1 | `ci-verdict` dans chaque run de release |
 | Advisories notifiées | 0 sur 34 | 100 % en moins de 24 h | Month-1 | Issues `type: security` comparées aux échecs de `audit.yml` |
 | Jobs `run_tests` sur `main` qui restaurent un cache | Environ 0 % (aucune entrée) | Au moins 80 % | Month-1 après US-014 | « Cache restored » dans les logs ; `gh api .../actions/caches` |
-| Taille du cache Actions | 11,24 GB | Sous 8 GB | Month-6 | `gh api .../actions/cache/usage` |
+| Taille du cache Actions | 11,24 GB | Sous le quota de 10 GB | Month-6 | `gh api .../actions/cache/usage` |
 | Durée d'une release | 48,9 min | 30 min au plus | Month-6 | Timestamps des jobs du run de release |
 | Findings zizmor de sévérité haute | 13 | 0 non justifié | Month-6 | zizmor en CI (US-018) |
 | Runs sur images Ubuntu 22.04 | 42 lignes et 2 legs | 0 | Avant le 2027-03-23 | `scripts/check-workflows.sh` |
