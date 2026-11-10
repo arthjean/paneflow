@@ -157,7 +157,14 @@ jobs:
           RESUME_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || github.ref_name }}
         run: scripts/require-ci-verdict.sh "$RELEASE_SHA" "$RESUME_REF"
 
-  build:
+  # The four build legs run as three jobs, one per platform, that share one
+  # step list through the `build_steps` YAML anchor: `build-linux` defines it
+  # and `build-macos` and `build-windows` alias it. A smoke job then needs
+  # only the build of its own platform, so the Windows MSI smokes no longer
+  # wait for the Linux legs, and "Re-run failed jobs" rebuilds only the
+  # platform that failed. The steps select their platform through
+  # `runner.os` and `matrix.*`, which every one of the three jobs defines.
+  build-linux:
     name: Build ${{ matrix.target }}
     needs: preflight
     runs-on: ${{ matrix.runs-on }}
@@ -168,15 +175,13 @@ jobs:
     # Anything else runs with no environment at all, gets no signing secret,
     # builds unsigned dry-run artifacts, and never trips the policy.
     environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
-    # Every matrix leg is hard-required. A failed Linux, macOS, or
-    # Windows build must fail the whole release workflow and block
-    # publishing.
+    # Every leg is hard-required: the publish job needs the three build
+    # jobs, so a failed Linux, macOS, or Windows build blocks publishing.
     strategy:
-      # fail-fast: true keeps the four-platform build matrix atomic: a
-      # broken target cancels queued siblings where possible, and any
-      # completed failure fails `build`, blocking publish and downstream
-      # release gates.
-      fail-fast: true
+      # Atomicity comes from `release.needs`, not from cancelling siblings:
+      # with fail-fast a macOS failure cancelled both Linux legs after 23
+      # minutes of work, and the re-run had to rebuild all four.
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -189,33 +194,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             arch: aarch64
             runs-on: ubuntu-22.04-arm
-          # US-019: macOS aarch64 (Apple Silicon). Native build on
-          # GitHub-hosted macos-15, chains through the US-013→US-016
-          # bundle + sign + notarize + .dmg pipeline. Uses the same
-          # TAG value as the Linux legs; the macOS-only prelude below
-          # strips the leading `v` before feeding it to Info.plist
-          # (CFBundleShortVersionString requires bare semver).
-          #
-          # Hard-required since 2026-05-27 - signing has been live since
-          # v0.2.9-rc.4 (see memory/project_macos_signing.md) and the
-          # last 3 stable cuts (v0.3.1/v0.3.2/v0.3.3) all shipped this
-          # leg green. The previous `continue-on-error: true` posture
-          # was hiding signal: a notarization-staple regression would
-          # have silently produced an unsigned .dmg and the workflow
-          # would still report success.
-          - target: aarch64-apple-darwin
-            arch: aarch64
-            runs-on: macos-15
-          # x86_64-pc-windows-msvc - OPEN since 2026-06-14. Azure Artifact
-          # Signing is provisioned for the Strivex subscription (account
-          # strivex-signing, cert profile StriveX-Release; the 6 AZURE_*
-          # secrets are set - see memory/project_windows_signing.md).
-          # Hard-required since 2026-06-26: Windows is a release target, so
-          # any Windows build, signing, packaging, or staging failure must
-          # fail the workflow.
-          - target: x86_64-pc-windows-msvc
-            arch: x86_64
-            runs-on: windows-2022
           # CLOSED TARGET - x86_64-apple-darwin (Intel Mac / macos-13)
           # Decision: 2026-04-21 (US-008, v0.2.1). Removed from the
           # matrix entirely until v0.3.0's macOS release cut. Two
@@ -239,36 +217,19 @@ jobs:
           # validation. Now that the Windows leg is restored, it is a
           # hard release gate like Linux and macOS.
 
-    steps:
+    steps: &build_steps
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
           ref: ${{ needs.preflight.outputs.sha }}
 
-      - name: Read libghostty pins
-        id: libghostty_pins
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/libghostty-manifest
-
-      - name: Checkout pinned Ghostty source
-        if: runner.os == 'Linux'
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-          repository: ghostty-org/ghostty
-          ref: ${{ steps.libghostty_pins.outputs.source_sha }}
-          path: .ghostty-source
-          fetch-depth: 1
-
-      # Every leg links the archive for its own target, and the workspace
-      # tests validate the Linux x86_64 and macOS trees on every host.
+      # Every leg links the published archive for its own target, which
+      # fetch-libghostty verifies against `archive_sha256` in the manifest.
+      # The Linux legs used to rebuild it from the Ghostty source, twice, to
+      # reproduce those same bytes: 12 minutes on the slowest leg.
+      # `libghostty-linux.yml` owns that reproducibility proof, on every
+      # recipe change and every night.
       - uses: ./.github/actions/fetch-libghostty
-
-      - name: Install pinned Zig
-        if: runner.os == 'Linux'
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ steps.libghostty_pins.outputs.zig_version }}
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
@@ -376,15 +337,6 @@ jobs:
         # upstream README: the `assets` inline-table grammar has changed in
         # prior minor versions.
         run: cargo install cargo-generate-rpm --version 0.20.0 --locked
-
-      - name: Prepare reproducible libghostty archive
-        if: runner.os == 'Linux'
-        env:
-          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
-          TARGET: ${{ matrix.target }}
-        run: |
-          scripts/build-libghostty-linux.sh --target "$TARGET" --verify-reproducible
-          echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/$TARGET" >> "$GITHUB_ENV"
 
       # Regenerate every icon asset (.png hicolor set, .icns, .ico,
       # rust-embed runtime icon) from the master PNGs under
@@ -1757,8 +1709,41 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  # US-019: macOS aarch64 (Apple Silicon). Native build on GitHub-hosted
+  # macos-15, through the bundle, sign, notarize and .dmg steps. Hard-required
+  # since 2026-05-27: a `continue-on-error` leg hid a notarization-staple
+  # regression behind a green run.
+  build-macos:
+    name: Build ${{ matrix.target }}
+    needs: preflight
+    runs-on: ${{ matrix.runs-on }}
+    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+            runs-on: macos-15
+    steps: *build_steps
+
+  # x86_64-pc-windows-msvc, signed through Azure Artifact Signing.
+  # Hard-required since 2026-06-26: Windows is a release target, so any
+  # Windows build, signing, packaging, or staging failure fails the workflow.
+  build-windows:
+    name: Build ${{ matrix.target }}
+    needs: preflight
+    runs-on: ${{ matrix.runs-on }}
+    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x86_64
+            runs-on: windows-2022
+    steps: *build_steps
+
   # ─── Unified release publish ────────────────────────────────────────
-  # US-019 converts `build` into a matrix (x86_64 + aarch64). Calling
+  # The build runs as four legs across three jobs. Calling
   # softprops/action-gh-release from each matrix leg would race two
   # concurrent API writers against the same tag: two "create release"
   # calls, two `generate_release_notes: true` bodies, overlapping
@@ -1768,10 +1753,11 @@ jobs:
   # GitHub Release exactly once with the merged file set.
   #
   # Atomic-release guarantee (PRD AC6): the publish job `needs:` list
-  # waits for `ci-verdict`, the full build matrix and every release smoke
+  # waits for `ci-verdict`, the three build jobs and every release smoke
   # gate. A red or skipped required `run_tests` job on the release commit,
   # or a failed Linux x64, Linux aarch64, macOS aarch64, Windows x64,
-  # package smoke, MSI smoke, or auto-update E2E blocks publishing.
+  # package smoke, MSI smoke, MSI upgrade over a live host, or auto-update
+  # E2E blocks publishing.
   release:
     name: Publish GitHub Release
     # US-003: skip the entire publish chain in dry-run mode. The
@@ -1793,7 +1779,7 @@ jobs:
     # (zed-industries/zed .github/workflows/release.yml).
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     # US-002: Publish is gated on every release validation job, not just
-    # `build`. If any smoke test fails, the GitHub Release must not publish.
+    # the builds. If any smoke test fails, the GitHub Release must not publish.
     # US-005: also gated on `auto-update-e2e` so a tag cut never ships a
     # binary that can't actually self-update v(N-1) → v(N).
     # Pre-US-002 the smoke jobs ran in parallel with publish (rationale:
@@ -1808,13 +1794,16 @@ jobs:
     needs:
       - preflight
       - ci-verdict
-      - build
+      - build-linux
+      - build-macos
+      - build-windows
       - smoke-test-ubuntu
       - smoke-test-fedora
       - smoke-test-debian
       - smoke-test-opensuse
       - smoke-test-arch
       - smoke-test-windows-msi
+      - smoke-test-windows-msi-live-host
       - auto-update-e2e
     runs-on: ubuntu-22.04
     # US-002 (prd-audit-remediation): gate the publish job (which holds the
@@ -2001,7 +1990,7 @@ jobs:
 
   smoke-test-ubuntu:
     name: Smoke test - Ubuntu 22.04 (.deb postinst)
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-22.04
     container: ubuntu:22.04
     # ubuntu:22.04's default /bin/sh is dash, which does NOT support
@@ -2101,7 +2090,7 @@ jobs:
 
   smoke-test-fedora:
     name: Smoke test - Fedora 40 (.rpm postinst)
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-22.04
     container: fedora:40
     # fedora:40 ships bash as /bin/sh already, but pin it explicitly
@@ -2177,7 +2166,7 @@ jobs:
   # postinst (e.g. `apt-get` flag drift, snap-aware codepaths).
   smoke-test-debian:
     name: Smoke test - Debian 12 (.deb postinst)
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-22.04
     container: debian:bookworm-slim
     defaults:
@@ -2249,7 +2238,7 @@ jobs:
   # we can claim openSUSE coverage on paneflow.dev.
   smoke-test-opensuse:
     name: Smoke test - openSUSE Tumbleweed (.rpm postinst)
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-22.04
     container: opensuse/tumbleweed
     defaults:
@@ -2353,7 +2342,7 @@ jobs:
   # libs implicitly from `Requires:` / `depends:`.
   smoke-test-arch:
     name: Smoke test - Arch Linux (tar.gz binary, no native PKGBUILD)
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-22.04
     container: archlinux:base
     defaults:
@@ -2435,9 +2424,9 @@ jobs:
   # diagnostics, removes its staged MSI, and requests a relaunch.
   smoke-test-windows-msi:
     name: Smoke test - Windows MSI install + relay
-    # Only the runs whose build signs (see `build.environment`) produce an MSI.
+    # Only the runs whose build signs (see `build-windows.environment`) produce an MSI.
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
-    needs: [preflight, build]
+    needs: [preflight, build-windows]
     runs-on: windows-2022
     defaults:
       run:
@@ -3003,7 +2992,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # ─── Windows MSI smoke: upgrade over a live session host (dry-run) ──
+  # ─── Windows MSI smoke: upgrade over a live session host ────────────
   # The in-app updater runs msiexec while the detached session host
   # (`paneflow-host.exe --home <home> serve`) can still run from
   # %ProgramFiles%\PaneFlow. Restart Manager cannot close that windowless
@@ -3014,12 +3003,18 @@ jobs:
   # installs the latest published MSI per-machine, starts its host, and
   # upgrades with the relay's exact msiexec arguments, then repeats the
   # upgrade without MSIRESTARTMANAGERCONTROL=Disable as the v0.16 updater
-  # ran it. The candidate ProductVersion must exceed the latest release:
-  # dispatch with `msi_upgrade_version` while the source is not bumped yet.
+  # ran it. It runs on every tag push and gates the publish job, like the
+  # relay smoke above, and on a dry-run from `main`: the two cases where the
+  # build signs an MSI. On a tag push the new release is still a draft, so
+  # the latest published release is the previous version. The candidate
+  # ProductVersion must exceed it: dispatch a dry-run with
+  # `msi_upgrade_version` while the source is not bumped yet. A tag that
+  # does not upgrade the latest release, such as a hotfix on an older line,
+  # has no upgrade to test and reports that in a notice instead of failing.
   smoke-test-windows-msi-live-host:
     name: Smoke test - Windows MSI upgrade over a live host
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main'
-    needs: build
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
+    needs: build-windows
     runs-on: windows-2022
     defaults:
       run:
@@ -3112,6 +3107,10 @@ jobs:
           $candidateVersion = Get-MsiProperty -Path $candidate.FullName -Name 'ProductVersion'
           $baselineVersion = Get-MsiProperty -Path $baseline.FullName -Name 'ProductVersion'
           if ((Get-MajorUpgradeVersion $candidateVersion) -le (Get-MajorUpgradeVersion $baselineVersion)) {
+              if ($env:GITHUB_EVENT_NAME -eq 'push') {
+                  Write-Host "::notice title=MSI upgrade smoke not applicable::Candidate MSI ProductVersion $candidateVersion does not upgrade the latest release $baselineVersion, so there is no upgrade over a live host to test for this tag."
+                  exit 0
+              }
               throw "Candidate MSI ProductVersion $candidateVersion does not upgrade the latest release $baselineVersion; dispatch the dry-run with msi_upgrade_version above $baselineVersion"
           }
           Write-Host "Upgrading $baselineVersion to $candidateVersion (UpgradeCode $upgradeCode)"
@@ -3269,7 +3268,7 @@ jobs:
   dry-run-summary:
     name: Dry-run artifact summary
     if: github.event_name == 'workflow_dispatch'
-    needs: [preflight, build]
+    needs: [preflight, build-linux, build-macos, build-windows]
     runs-on: ubuntu-22.04
     steps:
       - name: Download all release-assets-* workflow artifacts
@@ -3331,13 +3330,13 @@ jobs:
   # current ~monthly release cadence.
   auto-update-e2e:
     name: Auto-update e2e (Linux x86_64)
-    needs: [preflight, build]
+    needs: [preflight, build-linux]
     runs-on: ubuntu-22.04
     # The E2E signs the NEW tarball before publish so it can remain a
     # hard `release.needs` gate. That requires the same minisign secret as
     # the publish job, stored on the protected `release` environment, which
     # only `main` and `v*` tags may deploy to. It runs exactly when the build
-    # signs (see `build.environment`), so a `target_ref` other than `main`
+    # signs (see `build-linux.environment`), so a `target_ref` other than `main`
     # never gets the minisign key, and no other ref fails on the policy.
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
     environment: release
@@ -3349,7 +3348,7 @@ jobs:
     # Refactor (2026-05-27): the harness now accepts E2E_NEW_TARBALL
     # and E2E_OLD_TARBALL env vars and uses them directly when set
     # (scripts/test-update-e2e.sh). The NEW tarball is reused from
-    # the matrix `build` job's artifact (already built + bundled +
+    # the `build-linux` job's artifact (already built + bundled +
     # sha256-sided 5 minutes earlier - no point rebuilding). The OLD
     # tarball is fetched from the previous GitHub release, which is
     # strictly more faithful than a from-source rebuild: we now test
@@ -3382,7 +3381,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-x11-0
 
-      # Pull the NEW tarball straight from the matrix `build` job's
+      # Pull the NEW tarball straight from the `build-linux` job's
       # x86_64 Linux artifact. The matrix uploads
       # release-assets-x86_64-Linux which contains every Linux x86_64
       # artifact (.tar.gz, .deb, .rpm, AppImage, sha256 sidecars); the
