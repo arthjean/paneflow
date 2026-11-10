@@ -160,7 +160,8 @@ on the machine) is listed as not measured, neither accepted nor a
 regression. The non-ignored tests `gates::` and `gate_runs::` of the same
 binary run in the job before the measurement: they feed the verifier a
 synthetic overrun and check the job's workflow (no `pull_request_target` in
-any workflow, a `perf-gates-` cache prefix that `release.yml` never uses,
+any workflow, a job that keeps no cache and a `release.yml` that declares
+`cache-mode: none`,
 `tests_pass` depending on the job).
 
 The first local run of the gates, on Arthur's Fedora machine under Xvfb with

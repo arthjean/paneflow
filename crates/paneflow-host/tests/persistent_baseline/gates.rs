@@ -920,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn the_perf_gates_job_runs_on_pull_request_with_its_own_cache_inside_tests_pass() {
+    fn the_perf_gates_job_runs_on_pull_request_without_a_cache_inside_tests_pass() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows");
         for entry in std::fs::read_dir(&directory).unwrap() {
             let path = entry.unwrap().path();
@@ -933,7 +933,7 @@ mod tests {
         }
         let run_tests = workflow("run_tests.yml");
         let job = job_block(&run_tests, "perf_gates");
-        assert!(job.contains("prefix-key: \"perf-gates-\""), "{job}");
+        assert!(!job.contains("Swatinem/rust-cache"), "{job}");
         assert!(job.contains("timeout-minutes: 45"), "{job}");
         assert!(
             job.contains("uses: ./.github/actions/fetch-libghostty"),
@@ -943,8 +943,8 @@ mod tests {
         assert!(job.contains("retention-days: 14"), "{job}");
         let release = workflow("release.yml");
         assert!(
-            !release.contains("perf-gates-"),
-            "release.yml shares the perf-gates- cache prefix"
+            release.lines().any(|line| line == "cache-mode: none"),
+            "release.yml may read or write the Actions cache"
         );
         let tests_pass = job_block(&run_tests, "tests_pass");
         assert!(
