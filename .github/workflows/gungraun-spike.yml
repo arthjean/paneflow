@@ -43,12 +43,6 @@ jobs:
         with:
           toolchain: "1.98.0"
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "gungraun-spike-"
-          key: spike
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
       - name: Install the gungraun-runner matching the library
         run: |
           version=$(cargo metadata --locked --format-version=1 \

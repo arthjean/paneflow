@@ -101,12 +101,6 @@ jobs:
           toolchain: "1.98.0"
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty-windows-consumer
-          key: ${{ env.TARGET }}-${{ hashFiles('Cargo.lock', 'native/libghostty/manifest.toml') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
       # fmt, clippy --all-targets and `cargo test` used to run here. They are
       # what `run_tests.yml::windows_check` runs on every commit against the
       # same committed archive, and it now passes `--all-targets` too, so this
