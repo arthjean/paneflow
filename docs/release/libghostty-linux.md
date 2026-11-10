@@ -44,9 +44,12 @@ reviewed SHA-256 and requires every statically bundled component marker.
 ### Reproducibility
 
 `scripts/build-libghostty-linux.sh --verify-reproducible` builds the archive
-twice from clean caches and compares the two, and the workflow and the release
-pipeline then require the result to match `archive_sha256` and the published
-release asset byte for byte. That gate is only as deterministic as the build,
+twice from clean caches and compares the two, and the `libghostty Linux`
+workflow then requires the result to match `archive_sha256` and the published
+release asset byte for byte, on every recipe change and every night. The
+release pipeline does not rebuild the archive: it links the published asset,
+which `scripts/fetch-libghostty.sh` checks against the same `archive_sha256`.
+That gate is only as deterministic as the build,
 and until 2026-09-03 the build was not. `zig build -j1` limits how many steps
 the build runner drives at once, but the `zig build-lib` child sizes its own
 thread pool from the CPU count, and with two or more threads the code it

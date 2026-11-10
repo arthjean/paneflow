@@ -250,13 +250,13 @@
       "id": "US-016",
       "title": "Le chemin critique de la release passe sous 30 min",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
+      "started_at": "2026-11-10",
       "completed_at": null,
       "reviewed_at": null
     },
