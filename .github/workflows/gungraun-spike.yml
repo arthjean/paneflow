@@ -47,6 +47,7 @@ jobs:
         with:
           prefix-key: "gungraun-spike-"
           key: spike
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the gungraun-runner matching the library
         run: |

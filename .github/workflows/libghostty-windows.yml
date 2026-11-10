@@ -104,6 +104,7 @@ jobs:
         with:
           prefix-key: v1-libghostty-windows-consumer
           key: ${{ env.TARGET }}-${{ hashFiles('Cargo.lock', 'native/libghostty/manifest.toml') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # fmt, clippy --all-targets and `cargo test` used to run here. They are
       # what `run_tests.yml::windows_check` runs on every commit against the

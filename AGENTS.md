@@ -15,7 +15,8 @@ cargo fmt --check                                   # mandatory before commit an
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --profile ci  # the CI runner; cargo test --workspace --locked runs the same suite
 cargo deny check advisories licenses sources        # only when dependencies change
-bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace
+bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace, cache saved from main only
+bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
 ```
 

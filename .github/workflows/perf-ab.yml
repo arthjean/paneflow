@@ -72,6 +72,7 @@ jobs:
           prefix-key: "perf-ab-"
           key: perf_ab
           workspaces: ". -> ../perf-ab-target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the gungraun-runner matching the library
         run: |

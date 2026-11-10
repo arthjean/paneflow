@@ -147,6 +147,7 @@ jobs:
         with:
           prefix-key: v1-libghostty
           key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: ./.github/actions/linux-build-deps
         with:
@@ -333,6 +334,7 @@ jobs:
         with:
           prefix-key: v1-libghostty
           key: bindings
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned bindgen and native tools
         run: |
           for attempt in 1 2 3; do
@@ -377,6 +379,7 @@ jobs:
         with:
           prefix-key: v1-libghostty
           key: fuzz-nightly-2026-07-14
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - name: Download prepared x86_64 archive
@@ -557,6 +560,7 @@ jobs:
         with:
           prefix-key: v1-libghostty
           key: supply-chain
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.19.8 --locked
       # Same three checks as `run_tests.yml::security_audit`, and the same

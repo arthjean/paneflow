@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "Moins de minutes, un cache qui sert",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
       "stories_total": 4,
       "stories_done": 0
@@ -222,13 +222,13 @@
       "id": "US-014",
       "title": "Une seule politique de cache",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-11-10",
       "completed_at": null,
       "reviewed_at": null
     },

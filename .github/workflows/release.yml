@@ -40,6 +40,11 @@ on:
 permissions:
   contents: read
 
+# A release builds from a clean state and never touches the Actions cache:
+# a tag-scoped entry can only serve a re-run of that tag, and each one evicts
+# an entry `run_tests` restores on `main`.
+cache-mode: none
+
 # Serialize every release run, whatever its tag. A tag-push race (or a
 # dry-run launched on top of a real tag) shouldn't double-publish or
 # interrupt a half-baked upload - `cancel-in-progress: false` lets the first
@@ -359,11 +364,6 @@ jobs:
           toolchain: "1.98.0"
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: ${{ matrix.target }}
 
       - name: Install cargo-deb (pinned)
         if: runner.os == 'Linux'
@@ -1233,9 +1233,8 @@ jobs:
 
       # cargo-wix itself is NOT preinstalled on windows-2022. Pinned to
       # 0.3.9 (latest 2025-03 release; no 0.4.x exists yet that supports
-      # WiX v4 - tracked upstream as volks73/cargo-wix#202). The
-      # Swatinem/rust-cache step above caches `~/.cargo/bin`, so this is
-      # ~2 min cold / ~10 s cached.
+      # WiX v4 - tracked upstream as volks73/cargo-wix#202). The release
+      # runs without a cache, so this compiles for about 2 min.
       - name: Install cargo-wix (pinned)
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
         shell: pwsh

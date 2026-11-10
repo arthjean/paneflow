@@ -92,12 +92,6 @@ jobs:
         with:
           toolchain: "1.98.0"
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: cron-audit
-          workspaces: audited
-
       # Pin cargo-deny to the exact version the PR gate uses
       # (run_tests.yml::security_audit), so the cron and the gate can
       # never disagree about the same lockfile.
