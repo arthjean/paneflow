@@ -20,6 +20,7 @@ pub mod helpers;
 pub mod host;
 pub mod maintenance;
 pub mod manifest;
+pub mod owner_watch;
 pub mod persistence;
 pub mod process;
 mod process_listing;
@@ -36,7 +37,9 @@ pub mod work_counters;
 
 pub use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId};
 
-pub use bootstrap::{BootstrapError, Probe, ensure_host_running, probe};
+pub use bootstrap::{
+    BootstrapError, HostLifetime, Probe, ensure_host_running, ensure_host_running_for, probe,
+};
 pub use client::{Attachment, HostClient, HostClientError};
 pub use host::{
     CellSize, CreateSession, HostError, SessionAppearance, SessionHost, SessionReconnection,
@@ -46,4 +49,4 @@ pub use manifest::{SessionLifecycle, SessionManifest};
 pub use process::{ProcessIdentity, ProcessVerdict};
 pub use protocol::{ClientHello, HOST_PROTOCOL_VERSION, InputOrigin};
 pub use runtime::Checkpoint;
-pub use server::{ServerHandle, serve};
+pub use server::{ServerHandle, end_with_owner, serve};

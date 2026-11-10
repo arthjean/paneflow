@@ -18,6 +18,7 @@ use crate::agent_write::{Decision, METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLO
 use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
+use crate::owner_watch::OwnerWatch;
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
@@ -128,6 +129,38 @@ impl Drop for ServerHandle {
             let _ = thread.join();
         }
     }
+}
+
+fn stop_serving(host: &SessionHost, shutdown: &AtomicBool) {
+    shutdown.store(true, Ordering::Release);
+    host.wake_followers();
+    wake_accept_loop(Path::new(&host.identity().endpoint));
+}
+
+pub fn end_with_owner(
+    host: Arc<SessionHost>,
+    shutdown: Arc<AtomicBool>,
+    owner: OwnerWatch,
+) -> io::Result<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("paneflow-host-owner-watch".into())
+        .spawn(move || {
+            owner.wait_for_exit();
+            log::info!(
+                "paneflow-host: owner pid={} exited; ending every session and stopping",
+                owner.owner()
+            );
+            match host.request_shutdown(true) {
+                Ok(report) => log::info!(
+                    "paneflow-host: ended {} session(s) after the owner exited",
+                    report.ended.len()
+                ),
+                Err(error) => log::warn!(
+                    "paneflow-host: the shutdown that follows the owner's exit is incomplete: {error}"
+                ),
+            }
+            stop_serving(&host, &shutdown);
+        })
 }
 
 pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>) -> io::Result<()> {
@@ -284,6 +317,9 @@ fn serve_connections(
     shutdown: Arc<AtomicBool>,
     active: Arc<AtomicUsize>,
 ) {
+    if shutdown.load(Ordering::Acquire) {
+        return;
+    }
     for connection in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
             break;
@@ -583,9 +619,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 let stopping = envelope.get("result").is_some();
                 let written = wire.write_json(&envelope);
                 if stopping {
-                    shutdown.store(true, Ordering::Release);
-                    host.wake_followers();
-                    wake_accept_loop(Path::new(&host.identity().endpoint));
+                    stop_serving(&host, &shutdown);
                     return;
                 }
                 match written {
