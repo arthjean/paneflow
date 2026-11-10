@@ -92,11 +92,11 @@ jobs:
         with:
           toolchain: "1.98.0"
 
-      # Pin cargo-deny to the exact version the PR gate uses
-      # (run_tests.yml::security_audit), so the cron and the gate can
-      # never disagree about the same lockfile.
-      - name: Install cargo-deny (pinned)
-        run: cargo install cargo-deny --locked --version 0.19.8
+      # The same release binary, version and SHA-256 as the PR gate
+      # (run_tests.yml::security_audit): both run this script, so the cron
+      # and the gate can never disagree about the same lockfile.
+      - name: Install cargo-deny (prebuilt, pinned digest)
+        run: scripts/install-cargo-deny.sh
 
       # Only the network fetches are retried, and only on a transient network
       # signature. The check below runs offline and is never retried, so a

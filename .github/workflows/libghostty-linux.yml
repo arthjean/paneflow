@@ -69,7 +69,6 @@ jobs:
               - 'crates/paneflow-libghostty-sys/**'
               - 'crates/paneflow-terminal-ghostty/**'
               - 'debian/changelog'
-              - 'deny.toml'
               - 'fuzz/**'
               - 'native/libghostty/**'
               - 'packaging/AppRun'
@@ -90,7 +89,7 @@ jobs:
               - 'scripts/*libghostty*'
 
   native:
-    name: Native, tests, release, package (${{ matrix.arch }})
+    name: Native, release, package (${{ matrix.arch }})
     needs: changes
     if: needs.changes.outputs.native == 'true'
     strategy:
@@ -104,9 +103,13 @@ jobs:
             target: aarch64-unknown-linux-gnu
             runs-on: ubuntu-22.04-arm
     runs-on: ${{ matrix.runs-on }}
-    # Two clean Ghostty builds (--verify-reproducible), the workspace test
-    # run, a release build and four package formats. This was the only long
-    # job in the four workflows with no backstop but the 360 min default.
+    # Two clean Ghostty builds (--verify-reproducible), a release build and
+    # four package formats. The workspace tests and cargo-deny do not run
+    # here: `run_tests.yml` runs them on both arches against the same
+    # published archive, and `audit.yml` re-runs the advisory check daily.
+    # The release build stays because the static-link check, the PTY stress
+    # test, the four package formats and `distro-smoke` all consume it, and
+    # no other job builds the Linux x86_64 release binary before a tag.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -140,7 +143,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
-          components: rustfmt, clippy
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
@@ -205,11 +207,6 @@ jobs:
             exit 1
           fi
           sha256sum "$published"
-
-      - name: Debug tests with native backend
-        run: >-
-          cargo test --workspace --locked
-          --target "${{ matrix.target }}"
 
       - name: Release candidate and package smoke binary
         run: |
@@ -324,9 +321,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ steps.pins.outputs.zig_version }}
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
@@ -349,19 +343,20 @@ jobs:
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: scripts/generate-libghostty-bindings.sh
-      - name: Prepare x86_64 archive and run the native tests
-        env:
-          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
-          PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
-        run: |
-          scripts/ci-retry-network.sh \
-            scripts/build-libghostty-linux.sh --target x86_64-unknown-linux-gnu
-          cargo test --locked -p paneflow-terminal-ghostty \
-            --features native
+      # The native tests link the published archive that fetch-libghostty
+      # places, with `PANEFLOW_LIBGHOSTTY_DIR` unset. `native` proves that
+      # archive byte-identical to what the recipe produces, so a third Zig
+      # build here would only reproduce the same bytes.
+      - uses: ./.github/actions/fetch-libghostty
+      - name: Run the native tests against the published archive
+        run: cargo test --locked -p paneflow-terminal-ghostty --features native
 
+  # Fuzzes the published archive that fetch-libghostty places, the one
+  # `native` proves byte-identical to the recipe's output, so it starts with
+  # the first wave of jobs instead of waiting for both rebuilds.
   fuzz:
     name: Fuzz ${{ matrix.target }}
-    needs: [changes, native]
+    needs: changes
     if: needs.changes.outputs.recipe == 'true'
     runs-on: ubuntu-22.04
     strategy:
@@ -382,14 +377,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
-      - name: Download prepared x86_64 archive
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: libghostty-native-x86_64-unknown-linux-gnu
-          path: target/libghostty/x86_64-unknown-linux-gnu
+      - uses: ./.github/actions/fetch-libghostty
       - name: Run bounded native fuzz target
         env:
-          PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
           FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '1800' || '60' }}
           RUSTUP_TOOLCHAIN: nightly-2026-07-14
         run: cargo fuzz run "${{ matrix.target }}" -- -max_total_time="$FUZZ_SECONDS"
@@ -545,35 +535,10 @@ jobs:
           chmod +x "$smoke"
           "$smoke"
 
-  supply-chain:
-    name: Cargo and native supply chain
-    needs: native
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
-        with:
-          toolchain: "1.98.0"
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty
-          key: supply-chain
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install pinned cargo-deny
-        run: cargo install cargo-deny --version 0.19.8 --locked
-      # Same three checks as `run_tests.yml::security_audit`, and the same
-      # three AGENTS.md documents. A bare `cargo deny check` also ran `bans`,
-      # whose defaults apply silently because deny.toml has no [bans] section,
-      # so the two workflows could disagree about the same lockfile.
-      - name: Audit Cargo graph
-        run: cargo deny check advisories licenses sources
-
   validation-summary:
     name: libghostty validation
     if: ${{ !cancelled() }}
-    needs: [changes, native, bindings, fuzz, distro-smoke, supply-chain]
+    needs: [changes, native, bindings, fuzz, distro-smoke]
     runs-on: ubuntu-22.04
     steps:
       - name: Require every automated check
@@ -589,12 +554,10 @@ jobs:
           BINDINGS: ${{ needs.bindings.result }}
           FUZZ: ${{ needs.fuzz.result }}
           DISTRO: ${{ needs.distro-smoke.result }}
-          SUPPLY: ${{ needs.supply-chain.result }}
         run: |
           status=0
           for lane in "native:$CONSUMER_EXPECTED:$NATIVE" \
                       "distro-smoke:$CONSUMER_EXPECTED:$DISTRO" \
-                      "supply-chain:$CONSUMER_EXPECTED:$SUPPLY" \
                       "bindings:$ENGINE_EXPECTED:$BINDINGS" \
                       "fuzz:$ENGINE_EXPECTED:$FUZZ"; do
             name="${lane%%:*}"

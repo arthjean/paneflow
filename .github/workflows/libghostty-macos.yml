@@ -22,40 +22,6 @@ env:
   TARGET: aarch64-apple-darwin
 
 jobs:
-  # Gating lives here, at job level, not in a `paths:` filter on the trigger.
-  # A workflow that a trigger-level `paths:` filtered out reports no status at
-  # all, which leaves a required status check pending forever and blocks the
-  # PR. This job always runs, always reports, and costs seconds; the expensive
-  # lanes below read its output. Same pattern as `run_tests.yml::orchestrate`.
-  changes:
-    name: Detect libghostty inputs
-    runs-on: ubuntu-latest
-    outputs:
-      native: ${{ steps.filter.outputs.native }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-          fetch-depth: 1
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        id: filter
-        with:
-          filters: |
-            native:
-              - '.github/actions/fetch-libghostty/action.yml'
-              - '.github/workflows/libghostty-macos.yml'
-              - '.github/workflows/release.yml'
-              - '.github/workflows/run_tests.yml'
-              - 'Cargo.lock'
-              - 'Cargo.toml'
-              - 'crates/paneflow-ghostty-smoke/**'
-              - 'crates/paneflow-libghostty-sys/**'
-              - 'crates/paneflow-terminal-ghostty/**'
-              - 'native/libghostty/**'
-              - 'scripts/*libghostty*'
-              - 'src-app/Cargo.toml'
-              - 'src-app/src/terminal/**'
-
   # US-015 AC5: the US-004 spike selected the Linux-host cross-build, so the
   # archive is produced on `ubuntu-22.04`. Ghostty's CombineArchivesStep only
   # takes the Apple `libtool` path when the build host is Darwin; a Linux host
@@ -68,8 +34,11 @@ jobs:
     # push and PR touching these paths. What a PR actually needs to know is
     # that the committed archive is intact, which `paneflow-libghostty-sys`
     # asserts against `manifest.archive_sha256` on every cargo invocation in
-    # `consumer-qualification`. The full reproducibility proof runs nightly
-    # and on demand, and must be run by hand before re-pinning the archive.
+    # `run_tests.yml::macos_check`. That job also owns the consumer gates
+    # this workflow used to repeat on a second macos-15 runner: the
+    # static-link and notices contract and the end-to-end PTY smoke. The full
+    # reproducibility proof runs nightly and on demand, and must be run by
+    # hand before re-pinning the archive.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
@@ -160,126 +129,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  consumer-qualification:
-    needs: changes
-    if: >-
-      needs.changes.outputs.native == 'true' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
-    name: Repository consumer and release budget
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/fetch-libghostty
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
-        with:
-          toolchain: "1.98.0"
-          targets: aarch64-apple-darwin
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty-macos-consumer
-          key: ${{ env.TARGET }}-${{ hashFiles('native/libghostty/manifest.toml') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # `PANEFLOW_LIBGHOSTTY_DIR` is deliberately left unset for every cargo
-      # step below, so `ArtifactBundle::resolve` falls back to
-      # `native/libghostty/prebuilt/<target>`: the archive a release actually
-      # links. Never export it as an empty string here; the build script reads
-      # it with `env::var_os`, so `Some("")` would resolve the artifact root to
-      # the empty path and fail on `symlink_metadata`.
-      #
-      # clippy and `cargo test` used to run here too. They are exactly what
-      # `run_tests.yml::macos_check` already runs on macos-15 against the same
-      # committed archive, and its `rust` path filter covers every path that
-      # triggers this workflow, so the copy was a second 14x runner for
-      # the same answer. What is left below is what only this lane does: the
-      # end-to-end PTY smoke and the static-link / notices contract.
-      - name: Build the Ghostty release candidate
-        run: |
-          cargo build --release --locked \
-            -p paneflow-app --target "$TARGET"
-
-      # Every other gate on this runner links the archive and calls into it
-      # in-process. This one is the only end-to-end proof: it opens a real
-      # Darwin PTY, spawns `/bin/sh`, drives a resize through both the PTY and
-      # the engine, reads the shell's `stty size` answer back, asserts the
-      # marker reached the libghostty snapshot, and checks the child was
-      # reaped. It is the same binary and the same assertions the Linux leg
-      # runs, so the two platforms cannot drift.
-      - name: End-to-end PTY smoke against the repository artifact
-        run: |
-          cargo build --release --locked \
-            -p paneflow-ghostty-smoke \
-            --features native \
-            --target "$TARGET"
-          "target/$TARGET/release/paneflow-ghostty-smoke"
-
-      # The 2.5 MB budget measured Ghostty against a second, engine-less build
-      # of the same commit. Ghostty is the only engine now, so there is no
-      # second build to diff against and no absolute ceiling has been measured
-      # for the whole application binary. What remains is the part that still
-      # has a hard contract: libghostty must be statically linked into the
-      # .dmg binary and its notices must ship.
-      - name: Enforce static link and shipped notices
-        run: |
-          set -euo pipefail
-          scripts/verify-libghostty-macos.sh \
-            --binary "target/$TARGET/release/paneflow" \
-            --notice native/libghostty/THIRD_PARTY_NOTICES.md
-
-      - name: Upload qualified binary
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: libghostty-macos-candidate-${{ github.sha }}
-          path: target/aarch64-apple-darwin/release/paneflow
-          if-no-files-found: error
-          retention-days: 14
-
   validation-summary:
     name: libghostty macOS validation
     if: ${{ !cancelled() }}
-    needs: [changes, native-rebuild, consumer-qualification]
+    needs: native-rebuild
     runs-on: ubuntu-22.04
     steps:
-      - name: Require native and consumer lanes
+      # `native-rebuild` is schedule/dispatch-only, so on a push or a PR it
+      # must report `skipped`, and on a scheduled or dispatched run it must
+      # report `success`. `skipped` is never silently accepted for a lane
+      # that was supposed to run. The consumer gates live in
+      # `run_tests.yml::macos_check`, behind the `tests_pass` check.
+      - name: Require the native rebuild when it was due
         env:
-          EXPECTED_TO_RUN: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           NATIVE: ${{ needs.native-rebuild.result }}
-          CONSUMER: ${{ needs.consumer-qualification.result }}
         run: |
-          # `native-rebuild` is schedule/dispatch-only, so on a push or a PR it
-          # must report `skipped`, and on a scheduled or dispatched run it must
-          # report `success`. The consumer lane must be green whenever a
-          # libghostty input changed and skipped when none did. `skipped` is
-          # never silently accepted for a lane that was supposed to run.
           case "$GITHUB_EVENT_NAME" in
-            schedule|workflow_dispatch) want_native=success ;;
-            *) want_native=skipped ;;
+            schedule|workflow_dispatch) want=success ;;
+            *) want=skipped ;;
           esac
-          if [ "$EXPECTED_TO_RUN" = true ]; then
-            want_consumer=success
-            note="All automated libghostty macOS checks passed."
-          else
-            want_consumer=skipped
-            note="No libghostty input changed; the consumer lane correctly skipped."
+          if [ "$NATIVE" != "$want" ]; then
+            echo "::error::native-rebuild reported '$NATIVE', expected '$want'"
+            exit 1
           fi
-          status=0
-          for lane in "native-rebuild:$NATIVE:$want_native" \
-                      "consumer-qualification:$CONSUMER:$want_consumer"; do
-            name="${lane%%:*}"
-            rest="${lane#*:}"
-            result="${rest%%:*}"
-            want="${rest#*:}"
-            if [ "$result" != "$want" ]; then
-              echo "::error::$name reported '$result', expected '$want'"
-              status=1
-            fi
-          done
-          [ "$status" -eq 0 ] || exit 1
-          echo "$note"
+          echo "native-rebuild: $NATIVE (expected $want)"

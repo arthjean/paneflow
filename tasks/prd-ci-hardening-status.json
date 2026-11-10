@@ -236,13 +236,13 @@
       "id": "US-015",
       "title": "Une suite ne tourne qu'une fois",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-11-10",
       "completed_at": null,
       "reviewed_at": null
     },
