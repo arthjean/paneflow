@@ -36,9 +36,6 @@ mod fs_probe;
 mod git_command;
 #[cfg(test)]
 mod git_fixture;
-mod git_monitors;
-#[cfg(test)]
-mod git_race;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;
@@ -211,7 +208,6 @@ struct PaneFlowApp {
     git_watcher: Option<notify::RecommendedWatcher>,
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
     git_probed_at: std::collections::HashMap<String, std::time::Instant>,
-    git_wakes: crate::app::workspace_ops::GitWakes,
     settings_section: Option<SettingsSection>,
     settings_scroll: gpui::ScrollHandle,
     settings_drag: Option<crate::widgets::scrollbar::ScrollDragState>,

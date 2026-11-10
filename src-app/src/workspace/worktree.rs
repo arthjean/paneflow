@@ -669,7 +669,6 @@ pub fn snapshot_and_remove(
         true => None,
         false => Some(snapshot_worktree(repo_root, worktree_path)?),
     };
-    crate::git_monitors::GitMonitors::global().release(worktree_path);
     let path_s = worktree_path.to_string_lossy();
     retry_while_held(REMOVE_ATTEMPTS, REMOVE_RETRY_DELAY, || {
         run_git(
@@ -1079,53 +1078,16 @@ pub fn add_worktree(
     Ok(())
 }
 
+const CLEAN_STATUS_ARGS: &[&str] = &[
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=none",
+];
+
 pub fn is_clean(worktree_path: &Path) -> Result<bool, String> {
-    is_clean_through(
-        paneflow_git::engine::Selector::global(),
-        worktree_path,
-        is_clean_with_gix,
-    )
-}
-
-fn is_clean_through(
-    selector: &paneflow_git::engine::Selector,
-    worktree_path: &Path,
-    gix: impl FnOnce(&Path) -> Result<bool, paneflow_git::Error>,
-) -> Result<bool, String> {
-    selector.run(
-        paneflow_git::engine::Probe::IsClean,
-        worktree_path,
-        || gix(worktree_path).map(Ok),
-        || is_clean_with_cli(worktree_path),
-    )
-}
-
-fn is_clean_with_gix(worktree_path: &Path) -> Result<bool, paneflow_git::Error> {
-    let snapshot = crate::git_monitors::GitMonitors::global().with_snapshot(
-        paneflow_git::engine::Selector::global(),
-        worktree_path,
-        &paneflow_git::Options::is_clean(),
-        paneflow_git::Freshness::Fenced,
-        crate::git_monitors::Keep::IfLive,
-        |snapshot, _| Ok(snapshot),
-    )?;
-    if !snapshot.prefix.is_empty() {
-        return Err(paneflow_git::Error::Git {
-            context: "check a worktree for uncommitted work",
-            message: format!(
-                "{} is not the root of the worktree that holds it",
-                worktree_path.display()
-            ),
-        });
-    }
-    Ok(!snapshot.truncated && paneflow_git::porcelain::records(&snapshot).is_empty())
-}
-
-fn is_clean_with_cli(worktree_path: &Path) -> Result<bool, String> {
-    let mut cmd = git(
-        GitProfile::Probe,
-        paneflow_git::porcelain::CLEAN_STATUS_ARGS,
-    );
+    let mut cmd = git(GitProfile::Probe, CLEAN_STATUS_ARGS);
     cmd.current_dir(worktree_path);
     let failed = |reason: String| {
         format!(
@@ -1931,39 +1893,6 @@ mod tests {
     }
 
     #[test]
-    fn a_checkout_served_by_a_live_monitor_is_checked_fenced_and_still_removed() {
-        use crate::git_monitors::{GitMonitors, Keep};
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
-        let repo_root = tmp.path().join("repo");
-        init_test_repo(&repo_root);
-        let path = create_branch_checkout(&repo_root, "feat/watched", None)
-            .expect("create")
-            .path;
-        GitMonitors::global()
-            .with_snapshot(
-                paneflow_git::engine::Selector::global(),
-                &path,
-                &paneflow_git::Options::files_status(),
-                paneflow_git::Freshness::Converging,
-                Keep::Alive,
-                |snapshot, _| Ok(snapshot),
-            )
-            .expect("a live monitor serves the checkout");
-        assert_eq!(is_clean(&path), Ok(true));
-        std::fs::write(path.join("README.md"), "edited in the checkout\n").expect("edit");
-        assert_eq!(
-            is_clean(&path),
-            Ok(false),
-            "the fenced probe sees a write that completed before it"
-        );
-        let snapshot = snapshot_and_remove(&repo_root, &path)
-            .expect("a checkout with a live monitor is still removed");
-        assert!(snapshot.is_some());
-        assert!(!path.exists());
-    }
-
-    #[test]
     fn a_real_checkout_plans_a_hashed_path_when_the_slug_is_claimed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let _root = test_support::scoped_root(tmp.path().join("worktrees"));
@@ -2504,14 +2433,6 @@ mod tests {
         std::fs::create_dir_all(path.join("src")).expect("src dir");
         std::fs::write(path.join("src").join("agent.rs"), "fn main() {}\n").expect("untracked");
         assert_eq!(is_clean(&path), Ok(false));
-        for engine in paneflow_git::engine::Engine::ALL {
-            let (answer, _, _) = clean_through(engine, &path);
-            assert_eq!(
-                answer,
-                Ok(false),
-                "{engine:?} sees the hidden untracked file"
-            );
-        }
 
         let kept = teardown_all(vec![ManagedWorktree {
             path: path.clone(),
@@ -2754,244 +2675,6 @@ mod tests {
         assert_eq!(
             checkout_label(Some(""), Path::new("/wt/hotfix-42"), repo),
             "hotfix-42"
-        );
-    }
-
-    fn git_spawns_on_this_thread() -> u64 {
-        use crate::work_counters::{counted_on_this_thread, git_profile_counter};
-        counted_on_this_thread(git_profile_counter(true))
-            + counted_on_this_thread(git_profile_counter(false))
-    }
-
-    fn clean_through(
-        engine: paneflow_git::engine::Engine,
-        path: &Path,
-    ) -> (Result<bool, String>, paneflow_git::engine::Counters, u64) {
-        let selector = paneflow_git::engine::Selector::new(engine);
-        let before = git_spawns_on_this_thread();
-        let answer = is_clean_through(&selector, path, is_clean_with_gix);
-        (
-            answer,
-            selector.counters(),
-            git_spawns_on_this_thread() - before,
-        )
-    }
-
-    #[test]
-    fn is_clean_answers_from_a_gix_snapshot_without_spawning_git() {
-        use paneflow_git::engine::{Engine, Probe};
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path().join("repo");
-        init_test_repo(&repo_root);
-
-        let (answer, counters, spawned) = clean_through(Engine::Gix, &repo_root);
-        assert_eq!(answer, Ok(true));
-        assert_eq!(spawned, 0, "a clean check on gix spawns no git process");
-        assert_eq!(counters.probes(Probe::IsClean, Engine::Gix), 1);
-        assert_eq!(counters.probes(Probe::IsClean, Engine::Cli), 0);
-
-        std::fs::write(repo_root.join("notes.txt"), "untracked\n").expect("untracked");
-        let (answer, _, spawned) = clean_through(Engine::Gix, &repo_root);
-        assert_eq!(answer, Ok(false), "an untracked file is uncommitted work");
-        assert_eq!(spawned, 0);
-
-        let (answer, counters, spawned) = clean_through(Engine::Cli, &repo_root);
-        assert_eq!(answer, Ok(false));
-        assert!(spawned > 0, "the forced CLI runs git status");
-        assert_eq!(counters.probes(Probe::IsClean, Engine::Cli), 1);
-    }
-
-    #[test]
-    fn is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture() {
-        assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture();
-    }
-
-    #[test]
-    fn is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture_in_sha256_repositories()
-     {
-        paneflow_git::support::with_object_format(
-            paneflow_git::support::SHA256,
-            assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture,
-        );
-    }
-
-    fn assert_is_clean_gives_the_same_answer_on_both_engines_for_every_oracle_fixture() {
-        use paneflow_git::oracle::{Probe as OracleProbe, Skip, base, layouts, linked, submodules};
-        paneflow_git::support::isolate_process();
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let matrices = [
-            ("base", base::matrix(), base::MAY_SKIP, &[][..]),
-            ("layouts", layouts::matrix(), &[][..], &[][..]),
-            ("linked", linked::matrix(), &[][..], &[][..]),
-            (
-                "submodules",
-                submodules::matrix(OracleProbe::Clean),
-                &[][..],
-                submodules::MUST_FAIL,
-            ),
-        ];
-        let mut compared = 0usize;
-        let mut skipped = 0usize;
-        let mut total = 0usize;
-        let mut dirty = Vec::new();
-        let mut failures = Vec::new();
-        for (matrix, fixtures, may_skip, must_fail) in matrices {
-            for fixture in fixtures {
-                total += 1;
-                let root = tmp.path().join(matrix).join(fixture.name).join("repo");
-                let cwd = match (fixture.build)(&root) {
-                    Ok(cwd) => cwd,
-                    Err(Skip(reason)) if may_skip.contains(&fixture.name) => {
-                        eprintln!("oracle: SKIPPED fixture {}: {reason}", fixture.name);
-                        skipped += 1;
-                        continue;
-                    }
-                    Err(Skip(reason)) => {
-                        failures.push(format!(
-                            "fixture {} was skipped but is not allowed to skip: {reason}",
-                            fixture.name
-                        ));
-                        continue;
-                    }
-                };
-                compared += 1;
-                let cli = is_clean_with_cli(&cwd);
-                let gix = is_clean_with_gix(&cwd).map_err(|error| error.to_string());
-                let expected_to_fail = must_fail.contains(&fixture.name);
-                match (&cli, &gix) {
-                    (Ok(cli), Ok(gix)) if !expected_to_fail && cli == gix => {
-                        if !cli {
-                            dirty.push(fixture.name);
-                        }
-                    }
-                    (Err(_), Err(_)) if expected_to_fail => {}
-                    _ => failures.push(format!(
-                        "fixture {}: expected both engines to {}, got cli {cli:?} gix {gix:?}",
-                        fixture.name,
-                        if expected_to_fail {
-                            "fail"
-                        } else {
-                            "give the same answer"
-                        }
-                    )),
-                }
-                if expected_to_fail {
-                    let (answer, _, _) = clean_through(paneflow_git::engine::Engine::Gix, &cwd);
-                    if answer.is_ok() {
-                        failures.push(format!(
-                            "fixture {}: the selector answered {answer:?} where both engines fail",
-                            fixture.name
-                        ));
-                    }
-                }
-            }
-        }
-        assert!(compared > 0);
-        assert_eq!(
-            compared + skipped,
-            total,
-            "every fixture is compared or skipped by name"
-        );
-        for submodule_content in [
-            "submodule_modified_content",
-            "submodule_untracked_content",
-            "submodule_ignore_all",
-        ] {
-            assert!(
-                dirty.contains(&submodule_content),
-                "{submodule_content} holds uncommitted submodule work: {dirty:?}"
-            );
-        }
-        assert!(
-            failures.is_empty(),
-            "is_clean differs between the git CLI and gix ({compared} fixtures):\n{}",
-            failures.join("\n")
-        );
-    }
-
-    #[test]
-    fn a_gix_error_or_interrupt_is_answered_by_the_cli_and_a_double_failure_never_reads_clean() {
-        use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path().join("repo");
-        init_test_repo(&repo_root);
-        std::fs::write(repo_root.join("README.md"), "edited\n").expect("tracked edit");
-        let failures = [
-            || Err(paneflow_git::Error::Interrupted),
-            || {
-                Err(paneflow_git::Error::Git {
-                    context: "compute the status",
-                    message: "an unsupported index".to_string(),
-                })
-            },
-        ];
-        for failure in failures {
-            let selector = Selector::new(Engine::Gix);
-            let answer = is_clean_through(&selector, &repo_root, |_| failure());
-            assert_eq!(answer, Ok(false), "the CLI answers the same call");
-            let counters = selector.counters();
-            assert_eq!(counters.probes(Probe::IsClean, Engine::Cli), 1);
-            assert_eq!(counters.probes(Probe::IsClean, Engine::Gix), 0);
-            assert_eq!(counters.fallbacks(Fallback::Error), 1);
-        }
-
-        let outside = tmp.path().join("not-a-repo");
-        std::fs::create_dir_all(&outside).expect("plain dir");
-        for failure in failures {
-            let selector = Selector::new(Engine::Gix);
-            let answer = is_clean_through(&selector, &outside, |_| failure());
-            assert!(
-                answer.is_err(),
-                "both engines failed, so the check is an error: {answer:?}"
-            );
-        }
-        let selector = Selector::new(Engine::Gix);
-        assert!(is_clean_through(&selector, &outside, is_clean_with_gix).is_err());
-    }
-
-    #[test]
-    fn a_linked_worktree_whose_admin_directory_was_pruned_is_an_error_on_both_engines() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
-        let repo_root = tmp.path().join("repo");
-        init_test_repo(&repo_root);
-        let path = create_branch_checkout(&repo_root, "feat/pruned", None)
-            .expect("create")
-            .path;
-        assert_eq!(is_clean(&path), Ok(true));
-        let admin = worktree_git_dir(&path).expect("admin directory");
-        std::fs::remove_dir_all(&admin).expect("prune the admin directory");
-
-        assert!(is_clean_with_cli(&path).is_err());
-        assert!(
-            is_clean_with_gix(&path).is_err(),
-            "gix never reads a pruned worktree as clean"
-        );
-        for engine in paneflow_git::engine::Engine::ALL {
-            let (answer, _, _) = clean_through(engine, &path);
-            assert!(answer.is_err(), "{engine:?} answered {answer:?}");
-        }
-        assert!(is_clean(&path).is_err());
-    }
-
-    #[test]
-    fn a_folder_inside_a_worktree_is_not_answered_clean_by_gix_for_the_whole_repository() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path().join("repo");
-        init_test_repo(&repo_root);
-        let inner = repo_root.join("inner");
-        std::fs::create_dir_all(&inner).expect("inner folder");
-        std::fs::write(inner.join("kept.txt"), "kept\n").expect("inner file");
-        fixture::commit_all(&repo_root, "inner");
-        std::fs::write(repo_root.join("README.md"), "edited\n").expect("edit outside");
-        assert!(is_clean_with_gix(&inner).is_err());
-        assert!(matches!(is_clean_with_gix(&repo_root), Ok(false)));
-        assert_eq!(is_clean_with_cli(&inner), Ok(false));
-        let (answer, _, _) = clean_through(paneflow_git::engine::Engine::Gix, &inner);
-        assert_eq!(
-            answer,
-            Ok(false),
-            "the CLI answers for the whole repository"
         );
     }
 }

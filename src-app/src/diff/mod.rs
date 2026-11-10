@@ -21,11 +21,9 @@ pub(crate) use engine::DiffHunk;
 pub(crate) use engine::compute_hunks;
 pub(crate) use engine::{ComparisonPolicy, DiffOptions, HighlightPolicy, line_change_counts};
 pub(crate) use git::FileDiff;
-#[cfg(test)]
-pub(crate) use git::compute_head_diff;
 pub(crate) use git::{
     HeadFile, MAX_FILE_BYTES as MAX_DIFF_FILE_BYTES, classify as classify_git_bytes,
-    compute_head_diff_and_stats, head_sha, show_head_file, try_worktree_toplevel,
+    compute_head_diff, head_sha, show_head_file, try_worktree_toplevel,
 };
 pub(crate) use highlighter::{
     Grammar, MAX_CAPTURES_PER_ROW, grammar_for_ext, highlight_cap, highlight_lines, is_markdown,
