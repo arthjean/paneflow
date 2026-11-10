@@ -200,10 +200,10 @@ gh run view "$RUN_ID" --json jobs --jq '.jobs[] | "\(.name): \(.conclusion)"'
 ```
 
 `Dry-run artifact summary` is skipped on a tag push; that is expected.
-Read the annotations of a green `release` run: `ENOENT` from the
-`rust-cache` post step is noise, a `::warning::` on signing, `lintian`, or
-a GPG fingerprint is not, and neither is a `ci-verdict` failure, which no
-re-run of the build legs fixes.
+Read the annotations of a green `release` run: a `::warning::` on signing,
+`lintian`, or a GPG fingerprint is not noise, and neither is a `ci-verdict`
+failure, which no re-run of the build legs fixes. The release declares
+`cache-mode: none`, so no cache step runs and none can annotate the run.
 
 ## Step 4 - Verify the asset set
 
