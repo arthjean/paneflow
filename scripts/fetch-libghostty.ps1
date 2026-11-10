@@ -45,20 +45,7 @@ foreach ($triple in $Target) {
     New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
     Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
     Write-Host "${triple}: downloading $url"
-    $attempts = 3
-    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
-        try {
-            Save-Download -Uri $url -OutFile $partial
-            break
-        }
-        catch {
-            if ($attempt -eq $attempts) {
-                throw
-            }
-            Write-Warning "download attempt $attempt failed ($($_.Exception.Message)); retrying"
-            Start-Sleep -Seconds (5 * $attempt)
-        }
-    }
+    Save-Download -Uri $url -OutFile $partial
     $actual = Get-Sha256 $partial
     if ($actual -ne $expected) {
         Remove-Item -LiteralPath $partial -Force

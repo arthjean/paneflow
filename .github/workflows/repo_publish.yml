@@ -60,6 +60,7 @@ defaults:
 jobs:
   publish:
     runs-on: ubuntu-22.04
+    timeout-minutes: 19
     environment: release
     # US-003 chain guard. Three cases:
     #   (a) workflow_dispatch: operator-driven - always allow. No filter

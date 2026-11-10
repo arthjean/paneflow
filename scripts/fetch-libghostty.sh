@@ -66,6 +66,15 @@ TAG="$(manifest_string archive_release_tag)"
 }
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
 
+curl_flags=(
+  --fail --silent --show-error --location
+  --connect-timeout 30 --max-time 600
+  --retry 5 --retry-delay 5 --retry-all-errors
+)
+case "$(curl --version)" in
+  *Schannel*) curl_flags+=(--ssl-revoke-best-effort) ;;
+esac
+
 for target in "${TARGETS[@]}"; do
   archive_path="$(target_manifest_string "$target" archive_path)" || {
     echo "manifest declares no target $target" >&2
@@ -84,10 +93,7 @@ for target in "${TARGETS[@]}"; do
   mkdir -p "$(dirname "$destination")"
   rm -f "$partial"
   echo "$target: downloading $url"
-  curl --fail --silent --show-error --location \
-    --connect-timeout 30 --max-time 600 \
-    --retry 3 --retry-delay 5 \
-    --output "$partial" "$url"
+  curl "${curl_flags[@]}" --output "$partial" "$url"
   actual="$(sha256_of "$partial")"
   if [[ "$actual" != "$expected" ]]; then
     rm -f "$partial"

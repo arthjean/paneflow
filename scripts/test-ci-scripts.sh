@@ -122,6 +122,118 @@ jobs:
 EOF
 )"
   expect "a release workflow without cache-mode: none is refused" 1 "release\.yml:1: the release workflow must declare cache-mode: none" "$check" "$file"
+
+  file="$(workflow timeout/unbounded.yml <<EOF
+jobs:
+  bounded:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+  unbounded:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        timeout-minutes: 5
+EOF
+)"
+  expect "a job without timeout-minutes is named by file and line" 1 "unbounded\.yml:7: job 'unbounded' declares no timeout-minutes" "$check" "$file"
+
+  file="$(workflow timeout/last-job.yml <<EOF
+jobs:
+  only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+EOF
+)"
+  expect "the last job of a file is checked too" 1 "last-job\.yml:2: job 'only' declares no timeout-minutes" "$check" "$file"
+
+  file="$(workflow timeout/bounded.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps: &steps
+      - uses: actions/checkout@v5
+  again:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps: *steps
+  called:
+    uses: ./.github/workflows/other.yml
+EOF
+)"
+  expect "bounded jobs and a reusable workflow call pass" 0 "every job declares timeout-minutes \(3 job" "$check" "$file"
+}
+
+retry_cases() {
+  local retry="$ROOT/scripts/ci-retry-network.sh"
+  local fake="$WORK/fake-command.sh"
+  cat > "$fake" <<'EOF'
+#!/usr/bin/env bash
+counter="$1"
+failures="$2"
+message="$3"
+runs=0
+[ -f "$counter" ] && runs="$(cat "$counter")"
+runs=$((runs + 1))
+echo "$runs" > "$counter"
+if [ "$runs" -le "$failures" ]; then
+  echo "$message"
+  exit 7
+fi
+echo "command output"
+EOF
+  chmod +x "$fake"
+
+  local signature index=0 counter listed
+  listed="$("$retry" --list-transient)"
+  while IFS= read -r signature; do
+    index=$((index + 1))
+    counter="$WORK/retry-count-$index"
+    expect "the transient signature '$signature' is retried" 0 "succeeded on attempt 2 after a transient network failure" \
+      env CI_RETRY_BACKOFF_SECONDS=0 "$retry" "$fake" "$counter" 1 "error: $signature while fetching"
+    cases=$((cases + 1))
+    if [ "$(cat "$counter")" != "2" ]; then
+      echo "FAIL the transient signature '$signature' ran the command $(cat "$counter") time(s), expected 2"
+      failures=$((failures + 1))
+    fi
+  done <<<"$listed"
+  cases=$((cases + 1))
+  if [ "$index" -lt 20 ]; then
+    echo "FAIL --list-transient printed $index signature(s), expected at least 20"
+    failures=$((failures + 1))
+  fi
+  for signature in ReadFailed ProtocolError; do
+    cases=$((cases + 1))
+    if ! grep -qFx "$signature" <<<"$listed"; then
+      echo "FAIL the Zig signature $signature is not in the transient list"
+      failures=$((failures + 1))
+    fi
+  done
+
+  counter="$WORK/retry-count-real-error"
+  expect "a failure with no transient signature is not retried and keeps its exit code" 7 "no transient network signature; not retrying" \
+    env CI_RETRY_BACKOFF_SECONDS=0 "$retry" "$fake" "$counter" 1 "error[vulnerability]: a real advisory"
+  cases=$((cases + 1))
+  if [ "$(cat "$counter")" != "1" ]; then
+    echo "FAIL a failure with no transient signature ran the command $(cat "$counter") time(s), expected 1"
+    failures=$((failures + 1))
+  fi
+
+  counter="$WORK/retry-count-exhausted"
+  expect "a transient failure that never clears fails after the last attempt" 7 "still failing on a transient network error after 3 attempts" \
+    env CI_RETRY_BACKOFF_SECONDS=0 "$retry" "$fake" "$counter" 9 "503 Service Unavailable"
+  cases=$((cases + 1))
+  if [ "$(cat "$counter")" != "3" ]; then
+    echo "FAIL a transient failure that never clears ran the command $(cat "$counter") time(s), expected 3"
+    failures=$((failures + 1))
+  fi
+
+  counter="$WORK/retry-count-success"
+  expect "a command that succeeds runs once" 0 "command output" \
+    env CI_RETRY_BACKOFF_SECONDS=0 "$retry" "$fake" "$counter" 0 "unused"
 }
 
 helper_dir() {
@@ -163,6 +275,7 @@ helper_size_cases() {
 
 check_workflows_cases
 helper_size_cases
+retry_cases
 
 if [ "$failures" -ne 0 ]; then
   echo "::error::$failures of $cases CI script case(s) failed"

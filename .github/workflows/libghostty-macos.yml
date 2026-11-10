@@ -30,8 +30,8 @@ jobs:
   # stays documented in the manifest, but nothing here needs it.
   native-rebuild:
     name: Rebuild pinned macOS archive (Linux host)
-    # Two clean ReleaseFast builds at -j1 is a 3 h job, and it ran on every
-    # push and PR touching these paths. What a PR actually needs to know is
+    # Two clean ReleaseFast builds at -j1 ran on every push and PR touching
+    # these paths. What a PR actually needs to know is
     # that the committed archive is intact, which `paneflow-libghostty-sys`
     # asserts against `manifest.archive_sha256` on every cargo invocation in
     # `run_tests.yml::macos_check`. That job also owns the consumer gates
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-22.04
     # Two clean ReleaseFast builds at -j1, which is what the reproducibility
     # contract requires; the seed and job count are manifest-pinned.
-    timeout-minutes: 180
+    timeout-minutes: 19
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -134,6 +134,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs: native-rebuild
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       # `native-rebuild` is schedule/dispatch-only, so on a push or a PR it
       # must report `skipped`, and on a scheduled or dispatched run it must

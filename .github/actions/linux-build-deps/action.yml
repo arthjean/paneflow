@@ -24,7 +24,10 @@ runs:
         # Azure's apt mirrors return the odd 5xx or truncated Release file, and
         # a bare `apt-get update` has no retry of its own. Every Linux cargo job
         # in run_tests.yml, release.yml, and the libghostty workflows shares
-        # this step, so one retry loop here covers all of them.
+        # this step, so the apt retry setting and the update loop here cover
+        # all of them: apt retries each download 3 times, the install included.
+        printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+          | sudo tee /etc/apt/apt.conf.d/80-ci-retries >/dev/null
         for attempt in 1 2 3; do
           sudo apt-get update && break
           echo "::warning::apt-get update failed (attempt $attempt/3)"

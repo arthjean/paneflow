@@ -30,6 +30,7 @@ jobs:
   changes:
     name: Detect libghostty inputs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       native: ${{ steps.filter.outputs.native }}
     steps:
@@ -133,6 +134,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [changes, consumer-qualification]
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Require the consumer lane
         env:

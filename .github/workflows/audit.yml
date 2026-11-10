@@ -45,6 +45,7 @@ jobs:
   cron_audit:
     name: cargo-deny check (cron, ${{ matrix.target }})
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     # `main` catches an advisory against the lockfile we develop on, the
     # latest published release catches one against what users run. Advisory
     # titles depend only on the advisory ID, so both legs feed one issue; the
@@ -195,6 +196,7 @@ jobs:
   signing_key_expiry:
     name: Repository signing key expiry
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
