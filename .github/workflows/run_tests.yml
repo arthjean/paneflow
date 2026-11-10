@@ -36,9 +36,9 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   # Line tables keep file and line in a panic backtrace and drop the rest of
-  # the debug info, most of what a debug `target/` weighs. The six rust-cache
-  # entries of this workflow have to fit the repository's 10 GB cache quota
-  # together; with full debug info they measured 10.2 GB on 2026-11-10.
+  # the debug info, most of what a debug `target/` weighs. The rust-cache
+  # entries of this workflow share the repository's 10 GB cache quota with
+  # the one of `perf-ab.yml`.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
@@ -161,9 +161,16 @@ jobs:
   #
   # rust-cache keys per job so they don't fight over the same cache
   # slot. Only a run on `main` saves an entry (`save-if`): a pull request
-  # restores the entry `main` wrote and never writes one of its own. This
-  # workflow is the only one that keeps rust-cache entries, so the quota
-  # serves the jobs that run on every push.
+  # restores the entry `main` wrote and never writes one of its own.
+  #
+  # Four jobs keep an entry: `run_tests_linux`, `linux_aarch64_check`,
+  # `macos_check` and `windows_check`. Every entry carries its own copy of
+  # the cargo registry and git checkouts, about 0.85 GB of which the Zed
+  # repository alone is 406 MB, so six entries measured 9.9 GB on
+  # 2026-11-10 and left no room for the `perf-ab.yml` entry under the
+  # 10 GB quota. `check_style` and `perf_gates` build without a cache: on
+  # that day their entries saved 5.3 and 3.6 minutes for 1.1 and 1.4 GB,
+  # the two worst ratios of the six.
 
   check_style:
     name: Style (fmt + clippy)
@@ -199,12 +206,6 @@ jobs:
         with:
           toolchain: "1.98.0"
           components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: check_style
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         run: cargo fmt --check
@@ -280,7 +281,9 @@ jobs:
   # release build under Xvfb with Mesa lavapipe, the configuration the
   # US-003 spike validated on ubuntu-24.04 (bench/README.md, "Desktop sans
   # écran"), which is why this job does not share the 22.04 image the
-  # release-parity jobs pin. Its cache prefix stays disjoint from release.yml.
+  # release-parity jobs pin. It builds without a cache: the `gates` profile
+  # keeps a cold build inside the job's bound, and its rust-cache entry
+  # saved 3.6 minutes for 1.4 GB of the cache quota.
   perf_gates:
     name: Performance gates (Linux x86_64)
     needs: orchestrate
@@ -303,12 +306,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "perf-gates-"
-          key: perf_gates
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run the performance gates
         run: scripts/perf-gates.sh
