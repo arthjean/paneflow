@@ -61,6 +61,7 @@ jobs:
   orchestrate:
     name: Detect changed paths
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust }}
       rendering: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rendering }}
@@ -166,6 +167,7 @@ jobs:
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 11
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -212,6 +214,7 @@ jobs:
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -287,11 +290,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/fetch-libghostty
 
-      - name: Retry stalled apt downloads
-        run: |
-          printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
-            | sudo tee /etc/apt/apt.conf.d/80-perf-gates-retries
-
       - uses: ./.github/actions/linux-build-deps
         with:
           extra-packages: mesa-vulkan-drivers xvfb xdotool
@@ -350,6 +348,7 @@ jobs:
       needs.orchestrate.outputs.security == 'true' ||
       needs.orchestrate.outputs.ci == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -414,7 +413,7 @@ jobs:
     # cargo invocation here. Budget is a 25 min median over the first five
     # runs; past that, switch to `macos-15-xlarge` and record the rationale in
     # the PR per the US-001 AC5 note above. The timeout is the hard backstop.
-    timeout-minutes: 60
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -627,7 +626,7 @@ jobs:
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true') }}
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -816,7 +815,7 @@ jobs:
   # Time budget (US-018 AC-4): <5 min cached. Swatinem/rust-cache handles
   # cargo's share (keyed on `x86_64-pc-windows-msvc` so Linux/macOS cache
   # slots don't collide); actions/cache covers WiX's ~10 MB global tool
-  # install. `timeout-minutes: 30` is a runaway guard, not the SLA.
+  # install. `timeout-minutes` is a runaway guard, not the SLA.
   windows_check:
     name: Windows x86_64 libghostty check
     # Runs for Rust, CI, and release-packaging changes so Windows MSVC
@@ -1043,7 +1042,7 @@ jobs:
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true') }}
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -1270,6 +1269,7 @@ jobs:
     # aarch64-unknown-linux-gnu needs manual header staging; that
     # complexity is why this job prefers the native runner.
     runs-on: ubuntu-22.04-arm
+    timeout-minutes: 49
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -1357,6 +1357,7 @@ jobs:
       - linux_aarch64_check
     if: ${{ !cancelled() }}
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Aggregate upstream results
         env:

@@ -91,6 +91,7 @@ for file in "${trace_files[@]}"; do
 done
 
 cache_steps=0
+jobs_checked=0
 for file in "${trace_files[@]}"; do
   [ -f "$file" ] || continue
   mapfile -t lines < "$file"
@@ -142,11 +143,56 @@ for file in "${trace_files[@]}"; do
     echo "::error file=$(relative "$file"),line=1::$(relative "$file"):1: the release workflow must declare cache-mode: none at the top level"
     status=1
   fi
+
+  in_jobs=0
+  job=""
+  job_line=0
+  job_bounded=0
+  close_job() {
+    if [ -n "$job" ] && ((job_bounded == 0)); then
+      echo "::error file=$(relative "$file"),line=$job_line::$(relative "$file"):$job_line: job '$job' declares no timeout-minutes; set at most 1.5 times its longest observed run, or 60 for a job with no history"
+      status=1
+    fi
+    if [ -n "$job" ]; then
+      jobs_checked=$((jobs_checked + 1))
+    fi
+    job=""
+  }
+  for ((i = 0; i < total; i++)); do
+    line="${lines[i]%$'\r'}"
+    if [[ "$line" =~ ^jobs:[[:space:]]*(#.*)?$ ]]; then
+      in_jobs=1
+      continue
+    fi
+    if ((in_jobs == 0)); then
+      continue
+    fi
+    if [[ "$line" =~ ^[^[:space:]#] ]]; then
+      close_job
+      in_jobs=0
+      continue
+    fi
+    if [[ "$line" =~ ^\ \ ([A-Za-z0-9_-]+):(.*)$ ]]; then
+      close_job
+      job="${BASH_REMATCH[1]}"
+      job_line=$((i + 1))
+      job_bounded=0
+      if [[ "${BASH_REMATCH[2]}" =~ ^[[:space:]]*\* ]]; then
+        job_bounded=1
+      fi
+      continue
+    fi
+    if [[ "$line" =~ ^\ \ \ \ timeout-minutes:[[:space:]]*[^[:space:]#] ]] || [[ "$line" =~ ^\ \ \ \ uses:[[:space:]] ]]; then
+      job_bounded=1
+    fi
+  done
+  close_job
 done
 
 if [ "$status" -eq 0 ]; then
   echo "every third-party action in ${#pin_files[@]} file(s) is pinned by SHA ($checked references checked)"
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
   echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
+  echo "every job declares timeout-minutes ($jobs_checked job(s))"
 fi
 exit "$status"

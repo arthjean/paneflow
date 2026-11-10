@@ -61,7 +61,7 @@ jobs:
   resolve:
     name: Resolve target commit and stage the manifest
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     outputs:
       needed: ${{ steps.target.outputs.needed }}
       source_sha: ${{ steps.target.outputs.source_sha }}
@@ -219,7 +219,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.needed == 'true'
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -274,7 +274,7 @@ jobs:
     name: Rebuild ${{ matrix.target }}
     needs: [resolve, bindings]
     runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 180
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
@@ -334,7 +334,7 @@ jobs:
     # combine path when the build host is Darwin, and the reviewed recipe
     # normalizes the zig ar -M combine that a Linux host keeps.
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -399,7 +399,7 @@ jobs:
     name: Rebuild x86_64-pc-windows-msvc
     needs: [resolve, bindings]
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -429,14 +429,22 @@ jobs:
       # One clean build. Windows archives are not bit-for-bit reproducible
       # upstream, so there is no second build to compare against; the
       # provenance of this one is the attestation the assemble job publishes.
+      # The build fetches the Zig packages Ghostty depends on, so it runs
+      # through the retry wrapper like the Linux and macOS rebuilds: a
+      # transient `ReadFailed` or `ProtocolError` restarts it instead of
+      # failing the bump.
       - name: Build
+        shell: bash
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-bump-evidence
+          ZIG_EXE: ${{ steps.toolchain.outputs.zig }}
+          ZIG_SOURCE_ARCHIVE: ${{ steps.toolchain.outputs.zig-source-archive }}
         run: |
-          & .\scripts\build-libghostty-windows.ps1 `
-            -Zig "${{ steps.toolchain.outputs.zig }}" `
-            -ZigSourceArchive "${{ steps.toolchain.outputs.zig-source-archive }}" `
+          scripts/ci-retry-network.sh \
+            pwsh -NoProfile -File scripts/build-libghostty-windows.ps1 \
+            -Zig "$ZIG_EXE" \
+            -ZigSourceArchive "$ZIG_SOURCE_ARCHIVE" \
             -AllowHashDrift
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -586,7 +594,7 @@ jobs:
     needs: [resolve, assemble]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write

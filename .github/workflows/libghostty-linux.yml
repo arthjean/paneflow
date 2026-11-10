@@ -38,6 +38,7 @@ jobs:
   changes:
     name: Detect libghostty inputs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # `recipe` gates the engine lanes (reproducible rebuild, bindings, fuzz):
     # only the manifest, the build scripts, the -sys crate and this workflow
     # change what the engine build produces. `native` gates the consumer
@@ -110,7 +111,7 @@ jobs:
     # The release build stays because the static-link check, the PTY stress
     # test, the four package formats and `distro-smoke` all consume it, and
     # no other job builds the Linux x86_64 release binary before a tag.
-    timeout-minutes: 150
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -305,6 +306,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.recipe == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 33
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -359,6 +361,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.recipe == 'true'
     runs-on: ubuntu-22.04
+    timeout-minutes: 53
     strategy:
       fail-fast: false
       matrix:
@@ -388,6 +391,7 @@ jobs:
     name: Package smoke (${{ matrix.distro }}, ${{ matrix.arch }})
     needs: native
     runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 11
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false
@@ -540,6 +544,7 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [changes, native, bindings, fuzz, distro-smoke]
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Require every automated check
         env:

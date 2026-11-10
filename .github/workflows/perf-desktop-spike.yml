@@ -21,7 +21,7 @@ jobs:
   spike:
     name: Desktop under ${{ matrix.display }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 34
     strategy:
       fail-fast: false
       matrix:

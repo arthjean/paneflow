@@ -264,13 +264,13 @@
       "id": "US-017",
       "title": "Timeouts et retries réseau partout",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-11-10",
       "completed_at": null,
       "reviewed_at": null
     },
