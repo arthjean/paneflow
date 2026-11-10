@@ -306,10 +306,30 @@ pub fn stop_for_replacement(controller: &Path, home: &Path, endpoint: &Path) -> 
     stop_incompatible_host(home, endpoint)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostLifetime {
+    OutlivesCaller,
+    EndsWithCaller,
+}
+
 pub fn ensure_host_running(
     home: &Path,
     controller_exe: &Path,
     client_name: &str,
+) -> Result<HostAdoption, BootstrapError> {
+    ensure_host_running_for(
+        home,
+        controller_exe,
+        client_name,
+        HostLifetime::OutlivesCaller,
+    )
+}
+
+pub fn ensure_host_running_for(
+    home: &Path,
+    controller_exe: &Path,
+    client_name: &str,
+    lifetime: HostLifetime,
 ) -> Result<HostAdoption, BootstrapError> {
     let endpoint = host_endpoint_path(home);
     let hello = ClientHello::local(client_name);
@@ -334,7 +354,7 @@ pub fn ensure_host_running(
     }
     let executable = resolve_host_executable(controller_exe)?;
     let log = paneflow_home::host_dir_in(home).join(HOST_LOG_FILE_NAME);
-    let mut child = spawn_detached_host(&executable, home, &log)?;
+    let mut child = spawn_detached_host(&executable, home, &log, lifetime)?;
     let started = Instant::now();
     loop {
         match probe_within(home, &endpoint, &hello, started + STARTUP_WAIT) {
@@ -482,16 +502,19 @@ fn spawn_detached_host(
     executable: &Path,
     home: &Path,
     log: &Path,
+    lifetime: HostLifetime,
 ) -> Result<DetachedChild, BootstrapError> {
-    spawn_detached(
-        executable,
-        &[
-            std::ffi::OsStr::new("--home"),
-            home.as_os_str(),
-            std::ffi::OsStr::new("serve"),
-        ],
-        log,
-    )
+    let caller = std::process::id().to_string();
+    let mut arguments = vec![
+        std::ffi::OsStr::new("--home"),
+        home.as_os_str(),
+        std::ffi::OsStr::new("serve"),
+    ];
+    if lifetime == HostLifetime::EndsWithCaller {
+        arguments.push(std::ffi::OsStr::new("--exit-with"));
+        arguments.push(std::ffi::OsStr::new(&caller));
+    }
+    spawn_detached(executable, &arguments, log)
 }
 
 #[cfg(windows)]

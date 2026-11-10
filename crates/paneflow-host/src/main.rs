@@ -38,6 +38,12 @@ enum Command {
     Serve {
         #[arg(long, help = "Override the local endpoint derived from the state home")]
         endpoint: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PID",
+            help = "End every session and stop once the process with this id exits"
+        )]
+        exit_with: Option<u32>,
     },
     #[command(about = "Print the protocol and terminal engine identity this executable offers")]
     Identity,
@@ -126,7 +132,10 @@ fn main() {
         });
     let code = match cli.command {
         Command::Identity => identity(&home),
-        Command::Serve { endpoint } => serve(&home, endpoint),
+        Command::Serve {
+            endpoint,
+            exit_with,
+        } => serve(&home, endpoint, exit_with),
         Command::Session(command) => session(&home, command),
     };
     std::process::exit(code);
@@ -144,8 +153,9 @@ fn identity(home: &Path) -> i32 {
     print_json(&identity)
 }
 
-fn serve(home: &Path, endpoint: Option<PathBuf>) -> i32 {
+fn serve(home: &Path, endpoint: Option<PathBuf>, exit_with: Option<u32>) -> i32 {
     cap_malloc_arenas();
+    let owner = exit_with.map(paneflow_host::owner_watch::OwnerWatch::arm);
     let endpoint = endpoint.unwrap_or_else(|| paneflow_host::endpoint::host_endpoint_path(home));
     let host = match paneflow_host::SessionHost::open(home, &endpoint) {
         Ok(host) => host,
@@ -159,6 +169,14 @@ fn serve(home: &Path, endpoint: Option<PathBuf>) -> i32 {
         }
     };
     let shutdown = Arc::new(AtomicBool::new(false));
+    if let Some(owner) = owner
+        && let Err(error) =
+            paneflow_host::end_with_owner(Arc::clone(&host), Arc::clone(&shutdown), owner)
+    {
+        eprintln!("paneflow-host: cannot watch the owner process: {error}");
+        host.retire();
+        return EXIT_RUNTIME;
+    }
     let served = paneflow_host::serve(Arc::clone(&host), &endpoint, shutdown);
     host.retire();
     match served {

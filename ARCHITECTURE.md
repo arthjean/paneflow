@@ -1295,6 +1295,18 @@ controller's immediate job: a controller started under `cargo run` or
 why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 `target/<profile>/paneflow` directly.
 
+A caller that must not leave a host behind, which today means the host's own
+integration tests, starts it through `ensure_host_running_for` with
+`HostLifetime::EndsWithCaller`. The spawn then adds `--exit-with <caller pid>`,
+and `serve` arms `owner_watch::OwnerWatch` before it binds the endpoint, while
+the caller is still blocked waiting for the first `host.hello`, so the pid
+cannot have been recycled. The watch waits on a process handle on Windows, a
+pidfd on Linux and an `EVFILT_PROC` kqueue event on macOS. Where none is
+available it polls the caller's `ProcessIdentity`. When the caller exits, the
+host runs a forced `host.shutdown` and stops serving. This covers exit paths
+that run no destructor, such as nextest killing a test at its timeout. The
+desktop and `paneflow host start` keep `HostLifetime::OutlivesCaller`.
+
 | Event | Host | Sessions | Records |
 |---|---|---|---|
 | Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
@@ -1303,6 +1315,7 @@ why `scripts/dev.ps1` and `scripts/dev.sh` build both binaries and run
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
 | `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
+| Exit of the caller of a `serve --exit-with` host | forced `host.shutdown`, then exits | stopped | those of a forced `host.shutdown` |
 | Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them, while a shell that died first under a shutdown is recorded `exited` with a non-zero code; on the next layout restore each non-agent pane in either state comes back with a fresh shell in its cwd, and an agent pane offers its conversation resume |
 | `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
 | Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch, the pane offers Retry and an explicit "Stop host and restart" |
