@@ -69,7 +69,7 @@ fn insert_index_extension(root: &std::path::Path, signature: &[u8; 4], payload: 
 }
 
 #[test]
-fn an_unknown_mandatory_index_extension_fails_gix_and_the_selector_answers_with_the_cli() {
+fn an_unknown_mandatory_index_extension_fails_both_engines_and_the_selector_answers_unavailable() {
     support::isolate_process();
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().join("repo");
@@ -91,15 +91,16 @@ fn an_unknown_mandatory_index_extension_fails_gix_and_the_selector_answers_with_
         &root,
         || snapshot(&root, &Options::default()).map(|snapshot| Ok(porcelain::records(&snapshot))),
         || oracle::cli_records(&root, Probe::Files),
+        |unavailable| Err(unavailable.detail.clone()),
     );
     assert_eq!(
         answer,
-        Err(cli_error),
-        "the selector answers with the CLI after gix failed with {gix_error}"
+        Err(gix_error.to_string()),
+        "the selector answers unavailable with the gix error, never the CLI"
     );
     let counters = selector.counters();
     assert_eq!(counters.fallbacks(Fallback::Error), 1);
-    assert_eq!(counters.probes(engine::Probe::FilesStatus, Engine::Cli), 1);
+    assert_eq!(counters.probes(engine::Probe::FilesStatus, Engine::Cli), 0);
     assert_eq!(counters.probes(engine::Probe::FilesStatus, Engine::Gix), 0);
 }
 

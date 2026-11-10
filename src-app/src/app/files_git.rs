@@ -187,6 +187,7 @@ fn read_through(
         root,
         || gix(root),
         || read_with_cli(root, GIT_STATUS_STDOUT_CAP),
+        |_| None,
     )
 }
 
@@ -610,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_gix_refresh_returns_the_cli_statuses_and_counts_the_fallback() {
+    fn a_failed_gix_refresh_returns_no_statuses_and_spawns_no_git_process() {
         use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -618,26 +619,22 @@ mod tests {
         std::fs::write(root.join("README.md"), "changed\n").expect("edit");
         let selector = Selector::new(Engine::Gix);
 
+        let before = spawns_on_this_thread();
         let statuses = read_through(&selector, root, |_| {
             Err(paneflow_git::Error::Git {
                 context: "compute the status",
                 message: "injected failure".to_string(),
             })
         });
+        let spawned = spawns_on_this_thread() - before;
 
-        assert_eq!(statuses, cli_statuses(root));
-        assert_eq!(
-            statuses
-                .expect("the CLI statuses")
-                .summary(&root.join("README.md"))
-                .worktree
-                .modified,
-            1
-        );
+        assert_eq!(statuses, None);
+        assert_eq!(spawned, 0, "a failed gix refresh never spawns git");
         let counters = selector.counters();
         assert_eq!(counters.fallbacks(Fallback::Error), 1);
-        assert_eq!(counters.probes(Probe::FilesStatus, Engine::Cli), 1);
+        assert_eq!(counters.probes(Probe::FilesStatus, Engine::Cli), 0);
         assert_eq!(counters.probes(Probe::FilesStatus, Engine::Gix), 0);
+        assert_eq!(counters.unavailable_directories, 1);
     }
 
     #[test]

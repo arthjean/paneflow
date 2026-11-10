@@ -389,6 +389,12 @@ fn head_diff_and_stats_through(
                 GitDiffStats::from_cwd(&worktree_dir.to_string_lossy()),
             )
         },
+        |unavailable| {
+            (
+                failed_diff(unavailable.to_string()),
+                GitDiffStats::unavailable(),
+            )
+        },
     )
 }
 
@@ -1412,7 +1418,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gix_failure_is_answered_by_the_cli_in_the_same_call() {
+    fn a_gix_failure_shows_an_unavailable_listing_without_spawning_git() {
         use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1424,20 +1430,27 @@ mod tests {
         std::fs::write(&index, &bytes).unwrap();
 
         let selector = Selector::new(Engine::Gix);
+        let before = git_spawns_on_this_thread();
         let diff = compute_head_diff_through(
             &selector,
             &paneflow_git::Options::dock_listing(),
             root,
             DiffOptions::default(),
         );
+        assert_eq!(git_spawns_on_this_thread() - before, 0);
         let counters = selector.counters();
-        assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 1);
+        assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 0);
         assert_eq!(counters.fallbacks(Fallback::Error), 1);
-        assert_eq!(dock_view(&diff), dock_view(&cli_dock(root)));
+        assert!(diff.files.is_empty(), "{:?}", dock_view(&diff));
+        let error = diff.error.expect("an unavailable listing names its cause");
+        assert!(
+            error.starts_with("the git status is unavailable"),
+            "{error}"
+        );
     }
 
     #[test]
-    fn a_listing_over_the_entry_cap_is_answered_by_the_cli_without_pinning_the_repository() {
+    fn a_listing_over_the_entry_cap_is_unavailable_and_the_next_listing_is_answered_by_gix() {
         use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1451,16 +1464,20 @@ mod tests {
         };
 
         let selector = Selector::new(Engine::Gix);
+        let before = git_spawns_on_this_thread();
         for _ in 0..3 {
             let diff = compute_head_diff_through(&selector, &capped, root, DiffOptions::default());
-            assert_eq!(dock_view(&diff), dock_view(&cli_dock(root)));
+            assert!(diff.files.is_empty(), "{:?}", dock_view(&diff));
+            let error = diff.error.expect("an unavailable listing names its cause");
+            assert!(error.contains("more than 1 entries"), "{error}");
         }
+        assert_eq!(git_spawns_on_this_thread() - before, 0);
         let counters = selector.counters();
-        assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 3);
+        assert_eq!(counters.probes(Probe::DockListing, Engine::Cli), 0);
         assert_eq!(counters.fallbacks(Fallback::EntryCap), 3);
         assert_eq!(counters.fallbacks(Fallback::Error), 0);
         assert_eq!(
-            counters.pinned_directories, 0,
+            counters.unavailable_directories, 0,
             "a large status is not a fault of the repository"
         );
         let diff = compute_head_diff_through(

@@ -75,6 +75,7 @@ impl GitDiffStats {
             std::path::Path::new(cwd),
             || Self::with_gix(cwd, deadline, keep),
             || Self::with_cli(cwd, deadline),
+            |_| Self::unavailable(),
         )
     }
 

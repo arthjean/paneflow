@@ -340,33 +340,39 @@ the diff dock and `is_clean` (EP-005) run on it.
   polluting global and system `core.autocrlf` from both engines, and that
   each engine reads it once the isolation is lifted.
 - **Engine selector.** `paneflow_git::engine::Selector::global()` answers each
-  probe with gix or with the CLI closure the caller passes. It uses the CLI,
-  without opening the repository with gix, when `PANEFLOW_GIT_ENGINE=cli`
-  (`forced`), when `HEAD` holds the reftable marker or
-  `extensions.refStorage=reftable` (`reftable`), when
-  `extensions.objectFormat` is neither `sha1` nor `sha256` (`object_format`).
-  SHA-256 repositories run on gix: the EP-002 oracle matrices, the four
-  probes' engine comparisons and the `git_race` races also run on SHA-256
-  repositories (`support::with_object_format`, `Repository::Sha256`), and a
-  packed SHA-256 repository is read like the CLI reads it. Every CLI answer
-  keeps the residual of #124 on Windows: `git status` maps a same-size
-  stat-dirty file of 32 KiB or more, and `diff-index` and `diff
-  --name-status` map a racily clean one, so an agent's truncating write can
-  fail with error 1224 there. Only the gix path never maps a worktree file. A
-  reftable repository is the one layout a default probe still sends to the
-  CLI, and Git 3.0 makes reftable the default for new repositories (#138). A gix error is
-  answered by the CLI
-  in the same call (`error`); after two consecutive errors for one git
-  directory, keyed by the linked worktree's own git directory, that directory
-  stays on the CLI until Paneflow restarts and one warning names it with the
-  last error. An interrupted probe is answered by the CLI too but never counts
-  toward those two errors, and neither does a status over its entry cap
-  (`Error::TooManyEntries`, counted as `entry_cap`), which the dock
-  listing hands to the CLI because it cannot show a lower bound. `PANEFLOW_GIT_ENGINE` is read once: `gix` or unset prefers gix,
-  any other value prefers gix with one warning listing the accepted values.
-  `system.counters` reports `git_engine.probes.<probe>.<gix|cli>`,
-  `git_engine.fallbacks.<reason>`, `git_engine.pinned_directories` and
-  `git_engine.preferred`.
+  probe with gix, and only with gix unless `PANEFLOW_GIT_ENGINE=cli`
+  (`forced`) hands every probe to the CLI closure the caller passes. A
+  background probe never falls back to the CLI on any platform: every CLI
+  answer would reopen the residual of #124 on Windows, where `git status`
+  maps a same-size stat-dirty file of 32 KiB or more and `diff-index` and
+  `diff --name-status` map a racily clean one, so an agent's truncating write
+  fails with error 1224. Only the gix path never maps a worktree file, and
+  keeping the same rule on Linux and macOS lets every CI leg see a gix gap.
+  When gix cannot answer, the selector hands an `engine::Unavailable` (the
+  counted reason and a readable detail) to the caller's third closure, which
+  answers in the probe's own terms: the Files sidebar gets no statuses, the
+  badge `GitDiffStats::unavailable()`, the dock an error listing, and
+  `is_clean` an error, so a removal keeps a worktree it could not inspect. The selector refuses without
+  opening gix when `HEAD` holds the reftable marker or
+  `extensions.refStorage=reftable` (`reftable`, #138 and #141), and when
+  `extensions.objectFormat` is neither `sha1` nor `sha256`
+  (`object_format`). SHA-256 repositories run on gix: the EP-002 oracle
+  matrices, the four probes' engine comparisons and the `git_race` races also
+  run on SHA-256 repositories (`support::with_object_format`,
+  `Repository::Sha256`), and a packed SHA-256 repository is read like the CLI
+  reads it. A gix error is counted as `error`, a status over its entry cap
+  (`Error::TooManyEntries`) as `entry_cap`. Every probe asks gix again, so a
+  repaired repository is answered on its next probe. A git directory, keyed
+  by the linked worktree's own git directory, that a refusal or a gix error
+  leaves unanswered logs one warning naming the cause, and one info line when
+  gix answers it again; an interrupt or an entry cap is not a fault of the
+  repository and marks nothing. `PANEFLOW_GIT_ENGINE` is read once: `gix` or
+  unset prefers gix, any other value prefers gix with one warning listing the
+  accepted values. `system.counters` reports
+  `git_engine.probes.<probe>.<gix|cli>`, `git_engine.fallbacks.<reason>` (one
+  per unanswered probe, or per forced CLI answer),
+  `git_engine.unavailable_directories` (the git directories whose last probe
+  went unanswered) and `git_engine.preferred`.
 - **Files sidebar probe.** `files_git::read`, called on the Files sidebar
   worker thread, asks the selector for `files_status`: gix takes a snapshot
   with `Options::files_status()`, keeps the records under `prefix` (the CLI's
@@ -377,8 +383,7 @@ the diff dock and `is_clean` (EP-005) run on it.
   overflow does. A root outside any repository is an answer, not an error:
   gix returns no statuses and nothing is spawned or counted as a fallback,
   since the CLI probe strips the same `GIT_DIR` family and walks up the same
-  way. Any other gix error is answered by `rev-parse --show-prefix` and
-  `git status` in the same call.
+  way. Any other gix error returns `None` too and spawns nothing.
   The `oracle` feature of `paneflow-git` exports the EP-002 fixture matrix
   and its isolation helpers to `src-app` tests, where
   `gix_and_cli_statuses_are_equal_on_every_oracle_fixture` compares the
@@ -419,8 +424,8 @@ the diff dock and `is_clean` (EP-005) run on it.
   256 KiB of what the CLI would print, the blob reads at the 8 MiB the batch
   would print, so a capped listing is the same lower bound on both engines.
   A probe outside any repository is an answer on gix (unavailable, no
-  fallback); a broken `HEAD` is a gix error, answered by the CLI, which
-  reports the stats unavailable. A binary file whose bytes did not change is
+  fallback); a broken `HEAD` is a gix error, which reports the stats
+  unavailable without spawning git. A binary file whose bytes did not change is
   no longer counted on the CLI path either, which `diff-index` lists when its
   stat changed. `gix_and_cli_diff_stats_are_equal_on_every_oracle_fixture`
   compares both engines on the EP-002 matrix, and the racy-window race test
@@ -473,8 +478,11 @@ the diff dock and `is_clean` (EP-005) run on it.
   `--ignore-submodules=none` does), clean only when it holds no porcelain
   record and was not truncated. A path that is not the root of its worktree
   is a gix error, so gix never answers for a parent repository it found past
-  a pruned linked worktree. Any gix error or interrupt is answered by the
-  CLI, and a CLI failure is an error, never `Ok(true)`.
+  a pruned linked worktree. Any gix error, interrupt or refusal is an error
+  without spawning git, so `snapshot_and_remove` and `teardown_all` keep the
+  worktree rather than remove what they could not inspect, never
+  `Ok(true)`. A reftable repository's worktrees are therefore kept until
+  #138 lands.
 - **Change feed.** `paneflow_git::feed::ChangeFeed` (EP-001 of
   `prd-incremental-git-status.md`) watches one worktree and its git
   directories through the vendored `vendor/gix-notify`, the unpublished

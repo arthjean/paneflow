@@ -155,7 +155,7 @@ fn git_engine_counters(engine: &paneflow_git::engine::Counters) -> Value {
         "probes": probes,
         "fallbacks": fallbacks,
         "monitor": monitor,
-        "pinned_directories": engine.pinned_directories,
+        "unavailable_directories": engine.unavailable_directories,
     })
 }
 
@@ -206,7 +206,7 @@ mod tests {
                 reason.name()
             );
         }
-        assert!(engine["pinned_directories"].is_u64(), "{engine}");
+        assert!(engine["unavailable_directories"].is_u64(), "{engine}");
         assert!(engine["preferred"].is_string(), "{engine}");
     }
 

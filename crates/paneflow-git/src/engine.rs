@@ -9,8 +9,6 @@ pub const ENGINE_ENV: &str = "PANEFLOW_GIT_ENGINE";
 
 pub const ACCEPTED_ENGINE_VALUES: &[&str] = &["gix", "cli"];
 
-pub const PINNING_FAILURE_COUNT: u32 = 2;
-
 const REFTABLE_HEAD: &str = "ref: refs/heads/.invalid";
 
 const SUPPORTED_OBJECT_FORMATS: &[&str] = &["sha1", "sha256"];
@@ -282,7 +280,7 @@ pub struct Counters {
     pub probes: Vec<(Probe, Engine, u64)>,
     pub fallbacks: Vec<(Fallback, u64)>,
     pub monitor: Vec<(MonitorCounter, u64)>,
-    pub pinned_directories: u64,
+    pub unavailable_directories: u64,
 }
 
 impl Counters {
@@ -308,19 +306,43 @@ impl Counters {
     }
 }
 
-#[derive(Default)]
-struct Failures {
-    consecutive: u32,
-    pinned: bool,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unavailable {
+    pub reason: Fallback,
+    pub detail: String,
+    repository_fault: bool,
+}
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the git status is unavailable: {}", self.detail)
+    }
+}
+
+impl Unavailable {
+    fn from_error(error: &Error) -> Self {
+        Self {
+            reason: fallback_for(error),
+            detail: error.to_string(),
+            repository_fault: !matches!(error, Error::Interrupted | Error::TooManyEntries { .. }),
+        }
+    }
+
+    fn refused(reason: Fallback, detail: String) -> Self {
+        Self {
+            reason,
+            detail,
+            repository_fault: true,
+        }
+    }
 }
 
 pub struct Selector {
     preferred: Engine,
-    failures: Mutex<HashMap<PathBuf, Failures>>,
+    unavailable_directories: Mutex<HashMap<PathBuf, Fallback>>,
     probes: [[AtomicU64; 2]; Probe::ALL.len()],
     fallbacks: [AtomicU64; Fallback::ALL.len()],
     monitor: [AtomicU64; MonitorCounter::ALL.len()],
-    pinned_directories: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -333,11 +355,10 @@ impl Selector {
     pub fn new(preferred: Engine) -> Self {
         Self {
             preferred,
-            failures: Mutex::new(HashMap::new()),
+            unavailable_directories: Mutex::new(HashMap::new()),
             probes: [const { [const { AtomicU64::new(0) }; 2] }; Probe::ALL.len()],
             fallbacks: [const { AtomicU64::new(0) }; Fallback::ALL.len()],
             monitor: [const { AtomicU64::new(0) }; MonitorCounter::ALL.len()],
-            pinned_directories: AtomicU64::new(0),
         }
     }
 
@@ -363,26 +384,28 @@ impl Selector {
         cwd: &Path,
         gix: impl FnOnce() -> Result<T, Error>,
         cli: impl FnOnce() -> T,
+        unavailable: impl FnOnce(&Unavailable) -> T,
     ) -> T {
+        if self.preferred == Engine::Cli {
+            self.count_fallback(Fallback::Forced);
+            self.count_probe(probe, Engine::Cli);
+            return cli();
+        }
         let layout = locate(cwd);
-        if let Some(reason) = self.fallback_before_gix(layout.as_ref()) {
-            self.count_fallback(reason);
-            return self.answer_with_cli(probe, cli);
+        if let Some(refused) = layout.as_ref().and_then(refuse_before_gix) {
+            return self.answer_unavailable(probe, layout.as_ref(), &refused, unavailable);
         }
         match gix() {
             Ok(answer) => {
                 if let Some(layout) = &layout {
-                    self.record_success(&layout.git_dir);
+                    self.record_answer(probe, &layout.git_dir);
                 }
                 self.count_probe(probe, Engine::Gix);
                 answer
             }
             Err(error) => {
-                if let Some(layout) = layout.as_ref().filter(|_| counts_toward_pinning(&error)) {
-                    self.record_failure(&layout.git_dir, &error);
-                }
-                self.count_fallback(fallback_for(&error));
-                self.answer_with_cli(probe, cli)
+                let refused = Unavailable::from_error(&error);
+                self.answer_unavailable(probe, layout.as_ref(), &refused, unavailable)
             }
         }
     }
@@ -418,27 +441,23 @@ impl Selector {
                     )
                 })
                 .collect(),
-            pinned_directories: self.pinned_directories.load(Ordering::Relaxed),
+            unavailable_directories: self.directories().len() as u64,
         }
     }
 
-    fn fallback_before_gix(&self, layout: Option<&Layout>) -> Option<Fallback> {
-        if self.preferred == Engine::Cli {
-            return Some(Fallback::Forced);
+    fn answer_unavailable<T>(
+        &self,
+        probe: Probe,
+        layout: Option<&Layout>,
+        refused: &Unavailable,
+        unavailable: impl FnOnce(&Unavailable) -> T,
+    ) -> T {
+        self.count_fallback(refused.reason);
+        match layout.filter(|_| refused.repository_fault) {
+            Some(layout) => self.record_unavailable(probe, &layout.git_dir, refused),
+            None => log::debug!("{} answered without gix: {refused}", probe.name()),
         }
-        let layout = layout?;
-        if uses_reftable(layout) {
-            return Some(Fallback::Reftable);
-        }
-        if !uses_supported_object_format(layout) {
-            return Some(Fallback::ObjectFormat);
-        }
-        self.is_pinned(&layout.git_dir).then_some(Fallback::Error)
-    }
-
-    fn answer_with_cli<T>(&self, probe: Probe, cli: impl FnOnce() -> T) -> T {
-        self.count_probe(probe, Engine::Cli);
-        cli()
+        unavailable(refused)
     }
 
     fn count_probe(&self, probe: Probe, engine: Engine) {
@@ -461,39 +480,55 @@ impl Selector {
         self.fallbacks[reason.index()].fetch_add(1, Ordering::Relaxed);
     }
 
-    fn is_pinned(&self, git_dir: &Path) -> bool {
-        self.failures
+    fn directories(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Fallback>> {
+        self.unavailable_directories
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(git_dir)
-            .is_some_and(|failures| failures.pinned)
     }
 
-    fn record_success(&self, git_dir: &Path) {
-        let mut failures = self.failures.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = failures.get_mut(git_dir).filter(|entry| !entry.pinned) {
-            entry.consecutive = 0;
+    fn record_answer(&self, probe: Probe, git_dir: &Path) {
+        if let Some(reason) = self.directories().remove(git_dir) {
+            log::info!(
+                "the in-process git engine answers {} for {} again, after {}",
+                probe.name(),
+                git_dir.display(),
+                reason.name()
+            );
         }
     }
 
-    fn record_failure(&self, git_dir: &Path, error: &Error) {
-        let mut failures = self.failures.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = failures.entry(git_dir.to_path_buf()).or_default();
-        entry.consecutive += 1;
-        if entry.consecutive >= PINNING_FAILURE_COUNT && !entry.pinned {
-            entry.pinned = true;
-            self.pinned_directories.fetch_add(1, Ordering::Relaxed);
+    fn record_unavailable(&self, probe: Probe, git_dir: &Path, refused: &Unavailable) {
+        let previous = self
+            .directories()
+            .insert(git_dir.to_path_buf(), refused.reason);
+        if previous == Some(refused.reason) {
+            log::debug!("{} for {}: {refused}", probe.name(), git_dir.display());
+        } else {
             log::warn!(
-                "the in-process git engine failed {} times in a row for {}, which now uses the git CLI until Paneflow restarts; last error: {error}",
-                entry.consecutive,
-                git_dir.display()
+                "the in-process git engine cannot answer {} for {}, which shows no git status until it can: {}",
+                probe.name(),
+                git_dir.display(),
+                refused.detail
             );
         }
     }
 }
 
-fn counts_toward_pinning(error: &Error) -> bool {
-    !matches!(error, Error::Interrupted | Error::TooManyEntries { .. })
+fn refuse_before_gix(layout: &Layout) -> Option<Unavailable> {
+    if uses_reftable(layout) {
+        return Some(Unavailable::refused(
+            Fallback::Reftable,
+            "the repository stores its references in reftable, which the in-process git engine cannot read yet".to_string(),
+        ));
+    }
+    unsupported_object_format(layout).map(|format| {
+        Unavailable::refused(
+            Fallback::ObjectFormat,
+            format!(
+                "the repository uses the {format} object format, which the in-process git engine cannot read"
+            ),
+        )
+    })
 }
 
 fn fallback_for(error: &Error) -> Fallback {
@@ -549,7 +584,7 @@ fn uses_reftable(layout: &Layout) -> bool {
             == Some(REFTABLE_REF_STORAGE)
 }
 
-fn uses_supported_object_format(layout: &Layout) -> bool {
+fn unsupported_object_format(layout: &Layout) -> Option<String> {
     repository_extension(layout, "extensions.objectFormat")
-        .is_none_or(|format| SUPPORTED_OBJECT_FORMATS.contains(&format.as_str()))
+        .filter(|format| !SUPPORTED_OBJECT_FORMATS.contains(&format.as_str()))
 }

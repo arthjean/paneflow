@@ -1097,6 +1097,7 @@ fn is_clean_through(
         worktree_path,
         || gix(worktree_path).map(Ok),
         || is_clean_with_cli(worktree_path),
+        |unavailable| Err(unavailable.to_string()),
     )
 }
 
@@ -2910,7 +2911,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gix_error_or_interrupt_is_answered_by_the_cli_and_a_double_failure_never_reads_clean() {
+    fn a_gix_error_or_interrupt_is_an_error_without_spawning_git() {
         use paneflow_git::engine::{Engine, Fallback, Probe, Selector};
         let tmp = tempfile::tempdir().expect("tempdir");
         let repo_root = tmp.path().join("repo");
@@ -2925,25 +2926,24 @@ mod tests {
                 })
             },
         ];
-        for failure in failures {
-            let selector = Selector::new(Engine::Gix);
-            let answer = is_clean_through(&selector, &repo_root, |_| failure());
-            assert_eq!(answer, Ok(false), "the CLI answers the same call");
-            let counters = selector.counters();
-            assert_eq!(counters.probes(Probe::IsClean, Engine::Cli), 1);
-            assert_eq!(counters.probes(Probe::IsClean, Engine::Gix), 0);
-            assert_eq!(counters.fallbacks(Fallback::Error), 1);
-        }
-
         let outside = tmp.path().join("not-a-repo");
         std::fs::create_dir_all(&outside).expect("plain dir");
-        for failure in failures {
-            let selector = Selector::new(Engine::Gix);
-            let answer = is_clean_through(&selector, &outside, |_| failure());
-            assert!(
-                answer.is_err(),
-                "both engines failed, so the check is an error: {answer:?}"
-            );
+        for cwd in [&repo_root, &outside] {
+            for failure in failures {
+                let selector = Selector::new(Engine::Gix);
+                let before = git_spawns_on_this_thread();
+                let answer = is_clean_through(&selector, cwd, |_| failure());
+                assert_eq!(git_spawns_on_this_thread() - before, 0);
+                let error = answer.expect_err("an unanswered check is an error, never clean");
+                assert!(
+                    error.starts_with("the git status is unavailable"),
+                    "{error}"
+                );
+                let counters = selector.counters();
+                assert_eq!(counters.probes(Probe::IsClean, Engine::Cli), 0);
+                assert_eq!(counters.probes(Probe::IsClean, Engine::Gix), 0);
+                assert_eq!(counters.fallbacks(Fallback::Error), 1);
+            }
         }
         let selector = Selector::new(Engine::Gix);
         assert!(is_clean_through(&selector, &outside, is_clean_with_gix).is_err());
@@ -2987,11 +2987,11 @@ mod tests {
         assert!(is_clean_with_gix(&inner).is_err());
         assert!(matches!(is_clean_with_gix(&repo_root), Ok(false)));
         assert_eq!(is_clean_with_cli(&inner), Ok(false));
-        let (answer, _, _) = clean_through(paneflow_git::engine::Engine::Gix, &inner);
-        assert_eq!(
-            answer,
-            Ok(false),
-            "the CLI answers for the whole repository"
+        let (answer, _, spawned) = clean_through(paneflow_git::engine::Engine::Gix, &inner);
+        assert!(
+            answer.is_err(),
+            "gix never answers for the whole repository: {answer:?}"
         );
+        assert_eq!(spawned, 0);
     }
 }
