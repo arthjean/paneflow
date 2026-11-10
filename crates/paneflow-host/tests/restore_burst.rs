@@ -94,8 +94,13 @@ impl BurstHost {
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("paneflow.json"), "{}").unwrap();
         let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
-        bootstrap::ensure_host_running(home.path(), &host_executable(), name)
-            .expect("a detached host starts from the sibling executable");
+        bootstrap::ensure_host_running_for(
+            home.path(),
+            &host_executable(),
+            name,
+            bootstrap::HostLifetime::EndsWithCaller,
+        )
+        .expect("a detached host starts from the sibling executable");
         let hello = ClientHello::local(name);
         let pid = HostClient::connect(&endpoint, &hello)
             .unwrap()

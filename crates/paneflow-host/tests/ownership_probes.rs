@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use paneflow_host::protocol::ClientHello;
 use paneflow_host::{
-    CreateSession, HostClient, SessionLifecycle, SessionReconnection, SessionSummary, bootstrap,
+    CreateSession, HostClient, HostLifetime, ProcessIdentity, SessionLifecycle,
+    SessionReconnection, SessionSummary, bootstrap,
 };
 use paneflow_ipc_client::host_control::HostControl;
 use portable_pty::{CommandBuilder, PtySize};
@@ -77,9 +78,10 @@ fn wait_until(deadline: Duration, mut check: impl FnMut() -> bool) -> bool {
 }
 
 struct DetachedHost {
-    home: tempfile::TempDir,
+    _home: tempfile::TempDir,
     endpoint: PathBuf,
     hello: ClientHello,
+    process: ProcessIdentity,
 }
 
 impl DetachedHost {
@@ -92,37 +94,162 @@ impl DetachedHost {
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("paneflow.json"), config).unwrap();
         let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
-        bootstrap::ensure_host_running(home.path(), &host_executable(), name)
-            .expect("a detached host starts from the sibling executable");
+        let adoption = bootstrap::ensure_host_running_for(
+            home.path(),
+            &host_executable(),
+            name,
+            HostLifetime::EndsWithCaller,
+        )
+        .expect("a detached host starts from the sibling executable");
         Self {
-            home,
+            _home: home,
             endpoint,
             hello: ClientHello::local(name),
+            process: ProcessIdentity::capture(adoption.identity.pid),
         }
     }
 
     fn client(&self) -> HostClient {
         HostClient::connect(&self.endpoint, &self.hello).unwrap()
     }
+}
 
-    fn stop(self) {
-        let mut client = self.client();
-        for row in client.list(None).unwrap() {
-            if row.live {
-                let _ = client.stop(&row.session, None);
+impl Drop for DetachedHost {
+    fn drop(&mut self) {
+        if let Ok(mut client) = HostClient::connect(&self.endpoint, &self.hello) {
+            for row in client.list(None).unwrap_or_default() {
+                if row.live {
+                    let _ = client.stop(&row.session, None);
+                }
             }
+            let _ = client.call("host.shutdown", json!({"force": true}));
         }
-        let _ = client.call("host.shutdown", json!({"force": true}));
-        drop(client);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !matches!(
-            bootstrap::probe(self.home.path(), &self.endpoint, &self.hello),
-            bootstrap::Probe::Unreachable(_)
-        ) && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(50));
+        if wait_until(Duration::from_secs(10), || !self.process.is_provably_live()) {
+            return;
         }
+        terminate_process_tree(self.process.pid);
+        wait_until(Duration::from_secs(5), || !self.process.is_provably_live());
     }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(pid: u32) {
+    let _ = paneflow_host::process::terminate_windows_process_tree(
+        pid,
+        Instant::now() + Duration::from_secs(5),
+    );
+}
+
+#[cfg(unix)]
+fn terminate_process_tree(pid: u32) {
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+    }
+}
+
+#[cfg(windows)]
+fn die_like_a_timed_out_test() -> ! {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+    unsafe {
+        TerminateProcess(GetCurrentProcess(), 1);
+    }
+    std::process::abort();
+}
+
+#[cfg(unix)]
+fn die_like_a_timed_out_test() -> ! {
+    unsafe {
+        libc::kill(libc::getpid(), libc::SIGKILL);
+    }
+    std::process::abort();
+}
+
+fn start_host_with_a_live_fixture(name: &str) -> (DetachedHost, [ProcessIdentity; 2]) {
+    let host = DetachedHost::start(name);
+    let fixture = host
+        .client()
+        .create(&fixture_request(&["idle"]))
+        .unwrap()
+        .manifest
+        .process
+        .expect("the fixture session records its process");
+    let processes = [host.process, fixture];
+    (host, processes)
+}
+
+fn all_ended(processes: &[ProcessIdentity]) -> bool {
+    wait_until(Duration::from_secs(30), || {
+        processes.iter().all(|process| !process.is_provably_live())
+    })
+}
+
+fn terminate_leftovers(processes: &[ProcessIdentity]) {
+    for process in processes
+        .iter()
+        .filter(|process| process.is_provably_live())
+    {
+        terminate_process_tree(process.pid);
+    }
+}
+
+const TIMED_OUT_OWNER_PROBE: &str = "PANEFLOW_TIMED_OUT_OWNER_PROBE";
+
+#[test]
+#[ignore = "helper subprocess for the timed-out owner test"]
+fn timed_out_owner_probe() {
+    let Some(out) = std::env::var_os(TIMED_OUT_OWNER_PROBE) else {
+        return;
+    };
+    let (_host, processes) = start_host_with_a_live_fixture("timed-out-owner");
+    std::fs::write(out, serde_json::to_vec(&processes).unwrap()).unwrap();
+    die_like_a_timed_out_test();
+}
+
+#[test]
+fn a_failed_assertion_still_ends_the_host_and_its_sessions() {
+    let (sender, receiver) = mpsc::channel();
+    let probe = std::thread::spawn(move || {
+        let (_host, processes) = start_host_with_a_live_fixture("failed-assertion");
+        sender.send(processes).unwrap();
+        panic!("a probe assertion fails before the end of the test");
+    });
+    assert!(probe.join().is_err(), "the probe thread unwinds");
+    let processes = receiver.recv().unwrap();
+    let ended = all_ended(&processes);
+    terminate_leftovers(&processes);
+    assert!(
+        ended,
+        "the unwound helper leaves no host or session behind: {processes:?}"
+    );
+}
+
+#[test]
+fn a_test_process_killed_without_unwinding_takes_its_host_and_sessions_down() {
+    let scratch = tempfile::tempdir().unwrap();
+    let out = scratch.path().join("processes.json");
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "timed_out_owner_probe",
+            "--exact",
+            "--ignored",
+            "--test-threads=1",
+        ])
+        .env(TIMED_OUT_OWNER_PROBE, &out)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!status.success(), "the probe dies before it can pass");
+    let processes: Vec<ProcessIdentity> =
+        serde_json::from_slice(&std::fs::read(&out).expect("the probe recorded its processes"))
+            .unwrap();
+    let ended = all_ended(&processes);
+    terminate_leftovers(&processes);
+    assert!(
+        ended,
+        "a host started by a killed test process ends with it: {processes:?}"
+    );
 }
 
 #[test]
@@ -347,7 +474,6 @@ fn h02_a_requester_that_disconnects_mid_create_leaves_the_host_owning_the_child(
         SessionLifecycle::Exited { .. }
     ));
     assert!(!process.is_provably_live());
-    host.stop();
 }
 
 #[test]
@@ -374,7 +500,6 @@ fn descendants_remain_recoverable_after_the_parent_exits() {
     assert!(wait_until(Duration::from_secs(5), || pids
         .iter()
         .all(|pid| !pid_is_alive(*pid))));
-    host.stop();
 }
 
 #[test]
@@ -490,8 +615,6 @@ fn the_fixture_modes_are_driven_through_the_real_host_ipc() {
     for session in [echo.manifest.session, split.manifest.session] {
         let _ = client.stop(&session, None);
     }
-    drop(client);
-    host.stop();
 }
 
 fn wait_for_descendant_pids(
