@@ -140,6 +140,13 @@ the two you did.
   vocabulary. A guard test
   (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
   second engine reappears.
+- **One git implementation: the `git` CLI.** Every git read and write spawns
+  the user's `git` through `src-app/src/git_command.rs`, and a background read
+  uses `GitProfile::Probe`. Do not add libgit2, gitoxide (`gix`) or a
+  hand-written reader of git's on-disk formats: an in-process engine was built
+  and withdrawn in November 2026 (tag `archive/gix-engine`) because a second
+  implementation trails git. ARCHITECTURE.md, "Git goes through the git CLI",
+  has the reasons and the Windows residual that the CLI keeps (#124).
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
   or recursive directory walk on the GPUI main thread. Push that work through
   `smol::unblock` or the bootstrap path.

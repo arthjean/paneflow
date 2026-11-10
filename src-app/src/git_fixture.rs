@@ -24,17 +24,6 @@ const FIXTURE_IDENTITY: &[(&str, &str)] = &[
 
 const EMPTY_GLOBAL_CONFIG_NAME: &str = "paneflow-tests-empty-gitconfig";
 
-pub(crate) fn isolate_process() {
-    static ISOLATED: OnceLock<()> = OnceLock::new();
-    ISOLATED.get_or_init(|| {
-        let global = empty_global_config();
-        unsafe {
-            std::env::set_var("GIT_CONFIG_GLOBAL", global);
-            std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
-        }
-    });
-}
-
 pub(crate) fn isolate(command: &mut Command) {
     command
         .env("GIT_CONFIG_GLOBAL", empty_global_config())
@@ -44,7 +33,6 @@ pub(crate) fn isolate(command: &mut Command) {
 }
 
 pub(crate) fn command(cwd: &Path, args: &[&str]) -> Command {
-    isolate_process();
     let mut fixture_args: Vec<&str> = Vec::with_capacity(FIXTURE_CONFIG.len() * 2 + args.len());
     for setting in FIXTURE_CONFIG {
         fixture_args.push("-c");
@@ -80,24 +68,6 @@ pub(crate) fn run(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-pub(crate) fn run_feeding(cwd: &Path, args: &[&str], stdin: Vec<u8>) -> String {
-    let (out, _) = paneflow_process::run_with_timeout_feeding_stdin_keeping_stdout_head(
-        command(cwd, args),
-        stdin,
-        FIXTURE_DEADLINE,
-        FIXTURE_STDOUT_CAP,
-    )
-    .unwrap_or_else(|error| panic!("git {args:?} in {} failed: {error}", cwd.display()));
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} exited with {}: {}",
-        cwd.display(),
-        out.status,
-        String::from_utf8_lossy(&out.stderr).trim()
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
 pub(crate) fn init(root: &Path) {
     init_with(root, &[]);
 }
@@ -117,11 +87,7 @@ pub(crate) fn commit_all(root: &Path, message: &str) {
 }
 
 pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
-    committed_repo_with(root, &[], files);
-}
-
-pub(crate) fn committed_repo_with(root: &Path, init_args: &[&str], files: &[(&str, &str)]) {
-    init_with(root, init_args);
+    init(root);
     for (name, content) in files {
         let path = root.join(name);
         if let Some(parent) = path.parent() {
@@ -132,18 +98,6 @@ pub(crate) fn committed_repo_with(root: &Path, init_args: &[&str], files: &[(&st
             .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
     }
     commit_all(root, "init");
-}
-
-pub(crate) fn packed_sha256_repo(root: &Path, files: &[(&str, &str)]) {
-    committed_repo_with(root, &["--object-format=sha256"], files);
-    run(root, &["gc", "--prune=now", "--quiet"]);
-    assert!(
-        run(root, &["count-objects", "-v"])
-            .lines()
-            .any(|line| line.trim() == "count: 0"),
-        "every object of {} is packed",
-        root.display()
-    );
 }
 
 pub(crate) fn private_temp_root() -> &'static Path {

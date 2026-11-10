@@ -134,9 +134,6 @@ ureq.workspace = true
 # resolves a single version.
 imara-diff = { version = "0.2", default-features = false }
 paneflow-textdiff.workspace = true
-# Read-only in-process git status for the background probes
-# (prd-in-process-git-status.md, EP-001), kept out of the size-capped helpers.
-paneflow-git.workspace = true
 
 # Diff syntax highlighting (prd-diff-syntax-highlight-2026-Q3.md). Tree-sitter,
 # the same engine Zed uses - fast enough (ms-scale parse) that we highlight at
@@ -406,9 +403,6 @@ minisign = "0.9.1"
 # release binary opens no PTY of its own and does not link this crate.
 portable-pty = "0.9.0"
 tracing-test = "0.2"
-# The parity oracle of the in-process git engine, so the Files sidebar probe is
-# compared with the git CLI on the same fixture matrix.
-paneflow-git = { workspace = true, features = ["oracle"] }
 
 # Clippy lint policy (US-007). Mirrors `[workspace.lints.clippy]` in the
 # root Cargo.toml EXCEPT the unwrap/expect family is demoted from "warn"

@@ -1,8 +1,5 @@
 use super::*;
-use crate::git_monitors::{GitMonitors, Keep, Subscription};
 use notify::Watcher;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 const GIT_EVENT_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -15,72 +12,6 @@ const SHOWN_GIT_POLL: std::time::Duration = std::time::Duration::from_secs(30);
 const HIDDEN_GIT_PROBE_AGE: std::time::Duration = std::time::Duration::from_secs(300);
 
 const HIDDEN_GIT_POLL_ROUNDS: usize = 10;
-
-struct GitWake {
-    _subscription: Subscription,
-    pending: Arc<AtomicBool>,
-}
-
-#[derive(Clone)]
-pub(crate) struct GitWakes {
-    subscriptions: Arc<Mutex<std::collections::HashMap<String, GitWake>>>,
-    sender: smol::channel::Sender<String>,
-}
-
-impl GitWakes {
-    pub(crate) fn new() -> (Self, smol::channel::Receiver<String>) {
-        let (sender, receiver) = smol::channel::unbounded();
-        (
-            Self {
-                subscriptions: Arc::default(),
-                sender,
-            },
-            receiver,
-        )
-    }
-
-    fn subscriptions(&self) -> MutexGuard<'_, std::collections::HashMap<String, GitWake>> {
-        self.subscriptions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn ensure(&self, cwd: &str) {
-        if self.subscriptions().contains_key(cwd) {
-            return;
-        }
-        let pending = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&pending);
-        let sender = self.sender.clone();
-        let woken = cwd.to_string();
-        let Some(subscription) = GitMonitors::global().subscribe(
-            std::path::Path::new(cwd),
-            Arc::new(move || {
-                if !flag.swap(true, Ordering::AcqRel) {
-                    let _ = sender.try_send(woken.clone());
-                }
-            }),
-        ) else {
-            return;
-        };
-        self.subscriptions()
-            .entry(cwd.to_string())
-            .or_insert(GitWake {
-                _subscription: subscription,
-                pending,
-            });
-    }
-
-    fn retain(&self, shown: &[String]) {
-        self.subscriptions().retain(|cwd, _| shown.contains(cwd));
-    }
-
-    fn acknowledge(&self, cwd: &str) {
-        if let Some(wake) = self.subscriptions().get(cwd) {
-            wake.pending.store(false, Ordering::Release);
-        }
-    }
-}
 
 fn plan_git_poll(
     window_active: bool,
@@ -119,22 +50,6 @@ fn workspace_git_cwds(workspace: &crate::workspace::Workspace) -> Vec<String> {
         }
     }
     cwds
-}
-
-fn git_keep(cwd: &str, shown: &[String]) -> Keep {
-    if shown.iter().any(|shown| shown == cwd) {
-        Keep::Alive
-    } else {
-        Keep::IfLive
-    }
-}
-
-fn shown_wakes(woken: std::collections::BTreeSet<String>, shown: &[String]) -> Vec<(String, Keep)> {
-    woken
-        .into_iter()
-        .filter(|cwd| shown.contains(cwd))
-        .map(|cwd| (cwd, Keep::Alive))
-        .collect()
 }
 
 fn git_refresh_due(
@@ -179,42 +94,6 @@ fn collect_git_dirs(
         Err(error) => {
             log::warn!("git watcher: {error}");
             false
-        }
-    }
-}
-
-async fn next_monitor_refresh(
-    events: &smol::channel::Receiver<String>,
-    wakes: &GitWakes,
-) -> Option<std::collections::BTreeSet<String>> {
-    let mut cwds = std::collections::BTreeSet::new();
-    let mut burst: Option<(std::time::Instant, std::time::Instant)> = None;
-    loop {
-        let mut changed = match burst {
-            None => {
-                let cwd = events.recv().await.ok()?;
-                wakes.acknowledge(&cwd);
-                cwds.insert(cwd);
-                true
-            }
-            Some(_) => {
-                smol::Timer::after(GIT_EVENT_TICK).await;
-                false
-            }
-        };
-        while let Ok(cwd) = events.try_recv() {
-            wakes.acknowledge(&cwd);
-            cwds.insert(cwd);
-            changed = true;
-        }
-        let now = std::time::Instant::now();
-        if changed {
-            burst = Some((burst.map_or(now, |(started, _)| started), now));
-        }
-        if let Some((started, last_event)) = burst
-            && git_refresh_due(started, last_event, now)
-        {
-            return Some(cwds);
         }
     }
 }
@@ -264,7 +143,9 @@ impl PaneFlowApp {
             .collect()
     }
 
-    fn shown_git_cwds(&self, cx: &App) -> Vec<String> {
+    fn due_git_poll_cwds(&mut self, now: std::time::Instant, cx: &App) -> Vec<String> {
+        let live: std::collections::HashSet<String> = self.git_probe_cwds().into_iter().collect();
+        self.git_probed_at.retain(|cwd, _| live.contains(cwd));
         let mut shown: Vec<String> = Vec::new();
         for idx in self.shown_workspace_indices(cx) {
             for cwd in workspace_git_cwds(&self.workspaces[idx]) {
@@ -273,14 +154,6 @@ impl PaneFlowApp {
                 }
             }
         }
-        shown
-    }
-
-    fn due_git_poll_cwds(&mut self, now: std::time::Instant, cx: &App) -> Vec<(String, Keep)> {
-        let live: std::collections::HashSet<String> = self.git_probe_cwds().into_iter().collect();
-        self.git_probed_at.retain(|cwd, _| live.contains(cwd));
-        let shown = self.shown_git_cwds(cx);
-        self.git_wakes.retain(&shown);
         let hidden: Vec<String> = self
             .git_probe_cwds()
             .into_iter()
@@ -296,12 +169,7 @@ impl PaneFlowApp {
         for cwd in &due {
             self.git_probed_at.insert(cwd.clone(), now);
         }
-        due.into_iter()
-            .map(|cwd| {
-                let keep = git_keep(&cwd, &shown);
-                (cwd, keep)
-            })
-            .collect()
+        due
     }
 
     pub(crate) fn probe_workspace_git_now(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
@@ -319,16 +187,9 @@ impl PaneFlowApp {
         for cwd in &cwds {
             self.git_probed_at.insert(cwd.clone(), now);
         }
-        let keep = if self.shown_workspace_indices(cx).contains(&ws_idx) {
-            Keep::Alive
-        } else {
-            Keep::IfLive
-        };
-        let cwds: Vec<(String, Keep)> = cwds.into_iter().map(|cwd| (cwd, keep)).collect();
-        let wakes = self.git_wakes.clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let results = smol::unblock(move || Self::probe_git_state(cwds, &wakes)).await;
+                let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         app.apply_git_probe(&results, cx);
@@ -444,11 +305,9 @@ impl PaneFlowApp {
                         affected_dirs.len()
                     );
 
-                    let planned = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            let shown = app.shown_git_cwds(cx);
-                            let cwds = app
-                                .workspaces
+                    let cwds = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
+                            app.workspaces
                                 .iter()
                                 .filter(|ws| {
                                     ws.git_dir
@@ -461,17 +320,12 @@ impl PaneFlowApp {
                                 .filter(|cwd| !cwd.is_empty())
                                 .collect::<std::collections::BTreeSet<String>>()
                                 .into_iter()
-                                .map(|cwd| {
-                                    let keep = git_keep(&cwd, &shown);
-                                    (cwd, keep)
-                                })
-                                .collect::<Vec<(String, Keep)>>();
-                            (cwds, app.git_wakes.clone())
+                                .collect::<Vec<String>>()
                         })
                     });
 
-                    let (cwds, wakes) = match planned {
-                        Ok(planned) => planned,
+                    let cwds = match cwds {
+                        Ok(c) => c,
                         Err(_) => break,
                     };
 
@@ -479,7 +333,7 @@ impl PaneFlowApp {
                         continue;
                     }
 
-                    let results = smol::unblock(move || Self::probe_git_state(cwds, &wakes)).await;
+                    let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
 
                     let apply = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
@@ -500,25 +354,21 @@ impl PaneFlowApp {
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 loop {
                     smol::Timer::after(SHOWN_GIT_POLL).await;
-                    smol::unblock(|| GitMonitors::global().evict_idle()).await;
 
-                    let planned = cx.update(|cx| {
+                    let cwds = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            (
-                                app.due_git_poll_cwds(std::time::Instant::now(), cx),
-                                app.git_wakes.clone(),
-                            )
+                            app.due_git_poll_cwds(std::time::Instant::now(), cx)
                         })
                     });
-                    let (cwds, wakes) = match planned {
-                        Ok(planned) => planned,
+                    let cwds = match cwds {
+                        Ok(c) => c,
                         Err(_) => break,
                     };
                     if cwds.is_empty() {
                         continue;
                     }
 
-                    let results = smol::unblock(move || Self::probe_git_state(cwds, &wakes)).await;
+                    let results = smol::unblock(move || Self::probe_git_state(cwds)).await;
 
                     let apply = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
@@ -536,54 +386,13 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(in crate::app) fn spawn_git_monitor_refresh(
-        wakes: GitWakes,
-        events: smol::channel::Receiver<String>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                while let Some(woken) = next_monitor_refresh(&events, &wakes).await {
-                    let shown = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.shown_git_cwds(cx)
-                        })
-                    });
-                    let Ok(shown) = shown else {
-                        break;
-                    };
-                    let cwds = shown_wakes(woken, &shown);
-                    if cwds.is_empty() {
-                        continue;
-                    }
-                    let probe_wakes = wakes.clone();
-                    let results =
-                        smol::unblock(move || Self::probe_git_state(cwds, &probe_wakes)).await;
-                    let apply = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.apply_git_probe(&results, cx);
-                        })
-                    });
-                    if apply.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
-    }
-
     fn probe_git_state(
-        cwds: Vec<(String, Keep)>,
-        wakes: &GitWakes,
+        cwds: Vec<String>,
     ) -> Vec<(String, String, bool, crate::workspace::GitDiffStats)> {
         cwds.into_iter()
-            .map(|(cwd, keep)| {
+            .map(|cwd| {
                 let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
-                if keep == Keep::Alive && is_repo {
-                    wakes.ensure(&cwd);
-                }
-                let stats = crate::workspace::GitDiffStats::from_cwd_kept(&cwd, keep);
+                let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
                 (cwd, branch, is_repo, stats)
             })
             .collect()
@@ -784,11 +593,7 @@ mod tests {
         marked_dirs(&events);
 
         std::fs::write(root.join("a.txt"), "2\n").expect("edit the work tree");
-        let (wakes, _wake_events) = GitWakes::new();
-        let probed = PaneFlowApp::probe_git_state(
-            vec![(root.to_string_lossy().into_owned(), Keep::Alive)],
-            &wakes,
-        );
+        let probed = PaneFlowApp::probe_git_state(vec![root.to_string_lossy().into_owned()]);
         assert!(
             probed.iter().all(|(_, _, is_repo, _)| *is_repo),
             "{probed:?}"
@@ -875,46 +680,5 @@ mod tests {
         tx.try_send(git_event("/repo/.git/HEAD")).expect("send");
         let dirs = smol::block_on(wait).expect("a refresh after the error");
         assert!(dirs.contains(std::path::Path::new("/repo/.git")));
-    }
-
-    #[test]
-    fn a_shown_workspace_keeps_its_monitor_alive_and_a_hidden_one_only_borrows_it() {
-        let shown = vec!["/shown".to_string()];
-        assert_eq!(git_keep("/shown", &shown), Keep::Alive);
-        assert_eq!(git_keep("/hidden", &shown), Keep::IfLive);
-        let woken: std::collections::BTreeSet<String> =
-            ["/shown".to_string(), "/hidden".to_string()].into();
-        assert_eq!(
-            shown_wakes(woken, &shown),
-            vec![("/shown".to_string(), Keep::Alive)]
-        );
-    }
-
-    #[test]
-    fn a_tracked_edit_wakes_the_badge_of_a_shown_workspace_through_its_monitor() {
-        crate::git_fixture::isolate_process();
-        let temp = tempfile::tempdir().expect("temporary directory");
-        let root = temp.path().join("repo");
-        crate::git_fixture::committed_repo(&root, &[("tracked.txt", "one\n")]);
-        let cwd = root.to_string_lossy().into_owned();
-        let (wakes, events) = GitWakes::new();
-        let before = PaneFlowApp::probe_git_state(vec![(cwd.clone(), Keep::Alive)], &wakes);
-        assert_eq!(before[0].3.files_changed, 0);
-
-        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").expect("edit");
-        let woken = smol::block_on(smol::future::or(
-            next_monitor_refresh(&events, &wakes),
-            async {
-                smol::Timer::after(Duration::from_secs(10)).await;
-                None
-            },
-        ))
-        .expect("the monitor wakes the badge before the deadline");
-        assert!(woken.contains(&cwd), "{woken:?}");
-
-        let after =
-            PaneFlowApp::probe_git_state(shown_wakes(woken, std::slice::from_ref(&cwd)), &wakes);
-        assert_eq!(after[0].3.files_changed, 1);
-        assert_eq!(after[0].3.insertions, 1);
     }
 }

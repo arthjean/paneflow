@@ -122,41 +122,7 @@ pub(crate) fn counters() -> Value {
         "process_spawns".to_string(),
         json!(paneflow_process::spawn_count()),
     );
-    counters.insert(
-        "git_engine".to_string(),
-        git_engine_counters(&paneflow_git::engine::Selector::global().counters()),
-    );
     json!({ "counters": counters_value(counters) })
-}
-
-fn git_engine_counters(engine: &paneflow_git::engine::Counters) -> Value {
-    use paneflow_git::engine::{Engine, Fallback, MonitorCounter, Probe};
-    let mut probes = Map::new();
-    for probe in Probe::ALL {
-        let mut by_engine = Map::new();
-        for engine_kind in Engine::ALL {
-            by_engine.insert(
-                engine_kind.name().to_string(),
-                json!(engine.probes(probe, engine_kind)),
-            );
-        }
-        probes.insert(probe.name().to_string(), Value::Object(by_engine));
-    }
-    let mut fallbacks = Map::new();
-    for reason in Fallback::ALL {
-        fallbacks.insert(reason.name().to_string(), json!(engine.fallbacks(reason)));
-    }
-    let mut monitor = Map::new();
-    for counter in MonitorCounter::ALL {
-        monitor.insert(counter.name().to_string(), json!(engine.monitor(counter)));
-    }
-    json!({
-        "preferred": paneflow_git::engine::Selector::global().preferred().name(),
-        "probes": probes,
-        "fallbacks": fallbacks,
-        "monitor": monitor,
-        "pinned_directories": engine.pinned_directories,
-    })
 }
 
 #[cfg(test)]
@@ -182,73 +148,6 @@ mod tests {
             git_subcommand_counter(Some("status")),
             git_subcommand_counter(None)
         ));
-    }
-
-    #[test]
-    fn the_desktop_counters_expose_git_engine_probes_and_fallbacks_by_name() {
-        use paneflow_git::engine::{Engine, Fallback, Probe};
-        let value = counters();
-        let engine = &value["counters"]["git_engine"];
-        for probe in Probe::ALL {
-            for engine_kind in Engine::ALL {
-                assert!(
-                    engine["probes"][probe.name()][engine_kind.name()].is_u64(),
-                    "{}.{}: {engine}",
-                    probe.name(),
-                    engine_kind.name()
-                );
-            }
-        }
-        for reason in Fallback::ALL {
-            assert!(
-                engine["fallbacks"][reason.name()].is_u64(),
-                "{}: {engine}",
-                reason.name()
-            );
-        }
-        assert!(engine["pinned_directories"].is_u64(), "{engine}");
-        assert!(engine["preferred"].is_string(), "{engine}");
-    }
-
-    #[test]
-    fn the_perf_gates_read_the_diff_stat_probes_and_every_fallback_by_their_engine_names() {
-        use paneflow_git::engine::{Engine, Fallback, Probe};
-        use paneflow_host::work_counters::{
-            DESKTOP_COUNTERS, DIFF_STAT_ENGINE_PROBES, GIT_ENGINE_FALLBACKS,
-        };
-        let probes: Vec<String> = Engine::ALL
-            .into_iter()
-            .map(|engine| {
-                format!(
-                    "git_engine.probes.{}.{}",
-                    Probe::DiffStats.name(),
-                    engine.name()
-                )
-            })
-            .collect();
-        assert_eq!(DIFF_STAT_ENGINE_PROBES.to_vec(), probes);
-        let fallbacks: Vec<String> = Fallback::ALL
-            .into_iter()
-            .map(|reason| format!("git_engine.fallbacks.{}", reason.name()))
-            .collect();
-        assert_eq!(GIT_ENGINE_FALLBACKS.to_vec(), fallbacks);
-        for name in DIFF_STAT_ENGINE_PROBES.iter().chain(&GIT_ENGINE_FALLBACKS) {
-            assert!(DESKTOP_COUNTERS.contains(name), "{name}");
-        }
-    }
-
-    #[test]
-    fn the_host_reads_every_monitor_fallback_reason_by_its_engine_name() {
-        use paneflow_git::engine::MonitorCounter;
-        use paneflow_host::work_counters::{DESKTOP_COUNTERS, GIT_MONITOR_COUNTERS};
-        let names: Vec<String> = MonitorCounter::ALL
-            .into_iter()
-            .map(|counter| format!("git_engine.monitor.{}", counter.name()))
-            .collect();
-        assert_eq!(GIT_MONITOR_COUNTERS.to_vec(), names);
-        for name in &GIT_MONITOR_COUNTERS {
-            assert!(DESKTOP_COUNTERS.contains(name), "{name}");
-        }
     }
 
     #[test]
