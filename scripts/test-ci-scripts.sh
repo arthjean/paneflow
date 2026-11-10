@@ -124,7 +124,45 @@ EOF
   expect "a release workflow without cache-mode: none is refused" 1 "release\.yml:1: the release workflow must declare cache-mode: none" "$check" "$file"
 }
 
+helper_dir() {
+  local dir="$WORK/helpers/$1"
+  mkdir -p "$dir"
+  head -c "$2" /dev/zero > "$dir/paneflow-shim"
+  head -c "$3" /dev/zero > "$dir/paneflow-ai-hook"
+  head -c "$4" /dev/zero > "$dir/paneflow-mcp"
+  printf '%s' "$dir"
+}
+
+helper_size_cases() {
+  local check="$ROOT/scripts/check-helper-sizes.sh"
+  local dir
+
+  dir="$(helper_dir within 400000 300000 400000)"
+  expect "helpers under every cap pass" 0 "embedded helpers = 1100000 B" "$check" "$dir"
+
+  dir="$(helper_dir hook-over 400000 384001 400000)"
+  expect "a helper over its cap is named with its size and the cap" 1 "paneflow-ai-hook is 384001 B, over its hard cap of 384000 B" "$check" "$dir"
+
+  dir="$(helper_dir at-caps 524288 384000 524288)"
+  expect "helpers at their caps still fit the total cap" 0 "embedded helpers = 1432576 B" "$check" "$dir"
+
+  dir="$(helper_dir near-cap 400000 383000 400000)"
+  expect "a helper within 4 KiB of its cap warns and passes" 0 "::warning::paneflow-ai-hook is 383000 B, only 1000 B under its hard cap" "$check" "$dir"
+
+  dir="$(helper_dir missing 400000 300000 400000)"
+  rm "$dir/paneflow-mcp"
+  expect "a missing helper fails instead of passing an unmeasured build" 1 "paneflow-mcp is missing" "$check" "$dir"
+
+  dir="$(helper_dir stale-total 400000 300000 400000)"
+  printf 'const OTHER: u64 = 1;\n' > "$WORK/build.rs"
+  expect "an unreadable total cap fails" 1 "could not read EMBED_SIZE_LIMIT_BYTES" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
+
+  printf 'const EMBED_SIZE_LIMIT_BYTES: u64 = 1_000_000;\n' > "$WORK/build.rs"
+  expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 1100000 B, over the hard cap of 1000000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
+}
+
 check_workflows_cases
+helper_size_cases
 
 if [ "$failures" -ne 0 ]; then
   echo "::error::$failures of $cases CI script case(s) failed"

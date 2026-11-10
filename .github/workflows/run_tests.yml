@@ -140,14 +140,12 @@ jobs:
               - 'src-app/src/layout/render.rs'
               - 'src-app/tests/flex_nchild.rs'
 
-  # Linux quality gates are split into 3 parallel jobs so the wall-clock
-  # time of the CI run is max(jobs) instead of sum(steps). Previously a
-  # single `check` job ran fmt → clippy → test → release-build → size
-  # budget in series on one runner (~22 min). Splitting into 3 jobs
-  # parallels the work over 3 runners (~max 10-12 min wall-clock on
-  # cold cache). The downside is a marginal cost increase in runner
-  # minutes (each job re-restores the cargo cache); the upside is
-  # faster PR feedback, which is the right tradeoff here.
+  # Linux quality gates run as 2 parallel jobs, style and tests, so the
+  # wall-clock time of the CI run is max(jobs) instead of sum(steps). The
+  # helper size budget runs inside the test job, on the `release-min`
+  # helpers the test build already produces. The thin-LTO release build of
+  # the workspace is covered by `linux_aarch64_check` and, for the
+  # application and the host on x86_64, by `perf_gates` and the release.
   #
   # Each job pins ubuntu-22.04 (matches release.yml matrix legs, same
   # glibc 2.35 + system library set - see US-004 in
@@ -239,6 +237,18 @@ jobs:
       - name: Test
         run: cargo nextest run --workspace --locked --profile ci
 
+      # The three embedded helpers have hard size caps, measured on Linux
+      # x86_64 only. `src-app/build.rs` builds them under the `release-min`
+      # profile with every build of `paneflow-app`, the test build included,
+      # so the test step above has already produced the exact binaries a
+      # release embeds and no separate release build is needed to measure
+      # them. The per-helper caps live in the script; the total is read from
+      # `EMBED_SIZE_LIMIT_BYTES` in `src-app/build.rs`. It runs after a
+      # failing test too, so a flaky test cannot hide a size regression.
+      - name: Helper binary size budget
+        if: ${{ !cancelled() }}
+        run: scripts/check-helper-sizes.sh
+
       - name: Report failing and flaky tests
         if: ${{ !cancelled() }}
         run: scripts/ci-test-report.sh target/nextest/ci/junit.xml
@@ -251,148 +261,6 @@ jobs:
           path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
           retention-days: 14
-
-  release_build_linux:
-    name: Release build + binary-size budget (Linux x86_64)
-    needs: orchestrate
-    if: >-
-      needs.orchestrate.outputs.rust == 'true' ||
-      needs.orchestrate.outputs.ci == 'true' ||
-      needs.orchestrate.outputs.release_packaging == 'true'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/fetch-libghostty
-
-      - uses: ./.github/actions/linux-build-deps
-
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
-        with:
-          toolchain: "1.98.0"
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: release_build_linux
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # US-012 (prd-ai-hooks-cross-platform.md) - the 6-triple matrix
-      # requires each job to run `cargo build --workspace --release`.
-      # On Linux x86_64 this also triggers `src-app/build.rs` to stage
-      # the embedded `paneflow-shim` + `paneflow-ai-hook` + `paneflow-mcp`
-      # binaries into
-      # `target/embed-build/<triple>/release-min/`, which the size-budget
-      # step below measures. Without this step, the nested binaries
-      # would never be built on CI (build.rs only fires for paneflow-app
-      # builds) and the size-cap assertion would point at a missing file.
-      - name: Release build (workspace)
-        run: cargo build --workspace --release --locked
-
-      # US-012 AC-4 - enforce the helper size caps from the PRD Goals
-      # table and the aggregate embed cap from src-app/build.rs, measured
-      # on the `release-min` profile (workspace Cargo.toml) which applies
-      # `opt-level = "z"`, `lto = "fat"`, `strip = "symbols"`,
-      # `panic = "abort"`.
-      #
-      # Two-tier check:
-      #   * HARD cap → fails the build. Set to "current-measured-size +
-      #     small slack" so a future dep bump that bloats either binary
-      #     is caught immediately. Ratchet these caps DOWN as the
-      #     shrinking follow-up lands (do NOT relax them without PRD
-      #     sign-off; growing-only caps are a one-way door to rot).
-      #   * SOFT cap → PRD Goals table launch target. Warns in job
-      #     output when exceeded so the gap stays visible. Once the
-      #     soft cap is met in code, collapse both tiers into the soft
-      #     cap and delete this two-tier block.
-      #
-      # PRD soft caps: shim ≤ 600 KB, ai-hook ≤ 300 KB.
-      # As measured on 2026-04-23 at HEAD of US-012:
-      #   paneflow-shim     = 432 888 B   (meets soft 600 KB cap)
-      #   paneflow-ai-hook  = 359 168 B   (50 KB over soft 300 KB cap)
-      # Hard caps below reflect the as-measured reality plus ~6 %
-      # regression headroom. The ai-hook soft cap is out of reach on
-      # stable std: about 170 KB of every helper is std's backtrace
-      # symbolizer, which only `panic=immediate-abort` (nightly) removes.
-      #
-      # Margin warning: a helper within MARGIN_WARN bytes of its hard cap
-      # gets its own warning. A workspace version bump alone moves a
-      # helper by about 1.5 KB, so a margin under 4 KiB is one release
-      # bump plus one small feature away from a red job (#131: the
-      # ai-hook sat 768 B under its cap before anyone noticed).
-      #
-      # Caps are gated at x86_64 Linux only (matches the PRD Goals
-      # measurement target). Other targets may drift slightly due to
-      # PE/Mach-O overhead and are not gated here.
-      - name: Binary-size budget
-        run: |
-          set -euo pipefail
-          TARGET_DIR="target/embed-build/x86_64-unknown-linux-gnu/release-min"
-          SHIM_BIN="$TARGET_DIR/paneflow-shim"
-          HOOK_BIN="$TARGET_DIR/paneflow-ai-hook"
-          MCP_BIN="$TARGET_DIR/paneflow-mcp"
-          if [ ! -f "$SHIM_BIN" ] || [ ! -f "$HOOK_BIN" ] || [ ! -f "$MCP_BIN" ]; then
-            echo "::error::US-012: expected nested binaries under $TARGET_DIR - did src-app/build.rs run?"
-            ls -la "$TARGET_DIR" 2>&1 || true
-            exit 1
-          fi
-          SHIM_SIZE=$(stat -c%s "$SHIM_BIN")
-          HOOK_SIZE=$(stat -c%s "$HOOK_BIN")
-          MCP_SIZE=$(stat -c%s "$MCP_BIN")
-          TOTAL_SIZE=$((SHIM_SIZE + HOOK_SIZE + MCP_SIZE))
-          # Hard caps (regression gate). Tighten as binaries shrink.
-          # Re-baselined 2026-06-23: GitHub's ubuntu-22.04 image/toolchain
-          # now measures the shim at 493,712 B on main (ae0d9f2), tripping the
-          # old 480 KiB cap without any shim code change. Keep the same
-          # "measured + small slack" regression gate under the 600 KB soft cap.
-          SHIM_HARD=524288   # 512 KiB  (measured 482 KiB + ~6 % slack)
-          HOOK_HARD=384000   # 375 KiB  (set at 359,168 B + ~7 % slack; measured 378,536 B on 2026-11-05, #131)
-          MCP_HARD=524288    # 512 KiB
-          TOTAL_HARD=1835008 # Keep in sync with src-app/build.rs
-          # Soft caps (PRD launch targets). Warn-only until met.
-          SHIM_SOFT=614400   # 600 KB
-          HOOK_SOFT=307200   # 300 KB
-          MARGIN_WARN=4096
-
-          echo "paneflow-shim     = ${SHIM_SIZE} B  (hard ${SHIM_HARD}, margin $((SHIM_HARD - SHIM_SIZE)) / soft ${SHIM_SOFT})"
-          echo "paneflow-ai-hook  = ${HOOK_SIZE} B  (hard ${HOOK_HARD}, margin $((HOOK_HARD - HOOK_SIZE)) / soft ${HOOK_SOFT})"
-          echo "paneflow-mcp      = ${MCP_SIZE} B  (hard ${MCP_HARD}, margin $((MCP_HARD - MCP_SIZE)))"
-          echo "embedded helpers  = ${TOTAL_SIZE} B  (hard ${TOTAL_HARD}, margin $((TOTAL_HARD - TOTAL_SIZE)))"
-
-          near_hard_cap() {
-            local margin=$(($3 - $2))
-            if [ "$margin" -ge 0 ] && [ "$margin" -lt "$MARGIN_WARN" ]; then
-              echo "::warning::$1 is ${2} B, only ${margin} B under its HARD cap ${3}. A version bump alone moves a helper by about 1.5 KB: shrink it before the cap fails a release (#131)."
-            fi
-          }
-          near_hard_cap paneflow-shim "$SHIM_SIZE" "$SHIM_HARD"
-          near_hard_cap paneflow-ai-hook "$HOOK_SIZE" "$HOOK_HARD"
-          near_hard_cap paneflow-mcp "$MCP_SIZE" "$MCP_HARD"
-          near_hard_cap "the embedded helper total" "$TOTAL_SIZE" "$TOTAL_HARD"
-
-          fail=0
-          if [ "$SHIM_SIZE" -gt "$SHIM_HARD" ]; then
-            echo "::error::paneflow-shim size ${SHIM_SIZE} exceeds HARD cap ${SHIM_HARD}. Shrink via smaller deps or tighter release-min profile."
-            fail=1
-          elif [ "$SHIM_SIZE" -gt "$SHIM_SOFT" ]; then
-            echo "::warning::paneflow-shim ${SHIM_SIZE} B is over the PRD soft cap ${SHIM_SOFT} B (600 KB). Non-blocking; tighten before v0.3.0."
-          fi
-          if [ "$HOOK_SIZE" -gt "$HOOK_HARD" ]; then
-            echo "::error::paneflow-ai-hook size ${HOOK_SIZE} exceeds HARD cap ${HOOK_HARD}. Shrink via smaller deps or tighter release-min profile."
-            fail=1
-          elif [ "$HOOK_SIZE" -gt "$HOOK_SOFT" ]; then
-            echo "::warning::paneflow-ai-hook ${HOOK_SIZE} B is over the PRD soft cap ${HOOK_SOFT} B (300 KB). Non-blocking; tighten before v0.3.0."
-          fi
-          if [ "$MCP_SIZE" -gt "$MCP_HARD" ]; then
-            echo "::error::paneflow-mcp size ${MCP_SIZE} exceeds HARD cap ${MCP_HARD}. Shrink via smaller deps or tighter release-min profile."
-            fail=1
-          fi
-          if [ "$TOTAL_SIZE" -gt "$TOTAL_HARD" ]; then
-            echo "::error::embedded helper total ${TOTAL_SIZE} exceeds HARD cap ${TOTAL_HARD}. Keep this in sync with src-app/build.rs."
-            fail=1
-          fi
-          exit $fail
 
   # Performance gates (prd-performance-gates EP-003). Deterministic work
   # budgets for the host, the worker and the desktop, the allocation columns
@@ -491,23 +359,12 @@ jobs:
         with:
           toolchain: "1.98.0"
 
-      # `rust-cache` keys on prefix-key + key + job, so this slot is this
-      # job's own; it is not shared with `check_style`. What it buys here is
-      # ${CARGO_HOME}/bin, which keeps the `cargo install cargo-deny` below
-      # off the critical path on a warm cache.
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: "v1-rust"
-          key: security-audit
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install cargo-deny
-        # Exact pin, matching `libghostty-linux.yml::supply-chain`. A floating
-        # `^0.19` let the two workflows resolve different patch releases and
-        # disagree about the same lockfile. `--locked` pins cargo-deny's own
-        # dep graph on top of that. The rust-cache step above restores
-        # ${CARGO_HOME}/bin, so this is a no-op compile on a warm cache.
-        run: cargo install cargo-deny --locked --version 0.19.8
+      # The release binary, at the version and SHA-256 pinned in the script.
+      # `audit.yml` installs it through the same script, so the PR gate and
+      # the daily audit can never disagree about the same lockfile. Nothing
+      # compiles in this job, so it has no rust-cache entry.
+      - name: Install cargo-deny (prebuilt, pinned digest)
+        run: scripts/install-cargo-deny.sh
 
       # Only the network fetches are retried, and only on a transient network
       # signature. The check runs offline and is never retried: a real
@@ -665,6 +522,31 @@ jobs:
             target/aarch64-apple-darwin/release/paneflow-session-fixture
           if-no-files-found: error
           retention-days: 7
+
+      # The two libghostty gates below used to run in `libghostty-macos.yml`
+      # on a second macos-15 runner, after rebuilding the release binary this
+      # job has just built. `PANEFLOW_LIBGHOSTTY_DIR` stays unset, so cargo
+      # links `native/libghostty/prebuilt/<target>`, the archive a release
+      # links. libghostty must be statically linked into the binary and its
+      # notices must ship.
+      - name: Enforce the libghostty static link and shipped notices
+        run: |
+          scripts/verify-libghostty-macos.sh \
+            --binary target/aarch64-apple-darwin/release/paneflow \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      # The only end-to-end proof on this runner: it opens a real Darwin PTY,
+      # spawns `/bin/sh`, drives a resize through both the PTY and the engine,
+      # reads the shell's `stty size` answer back, asserts the marker reached
+      # the libghostty snapshot, and checks the child was reaped. It is the
+      # same binary and the same assertions the Linux leg runs.
+      - name: End-to-end libghostty PTY smoke
+        run: |
+          cargo build --release --locked \
+            -p paneflow-ghostty-smoke \
+            --features native \
+            --target aarch64-apple-darwin
+          target/aarch64-apple-darwin/release/paneflow-ghostty-smoke
 
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
@@ -1466,7 +1348,6 @@ jobs:
       - orchestrate
       - check_style
       - run_tests_linux
-      - release_build_linux
       - perf_gates
       - security_audit
       - macos_check
@@ -1482,7 +1363,6 @@ jobs:
           RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
           RESULT_CHECK_STYLE: ${{ needs.check_style.result }}
           RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
-          RESULT_RELEASE_BUILD_LINUX: ${{ needs.release_build_linux.result }}
           RESULT_PERF_GATES: ${{ needs.perf_gates.result }}
           RESULT_SECURITY_AUDIT: ${{ needs.security_audit.result }}
           RESULT_MACOS_CHECK: ${{ needs.macos_check.result }}
@@ -1503,7 +1383,6 @@ jobs:
           check_result "orchestrate"          "$RESULT_ORCHESTRATE"
           check_result "check_style"          "$RESULT_CHECK_STYLE"
           check_result "run_tests_linux"      "$RESULT_RUN_TESTS_LINUX"
-          check_result "release_build_linux"  "$RESULT_RELEASE_BUILD_LINUX"
           check_result "perf_gates"           "$RESULT_PERF_GATES"
           check_result "security_audit"       "$RESULT_SECURITY_AUDIT"
           check_result "macos_check"          "$RESULT_MACOS_CHECK"
