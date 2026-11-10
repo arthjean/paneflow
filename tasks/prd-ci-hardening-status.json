@@ -36,7 +36,7 @@
       "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-005",
@@ -236,15 +236,15 @@
       "id": "US-015",
       "title": "Une suite ne tourne qu'une fois",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-005"
       ],
       "started_at": "2026-11-10",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-10",
+      "reviewed_at": "2026-11-10"
     },
     {
       "id": "US-016",
