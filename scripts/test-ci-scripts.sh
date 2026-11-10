@@ -273,9 +273,59 @@ helper_size_cases() {
   expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 1100000 B, over the hard cap of 1000000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
 }
 
+powershell_retry_cases() {
+  if ! command -v pwsh >/dev/null; then
+    if [ -n "${CI:-}" ]; then
+      echo "FAIL pwsh is required in CI to test scripts/ci-retry-network.ps1"
+      failures=$((failures + 1))
+      cases=$((cases + 1))
+    else
+      echo "skip the PowerShell retry cases: pwsh is not installed"
+    fi
+    return
+  fi
+  local probe="$WORK/retry-probe.ps1"
+  cat > "$probe" <<'EOF'
+param([string]$Retry, [int]$Failures, [string]$Message, [string]$Counter)
+Set-Content -LiteralPath $Counter -Value "0"
+$env:PROBE_COUNTER = $Counter
+$env:PROBE_FAILURES = "$Failures"
+$env:PROBE_MESSAGE = $Message
+& $Retry -BackoffSeconds 0 -Command {
+    $runs = [int](Get-Content -LiteralPath $env:PROBE_COUNTER) + 1
+    Set-Content -LiteralPath $env:PROBE_COUNTER -Value "$runs"
+    if ($runs -le [int]$env:PROBE_FAILURES) {
+        throw "build failed: $($env:PROBE_MESSAGE)"
+    }
+    Write-Output "command output"
+}
+exit $LASTEXITCODE
+EOF
+  local retry="$ROOT/scripts/ci-retry-network.ps1"
+  local counter="$WORK/ps-retry-count"
+
+  expect "PowerShell: a transient Zig signature is retried" 0 "succeeded on attempt 2 after a transient network failure" \
+    pwsh -NoProfile -File "$probe" -Retry "$retry" -Failures 1 -Message "error: ReadFailed" -Counter "$counter"
+  expect "PowerShell: a failure with no transient signature is not retried" 1 "no transient network signature; not retrying" \
+    pwsh -NoProfile -File "$probe" -Retry "$retry" -Failures 1 -Message "cannot extract the Zig source tar" -Counter "$counter"
+  cases=$((cases + 1))
+  if [ "$(tr -d '[:space:]' < "$counter")" != "1" ]; then
+    echo "FAIL PowerShell: a failure with no transient signature ran the command $(cat "$counter") time(s), expected 1"
+    failures=$((failures + 1))
+  fi
+  expect "PowerShell: a transient failure that never clears fails after the last attempt" 1 "still failing on a transient network error after 3 attempts" \
+    pwsh -NoProfile -File "$probe" -Retry "$retry" -Failures 9 -Message "ProtocolError" -Counter "$counter"
+  cases=$((cases + 1))
+  if [ "$(tr -d '[:space:]' < "$counter")" != "3" ]; then
+    echo "FAIL PowerShell: a transient failure that never clears ran the command $(cat "$counter") time(s), expected 3"
+    failures=$((failures + 1))
+  fi
+}
+
 check_workflows_cases
 helper_size_cases
 retry_cases
+powershell_retry_cases
 
 if [ "$failures" -ne 0 ]; then
   echo "::error::$failures of $cases CI script case(s) failed"

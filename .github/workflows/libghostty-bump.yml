@@ -432,20 +432,22 @@ jobs:
       # The build fetches the Zig packages Ghostty depends on, so it runs
       # through the retry wrapper like the Linux and macOS rebuilds: a
       # transient `ReadFailed` or `ProtocolError` restarts it instead of
-      # failing the bump.
+      # failing the bump. The wrapper is the PowerShell one, which reads the
+      # signature list of `ci-retry-network.sh`: under Git Bash the build
+      # script would resolve MSYS `tar` and `link` instead of the Windows ones.
       - name: Build
-        shell: bash
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-bump-evidence
           ZIG_EXE: ${{ steps.toolchain.outputs.zig }}
           ZIG_SOURCE_ARCHIVE: ${{ steps.toolchain.outputs.zig-source-archive }}
         run: |
-          scripts/ci-retry-network.sh \
-            pwsh -NoProfile -File scripts/build-libghostty-windows.ps1 \
-            -Zig "$ZIG_EXE" \
-            -ZigSourceArchive "$ZIG_SOURCE_ARCHIVE" \
-            -AllowHashDrift
+          .\scripts\ci-retry-network.ps1 -Command {
+            & .\scripts\build-libghostty-windows.ps1 `
+              -Zig $env:ZIG_EXE `
+              -ZigSourceArchive $env:ZIG_SOURCE_ARCHIVE `
+              -AllowHashDrift
+          }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
