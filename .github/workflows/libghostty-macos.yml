@@ -184,6 +184,7 @@ jobs:
         with:
           prefix-key: v1-libghostty-macos-consumer
           key: ${{ env.TARGET }}-${{ hashFiles('native/libghostty/manifest.toml') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # `PANEFLOW_LIBGHOSTTY_DIR` is deliberately left unset for every cargo
       # step below, so `ArtifactBundle::resolve` falls back to

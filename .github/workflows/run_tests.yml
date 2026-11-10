@@ -156,8 +156,9 @@ jobs:
   # drift would silently diverge CI from release.
   #
   # rust-cache keys per job so they don't fight over the same cache
-  # slot. Cold cache → all three populate independently; warm cache
-  # → they read in parallel.
+  # slot. Only a run on `main` saves an entry (`save-if`): a pull request
+  # restores the entry `main` wrote and never writes one of its own, so
+  # the entries stay within the repository's cache quota.
 
   check_style:
     name: Style (fmt + clippy)
@@ -173,10 +174,13 @@ jobs:
           persist-credentials: false
 
       # Every third-party action in the release chain runs pinned to a
-      # full commit SHA (`actions/*` is exempt), and no workflow or
-      # composite action shell traces with -x.
-      - name: Workflow lint (action pins, no xtrace)
+      # full commit SHA (`actions/*` is exempt), no workflow or composite
+      # action shell traces with -x, and only `main` writes a rust-cache
+      # entry. `test-ci-scripts.sh` runs the CI scripts against fixtures.
+      - name: Workflow lint (action pins, no xtrace, cache policy)
         run: scripts/check-workflows.sh
+      - name: CI script tests
+        run: scripts/test-ci-scripts.sh
       - name: Path filter covers every build input
         run: scripts/check-ci-filter-coverage.sh
       - name: No new wall-clock budget in a unit test
@@ -194,6 +198,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: check_style
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         run: cargo fmt --check
@@ -225,6 +230,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: run_tests_linux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
@@ -270,6 +276,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: release_build_linux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # US-012 (prd-ai-hooks-cross-platform.md) - the 6-triple matrix
       # requires each job to run `cargo build --workspace --release`.
@@ -429,6 +436,7 @@ jobs:
         with:
           prefix-key: "perf-gates-"
           key: perf_gates
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run the performance gates
         run: scripts/perf-gates.sh
@@ -491,6 +499,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: security-audit
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-deny
         # Exact pin, matching `libghostty-linux.yml::supply-chain`. A floating
@@ -608,6 +617,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: aarch64-apple-darwin
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # US-018 AC2 - formatting + lint on macOS. fmt is platform-agnostic
       # but runs here too so formatter version drift between local Linux
@@ -1002,6 +1012,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: x86_64-pc-windows-msvc
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Enabling the app feature makes every relevant Cargo command compile
       # the Windows Ghostty host and link the reviewed static archive from
@@ -1395,6 +1406,7 @@ jobs:
         with:
           prefix-key: "v1-rust"
           key: aarch64-unknown-linux-gnu
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # fmt runs here too so formatter-version drift between dev boxes
       # (x86_64) and the arm runner is caught at the PR gate.

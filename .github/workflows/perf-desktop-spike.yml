@@ -48,6 +48,7 @@ jobs:
         with:
           prefix-key: perf-spike-
           key: ${{ matrix.display }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the release desktop, host and fixture
         run: |
           cargo build --release --locked -p paneflow-app -p paneflow-host

@@ -10,6 +10,8 @@ RELEASE_WORKFLOWS=(
 )
 XTRACE_RE='(^|[[:space:];&|(])(set|bash|sh)([[:space:]]+(-[A-Za-z]+|[+-]o[[:space:]]+[a-z]+))*[[:space:]]+(-[A-Za-z]*x[A-Za-z]*|-o[[:space:]]+xtrace)([[:space:]]|$)'
 GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
+RUST_CACHE_RE='^([[:space:]]*)(-[[:space:]]+)?uses:[[:space:]]*Swatinem/rust-cache@'
+SAVE_ON_MAIN="save-if:\${{github.ref=='refs/heads/main'}}"
 
 if [ "$#" -gt 0 ]; then
   pin_files=("$@")
@@ -88,8 +90,63 @@ for file in "${trace_files[@]}"; do
   traced=$((traced + 1))
 done
 
+cache_steps=0
+for file in "${trace_files[@]}"; do
+  [ -f "$file" ] || continue
+  mapfile -t lines < "$file"
+  total=${#lines[@]}
+  is_release=0
+  cache_mode_none=0
+  if [ "$(basename "$file")" = "release.yml" ]; then
+    is_release=1
+  fi
+  for ((i = 0; i < total; i++)); do
+    line="${lines[i]%$'\r'}"
+    if [[ "$line" =~ ^cache-mode:[[:space:]]*none[[:space:]]*$ ]]; then
+      cache_mode_none=1
+    fi
+    if ! [[ "$line" =~ $RUST_CACHE_RE ]]; then
+      continue
+    fi
+    step_indent=${#BASH_REMATCH[1]}
+    if [ -z "${BASH_REMATCH[2]}" ]; then
+      step_indent=$((step_indent - 2))
+    fi
+    cache_steps=$((cache_steps + 1))
+    if ((is_release == 1)); then
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): the release workflow builds without a cache; remove this Swatinem/rust-cache step"
+      status=1
+      continue
+    fi
+    saves_on_main=0
+    for ((j = i + 1; j < total; j++)); do
+      next="${lines[j]%$'\r'}"
+      if [[ "$next" =~ ^[[:space:]]*(#.*)?$ ]]; then
+        continue
+      fi
+      [[ "$next" =~ ^([[:space:]]*) ]]
+      if ((${#BASH_REMATCH[1]} <= step_indent)); then
+        break
+      fi
+      if [ "${next//[[:space:]]/}" = "$SAVE_ON_MAIN" ]; then
+        saves_on_main=1
+        break
+      fi
+    done
+    if ((saves_on_main == 0)); then
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): Swatinem/rust-cache must declare save-if: \${{ github.ref == 'refs/heads/main' }} so that only main writes the cache"
+      status=1
+    fi
+  done
+  if ((is_release == 1 && cache_mode_none == 0)); then
+    echo "::error file=$(relative "$file"),line=1::$(relative "$file"):1: the release workflow must declare cache-mode: none at the top level"
+    status=1
+  fi
+done
+
 if [ "$status" -eq 0 ]; then
   echo "every third-party action in ${#pin_files[@]} file(s) is pinned by SHA ($checked references checked)"
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
+  echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
 fi
 exit "$status"
