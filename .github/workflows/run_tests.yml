@@ -35,6 +35,11 @@ defaults:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Line tables keep file and line in a panic backtrace and drop the rest of
+  # the debug info, most of what a debug `target/` weighs. The six rust-cache
+  # entries of this workflow have to fit the repository's 10 GB cache quota
+  # together; with full debug info they measured 10.2 GB on 2026-11-10.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   # Mirrors Zed's `orchestrate` job pattern (run_tests.yml in
@@ -156,8 +161,9 @@ jobs:
   #
   # rust-cache keys per job so they don't fight over the same cache
   # slot. Only a run on `main` saves an entry (`save-if`): a pull request
-  # restores the entry `main` wrote and never writes one of its own, so
-  # the entries stay within the repository's cache quota.
+  # restores the entry `main` wrote and never writes one of its own. This
+  # workflow is the only one that keeps rust-cache entries, so the quota
+  # serves the jobs that run on every push.
 
   check_style:
     name: Style (fmt + clippy)

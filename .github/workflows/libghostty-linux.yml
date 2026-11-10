@@ -146,19 +146,13 @@ jobs:
           toolchain: "1.98.0"
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty
-          key: ${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
       - uses: ./.github/actions/linux-build-deps
         with:
           extra-packages: >-
             appstream binutils elfutils icnsutils imagemagick patchelf rpm
 
-      # `Swatinem/rust-cache` above restores ${CARGO_HOME}/bin, so on a warm
-      # cache these two resolve to a no-op instead of a ~4 min rebuild.
+      # This workflow keeps no rust-cache entry: the repository's cache quota
+      # is reserved for the `run_tests.yml` jobs, which run on every push.
       - name: Install pinned packaging tools
         run: |
           cargo install cargo-deb --version 3.6.3 --locked
@@ -326,11 +320,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty
-          key: bindings
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned bindgen and native tools
         run: |
           for attempt in 1 2 3; do
@@ -373,11 +362,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: nightly-2026-07-14
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: v1-libghostty
-          key: fuzz-nightly-2026-07-14
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - uses: ./.github/actions/fetch-libghostty

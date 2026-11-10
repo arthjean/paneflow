@@ -44,11 +44,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.98.0"
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-        with:
-          prefix-key: perf-spike-
-          key: ${{ matrix.display }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the release desktop, host and fixture
         run: |
           cargo build --release --locked -p paneflow-app -p paneflow-host
