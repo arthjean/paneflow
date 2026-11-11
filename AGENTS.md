@@ -27,9 +27,12 @@ commit. The release pipeline does not re-run fmt, clippy or the tests: its
 `ci-verdict` job requires every required `run_tests` job, `Style (fmt + clippy)`
 included, to be `success` on the exact commit being released, and "Publish
 GitHub Release" needs it. One mis-formatted line on that commit turns Style red
-and blocks the release. A dirty tag commit is worse: the tag has to be deleted
-and re-created at the fix commit, and the publish job refuses to run once the
-tag no longer points at the commit it built. For a tag-push release, run
+and blocks the release. A dirty tag commit is worse. Before the release is
+published, delete the tag and re-create it at the fix commit; the publish job
+refuses to run once the tag no longer points at the commit it built. Once the
+release is published, never delete or move its tag: a re-run refuses a
+published release, immutable releases lock the tag and its assets, and the fix
+ships as a patch version. For a tag-push release, run
 `cargo fmt --check` one final time on the exact commit you are about to tag,
 and wait for `run_tests` to be green on it.
 

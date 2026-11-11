@@ -1832,6 +1832,10 @@ jobs:
     environment: release
     permissions:
       contents: write
+      # actions/attest-build-provenance signs the provenance with this job's
+      # OIDC identity and stores it on the repository.
+      id-token: write
+      attestations: write
     steps:
       # AGENTS.md re-creates a tag at the fix commit when a tag build fails.
       # A run still in flight for the old commit must not publish its
@@ -1850,6 +1854,19 @@ jobs:
             exit 1
           fi
           echo "$RELEASE_TAG still points to $RELEASE_SHA"
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+
+      # A published release is final: a re-run fails here instead of
+      # replacing its assets, and the fix ships as a patch version. A draft
+      # left by an earlier attempt is still replaced.
+      - name: Refuse a release that is already published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/require-unpublished-release.sh "$RELEASE_TAG"
 
       - name: Download all release artifacts
         # `pattern` globs every `release-assets-*` workflow artifact
@@ -1885,19 +1902,11 @@ jobs:
             echo "::error::MINISIGN_SECRET_KEY is required. Clients with an embedded key refuse unsigned self-update assets."
             exit 1
           fi
-          # minisign is NOT packaged in Ubuntu 22.04 (jammy) - it only enters
-          # the archive in 24.04 (noble, universe). Install the upstream
-          # static binary instead, pinned by version + SHA-256 so the signing
-          # toolchain itself is tamper-evident (first executed 2026-06-10;
-          # the apt path had never run while the secret was unprovisioned).
-          MINISIGN_VERSION=0.12
-          MINISIGN_SHA256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
-          curl -sSfL --retry 3 -o /tmp/minisign.tar.gz \
-            "https://github.com/jedisct1/minisign/releases/download/${MINISIGN_VERSION}/minisign-${MINISIGN_VERSION}-linux.tar.gz"
-          echo "${MINISIGN_SHA256}  /tmp/minisign.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/minisign.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/minisign-linux/x86_64/minisign /usr/local/bin/minisign
-          minisign -v
+          # minisign is not packaged in Ubuntu 22.04 (jammy): the upstream
+          # static binary is installed, pinned by version and SHA-256 in the
+          # script, so the signing toolchain itself is tamper-evident.
+          bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
+          export PATH="$RUNNER_TEMP/minisign:$PATH"
           # Unencrypted secret key (generated with `minisign -G -W`) written to
           # a private temp file; the GitHub secret is the only protection.
           key_file="$(mktemp)"
@@ -1919,40 +1928,39 @@ jobs:
             echo "signed: ${base} -> ${base}.minisig"
           done
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      # Draft first: the release stays hidden from /releases/latest, which the
+      # in-app updater reads, until every asset is uploaded, matches the file
+      # this run built, and carries its provenance attestation.
+      - name: Create the draft GitHub Release and upload the assets
+        id: draft
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: release-assets/*
           generate_release_notes: true
-          # Keep the release hidden from /releases/latest until every signed
-          # asset is attached. The updater fetches <asset>.minisig and fails
-          # closed, so exposing a half-populated release can look like a
-          # tampered Windows MSI to clients that click Update immediately.
           draft: true
           prerelease: ${{ contains(env.RELEASE_TAG, 'alpha') || contains(env.RELEASE_TAG, 'beta') || contains(env.RELEASE_TAG, 'rc') }}
 
-      - name: Verify uploaded release asset set
+      # The `digest` GitHub computed for each uploaded asset must be the
+      # SHA-256 of the file this run built and signed, and the two asset sets
+      # must be equal. On any mismatch the job fails and the draft stays in
+      # place for inspection.
+      - name: Compare every uploaded asset digest with the built file
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          local_assets="$(mktemp)"
-          remote_assets="$(mktemp)"
-          trap 'rm -f "$local_assets" "$remote_assets"' EXIT
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: bash scripts/verify-release-digests.sh "$RELEASE_ID" release-assets
 
-          find release-assets -maxdepth 1 -type f -printf '%f\n' | sort > "$local_assets"
-          gh release view "${RELEASE_TAG}" \
-            --json assets \
-            --jq '.assets[].name' \
-            | sort > "$remote_assets"
+      # SLSA build provenance for every asset, signed with this job's OIDC
+      # identity. Users verify a download with
+      # `gh attestation verify <file> --repo arthjean/paneflow`.
+      - name: Attest the release assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/*
 
-          if ! diff -u "$local_assets" "$remote_assets"; then
-            echo "::error::Uploaded release assets do not match signed local artifacts."
-            exit 1
-          fi
-
-      - name: Publish GitHub Release after asset verification
+      # With immutable releases enabled on the repository, publishing locks
+      # the tag and every asset from here on.
+      - name: Publish the verified and attested release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -3513,14 +3521,8 @@ jobs:
             exit 1
           }
 
-          MINISIGN_VERSION=0.12
-          MINISIGN_SHA256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
-          curl -sSfL --retry 3 -o /tmp/minisign.tar.gz \
-            "https://github.com/jedisct1/minisign/releases/download/${MINISIGN_VERSION}/minisign-${MINISIGN_VERSION}-linux.tar.gz"
-          echo "${MINISIGN_SHA256}  /tmp/minisign.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/minisign.tar.gz -C /tmp
-          sudo install -m 0755 /tmp/minisign-linux/x86_64/minisign /usr/local/bin/minisign
-          minisign -v
+          bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
+          export PATH="$RUNNER_TEMP/minisign:$PATH"
 
           key_file="$(mktemp)"
           trap 'rm -f "$key_file"' EXIT
