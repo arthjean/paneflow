@@ -157,6 +157,29 @@ instructions below. If the window does not open, follow the
 Once Paneflow opens, use the [getting started guide](/docs) to launch your
 first agent. Install CLI agents separately and follow their sign-in instructions.
 
+## How do I check where a download comes from?
+
+Every release asset published after 0.19.0 carries a build provenance
+attestation, signed by the GitHub Actions run that built it. With the
+[GitHub CLI](https://cli.github.com/), check that a downloaded file was built
+by the Paneflow release workflow, from the Paneflow repository:
+
+```bash
+version="X.Y.Z"
+gh attestation verify "paneflow-$version-x86_64.deb" \
+  --repo arthjean/paneflow \
+  --signer-workflow arthjean/paneflow/.github/workflows/release.yml
+```
+
+Use the name of the file you downloaded: the `.deb`, `.rpm`, AppImage, or
+`.tar.gz`, for `x86_64` or `aarch64`. Packages installed through `apt`,
+`dnf`, or `zypper` are already checked against the repository signing key.
+
+In a terminal, the command ends with `Verification succeeded!`. If it fails,
+the file was not built by a Paneflow release:
+delete it and download a fresh copy from the
+[releases page](https://github.com/arthjean/paneflow/releases).
+
 ## What if `paneflow` is not found in my PATH?
 
 The steps below apply to AppImage and `.tar.gz` installs. For a `.deb` or

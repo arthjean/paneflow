@@ -68,6 +68,27 @@ opens. If the file is not found, check that `PaneFlow.app` is in
 Then use the [getting started guide](/docs) to launch your first agent.
 Install CLI agents separately and follow their sign-in instructions.
 
+## How do I check where a download comes from?
+
+Every release asset published after 0.19.0 carries a build provenance
+attestation, signed by the GitHub Actions run that built it. With the
+[GitHub CLI](https://cli.github.com/), check that a downloaded file was built
+by the Paneflow release workflow, from the Paneflow repository:
+
+```bash
+version="X.Y.Z"
+gh attestation verify "paneflow-$version-aarch64-apple-darwin.dmg" \
+  --repo arthjean/paneflow \
+  --signer-workflow arthjean/paneflow/.github/workflows/release.yml
+```
+
+Homebrew already checks the DMG against the SHA-256 in the cask.
+
+In a terminal, the command ends with `Verification succeeded!`. If it fails,
+the file was not built by a Paneflow release:
+delete it and download a fresh copy from the
+[releases page](https://github.com/arthjean/paneflow/releases).
+
 ## Use the paneflow command in your terminal
 
 Installing the app does not automatically add its executable to your

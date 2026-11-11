@@ -625,6 +625,74 @@ published_stream_cases() {
   wait "$server" 2>/dev/null || true
 }
 
+canned_gh() {
+  local bin="$WORK/canned-gh-bin"
+  mkdir -p "$bin"
+  cat > "$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CANNED_GH_LOG"
+if [ "${CANNED_GH_EXIT:-0}" -ne 0 ]; then
+  cat "$CANNED_GH_OUTPUT" >&2
+  exit "$CANNED_GH_EXIT"
+fi
+cat "$CANNED_GH_OUTPUT"
+EOF
+  chmod +x "$bin/gh"
+  printf '%s' "$bin"
+}
+
+release_publication_cases() {
+  local guard="$ROOT/scripts/require-unpublished-release.sh"
+  local digests="$ROOT/scripts/verify-release-digests.sh"
+  local bin answer="$WORK/canned-gh-answer" log="$WORK/canned-gh.log" dir="$WORK/built-assets"
+  bin="$(canned_gh)"
+  local run=(env PATH="$bin:$PATH" GITHUB_REPOSITORY=owner/paneflow CANNED_GH_OUTPUT="$answer" CANNED_GH_LOG="$log")
+
+  printf 'false true https://github.com/owner/paneflow/releases/tag/v1.2.3\n' > "$answer"
+  expect "a re-run after publication fails with a message instead of replacing the assets" 1 \
+    "Release v1\.2\.3 is already published \(https://github\.com/owner/paneflow/releases/tag/v1\.2\.3, immutable: true\)\. A re-run never replaces published assets: cut a patch version" \
+    "${run[@]}" "$guard" v1.2.3
+  printf 'true false https://github.com/owner/paneflow/releases/tag/untagged-1\n' > "$answer"
+  expect "a draft left by an earlier attempt may be replaced" 0 "exists as a draft" "${run[@]}" "$guard" v1.2.3
+  printf 'gh: Not Found (HTTP 404)\n' > "$answer"
+  expect "a tag with no release yet passes" 0 "no published release for v1\.2\.3 yet" "${run[@]}" CANNED_GH_EXIT=1 "$guard" v1.2.3
+  printf 'gh: HTTP 502: Bad Gateway\n' > "$answer"
+  expect "an unreadable release fails closed" 1 "Could not read the release of v1\.2\.3: gh: HTTP 502" "${run[@]}" CANNED_GH_EXIT=1 "$guard" v1.2.3
+
+  mkdir -p "$dir"
+  printf 'msi bytes' > "$dir/paneflow-1.2.3-x86_64-pc-windows-msvc.msi"
+  printf 'sig bytes' > "$dir/paneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig"
+  local msi_sha sig_sha
+  msi_sha="$(sha256sum "$dir/paneflow-1.2.3-x86_64-pc-windows-msvc.msi" | awk '{print $1}')"
+  sig_sha="$(sha256sum "$dir/paneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig" | awk '{print $1}')"
+
+  printf 'paneflow-1.2.3-x86_64-pc-windows-msvc.msi\tsha256:%s\npaneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig\tsha256:%s\n' "$msi_sha" "$sig_sha" > "$answer"
+  : > "$log"
+  expect "uploaded digests equal to the built files pass" 0 "every one of the 2 uploaded assets matches" "${run[@]}" "$digests" 4242 "$dir"
+  cases=$((cases + 1))
+  if ! grep -q 'repos/owner/paneflow/releases/4242/assets' "$log"; then
+    echo "FAIL the digest check did not read the assets of the draft release"
+    failures=$((failures + 1))
+  fi
+
+  printf 'paneflow-1.2.3-x86_64-pc-windows-msvc.msi\tsha256:%064d\npaneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig\tsha256:%s\n' 0 "$sig_sha" > "$answer"
+  expect "a digest gap fails and leaves the draft for inspection" 1 \
+    "Digest check failed for paneflow-1\.2\.3-x86_64-pc-windows-msvc\.msi: uploaded sha256:0{64}, built sha256:$msi_sha" \
+    "${run[@]}" "$digests" 4242 "$dir"
+  expect "the digest failure names the draft left in place" 1 "The draft release 4242 stays in place for inspection" "${run[@]}" "$digests" 4242 "$dir"
+
+  printf 'paneflow-1.2.3-x86_64-pc-windows-msvc.msi\tsha256:%s\n' "$msi_sha" > "$answer"
+  expect "a built asset missing from the release fails" 1 "Digest check failed for paneflow-1\.2\.3-x86_64-pc-windows-msvc\.msi\.minisig: the asset is missing from release 4242" \
+    "${run[@]}" "$digests" 4242 "$dir"
+
+  printf 'paneflow-1.2.3-x86_64-pc-windows-msvc.msi\tsha256:%s\npaneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig\tsha256:%s\nstale.msi\tsha256:%064d\n' "$msi_sha" "$sig_sha" 1 > "$answer"
+  expect "an extra asset on the release fails" 1 "Digest check failed for stale\.msi: release 4242 carries an asset this run did not build" \
+    "${run[@]}" "$digests" 4242 "$dir"
+
+  printf 'paneflow-1.2.3-x86_64-pc-windows-msvc.msi\t\npaneflow-1.2.3-x86_64-pc-windows-msvc.msi.minisig\tsha256:%s\n' "$sig_sha" > "$answer"
+  expect "an asset GitHub reports no digest for fails" 1 "GitHub reports no digest for the uploaded asset" "${run[@]}" "$digests" 4242 "$dir"
+}
+
 powershell_retry_cases() {
   if ! command -v pwsh >/dev/null; then
     if [ -n "${CI:-}" ]; then
@@ -679,6 +747,7 @@ action_pin_cases
 release_signature_cases
 render_cask_cases
 published_stream_cases
+release_publication_cases
 helper_size_cases
 retry_cases
 powershell_retry_cases

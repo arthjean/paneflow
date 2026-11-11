@@ -76,6 +76,39 @@ The secrets only the publishing jobs read (`R2_*`, `CLOUDFLARE_*`,
 next real release, so watch that release's `repo_publish` and `update_cask`
 runs.
 
+## Draft, digests, attestation, and immutable releases
+
+`Publish GitHub Release` never exposes a release before it is complete:
+
+1. `scripts/require-unpublished-release.sh` fails when the tag's release is
+   already published, so a re-run never replaces a published asset. A draft
+   left by an earlier attempt is replaced.
+2. Every asset is signed with minisign, then uploaded to a draft release.
+3. `scripts/verify-release-digests.sh` compares the `digest` GitHub computed
+   for each uploaded asset with the SHA-256 of the file the run built, and the
+   two asset sets. On a mismatch the job fails and the draft stays for
+   inspection: `gh release view "v$VERSION" --json assets`, then
+   `gh release delete "v$VERSION" --yes`, which keeps the tag, and re-run the
+   failed jobs.
+4. `actions/attest-build-provenance` attests every asset. Users verify a
+   download with `gh attestation verify <file> --repo arthjean/paneflow
+   --signer-workflow arthjean/paneflow/.github/workflows/release.yml`.
+5. Only then is the draft published.
+
+Immutable releases make step 5 final: once published, a release's assets
+and its tag can no longer be changed or deleted. Arthur enables it once:
+
+```bash
+gh api -X PUT repos/arthjean/paneflow/immutable-releases
+gh api repos/arthjean/paneflow/immutable-releases
+```
+
+The second command prints `{"enabled":true,...}`. The title and the notes of
+a published release stay editable, so the curated release note is still
+edited after publication. From then on, a tag is
+deleted and re-created at a fix commit only while its release is still a
+draft or absent. A problem found after publication ships as a patch version.
+
 ## Step 1 - Bump and commit
 
 Work on `main`, clean and current, with every change for the release

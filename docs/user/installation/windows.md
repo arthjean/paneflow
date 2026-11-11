@@ -47,6 +47,25 @@ SmartScreen can still show a reputation warning for a signed file. Check
 the signature and publisher first. If a managed PC blocks installation,
 ask its administrator.
 
+### Check where the MSI comes from
+
+Every release asset published after 0.19.0 carries a build provenance
+attestation, signed by the GitHub Actions run that built it. With the
+[GitHub CLI](https://cli.github.com/), check that a downloaded file was built
+by the Paneflow release workflow, from the Paneflow repository:
+
+```powershell
+$version = "X.Y.Z"
+gh attestation verify ".\paneflow-$version-x86_64-pc-windows-msvc.msi" `
+  --repo arthjean/paneflow `
+  --signer-workflow arthjean/paneflow/.github/workflows/release.yml
+```
+
+In a terminal, the command ends with `Verification succeeded!`. If it fails,
+the file was not built by a Paneflow release:
+delete it and download a fresh copy from the
+[releases page](https://github.com/arthjean/paneflow/releases).
+
 ## Verify the installation
 
 Open a new PowerShell window and run:
