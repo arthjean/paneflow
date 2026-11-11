@@ -539,15 +539,23 @@ status badge and no glyph: `Need you` in amber, `Error` in `agent_error`, and
 `Done` in light blue with the unread count, each in 12 px Medium on its own
 color at 0.16 (0.08 on a light theme), 18 px tall with 6 px of padding, in a
 radius 6 squircle sitting on the whole pixel below the line center. While it
-thinks, the dot matrix stands alone in the agent's accent when it declares one
-and `muted` otherwise. With no agent to report, the tab's pull request takes
+thinks, the dot matrix stands alone in the agent's accent when every working
+agent of the row shares one runtime that declares one, and `muted` otherwise.
+The tree and the Agents section rank a session with the same function, so a
+row and its agent never disagree. With no agent to report, the tab's pull request takes
 the slot as an 11 px glyph and a 10 px word in GitHub's state color: `Review`,
 `Draft`, or `Merged`. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
 over it. A `Customize sidebar` menu on the rail header toggles branch,
-diffstat, pull request, and indent guide per value, then, below a menu rule,
-the Agents section behind a 13 px sparkles glyph (`sidebar_show.agents`, on by
-default).
+diffstat, pull request, status, and indent guide per value, then, below a menu
+rule, the Agents section behind a 13 px sparkles glyph (`sidebar_show.agents`,
+on by default) and the usage capsule. `Status` sits behind the
+`notification-01` glyph (`sidebar_show.status`, on by default); turned off, the
+workspace and tab rows lose their status badge, their matrix, the title
+shimmer and the status tooltip, and the pull request takes the trailing slot
+by the same rule as a row with no agent. The Agents section, the hidden-space
+attention button, the pane header marker, notifications and
+`Cmd/Ctrl+Shift+J` do not read it.
 
 The Agents section sits between the workspace tree and the footer, with no
 separator. Its 36 px header (padding 8 horizontal) holds a 20 px toggle with
@@ -558,26 +566,43 @@ At the header's trailing edge, a 22 px button at radius 7 holds the 15 px
 Hugeicons `preference-horizontal` glyph in `muted` (`Customize agent rows`).
 It opens a 172 px menu 10 px above itself, right-aligned, on the usage
 bubble's fill (the active tab tint under Mica or Blended, the menu surface
-under Themed), that toggles the runtime logo, the status and the meta line
-(`sidebar_show.agent_logo`, `agent_status`, `agent_workspace`, all on by
-default). Without the logo the meta line starts under the title's leading
-edge; without the meta line a row is 32 px. There is no counter and no sort
-control. Clicking the header collapses the section to that row, the chevron
-turning -90 degrees over 180 ms (cubic
+under Themed), that toggles the runtime logo and the workspace suffix
+(`sidebar_show.agent_logo`, `agent_workspace`, both on by default). A row
+always shows its status: hiding it would hide what the section is grouped by,
+and `sidebar_show.agents` already hides the whole section. Either toggle
+leaves a row 32 px tall. Clicking the header collapses the section to that
+row, the chevron turning -90 degrees over 180 ms (cubic
 ease-out, instant under `reduce_motion`); nothing expands it on its own, not
-even an agent turning blocked. Each row is one recognized agent session of the
-active space, on the tab row shell (margin 8, padding 7 by 6, radius 9, 55 px
-for two lines): the runtime logo at 15 px in the 20 px folder slot, in the
-runtime's accent (`#D97757` for Claude Code) or `text`, the tab title at 14 px
-Medium (the runtime's display name when the title is empty), and the trailing
-status from the tree rows. A meta line 3 px below, aligned with the title at
-28 px, shows a 12 px folder glyph and the workspace name at 14 px `muted`, 3 px
-apart. The rows are ordered by rank: waiting for input, errored, finished and
-not yet seen, working, idle, then without OSC 7501 capability, the most recent
-first within a rank. Rows are 2 px apart and 10 px where a new rank begins.
-Working shows the matrix in the runtime's tint and the title shimmers; both
-hold still under `reduce_motion`. An idle row carries no status, and a finished
-row loses its `Done` badge once its tab has been seen. A recognized agent that
+even an agent turning blocked.
+
+The agents are grouped by the status a row shows, in a fixed order: `Need
+you`, `Error`, `Done`, `Working`, `Idle`, `No status`. A status no agent has
+gets no group. Each group opens with a 24 px header: its label at 12 px Medium,
+then, 6 px after it, the number of agents in `muted` with tabular figures, the
+text starting 15 px from the sidebar edge, on the leading edge of the row
+content (margin 8, padding 7). The label takes the status color for the three
+groups that wait on you, amber for `Need you`, `agent_error` for `Error` and
+light blue for `Done`, the fixed colors from 4.3, and `muted` for `Working`,
+`Idle` and `No status`. Every header but the first has 8 px above it; rows
+within a group are 2 px apart. Within a group the rows keep the urgency order
+of `order_agents`, the most recent first, the order `Cmd/Ctrl+Shift+J` also
+follows. A recognized agent without OSC 7501 capability sits in `Idle` during
+its 3 s grace, then in `No status`.
+
+Each row is one recognized agent session of the active space, on one 32 px
+line of the tab row shell (margin 8, padding 7 by 6, radius 9): the runtime
+logo at 15 px in the 20 px folder slot, in the runtime's accent (`#D97757` for
+Claude Code) or `text`, the tab title at 14 px Medium (the runtime's display
+name when the title is empty) followed by ` · ` and the workspace name at
+14 px `muted`, then the status at the trailing edge. Neither a meta line nor a
+gap between ranks exists any more. A title and workspace wider than the row
+end in an ellipsis on one line, the workspace suffix shrinking first, and the
+tooltip of a long name gives `title · workspace` in full. The status is the tree's
+`Need you`, `Error` or `Done` badge; for `Working`, the matrix in the
+runtime's tint with the title shimmering, both holding still under
+`reduce_motion`; for `Idle`, nothing. A finished row moves from `Done` to
+`Idle` once its tab has been seen. No field an OSC 7501 report declares
+(`title`, `message`, `app`) reaches a header or a row. A recognized agent that
 has declared nothing for 3 s shows a `No status` status badge in `muted`; its
 tooltip reads `No OSC 7501 status received. Claude Code reports it from version
 2.1.295.` when the catalog knows the version, else `No OSC 7501 status received
@@ -587,12 +612,15 @@ the pointer; a click activates the workspace, the tab and the pane, and writes
 nothing to the PTY. With no agent, one 32 px row reads `No agents running` at
 13 px `muted`, inset 15.
 
-The section's height is its header, its rows and a 4 px bottom margin, capped
-at 330 px with the list scrolling past it. A 9 px handle straddles its top
+The section's height is its header, its group headers and rows with their
+gaps, and a 4 px bottom margin, capped at 330 px with the list scrolling past
+it, headers scrolling with their rows; six agents in two groups fit under the
+cap. A 9 px handle straddles its top
 edge, absent when the section is collapsed or empty: under the pointer, or
 while dragging, it shows the vertical resize cursor and a 1 px rule in `text`
 at 0.16, invisible at rest, `text` at 0.35 while it holds keyboard focus.
-Dragging sets the height between one row (95 px) and the smallest of 620 px,
+Dragging sets the height between the section header, one group header and one
+row (96 px) and the smallest of 620 px,
 the content, and the available height minus 120 px kept for the tree, which
 also applies to the automatic height; the header always stays visible.
 Double-clicking the handle returns to the content height. From the focused
@@ -606,11 +634,15 @@ content height, expanded.
 The section is a list named `Agents` and each row a list item named by
 runtime, title, workspace and state (`Claude Code, Attention sidebar,
 paneflow, waiting for input`), selected when it holds the active tab, and a
-`No status` row carries its tooltip as its description; the header button exposes `Agents` and its
+`No status` row carries its tooltip as its description; each group header is a
+level 2 heading named by its label and count (`Need you, 2 agents`), and a row
+gives its position within its group. The header button exposes `Agents` and its
 expanded state, the handle a horizontal splitter with its value and bounds.
 The tree's keyboard cursor runs on past the last tree row into the section,
-skips it while it is collapsed or hidden, wears the same cursor ring
-(`text` at 0.35), and Enter on a row focuses its pane as a click does.
+skips it while it is collapsed or hidden, steps from agent to agent without
+ever stopping on a group header, follows an agent that changes group, wears
+the same cursor ring (`text` at 0.35), and Enter on a row focuses its pane as
+a click does.
 
 Drop placeholder while dragging: margin 6, radius 8, blue at 0.10 with a 0.22
 border and a 2 px line.
