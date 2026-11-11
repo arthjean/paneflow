@@ -7,6 +7,7 @@ XTRACE_RE='(^|[[:space:];&|(])(set|bash|sh)([[:space:]]+(-[A-Za-z]+|[+-]o[[:spac
 GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
 RUST_CACHE_RE='^([[:space:]]*)(-[[:space:]]+)?uses:[[:space:]]*Swatinem/rust-cache@'
 SAVE_ON_MAIN="save-if:\${{github.ref=='refs/heads/main'}}"
+RUNS_ON_RE='^[[:space:]]*(-[[:space:]]+)?runs-on:[[:space:]]*(.*)$'
 
 case "$REMOTE_MODE" in
   auto | required | off) ;;
@@ -122,6 +123,7 @@ else
 fi
 
 traced=0
+runner_lines=0
 for file in "${trace_files[@]}"; do
   [ -f "$file" ] || continue
   line_number=0
@@ -138,6 +140,27 @@ for file in "${trace_files[@]}"; do
     if [[ "$line" =~ $GHOSTTY_PIN_RE ]] && [[ "${BASH_REMATCH[1]}" != '${{'* ]]; then
       echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: literal GHOSTTY_SHA pin; read source_sha from native/libghostty/manifest.toml through .github/actions/libghostty-manifest"
       status=1
+    fi
+    if [[ "$line" =~ $RUNS_ON_RE ]]; then
+      labels="${BASH_REMATCH[2]%%#*}"
+      labels="${labels//[/ }"
+      labels="${labels//]/ }"
+      labels="${labels//,/ }"
+      labels="${labels//\"/ }"
+      labels="${labels//\'/ }"
+      runner_lines=$((runner_lines + 1))
+      for label in $labels; do
+        case "$label" in
+          ubuntu-22.04 | ubuntu-22.04-arm | macos-14)
+            echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: runner image '$label' is deprecated and GitHub is retiring it; use ubuntu-24.04, ubuntu-24.04-arm or macos-15. A build that needs the Ubuntu 22.04 userland runs in 'container: ubuntu:22.04' on a 24.04 host"
+            status=1
+            ;;
+          *-latest)
+            echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: runner label '$label' floats to whichever image GitHub maps it to; name the image, for example ubuntu-24.04"
+            status=1
+            ;;
+        esac
+      done
     fi
   done < "$file"
   traced=$((traced + 1))
@@ -248,6 +271,7 @@ if [ "$status" -eq 0 ]; then
     echo "every pinned SHA is a commit of its repository ($remote_checked distinct pin(s) resolved through the GitHub API)"
   fi
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
+  echo "no deprecated or floating runner image in $runner_lines runs-on line(s)"
   echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
   echo "every job declares timeout-minutes ($jobs_checked job(s))"
 fi

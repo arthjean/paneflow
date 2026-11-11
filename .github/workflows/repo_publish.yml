@@ -59,7 +59,7 @@ defaults:
 
 jobs:
   publish:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 24
     environment: release
     # US-003 chain guard. Three cases:

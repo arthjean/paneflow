@@ -43,7 +43,7 @@ permissions:
 jobs:
   cron_audit:
     name: cargo-deny check (cron, ${{ matrix.target }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -197,7 +197,7 @@ jobs:
 
   signing_key_expiry:
     name: Repository signing key expiry
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

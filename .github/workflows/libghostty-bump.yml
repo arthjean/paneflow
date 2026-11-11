@@ -60,7 +60,7 @@ env:
 jobs:
   resolve:
     name: Resolve target commit and stage the manifest
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       needed: ${{ steps.target.outputs.needed }}
@@ -218,7 +218,7 @@ jobs:
     name: Regenerate bindings
     needs: resolve
     if: needs.resolve.outputs.needed == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -280,9 +280,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            runs-on: ubuntu-22.04-arm
+            runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -334,7 +334,7 @@ jobs:
     # Cross-built on Linux on purpose: Ghostty only takes the Apple libtool
     # combine path when the build host is Darwin, and the reviewed recipe
     # normalizes the zig ar -M combine that a Linux host keeps.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -465,7 +465,7 @@ jobs:
   assemble:
     name: Stage the rebuilt archives and verify the re-pinned manifest
     needs: [resolve, bindings, linux, macos, windows]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -597,7 +597,7 @@ jobs:
     name: Publish the archives, attest them, and open the pull request
     needs: [resolve, assemble]
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

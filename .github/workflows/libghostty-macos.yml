@@ -23,10 +23,10 @@ env:
 
 jobs:
   # US-015 AC5: the US-004 spike selected the Linux-host cross-build, so the
-  # archive is produced on `ubuntu-22.04`. Ghostty's CombineArchivesStep only
+  # archive is produced on a Linux runner. Ghostty's CombineArchivesStep only
   # takes the Apple `libtool` path when the build host is Darwin; a Linux host
   # keeps the `zig ar -M` combine that `scripts/build-libghostty-macos.sh`
-  # normalizes with `llvm-ar --format=darwin`. The `macos-14` fallback recipe
+  # normalizes with `llvm-ar --format=darwin`. The macOS-host fallback recipe
   # stays documented in the manifest, but nothing here needs it.
   native-rebuild:
     name: Rebuild pinned macOS archive (Linux host)
@@ -42,7 +42,7 @@ jobs:
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     # Two clean ReleaseFast builds at -j1, which is what the reproducibility
     # contract requires; the seed and job count are manifest-pinned.
     timeout-minutes: 19
@@ -134,7 +134,7 @@ jobs:
     name: libghostty macOS validation
     if: ${{ !cancelled() }}
     needs: native-rebuild
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # `native-rebuild` is schedule/dispatch-only, so on a push or a PR it

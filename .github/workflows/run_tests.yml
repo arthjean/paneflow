@@ -65,7 +65,7 @@ jobs:
   # green. Rust jobs still skip for docs-only changes.
   orchestrate:
     name: Detect changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust }}
@@ -156,11 +156,12 @@ jobs:
   # the workspace is covered by `linux_aarch64_check` and, for the
   # application and the host on x86_64, by `perf_gates` and the release.
   #
-  # Each job pins ubuntu-22.04 (matches release.yml matrix legs, same
-  # glibc 2.35 + system library set - see US-004 in
-  # prd-v0.2.0-release-hardening). Do NOT revert to ubuntu-latest;
-  # GitHub began rolling that label to 24.04 in early 2025 and the
-  # drift would silently diverge CI from release.
+  # Each job names its image, ubuntu-24.04, never the floating
+  # ubuntu-latest: `scripts/check-workflows.sh` rejects a floating label
+  # and the retired 22.04 images. These jobs build and run on the same
+  # host, so they do not need the glibc 2.35 floor of the packages: only
+  # `release.yml` and the libghostty package lane build in the
+  # `ubuntu:22.04` container, and the release gates the floor itself.
   #
   # rust-cache keys per job so they don't fight over the same cache
   # slot. Only a run on `main` saves an entry (`save-if`): a pull request
@@ -182,7 +183,7 @@ jobs:
       needs.orchestrate.outputs.rust == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 11
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -229,7 +230,7 @@ jobs:
       needs.orchestrate.outputs.rust == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 22
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -289,8 +290,7 @@ jobs:
   # scripts/perf-gates.sh reproduces the job locally. The desktop runs the
   # release build under Xvfb with Mesa lavapipe, the configuration the
   # US-003 spike validated on ubuntu-24.04 (bench/README.md, "Desktop sans
-  # écran"), which is why this job does not share the 22.04 image the
-  # release-parity jobs pin. It builds without a cache: the `gates` profile
+  # écran"). It builds without a cache: the `gates` profile
   # keeps a cold build inside the job's bound, and its rust-cache entry
   # saved 3.6 minutes for 1.4 GB of the cache quota.
   perf_gates:
@@ -359,7 +359,7 @@ jobs:
       needs.orchestrate.outputs.rust == 'true' ||
       needs.orchestrate.outputs.security == 'true' ||
       needs.orchestrate.outputs.ci == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -1294,17 +1294,17 @@ jobs:
       needs.orchestrate.outputs.release_packaging == 'true'
     # Native ARM runner (GitHub public preview since late 2024, used
     # by release.yml on the same pattern - see the comment at
-    # release.yml:34-37). Same image basis as ubuntu-22.04 so the
+    # release.yml:34-37). Same image basis as ubuntu-24.04 so the
     # system-deps list mirrors the x86_64 `check` job above without
     # drift.
     #
     # Fallback posture (US-012 AC unhappy path): if the
-    # `ubuntu-22.04-arm` label is ever withdrawn or starts queuing
+    # `ubuntu-24.04-arm` label is ever withdrawn or starts queuing
     # >30 min, fall back to `cross = "0.2.5"` emulated build
     # documented in the AC. `cross`'s Vulkan + X11 sysroot for
     # aarch64-unknown-linux-gnu needs manual header staging; that
     # complexity is why this job prefers the native runner.
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 49
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -1393,7 +1393,7 @@ jobs:
       - windows_render_smoke
       - linux_aarch64_check
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Aggregate upstream results

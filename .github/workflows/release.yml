@@ -95,7 +95,7 @@ jobs:
   # is checked here, in seconds, instead of 38 minutes into the MSI smoke.
   preflight:
     name: Resolve the release commit and check its inputs
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
@@ -148,7 +148,7 @@ jobs:
   ci-verdict:
     name: run_tests verdict on the release commit
     needs: preflight
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 65
     permissions:
       checks: read
@@ -1866,7 +1866,7 @@ jobs:
       - smoke-test-windows-msi
       - smoke-test-windows-msi-live-host
       - auto-update-e2e
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # US-002 (prd-audit-remediation): gate the publish job (which holds the
     # minisign signing key) behind the `release` environment, so the private
@@ -2061,7 +2061,7 @@ jobs:
   smoke-test-ubuntu:
     name: Smoke test - Ubuntu 22.04 (.deb postinst)
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: ubuntu:22.04
     # ubuntu:22.04's default /bin/sh is dash, which does NOT support
@@ -2168,7 +2168,7 @@ jobs:
   smoke-test-fedora:
     name: Smoke test - Fedora 40 (.rpm postinst)
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: fedora:40
     # fedora:40 ships bash as /bin/sh already, but pin it explicitly
@@ -2251,7 +2251,7 @@ jobs:
   smoke-test-debian:
     name: Smoke test - Debian 12 (.deb postinst)
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: debian:bookworm-slim
     defaults:
@@ -2319,7 +2319,7 @@ jobs:
   smoke-test-opensuse:
     name: Smoke test - openSUSE Tumbleweed (.rpm postinst)
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: opensuse/tumbleweed
     defaults:
@@ -2432,7 +2432,7 @@ jobs:
   smoke-test-arch:
     name: Smoke test - Arch Linux (tar.gz binary, no native PKGBUILD)
     needs: build-linux
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: archlinux:base
     defaults:
@@ -3365,7 +3365,7 @@ jobs:
     name: Dry-run artifact summary
     if: github.event_name == 'workflow_dispatch'
     needs: [preflight, build-linux, build-macos, build-windows]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Download all release-assets-* workflow artifacts
@@ -3428,7 +3428,7 @@ jobs:
   auto-update-e2e:
     name: Auto-update e2e (Linux x86_64)
     needs: [preflight, build-linux]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The E2E signs the NEW tarball before publish so it can remain a
     # hard `release.needs` gate. That requires the same minisign secret as
