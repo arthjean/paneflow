@@ -240,6 +240,47 @@ jobs:
 EOF
 )"
   expect "a retired image named only in a comment passes" 0 "no deprecated or floating runner image in 1 runs-on line" "$check" "$file"
+
+  file="$(workflow cited/present.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+      - run: bash scripts/check-workflows.sh
+      - shell: pwsh
+        run: ./scripts/msvc-dev-env.ps1 -Arch x64
+      - run: echo "paths 'scripts/*libghostty*' and scripts/build-libghostty-*.sh are globs"
+EOF
+)"
+  expect "scripts that exist pass, and a glob is not a script" 0 "every script a workflow or composite action cites exists \(2 script" "$check" "$file"
+
+  file="$(workflow cited/removed.yml <<EOF
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+      - run: bash scripts/removed-spike.sh
+      - run: scripts/ci-retry-network.sh "\$GITHUB_WORKSPACE/scripts/also-removed.ps1"
+EOF
+)"
+  expect "a workflow that calls a removed script names the workflow and the script" 1 "removed\.yml:7: scripts/removed-spike\.sh does not exist: .*removed\.yml still calls a script" "$check" "$file"
+  expect "a removed script passed as an argument is found too" 1 "removed\.yml:8: scripts/also-removed\.ps1 does not exist" "$check" "$file"
+
+  file="$(workflow cited/commented.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # scripts/removed-spike.sh used to run here.
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a removed script named only in a comment passes" 0 "cites exists \(0 script" "$check" "$file"
 }
 
 fake_gh() {

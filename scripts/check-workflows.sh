@@ -8,6 +8,7 @@ GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
 RUST_CACHE_RE='^([[:space:]]*)(-[[:space:]]+)?uses:[[:space:]]*Swatinem/rust-cache@'
 SAVE_ON_MAIN="save-if:\${{github.ref=='refs/heads/main'}}"
 RUNS_ON_RE='^[[:space:]]*(-[[:space:]]+)?runs-on:[[:space:]]*(.*)$'
+SCRIPT_RE='(^|[^A-Za-z0-9_-])(scripts/[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.(sh|ps1))($|[^A-Za-z0-9_.-])'
 
 case "$REMOTE_MODE" in
   auto | required | off) ;;
@@ -124,6 +125,7 @@ fi
 
 traced=0
 runner_lines=0
+declare -A script_state=()
 for file in "${trace_files[@]}"; do
   [ -f "$file" ] || continue
   line_number=0
@@ -141,6 +143,22 @@ for file in "${trace_files[@]}"; do
       echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: literal GHOSTTY_SHA pin; read source_sha from native/libghostty/manifest.toml through .github/actions/libghostty-manifest"
       status=1
     fi
+    rest="$line"
+    while [[ "$rest" =~ $SCRIPT_RE ]]; do
+      cited="${BASH_REMATCH[2]}"
+      rest="${rest#*"$cited"}"
+      if [ -z "${script_state[$cited]:-}" ]; then
+        if [ -f "$ROOT/$cited" ]; then
+          script_state["$cited"]=present
+        else
+          script_state["$cited"]=absent
+        fi
+      fi
+      if [ "${script_state[$cited]}" = absent ]; then
+        echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: $cited does not exist: $(relative "$file") still calls a script that was removed or renamed"
+        status=1
+      fi
+    done
     if [[ "$line" =~ $RUNS_ON_RE ]]; then
       labels="${BASH_REMATCH[2]%%#*}"
       labels="${labels//[/ }"
@@ -272,6 +290,7 @@ if [ "$status" -eq 0 ]; then
   fi
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
   echo "no deprecated or floating runner image in $runner_lines runs-on line(s)"
+  echo "every script a workflow or composite action cites exists (${#script_state[@]} script(s))"
   echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
   echo "every job declares timeout-minutes ($jobs_checked job(s))"
 fi
