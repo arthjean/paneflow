@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Une seule projection d'état",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-002",
@@ -44,37 +44,37 @@
       "id": "US-001",
       "title": "Le résumé de l'arbre dérive de AgentRank",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-002",
       "title": "La matrice de l'arbre prend l'accent du runtime",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-001"],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-003",
       "title": "Suppression du code mort de l'agrégat par outil",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "XS",
       "blocked_by": [],
       "started_at": "2026-11-03",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-004",

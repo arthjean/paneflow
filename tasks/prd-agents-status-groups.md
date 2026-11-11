@@ -115,13 +115,13 @@ L'arbre, la section Agents et ⌘⇧J lisent l'état d'un agent avec la même fo
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given les sessions d'une ligne d'onglet ou de workspace, when le résumé est calculé, then chaque session reçoit son rang par `AgentRank::of(session, unread)` avec le non-lu de sa surface, et le résumé prend le rang le plus urgent parmi Blocked, Errored, Done et Working, avec le nombre de sessions de ce rang.
-- [ ] Given une session de rang Idle ou NoStatus, when le résumé est calculé, then elle ne produit aucun statut, comme aujourd'hui.
-- [ ] Given une surface dont le résultat n'a pas été vu et dont l'agent est reparti au travail, when l'arbre et la section sont rendus, then les deux montrent Working (aujourd'hui l'arbre montre Done).
-- [ ] Given un résultat non lu sans session vivante sur la ligne, ou non attribué à une surface (`src-app/src/workspace/mod.rs:39-86`), when le résumé est calculé, then il compte comme Done, comme le garantit aujourd'hui le test `sidebar_agent_summary_surfaces_unread_completion_without_live_session` (`meta.rs:211`).
-- [ ] Given un workspace déplié, when son résumé est calculé, then il ne compte que les sessions sans surface et les non-lus non attribués (`meta.rs:87-98`, `src-app/src/app/sidebar/workspace_row.rs:77-81`), comme aujourd'hui.
-- [ ] Given aucune session et aucun non-lu sur la ligne, when le résumé est calculé, then il vaut `None` et la PR peut prendre la place.
-- [ ] Un test croise, pour chaque combinaison d'état (`Thinking`, `WaitingForInput`, `Finished`, `Errored`), de non-lu et de capacité OSC 7501, l'état de la ligne de l'arbre et celui de la ligne de la section, et les trouve égaux là où les deux en affichent un.
+- [x] Given les sessions d'une ligne d'onglet ou de workspace, when le résumé est calculé, then chaque session reçoit son rang par `AgentRank::of(session, unread)` avec le non-lu de sa surface, et le résumé prend le rang le plus urgent parmi Blocked, Errored, Done et Working, avec le nombre de sessions de ce rang.
+- [x] Given une session de rang Idle ou NoStatus, when le résumé est calculé, then elle ne produit aucun statut, comme aujourd'hui.
+- [x] Given une surface dont le résultat n'a pas été vu et dont l'agent est reparti au travail, when l'arbre et la section sont rendus, then les deux montrent Working (aujourd'hui l'arbre montre Done).
+- [x] Given un résultat non lu sans session vivante sur la ligne, ou non attribué à une surface (`src-app/src/workspace/mod.rs:39-86`), when le résumé est calculé, then il compte comme Done, comme le garantit aujourd'hui le test `sidebar_agent_summary_surfaces_unread_completion_without_live_session` (`meta.rs:211`).
+- [x] Given un workspace déplié, when son résumé est calculé, then il ne compte que les sessions sans surface et les non-lus non attribués (`meta.rs:87-98`, `src-app/src/app/sidebar/workspace_row.rs:77-81`), comme aujourd'hui.
+- [x] Given aucune session et aucun non-lu sur la ligne, when le résumé est calculé, then il vaut `None` et la PR peut prendre la place.
+- [x] Un test croise, pour chaque combinaison d'état (`Thinking`, `WaitingForInput`, `Finished`, `Errored`), de non-lu et de capacité OSC 7501, l'état de la ligne de l'arbre et celui de la ligne de la section, et les trouve égaux là où les deux en affichent un.
 
 #### US-002: La matrice de l'arbre prend l'accent du runtime
 **Description:** As a développeur multi-agents, I want que la matrice d'un onglet au travail ait la couleur de son runtime so that l'arbre et la section Agents peignent le même agent de la même couleur.
@@ -131,11 +131,11 @@ L'arbre, la section Agents et ⌘⇧J lisent l'état d'un agent avec la même fo
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given une ligne dont toutes les sessions Working ont le même runtime, when la matrice est rendue, then elle prend `TerminalAgent::accent()` de ce runtime (`src-app/src/agent_launcher.rs:91-93`).
-- [ ] Given un runtime qui ne déclare pas d'accent, when sa matrice est rendue, then elle reste `muted`.
-- [ ] Given une ligne avec des sessions Working de runtimes différents, when la matrice est rendue, then elle reste `muted`.
-- [ ] Given `reduce_motion` activé, when la matrice est rendue, then elle reste immobile, comme aujourd'hui (`lane.rs:327-389`).
-- [ ] Les tests de `meta.rs` et `lane.rs` qui construisent `tint: None` (`meta.rs:165-303`, `lane.rs:430`, `lane.rs:453`) sont mis à jour pour ce comportement.
+- [x] Given une ligne dont toutes les sessions Working ont le même runtime, when la matrice est rendue, then elle prend `TerminalAgent::accent()` de ce runtime (`src-app/src/agent_launcher.rs:91-93`).
+- [x] Given un runtime qui ne déclare pas d'accent, when sa matrice est rendue, then elle reste `muted`.
+- [x] Given une ligne avec des sessions Working de runtimes différents, when la matrice est rendue, then elle reste `muted`.
+- [x] Given `reduce_motion` activé, when la matrice est rendue, then elle reste immobile, comme aujourd'hui (`lane.rs:327-389`).
+- [x] Les tests de `meta.rs` et `lane.rs` qui construisent `tint: None` (`meta.rs:165-303`, `lane.rs:430`, `lane.rs:453`) sont mis à jour pour ce comportement.
 
 #### US-003: Suppression du code mort de l'agrégat par outil
 **Description:** As a mainteneur, I want retirer les champs de l'agrégat par outil que rien n'affiche so that il ne reste qu'un ordre de priorité dans le code.
@@ -145,10 +145,10 @@ L'arbre, la section Agents et ⌘⇧J lisent l'état d'un agent avec la même fo
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `ToolAggregate.dominant`, `ToolAggregate.active_tool_name` et `state_rank` (`ai_types.rs:69-175`) sont supprimés, ainsi que les assertions sur `dominant` (`ai_types.rs:218`, `ai_types.rs:228`, `ai_types.rs:239`).
-- [ ] L'infobulle des lignes de l'arbre garde le nom des outils et le suffixe « +N » (`meta.rs:113-150`), vérifié par les tests existants.
-- [ ] Given deux sessions du même outil dans des états différents, when l'infobulle est construite, then elle liste l'outil une fois avec « +1 », comme aujourd'hui.
-- [ ] Given une ligne sans session hookée mais avec un agent détecté, when l'infobulle est construite, then elle liste l'agent détecté avec « running », comme aujourd'hui (`meta.rs:132-137`).
+- [x] `ToolAggregate.dominant`, `ToolAggregate.active_tool_name` et `state_rank` (`ai_types.rs:69-175`) sont supprimés, ainsi que les assertions sur `dominant` (`ai_types.rs:218`, `ai_types.rs:228`, `ai_types.rs:239`).
+- [x] L'infobulle des lignes de l'arbre garde le nom des outils et le suffixe « +N » (`meta.rs:113-150`), vérifié par les tests existants.
+- [x] Given deux sessions du même outil dans des états différents, when l'infobulle est construite, then elle liste l'outil une fois avec « +1 », comme aujourd'hui.
+- [x] Given une ligne sans session hookée mais avec un agent détecté, when l'infobulle est construite, then elle liste l'agent détecté avec « running », comme aujourd'hui (`meta.rs:132-137`).
 
 ---
 
