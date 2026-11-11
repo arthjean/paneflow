@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "La section Agents groupée par statut",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -88,48 +88,48 @@
       "id": "US-004",
       "title": "Le modèle de groupes et la hauteur de la section",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-11-11",
-      "completed_at": null,
+      "completed_at": "2026-11-11",
       "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-005",
       "title": "En-têtes de groupe et lignes d'une ligne",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-004"],
       "started_at": "2026-11-11",
-      "completed_at": null,
+      "completed_at": "2026-11-11",
       "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-006",
       "title": "Clavier, défilement et accessibilité des groupes",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-005"],
       "started_at": "2026-11-11",
-      "completed_at": null,
+      "completed_at": "2026-11-11",
       "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-007",
       "title": "Retrait du réglage Status des lignes Agents",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-005"],
       "started_at": "2026-11-11",
-      "completed_at": null,
+      "completed_at": "2026-11-11",
       "reviewed_at": "2026-11-11"
     },
     {
