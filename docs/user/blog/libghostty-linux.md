@@ -1,4 +1,4 @@
-# Paneflow 0.8.0: libghostty-vt replaces Alacritty on Linux
+# libghostty-vt on Linux: replacing Alacritty in Paneflow 0.8.0
 
 > Historical Paneflow 0.8.0 announcement: the Linux migration to libghostty-vt, with Alacritty rollback at the time. Includes links to current installation docs.
 

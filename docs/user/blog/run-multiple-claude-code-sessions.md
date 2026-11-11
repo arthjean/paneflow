@@ -20,8 +20,6 @@ Use independent sessions when you want to direct each task yourself. Each has it
 
 [Claude Code subagents](https://code.claude.com/docs/en/sub-agents) handle delegated tasks in their own context and return results to a parent session. Choose them when you want one conversation to coordinate the work.
 
-To combine different agents, see the [guide to running Claude Code and Codex together](/blog/run-claude-code-and-codex-in-parallel).
-
 ## Define a task for each session
 
 Start with two tasks that do not depend on unfinished work. For example, one session can update `docs/setup.md` while another adds edge-case tests for an existing parser. If the tests need a parser rewrite that is still underway, finish that rewrite first.
@@ -76,7 +74,7 @@ Merge the reviewed contributions using your team's Git workflow. Resolve conflic
 
 ## Return to a session later
 
-To close Paneflow while leaving terminals active, choose **Keep sessions running**. Reopening the app reconnects to them while the session host and machine remain running. The [session persistence guide](/blog/keep-coding-agents-running) covers shutdown and sleep limits.
+To close Paneflow while leaving terminals active, choose **Keep sessions running**. Reopening the app reconnects to them while the session host and machine remain running.
 
 If a Claude Code process has ended, [the Sessions menu](/blog/agent-sessions) can load a saved conversation for the active directory. **Restart** starts a fresh shell; it does not resume that conversation.
 
