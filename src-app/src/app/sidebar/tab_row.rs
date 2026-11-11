@@ -458,7 +458,6 @@ mod tests {
             agents: None,
             usage: None,
             agent_logo: None,
-            agent_status: None,
             agent_workspace: None,
         }
     }

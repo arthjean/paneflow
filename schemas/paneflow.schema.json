@@ -149,14 +149,9 @@
           "description": "Show the runtime logo at the start of each Agents section row. Default true.",
           "default": true
         },
-        "agent_status": {
-          "type": ["boolean", "null"],
-          "description": "Show the trailing status of each Agents section row: the activity matrix or the Need you, Error, Done, or No status badge. Rows keep their urgency order. Default true.",
-          "default": true
-        },
         "agent_workspace": {
           "type": ["boolean", "null"],
-          "description": "Show the workspace line under each Agents section row's title. Without it, a row is one line tall. Default true.",
+          "description": "Show the workspace name after each Agents section row's title. Default true.",
           "default": true
         }
       }

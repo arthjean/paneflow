@@ -132,14 +132,11 @@ impl PaneFlowApp {
             .position(|&row| self.sidebar_nav_cursor_for(row) == Some(cursor))
     }
 
-    fn scroll_sidebar_to(&self, rows: &[SidebarNavRow], index: usize) {
-        let tree_len = rows
-            .iter()
-            .take_while(|row| matches!(row, SidebarNavRow::Tree(_)))
-            .count();
-        match index.checked_sub(tree_len) {
-            None => self.sidebar_scroll.scroll_to_item(index * 2 + 1),
-            Some(position) => self.scroll_agents_to(position),
+    fn scroll_sidebar_to(&self, rows: &[SidebarNavRow], index: usize, cx: &Context<Self>) {
+        match rows.get(index) {
+            Some(SidebarNavRow::Agent(surface_id)) => self.scroll_agents_to(*surface_id, cx),
+            Some(SidebarNavRow::Tree(_)) => self.sidebar_scroll.scroll_to_item(index * 2 + 1),
+            None => {}
         }
     }
 
@@ -148,7 +145,7 @@ impl PaneFlowApp {
         let current = self.sidebar_cursor_position(&rows);
         if let Some(index) = moved_cursor_index(current, rows.len(), step) {
             self.sidebar_cursor = self.sidebar_nav_cursor_for(rows[index]);
-            self.scroll_sidebar_to(&rows, index);
+            self.scroll_sidebar_to(&rows, index, cx);
         }
         cx.notify();
     }
@@ -217,7 +214,7 @@ impl PaneFlowApp {
         }
         let rows = self.sidebar_nav_rows(cx);
         if let Some(index) = self.sidebar_cursor_position(&rows) {
-            self.scroll_sidebar_to(&rows, index);
+            self.scroll_sidebar_to(&rows, index, cx);
         }
         cx.notify();
     }

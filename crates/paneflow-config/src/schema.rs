@@ -74,7 +74,6 @@ mod tests {
                 agents: Some(false),
                 usage: Some(false),
                 agent_logo: Some(false),
-                agent_status: Some(false),
                 agent_workspace: Some(false),
             },
             editor: EditorDisplayConfig {
@@ -641,7 +640,6 @@ mod tests {
         assert!(cfg.sidebar_show.agents_enabled());
         assert!(cfg.sidebar_show.usage_enabled());
         assert!(cfg.sidebar_show.agent_logo_enabled());
-        assert!(cfg.sidebar_show.agent_status_enabled());
         assert!(cfg.sidebar_show.agent_workspace_enabled());
 
         let cfg: PaneFlowConfig =
@@ -650,12 +648,11 @@ mod tests {
         assert!(!cfg.sidebar_show.usage_enabled());
 
         let cfg: PaneFlowConfig = serde_json::from_str(
-            r#"{"sidebar_show": {"agent_logo": false, "agent_status": 0, "agent_workspace": false}}"#,
+            r#"{"sidebar_show": {"agent_logo": false, "agent_workspace": 0}}"#,
         )
         .unwrap();
         assert!(!cfg.sidebar_show.agent_logo_enabled());
-        assert!(cfg.sidebar_show.agent_status_enabled());
-        assert!(!cfg.sidebar_show.agent_workspace_enabled());
+        assert!(cfg.sidebar_show.agent_workspace_enabled());
 
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"agents": "hidden", "pr": true}}"#).unwrap();

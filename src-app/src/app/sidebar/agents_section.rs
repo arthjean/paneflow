@@ -19,8 +19,10 @@ pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
 pub(super) const AGENTS_TREE_MIN_HEIGHT: f32 = 120.;
 const AGENTS_LIST_BOTTOM_PADDING: f32 = 4.;
 const AGENTS_HEIGHT_CAP: f32 = 330.;
-const AGENTS_RESIZE_FLOOR: f32 =
-    AGENTS_HEADER_HEIGHT + AGENT_ROW_HEIGHT + AGENTS_LIST_BOTTOM_PADDING;
+const AGENTS_RESIZE_FLOOR: f32 = AGENTS_HEADER_HEIGHT
+    + AGENT_GROUP_HEADER_HEIGHT
+    + AGENT_LINE_HEIGHT
+    + AGENTS_LIST_BOTTOM_PADDING;
 const AGENTS_RESIZE_MAX: f32 = 620.;
 const AGENTS_RESIZE_HIT_HEIGHT: f32 = 9.;
 const AGENTS_RESIZE_STEP: f32 = 16.;
@@ -28,12 +30,13 @@ const AGENTS_RESIZE_FOCUS_ALPHA: f32 = 0.35;
 const AGENTS_RESIZE_GROUP: &str = "agents-resize-group";
 const AGENTS_EMPTY_HEIGHT: f32 = 32.;
 const AGENTS_EMPTY_INSET: f32 = 15.;
-const AGENT_ROW_HEIGHT: f32 =
-    SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT * 2. + SIDEBAR_ROW_GAP;
-const AGENT_ROW_COMPACT_HEIGHT: f32 = SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT;
-const AGENT_RANK_SPACING: f32 = SIDEBAR_GROUP_SPACING - SIDEBAR_ROW_SPACING;
+const AGENT_LINE_HEIGHT: f32 = SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT;
+const AGENT_GROUP_HEADER_HEIGHT: f32 = 24.;
+const AGENT_GROUP_SPACING: f32 = SIDEBAR_TITLE_ROW_GAP;
+const AGENT_GROUP_HEADER_INSET: f32 = SIDEBAR_ROW_MARGIN_X + SIDEBAR_ROW_PADDING_X;
+const AGENT_GROUP_COUNT_GAP: f32 = 6.;
+const AGENT_GROUP_HEADING_LEVEL: usize = 2;
 const AGENT_LOGO_SIZE: f32 = 15.;
-const AGENT_META_ICON_SIZE: f32 = 12.;
 const AGENTS_CHEVRON_SIZE: f32 = 12.;
 const AGENTS_TOGGLE_HEIGHT: f32 = 20.;
 const AGENTS_TOGGLE_GAP: f32 = 4.;
@@ -209,30 +212,19 @@ pub(super) enum AgentRowStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AgentRowDetails {
     pub(super) logo: bool,
-    pub(super) status: bool,
     pub(super) workspace: bool,
 }
 
 impl AgentRowDetails {
     pub(super) const ALL: Self = Self {
         logo: true,
-        status: true,
         workspace: true,
     };
 
     pub(super) fn from_show(show: paneflow_config::schema::SidebarShow) -> Self {
         Self {
             logo: show.agent_logo_enabled(),
-            status: show.agent_status_enabled(),
             workspace: show.agent_workspace_enabled(),
-        }
-    }
-
-    fn row_height(self) -> f32 {
-        if self.workspace {
-            AGENT_ROW_HEIGHT
-        } else {
-            AGENT_ROW_COMPACT_HEIGHT
         }
     }
 }
@@ -245,7 +237,6 @@ pub(super) struct AgentRow {
     pub(super) title: String,
     pub(super) workspace: String,
     pub(super) active: bool,
-    pub(super) starts_rank: bool,
     pub(super) status: AgentRowStatus,
     pub(super) details: AgentRowDetails,
 }
@@ -253,6 +244,96 @@ pub(super) struct AgentRow {
 pub(super) struct AgentRows {
     pub(super) rows: Vec<AgentRow>,
     pub(super) grace_deadline: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentGroupStatus {
+    NeedYou,
+    Error,
+    Done,
+    Working,
+    Idle,
+    NoStatus,
+}
+
+impl AgentGroupStatus {
+    const ORDER: [Self; 6] = [
+        Self::NeedYou,
+        Self::Error,
+        Self::Done,
+        Self::Working,
+        Self::Idle,
+        Self::NoStatus,
+    ];
+
+    fn of(status: AgentRowStatus) -> Self {
+        match status {
+            AgentRowStatus::Lane(SidebarAgentState::NeedsInput) => Self::NeedYou,
+            AgentRowStatus::Lane(SidebarAgentState::Errored) => Self::Error,
+            AgentRowStatus::Lane(SidebarAgentState::Finished) => Self::Done,
+            AgentRowStatus::Lane(SidebarAgentState::Thinking) => Self::Working,
+            AgentRowStatus::Silent => Self::Idle,
+            AgentRowStatus::NoStatus => Self::NoStatus,
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::NeedYou => "Need you",
+            Self::Error => "Error",
+            Self::Done => "Done",
+            Self::Working => "Working",
+            Self::Idle => "Idle",
+            Self::NoStatus => "No status",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::NeedYou => "need-you",
+            Self::Error => "error",
+            Self::Done => "done",
+            Self::Working => "working",
+            Self::Idle => "idle",
+            Self::NoStatus => "no-status",
+        }
+    }
+
+    fn color(self, ui: crate::theme::UiColors) -> gpui::Hsla {
+        match self {
+            Self::NeedYou => crate::app::constants::sidebar_needs_input_color(),
+            Self::Error => ui.agent_error,
+            Self::Done => crate::app::constants::sidebar_finished_color(),
+            Self::Working | Self::Idle | Self::NoStatus => ui.muted,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AgentGroup<'a> {
+    pub(super) status: AgentGroupStatus,
+    pub(super) rows: Vec<&'a AgentRow>,
+}
+
+pub(super) fn agent_groups(rows: &[AgentRow]) -> Vec<AgentGroup<'_>> {
+    AgentGroupStatus::ORDER
+        .into_iter()
+        .filter_map(|status| {
+            let members: Vec<&AgentRow> = rows
+                .iter()
+                .filter(|row| AgentGroupStatus::of(row.status) == status)
+                .collect();
+            (!members.is_empty()).then_some(AgentGroup {
+                status,
+                rows: members,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn agent_group_label(status: AgentGroupStatus, count: usize) -> String {
+    let noun = if count == 1 { "agent" } else { "agents" };
+    format!("{}, {count} {noun}", status.label())
 }
 
 pub(super) fn agent_rows(
@@ -263,7 +344,6 @@ pub(super) fn agent_rows(
     now: Instant,
     cx: &App,
 ) -> AgentRows {
-    let mut previous_rank = None;
     let mut grace_deadline: Option<Instant> = None;
     let rows = order_agents(agent_candidates(workspaces, active_space, cx), true)
         .into_iter()
@@ -289,8 +369,6 @@ pub(super) fn agent_rows(
             } else {
                 tab.title().to_string()
             };
-            let starts_rank = previous_rank.is_some_and(|previous| previous != candidate.rank);
-            previous_rank = Some(candidate.rank);
             Some(AgentRow {
                 surface_id: candidate.surface_id,
                 rank: candidate.rank,
@@ -299,7 +377,6 @@ pub(super) fn agent_rows(
                 workspace: workspace.title.clone(),
                 active: shown_workspace == Some(candidate.workspace_idx)
                     && workspace.active_tab_idx() == candidate.tab_idx,
-                starts_rank,
                 status,
                 details,
             })
@@ -311,38 +388,38 @@ pub(super) fn agent_rows(
     }
 }
 
-pub(super) fn agents_content_height(rows: &[AgentRow]) -> f32 {
-    if rows.is_empty() {
+pub(super) fn agents_content_height(groups: &[AgentGroup<'_>]) -> f32 {
+    if groups.is_empty() {
         return AGENTS_EMPTY_HEIGHT;
     }
-    rows.iter()
+    groups
+        .iter()
         .enumerate()
-        .map(|(index, row)| {
-            let spacing = if index > 0 { SIDEBAR_ROW_SPACING } else { 0. };
-            let rank_spacing = if row.starts_rank {
-                AGENT_RANK_SPACING
-            } else {
-                0.
-            };
-            row.details.row_height() + spacing + rank_spacing
+        .map(|(index, group)| {
+            let spacing = if index > 0 { AGENT_GROUP_SPACING } else { 0. };
+            let lines = group.rows.len() as f32;
+            spacing
+                + AGENT_GROUP_HEADER_HEIGHT
+                + lines * AGENT_LINE_HEIGHT
+                + (lines - 1.).max(0.) * SIDEBAR_ROW_SPACING
         })
         .sum()
 }
 
-fn agents_natural_height(rows: &[AgentRow]) -> f32 {
-    AGENTS_HEADER_HEIGHT + agents_content_height(rows) + AGENTS_LIST_BOTTOM_PADDING
+fn agents_natural_height(groups: &[AgentGroup<'_>]) -> f32 {
+    AGENTS_HEADER_HEIGHT + agents_content_height(groups) + AGENTS_LIST_BOTTOM_PADDING
 }
 
 pub(super) fn agents_section_height(
-    rows: &[AgentRow],
+    groups: &[AgentGroup<'_>],
     collapsed: bool,
     chosen: Option<f32>,
 ) -> f32 {
     if collapsed {
         return AGENTS_HEADER_HEIGHT;
     }
-    let natural = agents_natural_height(rows);
-    match chosen.filter(|_| !rows.is_empty()) {
+    let natural = agents_natural_height(groups);
+    match chosen.filter(|_| !groups.is_empty()) {
         Some(height) => height.clamp(
             AGENTS_RESIZE_FLOOR,
             natural.clamp(AGENTS_RESIZE_FLOOR, AGENTS_RESIZE_MAX),
@@ -388,6 +465,26 @@ fn agent_row_spoken_state(row: &AgentRow) -> &'static str {
     }
 }
 
+fn agent_title_shimmers(status: AgentRowStatus, reduce_motion: bool) -> bool {
+    status == AgentRowStatus::Lane(SidebarAgentState::Thinking) && !reduce_motion
+}
+
+fn agent_workspace_suffix(workspace: &str) -> String {
+    format!(" \u{b7} {workspace}")
+}
+
+fn agent_row_full_name(row: &AgentRow) -> String {
+    format!("{}{}", row.title, agent_workspace_suffix(&row.workspace))
+}
+
+fn agent_row_shown_name(row: &AgentRow) -> String {
+    if row.details.workspace {
+        agent_row_full_name(row)
+    } else {
+        row.title.clone()
+    }
+}
+
 pub(super) fn agent_row_label(row: &AgentRow) -> String {
     format!(
         "{}, {}, {}, {}",
@@ -398,15 +495,57 @@ pub(super) fn agent_row_label(row: &AgentRow) -> String {
     )
 }
 
-pub(super) fn agent_row_child_index(position: usize) -> usize {
-    position * 2
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct AgentListPosition {
+    pub(super) row: usize,
+    pub(super) group_header: Option<usize>,
 }
 
-fn agents_nav_targets(enabled: bool, collapsed: bool, rows: &[AgentRow]) -> Vec<u64> {
+pub(super) fn agent_list_position(
+    groups: &[AgentGroup<'_>],
+    surface_id: u64,
+) -> Option<AgentListPosition> {
+    let mut child = 0;
+    for group in groups {
+        let header = child;
+        child += 1;
+        for (index, row) in group.rows.iter().enumerate() {
+            if row.surface_id == surface_id {
+                return Some(AgentListPosition {
+                    row: child,
+                    group_header: (index == 0).then_some(header),
+                });
+            }
+            child += 1;
+        }
+    }
+    None
+}
+
+pub(super) fn scroll_agents_list_to(
+    scroll: &ScrollHandle,
+    groups: &[AgentGroup<'_>],
+    surface_id: u64,
+) {
+    let Some(position) = agent_list_position(groups, surface_id) else {
+        return;
+    };
+    let hidden_header = position.group_header.filter(|&header| {
+        scroll
+            .bounds_for_item(header)
+            .is_some_and(|bounds| bounds.top() + scroll.offset().y < scroll.bounds().top())
+    });
+    scroll.scroll_to_item(hidden_header.unwrap_or(position.row));
+}
+
+fn agents_nav_targets(enabled: bool, collapsed: bool, groups: &[AgentGroup<'_>]) -> Vec<u64> {
     if !enabled || collapsed {
         return Vec::new();
     }
-    rows.iter().map(|row| row.surface_id).collect()
+    groups
+        .iter()
+        .flat_map(|group| group.rows.iter().map(|row| row.surface_id))
+        .collect()
 }
 
 pub(super) fn agent_surface_location(
@@ -484,10 +623,63 @@ fn render_agents_header(
         .children(display_button)
 }
 
+fn render_agent_group_header(
+    group: &AgentGroup<'_>,
+    leads_the_list: bool,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
+    let status = group.status;
+    let key = status.key();
+    div()
+        .id(SharedString::from(format!("agent-group-{key}")))
+        .role(Role::Heading)
+        .aria_level(AGENT_GROUP_HEADING_LEVEL)
+        .aria_label(SharedString::from(agent_group_label(
+            status,
+            group.rows.len(),
+        )))
+        .flex_none()
+        .h(px(AGENT_GROUP_HEADER_HEIGHT))
+        .when(!leads_the_list, |header| header.mt(px(AGENT_GROUP_SPACING)))
+        .px(px(AGENT_GROUP_HEADER_INSET))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(AGENT_GROUP_COUNT_GAP))
+        .overflow_x_hidden()
+        .whitespace_nowrap()
+        .text_size(crate::ui_primitives::BODY)
+        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+        .font_weight(FontWeight::MEDIUM)
+        .debug_selector(move || format!("agent-group-{key}"))
+        .child(
+            div()
+                .flex_none()
+                .text_color(status.color(ui))
+                .debug_selector(move || format!("agent-group-label-{key}"))
+                .child(status.label()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_color(ui.muted)
+                .font_features(tabular_numerals())
+                .debug_selector(move || format!("agent-group-count-{key}"))
+                .child(group.rows.len().to_string()),
+        )
+}
+
+fn render_agent_group_member(
+    row: gpui::Stateful<gpui::Div>,
+    index: usize,
+    group_size: usize,
+) -> gpui::Stateful<gpui::Div> {
+    row.aria_position_in_set(index + 1)
+        .aria_size_of_set(group_size)
+        .when(index > 0, |row| row.mt(px(SIDEBAR_ROW_SPACING)))
+}
+
 fn render_agent_status(row: &AgentRow, ui: crate::theme::UiColors) -> Option<AnyElement> {
-    if !row.details.status {
-        return None;
-    }
     match row.status {
         AgentRowStatus::Lane(state) => Some(render_lane(
             Lane::Agent(SidebarAgentSummary {
@@ -569,17 +761,16 @@ fn render_agent_row(
                 )),
         );
     let title_text = div()
-        .flex_1()
+        .flex_none()
+        .max_w_full()
         .min_w_0()
         .overflow_x_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .text_size(crate::ui_primitives::TITLE)
-        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(ui.text);
-    let shimmer = row.status == AgentRowStatus::Lane(SidebarAgentState::Thinking)
-        && !crate::ui_primitives::reduce_motion();
+        .text_color(ui.text)
+        .debug_selector(move || format!("agent-title-{surface_id}"));
+    let shimmer = agent_title_shimmers(row.status, crate::ui_primitives::reduce_motion());
     let title = if shimmer {
         mark_shimmer_drawn();
         title_text.child(crate::ui_primitives::shimmer::shimmer_text(
@@ -592,52 +783,45 @@ fn render_agent_row(
     } else {
         title_text.child(row.title.clone())
     };
-    let title_row = div()
+    let workspace_suffix = row.details.workspace.then(|| {
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(ui.muted)
+            .debug_selector(move || format!("agent-workspace-{surface_id}"))
+            .child(agent_workspace_suffix(&row.workspace))
+    });
+    let name = div()
+        .flex_1()
+        .min_w_0()
+        .overflow_x_hidden()
+        .flex()
+        .flex_row()
+        .text_size(crate::ui_primitives::TITLE)
+        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+        .child(title)
+        .children(workspace_suffix);
+    let line = div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(SIDEBAR_TITLE_ROW_GAP))
         .w_full()
         .min_w_0()
-        .when(row.details.logo, |title_row| title_row.child(logo))
-        .child(title)
-        .children(render_agent_status(row, ui));
-    let meta_inset = if row.details.logo {
-        SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP
-    } else {
-        0.
-    };
-    let meta = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(SIDEBAR_ROW_GAP))
-        .h(px(SIDEBAR_ROW_LINE_HEIGHT))
-        .pl(px(meta_inset))
-        .min_w_0()
-        .child(
-            svg()
-                .size(px(AGENT_META_ICON_SIZE))
-                .flex_none()
-                .path("icons/folder.svg")
-                .text_color(ui.muted),
-        )
-        .child(
+        .when(row.details.logo, |line| line.child(logo))
+        .child(name)
+        .children(render_agent_status(row, ui).map(|status| {
             div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(crate::ui_primitives::TITLE)
-                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .text_color(ui.muted)
-                .child(row.workspace.clone()),
-        );
-    let title_tooltip = [&row.title, &row.workspace]
-        .iter()
-        .any(|text| text.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
-        .then(|| SharedString::from(format!("{} \u{b7} {}", row.title, row.workspace)));
+                .flex_none()
+                .debug_selector(move || format!("agent-status-{surface_id}"))
+                .child(status)
+        }));
+    let title_tooltip = (agent_row_shown_name(row).chars().count()
+        > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
+        .then(|| SharedString::from(agent_row_full_name(row)));
     let shell = sidebar_row_shell()
         .mx(px(SIDEBAR_ROW_MARGIN_X))
         .id(SharedString::from(format!("agent-row-{surface_id}")))
@@ -656,8 +840,7 @@ fn render_agent_row(
             cx.stop_propagation();
             on_pick(surface_id, window, cx);
         })
-        .child(title_row)
-        .when(row.details.workspace, |shell| shell.child(meta))
+        .child(line)
         .when(cursor, |shell| {
             shell.child(
                 div()
@@ -798,7 +981,7 @@ pub(super) fn render_agents_resize_handle(
 }
 
 pub(super) struct AgentsSectionFrame<'a> {
-    pub(super) rows: &'a [AgentRow],
+    pub(super) groups: &'a [AgentGroup<'a>],
     pub(super) cursor: Option<u64>,
     pub(super) collapsed: bool,
     pub(super) chosen_height: Option<f32>,
@@ -810,7 +993,7 @@ pub(super) struct AgentsSectionFrame<'a> {
 }
 
 fn render_agents_list(
-    rows: &[AgentRow],
+    groups: &[AgentGroup<'_>],
     cursor: Option<u64>,
     scroll: &ScrollHandle,
     ui: crate::theme::UiColors,
@@ -828,7 +1011,7 @@ fn render_agents_list(
         .flex()
         .flex_col()
         .pb(px(AGENTS_LIST_BOTTOM_PADDING));
-    if rows.is_empty() {
+    if groups.is_empty() {
         list = list.child(
             div()
                 .flex_none()
@@ -842,22 +1025,15 @@ fn render_agents_list(
                 .child("No agents running"),
         );
     }
-    for (index, row) in rows.iter().enumerate() {
-        let spacing = if index > 0 { SIDEBAR_ROW_SPACING } else { 0. }
-            + if row.starts_rank {
-                AGENT_RANK_SPACING
-            } else {
-                0.
-            };
-        if spacing > 0. {
-            list = list.child(div().flex_none().h(px(spacing)));
+    for (group_index, group) in groups.iter().enumerate() {
+        list = list.child(render_agent_group_header(group, group_index == 0, ui));
+        for (index, row) in group.rows.iter().enumerate() {
+            list = list.child(render_agent_group_member(
+                render_agent_row(row, cursor == Some(row.surface_id), ui, on_pick.clone()),
+                index,
+                group.rows.len(),
+            ));
         }
-        list = list.child(render_agent_row(
-            row,
-            cursor == Some(row.surface_id),
-            ui,
-            on_pick.clone(),
-        ));
     }
     list
 }
@@ -869,7 +1045,7 @@ pub(super) fn render_agents_section(
     on_pick: PickAgent,
 ) -> gpui::Div {
     let AgentsSectionFrame {
-        rows,
+        groups,
         cursor,
         collapsed,
         chosen_height,
@@ -881,7 +1057,7 @@ pub(super) fn render_agents_section(
     } = frame;
     let section = div()
         .relative()
-        .h(px(agents_section_height(rows, collapsed, chosen_height)))
+        .h(px(agents_section_height(groups, collapsed, chosen_height)))
         .min_h(px(AGENTS_HEADER_HEIGHT))
         .flex_shrink_1()
         .flex()
@@ -897,8 +1073,8 @@ pub(super) fn render_agents_section(
     if collapsed {
         return section;
     }
-    let resize_handle = resize_handle.filter(|_| !rows.is_empty());
-    let list = render_agents_list(rows, cursor, scroll, ui, on_pick);
+    let resize_handle = resize_handle.filter(|_| !groups.is_empty());
+    let list = render_agents_list(groups, cursor, scroll, ui, on_pick);
     section
         .child(
             div()
@@ -932,9 +1108,14 @@ impl PaneFlowApp {
             cx,
         );
         self.schedule_no_status_wake(grace_deadline, cx);
+        let groups = agent_groups(&rows);
+        let top_row = groups
+            .first()
+            .and_then(|group| group.rows.first())
+            .map(|row| row.surface_id);
         let (collapsed, chosen_height, dragging, chevron_turn, turning, scroll) = {
             let mut section = self.agents_section.borrow_mut();
-            if section.follow_top_row(rows.first().map(|row| row.surface_id)) {
+            if section.follow_top_row(top_row) {
                 section.scroll.set_offset(Point::default());
             }
             (
@@ -950,14 +1131,14 @@ impl PaneFlowApp {
             window.request_animation_frame();
         }
         let ui = crate::theme::ui_colors();
-        let natural = agents_natural_height(&rows);
+        let natural = agents_natural_height(&groups);
         let resize_app = cx.weak_entity();
         let resize_handle = render_agents_resize_handle(
             AgentsResizeFrame {
                 focus: &self.agents_resize_focus,
                 focused: self.agents_resize_focus.is_focused(window),
                 dragging,
-                height: agents_section_height(&rows, collapsed, chosen_height),
+                height: agents_section_height(&groups, collapsed, chosen_height),
                 ceiling: agents_resize_ceiling(natural, self.agents_available_height()),
             },
             ui,
@@ -996,7 +1177,7 @@ impl PaneFlowApp {
             .filter(|_| self.sidebar_focus.is_focused(window));
         render_agents_section(
             AgentsSectionFrame {
-                rows: &rows,
+                groups: &groups,
                 cursor,
                 collapsed,
                 chosen_height,
@@ -1087,27 +1268,32 @@ impl PaneFlowApp {
         true
     }
 
-    pub(super) fn agents_nav_surfaces(&self, cx: &App) -> Vec<u64> {
-        let shown = agent_rows(
+    fn shown_agent_rows(&self, cx: &App) -> Vec<AgentRow> {
+        agent_rows(
             &self.workspaces,
             self.active_space.as_ref(),
             self.shown_workspace_idx(),
             AgentRowDetails::ALL,
             Instant::now(),
             cx,
-        );
+        )
+        .rows
+    }
+
+    pub(super) fn agents_nav_surfaces(&self, cx: &App) -> Vec<u64> {
         agents_nav_targets(
             self.cached_config.sidebar_show.agents_enabled(),
             self.agents_section.borrow().collapsed,
-            &shown.rows,
+            &agent_groups(&self.shown_agent_rows(cx)),
         )
     }
 
-    pub(super) fn scroll_agents_to(&self, position: usize) {
-        self.agents_section
-            .borrow()
-            .scroll
-            .scroll_to_item(agent_row_child_index(position));
+    pub(super) fn scroll_agents_to(&self, surface_id: u64, cx: &App) {
+        scroll_agents_list_to(
+            &self.agents_section.borrow().scroll,
+            &agent_groups(&self.shown_agent_rows(cx)),
+            surface_id,
+        );
     }
 
     pub(crate) fn set_agents_section_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
@@ -1251,14 +1437,6 @@ fn render_agents_display_menu(
             cx,
         ))
         .child(render_show_option(
-            "Status",
-            "icons/palette/notification-01.svg",
-            SidebarShowLine::AgentStatus,
-            show.agent_status_enabled(),
-            ui,
-            cx,
-        ))
-        .child(render_show_option(
             "Workspace",
             "icons/folder.svg",
             SidebarShowLine::AgentWorkspace,
@@ -1300,59 +1478,135 @@ mod tests {
             title: "Attention sidebar".to_string(),
             workspace: "paneflow".to_string(),
             active: false,
-            starts_rank: false,
             status,
             details: AgentRowDetails::ALL,
         }
     }
 
+    fn rank_status(rank: AgentRank) -> AgentRowStatus {
+        match lane_state(rank) {
+            Some(state) => AgentRowStatus::Lane(state),
+            None if rank == AgentRank::NoStatus => AgentRowStatus::NoStatus,
+            None => AgentRowStatus::Silent,
+        }
+    }
+
     fn ranked_rows(ranks: &[AgentRank]) -> Vec<AgentRow> {
-        let mut previous = None;
         ranks
             .iter()
             .enumerate()
-            .map(|(index, &rank)| {
-                let mut row = row(index as u64 + 1, rank, AgentRowStatus::Silent);
-                row.starts_rank = previous.is_some_and(|previous| previous != rank);
-                previous = Some(rank);
-                row
+            .map(|(index, &rank)| row(index as u64 + 1, rank, rank_status(rank)))
+            .collect()
+    }
+
+    fn group_shape(groups: &[AgentGroup<'_>]) -> Vec<(AgentGroupStatus, Vec<u64>)> {
+        groups
+            .iter()
+            .map(|group| {
+                (
+                    group.status,
+                    group.rows.iter().map(|row| row.surface_id).collect(),
+                )
             })
             .collect()
     }
 
     #[test]
+    fn groups_gather_rows_by_shown_status_in_rank_order_and_keep_their_relative_order() {
+        let rows = vec![
+            row(1, AgentRank::Blocked, rank_status(AgentRank::Blocked)),
+            row(2, AgentRank::Blocked, rank_status(AgentRank::Blocked)),
+            row(3, AgentRank::Errored, rank_status(AgentRank::Errored)),
+            row(4, AgentRank::Done, rank_status(AgentRank::Done)),
+            row(5, AgentRank::Working, rank_status(AgentRank::Working)),
+            row(6, AgentRank::Working, rank_status(AgentRank::Working)),
+            row(7, AgentRank::Idle, AgentRowStatus::Silent),
+            row(8, AgentRank::NoStatus, AgentRowStatus::NoStatus),
+            row(9, AgentRank::NoStatus, AgentRowStatus::Silent),
+            row(10, AgentRank::NoStatus, AgentRowStatus::NoStatus),
+        ];
+        let groups = agent_groups(&rows);
+        assert_eq!(
+            group_shape(&groups),
+            [
+                (AgentGroupStatus::NeedYou, vec![1, 2]),
+                (AgentGroupStatus::Error, vec![3]),
+                (AgentGroupStatus::Done, vec![4]),
+                (AgentGroupStatus::Working, vec![5, 6]),
+                (AgentGroupStatus::Idle, vec![7, 9]),
+                (AgentGroupStatus::NoStatus, vec![8, 10]),
+            ],
+            "a session still in its grace delay sits in Idle"
+        );
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.status.label())
+                .collect::<Vec<_>>(),
+            ["Need you", "Error", "Done", "Working", "Idle", "No status"]
+        );
+    }
+
+    #[test]
+    fn a_status_no_agent_holds_produces_no_group_and_no_agent_produces_none() {
+        let rows = ranked_rows(&[AgentRank::Errored, AgentRank::Idle, AgentRank::Idle]);
+        assert_eq!(
+            group_shape(&agent_groups(&rows)),
+            [
+                (AgentGroupStatus::Error, vec![1]),
+                (AgentGroupStatus::Idle, vec![2, 3]),
+            ]
+        );
+        assert!(agent_groups(&[]).is_empty());
+    }
+
+    #[test]
     fn the_section_takes_its_content_height_plus_the_header_and_a_bottom_margin() {
         let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Blocked, AgentRank::Done]);
-        assert_eq!(AGENT_ROW_HEIGHT, 55.);
-        assert_eq!(agents_content_height(&rows), 55. + (2. + 55.) + (10. + 55.));
-        assert_eq!(agents_section_height(&rows, false, None), 36. + 177. + 4.);
-        assert_eq!(agents_section_height(&rows[..1], false, None), 95.);
+        let groups = agent_groups(&rows);
+        assert_eq!(AGENT_GROUP_HEADER_HEIGHT, 24.);
+        assert_eq!(AGENT_LINE_HEIGHT, 32.);
+        assert_eq!(
+            agents_content_height(&groups),
+            (24. + 32. + 2. + 32.) + (8. + 24. + 32.)
+        );
+        assert_eq!(agents_section_height(&groups, false, None), 36. + 154. + 4.);
+        assert_eq!(
+            agents_section_height(&agent_groups(&rows[..1]), false, None),
+            36. + 24. + 32. + 4.
+        );
         assert_eq!(agents_section_height(&[], false, None), 36. + 32. + 4.);
     }
 
     #[test]
-    fn hiding_the_workspace_line_folds_each_row_to_one_line() {
-        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Done]);
-        for row in &mut rows {
-            row.details.workspace = false;
-        }
-        assert_eq!(AGENT_ROW_COMPACT_HEIGHT, 32.);
-        assert_eq!(agents_content_height(&rows), 32. + (10. + 32.));
-        assert_eq!(agents_section_height(&rows, false, None), 36. + 74. + 4.);
+    fn six_agents_in_two_groups_fit_under_the_cap_without_scrolling() {
+        let rows = ranked_rows(&[
+            AgentRank::Working,
+            AgentRank::Working,
+            AgentRank::Idle,
+            AgentRank::Idle,
+            AgentRank::Idle,
+            AgentRank::Idle,
+        ]);
+        let groups = agent_groups(&rows);
+        assert_eq!(groups.len(), 2);
+        let natural = agents_natural_height(&groups);
+        assert_eq!(natural, 36. + 2. * 24. + 6. * 32. + 4. * 2. + 8. + 4.);
+        assert!(natural < AGENTS_HEIGHT_CAP);
+        assert_eq!(agents_section_height(&groups, false, None), natural);
     }
 
     #[test]
     fn the_row_details_follow_the_sidebar_show_config() {
         let show = paneflow_config::schema::SidebarShow {
-            agent_status: Some(false),
+            agent_workspace: Some(false),
             ..Default::default()
         };
         assert_eq!(
             AgentRowDetails::from_show(show),
             AgentRowDetails {
                 logo: true,
-                status: false,
-                workspace: true,
+                workspace: false,
             }
         );
         assert_eq!(
@@ -1362,11 +1616,44 @@ mod tests {
     }
 
     #[test]
+    fn a_retired_agent_status_setting_leaves_the_rows_with_their_status() {
+        let config: paneflow_config::schema::PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"agent_status": false}}"#)
+                .expect("a config that still sets the retired key loads");
+        assert_eq!(
+            AgentRowDetails::from_show(config.sidebar_show),
+            AgentRowDetails::ALL
+        );
+        let ui = crate::theme::ui_colors();
+        for rank in [
+            AgentRank::Blocked,
+            AgentRank::Errored,
+            AgentRank::Done,
+            AgentRank::Working,
+            AgentRank::NoStatus,
+        ] {
+            let mut shown = row(1, rank, rank_status(rank));
+            shown.details = AgentRowDetails::from_show(config.sidebar_show);
+            assert!(render_agent_status(&shown, ui).is_some(), "{rank:?}");
+        }
+        assert!(
+            render_agent_status(&row(1, AgentRank::Idle, AgentRowStatus::Silent), ui).is_none(),
+            "an idle row carries no status"
+        );
+    }
+
+    #[test]
     fn the_section_height_is_capped_and_a_collapsed_section_keeps_only_its_header() {
         let rows = ranked_rows(&[AgentRank::Working; 10]);
-        assert!(36. + agents_content_height(&rows) + 4. > 330.);
-        assert_eq!(agents_section_height(&rows, false, None), 330.);
-        assert_eq!(agents_section_height(&rows, true, None), 36.);
+        let groups = agent_groups(&rows);
+        assert_eq!(
+            agents_content_height(&groups),
+            24. + 10. * 32. + 9. * 2.,
+            "one group header, ten rows, nine row gaps"
+        );
+        assert!(36. + agents_content_height(&groups) + 4. > 330.);
+        assert_eq!(agents_section_height(&groups, false, None), 330.);
+        assert_eq!(agents_section_height(&groups, true, None), 36.);
     }
 
     #[test]
@@ -1430,13 +1717,21 @@ mod tests {
     #[test]
     fn a_chosen_height_is_bounded_by_one_row_620_px_and_the_content() {
         let ten = ranked_rows(&[AgentRank::Working; 10]);
+        let ten = agent_groups(&ten);
         let natural = agents_natural_height(&ten);
-        assert_eq!(natural, 36. + 10. * 55. + 9. * 2. + 4.);
-        assert_eq!(agents_section_height(&ten, false, Some(450.)), 450.);
-        assert_eq!(agents_section_height(&ten, false, Some(10.)), 95.);
+        assert_eq!(natural, 36. + 24. + 10. * 32. + 9. * 2. + 4.);
+        assert_eq!(agents_section_height(&ten, false, Some(350.)), 350.);
+        assert_eq!(
+            agents_section_height(&ten, false, Some(10.)),
+            36. + 24. + 32. + 4.,
+            "the floor is the section header, one group header and one row"
+        );
+        assert_eq!(AGENTS_RESIZE_FLOOR, 96.);
         assert_eq!(agents_section_height(&ten, false, Some(900.)), natural);
-        let twelve = ranked_rows(&[AgentRank::Working; 12]);
-        assert_eq!(agents_section_height(&twelve, false, Some(900.)), 620.);
+        let eighteen = ranked_rows(&[AgentRank::Working; 18]);
+        let eighteen = agent_groups(&eighteen);
+        assert!(agents_natural_height(&eighteen) > 620.);
+        assert_eq!(agents_section_height(&eighteen, false, Some(900.)), 620.);
         assert_eq!(agents_section_height(&ten, true, Some(450.)), 36.);
         assert_eq!(
             agents_section_height(&[], false, Some(450.)),
@@ -1461,11 +1756,11 @@ mod tests {
         assert!(!section.resize(AgentsResizeInput::Drag(-500.), 330., 589.));
         assert_eq!(section.height, Some(589.));
         assert!(!section.resize(AgentsResizeInput::Drag(2000.), 330., 589.));
-        assert_eq!(section.height, Some(95.));
-        assert!(section.resize(AgentsResizeInput::Release, 95., 589.));
-        assert!(!section.resize(AgentsResizeInput::Release, 95., 589.));
-        assert!(!section.resize(AgentsResizeInput::Drag(0.), 95., 589.));
-        assert_eq!(section.height, Some(95.), "a move after release is ignored");
+        assert_eq!(section.height, Some(96.));
+        assert!(section.resize(AgentsResizeInput::Release, 96., 589.));
+        assert!(!section.resize(AgentsResizeInput::Release, 96., 589.));
+        assert!(!section.resize(AgentsResizeInput::Drag(0.), 96., 589.));
+        assert_eq!(section.height, Some(96.), "a move after release is ignored");
     }
 
     #[test]
@@ -1476,10 +1771,10 @@ mod tests {
         assert!(section.resize(AgentsResizeInput::Step(-16.), 346., 589.));
         assert_eq!(section.height, Some(330.));
         assert!(section.resize(AgentsResizeInput::Floor, 330., 589.));
-        assert_eq!(section.height, Some(95.));
-        assert!(section.resize(AgentsResizeInput::Step(-16.), 95., 589.));
-        assert_eq!(section.height, Some(95.));
-        assert!(section.resize(AgentsResizeInput::Ceiling, 95., 589.));
+        assert_eq!(section.height, Some(96.));
+        assert!(section.resize(AgentsResizeInput::Step(-16.), 96., 589.));
+        assert_eq!(section.height, Some(96.));
+        assert!(section.resize(AgentsResizeInput::Ceiling, 96., 589.));
         assert_eq!(section.height, Some(589.));
         assert!(section.resize(AgentsResizeInput::Fit, 589., 589.));
         assert_eq!(section.height, None);
@@ -1533,7 +1828,8 @@ mod tests {
 
     impl gpui::Render for ResizeHarness {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let natural = agents_natural_height(&self.rows);
+            let groups = agent_groups(&self.rows);
+            let natural = agents_natural_height(&groups);
             let dragging = self.section.resize_drag.is_some();
             let chosen = self.section.height;
             let this = cx.weak_entity();
@@ -1542,7 +1838,7 @@ mod tests {
                     focus: &self.focus,
                     focused: self.focus.is_focused(window),
                     dragging,
-                    height: agents_section_height(&self.rows, self.section.collapsed, chosen),
+                    height: agents_section_height(&groups, self.section.collapsed, chosen),
                     ceiling: agents_resize_ceiling(
                         natural,
                         self.section.available_height(&self.tree),
@@ -1578,7 +1874,7 @@ mod tests {
                 )
                 .child(render_agents_section(
                     AgentsSectionFrame {
-                        rows: &self.rows,
+                        groups: &groups,
                         cursor: None,
                         collapsed: self.section.collapsed,
                         chosen_height: chosen,
@@ -1669,7 +1965,7 @@ mod tests {
     ) {
         let (view, cx) = resize_harness(
             cx,
-            ranked_rows(&[AgentRank::Working; 10]),
+            ranked_rows(&[AgentRank::Working; 18]),
             AgentsSection::default(),
             800.,
         );
@@ -1720,7 +2016,7 @@ mod tests {
             Modifiers::default(),
         );
         redraw(cx);
-        assert_eq!(section_height(cx), px(95.));
+        assert_eq!(section_height(cx), px(96.));
         cx.simulate_mouse_up(grip, MouseButton::Left, Modifiers::default());
         redraw(cx);
 
@@ -1746,7 +2042,7 @@ mod tests {
     fn the_focused_handle_answers_arrows_home_end_and_enter(cx: &mut TestAppContext) {
         let (view, cx) = resize_harness(
             cx,
-            ranked_rows(&[AgentRank::Working; 10]),
+            ranked_rows(&[AgentRank::Working; 18]),
             AgentsSection::default(),
             800.,
         );
@@ -1763,7 +2059,7 @@ mod tests {
         }
         assert_eq!(press(cx, "up"), px(346.));
         assert_eq!(press(cx, "down"), px(330.));
-        assert_eq!(press(cx, "home"), px(95.));
+        assert_eq!(press(cx, "home"), px(96.));
         assert_eq!(press(cx, "end"), px(800. - 36. - 55. - 120.));
         assert_eq!(press(cx, "enter"), px(330.));
         assert_eq!(
@@ -1785,7 +2081,7 @@ mod tests {
             collapsed: false,
         });
         let short = 36. + 120. + 55. + 200.;
-        let (view, cx) = resize_harness(cx, ranked_rows(&[AgentRank::Working; 10]), chosen, short);
+        let (view, cx) = resize_harness(cx, ranked_rows(&[AgentRank::Working; 18]), chosen, short);
         assert_eq!(section_height(cx), px(200.));
         assert_eq!(cx.debug_bounds("tree").expect("tree").size.height, px(120.));
         assert_eq!(
@@ -1932,12 +2228,15 @@ mod tests {
         );
         assert_eq!(shown.rows[1].tool, TerminalAgent::ClaudeCode);
         assert_eq!(
-            shown
-                .rows
+            agent_groups(&shown.rows)
                 .iter()
-                .map(|row| row.starts_rank)
+                .map(|group| (group.status, group.rows.len()))
                 .collect::<Vec<_>>(),
-            [false, true, true]
+            [
+                (AgentGroupStatus::NeedYou, 1),
+                (AgentGroupStatus::Working, 1),
+                (AgentGroupStatus::NoStatus, 1),
+            ]
         );
         assert_eq!(
             shown.rows.iter().map(|row| row.active).collect::<Vec<_>>(),
@@ -1970,12 +2269,22 @@ mod tests {
         assert_eq!(young.rows[0].rank, AgentRank::NoStatus);
         assert_eq!(young.rows[0].status, AgentRowStatus::Silent);
         assert_eq!(young.grace_deadline, Some(started + NO_STATUS_GRACE));
+        assert_eq!(
+            group_shape(&agent_groups(&young.rows)),
+            [(AgentGroupStatus::Idle, vec![surfaces[0]])],
+            "within its grace delay the session sits in Idle"
+        );
 
         let due = started + NO_STATUS_GRACE;
         let grown =
             cx.update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, due, cx));
         assert_eq!(grown.rows[0].status, AgentRowStatus::NoStatus);
         assert_eq!(grown.grace_deadline, None);
+        assert_eq!(
+            group_shape(&agent_groups(&grown.rows)),
+            [(AgentGroupStatus::NoStatus, vec![surfaces[0]])],
+            "the wake at the grace deadline moves it to No status"
+        );
 
         let session = workspaces[0].agent_sessions.get_mut(&1).expect("session");
         session.program_status_capable = true;
@@ -2111,6 +2420,7 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let picks = self.picks.clone();
             let toggles = self.toggles.clone();
+            let groups = agent_groups(&self.rows);
             div()
                 .w(px(SIDEBAR_WIDTH))
                 .h(px(self.height))
@@ -2125,7 +2435,7 @@ mod tests {
                 )
                 .child(render_agents_section(
                     AgentsSectionFrame {
-                        rows: &self.rows,
+                        groups: &groups,
                         cursor: self.cursor,
                         collapsed: self.collapsed,
                         chosen_height: None,
@@ -2171,12 +2481,25 @@ mod tests {
         (cx, held_picks, held_toggles)
     }
 
+    const GROUP_KEYS: [&str; 6] = ["need-you", "error", "done", "working", "idle", "no-status"];
+    const GROUP_SELECTORS: [&str; 6] = [
+        "agent-group-need-you",
+        "agent-group-error",
+        "agent-group-done",
+        "agent-group-working",
+        "agent-group-idle",
+        "agent-group-no-status",
+    ];
+
+    fn close(left: gpui::Pixels, right: gpui::Pixels) -> bool {
+        (left - right).abs() < px(0.01)
+    }
+
     #[gpui::test]
-    fn the_rendered_section_sits_under_the_tree_with_its_header_rows_and_rank_gaps(
+    fn the_rendered_section_sits_under_the_tree_with_its_header_group_headers_and_rows(
         cx: &mut TestAppContext,
     ) {
-        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Errored, AgentRank::Errored]);
-        rows[0].status = AgentRowStatus::Lane(SidebarAgentState::NeedsInput);
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Errored, AgentRank::Errored]);
         let (cx, _, _) = harness(cx, rows, false, 800.);
 
         let section = cx.debug_bounds("agents-section").expect("section");
@@ -2188,7 +2511,7 @@ mod tests {
         );
         assert_eq!(
             section.size.height,
-            px(36. + 55. + (10. + 55.) + (2. + 55.) + 4.)
+            px(36. + (24. + 32.) + (8. + 24. + 32. + 2. + 32.) + 4.)
         );
         let header = cx.debug_bounds("agents-header").expect("header");
         assert_eq!(header.size.height, px(36.));
@@ -2197,19 +2520,311 @@ mod tests {
         assert_eq!(toggle.left(), section.left() + px(8.));
         assert_eq!(toggle.center().y, header.center().y);
 
+        let need_you = cx.debug_bounds("agent-group-need-you").expect("Need you");
+        let error = cx.debug_bounds("agent-group-error").expect("Error");
         let first = cx.debug_bounds("agent-row-1").expect("row 1");
         let second = cx.debug_bounds("agent-row-2").expect("row 2");
         let third = cx.debug_bounds("agent-row-3").expect("row 3");
-        assert_eq!(first.top(), header.bottom());
-        assert_eq!(first.size.height, px(55.));
+        assert_eq!(
+            need_you.top(),
+            header.bottom(),
+            "no gap above the first group"
+        );
+        assert_eq!(need_you.size.height, px(24.));
+        assert_eq!(first.top(), need_you.bottom());
+        assert_eq!(first.size.height, px(32.));
         assert_eq!(first.left(), section.left() + px(8.));
         assert_eq!(
-            second.top() - first.bottom(),
-            px(10.),
-            "a new rank adds 8 px"
+            error.top() - first.bottom(),
+            px(8.),
+            "8 px before every group header but the first"
         );
+        assert_eq!(error.size.height, px(24.));
+        assert_eq!(second.top(), error.bottom());
         assert_eq!(third.top() - second.bottom(), px(2.));
+        assert_eq!(third.size.height, px(32.));
         assert!(cx.debug_bounds("agents-empty").is_none());
+        for absent in &GROUP_SELECTORS[2..] {
+            assert!(
+                cx.debug_bounds(absent).is_none(),
+                "{absent} has no agent and no header"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn a_group_header_shows_its_label_at_the_row_content_edge_then_its_count_six_px_after(
+        cx: &mut TestAppContext,
+    ) {
+        let mut rows = ranked_rows(&[AgentRank::Working, AgentRank::Working, AgentRank::Idle]);
+        rows[2].details.logo = false;
+        let (cx, _, _) = harness(cx, rows, false, 800.);
+        let section = cx.debug_bounds("agents-section").expect("section");
+        let logo_slot_edge =
+            cx.debug_bounds("agent-row-1").expect("row 1").left() + px(SIDEBAR_ROW_PADDING_X);
+        let bare_title = cx.debug_bounds("agent-title-3").expect("title 3");
+        assert_eq!(AGENT_GROUP_HEADER_INSET, 15.);
+        assert_eq!(logo_slot_edge, section.left() + px(15.));
+        assert_eq!(bare_title.left(), section.left() + px(15.));
+        let shown = [
+            (
+                "agent-group-working",
+                "agent-group-label-working",
+                "agent-group-count-working",
+            ),
+            (
+                "agent-group-idle",
+                "agent-group-label-idle",
+                "agent-group-count-idle",
+            ),
+        ];
+        for (key, label, count) in shown {
+            let header = cx.debug_bounds(key).expect("group header");
+            let label = cx.debug_bounds(label).expect("group label");
+            let count = cx.debug_bounds(count).expect("group count");
+            assert_eq!(header.left(), section.left());
+            assert_eq!(header.size.width, section.size.width);
+            assert_eq!(label.left(), logo_slot_edge, "{key}");
+            assert!(
+                close(count.left() - label.right(), px(6.)),
+                "{key}: {label:?} {count:?}"
+            );
+            assert_eq!(label.center().y, header.center().y, "{key}");
+            assert_eq!(count.center().y, header.center().y, "{key}");
+        }
+    }
+
+    #[test]
+    fn a_group_header_takes_its_status_color_only_when_the_group_awaits_the_user() {
+        let ui = crate::theme::ui_colors();
+        assert_eq!(
+            AgentGroupStatus::NeedYou.color(ui),
+            crate::app::constants::sidebar_needs_input_color()
+        );
+        assert_eq!(AgentGroupStatus::Error.color(ui), ui.agent_error);
+        assert_eq!(
+            AgentGroupStatus::Done.color(ui),
+            crate::app::constants::sidebar_finished_color()
+        );
+        for quiet in [
+            AgentGroupStatus::Working,
+            AgentGroupStatus::Idle,
+            AgentGroupStatus::NoStatus,
+        ] {
+            assert_eq!(quiet.color(ui), ui.muted, "{quiet:?}");
+        }
+        assert_eq!(
+            AgentGroupStatus::ORDER.map(AgentGroupStatus::key),
+            GROUP_KEYS
+        );
+        assert_eq!(
+            GROUP_KEYS.map(|key| format!("agent-group-{key}")),
+            GROUP_SELECTORS
+        );
+    }
+
+    #[gpui::test]
+    fn a_row_is_one_32_px_line_with_logo_title_workspace_suffix_then_status(
+        cx: &mut TestAppContext,
+    ) {
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Idle]);
+        let (cx, _, _) = harness(cx, rows, false, 800.);
+        let row = cx.debug_bounds("agent-row-1").expect("row 1");
+        let logo = cx.debug_bounds("agent-logo-1").expect("logo");
+        let title = cx.debug_bounds("agent-title-1").expect("title");
+        let suffix = cx.debug_bounds("agent-workspace-1").expect("workspace");
+        let badge = cx.debug_bounds("status-badge-agent-1").expect("badge");
+        assert_eq!(row.size.height, px(32.));
+        assert_eq!(
+            title.left() - row.left(),
+            px(SIDEBAR_ROW_PADDING_X + SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP)
+        );
+        let status = cx.debug_bounds("agent-status-1").expect("status");
+        assert!(logo.right() < title.left());
+        assert!(
+            close(suffix.left(), title.right()),
+            "the suffix follows the title: {title:?} {suffix:?}"
+        );
+        assert_eq!(title.center().y, row.center().y);
+        assert_eq!(suffix.center().y, row.center().y);
+        assert!(close(
+            suffix.right(),
+            status.left() - px(SIDEBAR_TITLE_ROW_GAP)
+        ));
+        assert!(status.contains(&badge.center()));
+        assert!(
+            close(status.right(), row.right() - px(SIDEBAR_ROW_PADDING_X)),
+            "the status closes the line"
+        );
+
+        let idle = cx.debug_bounds("agent-row-2").expect("row 2");
+        assert_eq!(idle.size.height, px(32.));
+        assert!(
+            cx.debug_bounds("agent-status-2").is_none(),
+            "an idle row carries no status"
+        );
+    }
+
+    #[gpui::test]
+    fn a_long_name_ellipses_on_one_line_and_cuts_the_workspace_suffix_first(
+        cx: &mut TestAppContext,
+    ) {
+        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Blocked]);
+        rows[0].workspace = "a-workspace-name-far-longer-than-the-sidebar-row-can-show".to_string();
+        rows[1].title =
+            "A tab title far longer than the sidebar row can show on one line".to_string();
+        let (cx, _, _) = harness(cx, rows, false, 800.);
+
+        let row = cx.debug_bounds("agent-row-1").expect("row 1");
+        let title = cx.debug_bounds("agent-title-1").expect("title");
+        let suffix = cx.debug_bounds("agent-workspace-1").expect("workspace");
+        let badge = cx.debug_bounds("status-badge-agent-1").expect("badge");
+        assert_eq!(row.size.height, px(32.), "the text does not wrap");
+        assert!(
+            close(suffix.left(), title.right()),
+            "a short title keeps its width"
+        );
+        assert!(
+            close(suffix.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
+            "the suffix is cut where the status begins"
+        );
+        assert!(suffix.size.width > px(0.));
+        assert!(title.size.width > px(100.), "{title:?}");
+
+        let row = cx.debug_bounds("agent-row-2").expect("row 2");
+        let title = cx.debug_bounds("agent-title-2").expect("title");
+        let badge = cx.debug_bounds("status-badge-agent-2").expect("badge");
+        assert_eq!(row.size.height, px(32.), "the text does not wrap");
+        assert!(
+            close(title.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
+            "the title is cut only once the suffix has no room left: {title:?} {badge:?}"
+        );
+        assert!(
+            cx.debug_bounds("agent-workspace-2")
+                .is_none_or(|suffix| suffix.size.width == px(0.)),
+            "the suffix gave up all of its width first"
+        );
+    }
+
+    #[test]
+    fn a_name_longer_than_the_line_can_hold_gets_the_title_and_workspace_tooltip() {
+        let mut long = row(1, AgentRank::Idle, AgentRowStatus::Silent);
+        assert_eq!(
+            agent_row_full_name(&long),
+            "Attention sidebar \u{b7} paneflow"
+        );
+        assert_eq!(agent_row_shown_name(&long), agent_row_full_name(&long));
+        long.details.workspace = false;
+        assert_eq!(agent_row_shown_name(&long), "Attention sidebar");
+
+        let mut short = row(2, AgentRank::Idle, AgentRowStatus::Silent);
+        short.title = "Docs".to_string();
+        short.workspace = "web".to_string();
+        assert!(agent_row_shown_name(&short).chars().count() <= SIDEBAR_TITLE_TOOLTIP_MIN_CHARS);
+        assert!(agent_row_shown_name(&long).chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS);
+    }
+
+    #[gpui::test]
+    fn hiding_the_logo_or_the_workspace_suffix_keeps_each_row_at_32_px(cx: &mut TestAppContext) {
+        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Done, AgentRank::Working]);
+        rows[0].details.logo = false;
+        rows[1].details.workspace = false;
+        let groups = agent_groups(&rows);
+        assert_eq!(
+            agents_content_height(&groups),
+            3. * (24. + 32.) + 2. * 8.,
+            "the row details never change the height"
+        );
+        let (cx, _, _) = harness(cx, rows, false, 800.);
+
+        let bare = cx.debug_bounds("agent-row-1").expect("row 1");
+        let title = cx.debug_bounds("agent-title-1").expect("title");
+        assert_eq!(bare.size.height, px(32.));
+        assert!(cx.debug_bounds("agent-logo-1").is_none());
+        assert!(cx.debug_bounds("agent-workspace-1").is_some());
+        assert_eq!(title.left() - bare.left(), px(SIDEBAR_ROW_PADDING_X));
+
+        let unnamed = cx.debug_bounds("agent-row-2").expect("row 2");
+        assert_eq!(unnamed.size.height, px(32.));
+        assert!(cx.debug_bounds("agent-logo-2").is_some());
+        assert!(cx.debug_bounds("agent-workspace-2").is_none());
+        assert!(cx.debug_bounds("status-badge-agent-2").is_some());
+
+        assert!(cx.debug_bounds("agent-logo-3").is_some());
+        assert!(cx.debug_bounds("agent-workspace-3").is_some());
+    }
+
+    #[test]
+    fn only_a_working_row_shimmers_and_it_holds_still_under_reduce_motion() {
+        let working = AgentRowStatus::Lane(SidebarAgentState::Thinking);
+        assert!(agent_title_shimmers(working, false));
+        assert!(!agent_title_shimmers(working, true));
+        for still in [
+            AgentRowStatus::Lane(SidebarAgentState::NeedsInput),
+            AgentRowStatus::Lane(SidebarAgentState::Errored),
+            AgentRowStatus::Lane(SidebarAgentState::Finished),
+            AgentRowStatus::Silent,
+            AgentRowStatus::NoStatus,
+        ] {
+            assert!(!agent_title_shimmers(still, false), "{still:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn a_working_row_shows_the_matrix_in_place_of_a_badge(cx: &mut TestAppContext) {
+        let (cx, _, _) = harness(cx, ranked_rows(&[AgentRank::Working]), false, 800.);
+        let row = cx.debug_bounds("agent-row-1").expect("row 1");
+        let status = cx.debug_bounds("agent-status-1").expect("status");
+        assert_eq!(row.size.height, px(32.));
+        assert!(cx.debug_bounds("status-badge-agent-1").is_none());
+        assert_eq!(status.size.width, px(SIDEBAR_LANE_GLYPH_SIZE));
+        assert!(close(
+            status.right(),
+            row.right() - px(SIDEBAR_ROW_PADDING_X)
+        ));
+    }
+
+    #[gpui::test]
+    fn no_field_declared_over_osc_7501_reaches_a_header_or_a_row(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (mut workspace, surfaces) = workspace_with_agents(cx, 1, "paneflow", &["Docs nav"]);
+        let mut session = agent(
+            TerminalAgent::ClaudeCode,
+            AgentState::WaitingForInput,
+            true,
+            surfaces[0],
+            Duration::from_secs(10),
+        );
+        session.message = Some("declared-message".to_string());
+        session.active_tool_name = Some("declared-app".to_string());
+        session.last_result = Some("declared-result".to_string());
+        session.pending_tab_title = Some("declared-title".to_string());
+        workspace.agent_sessions.insert(1, session);
+        let workspaces = vec![workspace];
+        let shown = cx.update(|_, cx| {
+            agent_rows(
+                &workspaces,
+                None,
+                Some(0),
+                AgentRowDetails::ALL,
+                Instant::now(),
+                cx,
+            )
+        });
+        let groups = agent_groups(&shown.rows);
+        let texts = [
+            shown.rows[0].title.clone(),
+            shown.rows[0].workspace.clone(),
+            agent_row_full_name(&shown.rows[0]),
+            agent_row_label(&shown.rows[0]),
+            agent_group_label(groups[0].status, groups[0].rows.len()),
+            groups[0].status.label().to_string(),
+        ];
+        assert_eq!(texts[0], "Docs nav");
+        assert_eq!(texts[1], "paneflow");
+        for text in &texts {
+            assert!(!text.contains("declared"), "{text}");
+        }
     }
 
     #[gpui::test]
@@ -2230,6 +2845,12 @@ mod tests {
         let (cx, _, _) = harness(cx, Vec::new(), false, 800.);
         let empty = cx.debug_bounds("agents-empty").expect("empty state");
         assert_eq!(empty.size.height, px(32.));
+        for header in GROUP_SELECTORS {
+            assert!(
+                cx.debug_bounds(header).is_none(),
+                "an empty section has no {header}"
+            );
+        }
         assert_eq!(
             cx.debug_bounds("agents-section")
                 .expect("section")
@@ -2308,6 +2929,17 @@ mod tests {
         let first = cx.debug_bounds("agent-row-1").expect("row 1");
         assert!(first.contains(&label.center()));
         assert_eq!(label.size.height, px(20.));
+        assert_eq!(first.size.height, px(32.));
+        let idle = cx.debug_bounds("agent-group-idle").expect("Idle");
+        let no_status = cx.debug_bounds("agent-group-no-status").expect("No status");
+        let starting = cx.debug_bounds("agent-row-2").expect("row 2");
+        assert_eq!(
+            starting.top(),
+            idle.bottom(),
+            "a session in its grace delay sits under Idle with no status"
+        );
+        assert!(cx.debug_bounds("agent-status-2").is_none());
+        assert_eq!(first.top(), no_status.bottom());
     }
 
     fn a11y_node(element: &gpui::Stateful<gpui::Div>) -> gpui::accesskit::Node {
@@ -2372,22 +3004,140 @@ mod tests {
             "the reason behind No status reaches assistive technology without a hover"
         );
         assert_eq!(silent.is_selected(), Some(true));
+
+        let listed = ranked_rows(&[AgentRank::Blocked, AgentRank::Working, AgentRank::Working]);
+        let groups = agent_groups(&listed);
+        assert_eq!(groups.len(), 2);
+        let spoken_states = ["waiting for input", "working", "working"];
+        for (row, state) in groups
+            .iter()
+            .flat_map(|group| group.rows.iter())
+            .zip(spoken_states)
+        {
+            let item = render_agent_row(row, false, ui, Rc::new(|_, _, _| {}));
+            assert_eq!(item.a11y_role(), Some(gpui::accesskit::Role::ListItem));
+            assert_eq!(
+                a11y_node(&item).label(),
+                Some(format!("Claude Code, Attention sidebar, paneflow, {state}").as_str())
+            );
+        }
+        let working = &groups[1];
+        let second = render_agent_group_member(
+            render_agent_row(working.rows[1], false, ui, Rc::new(|_, _, _| {})),
+            1,
+            working.rows.len(),
+        );
+        let second = a11y_node(&second);
+        assert_eq!(
+            (second.position_in_set(), second.size_of_set()),
+            (Some(2), Some(2)),
+            "a row is announced by its place within its own group"
+        );
+    }
+
+    #[test]
+    fn a_group_header_is_a_heading_named_by_its_label_and_agent_count() {
+        use gpui::Element as _;
+        let ui = crate::theme::ui_colors();
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Working, AgentRank::Working]);
+        let groups = agent_groups(&rows);
+        let names = ["Need you, 1 agent", "Working, 2 agents"];
+        assert_eq!(groups.len(), names.len());
+        for (index, (group, name)) in groups.iter().zip(names).enumerate() {
+            let header = render_agent_group_header(group, index == 0, ui);
+            assert_eq!(header.a11y_role(), Some(gpui::accesskit::Role::Heading));
+            let node = a11y_node(&header);
+            assert_eq!(node.label(), Some(name));
+            assert_eq!(node.level(), Some(AGENT_GROUP_HEADING_LEVEL));
+        }
+        assert_eq!(
+            agent_group_label(AgentGroupStatus::NoStatus, 12),
+            "No status, 12 agents"
+        );
     }
 
     #[test]
     fn the_keyboard_cursor_reaches_the_rows_only_of_a_shown_expanded_section() {
         let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Working]);
-        assert_eq!(agents_nav_targets(true, false, &rows), [1, 2]);
-        assert!(agents_nav_targets(true, true, &rows).is_empty());
-        assert!(agents_nav_targets(false, false, &rows).is_empty());
+        let groups = agent_groups(&rows);
+        assert_eq!(agents_nav_targets(true, false, &groups), [1, 2]);
+        assert!(agents_nav_targets(true, true, &groups).is_empty());
+        assert!(agents_nav_targets(false, false, &groups).is_empty());
         assert!(agents_nav_targets(true, false, &[]).is_empty());
+    }
+
+    #[test]
+    fn the_keyboard_cursor_walks_the_agents_in_shown_order_and_never_a_group_header() {
+        let rows = vec![
+            row(1, AgentRank::Blocked, rank_status(AgentRank::Blocked)),
+            row(2, AgentRank::Working, rank_status(AgentRank::Working)),
+            row(3, AgentRank::NoStatus, AgentRowStatus::NoStatus),
+            row(4, AgentRank::NoStatus, AgentRowStatus::Silent),
+        ];
+        let groups = agent_groups(&rows);
+        assert_eq!(groups.len(), 4);
+        let targets = agents_nav_targets(true, false, &groups);
+        assert_eq!(
+            targets,
+            [1, 2, 4, 3],
+            "one stop per agent, in the order the groups show them"
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .map(|&surface| agent_list_position(&groups, surface).map(|at| at.row))
+                .collect::<Vec<_>>(),
+            [Some(1), Some(3), Some(5), Some(7)],
+            "every stop is a row child, every header child is skipped"
+        );
+    }
+
+    #[test]
+    fn a_row_is_located_among_the_list_children_by_counting_the_group_headers() {
+        let rows = ranked_rows(&[
+            AgentRank::Blocked,
+            AgentRank::Blocked,
+            AgentRank::Working,
+            AgentRank::Working,
+        ]);
+        let groups = agent_groups(&rows);
+        assert_eq!(
+            agent_list_position(&groups, 1),
+            Some(AgentListPosition {
+                row: 1,
+                group_header: Some(0),
+            })
+        );
+        assert_eq!(
+            agent_list_position(&groups, 2),
+            Some(AgentListPosition {
+                row: 2,
+                group_header: None,
+            })
+        );
+        assert_eq!(
+            agent_list_position(&groups, 3),
+            Some(AgentListPosition {
+                row: 4,
+                group_header: Some(3),
+            })
+        );
+        assert_eq!(
+            agent_list_position(&groups, 4),
+            Some(AgentListPosition {
+                row: 5,
+                group_header: None,
+            })
+        );
+        assert_eq!(agent_list_position(&groups, 99), None);
     }
 
     #[test]
     fn the_section_list_is_a_list_named_agents() {
         use gpui::Element as _;
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Working]);
         let list = render_agents_list(
-            &ranked_rows(&[AgentRank::Blocked]),
+            &agent_groups(&rows),
             None,
             &ScrollHandle::new(),
             crate::theme::ui_colors(),
@@ -2401,37 +3151,130 @@ mod tests {
     fn the_cursor_row_wears_the_sidebar_cursor_ring_and_is_scrolled_into_view(
         cx: &mut TestAppContext,
     ) {
+        let mut ranks = vec![AgentRank::Blocked; 2];
+        ranks.extend([AgentRank::Working; 10]);
+        let rows = ranked_rows(&ranks);
+        let shown = rows.clone();
+        let groups = agent_groups(&shown);
+        assert_eq!(groups.len(), 2);
         let scroll = ScrollHandle::new();
         let held = scroll.clone();
         let (view, cx) = cx.add_window_view(move |_, _| SectionHarness {
-            rows: ranked_rows(&[AgentRank::Working; 10]),
-            cursor: Some(10),
+            rows,
+            cursor: Some(12),
             scroll: held,
             collapsed: false,
             height: 900.,
             picks: Rc::new(RefCell::new(Vec::new())),
             toggles: Rc::new(Cell::new(0)),
         });
+        let redraw = |cx: &mut gpui::VisualTestContext| {
+            view.update(cx, |_, cx| cx.notify());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
         cx.update(|window, cx| window.draw(cx).clear(cx));
         let section = cx.debug_bounds("agents-section").expect("section");
+        let list_top = cx.debug_bounds("agents-header").expect("header").bottom();
         assert!(
-            cx.debug_bounds("agent-row-10")
+            cx.debug_bounds("agent-row-12")
                 .is_none_or(|row| row.top() >= section.bottom()),
             "the last row starts below the 330 px section"
         );
 
-        scroll.scroll_to_item(agent_row_child_index(9));
-        view.update(cx, |_, cx| cx.notify());
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        let row = cx.debug_bounds("agent-row-10").expect("last row");
+        scroll_agents_list_to(&scroll, &groups, 12);
+        redraw(cx);
+        let row = cx.debug_bounds("agent-row-12").expect("last row");
         assert!(
-            row.bottom() <= section.bottom(),
-            "the cursor row is visible"
+            row.bottom() <= section.bottom() && row.top() >= list_top,
+            "the cursor row is visible past both group headers"
         );
-        let ring = cx.debug_bounds("agent-cursor-10").expect("cursor ring");
+        let ring = cx.debug_bounds("agent-cursor-12").expect("cursor ring");
         assert_eq!(ring, row);
-        assert!(cx.debug_bounds("agent-cursor-9").is_none());
+        assert!(cx.debug_bounds("agent-cursor-11").is_none());
+
+        view.update(cx, |harness, _| harness.cursor = Some(3));
+        scroll_agents_list_to(&scroll, &groups, 3);
+        redraw(cx);
+        let working = cx.debug_bounds("agent-group-working").expect("Working");
+        let row = cx.debug_bounds("agent-row-3").expect("row 3");
+        assert_eq!(
+            working.top(),
+            list_top,
+            "the first row of a group brings its header back into view"
+        );
+        assert_eq!(row.top(), working.bottom());
+        assert_eq!(cx.debug_bounds("agent-cursor-3"), Some(row));
+
+        view.update(cx, |harness, _| harness.cursor = Some(1));
+        scroll_agents_list_to(&scroll, &groups, 1);
+        redraw(cx);
+        let need_you = cx.debug_bounds("agent-group-need-you").expect("Need you");
+        let row = cx.debug_bounds("agent-row-1").expect("row 1");
+        assert_eq!(need_you.top(), list_top, "Home shows the first header");
+        assert_eq!(row.top(), need_you.bottom());
+
+        view.update(cx, |harness, _| harness.cursor = Some(7));
+        scroll_agents_list_to(&scroll, &groups, 12);
+        redraw(cx);
+        scroll_agents_list_to(&scroll, &groups, 7);
+        redraw(cx);
+        let row = cx.debug_bounds("agent-row-7").expect("row 7");
+        assert!(
+            row.top() >= list_top && row.bottom() <= section.bottom(),
+            "a row in the middle of a group is scrolled to by its own child index"
+        );
+        assert_eq!(cx.debug_bounds("agent-cursor-7"), Some(row));
+    }
+
+    #[gpui::test]
+    fn the_cursor_stays_on_its_agent_when_that_agent_changes_group(cx: &mut TestAppContext) {
+        let rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Working, AgentRank::Working]);
+        let (view, cx) = cx.add_window_view(move |_, _| SectionHarness {
+            rows,
+            cursor: Some(3),
+            scroll: ScrollHandle::new(),
+            collapsed: false,
+            height: 900.,
+            picks: Rc::new(RefCell::new(Vec::new())),
+            toggles: Rc::new(Cell::new(0)),
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let working = cx.debug_bounds("agent-group-working").expect("Working");
+        let row = cx.debug_bounds("agent-row-3").expect("row 3");
+        assert!(row.top() > working.bottom());
+        assert_eq!(cx.debug_bounds("agent-cursor-3"), Some(row));
+
+        view.update(cx, |harness, cx| {
+            harness.rows[2].rank = AgentRank::Errored;
+            harness.rows[2].status = rank_status(AgentRank::Errored);
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let error = cx.debug_bounds("agent-group-error").expect("Error");
+        let working = cx.debug_bounds("agent-group-working").expect("Working");
+        let moved = cx.debug_bounds("agent-row-3").expect("row 3");
+        assert_eq!(moved.top(), error.bottom(), "the row moved under Error");
+        assert!(moved.bottom() < working.top());
+        assert_eq!(
+            cx.debug_bounds("agent-cursor-3"),
+            Some(moved),
+            "the cursor followed the same agent"
+        );
+        for other in ["agent-cursor-1", "agent-cursor-2"] {
+            assert!(
+                cx.debug_bounds(other).is_none(),
+                "no other row took the cursor"
+            );
+        }
+        assert_eq!(
+            agents_nav_targets(
+                true,
+                false,
+                &agent_groups(&view.read_with(cx, |harness, _| harness.rows.clone()))
+            ),
+            [1, 3, 2]
+        );
     }
 
     struct LoadedSidebar {
@@ -2465,7 +3308,7 @@ mod tests {
         );
         render_agents_section(
             AgentsSectionFrame {
-                rows: &rows,
+                groups: &agent_groups(&rows),
                 cursor: None,
                 collapsed: false,
                 chosen_height: None,

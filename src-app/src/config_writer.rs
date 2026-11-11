@@ -544,6 +544,34 @@ mod tests {
     }
 
     #[test]
+    fn toggling_an_agent_row_detail_drops_a_retired_agent_status_key_from_the_file() {
+        use crate::app::sidebar::customize_menu::sidebar_show_value;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        let original =
+            r#"{"theme": "One Dark", "sidebar_show": {"agent_logo": true, "agent_status": false}}"#;
+        std::fs::write(&p, original).unwrap();
+        let loaded: paneflow_config::schema::PaneFlowConfig =
+            serde_json::from_str(original).unwrap();
+        let mut show = loaded.sidebar_show;
+        show.agent_logo = Some(!show.agent_logo_enabled());
+
+        assert_eq!(
+            save_setting_ordered_at(&p, false, "sidebar_show", sidebar_show_value(show), 1),
+            SettingWrite::Written
+        );
+        let written = load_raw_config(&p).unwrap();
+        assert!(
+            written["sidebar_show"].get("agent_status").is_none(),
+            "the retired key leaves the file: {written}"
+        );
+        assert_eq!(written["sidebar_show"]["agent_logo"], json!(false));
+        assert_eq!(written["sidebar_show"]["agent_workspace"], json!(true));
+        assert_eq!(written["theme"], json!("One Dark"));
+    }
+
+    #[test]
     fn a_reset_backs_the_file_up_first_and_refuses_a_read_only_file() {
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("paneflow.json");
