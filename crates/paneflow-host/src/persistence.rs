@@ -277,6 +277,7 @@ impl Persistence {
                 queue.metadata.insert(record.session.clone(), record);
             }
             WriteClass::Critical => {
+                supersede_queued_metadata(&mut queue, &record);
                 let admitted = queue.queued_bytes.saturating_add(size) <= QUEUE_BUDGET_BYTES;
                 if !admitted {
                     let queued = queue.queued_bytes;
@@ -292,6 +293,7 @@ impl Persistence {
                 queue.ordered.push_back(Job::Manifest(record, None));
             }
             WriteClass::Final => {
+                supersede_queued_metadata(&mut queue, &record);
                 let admitted = queue.queued_bytes.saturating_add(size) <= QUEUE_BUDGET_BYTES;
                 if !admitted {
                     record.state.set_error(Some(
@@ -322,6 +324,7 @@ impl Persistence {
             if queue.stopped {
                 return Err(PersistError::Stopped);
             }
+            supersede_queued_metadata(&mut queue, &record);
             let size = record.bytes();
             let admitted = queue.queued_bytes.saturating_add(size) <= QUEUE_BUDGET_BYTES;
             if !admitted {
@@ -486,6 +489,16 @@ fn wait(
     }
 }
 
+fn supersede_queued_metadata(queue: &mut Queue, record: &ManifestRevision) {
+    let older = queue
+        .metadata
+        .get(&record.session)
+        .is_some_and(|queued| queued.revision < record.revision);
+    if older && let Some(previous) = queue.metadata.remove(&record.session) {
+        queue.queued_bytes = queue.queued_bytes.saturating_sub(previous.bytes());
+    }
+}
+
 fn retain_pending_final(queue: &mut Queue, record: ManifestRevision) {
     let newer_pending = queue
         .pending_final
@@ -540,14 +553,37 @@ fn writer_loop(home: &Path, shared: &Arc<Shared>) {
             return;
         };
         let bytes = job.bytes();
-        let outcome = execute(home, job);
-        let mut queue = shared
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        queue.queued_bytes = queue.queued_bytes.saturating_sub(bytes);
-        if let Some(record) = outcome {
-            retain_pending_final(&mut queue, record);
+        let mut executed = execute(home, job);
+        {
+            let mut queue = shared
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            queue.queued_bytes = queue.queued_bytes.saturating_sub(bytes);
+            if let Some(record) = executed.retained.take() {
+                retain_pending_final(&mut queue, record);
+            }
+        }
+        executed.reply();
+    }
+}
+
+struct Executed {
+    retained: Option<ManifestRevision>,
+    reply: Option<(Completion, Result<(), PersistError>)>,
+}
+
+impl Executed {
+    fn answering(done: Option<Completion>, result: Result<(), PersistError>) -> Self {
+        Self {
+            retained: None,
+            reply: done.map(|done| (done, result)),
+        }
+    }
+
+    fn reply(self) {
+        if let Some((done, result)) = self.reply {
+            let _ = done.send(result);
         }
     }
 }
@@ -569,7 +605,7 @@ fn take_next(queue: &mut Queue, prefer_metadata: bool) -> Option<Job> {
     }
 }
 
-fn execute(home: &Path, job: Job) -> Option<ManifestRevision> {
+fn execute(home: &Path, job: Job) -> Executed {
     match job {
         Job::Manifest(record, done) => {
             let result = write_revision(home, &record);
@@ -583,10 +619,10 @@ fn execute(home: &Path, job: Job) -> Option<ManifestRevision> {
                     (record.class == WriteClass::Final).then_some(record)
                 }
             };
-            if let Some(done) = done {
-                let _ = done.send(result);
+            Executed {
+                retained,
+                ..Executed::answering(done, result)
             }
-            retained
         }
         Job::Remove {
             session,
@@ -603,22 +639,10 @@ fn execute(home: &Path, job: Job) -> Option<ManifestRevision> {
             };
             manifest::remove_session_data(home, &session);
             state.set_error(result.as_ref().err().map(ToString::to_string));
-            if let Some(done) = done {
-                let _ = done.send(result);
-            }
-            None
+            Executed::answering(done, result)
         }
-        Job::Exclusive(run, done) => {
-            let result = run();
-            if let Some(done) = done {
-                let _ = done.send(result);
-            }
-            None
-        }
-        Job::Barrier(done) => {
-            let _ = done.send(Ok(()));
-            None
-        }
+        Job::Exclusive(run, done) => Executed::answering(done, run()),
+        Job::Barrier(done) => Executed::answering(Some(done), Ok(())),
     }
 }
 
@@ -743,6 +767,59 @@ mod tests {
         assert_eq!(report.queued_bytes, 0);
         assert!(report.peak_queued_bytes <= 2 * 64 * 1024);
         assert_eq!(state.error(), None);
+    }
+
+    #[test]
+    fn executing_a_job_leaves_its_reply_to_the_writer_until_the_queue_is_settled() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let state = Arc::new(SessionPersistence::default());
+        let record = encode(&sample(&session, "critical"), &state, WriteClass::Critical);
+        let (done, answer) = sync_channel(1);
+        let executed = execute(home.path(), Job::Manifest(record, Some(done)));
+        assert!(answer.try_recv().is_err());
+        assert_eq!(
+            stored_title(home.path(), &session).as_deref(),
+            Some("critical")
+        );
+        executed.reply();
+        assert!(matches!(answer.try_recv(), Ok(Ok(()))));
+    }
+
+    #[test]
+    fn a_critical_revision_supersedes_the_metadata_revision_queued_for_its_session() {
+        let home = tempfile::tempdir().unwrap();
+        let service = Persistence::start(home.path()).unwrap();
+        let session = SessionId::new();
+        let state = Arc::new(SessionPersistence::default());
+        let (entered, writer_blocked) = sync_channel(1);
+        let (release, gate) = sync_channel::<()>(0);
+        service.spawn_exclusive(move || {
+            let _ = entered.send(());
+            let _ = gate.recv();
+            Ok(())
+        });
+        writer_blocked.recv_timeout(CRITICAL_DEADLINE).unwrap();
+        service
+            .submit(encode(
+                &sample(&session, "stale"),
+                &state,
+                WriteClass::Metadata,
+            ))
+            .unwrap();
+        let critical = encode(&sample(&session, "current"), &state, WriteClass::Critical);
+        let critical_bytes = critical.bytes();
+        service.submit(critical).unwrap();
+        let report = service.report();
+        assert_eq!(report.queued_jobs, 1);
+        assert_eq!(report.queued_bytes, critical_bytes);
+        drop(release);
+        service.drain(CRITICAL_DEADLINE).unwrap();
+        assert_eq!(
+            stored_title(home.path(), &session).as_deref(),
+            Some("current")
+        );
+        assert_eq!(service.report().queued_bytes, 0);
     }
 
     #[test]
