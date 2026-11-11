@@ -36,6 +36,8 @@ resolve_master() {
 MASTER="$(resolve_master "paneflow-icon-1024"             || true)"
 MASTER_MACOS="$(resolve_master "paneflow-icon-macos-1024" || true)"
 MASTER_LINUX="$(resolve_master    "paneflow-icon-linux-1024"      || true)"
+MASTER_WINDOWS="$(resolve_master  "paneflow-icon-windows-1024"    || true)"
+MASTER_WINDOWS_SIMPLE="$(resolve_master "paneflow-icon-windows-1024-simplified" || true)"
 MASTER_SIMPLE="$(resolve_master   "paneflow-icon-1024-simplified" || true)"
 MASTER_TEMPLATE="$(resolve_master "paneflow-icon-template-1024"   || true)"
 
@@ -59,6 +61,7 @@ fi
 
 PORTABLE_BODY_PCT=8333
 LINUX_BODY_PCT=8750
+WINDOWS_BODY_PCT=10000
 MACOS_BODY_PCT=8047
 MACOS_MASK_RADIUS_PCT=2237
 
@@ -121,6 +124,22 @@ src_for_size() {
     fi
 }
 
+ico_src_for_size() {
+    local size="$1"
+    if [ -z "$MASTER_WINDOWS" ]; then
+        src_for_size "$size"
+    elif [ "$size" -le 64 ] && [ -n "$MASTER_WINDOWS_SIMPLE" ]; then
+        printf '%s' "$MASTER_WINDOWS_SIMPLE"
+    else
+        printf '%s' "$MASTER_WINDOWS"
+    fi
+}
+
+ICO_BODY_PCT="$PORTABLE_BODY_PCT"
+if [ -n "$MASTER_WINDOWS" ]; then
+    ICO_BODY_PCT="$WINDOWS_BODY_PCT"
+fi
+
 mkdir -p "$OUT_ICONS_DIR"
 for size in 16 32 48 128 256 512; do
     dst="$OUT_ICONS_DIR/paneflow-${size}.png"
@@ -167,8 +186,8 @@ log "  $OUT_ICO"
 TMP_ICO="$TMP_ASSETS/ico"
 mkdir -p "$TMP_ICO"
 for size in 16 24 32 48 64 128 256; do
-    src="$(src_for_size "$size")"
-    resize_with_inset_png "$src" "$TMP_ICO/${size}.png" "$size" "$PORTABLE_BODY_PCT"
+    src="$(ico_src_for_size "$size")"
+    resize_with_inset_png "$src" "$TMP_ICO/${size}.png" "$size" "$ICO_BODY_PCT"
 done
 
 run_magick "$IM_BIN" "$TMP_ICO"/{16,24,32,48,64,128,256}.png "$OUT_ICO"
@@ -186,6 +205,12 @@ if [ -n "$MASTER_LINUX" ]; then
     log "Linux hicolor source: $(basename "$MASTER_LINUX") (full-bleed + keyline, Linux only -- .ico/.icns/runtime icon untouched)"
 else
     log "no Linux master  -- hicolor sizes use the transparent portable master"
+fi
+if [ -n "$MASTER_WINDOWS" ]; then
+    log "Windows ICO source: $(basename "$MASTER_WINDOWS") (full-bleed, no inset -- runtime icon stays on the portable master)"
+    [ -n "$MASTER_WINDOWS_SIMPLE" ] || log "no simplified Windows master -- ICO sizes <=64 use the full Windows master"
+else
+    log "no Windows master -- the ICO uses the transparent portable master"
 fi
 [ -f "$MASTER_SIMPLE" ]   || log  "no simplified master -- sizes <=64 use the transparent portable master"
 [ -f "$MASTER_TEMPLATE" ] || log  "no template master  -- skipping menubar Template PNGs"
