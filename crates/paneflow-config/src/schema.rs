@@ -361,6 +361,11 @@ mod tests {
         );
         assert_doc_mentions_property_keys(
             &doc,
+            &schema["properties"]["sidebar_show"]["properties"],
+            "sidebar_show",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
             &schema["definitions"]["commandDefinition"]["properties"],
             "commandDefinition",
         );
