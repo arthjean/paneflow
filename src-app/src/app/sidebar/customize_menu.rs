@@ -50,9 +50,6 @@ impl PaneFlowApp {
             SidebarShowLine::Agents => show.agents = Some(!show.agents_enabled()),
             SidebarShowLine::Usage => show.usage = Some(!show.usage_enabled()),
             SidebarShowLine::AgentLogo => show.agent_logo = Some(!show.agent_logo_enabled()),
-            SidebarShowLine::AgentStatus => {
-                show.agent_status = Some(!show.agent_status_enabled());
-            }
             SidebarShowLine::AgentWorkspace => {
                 show.agent_workspace = Some(!show.agent_workspace_enabled());
             }
@@ -64,7 +61,7 @@ impl PaneFlowApp {
     }
 }
 
-fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
+pub(crate) fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
     serde_json::json!({
         "branch": show.branch_enabled(),
         "diffstat": show.diffstat_enabled(),
@@ -73,7 +70,6 @@ fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "agents": show.agents_enabled(),
         "usage": show.usage_enabled(),
         "agent_logo": show.agent_logo_enabled(),
-        "agent_status": show.agent_status_enabled(),
         "agent_workspace": show.agent_workspace_enabled(),
     })
 }
@@ -87,16 +83,12 @@ pub(super) enum SidebarShowLine {
     Agents,
     Usage,
     AgentLogo,
-    AgentStatus,
     AgentWorkspace,
 }
 
 impl SidebarShowLine {
     fn is_agent_row_detail(self) -> bool {
-        matches!(
-            self,
-            Self::AgentLogo | Self::AgentStatus | Self::AgentWorkspace
-        )
+        matches!(self, Self::AgentLogo | Self::AgentWorkspace)
     }
 }
 
@@ -328,7 +320,6 @@ pub(super) fn render_show_option(
         SidebarShowLine::Agents => "sidebar-show-agents",
         SidebarShowLine::Usage => "sidebar-show-usage",
         SidebarShowLine::AgentLogo => "agents-show-logo",
-        SidebarShowLine::AgentStatus => "agents-show-status",
         SidebarShowLine::AgentWorkspace => "agents-show-workspace",
     };
 
@@ -402,7 +393,6 @@ mod tests {
                 "agents": true,
                 "usage": true,
                 "agent_logo": true,
-                "agent_status": true,
                 "agent_workspace": true,
             })
         );
@@ -443,7 +433,6 @@ mod tests {
 
         assert!(!next.sidebar_show.agent_workspace_enabled());
         assert!(next.sidebar_show.agent_logo_enabled());
-        assert!(next.sidebar_show.agent_status_enabled());
         assert!(next.sidebar_show.agents_enabled());
     }
 

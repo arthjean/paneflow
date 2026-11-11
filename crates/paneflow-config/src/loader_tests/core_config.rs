@@ -203,7 +203,8 @@ fn test_command_with_shell_command() {
 fn test_retired_keys_load_as_if_absent() {
     let without = r#"{
         "theme": "One Dark",
-        "agent_panel": {"notify_when_agent_waiting": "AllScreens"}
+        "agent_panel": {"notify_when_agent_waiting": "AllScreens"},
+        "sidebar_show": {"agent_logo": false}
     }"#;
     let with = r#"{
         "theme": "One Dark",
@@ -215,7 +216,8 @@ fn test_retired_keys_load_as_if_absent() {
             "default_profile": "Write"
         },
         "tool_permissions": {"read": {"always_allow": ["src/"], "always_deny": ["secrets/"]}},
-        "sidebar_ended_sessions": 5
+        "sidebar_ended_sessions": 5,
+        "sidebar_show": {"agent_logo": false, "agent_status": false}
     }"#;
     let dir = tempfile::tempdir().unwrap();
     let with_path = dir.path().join("with.json");

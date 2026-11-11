@@ -120,8 +120,6 @@ pub struct SidebarShow {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_logo: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
-    pub agent_status: Option<bool>,
-    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_workspace: Option<bool>,
 }
 
@@ -232,10 +230,6 @@ impl SidebarShow {
 
     pub fn agent_logo_enabled(&self) -> bool {
         self.agent_logo.unwrap_or(true)
-    }
-
-    pub fn agent_status_enabled(&self) -> bool {
-        self.agent_status.unwrap_or(true)
     }
 
     pub fn agent_workspace_enabled(&self) -> bool {
