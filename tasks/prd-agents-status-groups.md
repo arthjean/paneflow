@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-03 | Arthur Jean | PRD initial, issu de la revue du 2026-11-02 : section Agents groupée par statut dans la DA Paneflow, statuts de l'arbre masquables par `sidebar_show.status`, retrait de `sidebar_show.agent_status`, une seule projection d'état pour l'arbre et la section. 4 epics, 11 stories. |
 | 1.1 | 2026-11-11 | Arthur Jean | US-005 : le libellé d'en-tête de groupe commence à 15 px du bord, et non 14. La maquette utilise un padding de ligne de 6 px, l'app un padding de 7 px (`SIDEBAR_ROW_PADDING_X`) ; l'en-tête s'aligne sur le contenu des lignes. Décision d'Arthur à la revue d'EP-002. |
+| 1.2 | 2026-11-11 | Arthur Jean | Ajout d'EP-005 (US-012 à US-014), epic d'exploration : montrer qu'un agent qui attend ses sous-agents n'est pas au repos, en restant sur OSC 7501. Aucun code produit. 5 epics, 14 stories. |
 
 ## Problem Statement
 
@@ -99,6 +100,7 @@ Gates additionnels :
 - Stories qui touchent la configuration (US-007, US-008) : `cargo test -p paneflow-config --locked` - schéma et chargement.
 - Stories d'UX/UI (US-002, US-005, US-006, US-009, US-010) : revue par le skill `/better-interface` sur la surface modifiée, menée en appliquant les skills `better-*` à DESIGN.md et à la maquette validée. La story ne passe en IN_REVIEW qu'avec un verdict `Approve`, sans finding `HIGH` restant. Les vérifications qui exigent l'app rendue sont marquées `Not verified` dans le rapport.
 - Stories d'interface (EP-002, EP-003) : passe visuelle manuelle par Arthur sur macOS et Windows, comparée à la maquette validée. L'agent d'implémentation ne lance pas l'application et ne fait pas de capture.
+- Stories d'exploration (EP-005) : elles ne modifient aucun code produit, donc les trois commandes ci-dessus ne s'appliquent pas ; chaque fait consigné cite sa source (capture datée, fichier et ligne, ou section de la spec).
 
 ## Epics & User Stories
 
@@ -293,6 +295,57 @@ DESIGN.md, le changelog et la documentation utilisateur décrivent ce que l'app 
 - [ ] CHANGELOG.md, section Unreleased : l'entrée « Choose what each Agents row shows » (CHANGELOG.md:15) ne cite plus le statut ni `sidebar_show.agent_status` ; une entrée Changed décrit les groupes et l'alignement de l'arbre sur la section (Working au lieu de Done pour un agent reparti, matrice à l'accent du runtime) ; une entrée Added décrit `sidebar_show.status`.
 - [ ] La documentation utilisateur est modifiée dans le dépôt du site paneflow-web (page features, description des lignes Agents et de Customize sidebar › Show, aujourd'hui `docs/user/features.md:93` et `docs/user/features.md:108-109` ; page configuration/schema, `sidebar_show.status`), puis `docs/user/` est resynchronisé depuis le site.
 - [ ] Given une recherche de `agent_status` dans DESIGN.md, CHANGELOG.md, `schemas/` et `docs/user/`, when elle est lancée, then elle ne trouve rien.
+
+---
+
+### EP-005: Exploration, un agent qui attend ses sous-agents n'est pas au repos
+
+Un agent qui a lancé des sous-agents et rendu la main apparaît aujourd'hui dans Idle (ou Done), alors que du travail continue pour lui. Cet epic explore comment le montrer en restant sur OSC 7501. Il ne livre aucun code produit : il livre des observations, un inventaire et une décision.
+
+**Contexte vérifié le 2026-11-11.** La section classe une session avec `AgentRank::of` (`src-app/src/app/sidebar/agents.rs:19-27`) : une session qui a déjà déclaré un état et dont le dernier état est `idle`, ou `done` déjà vu, tombe dans Idle. No status ne concerne que les sessions qui n'ont jamais parlé OSC 7501. La spec r0.4 (2026-10-10) ne définit rien sur les sous-agents, mais elle donne aux enregistrements une hiérarchie par `id` (segments séparés par `/`, 8 niveaux) et précise qu'un programme peut être `idle` à son prompt pendant qu'un de ses workers est dans un autre état, la présentation restant au terminal. L'hôte garde déjà ces enregistrements enfants (`ProgramStatusRecords`, `crates/paneflow-host/src/program_status.rs:62-66`, jusqu'à 256), mais ne publie que l'enregistrement racine, ou à défaut le plus récent (`current`, `program_status.rs:119-125`). Ce que les runtimes émettent réellement pendant que des sous-agents tournent n'a pas été observé.
+
+**Definition of Done:** le flux OSC 7501 d'une session avec sous-agents est capturé pour chaque runtime supporté qui en propose ; l'écart entre ce que l'hôte reçoit et ce que la sidebar affiche est décrit ; une option est retenue par Arthur, avec ce qu'elle change aux contraintes de ce PRD, et consignée dans ce document ; la suite est tracée (amendement de ce PRD, nouveau PRD, ou demande aux runtimes).
+
+#### US-012: Observer ce que les runtimes déclarent pendant que des sous-agents tournent
+**Description:** As a mainteneur, I want le flux OSC 7501 réel d'un agent qui délègue so that la solution parte de ce que les runtimes émettent et non d'une supposition.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] Given Claude Code, Codex, OpenCode et Pi dans leur version courante, when un agent lance au moins un sous-agent, then la séquence des rapports OSC 7501 est capturée de la délégation jusqu'au retour du dernier sous-agent, avec pour chaque rapport son `state`, son `id` et l'instant relatif ; un runtime sans sous-agents est noté comme tel.
+- [ ] La capture couvre les deux formes de délégation quand le runtime les propose : sous-agent au premier plan (l'agent attend dans son tour) et sous-agent en arrière-plan (l'agent rend la main).
+- [ ] Pour chaque runtime, le relevé dit quel état porte l'enregistrement racine pendant que les sous-agents tournent (`working`, `idle` ou `done`), et si des enregistrements enfants existent pour eux.
+- [ ] Le relevé note la version de chaque runtime, la date, et si le runtime passe par un démon partagé qui changerait ce que le pane reçoit.
+- [ ] La capture lit les octets reçus par le pane ou les enregistrements de l'hôte ; elle n'utilise ni hook ni lecture d'écran.
+
+#### US-013: Inventaire de ce que Paneflow reçoit, garde et affiche
+**Description:** As a mainteneur, I want savoir où l'information se perd entre l'hôte et la sidebar so that le coût de chaque option soit connu avant de choisir.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** None
+
+**Acceptance Criteria:**
+- [ ] L'inventaire suit un rapport enfant (`id` non vide) de la réception dans l'hôte jusqu'à la sidebar, et nomme l'endroit où il cesse d'être transmis (publication de l'hôte, réduction du worker dans `crates/paneflow-serve/src/state.rs`, trame IPC, ou projection de l'app).
+- [ ] Il dit ce que la spec r0.4 permet et interdit pour ce cas : hiérarchie par `id`, durée de vie de `working` (jusqu'au remplacement, à l'effacement, à la sortie du processus ou au prompt suivant), absence de heartbeat, clés inconnues ignorées, liste d'états fermée.
+- [ ] Il liste les surfaces qui lisent l'état d'une session et qu'un nouvel affichage toucherait : lignes de l'arbre, section Agents, ⌘⇧J, bouton d'attention des espaces masqués, marqueur du header de pane, notifications de fin de tour, acquittement de `done`.
+- [ ] Il nomme les contraintes de ce PRD et d'ARCHITECTURE.md qu'une solution devrait lever ou garder (« aucune donnée nouvelle ne traverse l'hôte, le worker ou l'IPC », « OSC 7501 est la seule source d'état de tour »).
+
+#### US-014: Choisir comment montrer un agent qui attend ses sous-agents
+**Description:** As a développeur multi-agents, I want que la sidebar distingue un agent au repos d'un agent qui attend ses sous-agents so that je ne prenne pas pour disponible un agent dont le travail continue.
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-012, US-013
+
+**Acceptance Criteria:**
+- [ ] Les options sont comparées sur les faits de US-012 et US-013, au minimum : (a) dériver Working pour une session dont la racine est `idle` ou `done` tant qu'un enregistrement enfant est `working` ; (b) un statut distinct pour l'attente de sous-agents, avec son groupe ou son badge ; (c) demander aux runtimes de garder la racine à `working`, ou d'émettre des enregistrements enfants, s'ils n'émettent rien d'exploitable ; (d) ne rien changer.
+- [ ] Chaque option dit ce qu'elle affiche dans l'arbre et dans la section, dans quel groupe tombe la session, ce que deviennent la notification de fin de tour et le badge Done quand la racine dit `done` pendant que des enfants travaillent, et ce qui se passe quand un enfant reste `working` après la mort de son sous-agent.
+- [ ] Aucune option retenue ne lit l'écran, un hook, le clavier ou l'arbre des processus : OSC 7501 reste la seule source d'état de tour.
+- [ ] Given un runtime qui n'émet aucun rapport exploitable pour ses sous-agents, when l'option est choisie, then le document dit ce que Paneflow affiche pour lui (comportement actuel) et quelle demande est adressée au runtime, avec son lien si elle est déposée ; aucune issue n'est ouverte sans l'accord d'Arthur.
+- [ ] La décision d'Arthur, sa date et ses raisons sont consignées dans ce PRD, ainsi que la suite : stories ajoutées ici, nouveau PRD, ou abandon.
 
 ## Functional Requirements
 
