@@ -2,30 +2,26 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-RELEASE_WORKFLOWS=(
-  ".github/workflows/release.yml"
-  ".github/workflows/audit.yml"
-  ".github/workflows/repo_publish.yml"
-  ".github/workflows/update_cask.yml"
-)
+REMOTE_MODE="${CHECK_WORKFLOWS_REMOTE:-auto}"
 XTRACE_RE='(^|[[:space:];&|(])(set|bash|sh)([[:space:]]+(-[A-Za-z]+|[+-]o[[:space:]]+[a-z]+))*[[:space:]]+(-[A-Za-z]*x[A-Za-z]*|-o[[:space:]]+xtrace)([[:space:]]|$)'
 GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
 RUST_CACHE_RE='^([[:space:]]*)(-[[:space:]]+)?uses:[[:space:]]*Swatinem/rust-cache@'
 SAVE_ON_MAIN="save-if:\${{github.ref=='refs/heads/main'}}"
 
+case "$REMOTE_MODE" in
+  auto | required | off) ;;
+  *) echo "::error::CHECK_WORKFLOWS_REMOTE must be auto, required, or off, not '$REMOTE_MODE'"; exit 2 ;;
+esac
+
 if [ "$#" -gt 0 ]; then
   pin_files=("$@")
   trace_files=("$@")
 else
-  pin_files=()
-  for workflow in "${RELEASE_WORKFLOWS[@]}"; do
-    pin_files+=("$ROOT/$workflow")
-  done
-  trace_files=("$ROOT"/.github/workflows/*.yml)
+  pin_files=("$ROOT"/.github/workflows/*.yml)
   for composite in "$ROOT"/.github/actions/*/action.yml; do
     pin_files+=("$composite")
-    trace_files+=("$composite")
   done
+  trace_files=("${pin_files[@]}")
 fi
 
 status=0
@@ -35,6 +31,7 @@ relative() {
 }
 
 checked=0
+declare -A pin_locations=()
 for file in "${pin_files[@]}"; do
   if [ ! -f "$file" ]; then
     echo "::error::$file does not exist"
@@ -54,18 +51,76 @@ for file in "${pin_files[@]}"; do
     reference="${reference%"${reference##*[![:space:]]}"}"
     checked=$((checked + 1))
     case "$reference" in
-      ./* | actions/*) continue ;;
+      ./*) continue ;;
     esac
-    if ! [[ "$reference" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$ ]]; then
-      echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: third-party action '$reference' must be pinned to a full commit SHA"
+    if ! [[ "$reference" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(/[A-Za-z0-9_./-]+)?@([0-9a-f]{40})$ ]]; then
+      echo "::error file=$(relative "$file"),line=$line_number::$(relative "$file"):$line_number: action '$reference' must be pinned to a full commit SHA, with the exact version in a trailing comment"
       status=1
+      continue
     fi
+    object="${BASH_REMATCH[1]}@${BASH_REMATCH[3]}"
+    pin_locations["$object"]="${pin_locations[$object]:-} $(relative "$file"):$line_number"
   done < "$file"
 done
 
 if [ "$checked" -eq 0 ]; then
   echo "::error::no action reference found, the pin check scanned nothing"
   exit 1
+fi
+
+api_status() {
+  local output
+  if output="$(gh api "$1" --silent 2>&1)"; then
+    echo 200
+  elif [[ "$output" == *"(HTTP 404)"* ]]; then
+    echo 404
+  else
+    printf 'error %s' "${output//$'
+'/ }"
+  fi
+}
+
+remote_checked=0
+remote_enabled=1
+if [ "$REMOTE_MODE" = off ]; then
+  remote_enabled=0
+elif ! command -v gh >/dev/null; then
+  if [ "$REMOTE_MODE" = required ]; then
+    echo "::error::CHECK_WORKFLOWS_REMOTE=required but the gh CLI is not installed"
+    exit 1
+  fi
+  remote_enabled=0
+elif [ "$REMOTE_MODE" = auto ] && [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && ! gh auth status >/dev/null 2>&1; then
+  remote_enabled=0
+fi
+if ((remote_enabled == 0)); then
+  echo "::notice::pinned SHAs not resolved against GitHub (CHECK_WORKFLOWS_REMOTE=$REMOTE_MODE, gh unavailable or unauthenticated); CI runs this check with CHECK_WORKFLOWS_REMOTE=required"
+else
+  mapfile -t objects < <(printf '%s
+' "${!pin_locations[@]}" | LC_ALL=C sort)
+  for object in "${objects[@]}"; do
+    [ -n "$object" ] || continue
+    repository="${object%@*}"
+    sha="${object#*@}"
+    read -r -a locations <<< "${pin_locations[$object]}"
+    remote_checked=$((remote_checked + 1))
+    commit_status="$(api_status "repos/$repository/git/commits/$sha")"
+    [ "$commit_status" = 200 ] && continue
+    problem=""
+    if [ "$commit_status" = 404 ]; then
+      if target="$(gh api "repos/$repository/git/tags/$sha" --jq .object.sha 2>/dev/null)" && [ -n "$target" ]; then
+        problem="$sha is an annotated tag object, not a commit; pin the commit it points to, $target"
+      else
+        problem="$sha is not a commit of $repository"
+      fi
+    else
+      problem="could not resolve $sha in $repository: ${commit_status#error }"
+    fi
+    for location in "${locations[@]}"; do
+      echo "::error file=${location%:*},line=${location##*:}::$location: $repository@$problem"
+    done
+    status=1
+  done
 fi
 
 traced=0
@@ -190,7 +245,10 @@ for file in "${trace_files[@]}"; do
 done
 
 if [ "$status" -eq 0 ]; then
-  echo "every third-party action in ${#pin_files[@]} file(s) is pinned by SHA ($checked references checked)"
+  echo "every action in ${#pin_files[@]} file(s) is pinned by SHA ($checked references checked)"
+  if ((remote_enabled == 1)); then
+    echo "every pinned SHA is a commit of its repository ($remote_checked distinct pin(s) resolved through the GitHub API)"
+  fi
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
   echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
   echo "every job declares timeout-minutes ($jobs_checked job(s))"

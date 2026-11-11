@@ -55,7 +55,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 63
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ inputs.candidate_ref }}
           fetch-depth: 0
@@ -317,7 +317,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
       - name: Upload the package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.ids.outputs.name }}
           path: ${{ runner.temp }}/out/
@@ -326,7 +326,7 @@ jobs:
 
       - name: Upload the qualification evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.ids.outputs.name }}-evidence
           path: ${{ runner.temp }}/qualification-evidence/

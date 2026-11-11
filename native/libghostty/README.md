@@ -262,8 +262,9 @@ procedure is:
    base and DLL characteristics), `macos_canonical_zig_path`, and the Zig
    compiler runtime and libc++ header license versions.
 2. Set the expected version in the `paneflow-terminal-ghostty` toolchain
-   identity test. No workflow carries a Zig literal: every `setup-zig` step
-   reads `zig_version` from the manifest, through
+   identity test. No workflow carries a Zig literal: every
+   `scripts/install-zig.sh` step, which checks the ziglang.org minisign
+   signature, reads `zig_version` from the manifest, through
    `.github/actions/libghostty-manifest` or the bump's `resolve` job.
 3. Adapt the three build recipes to any `zig build` CLI change, and prove the
    Linux recipe locally with `--verify-reproducible --allow-hash-drift` in a

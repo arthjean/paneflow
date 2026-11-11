@@ -133,7 +133,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
@@ -459,134 +459,51 @@ jobs:
       # Purging the specific files gives us P95 < 60 s end-to-end freshness
       # (per Cloudflare Instant Purge: < 150 ms globally + HTTP RTT).
       #
-      # We invoke `nathanvaughn/actions-cloudflare-purge@v4.0.0` as the
-      # primary purge (vetted, minimal wrapper around Cloudflare's
-      # /purge_cache endpoint). The action itself has NO retry logic and
-      # does not validate HTTP status codes independently - a network-
-      # level 5xx or 429 rate-limit can produce a silent failure. The
-      # fallback step below catches that case and retries the same purge
-      # via direct `curl` to api.cloudflare.com with exponential backoff
-      # (1 s, 2 s, 4 s - AC5). Both steps share the identical URL list.
+      # The purge talks to the Cloudflare API directly: no third-party action
+      # ever holds the Cloudflare token, the HTTP status and the `success`
+      # field are both checked, and 5xx / 429 answers are retried with
+      # exponential backoff (1 s, 2 s, 4 s between the four attempts).
       - name: Purge Cloudflare edge cache
-        id: cloudflare-purge
-        # Never abort the publish job on a purge failure here - the retry
-        # step below takes over. If both steps fail, the final ::error::
-        # message is emitted by the retry step and fails the job.
-        continue-on-error: true
-        # Pinned to the commit SHA for `v4.0.0` rather than the mutable
-        # tag. A tag can be force-pushed; a SHA cannot. This is standard
-        # hardening for a third-party action that handles a Cloudflare
-        # Bearer token capable of purging our repo's CDN state. To bump:
-        # re-resolve the tag SHA via
-        # `gh api repos/NathanVaughn/actions-cloudflare-purge/git/ref/tags/vX.Y.Z`
-        # and update both this SHA and the trailing `# v...` annotation.
-        uses: nathanvaughn/actions-cloudflare-purge@1856dd6f59d23cafa1a193db9cff85987c9aaa74 # v4.0.0
-        with:
-          cf_zone: ${{ secrets.CLOUDFLARE_ZONE }}
-          cf_auth: ${{ secrets.CLOUDFLARE_AUTH_KEY }}
-          # Seven URLs (AC1): APT InRelease + Release + Release.gpg +
-          # Packages.gz (per arch), RPM repomd.xml + repomd.xml.asc. Bulk
-          # .deb / .rpm files are NOT purged - they are content-hashed
-          # references from Packages.gz / repomd.xml, so they're
-          # immutable and Cloudflare's edge cache of them is always
-          # correct. Only the metadata files need the cache busted.
-          files: |
-            https://pkg.paneflow.dev/apt/dists/stable/InRelease
-            https://pkg.paneflow.dev/apt/dists/stable/Release
-            https://pkg.paneflow.dev/apt/dists/stable/Release.gpg
-            https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages.gz
-            https://pkg.paneflow.dev/apt/dists/stable/main/binary-arm64/Packages.gz
-            https://pkg.paneflow.dev/rpm/repodata/repomd.xml
-            https://pkg.paneflow.dev/rpm/repodata/repomd.xml.asc
-
-      - name: Retry purge via Cloudflare API on failure (exp backoff 1s/2s/4s)
-        # Only runs if the primary action above reported failure. We talk
-        # to the Cloudflare API directly so we can (a) check HTTP status
-        # codes the wrapper ignores, (b) retry 5xx / 429 with exponential
-        # backoff, and (c) surface a final actionable error that names
-        # the stale-metadata risk. Secrets routed via `env:` - never
-        # inlined as `${{ … }}` into the shell body.
-        if: steps.cloudflare-purge.outcome == 'failure'
         env:
           CLOUDFLARE_ZONE: ${{ secrets.CLOUDFLARE_ZONE }}
           CLOUDFLARE_AUTH_KEY: ${{ secrets.CLOUDFLARE_AUTH_KEY }}
         run: |
           set -euo pipefail
-          # Build the JSON body once. `jq -n` emits a canonical array of
-          # strings with correct JSON escaping - safer than hand-rolling
-          # quoting, which would break if we ever add a URL with
-          # awkward characters.
+          # Seven URLs: APT InRelease + Release + Release.gpg + Packages.gz
+          # (per arch), RPM repomd.xml + repomd.xml.asc. Bulk .deb / .rpm
+          # files are content-addressed from that metadata, so only the
+          # metadata needs the cache busted.
           body="$(
-            jq -n \
-              --arg u1 "https://pkg.paneflow.dev/apt/dists/stable/InRelease" \
-              --arg u2 "https://pkg.paneflow.dev/apt/dists/stable/Release" \
-              --arg u3 "https://pkg.paneflow.dev/apt/dists/stable/Release.gpg" \
-              --arg u4 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages.gz" \
-              --arg u5 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-arm64/Packages.gz" \
-              --arg u6 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml" \
-              --arg u7 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml.asc" \
-              '{files: [$u1, $u2, $u3, $u4, $u5, $u6, $u7]}'
+            jq -n               --arg u1 "https://pkg.paneflow.dev/apt/dists/stable/InRelease"               --arg u2 "https://pkg.paneflow.dev/apt/dists/stable/Release"               --arg u3 "https://pkg.paneflow.dev/apt/dists/stable/Release.gpg"               --arg u4 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages.gz"               --arg u5 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-arm64/Packages.gz"               --arg u6 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml"               --arg u7 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml.asc"               '{files: [$u1, $u2, $u3, $u4, $u5, $u6, $u7]}'
           )"
 
-          # This step only runs when the primary action (above) reported
-          # failure, so there's no "initial" attempt here - 3 retries with
-          # exp-backoff sleeps of 1 s, 2 s, 4 s (2^(n-1)) between retries,
-          # matching AC5. Combined with the primary attempt, the publish
-          # makes up to 4 purge calls before giving up.
-          #
-          # --max-time 15 caps a single request; --retry-max-time is
-          # intentionally unused (we do our own retry loop so the
-          # backoff + error aggregation are explicit).
           response_file="$(mktemp)"
-          # Always clean up the response sidecar on exit so a crashed
-          # loop does not leave a temp file lying around. Per-iteration
-          # `: > "$response_file"` truncation below prevents any stale
-          # body from a prior retry being re-read on the next iteration.
           trap 'rm -f "$response_file"' EXIT
 
-          max_attempts=3
+          max_attempts=4
           for attempt in $(seq 1 "$max_attempts"); do
-              backoff=$(( 1 << (attempt - 1) ))   # 1, 2, 4
-              echo "→ Cloudflare purge retry $attempt/$max_attempts - sleeping ${backoff}s then retrying…"
-              sleep "$backoff"
-
-              # Truncate BEFORE each curl so a curl that writes 0 bytes
-              # (e.g. network timeout) cannot pair with a stale body
-              # from a prior iteration to spoof a false-positive success
-              # via the jq check.
+              if [ "$attempt" -gt 1 ]; then
+                  backoff=$(( 1 << (attempt - 2) ))
+                  echo "→ Cloudflare purge attempt $attempt/$max_attempts in ${backoff}s…"
+                  sleep "$backoff"
+              fi
+              # Truncate before each call so a request that writes nothing
+              # cannot pair with a stale body from an earlier attempt.
               : > "$response_file"
+              http=$(curl -sS --max-time 15                   -o "$response_file"                   -w "%{http_code}"                   -X POST                   -H "Authorization: Bearer ${CLOUDFLARE_AUTH_KEY}"                   -H "Content-Type: application/json"                   --data "$body"                   "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE}/purge_cache"                   || echo "000")
 
-              http=$(curl -sS --max-time 15 \
-                  -o "$response_file" \
-                  -w "%{http_code}" \
-                  -X POST \
-                  -H "Authorization: Bearer ${CLOUDFLARE_AUTH_KEY}" \
-                  -H "Content-Type: application/json" \
-                  --data "$body" \
-                  "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE}/purge_cache" \
-                  || echo "000")
-
-              if [ "$http" = "200" ] \
-                 && jq -e '.success == true' "$response_file" > /dev/null
+              if [ "$http" = "200" ]                  && jq -e '.success == true' "$response_file" > /dev/null
               then
-                  echo "✓ Cloudflare cache purged on retry $attempt (HTTP $http)."
+                  echo "✓ Cloudflare cache purged on attempt $attempt (HTTP $http)."
                   exit 0
               fi
 
-              echo "  retry $attempt failed - HTTP $http, response:" >&2
-              # `jq '.'` pretty-prints if JSON, falls back to raw cat
-              # if the body isn't JSON (e.g. Cloudflare 502 HTML page).
-              jq '.' "$response_file" 2>/dev/null \
-                  || cat "$response_file" >&2
+              echo "  attempt $attempt failed - HTTP $http, response:" >&2
+              jq '.' "$response_file" 2>/dev/null                   || cat "$response_file" >&2
               echo >&2
           done
 
-          # Error message preserves the exact substring mandated by
-          # AC7 ("Cloudflare API unreachable - metadata may be stale up
-          # to the edge TTL") so any log-grep assertion keyed on that
-          # phrase still matches; the retry-count suffix is additive
-          # context for the maintainer reading the failed job.
-          echo "::error::Cloudflare API unreachable - metadata may be stale up to the edge TTL (failed after ${max_attempts} retries)" >&2
+          echo "::error::Cloudflare API unreachable - metadata may be stale up to the edge TTL (failed after ${max_attempts} attempts)" >&2
           exit 1
 
       # ─── US-002 reprepro arch-idempotency regression guard ──────────────

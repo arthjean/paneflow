@@ -15,7 +15,8 @@ cargo fmt --check                                   # mandatory before commit an
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --profile ci  # the CI runner; cargo test --workspace --locked runs the same suite
 cargo deny check advisories licenses sources        # only when dependencies change
-bash scripts/check-workflows.sh                     # when .github/** changes: action pins, no shell xtrace, cache saved from main only, a timeout on every job
+bash scripts/check-workflows.sh                     # when .github/** changes: every action pinned to a commit SHA (checked through gh when it is authenticated), no shell xtrace, cache saved from main only, a timeout on every job
+uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github   # when .github/** changes: the Workflow audit job; set GH_TOKEN for the online audits
 bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
 ```
