@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Une chaîne d'approvisionnement et une publication vérifiées",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-006",
@@ -278,43 +278,43 @@
       "id": "US-018",
       "title": "Des actions à jour, épinglées et surveillées",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-002"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-019",
       "title": "La publication vérifie ce qu'elle publie",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-002"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-020",
       "title": "Les assets de release sont attestés et immuables",
       "epic": "EP-005",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-007"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-021",

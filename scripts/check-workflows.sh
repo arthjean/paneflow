@@ -75,8 +75,7 @@ api_status() {
   elif [[ "$output" == *"(HTTP 404)"* ]]; then
     echo 404
   else
-    printf 'error %s' "${output//$'
-'/ }"
+    printf 'error %s' "${output//$'\n'/ }"
   fi
 }
 
@@ -96,8 +95,7 @@ fi
 if ((remote_enabled == 0)); then
   echo "::notice::pinned SHAs not resolved against GitHub (CHECK_WORKFLOWS_REMOTE=$REMOTE_MODE, gh unavailable or unauthenticated); CI runs this check with CHECK_WORKFLOWS_REMOTE=required"
 else
-  mapfile -t objects < <(printf '%s
-' "${!pin_locations[@]}" | LC_ALL=C sort)
+  mapfile -t objects < <(printf '%s\n' "${!pin_locations[@]}" | LC_ALL=C sort)
   for object in "${objects[@]}"; do
     [ -n "$object" ] || continue
     repository="${object%@*}"

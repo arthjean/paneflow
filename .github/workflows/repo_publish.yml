@@ -494,7 +494,15 @@ jobs:
           # files are content-addressed from that metadata, so only the
           # metadata needs the cache busted.
           body="$(
-            jq -n               --arg u1 "https://pkg.paneflow.dev/apt/dists/stable/InRelease"               --arg u2 "https://pkg.paneflow.dev/apt/dists/stable/Release"               --arg u3 "https://pkg.paneflow.dev/apt/dists/stable/Release.gpg"               --arg u4 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages.gz"               --arg u5 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-arm64/Packages.gz"               --arg u6 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml"               --arg u7 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml.asc"               '{files: [$u1, $u2, $u3, $u4, $u5, $u6, $u7]}'
+            jq -n \
+              --arg u1 "https://pkg.paneflow.dev/apt/dists/stable/InRelease" \
+              --arg u2 "https://pkg.paneflow.dev/apt/dists/stable/Release" \
+              --arg u3 "https://pkg.paneflow.dev/apt/dists/stable/Release.gpg" \
+              --arg u4 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages.gz" \
+              --arg u5 "https://pkg.paneflow.dev/apt/dists/stable/main/binary-arm64/Packages.gz" \
+              --arg u6 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml" \
+              --arg u7 "https://pkg.paneflow.dev/rpm/repodata/repomd.xml.asc" \
+              '{files: [$u1, $u2, $u3, $u4, $u5, $u6, $u7]}'
           )"
 
           response_file="$(mktemp)"
@@ -510,16 +518,26 @@ jobs:
               # Truncate before each call so a request that writes nothing
               # cannot pair with a stale body from an earlier attempt.
               : > "$response_file"
-              http=$(curl -sS --max-time 15                   -o "$response_file"                   -w "%{http_code}"                   -X POST                   -H "Authorization: Bearer ${CLOUDFLARE_AUTH_KEY}"                   -H "Content-Type: application/json"                   --data "$body"                   "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE}/purge_cache"                   || echo "000")
+              http=$(curl -sS --max-time 15 \
+                  -o "$response_file" \
+                  -w "%{http_code}" \
+                  -X POST \
+                  -H "Authorization: Bearer ${CLOUDFLARE_AUTH_KEY}" \
+                  -H "Content-Type: application/json" \
+                  --data "$body" \
+                  "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE}/purge_cache" \
+                  || echo "000")
 
-              if [ "$http" = "200" ]                  && jq -e '.success == true' "$response_file" > /dev/null
+              if [ "$http" = "200" ] \
+                 && jq -e '.success == true' "$response_file" > /dev/null
               then
                   echo "✓ Cloudflare cache purged on attempt $attempt (HTTP $http)."
                   exit 0
               fi
 
               echo "  attempt $attempt failed - HTTP $http, response:" >&2
-              jq '.' "$response_file" 2>/dev/null                   || cat "$response_file" >&2
+              jq '.' "$response_file" 2>/dev/null \
+                  || cat "$response_file" >&2
               echo >&2
           done
 
