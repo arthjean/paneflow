@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Contrat visuel et documentation",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-005",
@@ -172,13 +172,13 @@
       "id": "US-011",
       "title": "DESIGN.md, CHANGELOG et documentation utilisateur",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-005", "US-007", "US-009", "US-010"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-11",
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-012",
