@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-03 | Arthur Jean | PRD initial, issu de la revue du 2026-11-02 : section Agents groupée par statut dans la DA Paneflow, statuts de l'arbre masquables par `sidebar_show.status`, retrait de `sidebar_show.agent_status`, une seule projection d'état pour l'arbre et la section. 4 epics, 11 stories. |
+| 1.1 | 2026-11-11 | Arthur Jean | US-005 : le libellé d'en-tête de groupe commence à 15 px du bord, et non 14. La maquette utilise un padding de ligne de 6 px, l'app un padding de 7 px (`SIDEBAR_ROW_PADDING_X`) ; l'en-tête s'aligne sur le contenu des lignes. Décision d'Arthur à la revue d'EP-002. |
 
 ## Problem Statement
 
@@ -166,14 +167,14 @@ La section présente ses agents en groupes par statut, sur des lignes d'une lign
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given les lignes triées par `order_agents`, when les groupes sont construits, then chaque groupe réunit les lignes d'un même statut affiché, dans l'ordre Need you, Error, Done, Working, Idle, No status, sans changer l'ordre relatif des lignes.
-- [ ] Given une session sans capacité OSC 7501 dans son délai de grâce de 3 s (`agents_section.rs:280-288`), when les groupes sont construits, then elle est dans Idle, et passe dans No status quand le délai expire, au réveil déjà programmé (`agents_section.rs:1132-1151`).
-- [ ] Given un statut qu'aucun agent n'a, when les groupes sont construits, then aucun groupe ni en-tête n'est produit pour lui.
-- [ ] Given aucun agent, when la section est construite, then aucun groupe n'existe et la ligne « No agents running » reste seule (`agents_section.rs:834-847`).
-- [ ] La hauteur du contenu vaut, pour chaque groupe, 24 px d'en-tête puis 32 px par ligne avec 2 px entre deux lignes, plus 8 px avant chaque en-tête sauf le premier ; `AGENT_ROW_HEIGHT`, `AGENT_RANK_SPACING` et le champ `starts_rank` (`agents_section.rs:31-34`, `agents_section.rs:240-251`) disparaissent.
-- [ ] Given 6 agents répartis en 2 groupes, when la hauteur automatique est calculée, then la section les montre tous sans défilement et reste sous 330 px.
-- [ ] Le plafond de 330 px, la poignée et la hauteur persistée restent ; le plancher de redimensionnement (`AGENTS_RESIZE_FLOOR`, `agents_section.rs:22-23`) devient l'en-tête de section, un en-tête de groupe et une ligne.
-- [ ] Les tests de hauteur existants (`the_section_takes_its_content_height_plus_the_header_and_a_bottom_margin`, `hiding_the_workspace_line_folds_each_row_to_one_line`, `the_section_height_is_capped_and_a_collapsed_section_keeps_only_its_header`, `a_chosen_height_is_bounded_by_one_row_620_px_and_the_content`, `a_long_list_caps_at_330_px`) sont réécrits sur ces valeurs.
+- [x] Given les lignes triées par `order_agents`, when les groupes sont construits, then chaque groupe réunit les lignes d'un même statut affiché, dans l'ordre Need you, Error, Done, Working, Idle, No status, sans changer l'ordre relatif des lignes.
+- [x] Given une session sans capacité OSC 7501 dans son délai de grâce de 3 s (`agents_section.rs:280-288`), when les groupes sont construits, then elle est dans Idle, et passe dans No status quand le délai expire, au réveil déjà programmé (`agents_section.rs:1132-1151`).
+- [x] Given un statut qu'aucun agent n'a, when les groupes sont construits, then aucun groupe ni en-tête n'est produit pour lui.
+- [x] Given aucun agent, when la section est construite, then aucun groupe n'existe et la ligne « No agents running » reste seule (`agents_section.rs:834-847`).
+- [x] La hauteur du contenu vaut, pour chaque groupe, 24 px d'en-tête puis 32 px par ligne avec 2 px entre deux lignes, plus 8 px avant chaque en-tête sauf le premier ; `AGENT_ROW_HEIGHT`, `AGENT_RANK_SPACING` et le champ `starts_rank` (`agents_section.rs:31-34`, `agents_section.rs:240-251`) disparaissent.
+- [x] Given 6 agents répartis en 2 groupes, when la hauteur automatique est calculée, then la section les montre tous sans défilement et reste sous 330 px.
+- [x] Le plafond de 330 px, la poignée et la hauteur persistée restent ; le plancher de redimensionnement (`AGENTS_RESIZE_FLOOR`, `agents_section.rs:22-23`) devient l'en-tête de section, un en-tête de groupe et une ligne.
+- [x] Les tests de hauteur existants (`the_section_takes_its_content_height_plus_the_header_and_a_bottom_margin`, `hiding_the_workspace_line_folds_each_row_to_one_line`, `the_section_height_is_capped_and_a_collapsed_section_keeps_only_its_header`, `a_chosen_height_is_bounded_by_one_row_620_px_and_the_content`, `a_long_list_caps_at_330_px`) sont réécrits sur ces valeurs.
 
 #### US-005: En-têtes de groupe et lignes d'une ligne
 **Description:** As a développeur multi-agents, I want voir un en-tête coloré par statut et une ligne courte par agent so that je sache d'un regard combien d'agents attendent, échouent, ont fini ou travaillent.
@@ -183,15 +184,15 @@ La section présente ses agents en groupes par statut, sur des lignes d'une lign
 **Dependencies:** Blocked by US-004
 
 **Acceptance Criteria:**
-- [ ] Given un groupe, when il est rendu, then son en-tête de 24 px affiche le libellé (« Need you », « Error », « Done », « Working », « Idle » ou « No status ») en 12 px Medium, puis, 6 px après, le nombre d'agents en `muted` à chiffres tabulaires, le texte commençant à 14 px du bord de la sidebar comme celui des lignes.
-- [ ] L'en-tête prend la couleur needs-input pour Need you, `agent_error` pour Error et finished pour Done (`src-app/src/app/constants.rs:233-249`), et `muted` pour Working, Idle et No status, dans tous les presets et dans les deux variantes de thème.
-- [ ] Given un agent, when sa ligne est rendue, then elle fait 32 px sur le shell des lignes d'onglet (marge 8, padding 7 par 6, rayon 9), avec le logo du runtime à 15 px dans l'emplacement de 20 px, le titre en 14 px Medium suivi de « · » et du nom du workspace en 14 px `muted`, puis le statut en fin de ligne.
-- [ ] Le statut d'une ligne est le badge « Need you », « Error » ou « Done » du rendu actuel, la matrice dans la teinte du runtime avec le shimmer du titre pour Working, le badge `muted` « No status » avec son infobulle actuelle, et rien pour Idle.
-- [ ] Given un titre et un nom de workspace plus longs que la ligne, when elle est rendue, then le texte s'ellipse en fin sans passer à la ligne, le suffixe se coupe en premier, et l'infobulle « title · workspace » existante apparaît (`agents_section.rs:640-643`).
-- [ ] Given `sidebar_show.agent_logo` ou `sidebar_show.agent_workspace` éteint, when une ligne est rendue, then le logo ou le suffixe disparaît et la ligne garde 32 px.
-- [ ] Given `reduce_motion` activé, when une ligne Working est rendue, then la matrice et le shimmer restent immobiles.
-- [ ] La ligne méta (`agents_section.rs:613-639`) et les espaceurs de rang (`agents_section.rs:848-857`) n'existent plus ; la ligne de l'onglet actif garde la teinte active et les autres la teinte de survol.
-- [ ] Aucun champ déclaré par OSC 7501 (`title`, `message`, `app`) n'apparaît dans un en-tête ou une ligne.
+- [x] Given un groupe, when il est rendu, then son en-tête de 24 px affiche le libellé (« Need you », « Error », « Done », « Working », « Idle » ou « No status ») en 12 px Medium, puis, 6 px après, le nombre d'agents en `muted` à chiffres tabulaires, le texte commençant à 15 px du bord de la sidebar comme celui des lignes (marge 8, padding 7).
+- [x] L'en-tête prend la couleur needs-input pour Need you, `agent_error` pour Error et finished pour Done (`src-app/src/app/constants.rs:233-249`), et `muted` pour Working, Idle et No status, dans tous les presets et dans les deux variantes de thème.
+- [x] Given un agent, when sa ligne est rendue, then elle fait 32 px sur le shell des lignes d'onglet (marge 8, padding 7 par 6, rayon 9), avec le logo du runtime à 15 px dans l'emplacement de 20 px, le titre en 14 px Medium suivi de « · » et du nom du workspace en 14 px `muted`, puis le statut en fin de ligne.
+- [x] Le statut d'une ligne est le badge « Need you », « Error » ou « Done » du rendu actuel, la matrice dans la teinte du runtime avec le shimmer du titre pour Working, le badge `muted` « No status » avec son infobulle actuelle, et rien pour Idle.
+- [x] Given un titre et un nom de workspace plus longs que la ligne, when elle est rendue, then le texte s'ellipse en fin sans passer à la ligne, le suffixe se coupe en premier, et l'infobulle « title · workspace » existante apparaît (`agents_section.rs:640-643`).
+- [x] Given `sidebar_show.agent_logo` ou `sidebar_show.agent_workspace` éteint, when une ligne est rendue, then le logo ou le suffixe disparaît et la ligne garde 32 px.
+- [x] Given `reduce_motion` activé, when une ligne Working est rendue, then la matrice et le shimmer restent immobiles.
+- [x] La ligne méta (`agents_section.rs:613-639`) et les espaceurs de rang (`agents_section.rs:848-857`) n'existent plus ; la ligne de l'onglet actif garde la teinte active et les autres la teinte de survol.
+- [x] Aucun champ déclaré par OSC 7501 (`title`, `message`, `app`) n'apparaît dans un en-tête ou une ligne.
 
 #### US-006: Clavier, défilement et accessibilité des groupes
 **Description:** As a développeur qui navigue au clavier ou avec un lecteur d'écran, I want parcourir les agents groupés comme avant so that les en-têtes structurent la liste sans gêner la navigation.
@@ -201,13 +202,13 @@ La section présente ses agents en groupes par statut, sur des lignes d'une lign
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given le curseur de la sidebar dans la section, when l'utilisateur appuie sur haut, bas, Home ou End, then il passe d'agent en agent et ne s'arrête jamais sur un en-tête (`agents_nav_targets`, `agents_section.rs:408-413`).
-- [ ] Given un curseur posé sur un agent hors de la zone visible, when il y arrive, then la liste défile jusqu'à sa ligne en comptant les en-têtes ; `agent_row_child_index` (`agents_section.rs:404-406`), qui suppose aujourd'hui un espaceur avant chaque ligne, est remplacé.
-- [ ] Given un agent qui change de groupe pendant qu'il porte le curseur, when la section est rendue à nouveau, then le curseur reste sur ce même agent.
-- [ ] Given un lecteur d'écran, when il parcourt la section, then chaque en-tête est annoncé avec son libellé et son nombre (par exemple « Need you, 2 agents »), avec le rôle `Heading`, ou `Group` si la révision de GPUI épinglée n'expose pas `Heading` ; le choix et sa raison figurent dans le rapport de la story.
-- [ ] Chaque ligne reste un `ListItem` nommé par `agent_row_label` (`agents_section.rs:394-402`), et la liste reste un `List` nommé « Agents » (`agents_section.rs:824-825`).
-- [ ] Given Entrée sur un agent, when elle est pressée, then le pane de l'agent prend le focus comme aujourd'hui (`src-app/src/app/sidebar/keyboard.rs:278-285`).
-- [ ] Les tests `the_cursor_row_wears_the_sidebar_cursor_ring_and_is_scrolled_into_view` et `a_row_is_a_list_item_named_by_agent_title_workspace_and_state` couvrent une liste d'au moins deux groupes.
+- [x] Given le curseur de la sidebar dans la section, when l'utilisateur appuie sur haut, bas, Home ou End, then il passe d'agent en agent et ne s'arrête jamais sur un en-tête (`agents_nav_targets`, `agents_section.rs:408-413`).
+- [x] Given un curseur posé sur un agent hors de la zone visible, when il y arrive, then la liste défile jusqu'à sa ligne en comptant les en-têtes ; `agent_row_child_index` (`agents_section.rs:404-406`), qui suppose aujourd'hui un espaceur avant chaque ligne, est remplacé.
+- [x] Given un agent qui change de groupe pendant qu'il porte le curseur, when la section est rendue à nouveau, then le curseur reste sur ce même agent.
+- [x] Given un lecteur d'écran, when il parcourt la section, then chaque en-tête est annoncé avec son libellé et son nombre (par exemple « Need you, 2 agents »), avec le rôle `Heading`, ou `Group` si la révision de GPUI épinglée n'expose pas `Heading` ; le choix et sa raison figurent dans le rapport de la story.
+- [x] Chaque ligne reste un `ListItem` nommé par `agent_row_label` (`agents_section.rs:394-402`), et la liste reste un `List` nommé « Agents » (`agents_section.rs:824-825`).
+- [x] Given Entrée sur un agent, when elle est pressée, then le pane de l'agent prend le focus comme aujourd'hui (`src-app/src/app/sidebar/keyboard.rs:278-285`).
+- [x] Les tests `the_cursor_row_wears_the_sidebar_cursor_ring_and_is_scrolled_into_view` et `a_row_is_a_list_item_named_by_agent_title_workspace_and_state` couvrent une liste d'au moins deux groupes.
 
 #### US-007: Retrait du réglage Status des lignes Agents
 **Description:** As a utilisateur de la section Agents, I want que les lignes affichent toujours leur statut so that une section groupée par statut ne puisse pas perdre ce qui l'organise.
@@ -217,11 +218,11 @@ La section présente ses agents en groupes par statut, sur des lignes d'une lign
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Le champ `agent_status`, son accesseur (`crates/paneflow-config/src/schema/config.rs:123`, `config.rs:237-239`), son entrée de schéma JSON (`schemas/paneflow.schema.json:152-156`) et ses références de test (`crates/paneflow-config/src/schema.rs:77`, `schema.rs:644`, `schema.rs:653`, `schema.rs:657`) sont retirés.
-- [ ] Customize agent rows ne propose plus que Logo et Workspace ; l'item Status (`agents_section.rs:1256-1263`) et ses branches dans `src-app/src/app/sidebar/customize_menu.rs` (`:53-55`, `:76`, `:90`, `:98`, `:331`, tests `:405` et `:446`) disparaissent, et `AgentRowDetails` perd son champ `status` (`agents_section.rs:226`).
-- [ ] Given une configuration `{"sidebar_show": {"agent_status": false}}`, when elle est chargée, then le résultat est identique à la même configuration sans la clé, vérifié en étendant `test_retired_keys_load_as_if_absent` (`crates/paneflow-config/src/loader_tests/core_config.rs:203-231`).
-- [ ] Given cette ancienne valeur `false`, when la section est rendue, then les lignes affichent quand même leur statut.
-- [ ] Given un clic sur Logo ou Workspace dans Customize agent rows, when le menu enregistre le réglage, then `paneflow.json` ne contient pas `agent_status`.
+- [x] Le champ `agent_status`, son accesseur (`crates/paneflow-config/src/schema/config.rs:123`, `config.rs:237-239`), son entrée de schéma JSON (`schemas/paneflow.schema.json:152-156`) et ses références de test (`crates/paneflow-config/src/schema.rs:77`, `schema.rs:644`, `schema.rs:653`, `schema.rs:657`) sont retirés.
+- [x] Customize agent rows ne propose plus que Logo et Workspace ; l'item Status (`agents_section.rs:1256-1263`) et ses branches dans `src-app/src/app/sidebar/customize_menu.rs` (`:53-55`, `:76`, `:90`, `:98`, `:331`, tests `:405` et `:446`) disparaissent, et `AgentRowDetails` perd son champ `status` (`agents_section.rs:226`).
+- [x] Given une configuration `{"sidebar_show": {"agent_status": false}}`, when elle est chargée, then le résultat est identique à la même configuration sans la clé, vérifié en étendant `test_retired_keys_load_as_if_absent` (`crates/paneflow-config/src/loader_tests/core_config.rs:203-231`).
+- [x] Given cette ancienne valeur `false`, when la section est rendue, then les lignes affichent quand même leur statut.
+- [x] Given un clic sur Logo ou Workspace dans Customize agent rows, when le menu enregistre le réglage, then `paneflow.json` ne contient pas `agent_status`.
 
 ---
 
