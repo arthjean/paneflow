@@ -199,6 +199,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CHECK_WORKFLOWS_REMOTE: required
         run: scripts/check-workflows.sh
+      - name: Install minisign for the signature check tests
+        run: bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
       - name: CI script tests
         run: scripts/test-ci-scripts.sh
       - name: Path filter covers every build input

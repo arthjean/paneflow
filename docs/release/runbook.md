@@ -238,16 +238,30 @@ publication on a mismatch; the count here is the second check.
 ## Step 5 - Verify the published streams
 
 ```bash
-curl --fail --silent https://pkg.paneflow.dev/apt/dists/stable/InRelease | grep -E '^Date:'
-curl --fail --silent https://pkg.paneflow.dev/apt/dists/stable/main/binary-amd64/Packages | grep -m1 '^Version:'
-curl --fail --silent https://pkg.paneflow.dev/rpm/repodata/repomd.xml | grep -m1 '<revision>'
-gh api repos/arthurdev44/homebrew-paneflow/contents/Casks/paneflow.rb --jq .content \
-  | base64 -d | grep -E '^\s*version'
+bash scripts/verify-published-streams.sh "$VERSION"
 ```
 
-The apt date is today's, the apt version is `X.Y.Z-1`, and the cask
-version is `X.Y.Z`. A stale `InRelease` within the first minute is the
-Cloudflare edge TTL, not a failed publish.
+This is the script that `repo_publish.yml` (apt and rpm) and
+`update_cask.yml` (cask) run after they publish. It reads every file with a
+cache-busting query, so the Cloudflare edge cache cannot hide a stale stream,
+and checks:
+
+- apt: `InRelease` verifies against `packaging/paneflow-release.asc`, each
+  `binary-<arch>/Packages.gz` matches the SHA-256 that the signed `InRelease`
+  lists, and both architectures list `paneflow X.Y.Z-1`;
+- rpm: `repomd.xml.asc` verifies, the primary metadata matches the SHA-256 of
+  the signed `repomd.xml`, and it lists `paneflow X.Y.Z` for `x86_64` and
+  `aarch64`;
+- cask: `Casks/paneflow.rb` in `arthjean/homebrew-paneflow` declares
+  `version "X.Y.Z"` and a real `sha256`, read through the GitHub API with
+  `GH_TOKEN` or the `gh` login.
+
+A stream still stale after 5 attempts 60 s apart fails with its name. Pass
+`--stream apt`, `--stream rpm` or `--stream cask` to check a single stream;
+`PANEFLOW_VERIFY_ATTEMPTS` and `PANEFLOW_VERIFY_INTERVAL_SECONDS` change the
+retry budget. The script refuses a prerelease version: the chained runs never
+publish one, and a prerelease dispatched to `repo_publish.yml` by hand is
+checked by hand.
 
 ## Step 6 - Install from a user's position
 

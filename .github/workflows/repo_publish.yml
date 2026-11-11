@@ -60,7 +60,7 @@ defaults:
 jobs:
   publish:
     runs-on: ubuntu-22.04
-    timeout-minutes: 19
+    timeout-minutes: 24
     environment: release
     # US-003 chain guard. Three cases:
     #   (a) workflow_dispatch: operator-driven - always allow. No filter
@@ -151,6 +151,45 @@ jobs:
           fi
           echo "→ GitHub Release $TAG confirmed - proceeding with R2 sync."
 
+      - name: Download release artifacts and their signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./assets
+          # `$TAG` and `$REPO` come from env, never from an expression
+          # inlined into the script (injection-hardening).
+          gh release download "$TAG" \
+            --repo "$REPO" \
+            --pattern "*.deb" \
+            --pattern "*.rpm" \
+            --pattern "*.deb.minisig" \
+            --pattern "*.rpm.minisig" \
+            --dir ./assets
+          ls -la ./assets
+
+      - name: Install minisign
+        run: bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
+
+      # FR-09: only a package whose minisign signature verifies against the
+      # key embedded in every shipped binary reaches the repositories. This
+      # runs before the GPG key is imported and before any R2 read or write,
+      # so a replaced or tampered asset stops the job with nothing signed.
+      - name: Verify the minisign signature of every package
+        env:
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(./assets/paneflow-*.deb ./assets/paneflow-*.rpm)
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "::error::release $TAG carries no .deb or .rpm package"
+            exit 1
+          fi
+          bash scripts/verify-release-signatures.sh "${packages[@]}"
+
       - name: Install repo-publishing tools
         run: |
           set -euo pipefail
@@ -229,25 +268,6 @@ jobs:
           # `--batch` silences prompts; `--import` reads the ASCII-armored
           # private key from stdin. `<<<` here-string preserves newlines.
           gpg --batch --import <<< "$GPG_PRIVATE_KEY"
-
-      - name: Download release artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          mkdir -p ./assets
-          # `gh release download` fetches matching assets from the tagged
-          # release. `$TAG` and `$REPO` come from env (set via the step
-          # `env:` block above) rather than being inlined as GitHub Actions
-          # expression substitutions, so a crafted tag can never be
-          # shell-interpreted as a command (injection-hardening).
-          gh release download "$TAG" \
-            --repo "$REPO" \
-            --pattern "*.deb" \
-            --pattern "*.rpm" \
-            --dir ./assets
-          ls -la ./assets
 
       - name: Pull current R2 repo state into local staging
         env:
@@ -506,96 +526,18 @@ jobs:
           echo "::error::Cloudflare API unreachable - metadata may be stale up to the edge TTL (failed after ${max_attempts} attempts)" >&2
           exit 1
 
-      # ─── US-002 reprepro arch-idempotency regression guard ──────────────
-      # Commit 83a3333 fixed an awk predicate bug that caused
-      # `binary-amd64/Packages` to stay empty after the arm64 deb was
-      # included first in the reprepro index. This step is a post-publish
-      # assertion that both arch `Packages` files are non-empty in the
-      # freshly-signed InRelease, so a silent re-introduction of the bug
-      # (or any future reprepro-wrapper regression) fails the release job
-      # instead of reaching users.
-      #
-      # Placement rationale: after BOTH rclone-upload and Cloudflare
-      # purge. Fetching before purge would hit the edge-cached InRelease
-      # from the previous release (up to 4 h TTL) - defeating the check.
-      # Purge is instant in P95 < 60 s; the retry loop below absorbs the
-      # propagation window.
-      #
-      # Parser: `awk` section-state machine. The clearsigned InRelease
-      # has four hash sections (`MD5Sum`/`SHA1`/`SHA256`/`SHA512`); we
-      # only parse the MD5Sum block to keep the match unambiguous, and
-      # compare against the universal empty-file MD5
-      # `d41d8cd98f00b204e9800998ecf8427e` AND size==0 (both should
-      # match for an empty file, but we check both as belt-and-braces
-      # against an awk edit that breaks one path).
-      - name: Verify InRelease binary-<arch>/Packages are non-empty (US-002)
+      # The published streams are read back through the CDN with a
+      # cache-busting query: the signed InRelease and repomd.xml must verify
+      # against packaging/paneflow-release.asc, the Packages.gz and primary
+      # metadata must match their signed hashes, and every architecture must
+      # list this version. Five attempts 60 s apart absorb the purge window;
+      # a stream still stale after that is named in the error. The same
+      # script is Step 5 of docs/release/runbook.md.
+      - name: Verify the published apt and rpm streams
         run: |
           set -euo pipefail
-
-          INRELEASE_URL="https://pkg.paneflow.dev/apt/dists/stable/InRelease"
-          INRELEASE_FILE="$(mktemp)"
-          trap 'rm -f "$INRELEASE_FILE"' EXIT
-
-          # --- Fetch with retry ----------------------------------------
-          # max_attempts=4 (1 initial + 3 retries). Sleep BEFORE each
-          # retry with backoff 2^(n-1): 1s, 2s, 4s - matches AC6.
-          max_attempts=4
-          attempt=1
-          while [ "$attempt" -le "$max_attempts" ]; do
-            if curl -sSfL --max-time 30 -o "$INRELEASE_FILE" "$INRELEASE_URL"; then
-              echo "✓ InRelease fetched (attempt ${attempt}/${max_attempts})"
-              break
-            fi
-            if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "::error::InRelease fetch failed after ${max_attempts} attempts against ${INRELEASE_URL}"
-              exit 1
-            fi
-            backoff=$(( 1 << (attempt - 1) ))
-            echo "→ InRelease fetch failed (attempt ${attempt}/${max_attempts}) - sleeping ${backoff}s and retrying…" >&2
-            sleep "$backoff"
-            attempt=$(( attempt + 1 ))
-          done
-
-          # --- Parse MD5Sum entries for both arches --------------------
-          # awk toggles `section` on each hash-section header, then emits
-          # `<md5> <size>` for the first exact match of
-          # `main/binary-<arch>/Packages` inside the MD5Sum block. `$3 ==`
-          # (exact) avoids picking up the `.gz` variants.
-          parse_entry() {
-            local arch="$1"
-            awk -v arch="$arch" '
-              /^MD5Sum:/  { section = "MD5Sum"; next }
-              /^SHA1:/    { section = "SHA1";   next }
-              /^SHA256:/  { section = "SHA256"; next }
-              /^SHA512:/  { section = "SHA512"; next }
-              section == "MD5Sum" && $3 == ("main/binary-" arch "/Packages") {
-                print $1, $2
-                exit
-              }
-            ' "$INRELEASE_FILE"
-          }
-
-          EMPTY_MD5="d41d8cd98f00b204e9800998ecf8427e"
-          fail=0
-
-          for arch in amd64 arm64; do
-            entry="$(parse_entry "$arch")"
-            if [ -z "$entry" ]; then
-              echo "::error::binary-${arch}/Packages entry missing from InRelease MD5Sum block"
-              fail=1
-              continue
-            fi
-            md5="${entry%% *}"
-            size="${entry##* }"
-            if [ "$size" = "0" ] || [ "$md5" = "$EMPTY_MD5" ]; then
-              echo "::error::binary-${arch}/Packages is empty - reprepro arch-idempotency regression (md5=${md5}, size=${size})"
-              fail=1
-              continue
-            fi
-            echo "✓ binary-${arch}/Packages non-empty (md5=${md5}, size=${size})"
-          done
-
-          if [ "$fail" -ne 0 ]; then
-            echo "::error::reprepro InRelease arch-idempotency guard failed - see per-arch errors above"
-            exit 1
+          if [[ "$TAG" == *-* ]]; then
+            echo "::notice::$TAG is a prerelease; its package versions are checked by hand (docs/release/runbook.md, Step 5)"
+            exit 0
           fi
+          bash scripts/verify-published-streams.sh --stream apt --stream rpm "$TAG"
