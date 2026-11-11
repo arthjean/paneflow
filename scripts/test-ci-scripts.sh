@@ -170,6 +170,76 @@ jobs:
 EOF
 )"
   expect "bounded jobs and a reusable workflow call pass" 0 "every job declares timeout-minutes \(3 job" "$check" "$file"
+
+  file="$(workflow runner/current.yml <<EOF
+jobs:
+  build:
+    runs-on: \${{ matrix.runs-on }}
+    container: ubuntu:22.04
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        include:
+          - runs-on: ubuntu-24.04
+          - runs-on: ubuntu-24.04-arm
+          - runs-on: macos-15
+    steps:
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "current runner images and a 22.04 container pass" 0 "no deprecated or floating runner image in 4 runs-on line" "$check" "$file"
+
+  file="$(workflow runner/job-level.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a job on the retired ubuntu-22.04 image is named by file and line" 1 "job-level\.yml:3: runner image 'ubuntu-22.04' is deprecated" "$check" "$file"
+
+  file="$(workflow runner/matrix-leg.yml <<EOF
+jobs:
+  build:
+    runs-on: \${{ matrix.runs-on }}
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-22.04-arm
+          - runs-on: [macos-14]
+    steps:
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a matrix leg on ubuntu-22.04-arm is refused" 1 "matrix-leg\.yml:9: runner image 'ubuntu-22.04-arm' is deprecated" "$check" "$file"
+  expect "macos-14 in a label list is refused" 1 "matrix-leg\.yml:10: runner image 'macos-14' is deprecated" "$check" "$file"
+
+  file="$(workflow runner/floating.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-latest # cheap
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a floating -latest label is refused" 1 "floating\.yml:3: runner label 'ubuntu-latest' floats" "$check" "$file"
+
+  file="$(workflow runner/commented.yml <<EOF
+jobs:
+  build:
+    # runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a retired image named only in a comment passes" 0 "no deprecated or floating runner image in 1 runs-on line" "$check" "$file"
 }
 
 fake_gh() {

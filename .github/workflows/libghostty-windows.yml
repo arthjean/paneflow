@@ -29,7 +29,7 @@ jobs:
   # lanes below read its output. Same pattern as `run_tests.yml::orchestrate`.
   changes:
     name: Detect libghostty inputs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       native: ${{ steps.filter.outputs.native }}
@@ -127,7 +127,7 @@ jobs:
     name: libghostty Windows validation
     if: ${{ !cancelled() }}
     needs: [changes, consumer-qualification]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Require the consumer lane

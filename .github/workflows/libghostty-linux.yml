@@ -37,7 +37,7 @@ jobs:
   # lanes below read its output. Same pattern as `run_tests.yml::orchestrate`.
   changes:
     name: Detect libghostty inputs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `recipe` gates the engine lanes (reproducible rebuild, bindings, fuzz):
     # only the manifest, the build scripts, the -sys crate and this workflow
@@ -101,11 +101,17 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-            runs-on: ubuntu-22.04-arm
+            runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
+    # Same Ubuntu 22.04 userland as the `build-linux` job of `release.yml`,
+    # on a 24.04 host: `distro-smoke` installs these packages on Ubuntu 22.04
+    # and Debian 12, where a binary linked against the host's glibc 2.39
+    # would not start.
+    container:
+      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
     # Two clean Ghostty builds (--verify-reproducible), a release build and
     # four package formats. The workspace tests and cargo-deny do not run
     # here: `run_tests.yml` runs them on both arches against the same
@@ -115,6 +121,11 @@ jobs:
     # no other job builds the Linux x86_64 release binary before a tag.
     timeout-minutes: 85
     steps:
+      - name: Prepare the Ubuntu 22.04 build container
+        run: |
+          apt-get -o Acquire::Retries=3 update
+          apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl git sudo xz-utils
+
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
@@ -151,6 +162,7 @@ jobs:
 
       - uses: ./.github/actions/linux-build-deps
         with:
+          container-toolchain: "true"
           extra-packages: >-
             appstream binutils elfutils icnsutils imagemagick patchelf rpm
 
@@ -302,7 +314,7 @@ jobs:
     name: Regenerated bindings and ABI
     needs: changes
     if: needs.changes.outputs.recipe == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 33
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -352,7 +364,7 @@ jobs:
     name: Fuzz ${{ matrix.target }}
     needs: changes
     if: needs.changes.outputs.recipe == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 53
     strategy:
       fail-fast: false
@@ -386,22 +398,22 @@ jobs:
         include:
           - distro: ubuntu
             arch: x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
             format: deb
           - distro: debian
             arch: x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             image: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
             format: deb
           - distro: fedora
             arch: x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
           - distro: opensuse
             arch: x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             # Tag rather than digest, unlike every other leg: Tumbleweed rolls
             # daily and its registry drops the superseded manifests, so a pin
             # turns this job red with "manifest unknown" within weeks. The smoke
@@ -410,7 +422,7 @@ jobs:
             format: rpm
           - distro: arch
             arch: x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
             format: tar
           # The `native` job builds and uploads aarch64 .deb / .rpm / tarball /
@@ -419,12 +431,12 @@ jobs:
           # shipping aarch64 artifacts without doubling the whole matrix.
           - distro: debian
             arch: aarch64
-            runs-on: ubuntu-22.04-arm
+            runs-on: ubuntu-24.04-arm
             image: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
             format: deb
           - distro: fedora
             arch: aarch64
-            runs-on: ubuntu-22.04-arm
+            runs-on: ubuntu-24.04-arm
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
     steps:
@@ -530,7 +542,7 @@ jobs:
     name: libghostty validation
     if: ${{ !cancelled() }}
     needs: [changes, native, bindings, fuzz, distro-smoke]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Require every automated check
