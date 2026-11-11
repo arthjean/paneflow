@@ -117,27 +117,39 @@ jobs:
           echo "tag=$tag"      | tee -a "$GITHUB_OUTPUT"
           echo "version=$version" | tee -a "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      # The cask is rendered from the template of the commit the release
+      # built, never from whatever `main` holds when this run starts: a
+      # chained run checks out the release run's head_sha, a dispatch the tag.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/{0}', steps.tag.outputs.tag) }}
           persist-credentials: false
 
-      - name: Download .dmg assets from the release
-        # `gh release download --pattern` globs by filename; our naming
-        # convention is paneflow-<version>-aarch64-apple-darwin.dmg
-        # while Homebrew is ARM-only. Download to a scratch dir so we don't
-        # pollute cwd.
+      - name: Install minisign
+        run: bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
+
+      - name: Download the .dmg and its signature from the release
+        # Homebrew is ARM-only: paneflow-<version>-aarch64-apple-darwin.dmg.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           mkdir -p dmg-staging
-          cd dmg-staging
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'paneflow-*-aarch64-apple-darwin.dmg'
-          ls -la
+            --dir dmg-staging \
+            --pattern 'paneflow-*-aarch64-apple-darwin.dmg' \
+            --pattern 'paneflow-*-aarch64-apple-darwin.dmg.minisig'
+          ls -la dmg-staging
+
+      - name: Verify the .dmg signature against the embedded keys
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+        run: bash scripts/verify-release-signatures.sh "dmg-staging/paneflow-${VERSION}-aarch64-apple-darwin.dmg"
 
       - name: Compute SHA-256
         id: sha
@@ -146,41 +158,31 @@ jobs:
         run: |
           set -euo pipefail
           arm_dmg="dmg-staging/paneflow-${VERSION}-aarch64-apple-darwin.dmg"
-          if [ ! -f "$arm_dmg" ]; then
-            echo "::error::missing aarch64 .dmg - Apple Silicon is a P0 artifact and must be present for a cask update"
-            ls -la dmg-staging/ >&2
-            exit 1
-          fi
-          arm_sha="$(shasum -a 256 "$arm_dmg" | awk '{print $1}')"
-          echo "arm=$arm_sha"   | tee -a "$GITHUB_OUTPUT"
+          arm_sha="$(sha256sum "$arm_dmg" | awk '{print $1}')"
+          echo "arm=$arm_sha" | tee -a "$GITHUB_OUTPUT"
 
-      - name: Render updated Casks/paneflow.rb
+      # The tap is public, so it is cloned without credentials. The render
+      # refuses a version that differs from the tag, a leftover template
+      # placeholder, invalid Ruby, and a version lower than the one the tap
+      # already publishes, all before the deploy key is ever read.
+      - name: Render and check Casks/paneflow.rb against the tap
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           ARM_SHA: ${{ steps.sha.outputs.arm }}
         run: |
           set -euo pipefail
-          # sed is deliberately pinned to the three version/sha lines
-          # - any other change to paneflow.rb flows through unmodified,
-          # so non-version edits (zap paths, depends_on bumps) make it
-          # into the tap on the next release.
-          #
-          # Using `|` as the sed delimiter to avoid clashes with the
-          # URL's `/` characters; the version/sha values we substitute
-          # never contain `|`.
-          sed \
-            -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
-            -e "s|^  sha256 \".*\"|  sha256 \"${ARM_SHA}\"|" \
-            packaging/homebrew/paneflow.rb > /tmp/paneflow.rb
+          tap="$RUNNER_TEMP/homebrew-paneflow"
+          git clone --depth=1 https://github.com/arthjean/homebrew-paneflow.git "$tap"
+          mkdir -p "$tap/Casks"
+          bash scripts/render-cask.sh packaging/homebrew/paneflow.rb "$VERSION" "$ARM_SHA" \
+            "$tap/Casks/paneflow.rb" "$tap/Casks/paneflow.rb"
           echo "--- rendered Casks/paneflow.rb ---"
-          cat /tmp/paneflow.rb
+          cat "$tap/Casks/paneflow.rb"
 
       - name: Push to tap repo
         env:
-          # SSH deploy key for arthjean/homebrew-paneflow (write). A
-          # deploy key is repo-scoped and NON-EXPIRING - unlike a PAT it
-          # never silently lapses, and it carries no personal-account
-          # coupling. This is the durable auth for cross-repo push from CI.
+          # SSH deploy key for arthjean/homebrew-paneflow (write), repo-scoped
+          # and non-expiring.
           DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
@@ -189,23 +191,15 @@ jobs:
             echo "::error::HOMEBREW_TAP_DEPLOY_KEY secret is not set - cannot push to tap repo. See packaging/homebrew/paneflow.rb header for setup steps."
             exit 1
           fi
-          # Materialize the deploy key to a 0600 temp file and point git at
-          # it via GIT_SSH_COMMAND. Only the file PATH (never the key bytes)
-          # appears in argv / the trace; the file is removed on step exit.
-          # `IdentitiesOnly=yes` forces this key only (ignores agent/~/.ssh).
+          # Only the key file PATH reaches argv; the file is removed on exit.
           keyfile="$(mktemp)"
           chmod 600 "$keyfile"
           printf '%s\n' "$DEPLOY_KEY" > "$keyfile"
           trap 'rm -f "$keyfile"' EXIT
           export GIT_SSH_COMMAND="ssh -i $keyfile -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
 
-          tmp="$(mktemp -d)"
-          git clone --depth=1 git@github.com:arthjean/homebrew-paneflow.git "$tmp"
-          mkdir -p "$tmp/Casks"
-          cp /tmp/paneflow.rb "$tmp/Casks/paneflow.rb"
-          cd "$tmp"
-          # Identity is the "github-actions[bot]" synthetic user; GitHub
-          # renders these commits with the automation badge.
+          cd "$RUNNER_TEMP/homebrew-paneflow"
+          git remote set-url --push origin git@github.com:arthjean/homebrew-paneflow.git
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/paneflow.rb
@@ -215,3 +209,9 @@ jobs:
           fi
           git commit -m "paneflow ${VERSION}" -m "Automated update from arthjean/paneflow release v${VERSION}."
           git push origin HEAD
+
+      - name: Verify the published cask
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: bash scripts/verify-published-streams.sh --stream cask "$VERSION"

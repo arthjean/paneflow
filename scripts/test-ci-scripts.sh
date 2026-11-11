@@ -373,6 +373,258 @@ helper_size_cases() {
   expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 1100000 B, over the hard cap of 1000000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
 }
 
+have_tool() {
+  local tool="$1" purpose="$2"
+  if command -v "$tool" >/dev/null; then
+    return 0
+  fi
+  if [ -n "${CI:-}" ]; then
+    echo "FAIL $tool is required in CI to test $purpose"
+    failures=$((failures + 1))
+    cases=$((cases + 1))
+  else
+    echo "skip the $purpose cases: $tool is not installed"
+  fi
+  return 1
+}
+
+new_minisign_key() {
+  local dir="$WORK/minisign/$1"
+  mkdir -p "$dir"
+  minisign -G -W -f -p "$dir/key.pub" -s "$dir/key.sec" >/dev/null
+  printf '%s' "$dir"
+}
+
+minisign_pubkey() {
+  sed -n 2p "$1/key.pub"
+}
+
+sign_asset() {
+  local key_dir="$1" asset="$2" name="${3:-$(basename "$2")}"
+  minisign -S -s "$key_dir/key.sec" -m "$asset" -t "paneflow release artifact $name" >/dev/null
+}
+
+release_signature_cases() {
+  have_tool minisign "scripts/verify-release-signatures.sh" || return 0
+  local verify="$ROOT/scripts/verify-release-signatures.sh"
+  local current next dir
+  current="$(new_minisign_key current)"
+  next="$(new_minisign_key next)"
+  dir="$WORK/release-assets"
+  mkdir -p "$dir"
+
+  printf 'deb payload' > "$dir/paneflow-1.2.3-x86_64.deb"
+  printf 'rpm payload' > "$dir/paneflow-1.2.3-x86_64.rpm"
+  sign_asset "$current" "$dir/paneflow-1.2.3-x86_64.deb"
+  sign_asset "$current" "$dir/paneflow-1.2.3-x86_64.rpm"
+  expect "assets signed by the embedded key pass" 0 "2 asset\(s\) carry a valid minisign signature" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" "$verify" "$dir/paneflow-1.2.3-x86_64.deb" "$dir/paneflow-1.2.3-x86_64.rpm"
+
+  printf 'tampered' >> "$dir/paneflow-1.2.3-x86_64.rpm"
+  expect "an asset changed after signing fails before publishing" 1 "Signature check failed for paneflow-1\.2\.3-x86_64\.rpm: no embedded key verifies" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" "$verify" "$dir/paneflow-1.2.3-x86_64.deb" "$dir/paneflow-1.2.3-x86_64.rpm"
+
+  printf 'aarch64 payload' > "$dir/paneflow-1.2.3-aarch64.deb"
+  expect "an asset without a signature fails" 1 "Signature check failed for paneflow-1\.2\.3-aarch64\.deb: paneflow-1\.2\.3-aarch64\.deb\.minisig is missing" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" "$verify" "$dir/paneflow-1.2.3-aarch64.deb"
+
+  sign_asset "$next" "$dir/paneflow-1.2.3-aarch64.deb"
+  expect "a signature from a key no binary embeds fails" 1 "Signature check failed for paneflow-1\.2\.3-aarch64\.deb: no embedded key verifies" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" "$verify" "$dir/paneflow-1.2.3-aarch64.deb"
+  expect "a signature from the rotation key passes" 0 "verified: paneflow-1\.2\.3-aarch64\.deb" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" PANEFLOW_MINISIGN_PUBKEY_NEXT="$(minisign_pubkey "$next")" "$verify" "$dir/paneflow-1.2.3-aarch64.deb"
+
+  printf 'old release' > "$dir/paneflow-1.2.4-x86_64.deb"
+  sign_asset "$current" "$dir/paneflow-1.2.4-x86_64.deb" "paneflow-1.2.2-x86_64.deb"
+  expect "a valid signature made for another asset name fails" 1 "Signature check failed for paneflow-1\.2\.4-x86_64\.deb: the signature was made for 'paneflow release artifact paneflow-1\.2\.2-x86_64\.deb'" \
+    env PANEFLOW_MINISIGN_PUBKEY="$(minisign_pubkey "$current")" "$verify" "$dir/paneflow-1.2.4-x86_64.deb"
+
+  expect "an empty embedded key fails" 1 "PANEFLOW_MINISIGN_PUBKEY is empty" \
+    env PANEFLOW_MINISIGN_PUBKEY=" " "$verify" "$dir/paneflow-1.2.3-x86_64.deb"
+}
+
+cask_template() {
+  local path="$WORK/cask/$1"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path"
+  printf '%s' "$path"
+}
+
+render_cask_cases() {
+  have_tool ruby "scripts/render-cask.sh" || return 0
+  local render="$ROOT/scripts/render-cask.sh"
+  local sha="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  local template published out="$WORK/cask/out.rb"
+  mkdir -p "$WORK/cask"
+
+  expect "the repository template renders and parses" 0 "rendered .*: version 1\.2\.3, sha256 $sha, Syntax OK" \
+    "$render" "$ROOT/packaging/homebrew/paneflow.rb" 1.2.3 "$sha" "$out"
+  cases=$((cases + 1))
+  if ! grep -qx '  version "1.2.3"' "$out" || ! grep -qx "  sha256 \"$sha\"" "$out"; then
+    echo "FAIL the rendered cask does not carry the version and sha256 lines"
+    failures=$((failures + 1))
+  fi
+
+  template="$(printf 'cask "paneflow" do\r\n  version "0.0.0"\r\n  sha256 "%064d"\r\nend\r\n' 0 | cask_template crlf.rb)"
+  expect "a CRLF template renders" 0 "version 1\.2\.3" "$render" "$template" 1.2.3 "$sha" "$out"
+
+  template="$(cask_template indented.rb <<'EOF'
+cask "paneflow" do
+    version "0.0.0"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+end
+EOF
+)"
+  expect "a template the sed no longer matches fails before the push" 1 "Cask version is missing, expected 1\.2\.3" "$render" "$template" 1.2.3 "$sha" "$out"
+
+  template="$(cask_template leftover.rb <<'EOF'
+cask "paneflow" do
+  version "0.0.0"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  livecheck do
+    version "0.0.0"
+  end
+end
+EOF
+)"
+  expect "a leftover 0.0.0 placeholder fails" 1 "still carries a template placeholder" "$render" "$template" 1.2.3 "$sha" "$out"
+
+  template="$(cask_template broken.rb <<'EOF'
+cask "paneflow" do
+  version "0.0.0"
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+EOF
+)"
+  expect "a cask that is not valid Ruby fails" 1 "the rendered cask is not valid Ruby" "$render" "$template" 1.2.3 "$sha" "$out"
+
+  published="$(cask_template published.rb <<'EOF'
+cask "paneflow" do
+  version "1.10.0"
+  sha256 "1111111111111111111111111111111111111111111111111111111111111111"
+end
+EOF
+)"
+  expect "a version lower than the tap's is refused" 1 "Cask version 1\.9\.0 is lower than the 1\.10\.0 the tap already publishes" \
+    "$render" "$ROOT/packaging/homebrew/paneflow.rb" 1.9.0 "$sha" "$out" "$published"
+  expect "the same version as the tap renders" 0 "the tap publishes 1\.10\.0, rendering 1\.10\.0" \
+    "$render" "$ROOT/packaging/homebrew/paneflow.rb" 1.10.0 "$sha" "$out" "$published"
+  expect "a higher version than the tap renders" 0 "the tap publishes 1\.10\.0, rendering 1\.11\.0" \
+    "$render" "$ROOT/packaging/homebrew/paneflow.rb" 1.11.0 "$sha" "$out" "$published"
+  expect "a tag that is not a stable version is refused" 1 "is not MAJOR\.MINOR\.PATCH" \
+    "$render" "$ROOT/packaging/homebrew/paneflow.rb" 1.2.3-rc.1 "$sha" "$out"
+}
+
+new_gpg_home() {
+  local home="$WORK/gnupg-$1"
+  mkdir -p "$home"
+  chmod 700 "$home"
+  gpg --homedir "$home" --batch --quiet --passphrase '' --quick-gen-key "Paneflow $1 <$1@example.invalid>" ed25519 sign never 2>/dev/null
+  gpg --homedir "$home" --batch --quiet --armor --export > "$home/key.asc"
+  printf '%s' "$home"
+}
+
+fake_streams() {
+  local root="$1" version="$2" gpg_home="$3" arch packages sha size
+  mkdir -p "$root/apt/dists/stable" "$root/rpm/repodata" "$root/cask"
+  {
+    printf 'Origin: Paneflow test\nSuite: stable\nCodename: stable\nArchitectures: amd64 arm64\nComponents: main\nSHA256:\n'
+    for arch in amd64 arm64; do
+      packages="$root/apt/dists/stable/main/binary-$arch"
+      mkdir -p "$packages"
+      printf 'Package: paneflow\nVersion: %s-1\nArchitecture: %s\nFilename: pool/main/p/paneflow/paneflow_%s-1_%s.deb\n\n' \
+        "$version" "$arch" "$version" "$arch" > "$packages/Packages"
+      gzip -n -c "$packages/Packages" > "$packages/Packages.gz"
+      sha="$(sha256sum "$packages/Packages.gz" | awk '{print $1}')"
+      size="$(wc -c < "$packages/Packages.gz" | tr -d ' ')"
+      printf ' %s %s main/binary-%s/Packages.gz\n' "$sha" "$size" "$arch"
+    done
+  } > "$root/apt/dists/stable/Release"
+  gpg --homedir "$gpg_home" --batch --quiet --yes --clearsign --output "$root/apt/dists/stable/InRelease" "$root/apt/dists/stable/Release"
+
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<metadata packages="4">\n'
+    for arch in x86_64 aarch64; do
+      for release in 1.0.0 "$version"; do
+        printf '<package type="rpm">\n  <name>paneflow</name>\n  <arch>%s</arch>\n  <version epoch="0" ver="%s" rel="1"/>\n</package>\n' "$arch" "$release"
+      done
+    done
+    printf '</metadata>\n'
+  } | gzip -n -c > "$root/rpm/primary.xml.gz"
+  sha="$(sha256sum "$root/rpm/primary.xml.gz" | awk '{print $1}')"
+  mv "$root/rpm/primary.xml.gz" "$root/rpm/repodata/$sha-primary.xml.gz"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<repomd xmlns="http://linux.duke.edu/metadata/repo">\n  <revision>1</revision>\n  <data type="primary">\n    <checksum type="sha256">%s</checksum>\n    <location href="repodata/%s-primary.xml.gz"/>\n  </data>\n</repomd>\n' \
+    "$sha" "$sha" > "$root/rpm/repodata/repomd.xml"
+  gpg --homedir "$gpg_home" --batch --quiet --yes --armor --detach-sign --output "$root/rpm/repodata/repomd.xml.asc" "$root/rpm/repodata/repomd.xml"
+
+  printf 'cask "paneflow" do\n  version "%s"\n  sha256 "%s"\nend\n' "$version" "$(printf '%064d' 7)" > "$root/cask/paneflow.rb"
+}
+
+published_stream_cases() {
+  have_tool gpg "scripts/verify-published-streams.sh" || return 0
+  have_tool gpgv "scripts/verify-published-streams.sh" || return 0
+  have_tool python3 "scripts/verify-published-streams.sh" || return 0
+  local verify="$ROOT/scripts/verify-published-streams.sh"
+  local signer other root="$WORK/streams" log="$WORK/streams-server.log" port="" server
+  signer="$(new_gpg_home signer)"
+  other="$(new_gpg_home other)"
+  fake_streams "$root/current" 1.2.3 "$signer"
+  fake_streams "$root/tampered" 1.2.3 "$signer"
+  sed -i 's/^Origin: Paneflow test$/Origin: Paneflow forged/' "$root/tampered/apt/dists/stable/InRelease"
+  fake_streams "$root/swapped" 1.2.3 "$signer"
+  printf 'Package: paneflow\nVersion: 9.9.9-1\n\n' | gzip -n -c > "$root/swapped/apt/dists/stable/main/binary-arm64/Packages.gz"
+  fake_streams "$root/foreign" 1.2.3 "$other"
+
+  python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$root" > "$log" 2>&1 &
+  server=$!
+  for _ in $(seq 1 50); do
+    port="$(sed -nE 's/.* port ([0-9]+).*/\1/p' "$log" | head -1)"
+    [ -n "$port" ] && break
+    sleep 0.1
+  done
+  if [ -z "$port" ]; then
+    echo "FAIL the fixture HTTP server did not start: $(cat "$log")"
+    failures=$((failures + 1))
+    cases=$((cases + 1))
+    kill "$server" 2>/dev/null || true
+    return 0
+  fi
+  local base="http://127.0.0.1:$port"
+  local common=(env PANEFLOW_RELEASE_KEY="$signer/key.asc" PANEFLOW_VERIFY_INTERVAL_SECONDS=0)
+
+  expect "every stream serving the version, with valid signatures, passes" 0 "cask: version 1\.2\.3" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/current" PANEFLOW_CASK_URL="$base/current/cask/paneflow.rb" PANEFLOW_VERIFY_ATTEMPTS=1 "$verify" 1.2.3
+  expect "the apt check reports the signed InRelease and both architectures" 0 "apt: InRelease signature valid; paneflow amd64 1\.2\.3-1 arm64 1\.2\.3-1" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/current" PANEFLOW_VERIFY_ATTEMPTS=1 "$verify" --stream apt v1.2.3
+  cases=$((cases + 1))
+  if ! grep -qE 'GET /current/apt/dists/stable/InRelease\?cb=[0-9]+-' "$log"; then
+    echo "FAIL the stream check did not bypass the CDN cache with a cache-busting query"
+    failures=$((failures + 1))
+  fi
+
+  expect "a stream still serving the old version fails after every attempt, naming the stream" 1 \
+    "apt stream: main/binary-amd64/Packages\.gz still lists paneflow 1\.2\.3-1, expected 1\.3\.0, after 5 attempt\(s\) 0 s apart" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/current" PANEFLOW_CASK_URL="$base/current/cask/paneflow.rb" "$verify" 1.3.0
+  expect "a stale rpm stream is named with the newest version it lists" 1 "rpm stream: repodata lists no paneflow 1\.3\.0 for x86_64 \(newest: 1\.2\.3\)" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/current" PANEFLOW_VERIFY_ATTEMPTS=2 "$verify" --stream rpm 1.3.0
+  expect "a stale cask is named" 1 "cask stream: the cask still declares version 1\.2\.3, expected 1\.3\.0" \
+    "${common[@]}" PANEFLOW_CASK_URL="$base/current/cask/paneflow.rb" PANEFLOW_VERIFY_ATTEMPTS=2 "$verify" --stream cask 1.3.0
+  expect "a tampered InRelease fails at once on its signature" 1 "::error::apt stream: InRelease does not carry a valid signature from key\.asc" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/tampered" "$verify" --stream apt 1.2.3
+  cases=$((cases + 1))
+  if PANEFLOW_RELEASE_KEY="$signer/key.asc" PANEFLOW_VERIFY_INTERVAL_SECONDS=0 PANEFLOW_PKG_BASE_URL="$base/tampered" "$verify" --stream apt 1.2.3 2>&1 | grep -q 'attempt 1/'; then
+    echo "FAIL a bad signature was retried instead of failing at once"
+    failures=$((failures + 1))
+  fi
+  expect "a Packages.gz that does not match the signed InRelease fails" 1 "main/binary-arm64/Packages\.gz has SHA256 [0-9a-f]+, the signed InRelease expects" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/swapped" PANEFLOW_VERIFY_ATTEMPTS=1 "$verify" --stream apt 1.2.3
+  expect "repositories signed by another key fail" 1 "rpm stream: repomd\.xml does not carry a valid signature" \
+    "${common[@]}" PANEFLOW_PKG_BASE_URL="$base/foreign" "$verify" --stream rpm 1.2.3
+  expect "a prerelease version is refused" 2 "is not a stable MAJOR\.MINOR\.PATCH version" "$verify" 1.3.0-rc.1
+
+  kill "$server" 2>/dev/null || true
+  wait "$server" 2>/dev/null || true
+}
+
 powershell_retry_cases() {
   if ! command -v pwsh >/dev/null; then
     if [ -n "${CI:-}" ]; then
@@ -424,6 +676,9 @@ EOF
 
 check_workflows_cases
 action_pin_cases
+release_signature_cases
+render_cask_cases
+published_stream_cases
 helper_size_cases
 retry_cases
 powershell_retry_cases
