@@ -291,10 +291,10 @@ DESIGN.md, le changelog et la documentation utilisateur décrivent ce que l'app 
 **Dependencies:** Blocked by US-005, US-007, US-009, US-010
 
 **Acceptance Criteria:**
-- [ ] DESIGN.md décrit les en-têtes de groupe (24 px, 12 px Medium, couleurs, compteur, 8 px avant chaque en-tête sauf le premier), la ligne de 32 px avec le suffixe workspace, la disparition de la ligne méta et de l'écart de rang, le nouveau plancher de redimensionnement, l'item Status de Customize sidebar et Customize agent rows réduit à Logo et Workspace ; la phrase « There is no counter and no sort control » (DESIGN.md:564) est remplacée.
-- [ ] CHANGELOG.md, section Unreleased : l'entrée « Choose what each Agents row shows » (CHANGELOG.md:15) ne cite plus le statut ni `sidebar_show.agent_status` ; une entrée Changed décrit les groupes et l'alignement de l'arbre sur la section (Working au lieu de Done pour un agent reparti, matrice à l'accent du runtime) ; une entrée Added décrit `sidebar_show.status`.
-- [ ] La documentation utilisateur est modifiée dans le dépôt du site paneflow-web (page features, description des lignes Agents et de Customize sidebar › Show, aujourd'hui `docs/user/features.md:93` et `docs/user/features.md:108-109` ; page configuration/schema, `sidebar_show.status`), puis `docs/user/` est resynchronisé depuis le site.
-- [ ] Given une recherche de `agent_status` dans DESIGN.md, CHANGELOG.md, `schemas/` et `docs/user/`, when elle est lancée, then elle ne trouve rien.
+- [x] DESIGN.md décrit les en-têtes de groupe (24 px, 12 px Medium, couleurs, compteur, 8 px avant chaque en-tête sauf le premier), la ligne de 32 px avec le suffixe workspace, la disparition de la ligne méta et de l'écart de rang, le nouveau plancher de redimensionnement, l'item Status de Customize sidebar et Customize agent rows réduit à Logo et Workspace ; la phrase « There is no counter and no sort control » (DESIGN.md:564) est remplacée.
+- [x] CHANGELOG.md, section Unreleased : l'entrée « Choose what each Agents row shows » (CHANGELOG.md:15) ne cite plus le statut ni `sidebar_show.agent_status` ; une entrée Changed décrit les groupes et l'alignement de l'arbre sur la section (Working au lieu de Done pour un agent reparti, matrice à l'accent du runtime) ; une entrée Added décrit `sidebar_show.status`.
+- [x] La documentation utilisateur est modifiée dans le dépôt du site paneflow-web (page features, description des lignes Agents et de Customize sidebar › Show, aujourd'hui `docs/user/features.md:93` et `docs/user/features.md:108-109` ; page configuration/schema, `sidebar_show.status`), puis `docs/user/` est resynchronisé depuis le site.
+- [x] Given une recherche de `agent_status` dans DESIGN.md, CHANGELOG.md, `schemas/` et `docs/user/`, when elle est lancée, then elle ne trouve rien.
 
 ---
 
