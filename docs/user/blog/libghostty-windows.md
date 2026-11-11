@@ -1,4 +1,4 @@
-# Paneflow 0.8.1: libghostty-vt replaces Alacritty on Windows
+# libghostty-vt on Windows: replacing Alacritty in Paneflow 0.8.1
 
 > How Paneflow 0.8.1 brought Ghostty's terminal engine to Windows x64: ConPTY integration, static linking, and the Alacritty fallback available at the time.
 

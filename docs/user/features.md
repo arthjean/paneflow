@@ -88,13 +88,16 @@ Use `paneflow sessions` to read session status even when the window is closed.
 The [automation guide](/docs/scripting) explains hooks and events.
 
 The **Agents** section at the bottom of the sidebar lists the agent sessions
-of the active space, most urgent first: waiting for input, failed, finished
-with a result you have not seen yet, working, idle, then agents that report
-no status. Each row shows the agent's logo, the tab title, its status, and
-the workspace name. Click a row to open the agent's pane; opening a finished
-agent's tab marks its result as seen and removes its `Done` dot. An agent
-that has reported nothing through OSC 7501 after 3 seconds shows
-`No status`, and its tooltip names the first version that reports it when
+of the active space, grouped by status, most urgent first: **Need you**
+(waiting for input), **Error**, **Done** (finished with a result you have not
+seen yet), **Working**, **Idle**, then **No status** for agents that report
+none. Each group header shows how many agents it holds, and a status that no
+agent has gets no group. Each row fits on one line: the agent's logo, the tab
+title, the workspace name, and its status. Within a group, the most recent
+agent comes first. Click a row to open the agent's pane; opening a finished
+agent's tab marks its result as seen and moves it from **Done** to **Idle**.
+An agent that has reported nothing through OSC 7501 after 3 seconds moves to
+**No status**, and its tooltip names the first version that reports it when
 Paneflow knows it, for example Claude Code 2.1.295. `Cmd/Ctrl+Shift+J` goes
 through the agents waiting for input, then the failed ones, then the unseen
 results, in the same order, across every workspace.
@@ -104,9 +107,20 @@ resize it, or press `Tab` in the focused sidebar to reach that edge, then
 use the arrow keys, `Home`, `End`, and `Enter`, which returns to the content
 height. Paneflow remembers the height and the collapsed state across
 restarts. After `Cmd/Ctrl+Alt+S`, the sidebar's keyboard cursor continues
-from the last tree row into the section, and `Enter` opens the agent's pane.
-Hide the section from **Customize sidebar > Show > Agents** or with
-[`sidebar_show.agents`](/docs/configuration/schema).
+from the last tree row into the section and steps from agent to agent past
+the group headers, and `Enter` opens the agent's pane. Hide the section from
+**Customize sidebar > Show > Agents** or with
+[`sidebar_show.agents`](/docs/configuration/schema). The button at the right
+of the header opens **Customize agent rows**, which shows or hides each row's
+logo and workspace name, stored in `sidebar_show.agent_logo` and
+`sidebar_show.agent_workspace`. A row always shows its status.
+
+Workspace and tab rows in the tree show the same status as the Agents
+section. To see each status only once, turn off **Customize sidebar > Show >
+Status** or set [`sidebar_show.status`](/docs/configuration/schema) to
+`false`: tree rows then drop their status badges and their working
+animation, and a tab's pull request takes their place. The Agents section,
+`Cmd/Ctrl+Shift+J`, the pane header, and notifications are unaffected.
 
 On Linux and macOS, the **Claude Code (team)** launcher entry starts Claude
 Code with agent teams enabled and opens each teammate in its own Paneflow
@@ -172,11 +186,9 @@ set `"agents": {"restore_conversations": false}`; see the
 **Fork conversation**, in the pane context menu and the command palette, opens
 a branch of a Claude Code or Codex conversation in a split to the right.
 
-When closing a pane, tab, or workspace brings up a confirmation, choose
-**Keep running** to preserve its sessions or **Stop** to end their processes.
-To remove a pane from the layout while keeping its process alive, choose
-**Hide from layout (keeps running)** in the pane menu. Reopen the session
-from the sidebar.
+Closing a pane, tab, or workspace takes one click and stops its sessions:
+their processes end and the session host forgets them. A tab or workspace
+whose diff dock holds unsaved files asks first.
 
 When a shell or command ends, its pane stays open with the final output in
 read-only mode. Choose **Restart** to open a new shell. To resume an agent
