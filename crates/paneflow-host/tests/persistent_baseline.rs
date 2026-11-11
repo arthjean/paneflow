@@ -855,7 +855,7 @@ fn windows_thread_samples_read_the_context_switches_of_every_live_thread() {
 }
 
 #[test]
-#[ignore = "US-003 headless desktop spike; run through .github/workflows/perf-desktop-spike.yml"]
+#[ignore = "US-003 headless desktop spike; the headless desktop section of bench/README.md has the record and the local command"]
 fn desktop_headless_spike() {
     allow_breakaway_like_the_desktop_does();
     let started = Instant::now();

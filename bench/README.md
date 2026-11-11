@@ -388,16 +388,18 @@ in an "Instruction counts" section appended to `summary.md`. The `bench`
 profile keeps its symbols (`strip = false`), because Callgrind finds the
 benchmark function by name and a stripped binary counts zero instructions.
 
-The US-017 spike validated the counts before they joined the A/B. The
-`workflow_dispatch` workflow `.github/workflows/gungraun-spike.yml` installs
-Valgrind and the matching `gungraun-runner`, and `scripts/gungraun-spike.sh`
-runs both benchmarks twice on the same commit; it validates when every count is
-non-zero and the two runs agree within 0.1 %, and otherwise concludes "not
-validated" with the reasons and the tail of the error log, for instance when
-Valgrind cannot execute libghostty's code. Run 37369490241 on `ubuntu-24.04`,
-2026-10-05, Valgrind 3.22.0, gungraun 0.20.0, cold cache: validated in 7 min
-44 s for the whole job (limit 15 min). Its second attempt, a separate job with
-a warm cache, took 1 min 9 s and reported the same counts.
+The US-017 spike validated the counts before they joined the A/B. A
+`workflow_dispatch` spike workflow installed Valgrind and the matching
+`gungraun-runner` and ran both benchmarks twice on the same commit; it
+validated when every count was non-zero and the two runs agreed within 0.1 %,
+and otherwise concluded "not validated" with the reasons and the tail of the
+error log, for instance when Valgrind cannot execute libghostty's code. Run
+[37369490241](https://github.com/arthjean/paneflow/actions/runs/37369490241)
+on `ubuntu-24.04`, 2026-10-05, Valgrind 3.22.0, gungraun 0.20.0, cold cache:
+validated in 7 min 44 s for the whole job (limit 15 min). Its second attempt,
+a separate job with a warm cache, took 1 min 9 s and reported the same counts.
+The spike workflow and its script were removed once `scripts/perf-ab.sh`
+carried the same measurement; that run is the record.
 
 | Benchmark | Run 1 (Ir) | Run 2 (Ir) | Drift |
 |---|---|---|---|
@@ -917,11 +919,13 @@ page. Each session thread gets 500 ms to answer.
 
 ## Desktop sans écran (headless desktop)
 
-The US-003 spike asks whether the real release desktop runs and measures under
-a virtual display with Mesa lavapipe on a GitHub `ubuntu-24.04` runner. The
-`workflow_dispatch` workflow `.github/workflows/perf-desktop-spike.yml` runs
-`scripts/perf-desktop-spike.sh` once under Xvfb and once under sway headless.
-The script runs the ignored test `desktop_headless_spike`, which starts the
+The US-003 spike asked whether the real release desktop runs and measures
+under a virtual display with Mesa lavapipe on a GitHub `ubuntu-24.04` runner. A
+`workflow_dispatch` spike workflow ran the ignored test
+`desktop_headless_spike` once under Xvfb and once under sway headless. The
+`perf_gates` job of `run_tests.yml` now carries the Xvfb configuration that
+spike validated, so the workflow and its script were removed: run 37198169856
+below is the record, and the test stays for a local run. It starts the
 release host with an isolated `PANEFLOW_HOME`, launches the desktop with
 `PANEFLOW_SOCKET_PATH` and `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1`, cursor blinking
 and telemetry off, and reads `system.counters` over IPC. It measures 5 windows
@@ -962,6 +966,25 @@ and 15 `session.list` calls per window), and one thinking agent drives about
 21 root renders per second under Xvfb: these are the regressions US-004 and
 US-008 remove. A spike that is not validated would have proposed counting
 inside `TestAppContext` or a third-party runner and blocked US-013.
+
+To run the spike test again on a Linux machine with Xvfb and Mesa lavapipe
+(`mesa-vulkan-drivers`, `xvfb`, `xauth`):
+
+```bash
+cargo build --release --locked -p paneflow-app -p paneflow-host
+harness=$(cargo test --release --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
+  | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+cd crates/paneflow-host
+PANEFLOW_BENCH_OUT=$PWD/../../bench/results/desktop-spike-xvfb.json \
+PANEFLOW_BENCH_STAMP=$(date -u +%Y%m%dT%H%M%SZ) \
+PANEFLOW_BENCH_SHA=$(git rev-parse --short=12 HEAD) \
+PANEFLOW_BENCH_HOST=$PWD/../../target/release/paneflow-host \
+PANEFLOW_BENCH_FIXTURE=$PWD/../../target/release/paneflow-session-fixture \
+PANEFLOW_BENCH_CONTROLLER=$PWD/../../target/release/paneflow \
+PANEFLOW_BENCH_DESKTOP=1 PANEFLOW_SPIKE_DISPLAY=xvfb \
+  xvfb-run -a -s "-screen 0 1920x1080x24" \
+  "$harness" desktop_headless_spike --ignored --exact --nocapture --test-threads=1
+```
 
 ### Tab badge cost
 

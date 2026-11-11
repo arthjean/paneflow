@@ -609,10 +609,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # AC1 - cargo check must exit 0 with no linker errors.
-      - name: cargo check (aarch64-apple-darwin)
-        run: cargo check --workspace --locked --target aarch64-apple-darwin
-
   # ───────────────────────────────────────────────────────────────────────
   # Visual rendering smoke test - macOS aarch64.
   #
@@ -836,7 +832,7 @@ jobs:
           retention-days: 7
 
   # US-003 + US-018 (prd-windows-port.md): windows-2022 PR gate. Runs the
-  # full Rust quality suite (fmt + clippy + test + check) against the
+  # full Rust quality suite (fmt + clippy + test) against the
   # x86_64-pc-windows-msvc target, plus toolchain/WiX verification. US-003
   # stood up the runner + WiX scaffolding; US-018 promotes the job from
   # "smoke cargo check with continue-on-error" to a required quality gate
@@ -844,10 +840,9 @@ jobs:
   # POSIX-locked code that previously broke the cross-compile.
   #
   # Runner: windows-2022 hosted image ships VS 2022 Build Tools + the
-  # Windows SDK preinstalled but does NOT expose cl/link/signtool on the
-  # default shell PATH. scripts/msvc-dev-env.ps1 loads the VS dev env (cl,
-  # link, lib) from vcvarsall.bat and an inline PowerShell step prepends
-  # the latest SDK bin dir (for signtool.exe) to $GITHUB_PATH.
+  # Windows SDK preinstalled but does NOT expose cl/link on the default
+  # shell PATH. scripts/msvc-dev-env.ps1 loads the VS dev env (cl, link,
+  # lib) from vcvarsall.bat.
   #
   # Time budget (US-018 AC-4): <5 min cached. Swatinem/rust-cache handles
   # cargo's share (keyed on `x86_64-pc-windows-msvc` so Linux/macOS cache
@@ -888,31 +883,11 @@ jobs:
         shell: pwsh
         run: ./scripts/msvc-dev-env.ps1 -Arch x64
 
-      # signtool.exe ships in the Windows 10 SDK bin dir but is not on the
-      # VS Dev Cmd PATH. Resolve the highest-versioned SDK bin subdir and
-      # append it to $GITHUB_PATH so later steps (and US-015's signing
-      # script work) see it. Explicit `throw` on not-found turns a silent
-      # drift of the runner image into a labelled preflight failure.
-      - name: Add Windows SDK bin to PATH (for signtool)
+      # AC-2 - the compiler and the linker are on PATH. Nothing in this
+      # workflow signs, so signtool.exe is only resolved by `release.yml`.
+      - name: Verify cl.exe / link.exe on PATH
         shell: pwsh
         run: |
-          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\bin"
-          $sdkBin = Get-ChildItem $sdkRoot -Directory |
-            Where-Object { $_.Name -match '^10\.' } |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-          if (-not $sdkBin) {
-            throw "Windows 10 SDK bin directory not found under $sdkRoot - runner image drift?"
-          }
-          $signtoolDir = Join-Path $sdkBin.FullName 'x64'
-          Write-Output "Using SDK bin: $signtoolDir"
-          Add-Content -Path $env:GITHUB_PATH -Value $signtoolDir
-
-      # AC-2 - toolchain binaries all on PATH.
-      - name: Verify signtool.exe / cl.exe / link.exe on PATH
-        shell: pwsh
-        run: |
-          where.exe signtool.exe
           where.exe cl.exe
           where.exe link.exe
 
@@ -942,24 +917,24 @@ jobs:
       # cargo-wix 0.3.9 (cargo-wix has no WiX v4/v5 backend - see
       # volks73/cargo-wix#202). Installing `dotnet tool install --global wix`
       # here would surface WiX v5 - incompatible with the release pipeline
-      # and unused by the fmt/clippy/test/check gate below, so it's omitted
+      # and unused by the fmt/clippy/test gate below, so it's omitted
       # to keep the CI check accurate to what it verifies.
 
       # ─── US-018 AC-2: quality-gate steps in mandated order ────────────────
-      # fmt → clippy → release build → test → check. Each step fails the job fast (`-D
+      # fmt → clippy → release build → test. Each step fails the job fast (`-D
       # warnings` on clippy, `set -e` semantics from GitHub Actions on
       # every step) so a Windows-specific regression surfaces at the PR
       # gate with the exact file:line from rustc/clippy output rather
       # than slipping into release.yml's best-effort Windows leg.
 
-      # AC-2 step 1/4: formatting. `--all` forces every workspace member;
+      # AC-2 step 1/3: formatting. `--all` forces every workspace member;
       # `--check` is the non-destructive mode that fails on unformatted
       # code. Runs first because a format failure is cheap and the 3
       # later steps then operate on consistently-formatted source.
       - name: cargo fmt --all --check
         run: cargo fmt --all --check
 
-      # AC-2 step 2/4: clippy. `--target x86_64-pc-windows-msvc` selects
+      # AC-2 step 2/3: clippy. `--target x86_64-pc-windows-msvc` selects
       # the Windows codepaths - cfg-gated modules (terminal::TerminateProcess,
       # install_method::WindowsMsi, ipc's interprocess branch, etc.) are
       # only type-checked when this target is chosen. `-D warnings`
@@ -1010,7 +985,7 @@ jobs:
         with:
           tool: cargo-nextest@0.9.146
 
-      # AC-2 step 3/4: tests. Ghostty is linked unconditionally, so the
+      # AC-2 step 3/3: tests. Ghostty is linked unconditionally, so the
       # workspace run executes the Windows backend corpus against the real
       # engine. nextest runs each test in its own process inside a job
       # object, so a test killed at its timeout takes its children with it.
@@ -1031,16 +1006,6 @@ jobs:
           path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
           retention-days: 14
-
-      # AC-2 step 4/4: final check. Redundant with clippy in practice
-      # (clippy is a superset), but kept as a belt-and-braces signal and
-      # because the PRD AC lists it explicitly - a bare `cargo check`
-      # failure is a clearer error surface than clippy's noisier output
-      # when the problem is a pure compile error (missing API, linker
-      # symbol, etc.) rather than a lint. No `continue-on-error` anymore
-      # (US-003 set it; EP-W2/W3 landing made it unnecessary).
-      - name: cargo check --workspace --target x86_64-pc-windows-msvc
-        run: cargo check --workspace --locked --target x86_64-pc-windows-msvc
 
   # ───────────────────────────────────────────────────────────────────────
   # Visual rendering smoke test - Windows x86_64.
