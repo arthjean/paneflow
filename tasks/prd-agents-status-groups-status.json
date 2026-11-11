@@ -37,6 +37,14 @@
       "priority": "P1",
       "stories_total": 1,
       "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Exploration, un agent qui attend ses sous-agents n'est pas au repos",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
     }
   ],
   "stories": [
@@ -168,6 +176,42 @@
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-005", "US-007", "US-009", "US-010"],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Observer ce que les runtimes déclarent pendant que des sous-agents tournent",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Inventaire de ce que Paneflow reçoit, garde et affiche",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Choisir comment montrer un agent qui attend ses sous-agents",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": ["US-012", "US-013"],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
