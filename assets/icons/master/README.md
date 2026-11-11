@@ -37,8 +37,10 @@ The plated sources show the plate through the stream. The transparent source
 fills the stream with the plate's indigo instead, so the mark keeps its S on a
 light background as well as a dark one, and its shadows stay inside the panes
 so no halo surrounds the mark. The simplified plated source widens the stream
-from 74 to 108 units and enlarges the glyph by 12% so the S survives at 16 and
-24 px.
+from 74 to 108 units so the S survives at 16 and 24 px. It keeps the glyph at
+the size of the full source: an earlier version enlarged it by 12%, and the
+smaller padding inside the tile was visible in the taskbar next to the large
+renders.
 
 ## Windows plating geometry
 
