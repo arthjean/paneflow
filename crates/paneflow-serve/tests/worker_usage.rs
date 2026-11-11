@@ -107,6 +107,30 @@ fn day_tokens(snapshot: &Value, agent: &str, dir: &str) -> (u64, u64) {
         })
 }
 
+fn wait_for_session_status(
+    worker: &paneflow_serve::worker::RunningWorker,
+    session: &Value,
+    status: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let frame = worker.worker().snapshot_frame();
+        let seen = frame["sessions"].as_array().is_some_and(|sessions| {
+            sessions
+                .iter()
+                .any(|entry| entry["session"] == *session && entry["status"] == status)
+        });
+        if seen {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the worker sees the session {status}: {frame}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn write_claude_transcript(config_dir: &Path) -> PathBuf {
     let dir = config_dir.join("projects").join("C--work");
     std::fs::create_dir_all(&dir).unwrap();
@@ -353,7 +377,7 @@ fn the_worker_stores_publishes_and_reloads_plan_limits_and_counts_turns() {
             declare_command("working").as_bytes(),
         )
         .unwrap();
-    std::thread::sleep(Duration::from_millis(1_500));
+    wait_for_session_status(&worker, &json!(claude.manifest.session), "busy");
     owner
         .input(
             &claude.manifest.session,
