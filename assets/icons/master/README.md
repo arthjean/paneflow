@@ -7,10 +7,12 @@ commit the regenerated outputs under `assets/icons/`, `assets/PaneFlow.icns`,
 
 | File | Required | Used for |
 |---|---|---|
-| `paneflow-icon-1024.png` | yes | Transparent portable mark for the Windows ICO and the GPUI runtime icon, plus Linux hicolor when no Linux master is present. |
+| `paneflow-icon-1024.png` | yes | Transparent portable mark for the GPUI runtime icon, plus the Windows ICO when no Windows master is present and Linux hicolor when no Linux master is present. |
 | `paneflow-icon-linux-1024.png` | no | Full-bleed Linux artwork, Linux hicolor only. Carries no margin of its own; the script applies the 87.5% keyline. Never reaches the ICO, the ICNS, or the embedded runtime icon. |
+| `paneflow-icon-windows-1024.png` | no | Full-bleed Windows artwork, Windows ICO only. The script emits it with no inset. Never reaches the ICNS, Linux hicolor, or the embedded runtime icon. |
+| `paneflow-icon-windows-1024-simplified.png` | no | Full-bleed Windows artwork for ICO sizes <= 64. When absent, the Windows master is downscaled directly. |
 | `paneflow-icon-macos-1024.png` | yes | Plated macOS artwork. The legacy ICNS fallback applies the Apple-style inset and rounded mask only to this source. |
-| `paneflow-icon-1024-simplified.png` | no | Transparent simplified mark for sizes <= 64. When absent, the portable master is downscaled directly. |
+| `paneflow-icon-1024-simplified.png` | no | Transparent simplified mark for sizes <= 64, used wherever the portable master is. Not shipped today: with a Linux and a Windows master present, no size <= 64 reads the portable master. |
 | `paneflow-icon-template-1024.png` | no | macOS menubar Template image. Pure black silhouette on alpha, no chrome, no fill. AppKit applies the system tint at runtime. |
 
 ## Vector sources
@@ -20,9 +22,9 @@ of one source:
 
 | Source | Master |
 |---|---|
-| `svg/paneflow-icon-plated.svg` | `paneflow-icon-macos-1024.png` and `paneflow-icon-linux-1024.png` (the same file) |
+| `svg/paneflow-icon-plated.svg` | `paneflow-icon-macos-1024.png`, `paneflow-icon-linux-1024.png` and `paneflow-icon-windows-1024.png` (the same file) |
+| `svg/paneflow-icon-plated-simplified.svg` | `paneflow-icon-windows-1024-simplified.png` |
 | `svg/paneflow-icon-portable.svg` | `paneflow-icon-1024.png` |
-| `svg/paneflow-icon-simplified.svg` | `paneflow-icon-1024-simplified.png` |
 
 The glass look relies on SVG filters (`feSpecularLighting` for the edge
 highlights, `feGaussianBlur` for the frosted layers and shadows), masks and
@@ -31,11 +33,24 @@ blend modes, so render the sources with a browser engine. Headless Chrome at a
 masters. Renderers without full filter support, such as rsvg-convert or
 Inkscape, do not reproduce them.
 
-The plated source shows the plate through the stream. The two transparent
-sources fill the stream with the plate's indigo instead, so the mark keeps its
-S on a light taskbar as well as a dark one, and their shadows stay inside the
-panes so no halo surrounds the mark. The simplified source widens the stream
-from 74 to 112 units for sizes <= 64.
+The plated sources show the plate through the stream. The transparent source
+fills the stream with the plate's indigo instead, so the mark keeps its S on a
+light background as well as a dark one, and its shadows stay inside the panes
+so no halo surrounds the mark. The simplified plated source widens the stream
+from 74 to 108 units and enlarges the glyph by 12% so the S survives at 16 and
+24 px.
+
+## Windows plating geometry
+
+The three desktop platforms ship the same plated icon. On Windows the tile
+fills the whole canvas, `WINDOWS_BODY_PCT = 10000`, because that is what its
+neighbours do: the 256 px icons of Zed, VS Code and Chrome, extracted from
+their executables, all span 100% of the canvas, and Zed's is a plated tile of
+the same kind. The 83.33% inset of the transparent mark would make the tile
+read visibly smaller than Zed's in the taskbar.
+
+The embedded runtime icon `src-app/assets/icons/paneflow.png`, shown inside
+the app and in Windows notifications, stays on the transparent portable mark.
 
 ## Regenerating
 
@@ -89,14 +104,14 @@ against the light end of the tile collapsed to 2.1:1. Scaling the inner glyph
 up to ChatGPT's 79% was tried and rejected as well: it reads as crowded. The
 glyph spans about 65% of the tile.
 
-This geometry is Linux-only. `assets/PaneFlow.ico`, `assets/PaneFlow.icns` and
-the rust-embed runtime icon `src-app/assets/icons/paneflow.png` all stay on the
-portable master.
+The 87.5% keyline is Linux-only. `assets/PaneFlow.ico` takes the Windows master
+with no inset, `assets/PaneFlow.icns` takes the macOS master at 80.47% under
+the rounded mask, and the rust-embed runtime icon
+`src-app/assets/icons/paneflow.png` stays on the portable master.
 
-The repository `README.md` header points at that runtime icon for the same
-reason. Do not repoint it at `assets/icons/paneflow-128.png`: those files are
-the Linux hicolor set, so the project page would advertise a mark that Windows,
-macOS and the website do not ship.
+The repository `README.md` header points at that runtime icon. Do not repoint
+it at `assets/icons/paneflow-128.png`: those files are the Linux hicolor set
+and carry the keyline margin.
 
 ## CI
 
