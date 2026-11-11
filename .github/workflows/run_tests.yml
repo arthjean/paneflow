@@ -867,7 +867,7 @@ jobs:
     # cargo steps must run under pwsh, NOT the workflow-default bash: Git
     # Bash prepends C:\Program Files\Git\usr\bin to PATH, whose coreutils
     # `link.exe` shadows the MSVC linker and breaks every build-script link
-    # ("/usr/bin/link: extra operand"). pwsh keeps the msvc-dev-cmd PATH so
+    # ("/usr/bin/link: extra operand"). pwsh keeps the vcvarsall.bat PATH so
     # the real link.exe wins. (The pwsh-explicit steps above are unchanged.)
     defaults:
       run:
