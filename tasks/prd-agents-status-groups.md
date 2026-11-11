@@ -242,10 +242,10 @@ L'utilisateur choisit si les lignes de workspace et d'onglet affichent le statut
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `SidebarShow` gagne `status: Option<bool>` avec `deserialize_with = "lenient_value_or_default"`, et `status_enabled()` vaut vrai par défaut, sur le modèle de `agents_enabled` (`config.rs:225-227`), déclarés avant tout `mod tests`.
-- [ ] Le schéma JSON déclare `status` en `["boolean","null"]`, défaut `true`, avec une description qui nomme ce que la clé masque dans l'arbre.
-- [ ] Given une valeur invalide (`"status": "yes"`), when la configuration est chargée, then la clé prend son défaut sans erreur, comme les autres clés de `sidebar_show` (`schema.rs:634-669`).
-- [ ] La fixture complète du schéma (`schema.rs:69-79`) et les tests d'aller-retour (`crates/paneflow-config/src/loader_tests/core_roundtrip.rs`) couvrent la nouvelle clé.
+- [x] `SidebarShow` gagne `status: Option<bool>` avec `deserialize_with = "lenient_value_or_default"`, et `status_enabled()` vaut vrai par défaut, sur le modèle de `agents_enabled` (`config.rs:225-227`), déclarés avant tout `mod tests`.
+- [x] Le schéma JSON déclare `status` en `["boolean","null"]`, défaut `true`, avec une description qui nomme ce que la clé masque dans l'arbre.
+- [x] Given une valeur invalide (`"status": "yes"`), when la configuration est chargée, then la clé prend son défaut sans erreur, comme les autres clés de `sidebar_show` (`schema.rs:634-669`).
+- [x] La fixture complète du schéma (`schema.rs:69-79`) et les tests d'aller-retour (`crates/paneflow-config/src/loader_tests/core_roundtrip.rs`) couvrent la nouvelle clé.
 
 #### US-009: L'arbre masque ses statuts quand Status est éteint
 **Description:** As a développeur multi-agents, I want éteindre les statuts de l'arbre so that le statut d'un agent ne s'affiche qu'une fois, dans la section Agents.
@@ -255,11 +255,11 @@ L'utilisateur choisit si les lignes de workspace et d'onglet affichent le statut
 **Dependencies:** Blocked by US-001, US-008
 
 **Acceptance Criteria:**
-- [ ] Given `sidebar_show.status` éteint, when une ligne d'onglet ou de workspace est rendue, then elle n'affiche ni badge, ni matrice, ni shimmer de titre, ni infobulle de statut (le résumé passé à `infer_lane` vaut `None`, `src-app/src/app/sidebar/tab_row.rs:61-66`, `workspace_row.rs:75-88`).
-- [ ] Given `status` éteint et une PR ouverte sur l'onglet, when la ligne est rendue, then la PR prend la place selon `infer_lane` (`lane.rs:20-30`) ; un workspace n'affiche sa PR que replié, comme aujourd'hui (`workspace_row.rs:83-88`).
-- [ ] Given `status` éteint, when un agent attend, then le bouton d'attention des espaces masqués, le marqueur du header de pane, les notifications, la section Agents et ⌘⇧J se comportent comme avec `status` allumé.
-- [ ] Given `status` éteint et la section Agents masquée (`sidebar_show.agents` à faux), when un agent attend, then la sidebar n'affiche aucun statut d'agent et aucun avertissement n'apparaît.
-- [ ] Given `status` allumé, when l'arbre est rendu, then il est identique au rendu d'avant ce PRD, aux changements de US-001 et US-002 près.
+- [x] Given `sidebar_show.status` éteint, when une ligne d'onglet ou de workspace est rendue, then elle n'affiche ni badge, ni matrice, ni shimmer de titre, ni infobulle de statut (le résumé passé à `infer_lane` vaut `None`, `src-app/src/app/sidebar/tab_row.rs:61-66`, `workspace_row.rs:75-88`).
+- [x] Given `status` éteint et une PR ouverte sur l'onglet, when la ligne est rendue, then la PR prend la place selon `infer_lane` (`lane.rs:20-30`) ; un workspace n'affiche sa PR que replié, comme aujourd'hui (`workspace_row.rs:83-88`).
+- [x] Given `status` éteint, when un agent attend, then le bouton d'attention des espaces masqués, le marqueur du header de pane, les notifications, la section Agents et ⌘⇧J se comportent comme avec `status` allumé.
+- [x] Given `status` éteint et la section Agents masquée (`sidebar_show.agents` à faux), when un agent attend, then la sidebar n'affiche aucun statut d'agent et aucun avertissement n'apparaît.
+- [x] Given `status` allumé, when l'arbre est rendu, then il est identique au rendu d'avant ce PRD, aux changements de US-001 et US-002 près.
 
 #### US-010: Item Status dans Customize sidebar › Show et dans la palette
 **Description:** As a utilisateur, I want basculer les statuts de l'arbre depuis le menu de la sidebar et la palette so that je règle ce détail là où je règle les autres.
@@ -269,11 +269,11 @@ L'utilisateur choisit si les lignes de workspace et d'onglet affichent le statut
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Customize sidebar › Show liste Branch, Diffstat, PR, Status, Indent guide, puis la règle, Agents et Usage (`customize_menu.rs:243-300`) ; Status utilise l'icône `icons/palette/notification-01.svg` et sa coche suit `status_enabled()`.
-- [ ] Given un clic sur Status, when le menu l'enregistre, then `sidebar_show.status` est écrit par `persist_setting` (`customize_menu.rs:61`) avec les autres clés de `sidebar_show` inchangées, et l'arbre se met à jour sans redémarrage.
-- [ ] La palette gagne une bascule « Show agent status in the sidebar » dans la section Sidebar (`src-app/src/app/command_palette/catalog.rs:1336-1390`), qui lit `status_enabled()` et écrit par `sidebar_show_toggle` (`catalog.rs:712-724`).
-- [ ] Given une écriture de configuration qui échoue, when l'utilisateur bascule Status, then le chemin d'erreur existant de `persist_setting` s'applique et la coche reflète la configuration effectivement chargée.
-- [ ] Les tests de `customize_menu.rs` (`:393-467`) couvrent la nouvelle bascule.
+- [x] Customize sidebar › Show liste Branch, Diffstat, PR, Status, Indent guide, puis la règle, Agents et Usage (`customize_menu.rs:243-300`) ; Status utilise l'icône `icons/palette/notification-01.svg` et sa coche suit `status_enabled()`.
+- [x] Given un clic sur Status, when le menu l'enregistre, then `sidebar_show.status` est écrit par `persist_setting` (`customize_menu.rs:61`) avec les autres clés de `sidebar_show` inchangées, et l'arbre se met à jour sans redémarrage.
+- [x] La palette gagne une bascule « Show agent status in the sidebar » dans la section Sidebar (`src-app/src/app/command_palette/catalog.rs:1336-1390`), qui lit `status_enabled()` et écrit par `sidebar_show_toggle` (`catalog.rs:712-724`).
+- [x] Given une écriture de configuration qui échoue, when l'utilisateur bascule Status, then le chemin d'erreur existant de `persist_setting` s'applique et la coche reflète la configuration effectivement chargée.
+- [x] Les tests de `customize_menu.rs` (`:393-467`) couvrent la nouvelle bascule.
 
 ---
 

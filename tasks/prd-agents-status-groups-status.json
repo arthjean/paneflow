@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Statuts de l'arbre masquables",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -136,37 +136,37 @@
       "id": "US-008",
       "title": "La clé sidebar_show.status",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-11",
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-009",
       "title": "L'arbre masque ses statuts quand Status est éteint",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-001", "US-008"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-11",
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-010",
       "title": "Item Status dans Customize sidebar › Show et dans la palette",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-008"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-11",
+      "completed_at": "2026-11-11",
+      "reviewed_at": "2026-11-11"
     },
     {
       "id": "US-011",
