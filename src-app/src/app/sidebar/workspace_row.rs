@@ -74,7 +74,8 @@ impl PaneFlowApp {
 
         let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
         let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
-        let row_agent_status = folder_row_agent_summary(ws, is_expanded);
+        let row_agent_status =
+            folder_row_agent_summary(self.cached_config.sidebar_show, ws, is_expanded);
         let lane = infer_lane(
             row_agent_status,
             (!is_expanded)

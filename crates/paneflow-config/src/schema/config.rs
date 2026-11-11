@@ -112,6 +112,8 @@ pub struct SidebarShow {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub pr: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub status: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub indent_guide: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agents: Option<bool>,
@@ -214,6 +216,10 @@ impl SidebarShow {
 
     pub fn pr_enabled(&self) -> bool {
         self.pr.unwrap_or(false)
+    }
+
+    pub fn status_enabled(&self) -> bool {
+        self.status.unwrap_or(true)
     }
 
     pub fn indent_guide_enabled(&self) -> bool {

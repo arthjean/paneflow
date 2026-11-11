@@ -2329,25 +2329,51 @@ mod tests {
                             .record_finished(false, Some(surfaces[0]));
                     }
                     let workspaces = vec![workspace];
-                    let (section, tab, folder) = cx.update(|_, cx| {
-                        let shown = agent_rows(
-                            &workspaces,
-                            None,
-                            Some(0),
-                            AgentRowDetails::ALL,
-                            Instant::now(),
-                            cx,
-                        );
-                        let workspace = &workspaces[0];
-                        let tab_surfaces = workspace.tabs()[0].surface_ids(cx);
-                        (
-                            shown.rows,
-                            tab_row_agent_summary(workspace, &tab_surfaces),
-                            folder_row_agent_summary(workspace, false),
-                        )
-                    });
+                    let tree_status_hidden = paneflow_config::schema::SidebarShow {
+                        status: Some(false),
+                        ..Default::default()
+                    };
+                    let (section, tab, folder, hidden_section, hidden_tab, hidden_folder) = cx
+                        .update(|_, cx| {
+                            let now = Instant::now();
+                            let shown = agent_rows(
+                                &workspaces,
+                                None,
+                                Some(0),
+                                AgentRowDetails::ALL,
+                                now,
+                                cx,
+                            );
+                            let hidden = agent_rows(
+                                &workspaces,
+                                None,
+                                Some(0),
+                                AgentRowDetails::from_show(tree_status_hidden),
+                                now,
+                                cx,
+                            );
+                            let workspace = &workspaces[0];
+                            let tab_surfaces = workspace.tabs()[0].surface_ids(cx);
+                            (
+                                shown.rows,
+                                tab_row_agent_summary(Default::default(), workspace, &tab_surfaces),
+                                folder_row_agent_summary(Default::default(), workspace, false),
+                                hidden.rows,
+                                tab_row_agent_summary(tree_status_hidden, workspace, &tab_surfaces),
+                                folder_row_agent_summary(tree_status_hidden, workspace, false),
+                            )
+                        });
                     let case = format!("{state:?} unread={unread} capable={capable}");
                     assert_eq!(section.len(), 1, "{case}");
+                    assert_eq!(
+                        (hidden_tab, hidden_folder),
+                        (None, None),
+                        "a hidden tree status empties the tree rows, {case}"
+                    );
+                    assert_eq!(
+                        hidden_section, section,
+                        "the section keeps its statuses when the tree hides its own, {case}"
+                    );
                     let section_state = match section[0].status {
                         AgentRowStatus::Lane(shown) => Some(shown),
                         AgentRowStatus::NoStatus | AgentRowStatus::Silent => None,

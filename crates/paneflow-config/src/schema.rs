@@ -70,6 +70,7 @@ mod tests {
                 branch: Some(true),
                 diffstat: Some(true),
                 pr: Some(true),
+                status: Some(false),
                 indent_guide: Some(true),
                 agents: Some(false),
                 usage: Some(false),
@@ -641,6 +642,18 @@ mod tests {
         assert!(cfg.sidebar_show.usage_enabled());
         assert!(cfg.sidebar_show.agent_logo_enabled());
         assert!(cfg.sidebar_show.agent_workspace_enabled());
+        assert!(cfg.sidebar_show.status_enabled());
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"status": false}}"#).unwrap();
+        assert!(!cfg.sidebar_show.status_enabled());
+        assert!(cfg.sidebar_show.agents_enabled());
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"status": "yes", "pr": true}}"#).unwrap();
+        assert_eq!(cfg.sidebar_show.status, None);
+        assert!(cfg.sidebar_show.status_enabled());
+        assert!(cfg.sidebar_show.pr_enabled());
 
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"agents": false, "usage": false}}"#).unwrap();

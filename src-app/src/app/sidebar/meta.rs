@@ -110,9 +110,13 @@ where
 }
 
 pub(super) fn tab_row_agent_summary(
+    show: paneflow_config::schema::SidebarShow,
     workspace: &crate::workspace::Workspace,
     surfaces: &std::collections::HashSet<u64>,
 ) -> Option<SidebarAgentSummary> {
+    if !show.status_enabled() {
+        return None;
+    }
     sidebar_agent_summary(
         tab_row_sessions(workspace.agent_sessions.values(), surfaces),
         workspace
@@ -123,9 +127,13 @@ pub(super) fn tab_row_agent_summary(
 }
 
 pub(super) fn folder_row_agent_summary(
+    show: paneflow_config::schema::SidebarShow,
     workspace: &crate::workspace::Workspace,
     expanded: bool,
 ) -> Option<SidebarAgentSummary> {
+    if !show.status_enabled() {
+        return None;
+    }
     sidebar_agent_summary(
         folder_row_sessions(workspace.agent_sessions.values(), expanded),
         workspace
@@ -475,6 +483,144 @@ mod tests {
         let tab_after = tab_row_sessions(sessions.iter(), &surfaces).count();
         assert_eq!((folder_after, tab_after), (0, 2));
         assert_eq!(folder_before + tab_before, folder_after + tab_after);
+    }
+
+    fn workspace_with(
+        sessions: impl IntoIterator<Item = AgentSession>,
+    ) -> crate::workspace::Workspace {
+        let mut workspace = crate::workspace::Workspace::empty_with_cwd_and_id(
+            1,
+            "paneflow",
+            std::path::PathBuf::new(),
+        );
+        for (id, session) in sessions.into_iter().enumerate() {
+            workspace.agent_sessions.insert(id as u32, session);
+        }
+        workspace
+    }
+
+    fn status_hidden() -> paneflow_config::schema::SidebarShow {
+        paneflow_config::schema::SidebarShow {
+            status: Some(false),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_hidden_tree_status_leaves_tab_and_workspace_rows_without_a_summary() {
+        let shown = paneflow_config::schema::SidebarShow::default();
+        let surfaces = HashSet::from([7u64]);
+        let mut with_a_status = 0;
+        for state in [
+            AgentState::Thinking,
+            AgentState::WaitingForInput,
+            AgentState::Finished,
+            AgentState::Errored,
+        ] {
+            for unread in [false, true] {
+                let mut workspace = workspace_with([on_surface(state, 7)]);
+                if unread {
+                    workspace
+                        .agent_completion_notification
+                        .record_finished(false, Some(7));
+                }
+                let case = format!("{state:?} unread={unread}");
+                let expected = sidebar_agent_summary(
+                    workspace.agent_sessions.values(),
+                    unread.then_some(Some(7)),
+                );
+                assert_eq!(
+                    tab_row_agent_summary(shown, &workspace, &surfaces),
+                    expected,
+                    "shown tab row, {case}"
+                );
+                assert_eq!(
+                    folder_row_agent_summary(shown, &workspace, false),
+                    expected,
+                    "shown collapsed workspace row, {case}"
+                );
+                with_a_status += usize::from(expected.is_some());
+
+                assert_eq!(
+                    tab_row_agent_summary(status_hidden(), &workspace, &surfaces),
+                    None,
+                    "hidden tab row, {case}"
+                );
+                for expanded in [false, true] {
+                    assert_eq!(
+                        folder_row_agent_summary(status_hidden(), &workspace, expanded),
+                        None,
+                        "hidden workspace row expanded={expanded}, {case}"
+                    );
+                }
+            }
+        }
+        assert_eq!(with_a_status, 7, "every case but finished and seen shows");
+    }
+
+    #[test]
+    fn a_hidden_tree_status_hides_an_unread_result_without_a_live_session() {
+        let mut workspace = workspace_with([]);
+        workspace
+            .agent_completion_notification
+            .record_finished(false, None);
+        let shown = paneflow_config::schema::SidebarShow::default();
+        for expanded in [false, true] {
+            assert_eq!(
+                folder_row_agent_summary(shown, &workspace, expanded).map(|summary| summary.state),
+                Some(SidebarAgentState::Finished)
+            );
+            assert_eq!(
+                folder_row_agent_summary(status_hidden(), &workspace, expanded),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_hidden_tree_status_hands_the_lane_to_the_pull_request() {
+        use crate::app::pull_request::{PrState, PullRequest};
+
+        let open = PullRequest {
+            number: 46,
+            state: PrState::Open,
+        };
+        let workspace = workspace_with([on_surface(AgentState::WaitingForInput, 7)]);
+        let surfaces = HashSet::from([7u64]);
+        let shown = paneflow_config::schema::SidebarShow::default();
+
+        assert!(matches!(
+            infer_lane(
+                tab_row_agent_summary(shown, &workspace, &surfaces),
+                Some(open)
+            ),
+            Some(Lane::Agent(SidebarAgentSummary {
+                state: SidebarAgentState::NeedsInput,
+                ..
+            }))
+        ));
+        assert_eq!(
+            infer_lane(
+                tab_row_agent_summary(status_hidden(), &workspace, &surfaces),
+                Some(open)
+            ),
+            Some(Lane::PullRequest(open))
+        );
+        assert_eq!(
+            infer_lane(
+                folder_row_agent_summary(status_hidden(), &workspace, false),
+                Some(open)
+            ),
+            Some(Lane::PullRequest(open))
+        );
+        assert_eq!(
+            infer_lane(
+                tab_row_agent_summary(status_hidden(), &workspace, &surfaces),
+                None
+            ),
+            None,
+            "no lane means no badge, no matrix, no shimmer and no status tooltip"
+        );
     }
 
     fn working_summary() -> SidebarAgentSummary {

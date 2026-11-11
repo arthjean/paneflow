@@ -111,7 +111,7 @@
     },
     "sidebar_show": {
       "type": ["object", "null"],
-      "description": "What the sidebar shows beyond a row's name. The row details are off and the Agents section is on by default.",
+      "description": "What the sidebar shows beyond a row's name. The row details are off by default; the agent status on tree rows and the Agents section are on.",
       "additionalProperties": false,
       "properties": {
         "branch": {
@@ -128,6 +128,11 @@
           "type": ["boolean", "null"],
           "description": "Mark a branch that already has a pull request: its icon becomes the pull-request glyph, colored by the request's state. Needs the 'gh' CLI, and answers for GitHub remotes only. Default false.",
           "default": false
+        },
+        "status": {
+          "type": ["boolean", "null"],
+          "description": "Show agent status on workspace and tab rows: the Need you, Error and Done badges, the working matrix, the title shimmer and the status tooltip. false leaves the status to the Agents section, and a pull request takes the freed place. Default true.",
+          "default": true
         },
         "indent_guide": {
           "type": ["boolean", "null"],

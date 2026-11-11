@@ -715,12 +715,20 @@ fn sidebar_show_toggle(
     next: bool,
     cx: &mut Context<PaneFlowApp>,
 ) {
-    let mut show =
-        serde_json::to_value(app.cached_config.sidebar_show).unwrap_or_else(|_| json!({}));
+    let show = sidebar_show_with(app.cached_config.sidebar_show, field, next);
+    app.persist_setting(false, "sidebar_show", show, cx);
+}
+
+fn sidebar_show_with(
+    show: paneflow_config::schema::SidebarShow,
+    field: &'static str,
+    next: bool,
+) -> serde_json::Value {
+    let mut show = serde_json::to_value(show).unwrap_or_else(|_| json!({}));
     if let Some(object) = show.as_object_mut() {
         object.insert(field.to_string(), json!(next));
     }
-    app.persist_setting(false, "sidebar_show", show, cx);
+    show
 }
 
 fn set_all_expanded(app: &mut PaneFlowApp, expanded: bool, cx: &mut Context<PaneFlowApp>) {
@@ -1367,6 +1375,17 @@ pub(crate) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        label: "Show agent status in the sidebar",
+        icon: Some("icons/palette/notification-01.svg"),
+        keywords: "agents tree badge working done appearance hide",
+        needs: Needs::Always,
+        section: Section::Sidebar,
+        kind: Kind::Toggle {
+            read: |app| app.cached_config.sidebar_show.status_enabled(),
+            write: |app, next, cx| sidebar_show_toggle(app, "status", next, cx),
+        },
+    },
+    Command {
         label: "Show the indent guide in the sidebar",
         icon: Some("icons/palette/text-indent.svg"),
         keywords: "appearance tree",
@@ -1625,6 +1644,48 @@ mod tests {
             palette_workspace_order(&workspaces, &config, None),
             [0, 2, 1]
         );
+    }
+
+    #[test]
+    fn the_agent_status_toggle_sits_in_the_sidebar_section_and_writes_only_its_key() {
+        let command = COMMANDS
+            .iter()
+            .find(|command| command.label == "Show agent status in the sidebar")
+            .expect("the palette lists the tree status toggle");
+        assert_eq!(command.section, Section::Sidebar);
+        assert_eq!(command.needs, Needs::Always);
+        assert_eq!(command.icon, Some("icons/palette/notification-01.svg"));
+        assert!(matches!(command.kind, Kind::Toggle { .. }));
+
+        let config: paneflow_config::schema::PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"pr": true, "agents": false}}"#)
+                .expect("loads");
+        assert!(config.sidebar_show.status_enabled());
+        let hidden = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_with(config.sidebar_show, "status", false),
+        )
+        .expect("written");
+        assert!(!hidden.sidebar_show.status_enabled());
+        assert_eq!(
+            paneflow_config::schema::SidebarShow {
+                status: None,
+                ..hidden.sidebar_show
+            },
+            config.sidebar_show,
+            "every other sidebar_show key is left as it was"
+        );
+
+        let shown = crate::config_writer::with_field(
+            &hidden,
+            false,
+            "sidebar_show",
+            sidebar_show_with(hidden.sidebar_show, "status", true),
+        )
+        .expect("written");
+        assert!(shown.sidebar_show.status_enabled());
     }
 
     #[test]
