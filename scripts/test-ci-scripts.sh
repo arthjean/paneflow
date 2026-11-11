@@ -373,6 +373,65 @@ helper_size_cases() {
   expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 1100000 B, over the hard cap of 1000000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
 }
 
+fake_objdump() {
+  local path="$WORK/objdump-$1"
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'cat "$OBJDUMP_FIXTURE"'
+  } > "$path"
+  chmod +x "$path"
+  printf '%s' "$path"
+}
+
+glibc_floor_cases() {
+  local check="$ROOT/scripts/check-glibc-floor.sh"
+  local objdump binary fixture
+  objdump="$(fake_objdump canned)"
+  binary="$WORK/paneflow-elf"
+  : > "$binary"
+
+  fixture="$WORK/symbols-at-floor.txt"
+  cat > "$fixture" <<'SYMBOLS'
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.2.5) memcpy
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.34) __libc_start_main
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.35) __memcpy_chk
+0000000000000000  w   D  *UND*	0000000000000000  Base        __gmon_start__
+SYMBOLS
+  expect "a binary whose highest glibc symbol is the floor passes" 0 "paneflow-elf: highest glibc symbol version 2\.35 \(floor 2\.35\)" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+
+  fixture="$WORK/symbols-over-floor.txt"
+  cat > "$fixture" <<'SYMBOLS'
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.34) __libc_start_main
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.36) arc4random
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.38) __isoc23_strtol
+SYMBOLS
+  expect "a binary that needs GLIBC_2.36 over a 2.35 floor fails and names the symbol" 1 "paneflow-elf needs GLIBC_2\.36 for arc4random, above the glibc 2\.35 floor" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+  expect "every symbol over the floor is named" 1 "needs GLIBC_2\.38 for __isoc23_strtol" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+  expect "the same binary passes a floor raised to 2.39" 0 "highest glibc symbol version 2\.38 \(floor 2\.39\)" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.39 "$binary"
+
+  fixture="$WORK/symbols-old-binutils.txt"
+  cat > "$fixture" <<'SYMBOLS'
+0000000000000000      DF *UND*	0000000000000000  GLIBC_2.17  memcpy
+0000000000000000      DF *UND*	0000000000000000  GLIBC_2.36  arc4random
+SYMBOLS
+  expect "a version printed without parentheses is read too" 1 "needs GLIBC_2\.36 for arc4random" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+
+  fixture="$WORK/symbols-single-digit-minor.txt"
+  cat > "$fixture" <<'SYMBOLS'
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.4) __stack_chk_fail
+0000000000000000      DF *UND*	0000000000000000 (GLIBC_2.9) pipe2
+SYMBOLS
+  expect "minor versions compare as numbers, so 2.9 is under 2.35" 0 "highest glibc symbol version 2\.9 " env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+
+  fixture="$WORK/symbols-none.txt"
+  printf 'DYNAMIC SYMBOL TABLE:\nno symbols\n' > "$fixture"
+  expect "a binary with no glibc symbol fails instead of passing unread" 1 "references no GLIBC_ symbol version" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$binary"
+
+  expect "a missing binary fails" 1 "absent-elf does not exist" env OBJDUMP="$objdump" OBJDUMP_FIXTURE="$fixture" "$check" 2.35 "$WORK/absent-elf"
+  expect "a malformed floor is a usage error" 2 "must look like 2\.35" "$check" jammy "$binary"
+  expect "a call without a binary is a usage error" 2 "usage: check-glibc-floor\.sh" "$check" 2.35
+}
+
 have_tool() {
   local tool="$1" purpose="$2"
   if command -v "$tool" >/dev/null; then
@@ -749,6 +808,7 @@ render_cask_cases
 published_stream_cases
 release_publication_cases
 helper_size_cases
+glibc_floor_cases
 retry_cases
 powershell_retry_cases
 

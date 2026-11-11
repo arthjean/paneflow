@@ -11,6 +11,15 @@ inputs:
       transaction (packaging tools, inspection tools, ...).
     required: false
     default: ""
+  container-toolchain:
+    description: >-
+      Set to "true" in a bare distribution container (`container: ubuntu:22.04`)
+      to also install the compiler toolchain and the archive tools that a
+      hosted runner image ships and a base image does not. The container must
+      already have sudo: the step that installs git and curl before
+      `actions/checkout` installs it too.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -19,8 +28,13 @@ runs:
       shell: bash
       env:
         EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+        CONTAINER_TOOLCHAIN: ${{ inputs.container-toolchain }}
       run: |
         set -euo pipefail
+        toolchain=""
+        if [ "$CONTAINER_TOOLCHAIN" = "true" ]; then
+          toolchain="build-essential clang file libclang-dev pkg-config python3 unzip xz-utils zstd"
+        fi
         # Azure's apt mirrors return the odd 5xx or truncated Release file, and
         # a bare `apt-get update` has no retry of its own. Every Linux cargo job
         # in run_tests.yml, release.yml, and the libghostty workflows shares
@@ -34,8 +48,10 @@ runs:
           [ "$attempt" -lt 3 ] || { echo "::error::apt-get update failed 3 times"; exit 1; }
           sleep $((attempt * 10))
         done
-        # shellcheck disable=SC2086 # word splitting is the point for EXTRA_PACKAGES
-        sudo apt-get install -y \
+        # sudo resets the environment, and tzdata waits on a prompt in a
+        # container unless the frontend is non-interactive.
+        # shellcheck disable=SC2086 # word splitting is the point for the package lists
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
           libfontconfig1-dev \
           libfreetype6-dev \
           libvulkan-dev \
@@ -47,4 +63,5 @@ runs:
           libxcb1-dev \
           libxkbcommon-dev \
           libxkbcommon-x11-dev \
+          $toolchain \
           $EXTRA_PACKAGES
