@@ -39,13 +39,15 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   cron_audit:
     name: cargo-deny check (cron, ${{ matrix.target }})
     runs-on: ubuntu-22.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     # `main` catches an advisory against the lockfile we develop on, the
     # latest published release catches one against what users run. Advisory
     # titles depend only on the advisory ID, so both legs feed one issue; the
@@ -56,7 +58,7 @@ jobs:
       matrix:
         target: [main, latest-release]
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
@@ -83,7 +85,7 @@ jobs:
       # The audited tree is checked out beside the workflow's own checkout, so
       # the alerting scripts always come from the current commit even when the
       # audited release predates them.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
           ref: ${{ steps.ref.outputs.ref }}
@@ -197,8 +199,11 @@ jobs:
     name: Repository signing key expiry
     runs-on: ubuntu-22.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 

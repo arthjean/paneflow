@@ -47,7 +47,7 @@ jobs:
     # contract requires; the seed and job count are manifest-pinned.
     timeout-minutes: 19
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
@@ -56,7 +56,7 @@ jobs:
         uses: ./.github/actions/libghostty-manifest
 
       - name: Checkout pinned Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ steps.pins.outputs.source_sha }}
@@ -64,9 +64,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ steps.pins.outputs.zig_version }}
+      - name: Install the pinned Zig, signature checked
+        env:
+          ZIG_VERSION: ${{ steps.pins.outputs.zig_version }}
+        run: bash scripts/install-zig.sh "$ZIG_VERSION"
 
       # `llvm-tools` carries llvm-strip / llvm-ar / llvm-nm / llvm-objdump at
       # exactly `macos_llvm_version` in the manifest. The build script refuses
@@ -122,7 +123,7 @@ jobs:
 
       - name: Upload rebuilt native input
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-macos-native-${{ github.sha }}
           path: target/libghostty/aarch64-apple-darwin

@@ -71,7 +71,7 @@ jobs:
       bump_id: ${{ steps.target.outputs.bump_id }}
       zig_version: ${{ steps.target.outputs.zig_version }}
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
@@ -130,7 +130,7 @@ jobs:
 
       - name: Checkout the target Ghostty source
         if: steps.target.outputs.needed == 'true'
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ steps.target.outputs.source_sha }}
@@ -207,7 +207,7 @@ jobs:
 
       - name: Upload the staged manifest
         if: steps.target.outputs.needed == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-bump-manifest
           path: native/libghostty/manifest.toml
@@ -221,17 +221,17 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-bump-manifest
           path: native/libghostty
 
       - name: Checkout the target Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ needs.resolve.outputs.source_sha }}
@@ -261,7 +261,7 @@ jobs:
           scripts/repin-libghostty-manifest.sh --set "bindings_sha256=$sha"
 
       - name: Upload the staged manifest and bindings
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-bump-staged
           path: |
@@ -284,17 +284,17 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runs-on: ubuntu-22.04-arm
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-bump-staged
           path: native/libghostty
 
       - name: Checkout the target Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ needs.resolve.outputs.source_sha }}
@@ -302,9 +302,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ needs.resolve.outputs.zig_version }}
+      - name: Install the pinned Zig, signature checked
+        env:
+          ZIG_VERSION: ${{ needs.resolve.outputs.zig_version }}
+        run: bash scripts/install-zig.sh "$ZIG_VERSION"
 
       - uses: ./.github/actions/linux-build-deps
         with:
@@ -320,7 +321,7 @@ jobs:
             --verify-reproducible \
             --allow-hash-drift
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-bump-${{ matrix.target }}
           path: target/libghostty/${{ matrix.target }}
@@ -336,17 +337,17 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-bump-staged
           path: native/libghostty
 
       - name: Checkout the target Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ needs.resolve.outputs.source_sha }}
@@ -354,9 +355,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ needs.resolve.outputs.zig_version }}
+      - name: Install the pinned Zig, signature checked
+        env:
+          ZIG_VERSION: ${{ needs.resolve.outputs.zig_version }}
+        run: bash scripts/install-zig.sh "$ZIG_VERSION"
 
       # llvm-strip and llvm-ar have to be exactly the ones that normalized the
       # committed archive: the recipe is LLVM-version-sensitive and the build
@@ -388,7 +390,7 @@ jobs:
             --verify-reproducible \
             --allow-hash-drift
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-bump-aarch64-apple-darwin
           path: target/libghostty/aarch64-apple-darwin
@@ -404,17 +406,17 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-bump-staged
           path: native/libghostty
 
       - name: Checkout the target Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ needs.resolve.outputs.source_sha }}
@@ -449,7 +451,7 @@ jobs:
               -AllowHashDrift
           }
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-bump-x86_64-pc-windows-msvc
           path: target/libghostty/x86_64-pc-windows-msvc
@@ -466,16 +468,16 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-bump-staged
           path: native/libghostty
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: libghostty-bump-*
           path: ${{ runner.temp }}/rebuilt
@@ -564,7 +566,7 @@ jobs:
         run: cargo build -p paneflow-libghostty-sys --locked
 
       - name: Upload the re-pinned tree
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-repinned-tree
           path: |
@@ -574,7 +576,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the release assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: libghostty-release-assets
           path: ${{ runner.temp }}/release-assets
@@ -605,7 +607,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       # Never overwrite an existing bump branch: a human fixing a binding
       # break works on exactly this branch, and a re-run must not throw that
@@ -642,12 +644,12 @@ jobs:
       - name: Replace the tree with the verified one
         run: rm -rf native/libghostty
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-repinned-tree
           path: native/libghostty
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: libghostty-release-assets
           path: ${{ runner.temp }}/release-assets

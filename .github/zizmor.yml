@@ -1,0 +1,27 @@
+# zizmor configuration, read by the `Workflow audit (zizmor)` job of
+# run_tests.yml. Only findings of high severity fail that job. Every
+# exception below names the reason it is safe; add one only with a reason.
+
+rules:
+  dangerous-triggers:
+    ignore:
+      # Both workflows run on `workflow_run` of `release` only after it
+      # concluded `success` on a `push` event, which release.yml accepts only
+      # for `v*` tags of this repository. A fork pull request can neither
+      # push a tag nor dispatch release.yml, so no untrusted code reaches
+      # these jobs. They read the published release assets, verify their
+      # minisign signatures before publishing, and run in the `release`
+      # environment, which is restricted to `main` and `v*` tags.
+      - repo_publish.yml
+      - update_cask.yml
+
+  unpinned-images:
+    ignore:
+      # openSUSE Tumbleweed is a rolling distribution: `latest` is the only
+      # tag that tracks it, and the point of both jobs is to prove the build
+      # and the .rpm against what a Tumbleweed user runs today. A pinned
+      # digest would test a snapshot no user has. Neither job holds a
+      # secret: the release smoke installs the already built .rpm, and the
+      # libghostty `distro-smoke` leg exercises the published archive.
+      - release.yml
+      - libghostty-linux.yml

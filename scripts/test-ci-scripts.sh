@@ -5,7 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-PINNED_CACHE="Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae"
+PINNED_CACHE="Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0"
+PINNED_CHECKOUT="actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"
+FAKE_COMMIT="1111111111111111111111111111111111111111"
+FAKE_TAG_OBJECT="2222222222222222222222222222222222222222"
+FAKE_TAGGED_COMMIT="3333333333333333333333333333333333333333"
+export CHECK_WORKFLOWS_REMOTE=off
 cases=0
 failures=0
 
@@ -155,7 +160,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps: &steps
-      - uses: actions/checkout@v5
+      - uses: $PINNED_CHECKOUT
   again:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -165,6 +170,101 @@ jobs:
 EOF
 )"
   expect "bounded jobs and a reusable workflow call pass" 0 "every job declares timeout-minutes \(3 job" "$check" "$file"
+}
+
+fake_gh() {
+  local bin="$WORK/fake-gh-bin"
+  mkdir -p "$bin"
+  cat > "$bin/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  "auth status") exit 0 ;;
+  *"/git/commits/$FAKE_COMMIT"*) exit 0 ;;
+  *"/git/tags/$FAKE_TAG_OBJECT"*) echo "$FAKE_TAGGED_COMMIT"; exit 0 ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$bin/gh"
+  printf '%s' "$bin"
+}
+
+action_pin_cases() {
+  local check="$ROOT/scripts/check-workflows.sh"
+  local file gh_bin
+  gh_bin="$(fake_gh)"
+
+  file="$(workflow pins/tag-ref.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: foo/bar@v1
+EOF
+)"
+  expect "a third-party action on a tag ref is named by file and line" 1 "tag-ref\.yml:6: action 'foo/bar@v1' must be pinned to a full commit SHA" "$check" "$file"
+
+  file="$(workflow pins/first-party-tag.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT # v5.0.1
+      - uses: actions/download-artifact@v4
+EOF
+)"
+  expect "an actions/* action on a tag ref is refused too" 1 "first-party-tag\.yml:7: action 'actions/download-artifact@v4' must be pinned" "$check" "$file"
+
+  file="$(workflow pins/.github/actions/composite/action.yml <<EOF
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+EOF
+)"
+  expect "a composite action is scanned for tag refs" 1 "action\.yml:4: action 'dtolnay/rust-toolchain@stable' must be pinned" "$check" "$file"
+
+  file="$(workflow pins/local.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/fetch-libghostty
+      - uses: owner/repo/sub/path@$FAKE_COMMIT # v1.2.3
+EOF
+)"
+  expect "a local action and a SHA-pinned sub-path action pass" 0 "every pinned SHA is a commit of its repository \(1 distinct" \
+    env PATH="$gh_bin:$PATH" CHECK_WORKFLOWS_REMOTE=required "$check" "$file"
+
+  file="$(workflow pins/tag-object.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: owner/cache@$FAKE_TAG_OBJECT # v2
+EOF
+)"
+  expect "an annotated tag object SHA is refused and the commit it points to is named" 1 \
+    "tag-object\.yml:6: owner/cache@$FAKE_TAG_OBJECT is an annotated tag object, not a commit; pin the commit it points to, $FAKE_TAGGED_COMMIT" \
+    env PATH="$gh_bin:$PATH" CHECK_WORKFLOWS_REMOTE=required "$check" "$file"
+
+  file="$(workflow pins/unknown.yml <<EOF
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: owner/gone@4444444444444444444444444444444444444444
+EOF
+)"
+  expect "a SHA that is not an object of the repository is refused" 1 "unknown\.yml:6: owner/gone@4444444444444444444444444444444444444444 is not a commit of owner/gone" \
+    env PATH="$gh_bin:$PATH" CHECK_WORKFLOWS_REMOTE=required "$check" "$file"
+
+  expect "an unknown CHECK_WORKFLOWS_REMOTE value is refused" 2 "CHECK_WORKFLOWS_REMOTE must be auto, required, or off" \
+    env CHECK_WORKFLOWS_REMOTE=sometimes "$check" "$file"
 }
 
 retry_cases() {
@@ -323,6 +423,7 @@ EOF
 }
 
 check_workflows_cases
+action_pin_cases
 helper_size_cases
 retry_cases
 powershell_retry_cases
