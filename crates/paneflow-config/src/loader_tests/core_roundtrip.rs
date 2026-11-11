@@ -32,7 +32,10 @@ fn test_serialization_roundtrip() {
         unfocused_pane_opacity: None,
         reduce_motion: None,
         comfortable_density: None,
-        sidebar_show: SidebarShow::default(),
+        sidebar_show: SidebarShow {
+            status: Some(false),
+            ..SidebarShow::default()
+        },
         editor: EditorDisplayConfig::default(),
         automation: AutomationConfig::default(),
         worktrees: WorktreesConfig::default(),
@@ -63,6 +66,36 @@ fn test_serialization_roundtrip() {
     let json = serde_json::to_string_pretty(&config).unwrap();
     let reparsed = parse_and_validate(&json);
     assert_eq!(config, reparsed);
+}
+
+#[test]
+fn sidebar_show_status_loads_from_a_file_and_an_invalid_value_takes_its_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let hidden = dir.path().join("hidden.json");
+    let invalid = dir.path().join("invalid.json");
+    std::fs::write(
+        &hidden,
+        r#"{"sidebar_show": {"status": false, "pr": true}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &invalid,
+        r#"{"theme": "One Dark", "sidebar_show": {"status": "yes", "pr": true}}"#,
+    )
+    .unwrap();
+
+    let loaded = load_config_from_path(&hidden);
+    assert_eq!(loaded.sidebar_show.status, Some(false));
+    assert!(!loaded.sidebar_show.status_enabled());
+    assert!(loaded.sidebar_show.pr_enabled());
+    let json = serde_json::to_string_pretty(&loaded).unwrap();
+    assert_eq!(try_parse_and_validate(&json).unwrap(), loaded);
+
+    let tolerant = load_config_from_path(&invalid);
+    assert_eq!(tolerant.sidebar_show.status, None);
+    assert!(tolerant.sidebar_show.status_enabled());
+    assert!(tolerant.sidebar_show.pr_enabled());
+    assert_eq!(tolerant.theme.as_deref(), Some("One Dark"));
 }
 
 #[test]

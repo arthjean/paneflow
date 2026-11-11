@@ -39,22 +39,7 @@ impl PaneFlowApp {
             self.sidebar_show_submenu_open = true;
         }
 
-        let mut show = self.cached_config.sidebar_show;
-        match line {
-            SidebarShowLine::Branch => show.branch = Some(!show.branch_enabled()),
-            SidebarShowLine::Diffstat => show.diffstat = Some(!show.diffstat_enabled()),
-            SidebarShowLine::Pr => show.pr = Some(!show.pr_enabled()),
-            SidebarShowLine::IndentGuide => {
-                show.indent_guide = Some(!show.indent_guide_enabled());
-            }
-            SidebarShowLine::Agents => show.agents = Some(!show.agents_enabled()),
-            SidebarShowLine::Usage => show.usage = Some(!show.usage_enabled()),
-            SidebarShowLine::AgentLogo => show.agent_logo = Some(!show.agent_logo_enabled()),
-            SidebarShowLine::AgentWorkspace => {
-                show.agent_workspace = Some(!show.agent_workspace_enabled());
-            }
-        }
-        let value = sidebar_show_value(show);
+        let value = sidebar_show_value(line.toggled(self.cached_config.sidebar_show));
         self.persist_setting(false, "sidebar_show", value, cx);
         self.refresh_pull_requests(cx);
         cx.notify();
@@ -66,6 +51,7 @@ pub(crate) fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "branch": show.branch_enabled(),
         "diffstat": show.diffstat_enabled(),
         "pr": show.pr_enabled(),
+        "status": show.status_enabled(),
         "indent_guide": show.indent_guide_enabled(),
         "agents": show.agents_enabled(),
         "usage": show.usage_enabled(),
@@ -79,6 +65,7 @@ pub(super) enum SidebarShowLine {
     Branch,
     Diffstat,
     Pr,
+    Status,
     IndentGuide,
     Agents,
     Usage,
@@ -90,7 +77,67 @@ impl SidebarShowLine {
     fn is_agent_row_detail(self) -> bool {
         matches!(self, Self::AgentLogo | Self::AgentWorkspace)
     }
+
+    fn toggled(self, mut show: SidebarShow) -> SidebarShow {
+        match self {
+            Self::Branch => show.branch = Some(!show.branch_enabled()),
+            Self::Diffstat => show.diffstat = Some(!show.diffstat_enabled()),
+            Self::Pr => show.pr = Some(!show.pr_enabled()),
+            Self::Status => show.status = Some(!show.status_enabled()),
+            Self::IndentGuide => show.indent_guide = Some(!show.indent_guide_enabled()),
+            Self::Agents => show.agents = Some(!show.agents_enabled()),
+            Self::Usage => show.usage = Some(!show.usage_enabled()),
+            Self::AgentLogo => show.agent_logo = Some(!show.agent_logo_enabled()),
+            Self::AgentWorkspace => {
+                show.agent_workspace = Some(!show.agent_workspace_enabled());
+            }
+        }
+        show
+    }
+
+    fn checked(self, show: SidebarShow) -> bool {
+        match self {
+            Self::Branch => show.branch_enabled(),
+            Self::Diffstat => show.diffstat_enabled(),
+            Self::Pr => show.pr_enabled(),
+            Self::Status => show.status_enabled(),
+            Self::IndentGuide => show.indent_guide_enabled(),
+            Self::Agents => show.agents_enabled(),
+            Self::Usage => show.usage_enabled(),
+            Self::AgentLogo => show.agent_logo_enabled(),
+            Self::AgentWorkspace => show.agent_workspace_enabled(),
+        }
+    }
 }
+
+const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 5] = [
+    (
+        "Branch",
+        "icons/git-branch-sidebar.svg",
+        SidebarShowLine::Branch,
+    ),
+    (
+        "Diffstat",
+        "icons/diff-unified.svg",
+        SidebarShowLine::Diffstat,
+    ),
+    ("PR", "icons/git-pull-request.svg", SidebarShowLine::Pr),
+    (
+        "Status",
+        "icons/palette/notification-01.svg",
+        SidebarShowLine::Status,
+    ),
+    (
+        "Indent guide",
+        "icons/list.svg",
+        SidebarShowLine::IndentGuide,
+    ),
+];
+
+const SHOW_SUBMENU_SECTIONS: [(&str, &str, SidebarShowLine); 2] = [
+    ("Agents", "icons/sparkles.svg", SidebarShowLine::Agents),
+    ("Usage", "icons/plan-usage.svg", SidebarShowLine::Usage),
+];
 
 pub(super) fn render_customize_sidebar_button(
     state: CustomizeMenuState,
@@ -241,55 +288,13 @@ fn render_show_submenu(
         .font_family("Geist")
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(render_show_option(
-            "Branch",
-            "icons/git-branch-sidebar.svg",
-            SidebarShowLine::Branch,
-            show.branch_enabled(),
-            ui,
-            cx,
-        ))
-        .child(render_show_option(
-            "Diffstat",
-            "icons/diff-unified.svg",
-            SidebarShowLine::Diffstat,
-            show.diffstat_enabled(),
-            ui,
-            cx,
-        ))
-        .child(render_show_option(
-            "PR",
-            "icons/git-pull-request.svg",
-            SidebarShowLine::Pr,
-            show.pr_enabled(),
-            ui,
-            cx,
-        ))
-        .child(render_show_option(
-            "Indent guide",
-            "icons/list.svg",
-            SidebarShowLine::IndentGuide,
-            show.indent_guide_enabled(),
-            ui,
-            cx,
-        ))
+        .children(SHOW_SUBMENU_LINES.map(|(label, icon, line)| {
+            render_show_option(label, icon, line, line.checked(show), ui, cx)
+        }))
         .child(menu_divider(ui))
-        .child(render_show_option(
-            "Agents",
-            "icons/sparkles.svg",
-            SidebarShowLine::Agents,
-            show.agents_enabled(),
-            ui,
-            cx,
-        ))
-        .child(render_show_option(
-            "Usage",
-            "icons/plan-usage.svg",
-            SidebarShowLine::Usage,
-            show.usage_enabled(),
-            ui,
-            cx,
-        ));
+        .children(SHOW_SUBMENU_SECTIONS.map(|(label, icon, line)| {
+            render_show_option(label, icon, line, line.checked(show), ui, cx)
+        }));
 
     deferred(crate::ui_primitives::menu_reveal(
         "sidebar-show-submenu-reveal",
@@ -316,6 +321,7 @@ pub(super) fn render_show_option(
         SidebarShowLine::Branch => "sidebar-show-branch",
         SidebarShowLine::Diffstat => "sidebar-show-diffstat",
         SidebarShowLine::Pr => "sidebar-show-pr",
+        SidebarShowLine::Status => "sidebar-show-status",
         SidebarShowLine::IndentGuide => "sidebar-show-indent-guide",
         SidebarShowLine::Agents => "sidebar-show-agents",
         SidebarShowLine::Usage => "sidebar-show-usage",
@@ -389,6 +395,7 @@ mod tests {
                 "branch": false,
                 "diffstat": false,
                 "pr": false,
+                "status": true,
                 "indent_guide": false,
                 "agents": true,
                 "usage": true,
@@ -396,6 +403,94 @@ mod tests {
                 "agent_workspace": true,
             })
         );
+    }
+
+    #[test]
+    fn the_show_submenu_lists_status_between_pr_and_the_indent_guide() {
+        assert_eq!(
+            SHOW_SUBMENU_LINES.map(|(label, _, _)| label),
+            ["Branch", "Diffstat", "PR", "Status", "Indent guide"]
+        );
+        assert_eq!(
+            SHOW_SUBMENU_SECTIONS.map(|(label, _, _)| label),
+            ["Agents", "Usage"]
+        );
+        let (_, icon, line) = SHOW_SUBMENU_LINES[3];
+        assert_eq!(icon, "icons/palette/notification-01.svg");
+        assert!(matches!(line, SidebarShowLine::Status));
+        for (label, icon, _) in SHOW_SUBMENU_LINES.into_iter().chain(SHOW_SUBMENU_SECTIONS) {
+            assert!(
+                crate::assets::Assets::get(icon).is_some(),
+                "{label} points at the missing icon {icon}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_status_check_follows_the_loaded_config() {
+        let line = SidebarShowLine::Status;
+        assert!(line.checked(SidebarShow::default()));
+        let hidden: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"status": false}}"#).expect("loads");
+        assert!(!line.checked(hidden.sidebar_show));
+        let invalid: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"status": "yes"}}"#).expect("loads");
+        assert!(line.checked(invalid.sidebar_show));
+    }
+
+    #[test]
+    fn clicking_status_writes_only_that_key_through_the_config_writer() {
+        let config: PaneFlowConfig = serde_json::from_str(
+            r#"{"theme": "One Dark", "sidebar_show": {"pr": true, "agents": false, "agent_logo": false}}"#,
+        )
+        .expect("loads");
+        let before = config.sidebar_show;
+        assert!(before.status_enabled());
+
+        let hidden = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(SidebarShowLine::Status.toggled(before)),
+        )
+        .expect("written");
+        assert!(!hidden.sidebar_show.status_enabled());
+        assert_eq!(hidden.theme.as_deref(), Some("One Dark"));
+        let mut every_other_key = sidebar_show_value(hidden.sidebar_show);
+        every_other_key["status"] = serde_json::json!(true);
+        assert_eq!(every_other_key, sidebar_show_value(before));
+
+        let shown = crate::config_writer::with_field(
+            &hidden,
+            false,
+            "sidebar_show",
+            sidebar_show_value(SidebarShowLine::Status.toggled(hidden.sidebar_show)),
+        )
+        .expect("written");
+        assert!(shown.sidebar_show.status_enabled());
+    }
+
+    #[test]
+    fn toggling_another_line_keeps_a_hidden_tree_status() {
+        let show = SidebarShow {
+            status: Some(false),
+            ..Default::default()
+        };
+        for line in [
+            SidebarShowLine::Branch,
+            SidebarShowLine::Pr,
+            SidebarShowLine::Agents,
+            SidebarShowLine::AgentLogo,
+        ] {
+            let next = crate::config_writer::with_field(
+                &PaneFlowConfig::default(),
+                false,
+                "sidebar_show",
+                sidebar_show_value(line.toggled(show)),
+            )
+            .expect("written");
+            assert!(!next.sidebar_show.status_enabled());
+        }
     }
 
     #[test]
