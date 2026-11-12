@@ -71,7 +71,7 @@ jobs:
           apt-get -o Acquire::Retries=3 update
           apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl git sudo xz-utils
 
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -87,7 +87,7 @@ jobs:
         uses: ./.github/actions/libghostty-manifest
 
       - name: Checkout pinned Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ steps.pins.outputs.source_sha }}
@@ -164,7 +164,7 @@ jobs:
     env:
       TARGET: aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -180,7 +180,7 @@ jobs:
         uses: ./.github/actions/libghostty-manifest
 
       - name: Checkout pinned Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ghostty-org/ghostty
           ref: ${{ steps.pins.outputs.source_sha }}
@@ -199,7 +199,7 @@ jobs:
       # toolchain is deliberately NOT the channel of `rust-toolchain.toml`: it
       # moves only with `macos_llvm_version` and a fresh `archive_sha256`,
       # never with a workspace toolchain bump.
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: ${{ steps.pins.outputs.macos_rust_toolchain }}
           components: llvm-tools

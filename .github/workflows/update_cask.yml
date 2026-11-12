@@ -120,7 +120,7 @@ jobs:
       # The cask is rendered from the template of the commit the release
       # built, never from whatever `main` holds when this run starts: a
       # chained run checks out the release run's head_sha, a dispatch the tag.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/{0}', steps.tag.outputs.tag) }}
           persist-credentials: false
