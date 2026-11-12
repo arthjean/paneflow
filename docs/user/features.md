@@ -115,6 +115,12 @@ of the header opens **Customize agent rows**, which shows or hides each row's
 logo and workspace name, stored in `sidebar_show.agent_logo` and
 `sidebar_show.agent_workspace`. A row always shows its status.
 
+The section lists the active space's agents. Once you have declared a
+space, **Customize agent rows > All spaces** (`sidebar_show.agent_all_spaces`,
+off by default) adds the agents of your other spaces: in each status group
+they follow the active space's agents, and each one names its space after
+its workspace. Clicking one switches to its space.
+
 While an agent works, its title turns gray and a bright band sweeps across
 it. Turn that off for tab rows with **Customize sidebar > Show > Shimmer**
 (`sidebar_show.shimmer`) and for the Agents section with **Customize agent

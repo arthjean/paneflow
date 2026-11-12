@@ -141,7 +141,7 @@
         },
         "agents": {
           "type": ["boolean", "null"],
-          "description": "Show the Agents section at the bottom of the sidebar: the active space's agent sessions, most urgent first. Default true.",
+          "description": "Show the Agents section at the bottom of the sidebar: the active space's agent sessions, or every space's with agent_all_spaces, most urgent first. Default true.",
           "default": true
         },
         "usage": {
@@ -168,6 +168,11 @@
           "type": ["boolean", "null"],
           "description": "Shimmer the title of an Agents section row while its agent works, the same way. false keeps the title still in its usual color; the working matrix stays. Default true.",
           "default": true
+        },
+        "agent_all_spaces": {
+          "type": ["boolean", "null"],
+          "description": "List the agent sessions of every space in the Agents section, the active space's first in each status group. A row from another space names that space after its workspace. false keeps the section to the active space. Default false.",
+          "default": false
         }
       }
     },

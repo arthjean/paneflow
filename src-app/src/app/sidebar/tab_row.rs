@@ -447,6 +447,7 @@ mod tests {
             agent_workspace: None,
             shimmer: None,
             agent_shimmer: None,
+            agent_all_spaces: None,
         }
     }
 

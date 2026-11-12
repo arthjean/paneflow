@@ -59,6 +59,7 @@ pub(crate) fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "agent_workspace": show.agent_workspace_enabled(),
         "shimmer": show.shimmer_enabled(),
         "agent_shimmer": show.agent_shimmer_enabled(),
+        "agent_all_spaces": show.agent_all_spaces_enabled(),
     })
 }
 
@@ -75,13 +76,14 @@ pub(super) enum SidebarShowLine {
     AgentWorkspace,
     Shimmer,
     AgentShimmer,
+    AgentAllSpaces,
 }
 
 impl SidebarShowLine {
     fn is_agent_row_detail(self) -> bool {
         matches!(
             self,
-            Self::AgentLogo | Self::AgentWorkspace | Self::AgentShimmer
+            Self::AgentLogo | Self::AgentWorkspace | Self::AgentShimmer | Self::AgentAllSpaces
         )
     }
 
@@ -100,6 +102,9 @@ impl SidebarShowLine {
             }
             Self::Shimmer => show.shimmer = Some(!show.shimmer_enabled()),
             Self::AgentShimmer => show.agent_shimmer = Some(!show.agent_shimmer_enabled()),
+            Self::AgentAllSpaces => {
+                show.agent_all_spaces = Some(!show.agent_all_spaces_enabled());
+            }
         }
         show
     }
@@ -117,6 +122,7 @@ impl SidebarShowLine {
             Self::AgentWorkspace => show.agent_workspace_enabled(),
             Self::Shimmer => show.shimmer_enabled(),
             Self::AgentShimmer => show.agent_shimmer_enabled(),
+            Self::AgentAllSpaces => show.agent_all_spaces_enabled(),
         }
     }
 }
@@ -346,6 +352,7 @@ pub(super) fn render_show_option(
         SidebarShowLine::AgentWorkspace => "agents-show-workspace",
         SidebarShowLine::Shimmer => "sidebar-show-shimmer",
         SidebarShowLine::AgentShimmer => "agents-show-shimmer",
+        SidebarShowLine::AgentAllSpaces => "agents-show-all-spaces",
     };
 
     menu_row(id, false, ui)
@@ -379,7 +386,7 @@ pub(super) fn render_show_option(
         .into_any_element()
 }
 
-fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
+pub(super) fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
     div()
         .mx(px(6.))
         .my(px(4.))
@@ -422,6 +429,7 @@ mod tests {
                 "agent_workspace": true,
                 "shimmer": true,
                 "agent_shimmer": true,
+                "agent_all_spaces": false,
             })
         );
     }
@@ -588,6 +596,36 @@ mod tests {
         assert!(!both_still.sidebar_show.shimmer_enabled());
         assert!(!both_still.sidebar_show.agent_shimmer_enabled());
         assert!(crate::assets::Assets::get(SHIMMER_ICON).is_some());
+    }
+
+    #[test]
+    fn showing_every_space_writes_its_own_key_and_reopens_the_agent_rows_menu() {
+        let config = PaneFlowConfig::default();
+        let line = SidebarShowLine::AgentAllSpaces;
+        assert!(!line.checked(config.sidebar_show));
+        assert!(line.is_agent_row_detail());
+
+        let everywhere = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(line.toggled(config.sidebar_show)),
+        )
+        .expect("written");
+        assert!(everywhere.sidebar_show.agent_all_spaces_enabled());
+        assert!(line.checked(everywhere.sidebar_show));
+        let mut every_other_key = sidebar_show_value(everywhere.sidebar_show);
+        every_other_key["agent_all_spaces"] = serde_json::json!(false);
+        assert_eq!(every_other_key, sidebar_show_value(config.sidebar_show));
+
+        let active_only = crate::config_writer::with_field(
+            &everywhere,
+            false,
+            "sidebar_show",
+            sidebar_show_value(line.toggled(everywhere.sidebar_show)),
+        )
+        .expect("written");
+        assert!(!active_only.sidebar_show.agent_all_spaces_enabled());
     }
 
     #[test]

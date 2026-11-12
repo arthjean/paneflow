@@ -577,7 +577,13 @@ working title's shimmer (`sidebar_show.agent_logo`, `agent_workspace`,
 `agent_shimmer`, all on by default). A row
 always shows its status: hiding it would hide what the section is grouped by,
 and `sidebar_show.agents` already hides the whole section. Either toggle
-leaves a row 32 px tall. Clicking the header collapses the section to that
+leaves a row 32 px tall. When the config declares at least one space, a
+divider and an `All spaces` line follow, behind the Hugeicons `layers-01`
+glyph (`sidebar_show.agent_all_spaces`, off by default): turned on, the
+section lists every space's agents, the active space's first within each
+status group, and a row from another space ends its workspace suffix with
+` · ` and that space's name, `Default` for the default space. The suffix
+toggle hides both, and the row's spoken label names the space either way. Clicking the header collapses the section to that
 row, the chevron turning -90 degrees over 180 ms (cubic
 ease-out, instant under `reduce_motion`); nothing expands it on its own, not
 even an agent turning blocked.
@@ -596,7 +602,8 @@ of `order_agents`, the most recent first, the order `Cmd/Ctrl+Shift+J` also
 follows. A recognized agent without OSC 7501 capability sits in `Idle` during
 its 3 s grace, then in `No status`.
 
-Each row is one recognized agent session of the active space, on one 32 px
+Each row is one recognized agent session of the active space, or of any
+space under `All spaces`, on one 32 px
 line of the tab row shell (margin 8, padding 7 by 6, radius 9): the runtime
 logo at 15 px in the 20 px folder slot, in the runtime's accent (`#D97757` for
 Claude Code) or `text`, the tab title at 14 px Medium (the runtime's display

@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
-use super::customize_menu::{SHIMMER_ICON, SidebarShowLine, render_show_option};
+use super::customize_menu::{SHIMMER_ICON, SidebarShowLine, menu_divider, render_show_option};
 use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
@@ -48,6 +48,7 @@ const AGENTS_DISPLAY_MENU_WIDTH: f32 = 172.;
 const AGENTS_DISPLAY_MENU_GAP: f32 = 10.;
 const AGENT_LOGO_ICON: &str = "icons/chat-bot.svg";
 const AGENT_WORKSPACE_ICON: &str = "icons/folder.svg";
+const AGENT_ALL_SPACES_ICON: &str = "icons/palette/layers-01.svg";
 
 type PickAgent = Rc<dyn Fn(u64, &mut Window, &mut App)>;
 type ResizeAgents = Rc<dyn Fn(AgentsResizeInput, &mut Window, &mut App)>;
@@ -234,6 +235,50 @@ impl AgentRowDetails {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct AgentScope<'a> {
+    active_space: Option<&'a paneflow_config::schema::SpaceId>,
+    every_space: Option<&'a paneflow_config::schema::PaneFlowConfig>,
+}
+
+impl<'a> AgentScope<'a> {
+    pub(super) fn active_space_only(
+        active_space: Option<&'a paneflow_config::schema::SpaceId>,
+    ) -> Self {
+        Self {
+            active_space,
+            every_space: None,
+        }
+    }
+
+    pub(super) fn every_space(
+        active_space: Option<&'a paneflow_config::schema::SpaceId>,
+        config: &'a paneflow_config::schema::PaneFlowConfig,
+    ) -> Self {
+        Self {
+            active_space,
+            every_space: Some(config),
+        }
+    }
+
+    pub(super) fn from_config(
+        active_space: Option<&'a paneflow_config::schema::SpaceId>,
+        config: &'a paneflow_config::schema::PaneFlowConfig,
+    ) -> Self {
+        if config.sidebar_show.agent_all_spaces_enabled() {
+            Self::every_space(active_space, config)
+        } else {
+            Self::active_space_only(active_space)
+        }
+    }
+
+    fn other_space_name(self, workspace: &Workspace, in_active_space: bool) -> Option<String> {
+        let config = self.every_space?;
+        (!in_active_space)
+            .then(|| crate::app::spaces::space_label(config, workspace.space.as_ref()).to_string())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRow {
     pub(super) surface_id: u64,
@@ -241,6 +286,7 @@ pub(super) struct AgentRow {
     pub(super) tool: TerminalAgent,
     pub(super) title: String,
     pub(super) workspace: String,
+    pub(super) space: Option<String>,
     pub(super) active: bool,
     pub(super) status: AgentRowStatus,
     pub(super) details: AgentRowDetails,
@@ -343,50 +389,54 @@ pub(super) fn agent_group_label(status: AgentGroupStatus, count: usize) -> Strin
 
 pub(super) fn agent_rows(
     workspaces: &[Workspace],
-    active_space: Option<&paneflow_config::schema::SpaceId>,
+    scope: AgentScope<'_>,
     shown_workspace: Option<usize>,
     details: AgentRowDetails,
     now: Instant,
     cx: &App,
 ) -> AgentRows {
     let mut grace_deadline: Option<Instant> = None;
-    let rows = order_agents(agent_candidates(workspaces, active_space, cx), true)
-        .into_iter()
-        .filter_map(|candidate| {
-            let workspace = workspaces.get(candidate.workspace_idx)?;
-            let session = workspace.agent_sessions.get(&candidate.session_key)?;
-            let tab = workspace.tabs().get(candidate.tab_idx)?;
-            let status = match (lane_state(candidate.rank), candidate.rank) {
-                (Some(state), _) => AgentRowStatus::Lane(state),
-                (None, AgentRank::NoStatus) => {
-                    let due = session.started_at + NO_STATUS_GRACE;
-                    if now >= due {
-                        AgentRowStatus::NoStatus
-                    } else {
-                        grace_deadline = Some(grace_deadline.map_or(due, |held| held.min(due)));
-                        AgentRowStatus::Silent
-                    }
+    let rows = order_agents(
+        agent_candidates(workspaces, scope.active_space, cx),
+        scope.every_space.is_none(),
+    )
+    .into_iter()
+    .filter_map(|candidate| {
+        let workspace = workspaces.get(candidate.workspace_idx)?;
+        let session = workspace.agent_sessions.get(&candidate.session_key)?;
+        let tab = workspace.tabs().get(candidate.tab_idx)?;
+        let status = match (lane_state(candidate.rank), candidate.rank) {
+            (Some(state), _) => AgentRowStatus::Lane(state),
+            (None, AgentRank::NoStatus) => {
+                let due = session.started_at + NO_STATUS_GRACE;
+                if now >= due {
+                    AgentRowStatus::NoStatus
+                } else {
+                    grace_deadline = Some(grace_deadline.map_or(due, |held| held.min(due)));
+                    AgentRowStatus::Silent
                 }
-                (None, _) => AgentRowStatus::Silent,
-            };
-            let title = if tab.title().trim().is_empty() {
-                session.tool.display_name().to_string()
-            } else {
-                tab.title().to_string()
-            };
-            Some(AgentRow {
-                surface_id: candidate.surface_id,
-                rank: candidate.rank,
-                tool: session.tool,
-                title,
-                workspace: workspace.title.clone(),
-                active: shown_workspace == Some(candidate.workspace_idx)
-                    && workspace.active_tab_idx() == candidate.tab_idx,
-                status,
-                details,
-            })
+            }
+            (None, _) => AgentRowStatus::Silent,
+        };
+        let title = if tab.title().trim().is_empty() {
+            session.tool.display_name().to_string()
+        } else {
+            tab.title().to_string()
+        };
+        Some(AgentRow {
+            surface_id: candidate.surface_id,
+            rank: candidate.rank,
+            tool: session.tool,
+            title,
+            workspace: workspace.title.clone(),
+            space: scope.other_space_name(workspace, candidate.in_active_space),
+            active: shown_workspace == Some(candidate.workspace_idx)
+                && workspace.active_tab_idx() == candidate.tab_idx,
+            status,
+            details,
         })
-        .collect();
+    })
+    .collect();
     AgentRows {
         rows,
         grace_deadline,
@@ -478,12 +528,15 @@ fn agent_title_shimmers(
     details.shimmer && status == AgentRowStatus::Lane(SidebarAgentState::Thinking) && !reduce_motion
 }
 
-fn agent_workspace_suffix(workspace: &str) -> String {
-    format!(" \u{b7} {workspace}")
+fn agent_workspace_suffix(row: &AgentRow) -> String {
+    match &row.space {
+        Some(space) => format!(" \u{b7} {} \u{b7} {space}", row.workspace),
+        None => format!(" \u{b7} {}", row.workspace),
+    }
 }
 
 fn agent_row_full_name(row: &AgentRow) -> String {
-    format!("{}{}", row.title, agent_workspace_suffix(&row.workspace))
+    format!("{}{}", row.title, agent_workspace_suffix(row))
 }
 
 fn agent_row_shown_name(row: &AgentRow) -> String {
@@ -495,11 +548,14 @@ fn agent_row_shown_name(row: &AgentRow) -> String {
 }
 
 pub(super) fn agent_row_label(row: &AgentRow) -> String {
+    let place = match &row.space {
+        Some(space) => format!("{}, {space} space", row.workspace),
+        None => row.workspace.clone(),
+    };
     format!(
-        "{}, {}, {}, {}",
+        "{}, {}, {place}, {}",
         row.tool.display_name(),
         row.title,
-        row.workspace,
         agent_row_spoken_state(row)
     )
 }
@@ -807,7 +863,7 @@ fn render_agent_row(
             .text_ellipsis()
             .text_color(ui.muted)
             .debug_selector(move || format!("agent-workspace-{surface_id}"))
-            .child(agent_workspace_suffix(&row.workspace))
+            .child(agent_workspace_suffix(row))
     });
     let name = div()
         .flex_1()
@@ -1116,7 +1172,7 @@ impl PaneFlowApp {
             grace_deadline,
         } = agent_rows(
             &self.workspaces,
-            self.active_space.as_ref(),
+            self.agent_scope(),
             self.shown_workspace_idx(),
             AgentRowDetails::from_show(self.cached_config.sidebar_show),
             now,
@@ -1283,10 +1339,14 @@ impl PaneFlowApp {
         true
     }
 
+    fn agent_scope(&self) -> AgentScope<'_> {
+        AgentScope::from_config(self.active_space.as_ref(), &self.cached_config)
+    }
+
     fn shown_agent_rows(&self, cx: &App) -> Vec<AgentRow> {
         agent_rows(
             &self.workspaces,
-            self.active_space.as_ref(),
+            self.agent_scope(),
             self.shown_workspace_idx(),
             AgentRowDetails::ALL,
             Instant::now(),
@@ -1384,6 +1444,7 @@ impl PaneFlowApp {
         let open = self.agents_display_menu_open;
         let hover = crate::app::constants::sidebar_tab_hover_background();
         let show = self.cached_config.sidebar_show;
+        let spaces_declared = !self.cached_config.spaces.is_empty();
         let fill = crate::app::constants::sidebar_menu_background(
             self.cached_config.interface_style(),
             ui,
@@ -1419,7 +1480,13 @@ impl PaneFlowApp {
                 .text_color(ui.muted),
         )
         .when(open, |trigger| {
-            trigger.child(render_agents_display_menu(show, fill, ui, cx))
+            trigger.child(render_agents_display_menu(
+                show,
+                spaces_declared,
+                fill,
+                ui,
+                cx,
+            ))
         })
         .into_any_element()
     }
@@ -1427,6 +1494,7 @@ impl PaneFlowApp {
 
 fn render_agents_display_menu(
     show: paneflow_config::schema::SidebarShow,
+    spaces_declared: bool,
     fill: gpui::Hsla,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -1466,7 +1534,17 @@ fn render_agents_display_menu(
             show.agent_shimmer_enabled(),
             ui,
             cx,
-        ));
+        ))
+        .when(spaces_declared, |menu| {
+            menu.child(menu_divider(ui)).child(render_show_option(
+                "All spaces",
+                AGENT_ALL_SPACES_ICON,
+                SidebarShowLine::AgentAllSpaces,
+                show.agent_all_spaces_enabled(),
+                ui,
+                cx,
+            ))
+        });
     gpui::deferred(crate::ui_primitives::menu_reveal(
         "agents-display-menu-reveal",
         div()
@@ -1486,7 +1564,12 @@ mod tests {
 
     #[test]
     fn every_customize_agent_rows_line_points_at_an_embedded_icon() {
-        for icon in [AGENT_LOGO_ICON, AGENT_WORKSPACE_ICON, SHIMMER_ICON] {
+        for icon in [
+            AGENT_LOGO_ICON,
+            AGENT_WORKSPACE_ICON,
+            SHIMMER_ICON,
+            AGENT_ALL_SPACES_ICON,
+        ] {
             assert!(
                 crate::assets::Assets::get(icon).is_some(),
                 "the Customize agent rows menu points at the missing icon {icon}"
@@ -1510,6 +1593,7 @@ mod tests {
             tool: TerminalAgent::ClaudeCode,
             title: "Attention sidebar".to_string(),
             workspace: "paneflow".to_string(),
+            space: None,
             active: false,
             status,
             details: AgentRowDetails::ALL,
@@ -2247,7 +2331,7 @@ mod tests {
         let shown = cx.update(|_, cx| {
             agent_rows(
                 &workspaces,
-                None,
+                AgentScope::active_space_only(None),
                 Some(0),
                 AgentRowDetails::ALL,
                 Instant::now(),
@@ -2301,6 +2385,134 @@ mod tests {
     }
 
     #[gpui::test]
+    fn every_space_scope_adds_the_other_spaces_after_the_active_one_and_names_them(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let client_id = "550e8400-e29b-41d4-a716-446655440001";
+        let client = paneflow_config::schema::SpaceId::parse(client_id).expect("space id");
+        let declared = |all_spaces: bool| -> paneflow_config::schema::PaneFlowConfig {
+            serde_json::from_value(serde_json::json!({
+                "spaces": [{"id": client_id, "name": "Client"}],
+                "sidebar_show": {"agent_all_spaces": all_spaces},
+            }))
+            .expect("loads")
+        };
+        let (mut here, here_surfaces) = workspace_with_agents(cx, 1, "paneflow", &["Sidebar"]);
+        let (mut blocked, blocked_surfaces) = workspace_with_agents(cx, 2, "site", &["Docs"]);
+        let (mut working, working_surfaces) = workspace_with_agents(cx, 3, "api", &["Routes"]);
+        blocked.space = Some(client.clone());
+        working.space = Some(client.clone());
+        for (workspace, surfaces, state) in [
+            (&mut here, &here_surfaces, AgentState::Thinking),
+            (&mut blocked, &blocked_surfaces, AgentState::WaitingForInput),
+            (&mut working, &working_surfaces, AgentState::Thinking),
+        ] {
+            workspace.agent_sessions.insert(
+                1,
+                agent(
+                    TerminalAgent::ClaudeCode,
+                    state,
+                    true,
+                    surfaces[0],
+                    Duration::from_secs(10),
+                ),
+            );
+        }
+        let workspaces = vec![here, blocked, working];
+        let (here, blocked, working) = (here_surfaces[0], blocked_surfaces[0], working_surfaces[0]);
+        let shown = |scope: AgentScope<'_>, cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                agent_rows(
+                    &workspaces,
+                    scope,
+                    Some(0),
+                    AgentRowDetails::ALL,
+                    Instant::now(),
+                    cx,
+                )
+                .rows
+            })
+        };
+
+        let active_only = declared(false);
+        let alone = shown(AgentScope::from_config(None, &active_only), cx);
+        assert_eq!(
+            alone
+                .iter()
+                .map(|row| (row.surface_id, row.space.clone()))
+                .collect::<Vec<_>>(),
+            [(here, None)],
+            "the default scope keeps to the active space"
+        );
+
+        let everywhere = declared(true);
+        let all = shown(AgentScope::from_config(None, &everywhere), cx);
+        assert_eq!(
+            all.iter()
+                .map(|row| (row.surface_id, row.space.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (here, None),
+                (blocked, Some("Client")),
+                (working, Some("Client"))
+            ],
+            "the active space leads, and only the other spaces are named"
+        );
+        assert_eq!(
+            group_shape(&agent_groups(&all)),
+            [
+                (AgentGroupStatus::NeedYou, vec![blocked]),
+                (AgentGroupStatus::Working, vec![here, working]),
+            ],
+            "a status group lists the active space's agents first"
+        );
+        assert_eq!(
+            all.iter().map(|row| row.active).collect::<Vec<_>>(),
+            [true, false, false]
+        );
+        assert_eq!(
+            agents_nav_targets(true, false, &agent_groups(&all)),
+            [blocked, here, working],
+            "the keyboard cursor reaches the other spaces' rows"
+        );
+
+        let from_client = shown(AgentScope::from_config(Some(&client), &everywhere), cx);
+        assert_eq!(
+            from_client
+                .iter()
+                .map(|row| (row.surface_id, row.space.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (blocked, None),
+                (working, None),
+                (here, Some(paneflow_config::schema::DEFAULT_SPACE_NAME))
+            ],
+            "seen from another space, the default space is the one named"
+        );
+    }
+
+    #[test]
+    fn a_row_from_another_space_names_it_after_its_workspace() {
+        let mut elsewhere = row(1, AgentRank::Idle, AgentRowStatus::Silent);
+        elsewhere.space = Some("Client".to_string());
+        assert_eq!(
+            agent_row_full_name(&elsewhere),
+            "Attention sidebar \u{b7} paneflow \u{b7} Client"
+        );
+        assert_eq!(
+            agent_row_label(&elsewhere),
+            "Claude Code, Attention sidebar, paneflow, Client space, idle"
+        );
+        elsewhere.details.workspace = false;
+        assert_eq!(agent_row_shown_name(&elsewhere), "Attention sidebar");
+        assert_eq!(
+            agent_row_label(&row(1, AgentRank::Idle, AgentRowStatus::Silent)),
+            "Claude Code, Attention sidebar, paneflow, idle"
+        );
+    }
+
+    #[gpui::test]
     fn a_silent_session_shows_no_status_only_after_three_seconds_and_leaves_it_once_capable(
         cx: &mut TestAppContext,
     ) {
@@ -2318,8 +2530,16 @@ mod tests {
         workspace.agent_sessions.insert(1, session);
         let mut workspaces = vec![workspace];
 
-        let young = cx
-            .update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, started, cx));
+        let young = cx.update(|_, cx| {
+            agent_rows(
+                &workspaces,
+                AgentScope::active_space_only(None),
+                None,
+                AgentRowDetails::ALL,
+                started,
+                cx,
+            )
+        });
         assert_eq!(young.rows[0].rank, AgentRank::NoStatus);
         assert_eq!(young.rows[0].status, AgentRowStatus::Silent);
         assert_eq!(young.grace_deadline, Some(started + NO_STATUS_GRACE));
@@ -2330,8 +2550,16 @@ mod tests {
         );
 
         let due = started + NO_STATUS_GRACE;
-        let grown =
-            cx.update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, due, cx));
+        let grown = cx.update(|_, cx| {
+            agent_rows(
+                &workspaces,
+                AgentScope::active_space_only(None),
+                None,
+                AgentRowDetails::ALL,
+                due,
+                cx,
+            )
+        });
         assert_eq!(grown.rows[0].status, AgentRowStatus::NoStatus);
         assert_eq!(grown.grace_deadline, None);
         assert_eq!(
@@ -2343,8 +2571,16 @@ mod tests {
         let session = workspaces[0].agent_sessions.get_mut(&1).expect("session");
         session.program_status_capable = true;
         session.state = AgentState::Thinking;
-        let capable =
-            cx.update(|_, cx| agent_rows(&workspaces, None, None, AgentRowDetails::ALL, due, cx));
+        let capable = cx.update(|_, cx| {
+            agent_rows(
+                &workspaces,
+                AgentScope::active_space_only(None),
+                None,
+                AgentRowDetails::ALL,
+                due,
+                cx,
+            )
+        });
         assert_eq!(capable.rows[0].rank, AgentRank::Working);
         assert_eq!(
             capable.rows[0].status,
@@ -2392,7 +2628,7 @@ mod tests {
                             let now = Instant::now();
                             let shown = agent_rows(
                                 &workspaces,
-                                None,
+                                AgentScope::active_space_only(None),
                                 Some(0),
                                 AgentRowDetails::ALL,
                                 now,
@@ -2400,7 +2636,7 @@ mod tests {
                             );
                             let hidden = agent_rows(
                                 &workspaces,
-                                None,
+                                AgentScope::active_space_only(None),
                                 Some(0),
                                 AgentRowDetails::from_show(tree_status_hidden),
                                 now,
@@ -2890,7 +3126,7 @@ mod tests {
         let shown = cx.update(|_, cx| {
             agent_rows(
                 &workspaces,
-                None,
+                AgentScope::active_space_only(None),
                 Some(0),
                 AgentRowDetails::ALL,
                 Instant::now(),
@@ -3386,7 +3622,7 @@ mod tests {
     fn loaded_section(workspaces: &[Workspace], cx: &App) -> gpui::Div {
         let AgentRows { rows, .. } = agent_rows(
             workspaces,
-            None,
+            AgentScope::active_space_only(None),
             Some(0),
             AgentRowDetails::ALL,
             Instant::now(),
@@ -3470,7 +3706,7 @@ mod tests {
         assert_eq!(
             cx.update(|_, cx| agent_rows(
                 &view.read(cx).workspaces,
-                None,
+                AgentScope::active_space_only(None),
                 Some(0),
                 AgentRowDetails::ALL,
                 Instant::now(),

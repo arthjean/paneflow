@@ -78,6 +78,7 @@ mod tests {
                 agent_workspace: Some(false),
                 shimmer: Some(false),
                 agent_shimmer: Some(false),
+                agent_all_spaces: Some(true),
             },
             editor: EditorDisplayConfig {
                 minimap: Some(true),
@@ -650,6 +651,7 @@ mod tests {
         assert!(cfg.sidebar_show.usage_enabled());
         assert!(cfg.sidebar_show.agent_logo_enabled());
         assert!(cfg.sidebar_show.agent_workspace_enabled());
+        assert!(!cfg.sidebar_show.agent_all_spaces_enabled());
         assert!(cfg.sidebar_show.status_enabled());
 
         let cfg: PaneFlowConfig =
@@ -682,6 +684,13 @@ mod tests {
                 .unwrap();
         assert!(!cfg.sidebar_show.shimmer_enabled());
         assert!(cfg.sidebar_show.agent_shimmer_enabled());
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"agent_all_spaces": true}}"#).unwrap();
+        assert!(cfg.sidebar_show.agent_all_spaces_enabled());
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"agent_all_spaces": "every"}}"#).unwrap();
+        assert!(!cfg.sidebar_show.agent_all_spaces_enabled());
 
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"agents": "hidden", "pr": true}}"#).unwrap();

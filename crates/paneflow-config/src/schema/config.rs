@@ -127,6 +127,8 @@ pub struct SidebarShow {
     pub shimmer: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_shimmer: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agent_all_spaces: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,6 +254,10 @@ impl SidebarShow {
 
     pub fn agent_shimmer_enabled(&self) -> bool {
         self.agent_shimmer.unwrap_or(true)
+    }
+
+    pub fn agent_all_spaces_enabled(&self) -> bool {
+        self.agent_all_spaces.unwrap_or(false)
     }
 
     pub fn any_enabled(&self) -> bool {
