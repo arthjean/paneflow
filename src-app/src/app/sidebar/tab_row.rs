@@ -61,7 +61,7 @@ impl PaneFlowApp {
         let row_agent_status =
             tab_row_agent_summary(self.cached_config.sidebar_show, ws, &surfaces);
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
-        let lane = infer_lane(row_agent_status, self.tab_pull_request(ws, tab));
+        let lane = infer_lane(row_agent_status, None);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
         let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
             (
@@ -390,7 +390,7 @@ impl PaneFlowApp {
                         .size(px(12.))
                         .flex_none()
                         .path(match pr {
-                            Some(_) => "icons/git-pull-request.svg",
+                            Some(pr) => lane::pull_request_glyph(pr.state),
                             None => "icons/git-branch-sidebar.svg",
                         })
                         .text_color(match pr {

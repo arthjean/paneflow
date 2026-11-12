@@ -542,9 +542,11 @@ radius 6 squircle sitting on the whole pixel below the line center. While it
 thinks, the dot matrix stands alone in the agent's accent when every working
 agent of the row shares one runtime that declares one, and `muted` otherwise.
 The tree and the Agents section rank a session with the same function, so a
-row and its agent never disagree. With no agent to report, the tab's pull request takes
-the slot as an 11 px glyph and a 10 px word in GitHub's state color: `Review`,
-`Draft`, or `Merged`. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
+row and its agent never disagree. A tab's pull request never takes the slot: it
+replaces the branch glyph in front of the branch, in GitHub's state color, with
+the merge glyph once merged and the pull request glyph otherwise, and the state
+lives in the branch tooltip. A folded workspace with no agent to report shows
+its best pull request in the slot as that 11 px glyph alone, with no word. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
 over it. A `Customize sidebar` menu on the rail header toggles branch,
 diffstat, pull request, status, and indent guide per value, then, below a menu
@@ -552,8 +554,8 @@ rule, the Agents section behind a 13 px sparkles glyph (`sidebar_show.agents`,
 on by default) and the usage capsule. `Status` sits behind the
 `notification-01` glyph (`sidebar_show.status`, on by default); turned off, the
 workspace and tab rows lose their status badge, their matrix, the title
-shimmer and the status tooltip, and the pull request takes the trailing slot
-by the same rule as a row with no agent. The Agents section, the hidden-space
+shimmer and the status tooltip, and a folded workspace's pull request takes
+the trailing slot by the same rule as a row with no agent. The Agents section, the hidden-space
 attention button, the pane header marker, notifications and
 `Cmd/Ctrl+Shift+J` do not read it.
 

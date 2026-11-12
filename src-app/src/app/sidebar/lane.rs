@@ -38,12 +38,7 @@ impl Lane {
                 SidebarAgentState::Thinking => "",
                 SidebarAgentState::Finished => "Done",
             },
-            Lane::PullRequest(pr) => match pr.state {
-                PrState::Open => "Review",
-                PrState::Draft => "Draft",
-                PrState::Merged => "Merged",
-                PrState::Closed => "Closed",
-            },
+            Lane::PullRequest(_) => "",
         }
     }
 
@@ -60,6 +55,13 @@ impl Lane {
             }
             _ => self.word().to_string(),
         }
+    }
+}
+
+pub(super) fn pull_request_glyph(state: PrState) -> &'static str {
+    match state {
+        PrState::Merged => "icons/git-merge.svg",
+        PrState::Open | PrState::Draft | PrState::Closed => "icons/git-pull-request.svg",
     }
 }
 
@@ -112,11 +114,7 @@ pub(super) fn lane_visual(lane: Lane, ui: crate::theme::UiColors) -> (gpui::Hsla
         },
         Lane::PullRequest(pr) => {
             let color = pr.state.color(ui);
-            let path = match pr.state {
-                PrState::Merged => "icons/git-merge.svg",
-                _ => "icons/git-pull-request.svg",
-            };
-            (color, icon(path, color))
+            (color, icon(pull_request_glyph(pr.state), color))
         }
     }
 }
@@ -468,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn every_lane_answers_with_a_word_and_only_agents_count() {
+    fn agent_lanes_answer_with_a_word_and_pull_requests_with_their_glyph_alone() {
         let summary = |state, count| {
             Lane::Agent(SidebarAgentSummary {
                 state,
@@ -488,9 +486,14 @@ mod tests {
         assert_eq!(summary(SidebarAgentState::Thinking, 1).label(), "");
         assert_eq!(summary(SidebarAgentState::Thinking, 2).label(), "2");
         assert_eq!(summary(SidebarAgentState::Finished, 3).label(), "Done 3");
-        assert_eq!(Lane::PullRequest(pr(PrState::Open)).label(), "Review");
-        assert_eq!(Lane::PullRequest(pr(PrState::Draft)).label(), "Draft");
-        assert_eq!(Lane::PullRequest(pr(PrState::Merged)).label(), "Merged");
+        for state in [PrState::Open, PrState::Draft, PrState::Merged] {
+            assert_eq!(Lane::PullRequest(pr(state)).label(), "");
+        }
+        assert_eq!(pull_request_glyph(PrState::Merged), "icons/git-merge.svg");
+        assert_eq!(
+            pull_request_glyph(PrState::Open),
+            "icons/git-pull-request.svg"
+        );
     }
 
     #[test]
