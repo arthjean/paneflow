@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 100
     environment: ${{ inputs.signed && 'release' || '' }}
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ inputs.sha }}
@@ -83,7 +83,7 @@ jobs:
       # `@master` ref + explicit `toolchain` input so the action reads the
       # same channel everywhere instead of resolving `@stable` at runtime,
       # which drifts each Rust point release and broke fmt mid-v0.2.11.
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           # Must match `rust-toolchain.toml` channel verbatim. The
           # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
