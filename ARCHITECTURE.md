@@ -620,8 +620,9 @@ which leave authentication to the agent's own unmodified binary:
   frame on its agent bus, and the worker stores it. A foreign status line is
   never rewritten, and `usage.plan_limits: false` or removing the integration
   removes the managed one.
-- **The probes.** `usage.refresh`, sent when the sidebar bubble opens or the
-  Usage page refreshes, makes the worker probe each requested account at most
+- **The probes.** `usage.refresh`, sent when the sidebar bubble opens, when the
+  Usage page refreshes, and by the app's automatic refresh, makes the worker
+  probe each requested account at most
   once per 30 s, two at a time, on background threads
   (`usage/probe.rs`): Claude Code runs as
   `claude -p --input-format stream-json --output-format stream-json` with the
@@ -633,6 +634,20 @@ which leave authentication to the agent's own unmodified binary:
 - **Codex rollouts.** At each Codex turn end, and every five minutes while a
   Codex session runs, the worker reads the tail of the newest
   `<CODEX_HOME>/sessions/**/rollout-*.jsonl` for its last `rate_limits`.
+
+The automatic refresh belongs to the app, not the worker, so nothing is probed
+once the window is gone: `start_usage_auto_refresh`
+(`src-app/src/app/usage/mod.rs`) ticks 10 s after launch and then every 60 s
+while the sidebar capsule is shown or the Usage page is open. A tick does no
+I/O; `stale_accounts` (`usage/model.rs`) picks the accounts whose newest
+observation and last automatic request are both at least five minutes old, and
+only those go out in one `usage.refresh`. An account the status line relay
+keeps fresh is therefore never probed, an account that does not answer is
+asked again five minutes later rather than at the next tick, and an account
+billed through an API key or hidden by `usage.sidebar_agents` is not asked at
+all unless the Usage page is open. `usage.sidebar_agents` is an app-side
+filter over what the capsule and its bubble show; the worker keeps storing
+every account.
 
 The newest observation of an account wins. `<home>/usage/plans.json` holds one
 snapshot per account (windows, reset times, observation time, agent version,

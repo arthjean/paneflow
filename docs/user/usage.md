@@ -38,6 +38,11 @@ reach the weekly limit at your current pace, or the share of the week you
 will have used when it resets. **Open usage settings** at the bottom opens
 the Usage page.
 
+The capsule refreshes on its own. About every minute Paneflow checks the age
+of each reading, and asks again for any account whose reading is more than
+five minutes old, so the number is at most a few minutes behind even when you
+use your subscription outside Paneflow.
+
 With both Claude Code and Codex accounts, **Settings › Usage › Sidebar** has
 one switch per agent. Turn an agent off to leave its limits out of the capsule
 and the bubble; the Usage page keeps showing every account. The choice is
@@ -88,9 +93,11 @@ your own login:
   Claude Code passes it the limits it reports, and Paneflow forwards them to
   the capsule. It prints nothing, so your status line stays empty.
 - **The installed Claude Code and Codex binaries.** When you open the bubble
-  or refresh the Usage page, Paneflow asks the installed `claude` for its
-  usage, without sending a message, and asks `codex app-server` for its rate
-  limits. Each account is asked at most once every 30 seconds.
+  or refresh the Usage page, and every five minutes for an account with no
+  newer reading while the capsule is shown, Paneflow asks the installed
+  `claude` for its usage, without sending a message, and asks
+  `codex app-server` for its rate limits. Each account is asked at most once
+  every 30 seconds.
 - **Codex session files.** After each Codex turn, Paneflow reads the limits
   Codex wrote in its newest session file.
 

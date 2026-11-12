@@ -4,7 +4,7 @@ mod page;
 mod render;
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::NaiveDate;
 use gpui::{App, Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
@@ -20,10 +20,15 @@ use serde_json::Value;
 
 use self::activity::Metric;
 use self::model::{
-    InventoryEntry, UsageInputs, UsageView, step_cursor, toggled_agents, usage_view,
+    InventoryEntry, ProbeAttempts, StaleInputs, UsageInputs, UsageView, probe_key, stale_accounts,
+    step_cursor, toggled_agents, usage_view,
 };
 use crate::ui_primitives::ClipLine;
 use crate::{PaneFlowApp, SettingsSection};
+
+const AUTO_REFRESH_FIRST_TICK: Duration = Duration::from_secs(10);
+const AUTO_REFRESH_TICK: Duration = Duration::from_secs(60);
+const AUTO_REFRESH_AGE_MS: u64 = 5 * 60 * 1000;
 
 pub(crate) struct UsagePanel {
     plans: Vec<AccountPlan>,
@@ -49,6 +54,7 @@ pub(crate) struct UsagePanel {
     hover_day: Option<NaiveDate>,
     import: ImportStatus,
     import_focus: FocusHandle,
+    auto_attempts: ProbeAttempts,
     sidebar_agent_focus: [FocusHandle; UsageAgent::ALL.len()],
 }
 
@@ -78,6 +84,7 @@ impl UsagePanel {
             hover_day: None,
             import: ImportStatus::default(),
             import_focus: cx.focus_handle(),
+            auto_attempts: ProbeAttempts::new(),
             sidebar_agent_focus: UsageAgent::ALL.map(|_| cx.focus_handle()),
         }
     }
@@ -238,6 +245,60 @@ impl PaneFlowApp {
             serde_json::to_value(&usage).unwrap_or(Value::Null)
         };
         self.persist_setting(false, "usage", value, cx);
+    }
+
+    pub(crate) fn start_usage_auto_refresh(&self, cx: &mut Context<Self>) {
+        cx.spawn(async |this, cx| {
+            let mut wait = AUTO_REFRESH_FIRST_TICK;
+            loop {
+                smol::Timer::after(wait).await;
+                wait = AUTO_REFRESH_TICK;
+                if this
+                    .update(cx, |app, cx| app.auto_refresh_usage(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn auto_refresh_usage(&mut self, cx: &mut Context<Self>) {
+        let page_open = self.settings_section == Some(SettingsSection::Usage);
+        if !page_open && !self.usage_capsule_enabled() {
+            return;
+        }
+        let now_ms = now_ms();
+        let stale = stale_accounts(&StaleInputs {
+            inventory: &self.usage.inventory,
+            plans: &self.usage.plans,
+            agents: if page_open {
+                None
+            } else {
+                self.sidebar_usage_agents()
+            },
+            attempts: &self.usage.auto_attempts,
+            now_ms,
+            max_age_ms: AUTO_REFRESH_AGE_MS,
+        });
+        if stale.is_empty() {
+            return;
+        }
+        for entry in &stale {
+            self.usage
+                .auto_attempts
+                .insert(probe_key(&entry.account), now_ms);
+        }
+        cx.spawn(async move |this, cx| {
+            let usage = smol::unblock(move || refresh_worker_usage(&stale)).await;
+            let _ = this.update(cx, |app, cx| {
+                if let Some(usage) = usage {
+                    app.apply_snapshot(usage, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn sidebar_usage_view(&self) -> Option<UsageView> {

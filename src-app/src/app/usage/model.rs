@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{MAIN_SEPARATOR, Path};
 
 use paneflow_agent_config::usage::accounts::{
@@ -118,6 +119,12 @@ struct Built {
     observed_at_ms: Option<u64>,
 }
 
+pub(crate) type ProbeAttempts = BTreeMap<(UsageAgent, String), u64>;
+
+pub(crate) fn probe_key(account: &UsageAccount) -> (UsageAgent, String) {
+    (account.agent, account_dir_key(&account.config_dir))
+}
+
 pub(crate) fn agent_shown(agents: Option<&[String]>, agent: UsageAgent) -> bool {
     agents.is_none_or(|agents| agents.iter().any(|slug| slug == agent.runtime_slug()))
 }
@@ -129,6 +136,41 @@ pub(crate) fn toggled_agents(agents: Option<&[String]>, agent: UsageAgent) -> Op
         .map(|candidate| candidate.runtime_slug().to_string())
         .collect();
     (next.len() < UsageAgent::ALL.len()).then_some(next)
+}
+
+pub(crate) struct StaleInputs<'a> {
+    pub(crate) inventory: &'a [InventoryEntry],
+    pub(crate) plans: &'a [AccountPlan],
+    pub(crate) agents: Option<&'a [String]>,
+    pub(crate) attempts: &'a ProbeAttempts,
+    pub(crate) now_ms: u64,
+    pub(crate) max_age_ms: u64,
+}
+
+pub(crate) fn stale_accounts(inputs: &StaleInputs<'_>) -> Vec<InventoryEntry> {
+    inputs
+        .inventory
+        .iter()
+        .filter(|entry| {
+            !entry.account.api_billing && agent_shown(inputs.agents, entry.account.agent)
+        })
+        .filter(|entry| {
+            let key = probe_key(&entry.account);
+            let observed = inputs
+                .plans
+                .iter()
+                .filter(|plan| {
+                    plan.agent == key.0.runtime_slug()
+                        && account_dir_key(Path::new(&plan.config_dir)) == key.1
+                })
+                .map(|plan| plan.received_at_ms.unwrap_or(plan.updated_at_ms))
+                .max();
+            observed
+                .max(inputs.attempts.get(&key).copied())
+                .is_none_or(|latest| inputs.now_ms.saturating_sub(latest) >= inputs.max_age_ms)
+        })
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn usage_view(inputs: &UsageInputs<'_>) -> Option<UsageView> {
@@ -593,6 +635,70 @@ mod tests {
         assert!(view.capsule.accessible_name().starts_with("33% "));
     }
 
+    fn stale(
+        inventory: &[InventoryEntry],
+        plans: &[AccountPlan],
+        attempts: &ProbeAttempts,
+        agents: Option<&[String]>,
+    ) -> Vec<UsageAgent> {
+        stale_accounts(&StaleInputs {
+            inventory,
+            plans,
+            agents,
+            attempts,
+            now_ms: NOW_MS,
+            max_age_ms: 5 * 60_000,
+        })
+        .into_iter()
+        .map(|entry| entry.account.agent)
+        .collect()
+    }
+
+    #[test]
+    fn test_an_account_is_stale_once_its_reading_and_its_last_probe_are_five_minutes_old() {
+        let inventory = [entry(claude_default()), entry(codex_default())];
+        let fresh_claude = plan(
+            UsageAgent::ClaudeCode,
+            "/home/a/.claude",
+            [None, Some(window(20., WEEK, WEEK_RESET))],
+            NOW_MS - 4 * 60_000,
+        );
+        let old_codex = plan(
+            UsageAgent::Codex,
+            "/home/a/.codex",
+            [None, Some(window(90., WEEK, WEEK_RESET))],
+            NOW_MS - 5 * 60_000,
+        );
+        let none = ProbeAttempts::new();
+        assert_eq!(
+            stale(&inventory, &[], &none, None),
+            [UsageAgent::ClaudeCode, UsageAgent::Codex],
+            "an account never read is asked"
+        );
+        let plans = [fresh_claude, old_codex];
+        assert_eq!(stale(&inventory, &plans, &none, None), [UsageAgent::Codex]);
+
+        let mut attempts = ProbeAttempts::new();
+        attempts.insert(probe_key(&codex_default()), NOW_MS - 60_000);
+        assert_eq!(
+            stale(&inventory, &plans, &attempts, None),
+            [],
+            "a probe that did not answer is not repeated every tick"
+        );
+        attempts.insert(probe_key(&codex_default()), NOW_MS - 5 * 60_000);
+        assert_eq!(
+            stale(&inventory, &plans, &attempts, None),
+            [UsageAgent::Codex]
+        );
+
+        let claude_only = ["claude-code".to_string()];
+        assert_eq!(
+            stale(&inventory, &plans, &none, Some(&claude_only)),
+            [],
+            "a hidden agent is not asked"
+        );
+    }
+
     #[test]
     fn test_toggling_an_agent_names_the_shown_ones_and_clears_the_list_when_all_are_shown() {
         let claude_only = toggled_agents(None, UsageAgent::Codex);
@@ -611,6 +717,13 @@ mod tests {
             None,
             "an unknown slug is dropped"
         );
+    }
+
+    #[test]
+    fn test_an_account_billed_through_an_api_key_is_never_stale() {
+        let mut billed = entry(claude_default());
+        billed.account.api_billing = true;
+        assert_eq!(stale(&[billed], &[], &ProbeAttempts::new(), None), []);
     }
 
     #[test]

@@ -681,7 +681,8 @@ and holds the 16 px ring of 4.7 and the most constraining percentage of the
 active space's accounts (the default accounts when the space declares none) in
 13 px Medium with tabular numerals, 7 px apart. `usage.sidebar_agents` narrows
 those accounts, and the bubble's, to the listed agents; with none left the
-capsule is not drawn. Its tooltip, after 800 ms,
+capsule is not drawn. The value stays at most about five minutes old without
+any interaction (ARCHITECTURE.md, "Plan usage and the activity ledger"). Its tooltip, after 800 ms,
 reads `Plan usage: {account}, {window} {percent}`, or `Plan usage: no data
 yet` over a bare track. Its accessible name starts with the visible text
 (`54% plan usage, Claude Code week`) and exposes the expanded state. Tab

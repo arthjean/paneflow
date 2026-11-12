@@ -497,6 +497,7 @@ impl PaneFlowApp {
         app.refresh_space_integrations_at_launch(cx);
         app.start_host_agent_stream();
         app.refresh_usage_inventory(false, cx);
+        app.start_usage_auto_refresh(cx);
         app.start_write_approval_stream();
 
         app.emit_app_started(is_first_run_for_telemetry);
