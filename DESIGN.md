@@ -557,7 +557,11 @@ workspace and tab rows lose their status badge, their matrix, the title
 shimmer and the status tooltip, and a folded workspace's pull request takes
 the trailing slot by the same rule as a row with no agent. The Agents section, the hidden-space
 attention button, the pane header marker, notifications and
-`Cmd/Ctrl+Shift+J` do not read it.
+`Cmd/Ctrl+Shift+J` do not read it. `Shimmer` follows `Status` behind the
+`ai-magic` glyph (`sidebar_show.shimmer`, on by default): a working tab's
+title rests in `muted` while a band sweeps it up to white, or to black on a
+light theme, the extreme on the side of `text`. Turned off, the title keeps
+`text` and holds still, and the matrix alone says the agent works.
 
 The Agents section sits between the workspace tree and the footer, with no
 separator. Its 36 px header (padding 8 horizontal) holds a 20 px toggle with
@@ -568,8 +572,9 @@ At the header's trailing edge, a 22 px button at radius 7 holds the 15 px
 Hugeicons `preference-horizontal` glyph in `muted` (`Customize agent rows`).
 It opens a 172 px menu 10 px above itself, right-aligned, on the usage
 bubble's fill (the active tab tint under Mica or Blended, the menu surface
-under Themed), that toggles the runtime logo and the workspace suffix
-(`sidebar_show.agent_logo`, `agent_workspace`, both on by default). A row
+under Themed), that toggles the runtime logo, the workspace suffix and the
+working title's shimmer (`sidebar_show.agent_logo`, `agent_workspace`,
+`agent_shimmer`, all on by default). A row
 always shows its status: hiding it would hide what the section is grouped by,
 and `sidebar_show.agents` already hides the whole section. Either toggle
 leaves a row 32 px tall. Clicking the header collapses the section to that
@@ -601,8 +606,9 @@ gap between ranks exists any more. A title and workspace wider than the row
 end in an ellipsis on one line, the workspace suffix shrinking first, and the
 tooltip of a long name gives `title · workspace` in full. The status is the tree's
 `Need you`, `Error` or `Done` badge; for `Working`, the matrix in the
-runtime's tint with the title shimmering, both holding still under
-`reduce_motion`; for `Idle`, nothing. A finished row moves from `Done` to
+runtime's tint with the title shimmering as a tab's does, `muted` under a
+white band, both holding still under `reduce_motion` and the title keeping
+`text` when `sidebar_show.agent_shimmer` is off; for `Idle`, nothing. A finished row moves from `Done` to
 `Idle` once its tab has been seen. No field an OSC 7501 report declares
 (`title`, `message`, `app`) reaches a header or a row. A recognized agent that
 has declared nothing for 3 s shows a `No status` status badge in `muted`; its

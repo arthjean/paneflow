@@ -57,6 +57,8 @@ pub(crate) fn sidebar_show_value(show: SidebarShow) -> serde_json::Value {
         "usage": show.usage_enabled(),
         "agent_logo": show.agent_logo_enabled(),
         "agent_workspace": show.agent_workspace_enabled(),
+        "shimmer": show.shimmer_enabled(),
+        "agent_shimmer": show.agent_shimmer_enabled(),
     })
 }
 
@@ -71,11 +73,16 @@ pub(super) enum SidebarShowLine {
     Usage,
     AgentLogo,
     AgentWorkspace,
+    Shimmer,
+    AgentShimmer,
 }
 
 impl SidebarShowLine {
     fn is_agent_row_detail(self) -> bool {
-        matches!(self, Self::AgentLogo | Self::AgentWorkspace)
+        matches!(
+            self,
+            Self::AgentLogo | Self::AgentWorkspace | Self::AgentShimmer
+        )
     }
 
     fn toggled(self, mut show: SidebarShow) -> SidebarShow {
@@ -91,6 +98,8 @@ impl SidebarShowLine {
             Self::AgentWorkspace => {
                 show.agent_workspace = Some(!show.agent_workspace_enabled());
             }
+            Self::Shimmer => show.shimmer = Some(!show.shimmer_enabled()),
+            Self::AgentShimmer => show.agent_shimmer = Some(!show.agent_shimmer_enabled()),
         }
         show
     }
@@ -106,11 +115,15 @@ impl SidebarShowLine {
             Self::Usage => show.usage_enabled(),
             Self::AgentLogo => show.agent_logo_enabled(),
             Self::AgentWorkspace => show.agent_workspace_enabled(),
+            Self::Shimmer => show.shimmer_enabled(),
+            Self::AgentShimmer => show.agent_shimmer_enabled(),
         }
     }
 }
 
-const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 5] = [
+pub(super) const SHIMMER_ICON: &str = "icons/palette/ai-magic.svg";
+
+const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 6] = [
     (
         "Branch",
         "icons/git-branch-sidebar.svg",
@@ -127,6 +140,7 @@ const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 5] = [
         "icons/palette/notification-01.svg",
         SidebarShowLine::Status,
     ),
+    ("Shimmer", SHIMMER_ICON, SidebarShowLine::Shimmer),
     (
         "Indent guide",
         "icons/list.svg",
@@ -327,6 +341,8 @@ pub(super) fn render_show_option(
         SidebarShowLine::Usage => "sidebar-show-usage",
         SidebarShowLine::AgentLogo => "agents-show-logo",
         SidebarShowLine::AgentWorkspace => "agents-show-workspace",
+        SidebarShowLine::Shimmer => "sidebar-show-shimmer",
+        SidebarShowLine::AgentShimmer => "agents-show-shimmer",
     };
 
     menu_row(id, false, ui)
@@ -401,15 +417,24 @@ mod tests {
                 "usage": true,
                 "agent_logo": true,
                 "agent_workspace": true,
+                "shimmer": true,
+                "agent_shimmer": true,
             })
         );
     }
 
     #[test]
-    fn the_show_submenu_lists_status_between_pr_and_the_indent_guide() {
+    fn the_show_submenu_lists_status_and_its_shimmer_between_pr_and_the_indent_guide() {
         assert_eq!(
             SHOW_SUBMENU_LINES.map(|(label, _, _)| label),
-            ["Branch", "Diffstat", "PR", "Status", "Indent guide"]
+            [
+                "Branch",
+                "Diffstat",
+                "PR",
+                "Status",
+                "Shimmer",
+                "Indent guide"
+            ]
         );
         assert_eq!(
             SHOW_SUBMENU_SECTIONS.map(|(label, _, _)| label),
@@ -529,6 +554,37 @@ mod tests {
         assert!(!next.sidebar_show.agent_workspace_enabled());
         assert!(next.sidebar_show.agent_logo_enabled());
         assert!(next.sidebar_show.agents_enabled());
+    }
+
+    #[test]
+    fn each_shimmer_switch_writes_its_own_key_and_reopens_its_own_menu() {
+        let config = PaneFlowConfig::default();
+        assert!(SidebarShowLine::Shimmer.checked(config.sidebar_show));
+        assert!(SidebarShowLine::AgentShimmer.checked(config.sidebar_show));
+        assert!(!SidebarShowLine::Shimmer.is_agent_row_detail());
+        assert!(SidebarShowLine::AgentShimmer.is_agent_row_detail());
+
+        let tree_still = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_show",
+            sidebar_show_value(SidebarShowLine::Shimmer.toggled(config.sidebar_show)),
+        )
+        .expect("written");
+        assert!(!tree_still.sidebar_show.shimmer_enabled());
+        assert!(tree_still.sidebar_show.agent_shimmer_enabled());
+        assert!(tree_still.sidebar_show.status_enabled());
+
+        let both_still = crate::config_writer::with_field(
+            &tree_still,
+            false,
+            "sidebar_show",
+            sidebar_show_value(SidebarShowLine::AgentShimmer.toggled(tree_still.sidebar_show)),
+        )
+        .expect("written");
+        assert!(!both_still.sidebar_show.shimmer_enabled());
+        assert!(!both_still.sidebar_show.agent_shimmer_enabled());
+        assert!(crate::assets::Assets::get(SHIMMER_ICON).is_some());
     }
 
     #[test]

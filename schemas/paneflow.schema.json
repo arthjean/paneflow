@@ -158,6 +158,16 @@
           "type": ["boolean", "null"],
           "description": "Show the workspace name after each Agents section row's title. Default true.",
           "default": true
+        },
+        "shimmer": {
+          "type": ["boolean", "null"],
+          "description": "Shimmer the title of a tab row while its agent works: the title turns muted and a bright band sweeps across it. false keeps the title still in its usual color; the working matrix stays. Default true.",
+          "default": true
+        },
+        "agent_shimmer": {
+          "type": ["boolean", "null"],
+          "description": "Shimmer the title of an Agents section row while its agent works, the same way. false keeps the title still in its usual color; the working matrix stays. Default true.",
+          "default": true
         }
       }
     },

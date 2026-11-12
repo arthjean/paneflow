@@ -1391,7 +1391,6 @@ impl Pane {
                     label.clone(),
                     ui.muted,
                     ui.text,
-                    false,
                     label.clone(),
                 ))
                 .into_any_element()

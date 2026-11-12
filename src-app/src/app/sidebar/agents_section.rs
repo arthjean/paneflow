@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
-use super::customize_menu::{SidebarShowLine, render_show_option};
+use super::customize_menu::{SHIMMER_ICON, SidebarShowLine, render_show_option};
 use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
@@ -213,18 +213,21 @@ pub(super) enum AgentRowStatus {
 pub(super) struct AgentRowDetails {
     pub(super) logo: bool,
     pub(super) workspace: bool,
+    pub(super) shimmer: bool,
 }
 
 impl AgentRowDetails {
     pub(super) const ALL: Self = Self {
         logo: true,
         workspace: true,
+        shimmer: true,
     };
 
     pub(super) fn from_show(show: paneflow_config::schema::SidebarShow) -> Self {
         Self {
             logo: show.agent_logo_enabled(),
             workspace: show.agent_workspace_enabled(),
+            shimmer: show.agent_shimmer_enabled(),
         }
     }
 }
@@ -465,8 +468,12 @@ fn agent_row_spoken_state(row: &AgentRow) -> &'static str {
     }
 }
 
-fn agent_title_shimmers(status: AgentRowStatus, reduce_motion: bool) -> bool {
-    status == AgentRowStatus::Lane(SidebarAgentState::Thinking) && !reduce_motion
+fn agent_title_shimmers(
+    status: AgentRowStatus,
+    details: AgentRowDetails,
+    reduce_motion: bool,
+) -> bool {
+    details.shimmer && status == AgentRowStatus::Lane(SidebarAgentState::Thinking) && !reduce_motion
 }
 
 fn agent_workspace_suffix(workspace: &str) -> String {
@@ -770,16 +777,22 @@ fn render_agent_row(
         .font_weight(FontWeight::MEDIUM)
         .text_color(ui.text)
         .debug_selector(move || format!("agent-title-{surface_id}"));
-    let shimmer = agent_title_shimmers(row.status, crate::ui_primitives::reduce_motion());
+    let shimmer = agent_title_shimmers(
+        row.status,
+        row.details,
+        crate::ui_primitives::reduce_motion(),
+    );
     let title = if shimmer {
         mark_shimmer_drawn();
-        title_text.child(crate::ui_primitives::shimmer::shimmer_text(
-            SharedString::from(row.title.clone()),
-            ui.text,
-            crate::ui_primitives::shimmer::shimmer_glint(ui.text),
-            true,
-            SharedString::from(row.title.clone()),
-        ))
+        let (resting, glint) = crate::ui_primitives::shimmer::working_title_shimmer(ui);
+        title_text
+            .text_color(resting)
+            .child(crate::ui_primitives::shimmer::shimmer_text(
+                SharedString::from(row.title.clone()),
+                resting,
+                glint,
+                SharedString::from(row.title.clone()),
+            ))
     } else {
         title_text.child(row.title.clone())
     };
@@ -1443,6 +1456,14 @@ fn render_agents_display_menu(
             show.agent_workspace_enabled(),
             ui,
             cx,
+        ))
+        .child(render_show_option(
+            "Shimmer",
+            SHIMMER_ICON,
+            SidebarShowLine::AgentShimmer,
+            show.agent_shimmer_enabled(),
+            ui,
+            cx,
         ));
     gpui::deferred(crate::ui_primitives::menu_reveal(
         "agents-display-menu-reveal",
@@ -1607,7 +1628,28 @@ mod tests {
             AgentRowDetails {
                 logo: true,
                 workspace: false,
+                shimmer: true,
             }
+        );
+        let still = paneflow_config::schema::SidebarShow {
+            agent_shimmer: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            AgentRowDetails::from_show(still),
+            AgentRowDetails {
+                shimmer: false,
+                ..AgentRowDetails::ALL
+            }
+        );
+        let tree_still = paneflow_config::schema::SidebarShow {
+            shimmer: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            AgentRowDetails::from_show(tree_still),
+            AgentRowDetails::ALL,
+            "the tree switch leaves the Agents section alone"
         );
         assert_eq!(
             AgentRowDetails::from_show(Default::default()),
@@ -2783,8 +2825,14 @@ mod tests {
     #[test]
     fn only_a_working_row_shimmers_and_it_holds_still_under_reduce_motion() {
         let working = AgentRowStatus::Lane(SidebarAgentState::Thinking);
-        assert!(agent_title_shimmers(working, false));
-        assert!(!agent_title_shimmers(working, true));
+        let all = AgentRowDetails::ALL;
+        let switched_off = AgentRowDetails {
+            shimmer: false,
+            ..all
+        };
+        assert!(agent_title_shimmers(working, all, false));
+        assert!(!agent_title_shimmers(working, all, true));
+        assert!(!agent_title_shimmers(working, switched_off, false));
         for still in [
             AgentRowStatus::Lane(SidebarAgentState::NeedsInput),
             AgentRowStatus::Lane(SidebarAgentState::Errored),
@@ -2792,7 +2840,7 @@ mod tests {
             AgentRowStatus::Silent,
             AgentRowStatus::NoStatus,
         ] {
-            assert!(!agent_title_shimmers(still, false), "{still:?}");
+            assert!(!agent_title_shimmers(still, all, false), "{still:?}");
         }
     }
 

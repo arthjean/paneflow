@@ -9,6 +9,22 @@ fn tab_diffstat_visible(
     show.diffstat_enabled() && (stats.insertions > 0 || stats.deletions > 0)
 }
 
+fn tab_title_shimmers(
+    show: paneflow_config::schema::SidebarShow,
+    lane: Option<&Lane>,
+    reduce_motion: bool,
+) -> bool {
+    show.shimmer_enabled()
+        && !reduce_motion
+        && matches!(
+            lane,
+            Some(Lane::Agent(SidebarAgentSummary {
+                state: SidebarAgentState::Thinking,
+                ..
+            }))
+        )
+}
+
 pub(crate) fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
     if tab.title().trim().is_empty() {
         format!("Tab {}", tab_idx + 1)
@@ -73,14 +89,11 @@ impl PaneFlowApp {
         };
         let text_color = ui.text;
         let shimmer_title = !is_renaming
-            && !crate::ui_primitives::reduce_motion()
             && self.sidebar_filter_input.read(cx).value().trim().is_empty()
-            && matches!(
-                lane,
-                Some(Lane::Agent(SidebarAgentSummary {
-                    state: SidebarAgentState::Thinking,
-                    ..
-                }))
+            && tab_title_shimmers(
+                self.cached_config.sidebar_show,
+                lane.as_ref(),
+                crate::ui_primitives::reduce_motion(),
             );
 
         let title_el = if is_renaming {
@@ -98,15 +111,15 @@ impl PaneFlowApp {
                 .font_weight(FontWeight::MEDIUM);
             if shimmer_title {
                 lane::mark_shimmer_drawn();
-                title_text.text_color(text_color).child(
-                    crate::ui_primitives::shimmer::shimmer_text(
+                let (resting, glint) = crate::ui_primitives::shimmer::working_title_shimmer(ui);
+                title_text
+                    .text_color(resting)
+                    .child(crate::ui_primitives::shimmer::shimmer_text(
                         SharedString::from(title.clone()),
-                        text_color,
-                        crate::ui_primitives::shimmer::shimmer_glint(text_color),
-                        true,
+                        resting,
+                        glint,
                         SharedString::from(title.clone()),
-                    ),
-                )
+                    ))
             } else {
                 title_text
                     .text_color(text_color)
@@ -432,7 +445,44 @@ mod tests {
             usage: None,
             agent_logo: None,
             agent_workspace: None,
+            shimmer: None,
+            agent_shimmer: None,
         }
+    }
+
+    fn lane_in(state: SidebarAgentState) -> Lane {
+        Lane::Agent(SidebarAgentSummary {
+            state,
+            count: 1,
+            tint: None,
+        })
+    }
+
+    #[test]
+    fn a_working_tab_title_shimmers_unless_the_switch_or_reduce_motion_holds_it_still() {
+        let working = lane_in(SidebarAgentState::Thinking);
+        let on = paneflow_config::schema::SidebarShow::default();
+        let off = paneflow_config::schema::SidebarShow {
+            shimmer: Some(false),
+            ..Default::default()
+        };
+        let agents_only = paneflow_config::schema::SidebarShow {
+            agent_shimmer: Some(false),
+            ..Default::default()
+        };
+        assert!(tab_title_shimmers(on, Some(&working), false));
+        assert!(!tab_title_shimmers(on, Some(&working), true));
+        assert!(!tab_title_shimmers(off, Some(&working), false));
+        assert!(
+            tab_title_shimmers(agents_only, Some(&working), false),
+            "the Agents section switch leaves the tree alone"
+        );
+        assert!(!tab_title_shimmers(on, None, false));
+        assert!(!tab_title_shimmers(
+            on,
+            Some(&lane_in(SidebarAgentState::Finished)),
+            false
+        ));
     }
 
     fn dirty() -> crate::workspace::GitDiffStats {

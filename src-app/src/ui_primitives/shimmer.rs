@@ -11,9 +11,7 @@ const SHIMMER_FRAME: Duration = Duration::from_millis(animation_clock::ANIMATION
 const SHIMMER_SWEEP: Duration = Duration::from_millis(3_400);
 const SHIMMER_HALF_WIDTH: f32 = 0.36;
 const SHIMMER_STRIP_WIDTH: f32 = 2.0;
-const SHIMMER_GLOW_ALPHA: f32 = 0.45;
 const SHIMMER_INK_OVERHANG_EM: f32 = 0.2;
-const SHIMMER_GLOW_OFFSETS: [(f32, f32); 4] = [(-0.5, 0.0), (0.5, 0.0), (0.0, -0.5), (0.0, 0.5)];
 const SHIMMER_COPY_SPACING: f32 = 3.0;
 const SHIMMER_TRAVEL: f32 = 6.0;
 
@@ -24,6 +22,10 @@ pub(crate) fn shimmer_glint(text: Hsla) -> Hsla {
         gpui::black()
     };
     extreme.opacity(text.a)
+}
+
+pub(crate) fn working_title_shimmer(ui: crate::theme::UiColors) -> (Hsla, Hsla) {
+    (ui.muted, shimmer_glint(ui.text))
 }
 
 #[cfg(test)]
@@ -78,8 +80,7 @@ pub(crate) fn shimmer_text(
     label: SharedString,
     base: Hsla,
     peak: Hsla,
-    glow: bool,
-    text: impl IntoElement,
+    sizer: impl IntoElement,
 ) -> AnyElement {
     let phase = shimmer_phase(animation_clock::animation_epoch().elapsed());
     #[cfg(test)]
@@ -120,25 +121,30 @@ pub(crate) fn shimmer_text(
             };
             let text_width = f32::from(line.width().min(available));
             let strip_count = (text_width / SHIMMER_STRIP_WIDTH).ceil() as usize;
-            let strips = (0..strip_count)
-                .filter_map(|ix| {
-                    let left = ix as f32 * SHIMMER_STRIP_WIDTH;
-                    let right = ((ix + 1) as f32 * SHIMMER_STRIP_WIDTH).min(text_width);
-                    let x = (left + right) * 0.5 / text_width.max(1.0);
-                    let amount = shimmer_amount(x, phase);
-                    (amount > 0.001).then(|| Strip {
-                        left,
-                        right,
-                        color: lerp_color(base, peak, amount),
-                    })
-                })
-                .collect::<Vec<_>>();
-            (line, strips, text_width)
-        },
-        move |bounds, (line, strips, text_width), window, _| {
-            if strips.is_empty() {
-                return;
+            let mut strips: Vec<Strip> = Vec::new();
+            for ix in 0..strip_count {
+                let left = ix as f32 * SHIMMER_STRIP_WIDTH;
+                let ink_right = ((ix + 1) as f32 * SHIMMER_STRIP_WIDTH).min(text_width);
+                let right = if ix + 1 == strip_count {
+                    f32::from(available)
+                } else {
+                    ink_right
+                };
+                let x = (left + ink_right) * 0.5 / text_width.max(1.0);
+                let amount = shimmer_amount(x, phase);
+                let color = if amount > 0.001 {
+                    lerp_color(base, peak, amount)
+                } else {
+                    base
+                };
+                match strips.last_mut() {
+                    Some(last) if last.color == color => last.right = right,
+                    _ => strips.push(Strip { left, right, color }),
+                }
             }
+            (line, strips)
+        },
+        move |bounds, (line, strips), window, _| {
             let line_height = window.line_height();
             let top = bounds.origin.y + (bounds.size.height - line_height) / 2.;
             let baseline = top + (line_height - line.ascent - line.descent) / 2. + line.ascent;
@@ -200,28 +206,6 @@ pub(crate) fn shimmer_text(
                         }
                     });
                 }
-                if !glow {
-                    return;
-                }
-                for glyph in &glyphs {
-                    let center = (glyph.left + glyph.right) / 2. - bounds.origin.x;
-                    let amount = shimmer_amount(f32::from(center) / text_width.max(1.0), phase);
-                    if amount <= 0.001 {
-                        continue;
-                    }
-                    let color = peak.opacity(peak.a * SHIMMER_GLOW_ALPHA * amount);
-                    for (dx, dy) in SHIMMER_GLOW_OFFSETS {
-                        #[cfg(test)]
-                        GLYPH_PAINTS.with(|count| count.set(count.get() + 1));
-                        let _ = window.paint_glyph(
-                            point(glyph.origin.x + px(dx), glyph.origin.y + px(dy)),
-                            glyph.font_id,
-                            glyph.glyph_id,
-                            font_size,
-                            color,
-                        );
-                    }
-                }
             });
         },
     )
@@ -231,7 +215,8 @@ pub(crate) fn shimmer_text(
         .relative()
         .min_w_0()
         .overflow_hidden()
-        .child(text)
+        .text_color(gpui::transparent_black())
+        .child(sizer)
         .child(overlay)
         .into_any_element()
 }
@@ -306,17 +291,13 @@ mod tests {
                     label.clone(),
                     text,
                     shimmer_glint(text),
-                    true,
                     label,
                 ))
         }
     }
 
-    #[gpui::test]
-    fn a_shimmer_frame_shapes_its_line_once_and_paints_only_the_glyphs_under_the_band(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        PINNED_PHASE.with(|phase| phase.set(Some(0.5)));
+    fn shapes_and_paints_of_one_frame_at(phase: f32, cx: &mut gpui::TestAppContext) -> (u64, u64) {
+        PINNED_PHASE.with(|pinned| pinned.set(Some(phase)));
         let (view, cx) = cx.add_window_view(|_, _| ShimmerRow);
         cx.simulate_resize(size(px(400.), px(80.)));
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -327,8 +308,18 @@ mod tests {
             window.refresh();
             window.draw(cx).clear(cx);
         });
-        let shapes = LINE_SHAPES.with(|count| count.get());
-        let paints = GLYPH_PAINTS.with(|count| count.get());
+        PINNED_PHASE.with(|pinned| pinned.set(None));
+        (
+            LINE_SHAPES.with(|count| count.get()),
+            GLYPH_PAINTS.with(|count| count.get()),
+        )
+    }
+
+    #[gpui::test]
+    fn a_shimmer_frame_shapes_its_line_once_and_repaints_only_the_glyphs_a_strip_crosses(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (shapes, paints) = shapes_and_paints_of_one_frame_at(0.5, cx);
         assert_eq!(
             shapes, 2,
             "one shape for the label and one for its truncation, however many strips the band spans"
@@ -336,10 +327,36 @@ mod tests {
         let max_strips = 240 / SHIMMER_STRIP_WIDTH as u64;
         let glyphs = ROW_LABEL.len() as u64;
         assert!(
-            paints <= 3 * max_strips + SHIMMER_GLOW_OFFSETS.len() as u64 * glyphs,
+            paints <= 3 * max_strips + glyphs,
             "a strip repaints only the glyphs it crosses: {paints}"
         );
-        PINNED_PHASE.with(|phase| phase.set(None));
+    }
+
+    #[gpui::test]
+    fn between_two_passes_the_resting_text_is_inked_once_so_no_stroke_gains_weight(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let band_off_the_text = 0.75;
+        assert_eq!(shimmer_amount(0.0, band_off_the_text), 0.0);
+        assert_eq!(shimmer_amount(1.0, band_off_the_text), 0.0);
+        let (_, paints) = shapes_and_paints_of_one_frame_at(band_off_the_text, cx);
+        let glyphs_and_ellipsis = ROW_LABEL.len() as u64 + 1;
+        assert!(
+            (1..=glyphs_and_ellipsis).contains(&paints),
+            "one resting span inks each visible glyph exactly once: {paints}"
+        );
+    }
+
+    #[test]
+    fn a_working_title_rests_muted_and_glints_to_the_extreme_of_the_text_color() {
+        let ui = crate::theme::ui_colors();
+        let (base, peak) = working_title_shimmer(ui);
+        assert_eq!(base, ui.muted);
+        assert_eq!(peak, shimmer_glint(ui.text));
+        assert_ne!(
+            base, ui.text,
+            "the resting title steps back from the text color"
+        );
     }
 
     #[test]

@@ -115,6 +115,12 @@ of the header opens **Customize agent rows**, which shows or hides each row's
 logo and workspace name, stored in `sidebar_show.agent_logo` and
 `sidebar_show.agent_workspace`. A row always shows its status.
 
+While an agent works, its title turns gray and a bright band sweeps across
+it. Turn that off for tab rows with **Customize sidebar > Show > Shimmer**
+(`sidebar_show.shimmer`) and for the Agents section with **Customize agent
+rows > Shimmer** (`sidebar_show.agent_shimmer`): the title then stays still
+in its usual color, and the working animation next to it remains.
+
 Workspace and tab rows in the tree show the same status as the Agents
 section. To see each status only once, turn off **Customize sidebar > Show >
 Status** or set [`sidebar_show.status`](/docs/configuration/schema) to
