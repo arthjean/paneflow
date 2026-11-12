@@ -1,0 +1,535 @@
+name: release-windows
+
+# Called by `release.yml`, never on its own.
+# The Windows x86_64 leg, signed through Azure Artifact Signing, and the two MSI smokes.
+# It receives only the secrets of its platform, by name. A job that signs
+# declares the `release` environment, whose deployment policy admits `main`
+# and `v*` tags, and the secrets of that environment then replace the empty
+# values a dry-run from another ref passes.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: "Commit to build, resolved once by the preflight job"
+        required: true
+        type: string
+      tag:
+        description: "Release tag, v followed by the version"
+        required: true
+        type: string
+      mode:
+        description: "release for a tag push, dry-run for a dispatch"
+        required: true
+        type: string
+      msi_version:
+        description: "MSI ProductVersion: the release version, or the upgrade version of a dry-run"
+        required: true
+        type: string
+      signed:
+        description: "True when the run may use the release environment and its signing secrets"
+        required: true
+        type: boolean
+    secrets:
+      POSTHOG_API_KEY:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_TRUSTED_SIGNING_ENDPOINT:
+        required: false
+      AZURE_TRUSTED_SIGNING_ACCOUNT:
+        required: false
+      AZURE_TRUSTED_SIGNING_CERT_PROFILE:
+        required: false
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_MODE: ${{ inputs.mode }}
+  WINDOWS_MSI_VERSION: ${{ inputs.msi_version }}
+
+jobs:
+  build:
+    name: Build x86_64-pc-windows-msvc
+    runs-on: windows-2022
+    timeout-minutes: 50
+    environment: ${{ inputs.signed && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+
+      # Every release leg links the published archive for its own target, which
+      # fetch-libghostty verifies against `archive_sha256` in the manifest.
+      # The Linux legs used to rebuild it from the Ghostty source, twice, to
+      # reproduce those same bytes: 12 minutes on the slowest leg.
+      # `libghostty-linux.yml` owns that reproducibility proof, on every
+      # recipe change and every night.
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Setup MSVC developer environment
+        shell: pwsh
+        run: ./scripts/msvc-dev-env.ps1 -Arch x64
+
+      - name: Verify Windows compiler and signing tools
+        shell: pwsh
+        run: ./scripts/check-windows-build-tools.ps1
+
+      # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
+      # `@master` ref + explicit `toolchain` input so the action reads the
+      # same channel everywhere instead of resolving `@stable` at runtime,
+      # which drifts each Rust point release and broke fmt mid-v0.2.11.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          # Must match `rust-toolchain.toml` channel verbatim. The
+          # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
+          # requires rustc >= 1.92, so this can't drift below 1.92.
+          toolchain: "1.98.0"
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      # Regenerate every icon asset (.png hicolor set, .icns, .ico,
+      # rust-embed runtime icon) from the master PNGs under
+      # `assets/icons/master/`. Script is a no-op when no master is present,
+      # so this step is safe to land before the masters are committed.
+      # Placement rationale: runs BEFORE `Build release binary` and all
+      # packaging steps, so cargo-deb / cargo-generate-rpm / bundle-macos.sh
+      # / cargo-wix all see fresh icons from this same checkout.
+      # `shell: bash` because the script is bash: it runs under Git Bash
+      # and consumes the `magick` binary preinstalled on windows-2022.
+      - name: Regenerate icons from master
+        shell: bash
+        run: bash scripts/build-icons.sh
+
+      # ─── Windows MSI/signing gate (early) ────────────────────────────────
+      # Detect whether the 6 Azure Trusted Signing secrets are populated
+      # BEFORE any MSI/packaging step runs. When any are missing, every
+      # subsequent Windows-only packaging step (Preflight WiX, Install
+      # cargo-wix, Produce MSI, Sign, Verify, Stage) is skipped - only
+      # the Build release binary step remains, which preserves the Windows
+      # release compile without noisy red failures from cargo-wix or
+      # unsigned-MSI artifacts.
+      #
+      # Routing: secrets go through env: so an unset secret resolves to
+      # an empty string (not the literal `${{ secrets.NAME }}` placeholder
+      # which would always look "present"). The 6 names match what
+      # `scripts/sign-windows.ps1` reads at runtime - see
+      # `memory/project_windows_signing.md` for the canonical list.
+      - name: Detect Windows signing secrets
+        id: windows_signing
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+        run: scripts/detect-windows-signing.sh
+
+      # Windows Application Control / Smart App Control evaluates the helper
+      # executable that actually runs from the PaneFlow terminal PATH. The
+      # outer `paneflow.exe` signature does not cover helper bytes after
+      # extraction, so sign the embedded helper artifacts before the app build
+      # ingests them via rust-embed. The build and the signing are two steps
+      # so that no `cargo` process, and no build script it runs, ever sees an
+      # Azure signing secret.
+      - name: Build Windows embedded helpers
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: ./scripts/build-windows-helpers.ps1 -Target $env:TARGET
+
+      - name: Sign and stage Windows embedded helpers
+        id: windows_helpers
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: x86_64-pc-windows-msvc
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+        run: ./scripts/stage-windows-helpers.ps1 -Target $env:TARGET
+
+      - name: Validate Windows helper packaging set
+        if: steps.windows_helpers.outputs.helpers_prepared == 'true'
+        shell: pwsh
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: ./scripts/check-wix-helper-set.ps1 -Target $env:TARGET
+
+      - name: Build release binary (Windows)
+        shell: pwsh
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+          TARGET: x86_64-pc-windows-msvc
+          WINDOWS_HELPERS_PREPARED: ${{ steps.windows_helpers.outputs.helpers_prepared }}
+        run: |
+          if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
+              $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
+          }
+          cargo build --release -p paneflow-app -p paneflow-host --locked --target $env:TARGET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ─── US-016 Windows MSI: toolchain preflight ─────────────────────────
+      # Gated on `windows_signing.signing_available` (set above): when the
+      # Azure secrets aren't populated yet, we don't bother with WiX or
+      # cargo-wix at all - the build/test/clippy validation above is what
+      # we need for cross-platform coverage. Once the secrets land, this
+      # whole chain re-activates without any other workflow change.
+      #
+      # windows-2022 preinstalls WiX 3.14.1.8722. signtool.exe lives in
+      # the Windows 10/11 SDK but is NOT resolved here: sign-windows.ps1
+      # does its own SDK scan (defense in depth - if the runner image
+      # ever drops it, the script's clear error is better than a silent
+      # PATH mismatch between this step and the script). Preflight only
+      # handles WiX because cargo-wix errors are cryptic otherwise.
+      - name: Preflight WiX v3 toolchain
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        run: ./scripts/preflight-wix.ps1
+
+      # cargo-wix itself is NOT preinstalled on windows-2022. Pinned to
+      # 0.3.9 (latest 2025-03 release; no 0.4.x exists yet that supports
+      # WiX v4 - tracked upstream as volks73/cargo-wix#202). The release
+      # runs without a cache, so this compiles for about 2 min.
+      - name: Install cargo-wix (pinned)
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        run: |
+          cargo install cargo-wix --version 0.3.9 --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate WiX per-machine invariants
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        run: ./scripts/check-wix-per-machine.ps1
+
+      # ─── Windows Authenticode: sign the installed executable first ───────
+      # Smart App Control evaluates the installed application binary, not just
+      # the container MSI. WiX embeds this exact release binary, so sign it
+      # before `cargo wix --no-build` packages it into Program Files.
+      - name: Sign Windows executable
+        id: sign_windows_exe
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+        run: ./scripts/sign-windows-executables.ps1
+
+      - name: Verify Windows libghostty release payload
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: ./scripts/verify-windows-release-payload.ps1 -Target $env:TARGET
+
+      # ─── US-016 AC-1: Produce MSI ────────────────────────────────────────
+      # cargo-wix reads [package.metadata.wix] in src-app/Cargo.toml (US-013)
+      # and `packaging/wix/main.wxs` to drive candle → light. The
+      # `--install-version` flag overrides the MSI's ProductVersion with
+      # the bare semver (no leading `v`) - required because WiX's
+      # ProductVersion schema rejects `v0.1.7` and accepts only `0.1.7`.
+      #
+      # Output: `target/wix/paneflow-<ver>-x86_64.msi`. The `--target`
+      # flag tells cargo-wix which already-signed release binary to pick up
+      # (`target/x86_64-pc-windows-msvc/release/paneflow.exe`) but the
+      # installer output directory is always `target/wix/` regardless -
+      # do NOT assume the triple folder.
+      - name: Produce MSI
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
+        run: ./scripts/build-msi.ps1 -Version $env:MSI_VERSION
+
+      # ─── US-016 AC-2 / US-024 AC-1+AC-3: Sign MSI via Azure Trusted Signing ───
+      # Invokes the US-015 script, which fetches the
+      # `Microsoft.ArtifactSigning.Client` NuGet (pinned 1.0.128) into a
+      # temp dir, writes a metadata.json with ExcludeCredentials, and
+      # calls `signtool.exe sign` with the 3-host timestamp retry chain
+      # (acs.microsoft.com → digicert → sectigo) - satisfying US-024 AC-3.
+      # Verification (`signtool verify /pa` + `Get-AuthenticodeSignature`)
+      # is embedded in the script; an additional standalone verify step
+      # below makes it visible at the workflow level (AC-6).
+      #
+      # Why script-not-action (US-024 AC-1 reconciliation): the official
+      # `azure/trusted-signing-action` is a thin wrapper around the same
+      # `Microsoft.ArtifactSigning.Client` NuGet, but accepts only ONE
+      # `timestamp-rfc3161` URL - it cannot satisfy AC-3's 3-server
+      # fallback chain. The script invokes the same official Microsoft
+      # client at a lower level (signtool /dlib), and is therefore the
+      # canonical Azure Trusted Signing integration here. See
+      # `docs/release/windows-signing.md §"Why a script and not the
+      # official action"` for the full rationale.
+      #
+      # Secrets (all 6 required - populated per US-014 onboarding):
+      #   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+      #       - service principal for EnvironmentCredential auth
+      #   AZURE_TRUSTED_SIGNING_ENDPOINT / _ACCOUNT / _CERT_PROFILE
+      #       - addressing for the code-signing account / cert profile
+      #
+      # AC-5: when `signing_available` is false the Windows leg still
+      # builds, tests, and lints, but skips MSI packaging/signing/staging.
+      # The banner step below records that no Windows installer was
+      # published. We do not ship unsigned Windows installers.
+      - name: Sign MSI
+        id: sign_msi
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: ./scripts/sign-msi.ps1 -Tag $env:TAG
+
+      # ─── US-024 AC-6: Verify MSI signature at workflow level ─────────────
+      # `sign-windows.ps1` already runs `signtool verify /pa /v` + an
+      # `Get-AuthenticodeSignature` Authenticode check internally - this
+      # step re-runs the bare `signtool verify /pa /v` so the verification
+      # output is unambiguously visible at the workflow level (the
+      # script's verify is buried inside its log section). AC-6 demands
+      # the literal "Successfully verified" string; we grep for it and
+      # fail the step if absent.
+      # Explicit `steps.sign_msi.outcome == 'success'` guard alongside the
+      # implicit `success()` default: belt-and-braces against a future
+      # editor adding `continue-on-error: true` to the Sign MSI step,
+      # which would let `success()` evaluate true after a sign failure
+      # and run Verify against an unsigned artifact.
+      - name: Verify MSI signature
+        if: steps.windows_signing.outputs.signing_available == 'true' && steps.sign_msi.outcome == 'success'
+        shell: pwsh
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: ./scripts/verify-msi-signature.ps1 -Tag $env:TAG
+
+      # Every executable the MSI installs, and the MSI itself, must carry a
+      # valid Authenticode signature before anything is uploaded. The embedded
+      # helpers are checked at the copies rust-embed ingested, and every shim
+      # copy is checked where WiX picks it up.
+      - name: Verify Windows Authenticode signatures
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: ./scripts/verify-windows-authenticode.ps1 -Target $env:TARGET
+
+      # ─── Record skipped Windows MSI packaging in job summary ────────────
+      # When the Azure secrets aren't populated, the entire MSI chain
+      # (Preflight WiX → Install cargo-wix → Produce MSI → Sign → Verify
+      # → Stage) is gated off. The leg still builds the Windows release
+      # binary, but produces no .msi artifact. This banner makes that
+      # visible in the run
+      # summary so a release reviewer doesn't wonder where the MSI went.
+      - name: Record skipped Windows MSI packaging in job summary
+        if: steps.windows_signing.outputs.signing_available != 'true'
+        shell: bash
+        env:
+          ARCH: x86_64
+          TAG: ${{ env.RELEASE_TAG }}
+        run: scripts/summarize-skipped-msi.sh "$ARCH" "$TAG"
+
+      # ─── US-016 AC-3: Stage the signed MSI + SHA-256 sidecar ─────────────
+      # Rename from cargo-wix's default (paneflow-<ver>-x86_64.msi) to the
+      # canonical release asset name paneflow-<ver>-x86_64-pc-windows-msvc.msi
+      # that `update::checker::pick_asset` (US-011) matches against. The
+      # `-pc-windows-msvc` suffix is the Rust triple, kept in the filename
+      # so the in-app updater's asset picker can key on the triple without
+      # an explicit per-OS branch.
+      #
+      # Same env-routing hardening as the Linux and macOS stage steps: `TAG`
+      # goes via the `env:` block, never inlined as `${{ ... }}` inside
+      # the shell body - so an attacker-controlled tag cannot shell-inject.
+      - name: Stage Windows assets
+        if: steps.windows_signing.outputs.signing_available == 'true'
+        shell: bash
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: scripts/stage-windows-assets.sh "${TAG#v}"
+
+      # Upload the artifacts for the MSI smokes below and the publish job
+      # of `release.yml`. `compression-level: 0`: the MSI is already
+      # compressed.
+      - name: Verify release artifacts staged
+        run: scripts/check-staged-assets.sh
+
+      - name: Upload release artifacts (for smoke-test jobs)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The platform is part of the name: Linux aarch64 and macOS
+          # aarch64 would otherwise collide on `release-assets-aarch64`.
+          # The publish and summary jobs of `release.yml` glob
+          # `release-assets-*`.
+          name: release-assets-x86_64-Windows
+          path: release-assets/
+          retention-days: 7
+          compression-level: 0
+
+  # ─── Windows MSI smoke: signed installer + update relay ──────────────
+  # This is the Windows counterpart to the Linux package smokes of `release.yml`.
+  # CI cannot click through a real UAC consent prompt, so the job keeps
+  # the elevated path for manual release smoke. What it does gate here is
+  # the release artifact that users receive: signed MSI integrity, silent
+  # Windows Installer install/uninstall, the installed `paneflow --version`,
+  # and the detached `--msi-relay` path that waits, invokes msiexec, writes
+  # diagnostics, removes its staged MSI, and requests a relaunch.
+  smoke-test-windows-msi:
+    name: Smoke test - Windows MSI install + relay
+    # Only the runs whose build signs (see `build.environment`) produce an MSI.
+    if: inputs.signed
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Download signed Windows MSI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets-x86_64-Windows
+          path: ./release-assets
+
+      - name: Download pinned v0.8.0 MSI baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
+        run: ./scripts/download-release-msi.ps1 -Tag v0.8.0 -Directory $env:BASELINE_DIR
+
+      - name: Upgrade MSI, verify compliance, and exercise update relay
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
+          SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-smoke
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
+        run: ./scripts/smoke-msi.ps1 -Tag $env:TAG -MsiVersion $env:MSI_VERSION -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
+
+      - name: Record manual Windows backend smoke boundary
+        if: success()
+        run: |
+          @'
+          ## Windows backend release boundary
+
+          CI proved fresh install, a hosted-desktop Ghostty launch, the signed
+          v0.8.0 MSI upgrade, preserved user configuration, static libghostty
+          provenance, installed compliance inventory, updater relay, and clean
+          uninstall. A release reviewer must still execute the full
+          Windows 10 and Windows 11 desktop matrix, including IME, GPU,
+          sleep/resume, non-ASCII profile paths, and conditional RDP.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Windows libghostty smoke provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-libghostty-smoke-provenance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}\paneflow-msi-smoke\*libghostty-provenance.json
+            ${{ runner.temp }}\paneflow-msi-smoke\ghostty-runtime-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Windows MSI smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-msi-smoke-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}\paneflow-msi-smoke
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ─── Windows MSI smoke: upgrade over a live session host ────────────
+  # The in-app updater runs msiexec while the detached session host
+  # (`paneflow-host.exe --home <home> serve`) can still run from
+  # %ProgramFiles%\PaneFlow. Restart Manager cannot close that windowless
+  # process, so the v0.16 updater stalled on MSI error 1611 until the
+  # `StopInstalledHost` custom action in packaging/wix/main.wxs started
+  # stopping it before InstallValidate. The relay smoke above restarts
+  # through System32\whoami.exe and never has a live host, so this job
+  # installs the latest published MSI per-machine, starts its host, and
+  # upgrades with the relay's exact msiexec arguments, then repeats the
+  # upgrade without MSIRESTARTMANAGERCONTROL=Disable as the v0.16 updater
+  # ran it. It runs on every tag push and gates the publish job, like the
+  # relay smoke above, and on a dry-run from `main`: the two cases where the
+  # build signs an MSI. On a tag push the new release is still a draft, so
+  # the latest published release is the previous version. The candidate
+  # ProductVersion must exceed it: dispatch a dry-run with
+  # `msi_upgrade_version` while the source is not bumped yet. A tag that
+  # does not upgrade the latest release, such as a hotfix on an older line,
+  # has no upgrade to test and reports that in a notice instead of failing.
+  smoke-test-windows-msi-live-host:
+    name: Smoke test - Windows MSI upgrade over a live host
+    if: inputs.signed
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+          sparse-checkout: scripts
+
+      - name: Download signed Windows MSI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets-x86_64-Windows
+          path: ./release-assets
+
+      - name: Download latest published MSI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
+        run: ./scripts/download-release-msi.ps1 -Tag latest -Directory $env:BASELINE_DIR
+
+      - name: Upgrade the latest release while its host runs
+        env:
+          SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-live-host
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
+        run: ./scripts/smoke-msi-live-host.ps1 -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
+
+      - name: Upload Windows MSI live-host upgrade logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-msi-live-host-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}\paneflow-msi-live-host
+          if-no-files-found: warn
+          retention-days: 7

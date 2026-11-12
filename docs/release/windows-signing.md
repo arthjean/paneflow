@@ -267,8 +267,8 @@ implemented:
 
 - `scripts/sign-windows.ps1` - primary signing implementation.
 - `scripts/sign-windows-ov.ps1` - local OV-cert fallback (not in CI).
-- `.github/workflows/release.yml` Windows section (lines ~930-1260) - CI
-  orchestration.
+- `.github/workflows/release-windows.yml` - CI orchestration of the Windows
+  leg and of the two MSI smokes.
 - `memory/project_windows_signing.md` - Strivex-specific metadata
   (account names, expiration dates, rotation reminders).
 - Microsoft Learn - Trusted Signing:
