@@ -11,6 +11,7 @@ RUNS_ON_RE='^[[:space:]]*(-[[:space:]]+)?runs-on:[[:space:]]*(.*)$'
 SECRETS_INHERIT_RE='^[[:space:]]*secrets:[[:space:]]*inherit[[:space:]]*(#.*)?$'
 RUNNER_OS_RE='^[[:space:]]*[^#[:space:]].*runner\.os'
 MAX_ORCHESTRATOR_LINES=400
+CHECKOUT_RE='^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*actions/checkout@'
 SCRIPT_RE='(^|[^A-Za-z0-9_-])(scripts/[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.(sh|ps1))($|[^A-Za-z0-9_.-])'
 
 case "$REMOTE_MODE" in
@@ -295,10 +296,18 @@ for file in "${trace_files[@]}"; do
       job="${BASH_REMATCH[1]}"
       job_line=$((i + 1))
       job_bounded=0
+      job_checkout=0
       if [[ "${BASH_REMATCH[2]}" =~ ^[[:space:]]*\* ]]; then
         job_bounded=1
       fi
       continue
+    fi
+    if [[ "$line" =~ $CHECKOUT_RE ]]; then
+      job_checkout=1
+    fi
+    if [ -n "$job" ] && ((job_checkout == 0)) && ! [[ "$line" =~ ^[[:space:]]*# ]] && [[ "$line" =~ $SCRIPT_RE ]]; then
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): job '$job' cites ${BASH_REMATCH[2]} before any actions/checkout step, so the script is not on the runner; check out the repository first, a sparse checkout of scripts is enough"
+      status=1
     fi
     if [[ "$line" =~ ^\ \ \ \ timeout-minutes:[[:space:]]*[^[:space:]#] ]] || [[ "$line" =~ ^\ \ \ \ uses:[[:space:]] ]]; then
       job_bounded=1
@@ -314,7 +323,7 @@ if [ "$status" -eq 0 ]; then
   fi
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
   echo "no deprecated or floating runner image in $runner_lines runs-on line(s)"
-  echo "every script a workflow or composite action cites exists (${#script_state[@]} script(s))"
+  echo "every script a workflow or composite action cites exists (${#script_state[@]} script(s)), and no job cites one before its checkout"
   echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and no release workflow uses a cache"
   echo "the release orchestrator holds at most $MAX_ORCHESTRATOR_LINES lines, no call passes 'secrets: inherit', and no platform release workflow tests runner.os"
   echo "every job declares timeout-minutes ($jobs_checked job(s))"

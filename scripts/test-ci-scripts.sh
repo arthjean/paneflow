@@ -357,6 +357,24 @@ EOF
   expect "a workflow that calls a removed script names the workflow and the script" 1 "removed\.yml:7: scripts/removed-spike\.sh does not exist: .*removed\.yml still calls a script" "$check" "$file"
   expect "a removed script passed as an argument is found too" 1 "removed\.yml:8: scripts/also-removed\.ps1 does not exist" "$check" "$file"
 
+  file="$(workflow cited/no-checkout.yml <<EOF
+jobs:
+  built:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CHECKOUT
+      - run: bash scripts/check-workflows.sh
+  summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: scripts/check-workflows.sh
+      - uses: $PINNED_CHECKOUT
+EOF
+)"
+  expect "a job that calls a script before its checkout is named by file and line" 1 "no-checkout\.yml:12: job 'summary' cites scripts/check-workflows\.sh before any actions/checkout step" "$check" "$file"
+
   file="$(workflow cited/commented.yml <<EOF
 jobs:
   build:
