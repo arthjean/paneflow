@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Une structure simple et des runners pérennes",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 6,
-      "stories_done": 3
+      "stories_done": 6
     }
   ],
   "stories": [
@@ -358,7 +358,7 @@
       "id": "US-024",
       "title": "Les scripts inline de release.yml deviennent des scripts versionnés",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -366,14 +366,14 @@
         "US-016"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     },
     {
       "id": "US-025",
       "title": "release.yml devient un orchestrateur de workflows réutilisables",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -381,14 +381,14 @@
         "US-007"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     },
     {
       "id": "US-026",
       "title": "Un seul workflow de recette libghostty",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "L",
       "blocked_by": [
@@ -396,8 +396,8 @@
         "US-015"
       ],
       "started_at": "2026-11-12",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     }
   ]
 }
