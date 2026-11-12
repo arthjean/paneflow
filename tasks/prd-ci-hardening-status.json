@@ -52,7 +52,7 @@
       "status": "IN_REVIEW",
       "priority": "P1",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 3
     }
   ],
   "stories": [
@@ -320,39 +320,39 @@
       "id": "US-021",
       "title": "Validate assumption: le build Linux de release tourne dans ubuntu:22.04 sur un hôte 24.04",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     },
     {
       "id": "US-022",
       "title": "Plus aucun job sur les images Ubuntu 22.04",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-021"
       ],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     },
     {
       "id": "US-023",
       "title": "Les spikes et le code mort disparaissent",
       "epic": "EP-006",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P2",
       "size": "XS",
       "blocked_by": [],
       "started_at": "2026-11-11",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-12",
+      "reviewed_at": "2026-11-12"
     },
     {
       "id": "US-024",
