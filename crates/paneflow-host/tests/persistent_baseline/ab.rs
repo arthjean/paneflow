@@ -1586,10 +1586,22 @@ mod tests {
         );
         assert!(workflow.contains("extra-packages: valgrind"));
         assert!(workflow.contains("cargo install gungraun-runner --version \"$version\" --locked"));
-        let release = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/release.yml"),
-        )
-        .unwrap();
-        assert!(!release.contains("perf-ab-"));
+        for name in [
+            "release.yml",
+            "release-linux.yml",
+            "release-macos.yml",
+            "release-windows.yml",
+        ] {
+            let release = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.github/workflows")
+                    .join(name),
+            )
+            .unwrap();
+            assert!(
+                !release.contains("perf-ab-"),
+                "{name} names a perf-ab artifact"
+            );
+        }
     }
 }

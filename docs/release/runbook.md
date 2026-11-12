@@ -390,6 +390,15 @@ The two Linux legs build in the `ubuntu:22.04` image on an `ubuntu-24.04`
 host, so every binary and every library the AppImage bundles comes from
 Ubuntu 22.04, the floor `packaging/debian/postinst` promises.
 
+The container costs nothing measurable. `cargo build --release` took 13 min
+22 s (x86_64) and 11 min 21 s (aarch64) on the `ubuntu-22.04` hosts of run
+43070193687, and between 10 min 58 s and 13 min 40 s (x86_64) and between
+10 min 48 s and 11 min 29 s (aarch64) in the container, over runs
+43173633556, 43177326821 and 43182204818: at most 2 % slower. Preparing the
+container adds about 10 s. In run 43182204818 `check-glibc-floor.sh` read
+2.35 as the highest glibc symbol version of `paneflow` on both targets, and
+2.34 for `paneflow-host` and the three helpers.
+
 | Script | Arguments | Environment | What it does |
 |---|---|---|---|
 | `check-appstream-version.sh` | none | | Fails when the top `<release>` of the AppStream metainfo is not the workspace version |
@@ -461,6 +470,7 @@ installed.
 | `release-dry-run-summary.sh` (fixtures) | `<tag> <built-ref> <asset-dir>` | | Writes the table of assets, sizes and SHA-256 to the job summary |
 | `require-tag-at-commit.sh` (fixtures) | `<tag> <sha>` | `GITHUB_REPOSITORY` | Fails when the tag no longer points at the commit the run built |
 | `sign-release-assets.sh` | `<asset-dir>` | `MINISIGN_SECRET_KEY` | Writes a `.minisig` next to every asset |
+| `install-minisign.sh` | `<install-dir>` | `GITHUB_PATH`, optional | Installs the pinned minisign as `<install-dir>/minisign`, checked against a pinned SHA-256, on Linux and macOS. `sign-release-assets.sh` and `sign-update-e2e-tarball.sh` call it themselves |
 
 ## Downstream packagers
 

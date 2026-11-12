@@ -255,6 +255,18 @@ naming the target and both hashes, when the archive differs from
 system `ar` and `eu-strip`, and the published archives were normalized by
 the Ubuntu 22.04 ones.
 
+The ruleset `main: required CI` requires four contexts: `tests_pass`,
+`libghostty validation`, `libghostty macOS validation` and
+`libghostty Windows validation`. They are the aggregator jobs of the calling
+workflows, which kept their names when the rebuilds moved into the recipe
+workflow, and no job of `libghostty-recipe.yml` is a required context: the
+ruleset needs no change. To check it:
+
+```bash
+gh api repos/arthjean/paneflow/rulesets/21711572 \
+  --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
+```
+
 Provenance is established in the bump run itself, not on the resulting pull
 request: a pull request lane only checks a published archive against its
 manifest hash, and a bump commit writes that hash, so the pull request alone

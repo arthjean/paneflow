@@ -294,7 +294,7 @@ jobs:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: scripts/generate-libghostty-bindings.sh
       # The native tests link the published archive that fetch-libghostty
-      # places, with `PANEFLOW_LIBGHOSTTY_DIR` unset. `native` proves that
+      # places, with `PANEFLOW_LIBGHOSTTY_DIR` unset. `recipe` proves that
       # archive byte-identical to what the recipe produces, so a third Zig
       # build here would only reproduce the same bytes.
       - uses: ./.github/actions/fetch-libghostty
@@ -302,7 +302,7 @@ jobs:
         run: cargo test --locked -p paneflow-terminal-ghostty --features native
 
   # Fuzzes the published archive that fetch-libghostty places, the one
-  # `native` proves byte-identical to the recipe's output, so it starts with
+  # `recipe` proves byte-identical to the recipe's output, so it starts with
   # the first wave of jobs instead of waiting for both rebuilds.
   fuzz:
     name: Fuzz ${{ matrix.target }}
