@@ -12,6 +12,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- **Choose which agents the sidebar usage gauge counts.** With both Claude Code and Codex accounts, **Settings › Usage › Sidebar** has one switch per agent; an agent turned off leaves the gauge and its panel, and stays on the Usage page. Stored in `usage.sidebar_agents`.
 - **Choose what each Agents row shows.** A button at the right of the `Agents` header opens **Customize agent rows**, with the agent logo and the workspace name, both on by default. A row always shows its status. Stored in `sidebar_show.agent_logo` and `sidebar_show.agent_workspace`.
 - **Hide agent status from the workspace tree.** **Customize sidebar › Show › Status**, the **Show agent status in the sidebar** command, or `sidebar_show.status` (on by default) removes the status badge, the working dot matrix, the title shimmer and the status tooltip from workspace and tab rows, so each agent's status appears once, in the Agents section. A tab's pull request takes the freed slot. The Agents section, `Cmd/Ctrl+Shift+J`, the hidden-space attention button, the pane header and notifications are unaffected.
 

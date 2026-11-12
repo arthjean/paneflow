@@ -68,11 +68,19 @@ impl AgentsConfig {
 pub struct UsageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_limits: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_agents: Option<Vec<String>>,
 }
 
 impl UsageConfig {
     pub fn plan_limits_enabled(&self) -> bool {
         self.plan_limits.unwrap_or(true)
+    }
+
+    pub fn shows_in_sidebar(&self, runtime_slug: &str) -> bool {
+        self.sidebar_agents
+            .as_ref()
+            .is_none_or(|agents| agents.iter().any(|agent| agent == runtime_slug))
     }
 }
 
@@ -80,4 +88,30 @@ impl UsageConfig {
 #[serde(default)]
 pub struct TelemetryConfig {
     pub enabled: Option<bool>,
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::UsageConfig;
+
+    #[test]
+    fn the_sidebar_shows_every_agent_until_a_list_names_some() {
+        let unset = UsageConfig::default();
+        assert!(unset.shows_in_sidebar("claude-code"));
+        assert!(unset.shows_in_sidebar("codex"));
+
+        let claude_only: UsageConfig =
+            serde_json::from_str(r#"{"sidebar_agents": ["claude-code"]}"#).unwrap();
+        assert!(claude_only.shows_in_sidebar("claude-code"));
+        assert!(!claude_only.shows_in_sidebar("codex"));
+        assert!(claude_only.plan_limits_enabled());
+
+        let none: UsageConfig = serde_json::from_str(r#"{"sidebar_agents": []}"#).unwrap();
+        assert!(!none.shows_in_sidebar("claude-code"));
+        assert_eq!(
+            serde_json::to_value(&unset).unwrap(),
+            serde_json::json!({}),
+            "an unset list is not written back"
+        );
+    }
 }

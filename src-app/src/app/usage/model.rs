@@ -27,6 +27,7 @@ pub(crate) struct InventoryEntry {
 pub(crate) struct UsageInputs<'a> {
     pub(crate) inventory: &'a [InventoryEntry],
     pub(crate) plans: &'a [AccountPlan],
+    pub(crate) agents: Option<&'a [String]>,
     pub(crate) active_space: Option<&'a str>,
     pub(crate) home: Option<&'a Path>,
     pub(crate) now_ms: u64,
@@ -117,12 +118,26 @@ struct Built {
     observed_at_ms: Option<u64>,
 }
 
+pub(crate) fn agent_shown(agents: Option<&[String]>, agent: UsageAgent) -> bool {
+    agents.is_none_or(|agents| agents.iter().any(|slug| slug == agent.runtime_slug()))
+}
+
+pub(crate) fn toggled_agents(agents: Option<&[String]>, agent: UsageAgent) -> Option<Vec<String>> {
+    let next: Vec<String> = UsageAgent::ALL
+        .into_iter()
+        .filter(|candidate| agent_shown(agents, *candidate) != (*candidate == agent))
+        .map(|candidate| candidate.runtime_slug().to_string())
+        .collect();
+    (next.len() < UsageAgent::ALL.len()).then_some(next)
+}
+
 pub(crate) fn usage_view(inputs: &UsageInputs<'_>) -> Option<UsageView> {
-    if inputs.inventory.is_empty() && inputs.plans.is_empty() {
+    let rows = ordered_rows(inputs);
+    if rows.is_empty() {
         return None;
     }
     let now = inputs.now_ms / 1000;
-    let built: Vec<Built> = ordered_rows(inputs)
+    let built: Vec<Built> = rows
         .into_iter()
         .map(|row| build(row, now, inputs.utc_offset_secs))
         .collect();
@@ -148,10 +163,11 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
                 .any(|origin| origin.kind == OriginKind::Space && origin.name == space)
         })
     };
+    let shown = |agent: UsageAgent| agent_shown(inputs.agents, agent);
     let space_has_accounts = inputs
         .inventory
         .iter()
-        .any(|entry| in_space(&entry.account));
+        .any(|entry| shown(entry.account.agent) && in_space(&entry.account));
     let active = |account: &UsageAccount| {
         if space_has_accounts {
             in_space(account)
@@ -172,6 +188,7 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
     let mut rows: Vec<Row<'a>> = inputs
         .inventory
         .iter()
+        .filter(|entry| shown(entry.account.agent))
         .map(|entry| Row {
             agent: entry.account.agent,
             label: entry.account.label.clone(),
@@ -183,7 +200,8 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
         })
         .collect();
     for plan in inputs.plans {
-        let Some(agent) = UsageAgent::for_runtime_slug(&plan.agent) else {
+        let Some(agent) = UsageAgent::for_runtime_slug(&plan.agent).filter(|agent| shown(*agent))
+        else {
             continue;
         };
         let dir = Path::new(&plan.config_dir);
@@ -449,6 +467,7 @@ mod tests {
         usage_view(&UsageInputs {
             inventory,
             plans,
+            agents: None,
             active_space: space,
             home: None,
             now_ms: NOW_MS,
@@ -471,6 +490,127 @@ mod tests {
             "arthur@example.com",
             &[(OriginKind::Default, "Default")],
         )
+    }
+
+    fn filtered(
+        inventory: &[InventoryEntry],
+        plans: &[AccountPlan],
+        agents: &[&str],
+    ) -> Option<UsageView> {
+        let agents: Vec<String> = agents.iter().map(|slug| (*slug).to_string()).collect();
+        usage_view(&UsageInputs {
+            inventory,
+            plans,
+            agents: Some(&agents),
+            active_space: None,
+            home: None,
+            now_ms: NOW_MS,
+            utc_offset_secs: 0,
+        })
+    }
+
+    fn codex_default() -> UsageAccount {
+        account(
+            UsageAgent::Codex,
+            "/home/a/.codex",
+            "codex",
+            &[(OriginKind::Default, "Default")],
+        )
+    }
+
+    #[test]
+    fn test_the_sidebar_agent_list_narrows_the_capsule_and_the_bubble() {
+        let inventory = [entry(claude_default()), entry(codex_default())];
+        let plans = [
+            plan(
+                UsageAgent::ClaudeCode,
+                "/home/a/.claude",
+                [None, Some(window(20., WEEK, WEEK_RESET))],
+                NOW_MS,
+            ),
+            plan(
+                UsageAgent::Codex,
+                "/home/a/.codex",
+                [None, Some(window(90., WEEK, WEEK_RESET))],
+                NOW_MS - 3_600_000,
+            ),
+            plan(
+                UsageAgent::Codex,
+                "/tmp/adhoc-codex",
+                [None, Some(window(95., WEEK, WEEK_RESET))],
+                NOW_MS,
+            ),
+        ];
+        let both = view(&inventory, &plans, None);
+        assert!(both.capsule.accessible_name().starts_with("90% "));
+        assert_eq!(both.blocks.len(), 3);
+
+        let claude = filtered(&inventory, &plans, &["claude-code"]).expect("Claude Code is shown");
+        assert_eq!(
+            claude.capsule.accessible_name(),
+            "20% plan usage, Claude Code week"
+        );
+        assert_eq!(claude.blocks.len(), 1);
+        assert_eq!(claude.blocks[0].agent, UsageAgent::ClaudeCode);
+        assert_eq!(
+            claude.updated.as_deref(),
+            Some("Updated just now"),
+            "the age ignores the hidden Codex snapshot"
+        );
+
+        let named_both = filtered(&inventory, &plans, &["claude-code", "codex"]);
+        assert_eq!(named_both, Some(both));
+        assert_eq!(filtered(&inventory, &plans, &[]), None);
+        assert_eq!(filtered(&inventory, &plans, &["gemini"]), None);
+    }
+
+    #[test]
+    fn test_a_space_with_only_hidden_accounts_falls_back_to_the_default_ones() {
+        let work = account(
+            UsageAgent::Codex,
+            "/home/a/.codex-work",
+            "codex work",
+            &[(OriginKind::Space, "Work")],
+        );
+        let inventory = [entry(claude_default()), entry(work)];
+        let plans = [plan(
+            UsageAgent::ClaudeCode,
+            "/home/a/.claude",
+            [None, Some(window(33., WEEK, WEEK_RESET))],
+            NOW_MS,
+        )];
+        let agents = ["claude-code".to_string()];
+        let view = usage_view(&UsageInputs {
+            inventory: &inventory,
+            plans: &plans,
+            agents: Some(&agents),
+            active_space: Some("Work"),
+            home: None,
+            now_ms: NOW_MS,
+            utc_offset_secs: 0,
+        })
+        .expect("Claude Code is shown");
+        assert!(view.capsule.accessible_name().starts_with("33% "));
+    }
+
+    #[test]
+    fn test_toggling_an_agent_names_the_shown_ones_and_clears_the_list_when_all_are_shown() {
+        let claude_only = toggled_agents(None, UsageAgent::Codex);
+        assert_eq!(claude_only, Some(vec!["claude-code".to_string()]));
+        assert_eq!(
+            toggled_agents(claude_only.as_deref(), UsageAgent::Codex),
+            None
+        );
+        assert_eq!(
+            toggled_agents(claude_only.as_deref(), UsageAgent::ClaudeCode),
+            Some(Vec::new())
+        );
+        let stray = ["gemini".to_string(), "codex".to_string()];
+        assert_eq!(
+            toggled_agents(Some(&stray), UsageAgent::ClaudeCode),
+            None,
+            "an unknown slug is dropped"
+        );
     }
 
     #[test]
@@ -570,6 +710,7 @@ mod tests {
             usage_view(&UsageInputs {
                 inventory: &[],
                 plans: &[],
+                agents: None,
                 active_space: None,
                 home: None,
                 now_ms: NOW_MS,

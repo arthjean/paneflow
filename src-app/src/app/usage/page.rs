@@ -2,23 +2,27 @@ use std::rc::Rc;
 
 use chrono::{Days, NaiveDate};
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Role, ScrollHandle, SharedString, Stateful,
+    AnyElement, App, ClickEvent, Context, Div, FocusHandle, FontWeight, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Role, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, accesskit::Toggled, div, prelude::FluentBuilder,
     px, relative, rgb, svg,
 };
+use paneflow_agent_config::usage::accounts::UsageAgent;
 use paneflow_agent_config::usage::model::UsageLevel;
 
 use super::activity::{
     ActivityInputs, ActivityView, LEVEL_MIX, Metric, NO_ACTIVITY, NO_TOKEN_DATA, Register, WEEKS,
     activity_view, step_day,
 };
-use super::model::{AccountBlock, BlockBody, UsageInputs, UsageView, WindowRow, usage_view};
+use super::model::{
+    AccountBlock, BlockBody, UsageInputs, UsageView, WindowRow, agent_shown, usage_view,
+};
 use super::render::{focus_ring, pace_line, runtime_logo, tabular_numerals};
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, menu_row, select_menu_surface, setting_card, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, menu_row, select_menu_surface, setting_card, toggle_row_with,
+    toggle_switch, with_alpha,
 };
-use crate::settings::search::{self, Block};
+use crate::settings::search::{self, Block, SearchCard, SettingCopy};
 use crate::theme::UiColors;
 use crate::ui_primitives::ring::{RingSize, concentric_rings, level_color, ring};
 use crate::ui_primitives::{TooltipDelayExt, lerp_color, section_eyebrow, text_tooltip};
@@ -45,6 +49,33 @@ const INNER_SWATCH_ALPHA: f32 = 0.72;
 const CLAUDE_HEAT: u32 = 0xD9_77_57;
 const EMPTY_CELL_MIX: f32 = 0.05;
 const DAY_LABELS: [&str; 7] = ["Mon", "", "Wed", "", "Fri", "", ""];
+const SIDEBAR_AGENT_LOGO: f32 = 18.;
+const SWITCH_FOCUS_OUTSET: f32 = 3.;
+const SWITCH_FOCUS_ALPHA: f32 = 0.35;
+
+const fn sidebar_agent_copy(agent: UsageAgent) -> &'static SettingCopy {
+    match agent {
+        UsageAgent::ClaudeCode => &search::USAGE_SIDEBAR_CLAUDE_CODE,
+        UsageAgent::Codex => &search::USAGE_SIDEBAR_CODEX,
+    }
+}
+
+pub(crate) fn sidebar_agent_choices(
+    present: impl Fn(UsageAgent) -> bool,
+    shown: impl Fn(UsageAgent) -> bool,
+) -> Vec<(usize, UsageAgent)> {
+    let choices: Vec<(usize, UsageAgent)> = UsageAgent::ALL
+        .into_iter()
+        .enumerate()
+        .filter(|(_, agent)| present(*agent))
+        .collect();
+    let one_is_hidden = choices.iter().any(|(_, agent)| !shown(*agent));
+    if choices.len() < 2 && !one_is_hidden {
+        Vec::new()
+    } else {
+        choices
+    }
+}
 
 pub(crate) fn tile_columns(page_width: f32) -> usize {
     if page_width < TILE_GRID_MIN_WIDTH {
@@ -94,6 +125,7 @@ fn reveal_day(scroll: &ScrollHandle, view: &ActivityView, day: NaiveDate) {
 enum UsageButton {
     Refresh,
     OpenAgents,
+    SidebarAgent(UsageAgent),
     Import,
 }
 
@@ -499,6 +531,7 @@ impl PaneFlowApp {
         usage_view(&UsageInputs {
             inventory: &self.usage.inventory,
             plans: &self.usage.plans,
+            agents: None,
             active_space,
             home: self.usage.home.as_deref(),
             now_ms: super::now_ms(),
@@ -591,6 +624,13 @@ impl PaneFlowApp {
         let has_activity = !self.usage_activity_view().is_empty();
         let limits_copy = &search::USAGE_PLAN_LIMITS;
         let activity_copy = &search::USAGE_ACTIVITY;
+        let sidebar_choices = self.usage_sidebar_agent_choices();
+        let sidebar = (!sidebar_choices.is_empty()).then(|| {
+            Block::new("Sidebar")
+                .child(eyebrow_row("Sidebar", ui))
+                .card(self.render_sidebar_agents_card(&sidebar_choices, window, cx))
+                .finish()
+        });
         div()
             .flex()
             .flex_col()
@@ -604,6 +644,7 @@ impl PaneFlowApp {
                     )
                     .finish(),
             )
+            .children(sidebar)
             .child(
                 Block::new("Activity by agent")
                     .child(
@@ -621,6 +662,77 @@ impl PaneFlowApp {
                     .finish(),
             )
             .into_any_element()
+    }
+
+    fn usage_sidebar_agent_choices(&self) -> Vec<(UsageAgent, FocusHandle)> {
+        let listed = self.sidebar_usage_agents();
+        sidebar_agent_choices(
+            |agent| {
+                self.usage
+                    .inventory
+                    .iter()
+                    .any(|entry| entry.account.agent == agent)
+            },
+            |agent| agent_shown(listed, agent),
+        )
+        .into_iter()
+        .filter_map(|(index, agent)| {
+            Some((agent, self.usage.sidebar_agent_focus.get(index)?.clone()))
+        })
+        .collect()
+    }
+
+    fn render_sidebar_agents_card(
+        &self,
+        choices: &[(UsageAgent, FocusHandle)],
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> SearchCard {
+        let ui = crate::theme::ui_colors();
+        let shown = self.sidebar_usage_agents();
+        let mut card = SearchCard::new(ui);
+        for (index, (agent, handle)) in choices.iter().enumerate() {
+            let agent = *agent;
+            let copy = sidebar_agent_copy(agent);
+            let switch = toggle_switch(
+                ("usage-sidebar-agent", index),
+                copy.title,
+                agent_shown(shown, agent),
+                ui,
+            )
+            .relative()
+            .track_focus(handle)
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                this.handle_usage_button_key(UsageButton::SidebarAgent(agent), event, window, cx);
+            }))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.toggle_sidebar_usage_agent(agent, cx);
+            }))
+            .when(handle.is_focused(window), |switch| {
+                switch.child(
+                    div()
+                        .absolute()
+                        .top(px(-SWITCH_FOCUS_OUTSET))
+                        .bottom(px(-SWITCH_FOCUS_OUTSET))
+                        .left(px(-SWITCH_FOCUS_OUTSET))
+                        .right(px(-SWITCH_FOCUS_OUTSET))
+                        .rounded_full()
+                        .border(px(1.5))
+                        .border_color(with_alpha(ui.text, SWITCH_FOCUS_ALPHA)),
+                )
+            });
+            card = card.row(
+                copy,
+                toggle_row_with(
+                    copy.title,
+                    copy.description,
+                    Some(runtime_logo(agent.runtime_slug(), SIDEBAR_AGENT_LOGO, ui)),
+                    ui,
+                    switch,
+                ),
+            );
+        }
+        card
     }
 
     fn render_no_account_card(
@@ -999,6 +1111,7 @@ impl PaneFlowApp {
                 UsageButton::OpenAgents => {
                     self.select_settings_section(SettingsSection::Agents, window, cx);
                 }
+                UsageButton::SidebarAgent(agent) => self.toggle_sidebar_usage_agent(agent, cx),
                 UsageButton::Import => self.import_past_activity(cx),
             },
             _ => return,
@@ -1017,6 +1130,11 @@ impl PaneFlowApp {
         if self.usage_page_view().is_none() {
             stops.push(self.usage.open_agents_focus.clone());
         }
+        stops.extend(
+            self.usage_sidebar_agent_choices()
+                .into_iter()
+                .map(|(_, handle)| handle),
+        );
         if !view.is_empty() {
             stops.push(self.usage.metric_focus.clone());
         }
@@ -1068,6 +1186,29 @@ mod tests {
     use paneflow_serve::usage::ledger::{DayTally, LedgerAccount, LedgerDays};
 
     use super::*;
+
+    #[test]
+    fn the_sidebar_choice_needs_accounts_of_two_agents() {
+        assert_eq!(
+            sidebar_agent_choices(|_| true, |_| true),
+            [(0, UsageAgent::ClaudeCode), (1, UsageAgent::Codex)]
+        );
+        let only_codex = |agent| agent == UsageAgent::Codex;
+        assert_eq!(sidebar_agent_choices(only_codex, |_| true), []);
+        assert_eq!(
+            sidebar_agent_choices(only_codex, |_| false),
+            [(1, UsageAgent::Codex)],
+            "a hidden agent that is the only one left can still be turned back on"
+        );
+        assert_eq!(sidebar_agent_choices(|_| false, |_| false), []);
+        for agent in UsageAgent::ALL {
+            assert!(
+                sidebar_agent_copy(agent)
+                    .title
+                    .starts_with(agent.display_name())
+            );
+        }
+    }
 
     #[test]
     fn the_tile_grid_drops_to_one_column_under_560_px() {

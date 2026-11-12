@@ -156,6 +156,14 @@ pub(crate) const USAGE_PLAN_LIMITS: SettingCopy = SettingCopy {
     description: "Session and weekly usage quota of each Claude Code and Codex plan, with the \
                   time each limit resets.",
 };
+pub(crate) const USAGE_SIDEBAR_CLAUDE_CODE: SettingCopy = SettingCopy {
+    title: "Claude Code in the sidebar",
+    description: "Count Claude Code plan limits in the sidebar gauge and list them in its panel.",
+};
+pub(crate) const USAGE_SIDEBAR_CODEX: SettingCopy = SettingCopy {
+    title: "Codex in the sidebar",
+    description: "Count Codex plan limits in the sidebar gauge and list them in its panel.",
+};
 pub(crate) const USAGE_ACTIVITY: SettingCopy = SettingCopy {
     title: "Activity by agent",
     description: "Daily turns, tokens, and active time of each agent over the last year.",
@@ -264,7 +272,12 @@ const TERMINAL_COPIES: &[&SettingCopy] = &[
 const WORKTREES_COPIES: &[&SettingCopy] =
     &[&WORKTREE_ROOT, &AUTO_REMOVE_WORKTREES, &WORKTREE_KEEP_LIMIT];
 const MCP_COPIES: &[&SettingCopy] = &[&MCP_BRIDGE];
-const USAGE_COPIES: &[&SettingCopy] = &[&USAGE_PLAN_LIMITS, &USAGE_ACTIVITY];
+const USAGE_COPIES: &[&SettingCopy] = &[
+    &USAGE_PLAN_LIMITS,
+    &USAGE_SIDEBAR_CLAUDE_CODE,
+    &USAGE_SIDEBAR_CODEX,
+    &USAGE_ACTIVITY,
+];
 const AGENTS_COPIES: &[&SettingCopy] = &[&CLAUDE_FULL_ACCESS, &AI_FREE_ACCESS, &INJECTION_FENCE];
 
 const GENERAL_HEADERS: &[&str] = &["Defaults", "Notifications"];
@@ -282,7 +295,7 @@ const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display", "Window"];
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
 const AGENTS_HEADERS: &[&str] = &["Agents", "Not installed", "Profiles", "Permissions"];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];
-const USAGE_HEADERS: &[&str] = &["Plan limits", "Activity by agent"];
+const USAGE_HEADERS: &[&str] = &["Plan limits", "Sidebar", "Activity by agent"];
 const WORKSPACES_HEADERS: &[&str] = &["Workspace templates"];
 const SPACES_HEADERS: &[&str] = &["Spaces"];
 const WORKTREES_HEADERS: &[&str] = &["Storage and cleanup", "Managed worktrees", "Snapshots"];

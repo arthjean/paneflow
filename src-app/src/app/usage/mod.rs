@@ -19,7 +19,9 @@ use paneflow_serve::usage::usage_origins;
 use serde_json::Value;
 
 use self::activity::Metric;
-use self::model::{InventoryEntry, UsageInputs, UsageView, step_cursor, usage_view};
+use self::model::{
+    InventoryEntry, UsageInputs, UsageView, step_cursor, toggled_agents, usage_view,
+};
 use crate::ui_primitives::ClipLine;
 use crate::{PaneFlowApp, SettingsSection};
 
@@ -47,6 +49,7 @@ pub(crate) struct UsagePanel {
     hover_day: Option<NaiveDate>,
     import: ImportStatus,
     import_focus: FocusHandle,
+    sidebar_agent_focus: [FocusHandle; UsageAgent::ALL.len()],
 }
 
 impl UsagePanel {
@@ -75,6 +78,7 @@ impl UsagePanel {
             hover_day: None,
             import: ImportStatus::default(),
             import_focus: cx.focus_handle(),
+            sidebar_agent_focus: UsageAgent::ALL.map(|_| cx.focus_handle()),
         }
     }
 
@@ -209,14 +213,35 @@ fn now_ms() -> u64 {
 }
 
 impl PaneFlowApp {
-    pub(crate) fn sidebar_usage_view(&self) -> Option<UsageView> {
-        let enabled = self.cached_config.sidebar_show.usage_enabled()
+    fn usage_capsule_enabled(&self) -> bool {
+        self.cached_config.sidebar_show.usage_enabled()
             && self
                 .cached_config
                 .usage
                 .as_ref()
-                .is_none_or(|usage| usage.plan_limits_enabled());
-        if !enabled {
+                .is_none_or(|usage| usage.plan_limits_enabled())
+    }
+
+    pub(crate) fn sidebar_usage_agents(&self) -> Option<&[String]> {
+        self.cached_config
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.sidebar_agents.as_deref())
+    }
+
+    pub(crate) fn toggle_sidebar_usage_agent(&mut self, agent: UsageAgent, cx: &mut Context<Self>) {
+        let mut usage = self.cached_config.usage.clone().unwrap_or_default();
+        usage.sidebar_agents = toggled_agents(usage.sidebar_agents.as_deref(), agent);
+        let value = if usage == paneflow_config::schema::UsageConfig::default() {
+            Value::Null
+        } else {
+            serde_json::to_value(&usage).unwrap_or(Value::Null)
+        };
+        self.persist_setting(false, "usage", value, cx);
+    }
+
+    pub(crate) fn sidebar_usage_view(&self) -> Option<UsageView> {
+        if !self.usage_capsule_enabled() {
             return None;
         }
         let active_space = self
@@ -227,6 +252,7 @@ impl PaneFlowApp {
         usage_view(&UsageInputs {
             inventory: &self.usage.inventory,
             plans: &self.usage.plans,
+            agents: self.sidebar_usage_agents(),
             active_space,
             home: self.usage.home.as_deref(),
             now_ms: now_ms(),
@@ -533,6 +559,7 @@ mod tests {
             usage_view(&UsageInputs {
                 inventory: &inventory,
                 plans: &[],
+                agents: None,
                 active_space: None,
                 home: Some(home.path()),
                 now_ms: 1_793_457_000_000,
@@ -572,6 +599,7 @@ mod tests {
         let view = usage_view(&UsageInputs {
             inventory: &inventory,
             plans: &plans,
+            agents: None,
             active_space: None,
             home: Some(home.path()),
             now_ms,
@@ -707,6 +735,7 @@ mod tests {
         let tiles = usage_view(&UsageInputs {
             inventory: &inventory,
             plans: &plans,
+            agents: None,
             active_space: None,
             home: Some(home.path()),
             now_ms,

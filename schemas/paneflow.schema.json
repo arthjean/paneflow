@@ -517,6 +517,16 @@
           "type": ["boolean", "null"],
           "description": "Install Paneflow's Claude Code status line relay in each config directory that has no status line of its own, so plan limits reach Paneflow without reading any credential. false removes the relay at the next integration refresh. Default true.",
           "default": true
+        },
+        "sidebar_agents": {
+          "type": ["array", "null"],
+          "description": "Agents whose plan limits the sidebar capsule and its bubble show, by runtime slug. null or absent shows every agent, an empty list hides the capsule. Settings > Usage always lists every account. Set from Settings > Usage > Sidebar.",
+          "items": {
+            "type": "string",
+            "enum": ["claude-code", "codex"]
+          },
+          "uniqueItems": true,
+          "default": null
         }
       }
     },

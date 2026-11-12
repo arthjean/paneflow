@@ -679,7 +679,9 @@ between the filter and the Settings button (`src-app/src/app/usage/render.rs`).
 It is 36 px high at radius 12 with the Settings button's hover and open tints,
 and holds the 16 px ring of 4.7 and the most constraining percentage of the
 active space's accounts (the default accounts when the space declares none) in
-13 px Medium with tabular numerals, 7 px apart. Its tooltip, after 800 ms,
+13 px Medium with tabular numerals, 7 px apart. `usage.sidebar_agents` narrows
+those accounts, and the bubble's, to the listed agents; with none left the
+capsule is not drawn. Its tooltip, after 800 ms,
 reads `Plan usage: {account}, {window} {percent}`, or `Plan usage: no data
 yet` over a bare track. Its accessible name starts with the visible text
 (`54% plan usage, Claude Code week`) and exposes the expanded state. Tab
@@ -974,7 +976,15 @@ a two-column grid of tiles (squircle 20 on `card`, one column under 560 px of
 page width) shows each account: the 76 px concentric rings, the agent name in
 13 px Medium, the account label, a legend of swatch, window, percentage, and
 reset, and the pace line. A tile without data shows the state text of the
-bubble instead of a gauge. Under the `Activity by agent` eyebrow, whose
+bubble instead of a gauge. When accounts of both agents exist, or the only
+agent with an account is hidden from the sidebar, a `Sidebar` eyebrow follows
+with one settings card: a `toggle_row_with` row per agent
+(18 px logo, `{Agent} in the sidebar`, one muted line, the standard switch)
+that writes `usage.sidebar_agents`. The tiles and the registers always show
+every account, whatever the switches say. Tab reaches the switches after
+`Refresh`, Enter or Space flips the focused one, and focus draws a 1.5 px
+`text` capsule ring at 0.35, 3 px outside the switch. Under the
+`Activity by agent` eyebrow, whose
 trailing edge holds a `Turns` | `Tokens` | `Active time` segmented control of
 full-radius pills (Turns by default, not persisted), one card stacks a register
 per account with activity in the last 53 weeks: Claude Code first, then Codex,

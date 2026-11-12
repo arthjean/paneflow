@@ -155,6 +155,7 @@ and macOS keep every agent below.
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `usage.plan_limits` | boolean/null | `true` | Paneflow installs its status line relay, `paneflow-ai-hook StatusLine`, in each Claude Code config directory whose `settings.json` has no `statusLine`, so the plan limits Claude Code hands its status line reach Paneflow. A status line of your own is never changed. `false` removes the relay at the next integration refresh. No credential is read. |
+| `usage.sidebar_agents` | array/null | `null` | The agents whose plan limits the sidebar capsule and its bubble show, by runtime slug: `claude-code`, `codex`. `null` shows every agent, and an empty list hides the capsule. **Settings › Usage** always lists every account. Set from **Settings › Usage › Sidebar**. |
 
 ## `worktrees`
 

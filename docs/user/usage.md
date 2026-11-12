@@ -38,6 +38,11 @@ reach the weekly limit at your current pace, or the share of the week you
 will have used when it resets. **Open usage settings** at the bottom opens
 the Usage page.
 
+With both Claude Code and Codex accounts, **Settings › Usage › Sidebar** has
+one switch per agent. Turn an agent off to leave its limits out of the capsule
+and the bubble; the Usage page keeps showing every account. The choice is
+stored in `usage.sidebar_agents`.
+
 To hide the capsule, turn off **Usage** in **Customize sidebar › Show**, or
 set `sidebar_show.usage` to `false`. With no Claude Code or Codex account,
 the capsule does not appear.

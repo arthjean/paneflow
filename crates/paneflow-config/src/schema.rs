@@ -151,6 +151,7 @@ mod tests {
             }),
             usage: Some(UsageConfig {
                 plan_limits: Some(true),
+                sidebar_agents: Some(vec!["claude-code".to_string()]),
             }),
             agent_profiles: vec![AgentProfileConfig {
                 name: "Claude perso".to_string(),
