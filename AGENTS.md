@@ -188,6 +188,8 @@ every pane exports them, so `scripts/dev.sh`, `cargo run` and `cargo test` stay
 on the dev state. A desktop launched from a pane also sheds the pane's markers
 (`PANEFLOW_SURFACE_ID`, `PANEFLOW_SESSION_ID`, and the rest of
 `paneflow_host::env::PANE_CONTEXT_ENV`) before starting its host and worker.
+Drive a live UI or agent test in a debug build on its own tagged home, never in
+the installed app, which holds the user's live sessions.
 When several agents need their own running instance, `scripts/dev.sh --tag
 <name>` (`dev.ps1 -Tag <name>`) sets `PANEFLOW_HOME=~/.paneflow-dev-<name>`:
 an isolated home owns its IPC endpoint (`paneflow-ipc-<fingerprint>`), host
