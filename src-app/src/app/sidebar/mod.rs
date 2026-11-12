@@ -739,27 +739,7 @@ impl PaneFlowApp {
                 .heights
                 .get(row)
                 .copied()
-                .unwrap_or_else(|| {
-                    let meta = match *row {
-                        SidebarRow::Folder(_) => false,
-                        SidebarRow::Tab(ws, tab) => self
-                            .render_tab_checkout_meta(
-                                &self.workspaces[ws],
-                                &self.workspaces[ws].tabs()[tab],
-                                0.,
-                                SIDEBAR_WIDTH,
-                                cx,
-                            )
-                            .is_some(),
-                    };
-                    SIDEBAR_ROW_PADDING_Y * 2.
-                        + SIDEBAR_ROW_LINE_HEIGHT
-                        + if meta {
-                            SIDEBAR_ROW_GAP + SIDEBAR_ROW_LINE_HEIGHT
-                        } else {
-                            0.
-                        }
-                });
+                .unwrap_or(SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT);
             list = list.child(
                 div()
                     .flex_none()

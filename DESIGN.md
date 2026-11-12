@@ -496,7 +496,7 @@ it from the content.
 
 ### 5.2 Primary sidebar, Agents mode
 
-The primary sidebar uses the bundled Geist at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px Geist text in the same family as workspace titles; diff statistics use 12 px Geist text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 15 px inside 20 px slots. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
+The primary sidebar uses the bundled Geist at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px Geist text in the same family as workspace titles; diff statistics use 12 px Geist text. Simple rows have a 32 px minimum height and 9 px corners; A tab row fits on one line: the title, then its branch in muted text after a 6 px gap with the branch or pull request glyph, the branch truncating before the title, and the diff statistics on the trailing edge. Folder glyphs are 15 px inside 20 px slots. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
 
 All squircle fills and borders use three cubic Bezier segments per
 corner in `src-app/src/ui_primitives/squircle.rs`. This is an approximation of

@@ -87,6 +87,8 @@ impl PaneFlowApp {
             self.inline_rename_field(ui)
         } else {
             let title_text = div()
+                .flex_none()
+                .max_w_full()
                 .min_w_0()
                 .overflow_x_hidden()
                 .whitespace_nowrap()
@@ -118,6 +120,9 @@ impl PaneFlowApp {
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
         let diffstat = self.render_tab_diffstat_chip(ws, tab);
+        let branch = (!is_renaming)
+            .then(|| self.render_tab_branch_label(ws, tab, cx))
+            .flatten();
         let close_tab = cx.listener(move |this, _: &ClickEvent, window, cx| {
             if let Some((at_ws, at_tab)) = this
                 .workspaces
@@ -152,38 +157,40 @@ impl PaneFlowApp {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(SIDEBAR_TITLE_ROW_GAP))
-                    .flex_1()
+                    .gap(px(SIDEBAR_BRANCH_GAP))
+                    .flex_initial()
                     .min_w_0()
+                    .overflow_x_hidden()
                     .child(title_el)
-                    .when(!detached_panes.is_empty(), |titled| {
-                        titled.child(
-                            sidebar_action_button(
-                                SharedString::from(format!("tab-detached-{tab_id}")),
-                                "icons/detach-pane.svg",
-                                12.,
-                                "Show detached pane".into(),
-                                ui,
-                            )
-                            .my(px(
-                                (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
-                            ))
-                            .on_click(move |_, _, cx| {
-                                let current = detached_panes.iter().position(|pane| {
-                                    pane.read(cx).detached.is_some_and(|placement| {
-                                        crate::agents::notifications::is_window_active(
-                                            placement.window.window_id(),
-                                        )
-                                    })
-                                });
-                                let index =
-                                    current.map_or(0, |index| (index + 1) % detached_panes.len());
-                                PaneFlowApp::focus_pane_window(detached_panes[index].clone(), cx);
-                                cx.stop_propagation();
-                            }),
-                        )
-                    }),
+                    .children(branch),
             )
+            .when(!detached_panes.is_empty(), |titled| {
+                titled.child(
+                    sidebar_action_button(
+                        SharedString::from(format!("tab-detached-{tab_id}")),
+                        "icons/detach-pane.svg",
+                        12.,
+                        "Show detached pane".into(),
+                        ui,
+                    )
+                    .my(px(
+                        (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
+                    ))
+                    .on_click(move |_, _, cx| {
+                        let current = detached_panes.iter().position(|pane| {
+                            pane.read(cx).detached.is_some_and(|placement| {
+                                crate::agents::notifications::is_window_active(
+                                    placement.window.window_id(),
+                                )
+                            })
+                        });
+                        let index = current.map_or(0, |index| (index + 1) % detached_panes.len());
+                        PaneFlowApp::focus_pane_window(detached_panes[index].clone(), cx);
+                        cx.stop_propagation();
+                    }),
+                )
+            })
+            .child(div().flex_1())
             .children(diffstat.map(|chip| div().flex_none().child(chip)));
 
         let title_tooltip = (!is_renaming
@@ -257,8 +264,6 @@ impl PaneFlowApp {
                 }
             }));
 
-        let meta =
-            self.render_tab_checkout_meta(ws, tab, title_indent - row_inset, content_width, cx);
         let lane_slot = lane.is_some().then(|| {
             render_lane_slot(
                 lane,
@@ -292,17 +297,7 @@ impl PaneFlowApp {
                         .child(close_button)
                         .children(lane_slot),
                 );
-                let body = match meta {
-                    Some(meta) => div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(SIDEBAR_ROW_GAP))
-                        .child(title_row)
-                        .child(meta)
-                        .into_any_element(),
-                    None => title_row.into_any_element(),
-                };
-                row.extend([body]);
+                row.extend([title_row.into_any_element()]);
             })
             .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
 
@@ -347,35 +342,28 @@ impl PaneFlowApp {
         if !show.any_enabled() {
             return None;
         }
-        let (label, stats) = self.tab_row_checkout(ws, tab)?;
-        if show.branch_enabled() && !label.is_empty() {
-            return None;
-        }
+        let (_, stats) = self.tab_row_checkout(ws, tab)?;
         if !tab_diffstat_visible(show, &stats) {
             return None;
         }
         Some(render_diffstat_counts(&stats, crate::theme::ui_colors()).into_any_element())
     }
 
-    pub(super) fn render_tab_checkout_meta(
+    fn render_tab_branch_label(
         &self,
         ws: &Workspace,
         tab: &Tab,
-        indent: f32,
-        width: f32,
         cx: &gpui::App,
     ) -> Option<AnyElement> {
         let ui = crate::theme::ui_colors();
         let show = self.cached_config.sidebar_show;
-        if !show.any_enabled() {
+        if !show.branch_enabled() {
             return None;
         }
-        let (label, stats) = self.tab_row_checkout(ws, tab)?;
-        let draw_branch = show.branch_enabled() && !label.is_empty();
-        if !draw_branch {
+        let (label, _) = self.tab_row_checkout(ws, tab)?;
+        if label.is_empty() {
             return None;
         }
-        let draw_counts = tab_diffstat_visible(show, &stats);
 
         let pr = self.tab_pull_request(ws, tab);
         let branch_tooltip = match pr {
@@ -385,7 +373,7 @@ impl PaneFlowApp {
             }
         };
 
-        let branch = draw_branch.then(|| {
+        Some(
             div()
                 .id(SharedString::from(format!("tab-branch-{}", tab.id)))
                 .when_some(branch_tooltip, |branch, text| {
@@ -395,7 +383,7 @@ impl PaneFlowApp {
                 .flex_row()
                 .items_center()
                 .gap(px(3.))
-                .flex_1()
+                .flex_initial()
                 .min_w_0()
                 .child(
                     svg()
@@ -412,33 +400,16 @@ impl PaneFlowApp {
                 )
                 .child(
                     div()
-                        .flex_1()
+                        .flex_initial()
                         .min_w_0()
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_size(px(14.))
+                        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                         .text_color(ui.muted)
                         .child(self.sidebar_filter_label(label, cx)),
                 )
-        });
-
-        let counts = draw_counts.then(|| render_diffstat_counts(&stats, ui));
-
-        Some(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_end()
-                .gap(px(6.))
-                .h(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .pl(px(indent))
-                .w(px(width))
-                .max_w(px(width))
-                .overflow_x_hidden()
-                .when_some(branch, |row, branch| row.child(branch))
-                .when_some(counts, |row, counts| row.child(counts))
                 .into_any_element(),
         )
     }

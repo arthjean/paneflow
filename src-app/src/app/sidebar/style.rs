@@ -6,6 +6,7 @@ pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
 pub(super) const SIDEBAR_ROW_GAP: f32 = 3.0;
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 20.0;
 pub(super) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
+pub(super) const SIDEBAR_BRANCH_GAP: f32 = 6.0;
 const SIDEBAR_ROW_MIN_HEIGHT: f32 = 32.0;
 pub(super) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
 pub(super) const ROW_RADIUS: gpui::Pixels = px(9.0);
