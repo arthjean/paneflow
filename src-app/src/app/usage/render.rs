@@ -104,7 +104,7 @@ impl PaneFlowApp {
         .when_some(percent, |capsule, percent| {
             capsule.child(
                 div()
-                    .font_family(".SystemUIFont")
+                    .font_family("Geist")
                     .text_size(px(13.))
                     .font_weight(FontWeight::MEDIUM)
                     .font_features(tabular_numerals())

@@ -496,7 +496,7 @@ it from the content.
 
 ### 5.2 Primary sidebar, Agents mode
 
-The primary sidebar uses the platform system UI font at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px system text in the same family as workspace titles; diff statistics use 12 px system text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 15 px inside 20 px slots. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
+The primary sidebar uses the bundled Geist at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px Geist text in the same family as workspace titles; diff statistics use 12 px Geist text. Simple rows have a 32 px minimum height and 9 px corners; Paneflow-specific Git metadata retains its second line. Folder glyphs are 15 px inside 20 px slots. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
 
 All squircle fills and borders use three cubic Bezier segments per
 corner in `src-app/src/ui_primitives/squircle.rs`. This is an approximation of
@@ -876,7 +876,7 @@ inside the editor's existing frame budget.
 
 ### 5.5 Settings
 
-Navigation uses the same system font and row scale as the workspace sidebar:
+Navigation uses the same Geist font and row scale as the workspace sidebar:
 14 px text with 20 px line height, 17 px icons, 32 px minimum row height,
 2 px row spacing, 8 px outer margins, and continuous corners at radius 9.
 The search field is the sidebar filter field (`filter_field`): a 36 px

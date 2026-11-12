@@ -310,7 +310,7 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         let mut sidebar = div()
-            .font_family(".SystemUIFont")
+            .font_family("Geist")
             .text_size(px(13.))
             .font_weight(FontWeight::NORMAL)
             .relative()

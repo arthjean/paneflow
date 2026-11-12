@@ -876,7 +876,7 @@ fn build_styled_text(
         let family: SharedString = if is_code {
             "monospace".into()
         } else {
-            ".SystemUIFont".into()
+            "Geist".into()
         };
         let weight = if span.style.strong {
             FontWeight::BOLD

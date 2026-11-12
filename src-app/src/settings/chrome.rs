@@ -324,7 +324,7 @@ impl PaneFlowApp {
 
         div()
             .id("settings-nav")
-            .font_family(".SystemUIFont")
+            .font_family("Geist")
             .text_size(px(14.))
             .w(px(SETTINGS_NAV_WIDTH))
             .h_full()
