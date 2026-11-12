@@ -121,9 +121,13 @@ jobs:
     # Same Ubuntu 22.04 userland as the `build` job of `release-linux.yml`,
     # on a 24.04 host: `distro-smoke` installs these packages on Ubuntu 22.04
     # and Debian 12, where a binary linked against the host's glibc 2.39
-    # would not start.
+    # would not start. `--init` puts an init process at PID 1: the runner
+    # starts the container on `tail`, which never reaps an orphan, so a
+    # descendant the PTY stress check killed would stay a zombie and still
+    # answer `kill(pid, 0)`, which is how that test looks for survivors.
     container:
       image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+      options: --init
     # A release build against the published archive, and four package
     # formats. The engine rebuild is the `recipe` job above, in
     # `libghostty-recipe.yml`. The workspace tests and cargo-deny do not run
