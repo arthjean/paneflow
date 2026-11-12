@@ -764,6 +764,28 @@ release_tag_cases() {
   expect "the package smoke without its arguments is a usage error" 2 "usage: smoke-linux-package\.sh" "$smoke" ubuntu
 }
 
+libghostty_archive_cases() {
+  local compare="$ROOT/scripts/compare-libghostty-archive.sh"
+  local dir="$WORK/libghostty-archive"
+  mkdir -p "$dir"
+  printf 'rebuilt' > "$dir/rebuilt.a"
+  printf 'rebuilt' > "$dir/same.a"
+  printf 'published' > "$dir/other.a"
+
+  expect "a rebuilt archive identical to the published one passes" 0 \
+    "x86_64-unknown-linux-gnu: the rebuilt archive is the published one \([0-9a-f]{64}\)" \
+    "$compare" x86_64-unknown-linux-gnu "$dir/rebuilt.a" "$dir/same.a"
+  expect "a drifted archive is refused with its target and both hashes" 1 \
+    "aarch64-apple-darwin: the published archive is not the one the recipe produces: rebuilt [0-9a-f]{64}, published [0-9a-f]{64}" \
+    "$compare" aarch64-apple-darwin "$dir/rebuilt.a" "$dir/other.a"
+  expect "a missing published archive is named with its target" 1 \
+    "aarch64-apple-darwin: missing archive .*absent\.a" \
+    "$compare" aarch64-apple-darwin "$dir/rebuilt.a" "$dir/absent.a"
+  expect "the archive comparison without its arguments is a usage error" 2 \
+    "usage: compare-libghostty-archive\.sh" \
+    "$compare" x86_64-unknown-linux-gnu
+}
+
 have_tool() {
   local tool="$1" purpose="$2"
   if command -v "$tool" >/dev/null; then
@@ -1144,6 +1166,7 @@ glibc_floor_cases
 release_staging_cases
 signing_detection_cases
 release_tag_cases
+libghostty_archive_cases
 retry_cases
 powershell_retry_cases
 

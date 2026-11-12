@@ -100,7 +100,7 @@ jobs:
       # fetch-libghostty verifies against `archive_sha256` in the manifest.
       # The Linux legs used to rebuild it from the Ghostty source, twice, to
       # reproduce those same bytes: 12 minutes on the slowest leg.
-      # `libghostty-linux.yml` owns that reproducibility proof, on every
+      # `libghostty-recipe.yml` owns that reproducibility proof, on every
       # recipe change and every night.
       - uses: ./.github/actions/fetch-libghostty
 
