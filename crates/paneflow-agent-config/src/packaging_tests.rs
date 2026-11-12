@@ -21,11 +21,11 @@ fn wix_shims(wix: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn release_shims(workflow: &str) -> BTreeSet<String> {
-    let start = workflow
+fn staged_shims(script: &str) -> BTreeSet<String> {
+    let start = script
         .find("$shim = Join-Path $artifactDir 'paneflow-shim.exe'")
-        .expect("release.yml copies the shim under its alias names");
-    let list = &workflow[start..];
+        .expect("stage-windows-helpers.ps1 copies the shim under its alias names");
+    let list = &script[start..];
     let list = &list[list.find("@(").expect("shim alias list opens")..];
     let list = &list[..list.find("))").expect("shim alias list closes")];
     let entry = regex::Regex::new(r"'([^']+\.exe)'").unwrap();
@@ -56,13 +56,13 @@ fn packaging_drift(
     })
 }
 
-fn check_packaging(expected: &BTreeSet<String>, wix: &str, workflow: &str) -> Result<(), String> {
+fn check_packaging(expected: &BTreeSet<String>, wix: &str, script: &str) -> Result<(), String> {
     let drift = [
         packaging_drift(expected, "packaging/wix/main.wxs", &wix_shims(wix)),
         packaging_drift(
             expected,
-            ".github/workflows/release.yml",
-            &release_shims(workflow),
+            "scripts/stage-windows-helpers.ps1",
+            &staged_shims(script),
         ),
     ]
     .into_iter()
@@ -79,7 +79,7 @@ fn packaged_lists() -> (String, String) {
     let root = repository_root();
     (
         fs::read_to_string(root.join("packaging/wix/main.wxs")).unwrap(),
-        fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap(),
+        fs::read_to_string(root.join("scripts/stage-windows-helpers.ps1")).unwrap(),
     )
 }
 
@@ -96,8 +96,8 @@ fn windows_packaging_ships_one_shim_per_shimmed_catalog_runtime() {
     );
     assert_eq!(expected.len(), shimmed.len());
     assert!(!expected.contains("fx.exe"));
-    let (wix, workflow) = packaged_lists();
-    let drift = check_packaging(&expected, &wix, &workflow).err();
+    let (wix, script) = packaged_lists();
+    let drift = check_packaging(&expected, &wix, &script).err();
     assert!(drift.is_none(), "{}", drift.unwrap_or_default());
 }
 
@@ -133,15 +133,16 @@ fn a_fixture_runtime_without_a_wix_entry_fails_naming_its_alias() {
             .filter(|located| located.descriptor.detection.title_prefix.is_none())
             .map(|located| located.descriptor.detection.command_aliases[0].as_str()),
     );
-    let (wix, workflow) = packaged_lists();
-    let error = check_packaging(&expected, &wix, &workflow).unwrap_err();
+    let (wix, script) = packaged_lists();
+    let error = check_packaging(&expected, &wix, &script).unwrap_err();
     assert!(
         error.contains("packaging/wix/main.wxs: missing catalog aliases [\"alpha-cli.exe\"]"),
         "{error}"
     );
     assert!(
-        error
-            .contains(".github/workflows/release.yml: missing catalog aliases [\"alpha-cli.exe\"]"),
+        error.contains(
+            "scripts/stage-windows-helpers.ps1: missing catalog aliases [\"alpha-cli.exe\"]"
+        ),
         "{error}"
     );
 }

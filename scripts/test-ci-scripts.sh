@@ -543,6 +543,140 @@ SYMBOLS
   expect "a call without a binary is a usage error" 2 "usage: check-glibc-floor\.sh" "$check" 2.35
 }
 
+in_dir() {
+  local dir="$1"
+  shift
+  (cd "$dir" && "$@")
+}
+
+linux_leg() {
+  local dir="$WORK/release-legs/$1"
+  mkdir -p "$dir/target/bundle" "$dir/target/appimage" \
+    "$dir/target/x86_64-unknown-linux-gnu/debian" "$dir/target/x86_64-unknown-linux-gnu/generate-rpm"
+  echo tarball > "$dir/target/bundle/paneflow-1.2.3-x86_64.tar.gz"
+  echo appimage > "$dir/target/appimage/paneflow-1.2.3-x86_64.AppImage"
+  echo zsync > "$dir/target/appimage/paneflow-1.2.3-x86_64.AppImage.zsync"
+  echo deb > "$dir/target/x86_64-unknown-linux-gnu/debian/paneflow_1.2.3-1_amd64.deb"
+  echo rpm > "$dir/target/x86_64-unknown-linux-gnu/generate-rpm/paneflow-1.2.3-1.x86_64.rpm"
+  printf '%s' "$dir"
+}
+
+release_staging_cases() {
+  local stage="$ROOT/scripts/stage-linux-assets.sh"
+  local staged="$ROOT/scripts/check-staged-assets.sh"
+  local windows="$ROOT/scripts/stage-windows-assets.sh"
+  local summary="$ROOT/scripts/release-dry-run-summary.sh"
+  local dir names
+
+  dir="$(linux_leg complete)"
+  expect "a complete Linux leg is staged" 0 "paneflow-1\.2\.3-x86_64\.rpm\.sha256" in_dir "$dir" "$stage" v1.2.3 x86_64 x86_64-unknown-linux-gnu
+  names="$(cd "$dir/release-assets" && printf '%s ' *)"
+  expect "the staged Linux assets carry the release names and one checksum each" 0 \
+    "^paneflow-1\.2\.3-x86_64\.AppImage paneflow-1\.2\.3-x86_64\.AppImage\.sha256 paneflow-1\.2\.3-x86_64\.AppImage\.zsync paneflow-1\.2\.3-x86_64\.deb paneflow-1\.2\.3-x86_64\.deb\.sha256 paneflow-1\.2\.3-x86_64\.rpm paneflow-1\.2\.3-x86_64\.rpm\.sha256 paneflow-1\.2\.3-x86_64\.tar\.gz paneflow-1\.2\.3-x86_64\.tar\.gz\.sha256 $" \
+    echo "$names"
+  expect "a staged checksum verifies next to its asset" 0 "paneflow-1\.2\.3-x86_64\.deb: OK" in_dir "$dir/release-assets" sha256sum -c paneflow-1.2.3-x86_64.deb.sha256
+  expect "staged assets pass the staging check" 0 "" in_dir "$dir" env RELEASE_MODE=release "$staged"
+
+  dir="$(linux_leg no-rpm)"
+  rm "$dir"/target/x86_64-unknown-linux-gnu/generate-rpm/*.rpm
+  expect "a Linux leg without its rpm fails the staging" 1 "" in_dir "$dir" "$stage" 1.2.3 x86_64 x86_64-unknown-linux-gnu
+
+  dir="$(linux_leg empty-appimage)"
+  : > "$dir/target/appimage/paneflow-1.2.3-x86_64.AppImage"
+  expect "an empty asset is refused before it is hashed" 1 "paneflow-1\.2\.3-x86_64\.AppImage is missing or empty" in_dir "$dir" "$stage" 1.2.3 x86_64 x86_64-unknown-linux-gnu
+  expect "staging without its three arguments is a usage error" 2 "usage: stage-linux-assets\.sh <version> <arch> <rust-target-triple>" "$stage" 1.2.3
+
+  dir="$WORK/release-legs/nothing"
+  mkdir -p "$dir"
+  expect "a release leg that staged nothing fails" 1 "No release artifacts were staged" in_dir "$dir" env RELEASE_MODE=release RUNNER_OS=Windows "$staged"
+  expect "a dry-run leg that staged nothing warns and passes" 0 "::warning::No release artifacts were staged for Windows" in_dir "$dir" env RELEASE_MODE=dry-run RUNNER_OS=Windows "$staged"
+
+  dir="$WORK/release-legs/windows"
+  mkdir -p "$dir/target/wix" "$dir/target/libghostty-windows-release"
+  echo msi > "$dir/target/wix/paneflow-1.2.3-x86_64.msi"
+  echo '{}' > "$dir/target/libghostty-windows-release/provenance.json"
+  expect "the Windows MSI and its provenance are staged under their release names" 0 "paneflow-1\.2\.3-x86_64-pc-windows-msvc\.libghostty-provenance\.json\.sha256" in_dir "$dir" "$windows" v1.2.3
+  expect "the staged MSI carries the canonical name" 0 "" test -s "$dir/release-assets/paneflow-1.2.3-x86_64-pc-windows-msvc.msi"
+  echo second > "$dir/target/wix/paneflow-1.2.3.1-x86_64.msi"
+  expect "two MSIs under target/wix are refused" 1 "Expected exactly one MSI under target/wix/, found 2" in_dir "$dir" "$windows" 1.2.3
+  rm "$dir/target/wix/paneflow-1.2.3.1-x86_64.msi" "$dir/target/libghostty-windows-release/provenance.json"
+  expect "a missing provenance report is refused" 1 "Missing Windows libghostty provenance report" in_dir "$dir" "$windows" 1.2.3
+
+  dir="$(linux_leg complete)"
+  expect "the dry-run summary lists every asset with its size and hash, without the checksum files" 0 \
+    '\| `paneflow-1\.2\.3-x86_64\.deb` \| 4 \| `[0-9a-f]{64}` \|' \
+    env GITHUB_STEP_SUMMARY=/dev/stdout "$summary" v1.2.3 "main at abc" "$dir/release-assets"
+  if env GITHUB_STEP_SUMMARY=/dev/stdout "$summary" v1.2.3 "main at abc" "$dir/release-assets" | grep -q '\.sha256` |'; then
+    echo "FAIL the dry-run summary lists a .sha256 file as an asset"
+    failures=$((failures + 1))
+  fi
+  cases=$((cases + 1))
+}
+
+signing_detection_cases() {
+  local macos="$ROOT/scripts/detect-macos-signing.sh"
+  local windows="$ROOT/scripts/detect-windows-signing.sh"
+  local sign="$ROOT/scripts/sign-linux-packages.sh"
+  local apple=(APPLE_DEVELOPER_CERT_P12=p12 APPLE_DEVELOPER_CERT_PASSWORD=pw APPLE_ID=id APPLE_APP_SPECIFIC_PASSWORD=app APPLE_TEAM_ID=team)
+  local azure=(AZURE_TENANT_ID=t AZURE_CLIENT_ID=c AZURE_CLIENT_SECRET=s AZURE_TRUSTED_SIGNING_ENDPOINT=e AZURE_TRUSTED_SIGNING_ACCOUNT=a AZURE_TRUSTED_SIGNING_CERT_PROFILE=p)
+  local clean=(env -u APPLE_DEVELOPER_CERT_P12 -u APPLE_DEVELOPER_CERT_PASSWORD -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD -u APPLE_TEAM_ID
+    -u AZURE_TENANT_ID -u AZURE_CLIENT_ID -u AZURE_CLIENT_SECRET -u AZURE_TRUSTED_SIGNING_ENDPOINT -u AZURE_TRUSTED_SIGNING_ACCOUNT -u AZURE_TRUSTED_SIGNING_CERT_PROFILE
+    -u GPG_PRIVATE_KEY -u GPG_KEY_ID -u GPG_PASSPHRASE GITHUB_OUTPUT=/dev/stdout GITHUB_REF=refs/heads/feature)
+
+  expect "five Apple secrets enable macOS signing" 0 "^signing_available=true$" "${clean[@]}" "${apple[@]}" RELEASE_MODE=release "$macos"
+  expect "a dry-run without Apple secrets builds unsigned" 0 "^signing_available=false$" "${clean[@]}" RELEASE_MODE=dry-run "$macos"
+  expect "the unsigned dry-run names the ref" 0 "Signing secrets unavailable on refs/heads/feature: building unsigned dry-run artifacts" "${clean[@]}" RELEASE_MODE=dry-run "$macos"
+  expect "a release without Apple secrets fails" 1 "macOS signing required" "${clean[@]}" RELEASE_MODE=release "$macos"
+  expect "one missing Apple secret is enough to fail a release" 1 "macOS signing required" "${clean[@]}" "${apple[@]}" APPLE_TEAM_ID= RELEASE_MODE=release "$macos"
+
+  expect "six Azure secrets enable Windows signing" 0 "^signing_available=true$" "${clean[@]}" "${azure[@]}" "$windows"
+  expect "a missing Azure secret skips the MSI chain" 0 "^signing_available=false$" "${clean[@]}" "${azure[@]}" AZURE_CLIENT_SECRET= "$windows"
+
+  expect "a dry-run without the GPG key skips the package signature" 0 "GPG signing skipped::Signing secrets unavailable on refs/heads/feature" "${clean[@]}" RELEASE_MODE=dry-run "$sign" x86_64-unknown-linux-gnu
+  expect "a release without the GPG key fails with the contract message" 1 "GPG signing failed: key not loaded" "${clean[@]}" RELEASE_MODE=release "$sign" x86_64-unknown-linux-gnu
+  expect "a short GPG key id is refused" 1 "GPG_KEY_ID must be the 40-char hex fingerprint \(got 16 chars\)" "${clean[@]}" GPG_PRIVATE_KEY=armor GPG_KEY_ID=0123456789ABCDEF RELEASE_MODE=release "$sign" x86_64-unknown-linux-gnu
+  expect "package signing without a target is a usage error" 2 "usage: sign-linux-packages\.sh <rust-target-triple>" "$sign"
+}
+
+fake_git_remote() {
+  local bin="$WORK/fake-git-$1"
+  mkdir -p "$bin"
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'cat "$FAKE_LS_REMOTE"'
+  } > "$bin/git"
+  chmod +x "$bin/git"
+  printf '%s' "$bin"
+}
+
+release_tag_cases() {
+  local check="$ROOT/scripts/require-tag-at-commit.sh"
+  local previous="$ROOT/scripts/resolve-previous-release.sh"
+  local smoke="$ROOT/scripts/smoke-linux-package.sh"
+  local bin listing gh_bin
+  bin="$(fake_git_remote remote)"
+  listing="$WORK/ls-remote.txt"
+
+  printf '%s\trefs/tags/v1.2.3\n' "$FAKE_COMMIT" > "$listing"
+  expect "a lightweight tag on the built commit passes" 0 "v1\.2\.3 still points to $FAKE_COMMIT" env PATH="$bin:$PATH" FAKE_LS_REMOTE="$listing" GITHUB_REPOSITORY=o/r "$check" v1.2.3 "$FAKE_COMMIT"
+
+  printf '%s\trefs/tags/v1.2.3\n%s\trefs/tags/v1.2.3^{}\n' "$FAKE_TAG_OBJECT" "$FAKE_TAGGED_COMMIT" > "$listing"
+  expect "an annotated tag is compared through the commit it points to" 0 "still points to $FAKE_TAGGED_COMMIT" env PATH="$bin:$PATH" FAKE_LS_REMOTE="$listing" GITHUB_REPOSITORY=o/r "$check" v1.2.3 "$FAKE_TAGGED_COMMIT"
+  expect "a tag moved to another commit fails and names both" 1 "Tag v1\.2\.3 now points to $FAKE_TAGGED_COMMIT, this run built $FAKE_COMMIT\. Re-run the release" env PATH="$bin:$PATH" FAKE_LS_REMOTE="$listing" GITHUB_REPOSITORY=o/r "$check" v1.2.3 "$FAKE_COMMIT"
+
+  : > "$listing"
+  expect "a deleted tag fails" 1 "Tag v1\.2\.3 now points to nothing" env PATH="$bin:$PATH" FAKE_LS_REMOTE="$listing" GITHUB_REPOSITORY=o/r "$check" v1.2.3 "$FAKE_COMMIT"
+  expect "the tag check without a repository fails" 1 "GITHUB_REPOSITORY is required" env -u GITHUB_REPOSITORY PATH="$bin:$PATH" FAKE_LS_REMOTE="$listing" "$check" v1.2.3 "$FAKE_COMMIT"
+
+  gh_bin="$(canned_gh)"
+  printf 'v1.2.3\nv1.2.2\nv1.2.1\n' > "$WORK/release-list.txt"
+  expect "the previous release is the newest one that is not the current tag" 0 "^old_tag=v1\.2\.2$" env PATH="$gh_bin:$PATH" CANNED_GH_LOG="$WORK/gh.log" CANNED_GH_OUTPUT="$WORK/release-list.txt" GITHUB_OUTPUT=/dev/stdout "$previous" v1.2.3
+  expect "the previous version drops the v prefix" 0 "^old_version=1\.2\.2$" env PATH="$gh_bin:$PATH" CANNED_GH_LOG="$WORK/gh.log" CANNED_GH_OUTPUT="$WORK/release-list.txt" GITHUB_OUTPUT=/dev/stdout "$previous" v1.2.3
+
+  expect "the package smoke refuses an unknown distribution" 2 "unknown distribution 'gentoo'" "$smoke" gentoo 1.2.3 "$WORK"
+  expect "the package smoke without its arguments is a usage error" 2 "usage: smoke-linux-package\.sh" "$smoke" ubuntu
+}
+
 have_tool() {
   local tool="$1" purpose="$2"
   if command -v "$tool" >/dev/null; then
@@ -920,6 +1054,9 @@ published_stream_cases
 release_publication_cases
 helper_size_cases
 glibc_floor_cases
+release_staging_cases
+signing_detection_cases
+release_tag_cases
 retry_cases
 powershell_retry_cases
 

@@ -129,14 +129,16 @@ jobs:
         run: scripts/check-minisign-pubkeys.sh
 
       # The package smokes run in bare distribution containers with no
-      # checkout. They download this artifact to run their apt and dnf calls
-      # through the retry wrapper, which retries a transient mirror failure
-      # and fails at once on anything else.
-      - name: Upload the network retry wrapper for the package smokes
+      # checkout. They download this artifact: the smoke script, and the retry
+      # wrapper it runs its apt, dnf and zypper calls through, which retries a
+      # transient mirror failure and fails at once on anything else.
+      - name: Upload the package smoke scripts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-ci-scripts
-          path: scripts/ci-retry-network.sh
+          path: |
+            scripts/ci-retry-network.sh
+            scripts/smoke-linux-package.sh
           if-no-files-found: error
           retention-days: 7
 
@@ -298,25 +300,7 @@ jobs:
       - name: Verify Windows compiler and signing tools
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          where.exe cl.exe
-          where.exe link.exe
-
-          $signtool = Get-Command -Name signtool.exe -ErrorAction SilentlyContinue
-          if ($null -eq $signtool) {
-              $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
-              if (Test-Path -LiteralPath $sdkRoot) {
-                  $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
-                      Where-Object { $_.FullName -match '\\x64\\' } |
-                      Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
-                      Select-Object -First 1
-              }
-          }
-          if ($null -eq $signtool) {
-              throw "signtool.exe not found on PATH or under the Windows SDK."
-          }
-          $signtoolPath = if ($signtool.PSObject.Properties.Name -contains 'Source') { $signtool.Source } else { $signtool.FullName }
-          Write-Output "Using signtool: $signtoolPath"
+        run: ./scripts/check-windows-build-tools.ps1
 
       # US-002 AC3 - validate the AppStream metainfo XML before any packaging
       # step touches it. Invalid metainfo would (a) make `.deb`/`.rpm` install
@@ -334,17 +318,7 @@ jobs:
 
       - name: Verify AppStream release version freshness
         if: runner.os == 'Linux'
-        run: |
-          workspace_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
-          appstream_version="$(awk -F'"' '/<release version=/ { print $2; exit }' assets/io.github.arthurdev44.paneflow.metainfo.xml)"
-          if [ -z "$workspace_version" ] || [ -z "$appstream_version" ]; then
-            echo "::error::could not resolve Cargo.toml or AppStream release version"
-            exit 1
-          fi
-          if [ "$workspace_version" != "$appstream_version" ]; then
-            echo "::error::AppStream top release version ($appstream_version) must match workspace version ($workspace_version)"
-            exit 1
-          fi
+        run: scripts/check-appstream-version.sh
 
       # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
       # `@master` ref + explicit `toolchain` input so the action reads the
@@ -409,21 +383,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: |
-          set -euo pipefail
-          if [ -n "${AZURE_TENANT_ID:+set}" ] \
-             && [ -n "${AZURE_CLIENT_ID:+set}" ] \
-             && [ -n "${AZURE_CLIENT_SECRET:+set}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_ENDPOINT:+set}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_ACCOUNT:+set}" ] \
-             && [ -n "${AZURE_TRUSTED_SIGNING_CERT_PROFILE:+set}" ]; then
-              echo "All 6 Azure Trusted Signing secrets are present - will sign the EXE, then produce + sign + verify MSI."
-              echo "signing_available=true" >> "$GITHUB_OUTPUT"
-          else
-              echo "::warning title=Windows signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
-              echo "::warning title=Windows MSI packaging skipped::One or more AZURE_* secrets are missing - skipping Preflight WiX / Install cargo-wix / Produce MSI / Sign / Verify / Stage. Build/test/clippy still run for cross-platform validation. See docs/release/windows-signing.md to enable."
-              echo "signing_available=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: scripts/detect-windows-signing.sh
 
       # Windows Application Control / Smart App Control evaluates the helper
       # executable that actually runs from the PaneFlow terminal PATH. The
@@ -437,17 +397,7 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          $cargo = if ([string]::IsNullOrEmpty($env:CARGO)) { 'cargo' } else { $env:CARGO }
-          & $cargo build `
-            --profile release-min `
-            --locked `
-            --target $env:TARGET `
-            --target-dir target/embed-build `
-            -p paneflow-shim `
-            -p paneflow-ai-hook `
-            -p paneflow-mcp
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: ./scripts/build-windows-helpers.ps1 -Target $env:TARGET
 
       - name: Sign and stage Windows embedded helpers
         id: windows_helpers
@@ -461,77 +411,14 @@ jobs:
           AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: |
-          $target = $env:TARGET
-          $artifactDir = Join-Path 'target/embed-build' "$target/release-min"
-          $embedDir = Join-Path 'src-app/target/embed/bin' $target
-          $packagedHelperDir = Join-Path (Join-Path 'target' $target) 'release/paneflow-helpers'
-          New-Item -ItemType Directory -Path $embedDir -Force | Out-Null
-          New-Item -ItemType Directory -Path $packagedHelperDir -Force | Out-Null
-
-          foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe', 'paneflow-mcp.exe')) {
-            $artifact = Join-Path $artifactDir $name
-            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
-              throw "Expected helper artifact missing: $artifact"
-            }
-            pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $artifact
-            if ($LASTEXITCODE -ne 0) { throw "Signing failed for $artifact (exit $LASTEXITCODE)" }
-            Copy-Item -LiteralPath $artifact -Destination (Join-Path $embedDir $name) -Force
-          }
-
-          $shim = Join-Path $artifactDir 'paneflow-shim.exe'
-          foreach ($name in @(
-            'claude.exe',
-            'codex.exe',
-            'opencode.exe',
-            'pi.exe',
-            'hermes.exe',
-            'grok.exe',
-            'amp.exe',
-            'gemini.exe',
-            'copilot.exe',
-            'droid.exe',
-            'openclaw.exe',
-            'muse.exe'
-          )) {
-            Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir $name) -Force
-          }
-          Copy-Item -LiteralPath (Join-Path $artifactDir 'paneflow-ai-hook.exe') `
-            -Destination (Join-Path $packagedHelperDir 'paneflow-ai-hook.exe') `
-            -Force
-
-          "helpers_prepared=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        run: ./scripts/stage-windows-helpers.ps1 -Target $env:TARGET
 
       - name: Validate Windows helper packaging set
         if: runner.os == 'Windows' && steps.windows_helpers.outputs.helpers_prepared == 'true'
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          $helperDir = Join-Path (Join-Path 'target' $env:TARGET) 'release/paneflow-helpers'
-          if (-not (Test-Path -LiteralPath $helperDir -PathType Container)) {
-              throw "Expected helper directory missing: $helperDir"
-          }
-
-          $ns = New-Object System.Xml.XmlNamespaceManager((New-Object System.Xml.NameTable))
-          $ns.AddNamespace('w', 'http://schemas.microsoft.com/wix/2006/wi')
-          $xml = New-Object System.Xml.XmlDocument
-          $xml.Load((Resolve-Path -LiteralPath 'packaging/wix/main.wxs').Path)
-          $wixHelpers = @(
-              $xml.SelectNodes("//w:Component[@Id='HelperBinaries']/w:File", $ns) |
-                  ForEach-Object { $_.GetAttribute('Name') } |
-                  Sort-Object
-          )
-          $diskHelpers = @(
-              Get-ChildItem -LiteralPath $helperDir -Filter '*.exe' -File |
-                  ForEach-Object { $_.Name } |
-                  Sort-Object
-          )
-          $diff = Compare-Object -ReferenceObject $wixHelpers -DifferenceObject $diskHelpers
-          if ($null -ne $diff) {
-              $diff | Format-Table | Out-String | Write-Output
-              throw "WiX HelperBinaries entries do not match prepared paneflow-helpers files."
-          }
+        run: ./scripts/check-wix-helper-set.ps1 -Target $env:TARGET
 
       # --- Release build ---
       # `POSTHOG_API_KEY` is resolved by `option_env!` at compile time
@@ -705,254 +592,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-
-          # --- Fail-fast: secrets present? -----------------------------
-          if [ -z "${GPG_PRIVATE_KEY:+set}" ] || [ -z "${GPG_KEY_ID:+set}" ]; then
-            if [ "${RELEASE_MODE}" = "dry-run" ]; then
-              echo "::warning title=GPG signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
-              exit 0
-            fi
-            echo "::error title=GPG signing::GPG signing failed: key not loaded"
-            echo "::error::GPG_PRIVATE_KEY and/or GPG_KEY_ID secrets are not populated." >&2
-            exit 1
-          fi
-          # Require the full 40-char fingerprint. Short 16-char key IDs
-          # are collision-vulnerable (see https://evil32.com/) - an
-          # attacker who could populate `GPG_KEY_ID` with a short ID
-          # pointing at a rogue key would satisfy the later `grep -qi
-          # "${GPG_KEY_ID}$"` fingerprint match against any key whose
-          # fingerprint ends in those 16 hex chars. Enforcing 40 chars
-          # eliminates the attack class.
-          if ! [[ "$GPG_KEY_ID" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-            echo "::error title=GPG signing::GPG signing failed: key not loaded"
-            echo "::error::GPG_KEY_ID must be the 40-char hex fingerprint (got ${#GPG_KEY_ID} chars). Short key IDs are rejected because they are collision-vulnerable." >&2
-            exit 1
-          fi
-
-          # --- Import the key ------------------------------------------
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
-          # `allow-loopback-pinentry` lets us pass the passphrase via
-          # `--pinentry-mode loopback` from non-interactive contexts.
-          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-          gpgconf --kill gpg-agent || true
-          # Import; if the private-key blob is malformed, `gpg --import`
-          # exits non-zero and `set -e` fails the step - the annotation
-          # above ensures the red X in PR check matches the AC contract.
-          # `<<<` (bash herestring) passes the secret through a kernel
-          # pipe buffer, NOT through argv - so it never appears in
-          # `/proc/<pid>/cmdline` of any intermediate process.
-          if ! gpg --batch --import <<< "$GPG_PRIVATE_KEY" 2>&1; then
-            echo "::error title=GPG signing::GPG signing failed: key not loaded"
-            echo "::error::GPG_PRIVATE_KEY failed to import. Secret may be truncated or missing the ASCII-armor header." >&2
-            exit 1
-          fi
-          # Verify the imported key's fingerprint matches GPG_KEY_ID.
-          # Substring match because `--with-colons` prints the full
-          # fingerprint while GPG_KEY_ID may be either form (16/40 hex).
-          if ! gpg --list-secret-keys --with-colons \
-               | awk -F: '/^fpr:/ {print $10}' \
-               | grep -qi "${GPG_KEY_ID}$"; then
-            echo "::error title=GPG signing::GPG signing failed: key not loaded"
-            echo "::error::GPG_PRIVATE_KEY does not match GPG_KEY_ID fingerprint. Secrets likely mismatched." >&2
-            exit 1
-          fi
-
-          # --- Prime the agent passphrase cache (only if passphrased) --
-          # US-015 uses the same dummy-clearsign trick. If the key has no
-          # passphrase (`%no-protection`), GPG_PASSPHRASE is empty and we
-          # skip - `gpg` accepts `--passphrase-file <(printf '')` as an
-          # empty passphrase but it also ignores pinentry in that case.
-          if [ -n "${GPG_PASSPHRASE:+set}" ]; then
-            printf 'prime' | gpg --batch --yes \
-              --passphrase-file <(printf '%s' "$GPG_PASSPHRASE") \
-              --pinentry-mode loopback \
-              --local-user "$GPG_KEY_ID" \
-              --armor --clearsign \
-              --output /dev/null
-          fi
-
-          # --- Pre-warm the GPG agent cache (US-001 research step 2) ---
-          # Explicit `gpg --list-secret-keys` call to ensure the imported
-          # secret key is loaded into the running gpg-agent BEFORE the
-          # first rpmsign invocation. Without this, on a fresh runner
-          # agent, rpmsign can race the agent's lazy key-load path and
-          # abort mid-sign with a stdin-read error (upstream
-          # https://github.com/rpm-software-management/rpm/issues/3740).
-          # The earlier fingerprint-check call already reads the key, but
-          # we keep this as a distinct step so the intent is obvious if
-          # a future maintainer refactors the fingerprint check away.
-          gpg --list-secret-keys >/dev/null
-
-          # --- Write ~/.rpmmacros for rpmsign --------------------------
-          # `rpmsign` without a macros file would spawn an interactive
-          # pinentry. Override `%__gpg_sign_cmd` so it runs in batch mode
-          # with loopback pinentry. `%_gpg_name` tells it which key.
-          #
-          # Passphrase handling: rpmsign invokes `%__gpg_sign_cmd` via
-          # `/bin/sh -c`, which on Ubuntu is `dash` - and dash does NOT
-          # support bash process substitution `<(...)`. So we can't inline
-          # `--passphrase-file <(printf ...)` into the macro. Instead we
-          # write the passphrase to a private 0600 temp file, reference
-          # that path from the macro, and `trap` its cleanup. The temp
-          # file is on the runner's ephemeral tmpfs - same blast radius
-          # as the `.rpmmacros` file itself.
-          PASS_FILE=$(mktemp)
-          chmod 600 "$PASS_FILE"
-          trap 'rm -f "$PASS_FILE" "$HOME/.rpmmacros"' EXIT
-          printf '%s' "${GPG_PASSPHRASE:-}" > "$PASS_FILE"
-
-          # Override `%__gpg` directly (NOT `%_gpgbin`). On Ubuntu 22.04
-          # the default `/usr/lib/rpm/macros` sets `%__gpg` to
-          # `/usr/bin/gpg2` - a Fedora-ism that does not exist on
-          # Debian-family systems, where GnuPG 2.2+ ships as the
-          # unified `/usr/bin/gpg` binary. Setting only `%_gpgbin` is
-          # NOT enough (rpm ignores it during macro expansion of
-          # `%{__gpg}`); `%__gpg` is the authoritative knob.
-          #
-          # `%__gpg_sign_cmd` then references `%{__gpg}` which now
-          # resolves to our Ubuntu-safe path. Verified empirically via
-          # strace against `rpmsign --addsign`: without this override,
-          # rpmsign execve's `/usr/bin/gpg2` → ENOENT → "Could not
-          # exec gpg".
-          cat > "$HOME/.rpmmacros" <<RPMMACROS
-          %_signature gpg
-          %_gpg_name  $GPG_KEY_ID
-          %__gpg      /usr/bin/gpg
-          %__gpg_sign_cmd %{__gpg} --batch --yes \
-              --pinentry-mode loopback \
-              --passphrase-file $PASS_FILE \
-              --no-verbose \
-              --no-armor \
-              --no-secmem-warning \
-              -u "%{_gpg_name}" \
-              -sbo %{__signature_filename} \
-              %{__plaintext_filename}
-          RPMMACROS
-
-          # --- Sign all .deb files -------------------------------------
-          # `dpkg-sig --sign builder` embeds a detached GPG clearsign in
-          # the .deb's control section. The `builder` role string is
-          # conventional for CI-built packages.
-          #
-          # Glob note: cargo-deb emits `_amd64.deb` on x86_64 and
-          # `_arm64.deb` on aarch64. The `target/${TARGET}/debian/`
-          # prefix already scopes the glob to the current matrix leg, so
-          # the wildcard `paneflow_*.deb` is unambiguous per-leg (US-019).
-          for deb in target/"${TARGET}"/debian/paneflow_*.deb; do
-            [ -f "$deb" ] || continue
-            echo "→ dpkg-sig --sign builder $deb"
-            dpkg-sig -k "$GPG_KEY_ID" --sign builder "$deb"
-          done
-
-          # --- Sign all .rpm files -------------------------------------
-          # `rpmsign --addsign` embeds the signature in the RPM header
-          # using the macros above. No per-invocation flags - everything
-          # is controlled by ~/.rpmmacros.
-          #
-          # Glob note: cargo-generate-rpm emits `.x86_64.rpm` and
-          # `.aarch64.rpm`. Same target-scoped-directory reasoning as the
-          # .deb loop above (US-019).
-          #
-          # US-001 (v0.2.1) re-enable: prior v0.2.0 failure signature was
-          # "/dev/stdin: import read failed(0)". Root cause was bundled
-          # with the rpm-pubkey-import path (fixed separately in commit
-          # 92729d0 via tempfile); the rpmsign path depends on a warmed
-          # gpg-agent (see Pre-warm step above) plus the Ubuntu-specific
-          # `%__gpg` override. If CI regresses on a future release,
-          # fallbacks ranked: (a) rpmsign with inline `--define` flags
-          # (sidesteps ~/.rpmmacros entirely), (b) revert to the echo-only
-          # placeholder and ship unsigned for a single hotfix release.
-          for rpm in target/"${TARGET}"/generate-rpm/paneflow-*.rpm; do
-            [ -f "$rpm" ] || continue
-            echo "→ rpmsign --addsign $rpm"
-            rpmsign --addsign "$rpm"
-          done
-
-          # --- Verify (hard assert; a failed verify aborts the run) ----
-          # Strategy: rely on the tool's exit code as the authoritative
-          # pass/fail signal. Both `dpkg-sig --verify` and `rpm
-          # --checksig` exit 0 iff every signature component is OK, and
-          # non-zero otherwise. Verbose output is tee'd to a log for CI
-          # debugging but is NOT grepped - the output format varies
-          # across versions (modern rpm ≥4.17 emits "Header V4 RSA/SHA256
-          # Signature, key ID ...: OK" while older rpm emits "pgp md5
-          # OK"; dpkg-sig keeps GOODSIG stable but why couple to strings
-          # when the exit code is canonical?).
-          #
-          # Import the public half of our own key into an RPM DB so
-          # `rpm --checksig` can verify. Use a USER-SCOPED DB via
-          # `--dbpath` instead of the system DB at `/var/lib/rpm`:
-          #
-          # 1. No sudo needed - avoids the `sudo rpm --import /dev/stdin`
-          #    subprocess-stdin-reopen bug (rpm#3740) AND avoids any
-          #    silent-failure on Ubuntu's `rpm` package, which ships
-          #    without an initialized `/var/lib/rpm/Packages` db (v0.2.1
-          #    retry #1 surface: rpmsign signed OK, dpkg-sig verified OK,
-          #    but `rpm --checksig` returned NOKEY for key ID 183f2711
-          #    despite `sudo rpm --import` running to silent-success).
-          # 2. Fully isolated - cleaned up by the trap at EXIT along with
-          #    PASS_FILE and PUBKEY_FILE. No state leaks into the runner.
-          # 3. Cross-distro portable - the same `--dbpath "$RPM_DB"`
-          #    arguments work on Fedora / RHEL / openSUSE runners too if
-          #    we ever add them to the matrix.
-          PUBKEY_FILE=$(mktemp --suffix=.asc)
-          chmod 600 "$PUBKEY_FILE"
-          RPM_DB=$(mktemp -d)
-          trap 'rm -f "$PASS_FILE" "$HOME/.rpmmacros" "$PUBKEY_FILE"; rm -rf "$RPM_DB"' EXIT
-          gpg --armor --export "$GPG_KEY_ID" > "$PUBKEY_FILE"
-          rpm --dbpath "$RPM_DB" --initdb
-          rpm --dbpath "$RPM_DB" --import "$PUBKEY_FILE"
-          # Sanity-check the import actually landed - failure mode on
-          # rpm 4.17 is silent (exit 0 + empty keyring). The signing key
-          # fingerprint's last 8 hex chars lowercased are what rpm uses
-          # for the gpg-pubkey-<keyid>-<creation> package name.
-          KEY_SHORT=$(echo "$GPG_KEY_ID" | tail -c9 | tr 'A-F' 'a-f')
-          # rpm -qa with a pattern matches the NAME column only. gpg-pubkey
-          # packages all share the name "gpg-pubkey" - the key-id lives in
-          # the Version-Release ("gpg-pubkey-<keyid>-<creation>"). So the
-          # pattern `"gpg-pubkey-${KEY_SHORT}*"` matches NOTHING even when
-          # the key is present (v0.2.1 retry #2 surface: keyring dump
-          # confirmed "gpg-pubkey-183f2711-69e67caa" was imported, but the
-          # pattern-match check failed). Grep the full `rpm -qa 'gpg-pubkey*'`
-          # listing for the short key-id substring instead.
-          if ! rpm --dbpath "$RPM_DB" -qa 'gpg-pubkey*' | grep -qi "${KEY_SHORT}"; then
-            echo "::error::Public key ${KEY_SHORT} not imported into rpm DB at ${RPM_DB}. Dumping keyring for diagnostics:"
-            rpm --dbpath "$RPM_DB" -qa 'gpg-pubkey*' >&2 || true
-            exit 1
-          fi
-          echo "→ Imported gpg-pubkey-${KEY_SHORT} into isolated rpm DB at ${RPM_DB}"
-          # `${PIPESTATUS[0]}` reads the exit code of the FIRST command
-          # in a bash pipeline, independent of `tee`'s exit code. Using
-          # `set -o pipefail` wouldn't work here because `tee` always
-          # exits 0 on successful writes - we need the verify tool's
-          # own status, not the pipeline's composite status.
-          for deb in target/"${TARGET}"/debian/paneflow_*.deb; do
-            [ -f "$deb" ] || continue
-            echo "→ dpkg-sig --verify $deb"
-            dpkg-sig --verify "$deb" | tee /tmp/dpkg-sig-verify.log
-            if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-              echo "::error::dpkg-sig --verify failed on $deb"
-              exit 1
-            fi
-          done
-          # US-001 (v0.2.1): verify every signed .rpm with
-          # `rpm --checksig -v`. Exits 0 iff every signature component is
-          # OK (Header V4 RSA/SHA256, Header SHA1, Payload, MD5). Any
-          # NOKEY/BAD bubbles up as non-zero and fails the release - no
-          # silent-unsigned-rpm path. `PIPESTATUS[0]` reads rpm's own
-          # status, independent of `tee`'s always-0 exit.
-          for rpm_path in target/"${TARGET}"/generate-rpm/paneflow-*.rpm; do
-            [ -f "$rpm_path" ] || continue
-            echo "→ rpm --dbpath $RPM_DB --checksig -v $rpm_path"
-            rpm --dbpath "$RPM_DB" --checksig -v "$rpm_path" | tee /tmp/rpm-checksig-verify.log
-            if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-              echo "::error::rpm --checksig failed on $rpm_path (NOKEY or BAD signature)"
-              exit 1
-            fi
-          done
+        run: scripts/sign-linux-packages.sh "$TARGET"
 
       - name: Produce AppImage
         if: runner.os == 'Linux'
@@ -976,32 +616,7 @@ jobs:
       # cryptic mid-compile error).
       - name: Verify Xcode CLT + Metal toolchain (macOS)
         if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-
-          CLT_PATH="$(xcode-select -p 2>/dev/null || true)"
-          if [ -z "$CLT_PATH" ] || [ ! -d "$CLT_PATH" ]; then
-            echo "::error::Xcode Command Line Tools not found (xcode-select -p returned '$CLT_PATH')."
-            exit 1
-          fi
-
-          SDK_PATH="$(xcrun --show-sdk-path 2>/dev/null || true)"
-          if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
-            echo "::error::macOS SDK not found (xcrun --show-sdk-path returned '$SDK_PATH')."
-            exit 1
-          fi
-
-          if ! xcrun --find metal >/dev/null 2>&1; then
-            echo "::error::Metal compiler not available - gpui_macos compiles .metal shaders and will fail without it."
-            exit 1
-          fi
-
-          METAL_HEADERS="$SDK_PATH/System/Library/Frameworks/Metal.framework/Headers"
-          if [ ! -d "$METAL_HEADERS" ]; then
-            echo "::error::Metal framework headers not found at $METAL_HEADERS."
-            exit 1
-          fi
-          echo "Xcode CLT: $CLT_PATH | SDK: $SDK_PATH | Metal: $(xcrun --find metal)"
+        run: scripts/check-xcode-metal.sh
 
       # Assemble the .app bundle from the release binary cargo just built
       # (the preceding "Build release binary" step ran for every leg
@@ -1015,10 +630,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          bash scripts/bundle-macos.sh --version "$version" --arch "$ARCH"
+        run: bash scripts/bundle-macos.sh --version "${TAG#v}" --arch "$ARCH"
 
       # ─── US-015 / US-023 macOS codesign + notarize ───────────────────
       # The `if: runner.os == 'macOS'` guard skips these steps silently on
@@ -1057,24 +669,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          if [ -n "${APPLE_DEVELOPER_CERT_P12:+set}" ] \
-             && [ -n "${APPLE_DEVELOPER_CERT_PASSWORD:+set}" ] \
-             && [ -n "${APPLE_ID:+set}" ] \
-             && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:+set}" ] \
-             && [ -n "${APPLE_TEAM_ID:+set}" ]; then
-              echo "All 5 Apple signing secrets are present - will sign + notarize."
-              echo "signing_available=true" >> "$GITHUB_OUTPUT"
-          else
-              if [ "${RELEASE_MODE}" = "release" ]; then
-                  echo "::error title=macOS signing required::One or more APPLE_* secrets are missing. Tag-push releases must sign and notarize the macOS artifact."
-                  exit 1
-              fi
-              echo "::warning title=macOS signing skipped::Signing secrets unavailable on ${GITHUB_REF}: building unsigned dry-run artifacts"
-              echo "::warning title=macOS signing skipped::One or more APPLE_* secrets are missing - emitting an UNSIGNED .app. See docs/release/macos-signing.md."
-              echo "signing_available=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: scripts/detect-macos-signing.sh
 
       - name: Sign macOS .app bundle
         if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available == 'true'
@@ -1109,21 +704,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          {
-              echo "## ⚠️ Unsigned macOS build (${ARCH}, ${TAG})"
-              echo
-              echo "One or more APPLE_* secrets were missing, so this leg shipped an"
-              echo "**unsigned, un-notarized** \`PaneFlow.app\`. macOS Gatekeeper will"
-              echo "block first-launch with the \"can't be opened\" prompt."
-              echo
-              echo "Required secrets: \`APPLE_DEVELOPER_CERT_P12\`, "
-              echo "\`APPLE_DEVELOPER_CERT_PASSWORD\`, \`APPLE_ID\`,"
-              echo "\`APPLE_APP_SPECIFIC_PASSWORD\`, \`APPLE_TEAM_ID\`."
-              echo
-              echo "Onboarding runbook: \`docs/release/macos-signing.md\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/summarize-unsigned-macos.sh "$ARCH" "$TAG"
 
       # ─── Free disk space before .dmg ─────────────────────────────────
       # macos-15 hosted runners ship with ~14 GB free. A workspace-wide
@@ -1178,10 +759,7 @@ jobs:
         env:
           TAG: ${{ env.RELEASE_TAG }}
           ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          bash scripts/create-dmg.sh --version "$version" --arch "$ARCH"
+        run: bash scripts/create-dmg.sh --version "${TAG#v}" --arch "$ARCH"
 
       # Stage the .dmg + SHA-256 sibling into release-assets/ so the
       # downstream `release` job picks it up alongside the Linux-leg
@@ -1194,16 +772,7 @@ jobs:
         env:
           TAG: ${{ env.RELEASE_TAG }}
           ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          # US-019: filenames drop the leading `v` to match US-008's
-          # documented convention (paneflow-<semver>-<arch>-apple-darwin.dmg).
-          version="${TAG#v}"
-          dmg="paneflow-${version}-${ARCH}-apple-darwin.dmg"
-          cp "dist/${dmg}" "release-assets/${dmg}"
-          ( cd release-assets && shasum -a 256 "${dmg}" > "${dmg}.sha256" )
-          ls -la release-assets/
+        run: scripts/stage-macos-assets.sh "${TAG#v}" "$ARCH"
 
       # ─── US-016 Windows MSI: toolchain preflight ─────────────────────────
       # Gated on `windows_signing.signing_available` (set above): when the
@@ -1221,26 +790,7 @@ jobs:
       - name: Preflight WiX v3 toolchain
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
         shell: pwsh
-        run: |
-          # cargo-wix 0.3.9 needs candle.exe + light.exe. Preinstalled
-          # on windows-2022 at C:\Program Files (x86)\WiX Toolset v3.14\bin\.
-          # v3.11 retained as a defensive fallback - if the image ever
-          # rolls back, emit a Write-Warning so the drift is visible in
-          # the CI log rather than silently selecting an older toolset
-          # that may emit subtly different MSIs.
-          $wixRoots = @(
-              'C:\Program Files (x86)\WiX Toolset v3.14\bin',
-              'C:\Program Files (x86)\WiX Toolset v3.11\bin'
-          )
-          $wixBin = $wixRoots | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $wixBin) {
-              throw "WiX v3 not found under any known path. cargo-wix 0.3.9 requires WiX v3 (candle.exe/light.exe). Runner image may have dropped the preinstalled toolset - add an explicit install step (choco install wixtoolset --version 3.14.1)."
-          }
-          if ($wixBin -match 'v3\.11') {
-              Write-Warning "Falling back to WiX v3.11 - windows-2022 image normally ships v3.14. Verify runner-image changelog for a silent WiX downgrade."
-          }
-          Write-Output "Using WiX: $wixBin"
-          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+        run: ./scripts/preflight-wix.ps1
 
       # cargo-wix itself is NOT preinstalled on windows-2022. Pinned to
       # 0.3.9 (latest 2025-03 release; no 0.4.x exists yet that supports
@@ -1256,29 +806,7 @@ jobs:
       - name: Validate WiX per-machine invariants
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
         shell: pwsh
-        run: |
-          $ns = New-Object System.Xml.XmlNamespaceManager((New-Object System.Xml.NameTable))
-          $ns.AddNamespace('w', 'http://schemas.microsoft.com/wix/2006/wi')
-          $xml = New-Object System.Xml.XmlDocument
-          $xml.Load((Resolve-Path -LiteralPath 'packaging/wix/main.wxs').Path)
-          $package = $xml.SelectSingleNode('//w:Package', $ns)
-          if ($null -eq $package) {
-              throw "WiX Package element not found."
-          }
-          if ($package.GetAttribute('InstallScope') -eq 'perMachine') {
-              $hkcuKeyPaths = @($xml.SelectNodes("//w:Component[.//w:RegistryValue[@Root='HKCU' and @KeyPath='yes']]", $ns))
-              $invalid = @($hkcuKeyPaths | Where-Object {
-                  $hasShortcut = $_.SelectNodes(".//w:Shortcut", $ns).Count -gt 0
-                  $hasMachineFile = $_.SelectNodes(".//w:File", $ns).Count -gt 0
-                  $hasMachineEnvironment = $_.SelectNodes(".//w:Environment", $ns).Count -gt 0
-                  $hasMachineRegistry = $_.SelectNodes(".//w:RegistryValue[@Root='HKLM']", $ns).Count -gt 0
-                  -not ($hasShortcut -and -not ($hasMachineFile -or $hasMachineEnvironment -or $hasMachineRegistry))
-              })
-              if ($invalid.Count -gt 0) {
-                  $ids = @($invalid | ForEach-Object { $_.Id }) -join ', '
-                  throw "perMachine MSI may use HKCU KeyPath only for shortcut-only components. Offending component(s): $ids"
-              }
-          }
+        run: ./scripts/check-wix-per-machine.ps1
 
       # ─── Windows Authenticode: sign the installed executable first ───────
       # Smart App Control evaluates the installed application binary, not just
@@ -1295,44 +823,14 @@ jobs:
           AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: |
-          $executables = @(
-              'target\x86_64-pc-windows-msvc\release\paneflow.exe',
-              'target\x86_64-pc-windows-msvc\release\paneflow-host.exe'
-          )
-          foreach ($exe in $executables) {
-              if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-                  throw "No Windows release executable found at $exe. The Build release binary step may have failed or emitted an unexpected path."
-              }
-              pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $exe
-              if ($LASTEXITCODE -ne 0) { throw "Signing failed for $exe (exit $LASTEXITCODE)" }
-          }
+        run: ./scripts/sign-windows-executables.ps1
 
       - name: Verify Windows libghostty release payload
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          $report = 'target\libghostty-windows-release\provenance.json'
-          $exe = "target\$env:TARGET\release\paneflow.exe"
-          pwsh -NoProfile -File ./scripts/verify-libghostty-windows.ps1 `
-            -Target $env:TARGET `
-            -Binary $exe `
-            -ReportPath $report `
-            -AllowGeneratedIcons
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          $provenance = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-          if ($provenance.linkage -ne 'static-candidate' -or
-              $provenance.runtime_smoke_verified -ne $false -or
-              [string]::IsNullOrWhiteSpace($provenance.binary_sha256)) {
-              throw 'libghostty release provenance did not produce the expected pre-smoke static candidate'
-          }
-          $serialized = Get-Content -LiteralPath $report -Raw
-          if ($serialized -match '(?i)[a-z]:\\') {
-              throw 'libghostty release provenance must not contain runner-local absolute paths'
-          }
+        run: ./scripts/verify-windows-release-payload.ps1 -Target $env:TARGET
 
       # ─── US-016 AC-1: Produce MSI ────────────────────────────────────────
       # cargo-wix reads [package.metadata.wix] in src-app/Cargo.toml (US-013)
@@ -1351,45 +849,7 @@ jobs:
         shell: pwsh
         env:
           MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
-        run: |
-          $version = $env:MSI_VERSION -replace '^v', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
-              throw "Windows MSI ProductVersion must be valid semver, got '$version'"
-          }
-          # --no-build: the "Build release binary" step above already
-          # produced target/x86_64-pc-windows-msvc/release/paneflow.exe.
-          # Without this flag cargo-wix 0.3.9 internally re-runs
-          # `cargo build --release`, duplicating ~3-5 min of compile on
-          # a cold runner. Matches the macOS pattern where
-          # bundle-macos.sh consumes a pre-built binary.
-          #
-          # cargo-wix has NO `build` subcommand: `cargo wix` (the default) IS
-          # the create-MSI action. Writing `cargo wix build` makes clap treat
-          # `build` as the positional INPUT (a Cargo.toml/.wxs path), which
-          # does not exist -> `Error[3] (Io): The 'build' path does not exist`.
-          # `--target` still MUST be passed explicitly: cargo-wix 0.3.x resolves
-          # the binary path from this flag
-          # (target/x86_64-pc-windows-msvc/release/paneflow.exe), NOT from a
-          # `CARGO_BUILD_TARGET` env var.
-          # cargo-wix 0.3.9 does NOT read a `wxs` key from
-          # [package.metadata.wix] (verified against create.rs) - it only
-          # auto-discovers `<package>/wix/*.wxs`, i.e. src-app/wix/, which does
-          # not exist here -> `Error[2]: There are no WXS files`. Point it at
-          # the real source explicitly with --include. Path is relative to the
-          # CWD (repo root in the checkout).
-          # --nocapture surfaces candle/light output (otherwise cargo-wix
-          # swallows LGHT/CNDL errors). The .wxs references License.rtf and
-          # PaneFlow.ico, which light resolves from the CWD (repo root), so
-          # main.wxs names them by their repository paths.
-          cargo wix `
-            --nocapture `
-            --no-build `
-            --package paneflow-app `
-            --target x86_64-pc-windows-msvc `
-            --install-version $version `
-            --include packaging/wix/main.wxs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem -LiteralPath target/wix
+        run: ./scripts/build-msi.ps1 -Version $env:MSI_VERSION
 
       # ─── US-016 AC-2 / US-024 AC-1+AC-3: Sign MSI via Azure Trusted Signing ───
       # Invokes the US-015 script, which fetches the
@@ -1433,28 +893,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
           AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          $version = $env:TAG -replace '^v', ''
-          # Hard-validate $version as strict semver before it flows into
-          # a glob pattern. github.ref_name is attacker-controlled; a
-          # tag like `v1.0.0*;evil` would produce a malformed glob. This
-          # doesn't enable command injection (Get-ChildItem -Filter is
-          # not an eval surface), but a crafted tag could match the
-          # wrong MSI or skip signing silently. Belt-and-suspenders.
-          if ($version -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
-              throw "TAG '$env:TAG' does not strip to a valid semver (got '$version'). Refusing to glob for MSI."
-          }
-          $candidates = @(Get-ChildItem -Path 'target/wix' -Filter 'paneflow-*.msi' -File)
-          if ($candidates.Count -ne 1) {
-              $names = if ($candidates.Count -gt 0) { ($candidates | ForEach-Object { $_.Name }) -join ', ' } else { '<none>' }
-              throw "Expected exactly one MSI under target/wix/ after cargo wix, found $($candidates.Count): $names"
-          }
-          $msi = $candidates[0].FullName
-          Write-Output "Signing: $msi"
-          # Quoted "$msi" so a path with spaces (unlikely with cargo-wix
-          # defaults but defensive) is passed as one argv element.
-          pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile "$msi"
-          if ($LASTEXITCODE -ne 0) { throw "Signing failed for $msi (exit $LASTEXITCODE)" }
+        run: ./scripts/sign-msi.ps1 -Tag $env:TAG
 
       # ─── US-024 AC-6: Verify MSI signature at workflow level ─────────────
       # `sign-windows.ps1` already runs `signtool verify /pa /v` + an
@@ -1474,56 +913,7 @@ jobs:
         shell: pwsh
         env:
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          $version = $env:TAG -replace '^v', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
-              throw "TAG '$env:TAG' does not strip to a valid semver (got '$version')."
-          }
-          $candidates = @(Get-ChildItem -Path 'target/wix' -Filter 'paneflow-*.msi' -File)
-          if ($candidates.Count -ne 1) {
-              $names = if ($candidates.Count -gt 0) { ($candidates | ForEach-Object { $_.Name }) -join ', ' } else { '<none>' }
-              throw "Expected exactly one MSI under target/wix/ after cargo wix, found $($candidates.Count): $names"
-          }
-          $msi = $candidates[0].FullName
-
-          # Resolve signtool the same way sign-windows.ps1 does - keep
-          # the two paths in sync so a runner-image SDK change cannot
-          # silently desynchronize them.
-          $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
-          $signtool = $null
-          if (Test-Path -LiteralPath $sdkRoot) {
-              $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
-                  Where-Object { $_.FullName -match '\\x64\\' } |
-                  Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
-                  Select-Object -First 1 -ExpandProperty FullName
-          }
-          if ([string]::IsNullOrEmpty($signtool)) {
-              $onPath = Get-Command -Name signtool.exe -ErrorAction SilentlyContinue
-              if ($null -ne $onPath) { $signtool = $onPath.Source }
-          }
-          if ([string]::IsNullOrEmpty($signtool)) {
-              throw "signtool.exe not found."
-          }
-
-          Write-Output "Verifying: $msi"
-          # Capture stdout+stderr so we can grep for the AC-6 sentinel.
-          # 2>&1 routes signtool's diagnostic output (which goes to
-          # stderr) into the same stream as the success line.
-          $verifyOutput = & $signtool verify /pa /v "$msi" 2>&1
-          $verifyExit = $LASTEXITCODE
-          $verifyOutput | ForEach-Object { Write-Output $_ }
-          if ($verifyExit -ne 0) {
-              throw "signtool verify exit code $verifyExit"
-          }
-          # Anchor the regex with `^\s*` so the AC-6 sentinel must appear
-          # as its own line (signtool emits "    Successfully verified:
-          # <path>" with leading whitespace). A bare substring match could
-          # in theory be tricked by a future signtool diagnostic that
-          # echoes the phrase mid-sentence in an error path.
-          if (-not ($verifyOutput -match '^\s*Successfully verified')) {
-              throw "signtool verify did not emit 'Successfully verified' - AC-6 sentinel missing."
-          }
-          Write-Output "AC-6 sentinel 'Successfully verified' present."
+        run: ./scripts/verify-msi-signature.ps1 -Tag $env:TAG
 
       # Every executable the MSI installs, and the MSI itself, must carry a
       # valid Authenticode signature before anything is uploaded. The embedded
@@ -1534,44 +924,7 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          $releaseDir = Join-Path 'target' "$env:TARGET/release"
-          $embedDir = Join-Path 'src-app/target/embed/bin' $env:TARGET
-          $helperDir = Join-Path $releaseDir 'paneflow-helpers'
-          $files = [System.Collections.Generic.List[string]]::new()
-          $files.Add((Join-Path $releaseDir 'paneflow.exe'))
-          $files.Add((Join-Path $releaseDir 'paneflow-host.exe'))
-          foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe', 'paneflow-mcp.exe')) {
-              $files.Add((Join-Path $embedDir $name))
-          }
-          $packaged = @(Get-ChildItem -LiteralPath $helperDir -Filter '*.exe' -File -ErrorAction SilentlyContinue)
-          if ($packaged.Count -eq 0) {
-              throw "No packaged helper executable found under $helperDir"
-          }
-          foreach ($helper in $packaged) { $files.Add($helper.FullName) }
-          $msis = @(Get-ChildItem -Path 'target/wix' -Filter 'paneflow-*.msi' -File)
-          if ($msis.Count -ne 1) {
-              throw "Expected exactly one MSI under target/wix/, found $($msis.Count)"
-          }
-          $files.Add($msis[0].FullName)
-
-          $failures = [System.Collections.Generic.List[string]]::new()
-          foreach ($file in $files) {
-              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-                  $failures.Add("$file (missing)")
-                  continue
-              }
-              $signature = Get-AuthenticodeSignature -LiteralPath $file
-              Write-Output "$($signature.Status) $file"
-              if ($signature.Status -ne 'Valid') {
-                  $failures.Add("$file ($($signature.Status): $($signature.StatusMessage))")
-              }
-          }
-          if ($failures.Count -gt 0) {
-              foreach ($failure in $failures) { Write-Output "::error::Not validly signed: $failure" }
-              throw "$($failures.Count) of $($files.Count) Windows file(s) are not validly signed"
-          }
-          Write-Output "All $($files.Count) Windows executables and the MSI carry a valid Authenticode signature."
+        run: ./scripts/verify-windows-authenticode.ps1 -Target $env:TARGET
 
       # ─── Record skipped Windows MSI packaging in job summary ────────────
       # When the Azure secrets aren't populated, the entire MSI chain
@@ -1586,24 +939,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          {
-              echo "## ℹ️ Windows MSI packaging skipped (${ARCH}, ${TAG})"
-              echo
-              echo "One or more AZURE_* secrets were missing, so this leg ran"
-              echo "**only the build/test/clippy validation** for Windows and produced"
-              echo "no \`.msi\` artifact. This is intentional: we don't ship"
-              echo "unsigned Windows installers."
-              echo
-              echo "Required secrets: \`AZURE_TENANT_ID\`, \`AZURE_CLIENT_ID\`,"
-              echo "\`AZURE_CLIENT_SECRET\`, \`AZURE_TRUSTED_SIGNING_ENDPOINT\`,"
-              echo "\`AZURE_TRUSTED_SIGNING_ACCOUNT\`, \`AZURE_TRUSTED_SIGNING_CERT_PROFILE\`."
-              echo
-              echo "Once populated, the MSI chain re-activates automatically"
-              echo "with no other workflow change. Onboarding runbook:"
-              echo "\`docs/release/windows-signing.md\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/summarize-skipped-msi.sh "$ARCH" "$TAG"
 
       # ─── US-016 AC-3: Stage the signed MSI + SHA-256 sidecar ─────────────
       # Rename from cargo-wix's default (paneflow-<ver>-x86_64.msi) to the
@@ -1621,35 +957,7 @@ jobs:
         shell: bash
         env:
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          version="${TAG#v}"
-          # cargo-wix normalizes prerelease versions in the emitted MSI
-          # filename (for example 0.6.4-rc.1 -> 0.6.4.1), so resolve the
-          # single produced MSI independently from the canonical release
-          # asset name below.
-          shopt -s nullglob
-          matches=( target/wix/paneflow-*.msi )
-          shopt -u nullglob
-          if [ "${#matches[@]}" -ne 1 ]; then
-              printf '::error::Expected exactly one MSI under target/wix/, found %s: %s\n' "${#matches[@]}" "${matches[*]:-<none>}" >&2
-              exit 1
-          fi
-          src="${matches[0]}"
-          dst="paneflow-${version}-x86_64-pc-windows-msvc.msi"
-          provenance_src="target/libghostty-windows-release/provenance.json"
-          provenance_dst="paneflow-${version}-x86_64-pc-windows-msvc.libghostty-provenance.json"
-          if [ ! -s "${provenance_src}" ]; then
-              echo "::error::Missing Windows libghostty provenance report at ${provenance_src}" >&2
-              exit 1
-          fi
-          cp "${src}" "release-assets/${dst}"
-          cp "${provenance_src}" "release-assets/${provenance_dst}"
-          ( cd release-assets \
-            && sha256sum "${dst}" > "${dst}.sha256" \
-            && sha256sum "${provenance_dst}" > "${provenance_dst}.sha256" )
-          ls -la release-assets/
+        run: scripts/stage-windows-assets.sh "${TAG#v}"
 
       # --- Stage all 4 artifacts with canonical names ---
       # Linux-leg-only: the macOS .dmg is staged by its own step above.
@@ -1673,88 +981,13 @@ jobs:
         # (`a.name.to_ascii_lowercase().ends_with("-x86_64.deb")` etc.),
         # so dropping the `v` from the prefix is safe for v0.2.x clients
         # auto-updating to v0.3.0+.
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#v}"
-          mkdir -p release-assets
-          cp "target/bundle/paneflow-${VERSION}-${ARCH}.tar.gz"            "release-assets/"
-          cp "target/appimage/paneflow-${VERSION}-${ARCH}.AppImage"        "release-assets/"
-          cp "target/appimage/paneflow-${VERSION}-${ARCH}.AppImage.zsync"  "release-assets/"
-          # cargo-deb names the file from crate version + revision + the
-          # Debian arch tag derived from the target triple
-          # (e.g. paneflow_0.3.0-1_amd64.deb on x86_64,
-          #  paneflow_0.3.0-1_arm64.deb on aarch64). Rename to the canonical
-          # paneflow-<version>-<arch>.deb form the GitHub release uses. The
-          # target-scoped directory keeps the glob unambiguous per matrix
-          # leg (US-019).
-          cp target/"${TARGET}"/debian/paneflow_*.deb \
-             "release-assets/paneflow-${VERSION}-${ARCH}.deb"
-          # cargo-generate-rpm names the file from crate version + release +
-          # rpm arch tag (e.g. paneflow-0.3.0-1.x86_64.rpm,
-          # paneflow-0.3.0-1.aarch64.rpm). Rename to the canonical
-          # paneflow-<version>-<arch>.rpm form so `update::checker::pick_asset`
-          # can match it (US-009's asset picker matches on `-${arch}.rpm`).
-          cp target/"${TARGET}"/generate-rpm/paneflow-*.rpm \
-             "release-assets/paneflow-${VERSION}-${ARCH}.rpm"
-          # Emit SHA-256 siblings for every primary Linux artifact.
-          # Rationale:
-          #   - `.tar.gz` → consumed by the in-app updater (US-011), which
-          #     fetches `<asset>.sha256` and verifies the download before
-          #     swapping `$HOME/.local/paneflow.app/`.
-          #   - `.deb` / `.rpm` / `.AppImage` (US-002) → out-of-band
-          #     verification by downstream mirrors, security scanners, and
-          #     users downloading artifacts directly from GitHub Releases.
-          #
-          # `test -s` guards catch the pathological case where an earlier
-          # `cp` silently produced a zero-byte file (e.g. disk pressure on
-          # the runner). Without them, `sha256sum` would happily hash an
-          # empty file and publish a valid-but-wrong sidecar. `sha256sum`
-          # itself is part of coreutils on ubuntu-22.04; it is always
-          # present.
-          #
-          # Staying inside a single `cd release-assets` subshell keeps the
-          # canonical coreutils output format `<64-hex>  <filename>` (no
-          # path prefix) - essential for `sha256sum -c <asset>.sha256` to
-          # work after a user downloads both files into the same directory.
-          # `set -e` / `set -o pipefail` are inherited by the subshell, so
-          # any single `sha256sum` failure aborts the chain and fails the
-          # whole step rather than publishing a partial sidecar set.
-          for art in \
-              "paneflow-${VERSION}-${ARCH}.tar.gz" \
-              "paneflow-${VERSION}-${ARCH}.AppImage" \
-              "paneflow-${VERSION}-${ARCH}.deb" \
-              "paneflow-${VERSION}-${ARCH}.rpm"
-          do
-              if [ ! -s "release-assets/${art}" ]; then
-                  echo "::error::release-assets/${art} is missing or empty, refusing to hash." >&2
-                  exit 1
-              fi
-          done
-          ( cd release-assets \
-            && sha256sum "paneflow-${VERSION}-${ARCH}.tar.gz" \
-                 > "paneflow-${VERSION}-${ARCH}.tar.gz.sha256" \
-            && sha256sum "paneflow-${VERSION}-${ARCH}.AppImage" \
-                 > "paneflow-${VERSION}-${ARCH}.AppImage.sha256" \
-            && sha256sum "paneflow-${VERSION}-${ARCH}.deb" \
-                 > "paneflow-${VERSION}-${ARCH}.deb.sha256" \
-            && sha256sum "paneflow-${VERSION}-${ARCH}.rpm" \
-                 > "paneflow-${VERSION}-${ARCH}.rpm.sha256" )
-          ls -la release-assets/
+        run: scripts/stage-linux-assets.sh "${TAG#v}" "$ARCH" "$TARGET"
 
       # Upload artifacts so the smoke-test jobs below can install them
       # in clean Ubuntu / Fedora containers. `compression-level: 0`
       # - artifacts are already compressed (.deb/.rpm/.tar.gz/.AppImage).
       - name: Verify release artifacts staged
-        run: |
-          set -euo pipefail
-          if [ ! -d release-assets ] || ! find release-assets -maxdepth 1 -type f | grep -q .; then
-            if [ "${RELEASE_MODE}" = "dry-run" ]; then
-              echo "::warning::No release artifacts were staged for ${RUNNER_OS}. Dry-run upload will be empty."
-              exit 0
-            fi
-            echo "::error::No release artifacts were staged for ${RUNNER_OS} in release mode."
-            exit 1
-          fi
+        run: scripts/check-staged-assets.sh
 
       - name: Upload release artifacts (for smoke-test jobs)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1858,11 +1091,7 @@ jobs:
       - build-linux
       - build-macos
       - build-windows
-      - smoke-test-ubuntu
-      - smoke-test-fedora
-      - smoke-test-debian
-      - smoke-test-opensuse
-      - smoke-test-arch
+      - smoke-linux
       - smoke-test-windows-msi
       - smoke-test-windows-msi-live-host
       - auto-update-e2e
@@ -1882,28 +1111,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          persist-credentials: false
+
       # AGENTS.md re-creates a tag at the fix commit when a tag build fails.
       # A run still in flight for the old commit must not publish its
       # binaries under a tag that now names another commit.
       - name: Require the tag to still point at the built commit
         env:
           RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
-        run: |
-          listing="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
-          tagged="$(awk -v r="refs/tags/$RELEASE_TAG^{}" '$2 == r { print $1; exit }' <<< "$listing")"
-          if [ -z "$tagged" ]; then
-            tagged="$(awk -v r="refs/tags/$RELEASE_TAG" '$2 == r { print $1; exit }' <<< "$listing")"
-          fi
-          if [ "$tagged" != "$RELEASE_SHA" ]; then
-            echo "::error::Tag $RELEASE_TAG now points to ${tagged:-nothing}, this run built $RELEASE_SHA. Re-run the release"
-            exit 1
-          fi
-          echo "$RELEASE_TAG still points to $RELEASE_SHA"
-
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          ref: ${{ needs.preflight.outputs.sha }}
-          persist-credentials: false
+        run: scripts/require-tag-at-commit.sh "$RELEASE_TAG" "$RELEASE_SHA"
 
       # A published release is final: a re-run fails here instead of
       # replacing its assets, and the fix ships as a patch version. A draft
@@ -1941,37 +1160,7 @@ jobs:
       - name: Sign release artifacts (minisign)
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${MINISIGN_SECRET_KEY:+set}" ]; then
-            echo "::error::MINISIGN_SECRET_KEY is required. Clients with an embedded key refuse unsigned self-update assets."
-            exit 1
-          fi
-          # minisign is not packaged in Ubuntu 22.04 (jammy): the upstream
-          # static binary is installed, pinned by version and SHA-256 in the
-          # script, so the signing toolchain itself is tamper-evident.
-          bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
-          export PATH="$RUNNER_TEMP/minisign:$PATH"
-          # Unencrypted secret key (generated with `minisign -G -W`) written to
-          # a private temp file; the GitHub secret is the only protection.
-          key_file="$(mktemp)"
-          trap 'rm -f "$key_file"' EXIT
-          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "$key_file"
-          chmod 600 "$key_file"
-          shopt -s nullglob
-          for f in release-assets/*; do
-            # Skip checksum / signature / zsync siblings - only the primary
-            # artifacts (.tar.gz/.deb/.rpm/.AppImage/.dmg/.msi) are signed.
-            case "$f" in
-              *.sha256|*.minisig|*.zsync) continue ;;
-            esac
-            [ -f "$f" ] || continue
-            base="$(basename "$f")"
-            # Trusted comment binds the artifact name into the signed payload.
-            minisign -S -s "$key_file" -m "$f" \
-              -t "paneflow release artifact ${base}" >/dev/null
-            echo "signed: ${base} -> ${base}.minisig"
-          done
+        run: scripts/sign-release-assets.sh release-assets
 
       # Draft first: the release stays hidden from /releases/latest, which the
       # in-app updater reads, until every asset is uploaded, matches the file
@@ -2013,500 +1202,68 @@ jobs:
           set -euo pipefail
           gh release edit "${RELEASE_TAG}" --draft=false
 
-  # ─── Smoke tests (US-016 + US-002 multi-distro expansion) ───────────
-  # Exercise the postinst scripts and packaged binary in clean distro
-  # containers to catch (a) the Cursor-style "broken apt update"
-  # regression US-016 guarded against, and (b) cross-distro library/
-  # naming drift that US-002 now widens to cover.
-  #
-  # 5-distro matrix (kept as 5 sibling top-level jobs rather than a
-  # `matrix:` strategy because each distro has a different package
-  # manager + assertion set; flattening them into one matrix would
-  # require a per-distro switch ladder that erases the per-distro
-  # signal a reviewer needs at a glance):
-  #   - Ubuntu 22.04         .deb postinst (deep checks: paneflow.list, idempotency)
-  #   - Fedora 40            .rpm %post     (deep checks: paneflow.repo, idempotency)
-  #   - Debian 12 bookworm   .deb install + paneflow --version  (US-002 AC1)
-  #   - openSUSE Tumbleweed  .rpm install via zypper             (US-002 AC2)
-  #   - Arch Linux           tar.gz install + paneflow --version (US-002 AC3)
-  #
-  # The Arch leg installs from the platform-agnostic `.tar.gz` rather
-  # than a native PKGBUILD because Paneflow has no AUR maintainer
-  # today (PRD US-002 AC3 explicitly allows the tar.gz fallback). It
-  # still exercises the same regression surface that matters for
-  # rolling distros: a binary built on ubuntu-22.04 (glibc 2.35) must
-  # still load on Arch's current libxcb / libxkbcommon / libvulkan.
-  #
-  # AC5 (`fail-fast: false`) is satisfied by these jobs being separate
-  # top-level jobs - GHA never cancels sibling top-level jobs on a
-  # peer's failure, so a Debian fail still surfaces the openSUSE
-  # result. Inside each step, transient package-manager fetches are
-  # wrapped in a small 3-attempt retry loop (US-002 AC6) to absorb
-  # the dominant failure mode (mirror flakes, not container pulls;
-  # GHA pulls the container before the first step and has no native
-  # retry knob).
-  #
-  # Publish gating (US-002 AC4): all release smokes sit in the
-  # `release.needs:` list above, so a smoke failure on any distro or on
-  # Windows blocks the GitHub Release publish and the downstream
-  # package-manager update jobs that fan out from it.
-  #
-  # Smoke tests are intentionally x86_64-only even after US-019 adds
-  # the aarch64 build matrix leg. The tests exercise postinst scripts
-  # (shell-only, arch-agnostic) - extending them to aarch64 would buy
-  # no additional coverage over the x86_64 run. Real aarch64
-  # installation-and-runtime validation is US-020's scope (on-device
-  # tests on a Raspberry Pi 5 / Asahi Linux).
-
-  smoke-test-ubuntu:
-    name: Smoke test - Ubuntu 22.04 (.deb postinst)
+  # ─── Linux package smokes ───────────────────────────────────────────
+  # Each leg installs the x86_64 package the way its distribution does, in
+  # a bare container, through `scripts/smoke-linux-package.sh`:
+  #   - Ubuntu 22.04         .deb postinst, paneflow.list, idempotency, and
+  #                          `paneflow --version` on the glibc 2.35 floor
+  #   - Fedora 40            .rpm %post, paneflow.repo, idempotency
+  #   - Debian 12 bookworm   .deb install + paneflow --version
+  #   - openSUSE Tumbleweed  .rpm install via zypper + paneflow --version
+  #   - Arch Linux           tar.gz + paneflow and paneflow-host --version
+  # Arch installs the tarball because Paneflow has no PKGBUILD; it still
+  # proves that a binary built for glibc 2.35 loads on a rolling
+  # distribution's libxcb, libxkbcommon and libvulkan. The legs are
+  # x86_64 only: the scriptlets they exercise are shell, the same on arm64.
+  # `fail-fast: false` keeps every distribution's verdict, and the publish
+  # job needs the whole matrix. The images run the script with bash: dash,
+  # the /bin/sh of Ubuntu and Debian, has no `set -o pipefail`.
+  smoke-linux:
+    name: Smoke test - ${{ matrix.name }}
     needs: build-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    container: ubuntu:22.04
-    # ubuntu:22.04's default /bin/sh is dash, which does NOT support
-    # `set -o pipefail`. v0.2.1 retry #3 failed at step 1 with
-    # `/tmp/XXX.sh: 1: set: Illegal option -o pipefail` before reaching
-    # any PaneFlow logic. Pin bash at the job level so every step uses
-    # a POSIX-extension-supporting shell by default.
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu
+            name: Ubuntu 22.04 (.deb postinst)
+            image: ubuntu:22.04
+          - distro: fedora
+            name: Fedora 40 (.rpm postinst)
+            image: fedora:40
+          - distro: debian
+            name: Debian 12 (.deb postinst)
+            image: debian:bookworm-slim
+          - distro: opensuse
+            name: openSUSE Tumbleweed (.rpm postinst)
+            image: opensuse/tumbleweed
+          - distro: arch
+            name: Arch Linux (tar.gz binary, no native PKGBUILD)
+            image: archlinux:base
     defaults:
       run:
         shell: bash
     steps:
-      - name: Download the network retry wrapper
+      - name: Download the package smoke scripts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-ci-scripts
           path: ./ci-scripts
 
-      - name: Install baseline tools
-        # `apt-get install` inside the container - not the host runner.
-        # `ca-certificates` is required by APT for the https repo smoke.
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -euo pipefail
-          bash ci-scripts/ci-retry-network.sh apt-get update -qq
-          bash ci-scripts/ci-retry-network.sh apt-get install -y --no-install-recommends \
-            ca-certificates
-
-      - name: Download built .deb
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          # US-019: artifact name carries runner.os to avoid Linux/macOS
-          # aarch64 name collisions. Linux-x86_64 leg uploads to this
-          # exact name.
-          name: release-assets-x86_64-Linux
-          path: ./release-assets
-
-      - name: Install paneflow.deb (exercises postinst)
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -euo pipefail
-          # `apt install` resolves runtime deps automatically - `dpkg -i`
-          # would leave them unconfigured and force a follow-up `apt -f`.
-          bash ci-scripts/ci-retry-network.sh apt-get install -y --no-install-recommends ./release-assets/paneflow-*.deb
-
-      - name: Assert postinst wrote paneflow.list with expected content
-        run: |
-          set -euo pipefail
-          test -f /etc/apt/sources.list.d/paneflow.list
-          test -s /usr/share/keyrings/paneflow-archive.asc
-          grep -Fxq 'deb [signed-by=/usr/share/keyrings/paneflow-archive.asc] https://pkg.paneflow.dev/apt stable main' \
-            /etc/apt/sources.list.d/paneflow.list
-
-      - name: Assert `apt update` completes without error (Cursor regression)
-        # AC: `sudo apt update must complete without error` - modern apt
-        # exits 0 even if individual sources 404, emitting `W:` warnings.
-        # A non-zero exit would mean the postinst wrote a MALFORMED
-        # sources line that broke the apt parser - the Cursor failure
-        # mode. Exit code is the test.
-        run: |
-          set -euo pipefail
-          bash ci-scripts/ci-retry-network.sh apt-get update
-
-      - name: Assert paneflow visible via apt-cache policy
-        run: |
-          set -euo pipefail
-          # `apt-cache policy paneflow` prints `Installed: <version>` - our
-          # crate version starts with 0 (0.1.x today) but the match must
-          # not depend on that. Accept any digit-led version string.
-          # Also use `dpkg-query` as a belt-and-braces check that catches
-          # the case where apt-cache silently reports `(none)`.
-          #
-          # Capture-then-grep via here-strings instead of a pipe. Under
-          # `set -o pipefail`, `apt-cache policy | grep -q` can flake
-          # with exit 141 (SIGPIPE): grep closes its stdin as soon as
-          # the first match is found, and apt-cache's multi-line output
-          # gets SIGPIPE on its next write, which pipefail propagates as
-          # a pipeline failure. Observed in the v0.2.3 release smoke
-          # test. Here-strings have no writer process, so there is no
-          # SIGPIPE surface - the input is a fully-materialised string
-          # handed to grep's stdin before grep runs. dpkg-query output
-          # is one line and has never been observed to flake, but we
-          # switch it to the same pattern for consistency.
-          policy=$(apt-cache policy paneflow)
-          grep -Eq '^  Installed: [0-9]' <<< "$policy"
-          status=$(dpkg-query -W -f='${Status}' paneflow)
-          grep -q 'install ok installed' <<< "$status"
-
-      - name: Idempotency - pre-existing paneflow.list is not overwritten
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -euo pipefail
-          # Simulate a user with a custom mirror already configured.
-          # Reinstalling the package must NOT clobber their file.
-          custom='deb [trusted=yes] https://mirror.example.com/paneflow stable main'
-          echo "$custom" > /etc/apt/sources.list.d/paneflow.list
-          bash ci-scripts/ci-retry-network.sh apt-get install --reinstall -y --no-install-recommends \
-            ./release-assets/paneflow-*.deb
-          grep -Fxq "$custom" /etc/apt/sources.list.d/paneflow.list \
-            || { echo "::error::postinst overwrote a pre-existing paneflow.list"; exit 1; }
-
-  smoke-test-fedora:
-    name: Smoke test - Fedora 40 (.rpm postinst)
-    needs: build-linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    container: fedora:40
-    # fedora:40 ships bash as /bin/sh already, but pin it explicitly
-    # here too - keeps the smoke jobs uniform and survives a future
-    # base-image swap (e.g., fedora:41+ or a minimal variant) without
-    # silently regressing pipefail support.
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Download the network retry wrapper
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-ci-scripts
-          path: ./ci-scripts
-
-      - name: Download built .rpm
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          # US-019: see the deb smoke test for the same naming rationale.
-          name: release-assets-x86_64-Linux
-          path: ./release-assets
-
-      - name: Install paneflow.rpm (exercises %post scriptlet)
-        # `--allowerasing` handles minimal-image edge cases where a dep
-        # conflicts with a pre-installed placeholder; safe in CI because
-        # the clean container has no user data to erase.
-        run: |
-          set -euo pipefail
-          bash ci-scripts/ci-retry-network.sh dnf install -y --allowerasing ./release-assets/paneflow-*.rpm
-
-      - name: Assert %post wrote /etc/yum.repos.d/paneflow.repo
-        run: |
-          set -euo pipefail
-          test -f /etc/yum.repos.d/paneflow.repo
-          grep -Fq '[paneflow]' /etc/yum.repos.d/paneflow.repo
-          grep -Fq 'baseurl=https://pkg.paneflow.dev/rpm' /etc/yum.repos.d/paneflow.repo
-          grep -Fq 'gpgcheck=1' /etc/yum.repos.d/paneflow.repo
-          grep -Fq 'gpgkey=https://pkg.paneflow.dev/gpg' /etc/yum.repos.d/paneflow.repo
-
-      - name: Assert `dnf check-update paneflow` does not hard-fail
-        # Same Cursor-regression check as the apt smoke test. If
-        # pkg.paneflow.dev isn't live yet (first release), dnf emits
-        # `Errors during downloading metadata for repository 'paneflow'`
-        # and exits non-zero. That's expected pre-infra. What we test:
-        # other dnf operations still work (dnf didn't choke on the
-        # .repo file itself).
-        run: |
-          set -euo pipefail
-          dnf check-update paneflow || true
-          # A repo that reaches dnf at all passes this test: we verify
-          # dnf can still function on other repos (the Fedora base
-          # mirror is always there in a clean container).
-          dnf list installed paneflow
-
-      - name: Idempotency - pre-existing paneflow.repo is not overwritten
-        run: |
-          set -euo pipefail
-          # Write a pre-existing .repo file pointing at a dummy mirror;
-          # verify the %post scriptlet leaves it alone on reinstall.
-          # Single-line cat heredoc keeps the YAML block-scalar indent
-          # contract intact (YAML requires every non-empty line to be
-          # indented ≥ the first line; a multi-line shell variable with
-          # column-0 continuations would violate that).
-          cat > /etc/yum.repos.d/paneflow.repo <<'CUSTOMEOF'
-          [paneflow]
-          name=PaneFlow (custom mirror)
-          baseurl=https://mirror.example.com/paneflow
-          enabled=1
-          gpgcheck=0
-          CUSTOMEOF
-          bash ci-scripts/ci-retry-network.sh dnf reinstall -y --allowerasing ./release-assets/paneflow-*.rpm
-          grep -Fq 'PaneFlow (custom mirror)' /etc/yum.repos.d/paneflow.repo \
-            || { echo "::error::%post overwrote a pre-existing paneflow.repo"; exit 1; }
-
-  # ─── US-002 AC1: Debian 12 (.deb postinst) ──────────────────────────
-  # Same .deb the Ubuntu smoke test installs, but on Debian's older
-  # apt + glibc baseline. Catches Ubuntu-only assumptions in our
-  # postinst (e.g. `apt-get` flag drift, snap-aware codepaths).
-  smoke-test-debian:
-    name: Smoke test - Debian 12 (.deb postinst)
-    needs: build-linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    container: debian:bookworm-slim
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Download the network retry wrapper
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-ci-scripts
-          path: ./ci-scripts
-
-      - name: Install baseline tools (retry on transient mirror flake)
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        # `bookworm-slim` ships dash as /bin/sh and a stripped APT
-        # cache, so a fresh `apt-get update` is mandatory before the
-        # .deb install can resolve `ca-certificates` and runtime deps. The
-        # retry wrapper covers deb.debian.org, which occasionally returns
-        # 503 on the first hit from a fresh container IP.
-        run: |
-          set -euo pipefail
-          bash ci-scripts/ci-retry-network.sh apt-get update -qq
-          bash ci-scripts/ci-retry-network.sh apt-get install -y --no-install-recommends \
-            ca-certificates
-
-      - name: Download built .deb
+      - name: Download the built Linux x86_64 packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets-x86_64-Linux
           path: ./release-assets
 
-      - name: Install paneflow.deb (exercises postinst on Debian 12)
+      - name: Install the package and check what it wrote
         env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -euo pipefail
-          bash ci-scripts/ci-retry-network.sh apt-get install -y --no-install-recommends \
-            ./release-assets/paneflow-*.deb
-
-      - name: Assert paneflow --version matches the released tag
-        env:
+          DISTRO: ${{ matrix.distro }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          actual="$(paneflow --version)"
-          expected="paneflow ${version}"
-          if [ "${actual}" != "${expected}" ]; then
-            echo "::error::paneflow --version returned '${actual}', expected '${expected}'"
-            exit 1
-          fi
-
-      - name: Assert postinst wrote paneflow.list (Debian path)
-        run: |
-          set -euo pipefail
-          test -f /etc/apt/sources.list.d/paneflow.list
-
-  # ─── US-002 AC2: openSUSE Tumbleweed (.rpm via zypper) ──────────────
-  # Validates that our cargo-generate-rpm `Requires:` (vulkan-loader,
-  # libxkbcommon, libxkbcommon-x11, fontconfig, freetype) resolves on
-  # zypper's package graph too - not only dnf's. A naming-drift
-  # failure here means the .rpm needs a `Provides:`-aware fix before
-  # we can claim openSUSE coverage on paneflow.dev.
-  smoke-test-opensuse:
-    name: Smoke test - openSUSE Tumbleweed (.rpm postinst)
-    needs: build-linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    container: opensuse/tumbleweed
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Refresh zypper repos (retry on transient mirror flake)
-        # Tumbleweed's container image ships with stale repo metadata
-        # roughly half the time; refresh once, retry on flake. The repo
-        # files point at download.opensuse.org, which redirects every file
-        # to a community mirror that is regularly lagging or dead from
-        # US-hosted runners (60 s connect timeouts on appdata.xml.gz);
-        # downloadcontentcdn.opensuse.org is the MirrorCache origin behind
-        # Fastly and serves every file itself. Same fix as the package
-        # smoke in libghostty-linux.yml.
-        run: |
-          set -euo pipefail
-          sed -i 's#^baseurl=https\?://download\.opensuse\.org/#baseurl=https://downloadcontentcdn.opensuse.org/#' /etc/zypp/repos.d/*.repo
-          grep -q 'downloadcontentcdn' /etc/zypp/repos.d/*.repo
-          mkdir -p /etc/zypp
-          touch /etc/zypp/zypp.conf
-          sed -i \
-            -e 's/^#\?[[:space:]]*download.connect_timeout.*/download.connect_timeout = 120/' \
-            -e 's/^#\?[[:space:]]*download.transfer_timeout.*/download.transfer_timeout = 600/' \
-            /etc/zypp/zypp.conf
-          grep -q '^download.connect_timeout = 120' /etc/zypp/zypp.conf || \
-            echo 'download.connect_timeout = 120' >> /etc/zypp/zypp.conf
-          grep -q '^download.transfer_timeout = 600' /etc/zypp/zypp.conf || \
-            echo 'download.transfer_timeout = 600' >> /etc/zypp/zypp.conf
-          for attempt in 1 2 3; do
-            if zypper --non-interactive --gpg-auto-import-keys refresh; then
-              break
-            fi
-            echo "::warning::zypper refresh failed, retry ${attempt}/3"
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error::zypper refresh failed 3 times"
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Download built .rpm
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-assets-x86_64-Linux
-          path: ./release-assets
-
-      - name: Install paneflow.rpm via zypper
-        # `--no-gpg-checks` (NOT `--allow-unsigned-rpm`): the build
-        # job signs the .rpm with `rpmsign --addsign` (release.yml
-        # line ~474), so the artifact is SIGNED but with a key that
-        # the Tumbleweed container's keyring does not trust.
-        # `--allow-unsigned-rpm` only skips the check for UNSIGNED
-        # rpms; on a signed-but-unknown-key rpm it still aborts
-        # with `Signature verification failed [4-Signatures public
-        # key is not available]`. `--no-gpg-checks` covers both
-        # cases. The smoke test's purpose is install+postinst
-        # correctness, not signature validation - which is the
-        # job of the Phase-1 sha256 sidecar emitted by the build
-        # job.
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if zypper --non-interactive --no-gpg-checks install \
-                 --allow-unsigned-rpm \
-                 ./release-assets/paneflow-*.rpm; then
-              break
-            fi
-            echo "::warning::zypper install failed, retry ${attempt}/3"
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error::zypper install failed 3 times"
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Assert paneflow --version matches the released tag
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          actual="$(paneflow --version)"
-          expected="paneflow ${version}"
-          if [ "${actual}" != "${expected}" ]; then
-            echo "::error::paneflow --version returned '${actual}', expected '${expected}'"
-            exit 1
-          fi
-
-      - name: Assert %post wrote paneflow.repo
-        # openSUSE uses /etc/zypp/repos.d/ (not yum.repos.d/) - the
-        # postinst.sh writes to whichever distro-canonical directory
-        # exists, so on Tumbleweed this is the correct expected path.
-        run: |
-          set -euo pipefail
-          test -f /etc/zypp/repos.d/paneflow.repo
-          grep -Fq '[paneflow]' /etc/zypp/repos.d/paneflow.repo
-
-  # ─── US-002 AC3: Arch Linux (tar.gz, no native PKGBUILD) ────────────
-  # Paneflow has no AUR maintainer yet, so this leg installs the
-  # platform-agnostic tarball produced by `scripts/bundle-tarball.sh`
-  # (Zed-style `paneflow.app/bin/paneflow` layout) into a clean
-  # `archlinux:base` container. The runtime libs are installed
-  # ahead of time via pacman because the tar.gz carries no dep
-  # metadata; missing names here would surface as the same
-  # `error while loading shared libraries: libvulkan.so.1` the in-app
-  # updater would emit on a real user's box. The .deb / .rpm legs
-  # don't catch this because their package managers resolve those
-  # libs implicitly from `Requires:` / `depends:`.
-  smoke-test-arch:
-    name: Smoke test - Arch Linux (tar.gz binary, no native PKGBUILD)
-    needs: build-linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    container: archlinux:base
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Install runtime libs (tar.gz has no dep metadata)
-        # Mirror the .deb / .rpm `Requires:` set, mapped to Arch
-        # package names. Pinning to a specific Arch snapshot is not
-        # worth it: the smoke test's job is precisely to fail when
-        # rolling-Arch ships a SO-name bump that breaks our
-        # ubuntu-22.04 build target.
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if pacman -Sy --noconfirm --needed \
-                 glibc libxcb libxkbcommon libxkbcommon-x11 libx11 \
-                 vulkan-icd-loader fontconfig freetype2; then
-              break
-            fi
-            echo "::warning::pacman install failed, retry ${attempt}/3"
-            if [ "${attempt}" -eq 3 ]; then
-              echo "::error::pacman install failed 3 times"
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Download tar.gz tarball
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-assets-x86_64-Linux
-          path: ./release-assets
-
-      - name: Extract paneflow.app/ and assert --version matches the tag
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-        # Tarball layout (scripts/bundle-tarball.sh): `paneflow.app/`
-        # at the root, binary at `paneflow.app/bin/paneflow`. We
-        # `find` the binary instead of hardcoding the path so a
-        # future bundle-layout shift doesn't silently mask a smoke
-        # regression.
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          mkdir -p /opt/paneflow-smoke
-          tar -xzf release-assets/paneflow-*.tar.gz -C /opt/paneflow-smoke
-          paneflow_bin="$(find /opt/paneflow-smoke -type f -name paneflow -executable | head -n1)"
-          if [ -z "${paneflow_bin}" ]; then
-            echo "::error::paneflow binary not found in tar.gz layout"
-            ls -laR /opt/paneflow-smoke
-            exit 1
-          fi
-          actual="$("${paneflow_bin}" --version)"
-          expected="paneflow ${version}"
-          if [ "${actual}" != "${expected}" ]; then
-            echo "::error::paneflow --version returned '${actual}', expected '${expected}'"
-            exit 1
-          fi
-          # `paneflow_host::resolve_host_executable` only looks next to the
-          # running controller, so a tarball that ships the desktop without
-          # its host installs an app whose every terminal pane opens dead.
-          host_bin="$(dirname "${paneflow_bin}")/paneflow-host"
-          if [ ! -x "${host_bin}" ]; then
-            echo "::error::paneflow-host is missing next to ${paneflow_bin}; hosted terminal sessions cannot start"
-            ls -laR /opt/paneflow-smoke
-            exit 1
-          fi
-          host_actual="$("${host_bin}" --version)"
-          host_expected="paneflow-host ${version}"
-          if [ "${host_actual}" != "${host_expected}" ]; then
-            echo "::error::paneflow-host --version returned '${host_actual}', expected '${host_expected}'"
-            exit 1
-          fi
+        run: bash ci-scripts/smoke-linux-package.sh "$DISTRO" "${TAG#v}" release-assets
 
   # ─── Windows MSI smoke: signed installer + update relay ──────────────
   # This is the Windows counterpart to the Linux package smokes above.
@@ -2543,14 +1300,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:BASELINE_DIR | Out-Null
-          gh release download v0.8.0 `
-            --repo $env:GITHUB_REPOSITORY `
-            --pattern 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi' `
-            --pattern 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi.sha256' `
-            --dir $env:BASELINE_DIR
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: ./scripts/download-release-msi.ps1 -Tag v0.8.0 -Directory $env:BASELINE_DIR
 
       - name: Upgrade MSI, verify compliance, and exercise update relay
         env:
@@ -2558,500 +1308,7 @@ jobs:
           MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
           SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-smoke
           BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          New-Item -ItemType Directory -Force -Path $env:SMOKE_DIR | Out-Null
-          $version = $env:TAG.TrimStart('v')
-          $msiVersion = $env:MSI_VERSION.TrimStart('v')
-          if ($env:RELEASE_MODE -eq 'release' -and $msiVersion -ne $version) {
-              throw "Published MSI ProductVersion '$msiVersion' must match release version '$version'"
-          }
-          if ($msiVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
-              throw "Windows MSI upgrade smoke requires a valid semver, got '$msiVersion'"
-          }
-          if ($msiVersion -match '^\d+\.\d+\.\d+$' -and [version]$msiVersion -le [version]'0.8.0') {
-              throw "Windows MSI upgrade smoke requires an MSI ProductVersion newer than the pinned v0.8.0 baseline, got '$msiVersion'"
-          }
-
-          $msis = @(Get-ChildItem -LiteralPath 'release-assets' -Filter 'paneflow-*-x86_64-pc-windows-msvc.msi' -File)
-          if ($msis.Count -ne 1) {
-              $found = $msis | Sort-Object Name | ForEach-Object { $_.Name }
-              throw "Expected exactly one Windows MSI, found $($msis.Count): $($found -join ', ')"
-          }
-          $msi = $msis[0]
-          if ($msi.Length -le 0) {
-              throw "MSI is empty: $($msi.FullName)"
-          }
-
-          $baselineMsis = @(Get-ChildItem -LiteralPath $env:BASELINE_DIR -Filter 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi' -File)
-          if ($baselineMsis.Count -ne 1) {
-              throw "Expected exactly one pinned v0.8.0 MSI, found $($baselineMsis.Count)"
-          }
-          $baselineMsi = $baselineMsis[0]
-
-          $publisherSource = Get-Content -LiteralPath 'src-app/src/update/windows/msi.rs' -Raw
-          $publisherMatch = [regex]::Match(
-              $publisherSource,
-              'const\s+WINDOWS_PUBLISHER_ORGANIZATION:\s*&str\s*=\s*"([^"]+)";'
-          )
-          if (-not $publisherMatch.Success) {
-              throw 'Could not read WINDOWS_PUBLISHER_ORGANIZATION from src-app/src/update/windows/msi.rs'
-          }
-          $expectedPublisher = $publisherMatch.Groups[1].Value
-
-          function Assert-Sha256Sidecar {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Path,
-                  [Parameter(Mandatory = $true)][string] $Sidecar,
-                  [Parameter(Mandatory = $true)][string] $Label
-              )
-
-              if (-not (Test-Path -LiteralPath $Sidecar -PathType Leaf)) {
-                  throw "$Label is missing SHA-256 sidecar: $Sidecar"
-              }
-              $expectedHash = ((Get-Content -LiteralPath $Sidecar -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-              if ($expectedHash -notmatch '^[a-f0-9]{64}$') {
-                  throw "$Label has invalid SHA-256 sidecar content in $Sidecar"
-              }
-              $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
-              if ($actualHash -ne $expectedHash) {
-                  throw "$Label SHA-256 mismatch: expected $expectedHash, got $actualHash"
-              }
-          }
-
-          function Assert-MsiTrust {
-              param(
-                  [Parameter(Mandatory = $true)][System.IO.FileInfo] $Msi,
-                  [Parameter(Mandatory = $true)][string] $Publisher,
-                  [Parameter(Mandatory = $true)][string] $Label
-              )
-
-              Assert-Sha256Sidecar -Path $Msi.FullName -Sidecar "$($Msi.FullName).sha256" -Label $Label
-              $signature = Get-AuthenticodeSignature -LiteralPath $Msi.FullName
-              if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
-                  throw "$Label Authenticode signature is $($signature.Status): $($signature.StatusMessage)"
-              }
-              $publisherPattern = "(?:^|,\s*)O=$([regex]::Escape($Publisher))(?:,|$)"
-              if ($signature.SignerCertificate.Subject -notmatch $publisherPattern) {
-                  throw "$Label publisher mismatch: expected O=$Publisher, got $($signature.SignerCertificate.Subject)"
-              }
-              Write-Host "$Label signed by $($signature.SignerCertificate.Subject)"
-          }
-
-          Assert-MsiTrust -Msi $baselineMsi -Publisher $expectedPublisher -Label 'Pinned v0.8.0 MSI'
-          Assert-MsiTrust -Msi $msi -Publisher $expectedPublisher -Label 'Candidate MSI'
-
-          $releaseReports = @(Get-ChildItem -LiteralPath 'release-assets' -Filter 'paneflow-*.libghostty-provenance.json' -File)
-          if ($releaseReports.Count -ne 1) {
-              throw "Expected exactly one Windows libghostty provenance report, found $($releaseReports.Count)"
-          }
-          $releaseReportFile = $releaseReports[0]
-          Assert-Sha256Sidecar `
-              -Path $releaseReportFile.FullName `
-              -Sidecar "$($releaseReportFile.FullName).sha256" `
-              -Label 'Windows libghostty provenance report'
-          $releaseReportText = Get-Content -LiteralPath $releaseReportFile.FullName -Raw
-          if ($releaseReportText -match '(?i)[a-z]:\\') {
-              throw 'Windows libghostty provenance report contains a runner-local absolute path'
-          }
-          $releaseReport = $releaseReportText | ConvertFrom-Json
-          if ($releaseReport.target -ne 'x86_64-pc-windows-msvc' -or
-              $releaseReport.linkage -ne 'static-candidate' -or
-              $releaseReport.runtime_smoke_verified -ne $false) {
-              throw 'Windows libghostty provenance report has the wrong target or linkage mode'
-          }
-
-          function Show-LogTail {
-              param([Parameter(Mandatory = $true)][string] $Path)
-
-              if (Test-Path -LiteralPath $Path) {
-                  Write-Host "--- tail of $Path ---"
-                  Get-Content -LiteralPath $Path -Tail 160 | ForEach-Object { Write-Host $_ }
-              }
-          }
-
-          function Invoke-SmokeProcess {
-              param(
-                  [Parameter(Mandatory = $true)][string] $FilePath,
-                  [Parameter(Mandatory = $true)][string[]] $Arguments,
-                  [Parameter(Mandatory = $true)][string] $Label,
-                  [int] $TimeoutSeconds = 300,
-                  [int[]] $AllowedExitCodes = @(0)
-              )
-
-              $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-              $startInfo.FileName = $FilePath
-              $startInfo.UseShellExecute = $false
-              foreach ($argument in $Arguments) {
-                  [void] $startInfo.ArgumentList.Add($argument)
-              }
-
-              $process = [System.Diagnostics.Process]::Start($startInfo)
-              if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                  try {
-                      $process.Kill($true)
-                  } catch {
-                      Write-Warning "Could not kill timed-out process $($process.Id): $_"
-                  }
-                  throw "$Label timed out after $TimeoutSeconds seconds"
-              }
-
-              if ($AllowedExitCodes -notcontains $process.ExitCode) {
-                  throw "$Label exited with $($process.ExitCode)"
-              }
-
-              return $process.ExitCode
-          }
-
-          $complianceSources = [ordered]@{
-              'LICENSE.txt' = 'LICENSE'
-              'THIRD_PARTY_NOTICES.md' = 'native/libghostty/THIRD_PARTY_NOTICES.md'
-              'libghostty-sbom.cdx.json' = 'native/libghostty/sbom.cdx.json'
-              'libghostty-manifest.toml' = 'native/libghostty/manifest.toml'
-              'libghostty-build-info.txt' = 'native/libghostty/prebuilt/x86_64-pc-windows-msvc/build-info.txt'
-          }
-
-          function Assert-NoMsiResidue {
-              param([Parameter(Mandatory = $true)][string] $Label)
-
-              if (-not (Test-Path -LiteralPath $installDir -PathType Container)) {
-                  return
-              }
-              $residue = @(Get-ChildItem -LiteralPath $installDir -Recurse -File -Force |
-                  ForEach-Object { [IO.Path]::GetRelativePath($installDir, $_.FullName) } |
-                  Sort-Object)
-              if ($residue.Count -ne 0) {
-                  throw "$Label left installed files: $($residue -join ', ')"
-              }
-          }
-
-          function Invoke-GhosttyLaunchSmoke {
-              param([Parameter(Mandatory = $true)][string] $Exe)
-
-              $stdout = Join-Path $env:SMOKE_DIR 'backend-ghostty.stdout.log'
-              $stderr = Join-Path $env:SMOKE_DIR 'backend-ghostty.stderr.log'
-              $smokeHome = Join-Path $env:SMOKE_DIR 'backend-ghostty-home'
-              New-Item -ItemType Directory -Force -Path $smokeHome | Out-Null
-              $cwd = $env:SMOKE_DIR.Replace('\', '\\')
-              $session = '{"version":2,"active_workspace":0,"workspaces":[{"title":"smoke","cwd":"' + $cwd + '","tabs":[{"title":"","title_source":"preset","layout":{"type":"pane","surfaces":[{"surface_type":"terminal","name":"Terminal","command":null,"cwd":"' + $cwd + '","env":null,"focus":true}]}}]}]}'
-              Set-Content -LiteralPath (Join-Path $smokeHome 'session.json') -Encoding utf8 -Value $session
-              Set-Content -LiteralPath (Join-Path $smokeHome 'paneflow.json') -Encoding utf8 -Value '{}'
-              Set-Content -LiteralPath (Join-Path $smokeHome 'window-state.json') -Encoding utf8 -Value '{"width":1400.0,"height":900.0}'
-              Set-Content -LiteralPath (Join-Path $smokeHome 'telemetry_id') -Encoding utf8 -Value 'msi-smoke'
-              $previousRustLog = $env:RUST_LOG
-              $previousHome = $env:PANEFLOW_HOME
-              $process = $null
-              try {
-                  $env:RUST_LOG = 'paneflow::terminal::backend=info'
-                  $env:PANEFLOW_HOME = $smokeHome
-                  $process = Start-Process -FilePath $Exe `
-                      -PassThru `
-                      -RedirectStandardOutput $stdout `
-                      -RedirectStandardError $stderr
-                  Start-Sleep -Seconds 15
-                  if ($process.HasExited) {
-                      throw 'PaneFlow launch exited before the backend diagnostic was captured'
-                  }
-              }
-              finally {
-                  if ($null -ne $process -and -not $process.HasExited) {
-                      $process.Kill($true)
-                      $null = $process.WaitForExit(10000)
-                  }
-                  if ($null -eq $previousRustLog) {
-                      Remove-Item Env:RUST_LOG -ErrorAction SilentlyContinue
-                  }
-                  else {
-                      $env:RUST_LOG = $previousRustLog
-                  }
-                  if ($null -eq $previousHome) {
-                      Remove-Item Env:PANEFLOW_HOME -ErrorAction SilentlyContinue
-                  }
-                  else {
-                      $env:PANEFLOW_HOME = $previousHome
-                  }
-              }
-
-              $backendLogParts = foreach ($logPath in @($stdout, $stderr)) {
-                  if (Test-Path -LiteralPath $logPath -PathType Leaf) {
-                      Get-Content -LiteralPath $logPath -Raw
-                  }
-              }
-              $backendLog = @($backendLogParts) -join "`n"
-              $expected = 'backend=ghostty failure_phase=none'
-              if (-not $backendLog.Contains($expected)) {
-                  throw "PaneFlow launch did not emit the expected privacy-safe diagnostic '$expected'"
-              }
-              if ($backendLog -match '(?i)(command=|cwd=|clipboard=|osc_payload=|[a-z]:\\users\\)') {
-                  throw 'PaneFlow backend diagnostic contains a forbidden sensitive field'
-              }
-              foreach ($identity in @(
-                  "ghostty_source_sha=$($releaseReport.source_sha)",
-                  "ghostty_version=$($releaseReport.ghostty_version)"
-              )) {
-                  if (-not $backendLog.Contains($identity)) {
-                      throw "PaneFlow launch did not emit runtime identity '$identity'"
-                  }
-              }
-              $runtimeEvidencePath = Join-Path $env:SMOKE_DIR 'ghostty-runtime-evidence.json'
-              [ordered]@{
-                  schema_version = 1
-                  binary_sha256 = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-                  source_sha = $releaseReport.source_sha
-                  ghostty_version = $releaseReport.ghostty_version
-                  status = 'passed'
-              } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runtimeEvidencePath -Encoding utf8
-              return $runtimeEvidencePath
-          }
-
-          $msiexec = Join-Path $env:WINDIR 'System32\msiexec.exe'
-          $installDir = Join-Path $env:ProgramFiles 'PaneFlow'
-          $pwsh = (Get-Command -Name pwsh -ErrorAction Stop).Source
-          $verifier = (Resolve-Path -LiteralPath 'scripts/verify-libghostty-windows.ps1').Path
-          $freshInstallLog = Join-Path $env:SMOKE_DIR 'fresh-install.log'
-          $freshUninstallLog = Join-Path $env:SMOKE_DIR 'fresh-uninstall.log'
-          $baselineInstallLog = Join-Path $env:SMOKE_DIR 'baseline-install.log'
-          $upgradeLog = Join-Path $env:SMOKE_DIR 'upgrade.log'
-          $uninstallLog = Join-Path $env:SMOKE_DIR 'uninstall.log'
-          $installed = $false
-          $uninstallMsi = $baselineMsi.FullName
-
-          $freshInstalled = $false
-          try {
-              try {
-                  Invoke-SmokeProcess `
-                      -FilePath $msiexec `
-                      -Arguments @('/i', $msi.FullName, '/qn', '/norestart', '/l*v', $freshInstallLog) `
-                      -Label 'candidate MSI fresh install'
-              }
-              catch {
-                  Show-LogTail -Path $freshInstallLog
-                  throw
-              }
-              $freshInstalled = $true
-              $freshExe = Join-Path $installDir 'paneflow.exe'
-              $freshVersion = (& $freshExe --version).Trim()
-              if ($LASTEXITCODE -ne 0 -or $freshVersion -ne "paneflow $version") {
-                  throw "Fresh candidate returned '$freshVersion', expected 'paneflow $version'"
-              }
-
-              $freshGhosttyEvidence = Invoke-GhosttyLaunchSmoke -Exe $freshExe
-
-              $freshReportPath = Join-Path $env:SMOKE_DIR 'fresh-install-libghostty-provenance.json'
-              Invoke-SmokeProcess `
-                  -FilePath $pwsh `
-                  -Arguments @(
-                      '-NoProfile',
-                      '-File', $verifier,
-                      '-Target', 'x86_64-pc-windows-msvc',
-                      '-Binary', $freshExe,
-                      '-PackageRoot', $installDir,
-                      '-RuntimeEvidence', $freshGhosttyEvidence,
-                      '-ReportPath', $freshReportPath,
-                      '-AllowReleaseAssets'
-                  ) `
-                  -Label 'fresh-installed libghostty runtime verifier'
-              $freshReport = Get-Content -LiteralPath $freshReportPath -Raw | ConvertFrom-Json
-              if ($freshReport.linkage -ne 'static' -or
-                  $freshReport.runtime_smoke_verified -ne $true -or
-                  $freshReport.binary_sha256 -ne $releaseReport.binary_sha256) {
-                  throw 'Fresh-installed PaneFlow binary did not produce runtime-verified static provenance'
-              }
-          }
-          finally {
-              if ($freshInstalled) {
-                  try {
-                      Invoke-SmokeProcess `
-                          -FilePath $msiexec `
-                          -Arguments @('/x', $msi.FullName, '/qn', '/norestart', '/l*v', $freshUninstallLog) `
-                          -Label 'candidate MSI fresh uninstall'
-                  }
-                  catch {
-                      Show-LogTail -Path $freshUninstallLog
-                      throw
-                  }
-              }
-          }
-          Assert-NoMsiResidue -Label 'Candidate fresh uninstall'
-
-          $configDir = Join-Path $env:APPDATA 'paneflow'
-          $configPath = Join-Path $configDir 'paneflow.json'
-          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-          # Any user setting works as the preservation probe; `scrollback_lines`
-          # is the cheapest one that no installer step has a reason to touch.
-          [ordered]@{ terminal = [ordered]@{ scrollback_lines = 4321 } } |
-              ConvertTo-Json -Depth 4 |
-              Set-Content -LiteralPath $configPath -Encoding utf8
-          $configHashBeforeUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
-
-          try {
-              try {
-                  Invoke-SmokeProcess `
-                      -FilePath $msiexec `
-                      -Arguments @('/i', $baselineMsi.FullName, '/qn', '/norestart', '/l*v', $baselineInstallLog) `
-                      -Label 'pinned v0.8.0 MSI install'
-              } catch {
-                  Show-LogTail -Path $baselineInstallLog
-                  throw
-              }
-              $installed = $true
-              $exe = Join-Path $installDir 'paneflow.exe'
-              if (-not (Test-Path -LiteralPath $exe)) {
-                  throw "Pinned v0.8.0 paneflow.exe not found at $exe"
-              }
-              $baselineActualVersion = (& $exe --version).Trim()
-              if ($LASTEXITCODE -ne 0 -or $baselineActualVersion -ne 'paneflow 0.8.0') {
-                  throw "Pinned baseline returned '$baselineActualVersion', expected 'paneflow 0.8.0'"
-              }
-
-              try {
-                  Invoke-SmokeProcess `
-                      -FilePath $msiexec `
-                      -Arguments @('/i', $msi.FullName, '/qn', '/norestart', '/l*v', $upgradeLog) `
-                      -Label 'candidate MSI upgrade'
-              } catch {
-                  Show-LogTail -Path $upgradeLog
-                  throw
-              }
-              $uninstallMsi = $msi.FullName
-
-              if (-not (Test-Path -LiteralPath $exe)) {
-                  throw "Upgraded paneflow.exe not found at $exe"
-              }
-              $actualVersion = (& $exe --version).Trim()
-              if ($LASTEXITCODE -ne 0) {
-                  throw "paneflow --version exited with $LASTEXITCODE"
-              }
-              $expectedVersion = "paneflow $version"
-              if ($actualVersion -ne $expectedVersion) {
-                  throw "paneflow --version returned '$actualVersion', expected '$expectedVersion'"
-              }
-
-              if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-                  throw 'MSI upgrade removed the existing PaneFlow configuration'
-              }
-              $configHashAfterUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
-              $preservedConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-              if ($configHashAfterUpgrade -ne $configHashBeforeUpgrade -or
-                  $preservedConfig.terminal.scrollback_lines -ne 4321) {
-                  throw 'MSI upgrade did not preserve the existing user configuration'
-              }
-
-              foreach ($entry in $complianceSources.GetEnumerator()) {
-                  $installedPath = Join-Path $installDir $entry.Key
-                  if (-not (Test-Path -LiteralPath $installedPath -PathType Leaf)) {
-                      throw "Installed MSI compliance inventory is missing $($entry.Key)"
-                  }
-                  $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $entry.Value).Hash
-                  $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedPath).Hash
-                  if ($installedHash -ne $sourceHash) {
-                      throw "Installed MSI compliance file differs from its release source: $($entry.Key)"
-                  }
-              }
-              $forbiddenDlls = @(Get-ChildItem -LiteralPath $installDir -Recurse -Filter '*ghostty*.dll' -File)
-              if ($forbiddenDlls.Count -ne 0) {
-                  throw "Installed MSI contains forbidden Ghostty DLLs: $(($forbiddenDlls.FullName) -join ', ')"
-              }
-
-              $installedReportPath = Join-Path $env:SMOKE_DIR 'installed-libghostty-provenance.json'
-              Invoke-SmokeProcess `
-                  -FilePath $pwsh `
-                  -Arguments @(
-                      '-NoProfile',
-                      '-File', $verifier,
-                      '-Target', 'x86_64-pc-windows-msvc',
-                      '-Binary', $exe,
-                      '-PackageRoot', $installDir,
-                      '-RuntimeEvidence', $freshGhosttyEvidence,
-                      '-ReportPath', $installedReportPath,
-                      '-AllowReleaseAssets'
-                  ) `
-                  -Label 'installed libghostty verifier'
-
-              $installedReportText = Get-Content -LiteralPath $installedReportPath -Raw
-              if ($installedReportText -match '(?i)[a-z]:\\') {
-                  throw 'Installed libghostty provenance report contains a runner-local absolute path'
-              }
-              $installedReport = $installedReportText | ConvertFrom-Json
-              $installedBinaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
-              if ($installedReport.linkage -ne 'static' -or
-                  $installedReport.runtime_smoke_verified -ne $true -or
-                  $installedReport.binary_sha256 -ne $installedBinaryHash) {
-                  throw 'Installed libghostty provenance does not match the statically linked PaneFlow binary'
-              }
-              if ($releaseReport.binary_sha256 -ne $installedBinaryHash) {
-                  throw 'Packaged Windows libghostty provenance does not match the installed PaneFlow binary'
-              }
-              foreach ($requiredFile in @('paneflow.exe') + @($complianceSources.Keys)) {
-                  if (@($installedReport.package_files) -notcontains $requiredFile) {
-                      throw "Installed libghostty provenance is missing package inventory entry $requiredFile"
-                  }
-              }
-
-              $relayExe = Join-Path $env:SMOKE_DIR 'paneflow-msi-relay.exe'
-              $relayMsi = Join-Path $env:SMOKE_DIR $msi.Name
-              $relayLog = Join-Path $env:SMOKE_DIR 'relay.log'
-              $relayMsiLog = Join-Path $env:SMOKE_DIR 'relay-msiexec.log'
-              $restartProbe = Join-Path $env:WINDIR 'System32\whoami.exe'
-              $missingParentPid = '4294967295'
-
-              Copy-Item -LiteralPath $exe -Destination $relayExe -Force
-              Copy-Item -LiteralPath $msi.FullName -Destination $relayMsi -Force
-
-              try {
-                  Invoke-SmokeProcess `
-                      -FilePath $relayExe `
-                      -Arguments @(
-                          '--msi-relay',
-                          '--parent-pid', $missingParentPid,
-                          '--msi', $relayMsi,
-                          '--msi-log', $relayMsiLog,
-                          '--restart', $restartProbe,
-                          '--relay-log', $relayLog
-                      ) `
-                      -Label 'paneflow MSI relay'
-              } catch {
-                  Show-LogTail -Path $relayLog
-                  Show-LogTail -Path $relayMsiLog
-                  throw
-              }
-
-              if (Test-Path -LiteralPath $relayMsi) {
-                  throw "MSI relay did not remove staged MSI copy: $relayMsi"
-              }
-
-              $relayText = Get-Content -LiteralPath $relayLog -Raw
-              foreach ($needle in @(
-                  'started pid=',
-                  "parent $missingParentPid already exited or cannot be opened",
-                  'running msiexec',
-                  'msiexec exited with 0',
-                  'relaunch requested'
-              )) {
-                  if (-not $relayText.Contains($needle)) {
-                      throw "Relay log missing expected entry '$needle'"
-                  }
-              }
-          } finally {
-              if ($installed) {
-                  try {
-                      Invoke-SmokeProcess `
-                          -FilePath $msiexec `
-                          -Arguments @('/x', $uninstallMsi, '/qn', '/norestart', '/l*v', $uninstallLog) `
-                          -Label 'msiexec uninstall'
-                  } catch {
-                      Show-LogTail -Path $uninstallLog
-                      throw
-                  }
-              }
-          }
-
-          Assert-NoMsiResidue -Label 'Candidate upgrade uninstall'
-          if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
-              (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -ne $configHashBeforeUpgrade) {
-              throw 'MSI uninstall did not preserve the existing user configuration'
-          }
+        run: ./scripts/smoke-msi.ps1 -Tag $env:TAG -MsiVersion $env:MSI_VERSION -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
 
       - name: Record manual Windows backend smoke boundary
         if: success()
@@ -3109,13 +1366,19 @@ jobs:
   smoke-test-windows-msi-live-host:
     name: Smoke test - Windows MSI upgrade over a live host
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
-    needs: build-windows
+    needs: [preflight, build-windows]
     runs-on: windows-2022
     timeout-minutes: 10
     defaults:
       run:
         shell: pwsh
     steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.preflight.outputs.sha }}
+          sparse-checkout: scripts
+
       - name: Download signed Windows MSI
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -3126,220 +1389,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
-              throw "Latest release tag '$tag' is not a vX.Y.Z tag"
-          }
-          $msiName = "paneflow-$($Matches[1])-x86_64-pc-windows-msvc.msi"
-          New-Item -ItemType Directory -Force -Path $env:BASELINE_DIR | Out-Null
-          gh release download $tag `
-            --repo $env:GITHUB_REPOSITORY `
-            --pattern $msiName `
-            --pattern "$msiName.sha256" `
-            --dir $env:BASELINE_DIR
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host "Latest published release: $tag"
+        run: ./scripts/download-release-msi.ps1 -Tag latest -Directory $env:BASELINE_DIR
 
       - name: Upgrade the latest release while its host runs
         env:
           SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-live-host
           BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path $env:SMOKE_DIR | Out-Null
-
-          function Get-SingleMsi {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Directory,
-                  [Parameter(Mandatory = $true)][string] $Label
-              )
-
-              $found = @(Get-ChildItem -LiteralPath $Directory -Filter 'paneflow-*-x86_64-pc-windows-msvc.msi' -File)
-              if ($found.Count -ne 1) {
-                  throw "Expected exactly one $Label MSI in $Directory, found $($found.Count)"
-              }
-              return $found[0]
-          }
-
-          $candidate = Get-SingleMsi -Directory 'release-assets' -Label 'candidate'
-          $baseline = Get-SingleMsi -Directory $env:BASELINE_DIR -Label 'latest release'
-          $baselineHash = ((Get-Content -LiteralPath "$($baseline.FullName).sha256" -Raw).Trim() -split '\s+')[0]
-          if ((Get-FileHash -LiteralPath $baseline.FullName -Algorithm SHA256).Hash -ne $baselineHash) {
-              throw "Latest release MSI does not match its SHA-256 sidecar: $($baseline.Name)"
-          }
-
-          $installer = New-Object -ComObject WindowsInstaller.Installer
-
-          function Get-MsiProperty {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Path,
-                  [Parameter(Mandatory = $true)][string] $Name
-              )
-
-              $database = $installer.OpenDatabase($Path, 0)
-              $view = $database.OpenView("SELECT Value FROM Property WHERE Property = '$Name'")
-              [void] $view.Execute()
-              $record = $view.Fetch()
-              [void] $view.Close()
-              [void] [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
-              [void] [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
-              if ($null -eq $record) {
-                  throw "$Path has no $Name property"
-              }
-              return $record.StringData(1)
-          }
-
-          function Get-MajorUpgradeVersion {
-              param([Parameter(Mandatory = $true)][string] $ProductVersion)
-
-              $fields = $ProductVersion.Split('.')
-              return [version]::new([int] $fields[0], [int] $fields[1], [int] $fields[2])
-          }
-
-          $upgradeCode = Get-MsiProperty -Path $candidate.FullName -Name 'UpgradeCode'
-          $candidateVersion = Get-MsiProperty -Path $candidate.FullName -Name 'ProductVersion'
-          $baselineVersion = Get-MsiProperty -Path $baseline.FullName -Name 'ProductVersion'
-          if ((Get-MajorUpgradeVersion $candidateVersion) -le (Get-MajorUpgradeVersion $baselineVersion)) {
-              if ($env:GITHUB_EVENT_NAME -eq 'push') {
-                  Write-Host "::notice title=MSI upgrade smoke not applicable::Candidate MSI ProductVersion $candidateVersion does not upgrade the latest release $baselineVersion, so there is no upgrade over a live host to test for this tag."
-                  exit 0
-              }
-              throw "Candidate MSI ProductVersion $candidateVersion does not upgrade the latest release $baselineVersion; dispatch the dry-run with msi_upgrade_version above $baselineVersion"
-          }
-          Write-Host "Upgrading $baselineVersion to $candidateVersion (UpgradeCode $upgradeCode)"
-
-          function Show-LogTail {
-              param([Parameter(Mandatory = $true)][string] $Path)
-
-              if (Test-Path -LiteralPath $Path) {
-                  Write-Host "--- tail of $Path ---"
-                  Get-Content -LiteralPath $Path -Tail 160 | ForEach-Object { Write-Host $_ }
-              }
-          }
-
-          function Invoke-SmokeProcess {
-              param(
-                  [Parameter(Mandatory = $true)][string] $FilePath,
-                  [Parameter(Mandatory = $true)][string[]] $Arguments,
-                  [Parameter(Mandatory = $true)][string] $Label,
-                  [int] $TimeoutSeconds = 300
-              )
-
-              $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-              $startInfo.FileName = $FilePath
-              $startInfo.UseShellExecute = $false
-              foreach ($argument in $Arguments) {
-                  [void] $startInfo.ArgumentList.Add($argument)
-              }
-
-              $process = [System.Diagnostics.Process]::Start($startInfo)
-              if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-                  try {
-                      $process.Kill($true)
-                  } catch {
-                      Write-Warning "Could not kill timed-out process $($process.Id): $_"
-                  }
-                  throw "$Label timed out after $TimeoutSeconds seconds"
-              }
-              if ($process.ExitCode -ne 0) {
-                  throw "$Label exited with $($process.ExitCode)"
-              }
-          }
-
-          $msiexec = Join-Path $env:WINDIR 'System32\msiexec.exe'
-          $installDir = Join-Path $env:ProgramFiles 'PaneFlow'
-          $installedExe = Join-Path $installDir 'paneflow.exe'
-          $installedHost = Join-Path $installDir 'paneflow-host.exe'
-          $filesInUseMarkers = @(
-              'Note: 1: 1611',
-              '`Error` = 1603',
-              '`Error` = 1607',
-              '`Error` = 1610',
-              'is being held in use',
-              'held files in use',
-              'ReplacedInUseFiles'
-          )
-
-          function Invoke-Msiexec {
-              param(
-                  [Parameter(Mandatory = $true)][string[]] $Arguments,
-                  [Parameter(Mandatory = $true)][string] $Log,
-                  [Parameter(Mandatory = $true)][string] $Label
-              )
-
-              try {
-                  Invoke-SmokeProcess -FilePath $msiexec -Arguments ($Arguments + @('/l*v', $Log)) -Label $Label
-              } catch {
-                  Show-LogTail -Path $Log
-                  throw
-              }
-          }
-
-          function Assert-InstalledVersion {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Expected,
-                  [Parameter(Mandatory = $true)][string] $Label
-              )
-
-              $installed = @(foreach ($productCode in @($installer.RelatedProducts($upgradeCode))) {
-                  $installer.ProductInfo($productCode, 'VersionString')
-              })
-              if ($installed.Count -ne 1 -or
-                  (Get-MajorUpgradeVersion $installed[0]) -ne (Get-MajorUpgradeVersion $Expected)) {
-                  throw "$Label expected installed ProductVersion $Expected, found '$($installed -join ', ')'"
-              }
-          }
-
-          function Invoke-LiveHostUpgrade {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Name,
-                  [string[]] $Properties = @()
-              )
-
-              Invoke-Msiexec `
-                  -Arguments @('/i', $baseline.FullName, '/qn', '/norestart') `
-                  -Log (Join-Path $env:SMOKE_DIR "$Name-baseline-install.log") `
-                  -Label "$Name install of $baselineVersion"
-              Assert-InstalledVersion -Expected $baselineVersion -Label "$Name install of $baselineVersion"
-
-              Invoke-SmokeProcess -FilePath $installedExe -Arguments @('host', 'start') -Label "$Name host start" -TimeoutSeconds 60
-              $liveHosts = @(Get-Process -Name 'paneflow-host' -ErrorAction SilentlyContinue |
-                  Where-Object Path -eq $installedHost)
-              if ($liveHosts.Count -eq 0) {
-                  throw "$Name host start left no process running $installedHost"
-              }
-              foreach ($liveHost in $liveHosts) {
-                  $null = $liveHost.Handle
-              }
-              Write-Host "$Name live host pid $($liveHosts.Id -join ', ') runs $installedHost"
-
-              $upgradeLog = Join-Path $env:SMOKE_DIR "$Name-upgrade.log"
-              Invoke-Msiexec `
-                  -Arguments (@('/i', $candidate.FullName, '/qb', '/norestart') + $Properties) `
-                  -Log $upgradeLog `
-                  -Label "$Name upgrade to $candidateVersion"
-              $inUse = @(Select-String -LiteralPath $upgradeLog -SimpleMatch -Pattern $filesInUseMarkers)
-              if ($inUse.Count -ne 0) {
-                  $inUse | ForEach-Object { Write-Host $_.Line }
-                  throw "$Name upgrade log reports files in use"
-              }
-              Assert-InstalledVersion -Expected $candidateVersion -Label "$Name upgrade to $candidateVersion"
-              $survivors = @($liveHosts | Where-Object { -not $_.HasExited })
-              if ($survivors.Count -ne 0) {
-                  throw "$Name upgrade left the old host image running as pid $($survivors.Id -join ', ')"
-              }
-
-              Invoke-Msiexec `
-                  -Arguments @('/x', $candidate.FullName, '/qn', '/norestart') `
-                  -Log (Join-Path $env:SMOKE_DIR "$Name-uninstall.log") `
-                  -Label "$Name uninstall of $candidateVersion"
-          }
-
-          Invoke-LiveHostUpgrade -Name 'relay-args' -Properties @('MSIRESTARTMANAGERCONTROL=Disable')
-          Invoke-LiveHostUpgrade -Name 'v0.16-args'
+        run: ./scripts/smoke-msi-live-host.ps1 -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
 
       - name: Upload Windows MSI live-host upgrade logs on failure
         if: failure()
@@ -3379,36 +1435,7 @@ jobs:
         env:
           DRYRUN_TAG: ${{ env.RELEASE_TAG }}
           DRYRUN_REF: ${{ inputs.target_ref || 'main' }} at ${{ needs.preflight.outputs.sha }}
-        run: |
-          set -euo pipefail
-          {
-            echo "## Dry-run artifacts (${DRYRUN_TAG})"
-            echo
-            echo "Built from \`${DRYRUN_REF}\`. Workflow artifacts have"
-            echo "7-day retention - download them from the Actions UI"
-            echo "sidebar to inspect before cutting the real tag."
-            echo
-            echo "| Asset | Size | SHA-256 |"
-            echo "|---|---:|---|"
-          } >> "$GITHUB_STEP_SUMMARY"
-          # `find -print0` keeps filenames with spaces / unicode safe.
-          # `sha256sum` is part of coreutils on ubuntu-22.04 (always
-          # present). Sort by name so the table is deterministic across
-          # runs and diffable between two back-to-back dry-runs. Skip
-          # the `*.sha256` sidecars we already emitted at build time -
-          # they would clutter the table and their content is the next
-          # column anyway.
-          while IFS= read -r -d '' f; do
-            [ -d "$f" ] && continue
-            case "$f" in
-              *.sha256) continue ;;
-            esac
-            name="$(basename "$f")"
-            size="$(stat -c '%s' "$f")"
-            hash="$(sha256sum "$f" | awk '{print $1}')"
-            printf '| `%s` | %s | `%s` |\n' "$name" "$size" "$hash"
-          done < <(find release-assets -type f -print0 | sort -z) \
-            >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/release-dry-run-summary.sh "$DRYRUN_TAG" "$DRYRUN_REF" release-assets
 
   # ─── US-005: auto-update e2e (publish-gating) ───────────────────────
   # Builds OLD paneflow at the previous tag in a git worktree, builds
@@ -3502,45 +1529,17 @@ jobs:
         id: prev_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # `gh release list --exclude-pre-releases` filters at the API
-          # layer (stable JSON, no client-side regex needed). Take the
-          # newest entry by createdAt (gh's default sort). Skip the tag
-          # currently being released (RELEASE_TAG) when this run is a
-          # tag-push - otherwise we'd compare a tag against itself.
-          CURRENT_TAG="${RELEASE_TAG:-}"
-          PREV_TAG="$(gh release list \
-              --exclude-pre-releases \
-              --exclude-drafts \
-              --limit 5 \
-              --json tagName,createdAt \
-              --jq 'sort_by(.createdAt) | reverse | .[] | .tagName' \
-            | grep -v "^${CURRENT_TAG}$" \
-            | head -n1)"
-          if [ -z "${PREV_TAG}" ]; then
-            echo "No previous stable release found - harness will self-bootstrap to no-op"
-            echo "old_version=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          OLD_VERSION="${PREV_TAG#v}"
-          echo "Previous stable: ${PREV_TAG} (OLD_VERSION=${OLD_VERSION})"
-          echo "old_version=${OLD_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "old_tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
+        run: scripts/resolve-previous-release.sh "$RELEASE_TAG"
 
       - name: Download OLD release tarball
         if: steps.prev_release.outputs.old_version != ''
         env:
+          OLD_TAG: ${{ steps.prev_release.outputs.old_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/e2e-old"
-          # Pattern is suffix-only matcher (v-prefix-agnostic) - matches
-          # both pre-v0.3.0 naming and v0.3.0+ naming.
-          gh release download "${{ steps.prev_release.outputs.old_tag }}" \
-            --pattern 'paneflow-*-x86_64.tar.gz' \
-            --dir "${RUNNER_TEMP}/e2e-old"
-          ls -la "${RUNNER_TEMP}/e2e-old"
+          mkdir -p "$RUNNER_TEMP/e2e-old"
+          gh release download "$OLD_TAG" --pattern 'paneflow-*-x86_64.tar.gz' --dir "$RUNNER_TEMP/e2e-old"
+          ls -la "$RUNNER_TEMP/e2e-old"
 
       # The build artifact predates the publish job's release signing, but
       # auto-update-e2e now sits in `release.needs`. It cannot poll a
@@ -3551,65 +1550,13 @@ jobs:
         if: steps.prev_release.outputs.old_version != ''
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${MINISIGN_SECRET_KEY:+set}" ]; then
-            echo "::error::MINISIGN_SECRET_KEY is required for auto-update e2e because OLD clients verify fail-closed."
-            exit 1
-          fi
-
-          NEW_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
-          tarball="${RUNNER_TEMP}/e2e-new/paneflow-${NEW_VERSION}-x86_64.tar.gz"
-          [ -s "${tarball}" ] || {
-            echo "::error::Expected NEW tarball not found before signing: ${tarball}"
-            ls -la "${RUNNER_TEMP}/e2e-new" || true
-            exit 1
-          }
-
-          bash scripts/install-minisign.sh "$RUNNER_TEMP/minisign"
-          export PATH="$RUNNER_TEMP/minisign:$PATH"
-
-          key_file="$(mktemp)"
-          trap 'rm -f "$key_file"' EXIT
-          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "$key_file"
-          chmod 600 "$key_file"
-
-          base="$(basename "$tarball")"
-          minisign -S -s "$key_file" -m "$tarball" \
-            -t "paneflow release artifact ${base}" >/dev/null
-          test -s "${tarball}.minisig"
-          ls -la "${RUNNER_TEMP}/e2e-new"
+        run: scripts/sign-update-e2e-tarball.sh "$RUNNER_TEMP/e2e-new"
 
       - name: Run auto-update e2e harness
         if: steps.prev_release.outputs.old_version != ''
         env:
           OLD_VERSION: ${{ steps.prev_release.outputs.old_version }}
-        run: |
-          set -euo pipefail
-          # NEW tarball name keys off the workspace package version
-          # (matches scripts/bundle-tarball.sh:50). Derived here rather
-          # than from a workflow env so the job is robust across
-          # release.yml refactors that change `NEW_VERSION` plumbing.
-          NEW_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
-          echo "NEW_VERSION=${NEW_VERSION}"
-          E2E_NEW_TARBALL="${RUNNER_TEMP}/e2e-new/paneflow-${NEW_VERSION}-x86_64.tar.gz"
-          [ -s "${E2E_NEW_TARBALL}" ] || {
-            echo "::error::Expected NEW tarball not found in build artifact: ${E2E_NEW_TARBALL}"
-            ls -la "${RUNNER_TEMP}/e2e-new" || true
-            exit 1
-          }
-          # OLD tarball: find the single matching file. `gh release
-          # download` wrote the asset under e2e-old with whatever
-          # naming the release tagged (pre-v0.3.0 vs. v0.3.0+
-          # convention, see memory/release_artifact_naming_convention.md).
-          E2E_OLD_TARBALL="$(find "${RUNNER_TEMP}/e2e-old" -maxdepth 1 -name 'paneflow-*-x86_64.tar.gz' | head -n1)"
-          [ -n "${E2E_OLD_TARBALL}" ] && [ -s "${E2E_OLD_TARBALL}" ] || {
-            echo "::error::Expected OLD tarball not found under ${RUNNER_TEMP}/e2e-old"
-            ls -la "${RUNNER_TEMP}/e2e-old" || true
-            exit 1
-          }
-          export E2E_NEW_TARBALL E2E_OLD_TARBALL
-          bash scripts/test-update-e2e.sh
+        run: scripts/run-update-e2e.sh "$RUNNER_TEMP/e2e-new" "$RUNNER_TEMP/e2e-old"
 
       - name: Self-bootstrap skip notice
         if: steps.prev_release.outputs.old_version == ''

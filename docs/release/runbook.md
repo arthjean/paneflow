@@ -340,6 +340,97 @@ There is no hosted `paneflow.repo` descriptor: the RPM's own `%post`
 a first install from a GitHub Release, which is why the Fedora block writes
 it by hand. Both commands must exit 0 and print `paneflow X.Y.Z`.
 
+## Release scripts
+
+The release workflow holds no logic of its own: each step calls a script under
+`scripts/`, so a step can be run and debugged from a checkout. Run every
+script from the repository root. The bash scripts print their usage when
+called with the wrong number of arguments; the PowerShell scripts need
+PowerShell 7 and take named parameters. A secret is always read from the
+environment, never from an argument. `RELEASE_MODE` is `release` unless it is
+set to `dry-run`.
+
+`scripts/test-ci-scripts.sh` runs the scripts marked "fixtures" against
+fixtures, on any machine.
+
+### Linux legs
+
+The two Linux legs build in the `ubuntu:22.04` image on an `ubuntu-24.04`
+host, so every binary and every library the AppImage bundles comes from
+Ubuntu 22.04, the floor `packaging/debian/postinst` promises.
+
+| Script | Arguments | Environment | What it does |
+|---|---|---|---|
+| `check-appstream-version.sh` | none | | Fails when the top `<release>` of the AppStream metainfo is not the workspace version |
+| `check-glibc-floor.sh` (fixtures) | `<floor> <elf>...`, for example `2.35 target/<triple>/release/paneflow` | `OBJDUMP` to use another objdump | Fails and names each symbol that needs a glibc newer than the floor |
+| `check-helper-sizes.sh` (fixtures) | `[helper-dir]` | | Enforces the size caps of the three embedded helpers |
+| `sign-linux-packages.sh` (fixtures, unsigned paths) | `<triple>` | `GPG_PRIVATE_KEY`, `GPG_KEY_ID`, `GPG_PASSPHRASE`, `RELEASE_MODE` | Signs the `.deb` with `dpkg-sig` and the `.rpm` with `rpmsign`, then verifies both |
+| `stage-linux-assets.sh` (fixtures) | `<version> <arch> <triple>` | | Copies the tarball, AppImage, `.deb` and `.rpm` into `release-assets/` under their release names, with a `.sha256` each |
+| `smoke-linux-package.sh` | `<ubuntu\|debian\|fedora\|opensuse\|arch> <version> <asset-dir>` | | Installs the x86_64 package as the distribution does and checks what it wrote. It runs as root and edits `/etc`: use a throwaway container |
+| `resolve-previous-release.sh` (fixtures) | `<current-tag>` | `GH_TOKEN` | Writes `old_tag` and `old_version`, the newest stable release other than the current tag, to `$GITHUB_OUTPUT` |
+| `sign-update-e2e-tarball.sh` | `<new-asset-dir>` | `MINISIGN_SECRET_KEY` | Signs the new x86_64 tarball the way the publish job will |
+| `run-update-e2e.sh` | `<new-asset-dir> <old-asset-dir>` | `OLD_VERSION` | Runs `test-update-e2e.sh` from the old tarball to the new one |
+
+`sign-linux-packages.sh` keeps three constraints that cost a release each:
+`GPG_KEY_ID` must be the 40-character fingerprint, because a short key id can
+be forged; `rpmsign` reads `%__gpg /usr/bin/gpg` from `~/.rpmmacros`, because
+Ubuntu's rpm otherwise calls a `gpg2` that does not exist; and the signature
+is checked against a private rpm database (`rpm --dbpath`), because Ubuntu
+ships no initialized system one. A release without the key fails with
+"GPG signing failed: key not loaded"; only a dry-run skips the signature.
+
+The package smoke on Ubuntu 22.04 runs `paneflow --version`: that is the run
+that proves the binary starts on glibc 2.35.
+
+### macOS leg
+
+| Script | Arguments | Environment | What it does |
+|---|---|---|---|
+| `check-xcode-metal.sh` | none | | Fails when the Command Line Tools, the SDK or the Metal compiler is missing |
+| `detect-macos-signing.sh` (fixtures) | none | the five `APPLE_*` secrets, `RELEASE_MODE` | Writes `signing_available` to `$GITHUB_OUTPUT`; a release without the secrets fails |
+| `summarize-unsigned-macos.sh` | `<arch> <tag>` | | Writes the unsigned-build notice to the job summary |
+| `stage-macos-assets.sh` | `<version> <arch>` | | Copies the `.dmg` into `release-assets/` with its `.sha256` |
+
+### Windows leg
+
+Load the MSVC environment first (`scripts/msvc-dev-env.ps1 -Arch x64`). The
+MSI chain runs only when the six `AZURE_*` secrets are present: Paneflow
+never ships an unsigned installer.
+
+| Script | Arguments | Environment | What it does |
+|---|---|---|---|
+| `check-windows-build-tools.ps1` | none | | Fails when `cl.exe`, `link.exe` or `signtool.exe` cannot be found |
+| `detect-windows-signing.sh` (fixtures) | none | the six `AZURE_*` secrets | Writes `signing_available` to `$GITHUB_OUTPUT` |
+| `build-windows-helpers.ps1` | `-Target <triple>` | | Builds the three embedded helpers under `release-min`, with no signing secret in the environment |
+| `stage-windows-helpers.ps1` | `-Target <triple>` | `AZURE_*` | Signs the helpers, copies them where `rust-embed` and WiX read them, writes `helpers_prepared` |
+| `check-wix-helper-set.ps1` | `-Target <triple>` | | Fails when the WiX `HelperBinaries` list and the prepared helpers differ |
+| `preflight-wix.ps1` | none | | Finds WiX v3 (`cargo-wix` 0.3.9 has no WiX v4 backend) and adds it to `$GITHUB_PATH` |
+| `check-wix-per-machine.ps1` | none | | Fails when a per-machine MSI uses an HKCU key path outside a shortcut-only component |
+| `sign-windows-executables.ps1` | none | `AZURE_*` | Signs `paneflow.exe` and `paneflow-host.exe` |
+| `verify-windows-release-payload.ps1` | `-Target <triple>` | | Checks the static libghostty link and writes the provenance report |
+| `build-msi.ps1` | `-Version <semver>` | | Runs `cargo wix --no-build --include packaging/wix/main.wxs`; `cargo wix` has no `build` subcommand |
+| `sign-msi.ps1` | `-Tag <tag>` | `AZURE_*` | Signs the single MSI under `target/wix` |
+| `verify-msi-signature.ps1` | `-Tag <tag>` | | Requires `signtool verify /pa` to print "Successfully verified" |
+| `verify-windows-authenticode.ps1` | `-Target <triple>` | | Requires a valid Authenticode signature on every executable the MSI installs and on the MSI |
+| `stage-windows-assets.sh` (fixtures) | `<version>` | | Copies the MSI and the provenance report into `release-assets/` |
+| `summarize-skipped-msi.sh` | `<arch> <tag>` | | Writes the skipped-MSI notice to the job summary |
+| `download-release-msi.ps1` | `-Tag <vX.Y.Z\|latest> -Directory <dir>` | `GH_TOKEN`, `GITHUB_REPOSITORY` | Downloads a published MSI and its `.sha256` |
+| `smoke-msi.ps1` | `-Tag -MsiVersion -SmokeDir -BaselineDir` | `RELEASE_MODE` | Fresh install, upgrade from v0.8.0, update relay and uninstall of the MSI in `release-assets/` |
+| `smoke-msi-live-host.ps1` | `-SmokeDir -BaselineDir` | | Upgrades the latest published release while its host runs |
+
+The two MSI smokes install and remove Paneflow machine-wide. Run them on a
+throwaway Windows machine, never on a workstation that has Paneflow
+installed.
+
+### Every leg, summary and publication
+
+| Script | Arguments | Environment | What it does |
+|---|---|---|---|
+| `check-staged-assets.sh` (fixtures) | none | `RELEASE_MODE` | Fails when `release-assets/` is empty, except in a dry-run, where an unsigned leg stages nothing |
+| `release-dry-run-summary.sh` (fixtures) | `<tag> <built-ref> <asset-dir>` | | Writes the table of assets, sizes and SHA-256 to the job summary |
+| `require-tag-at-commit.sh` (fixtures) | `<tag> <sha>` | `GITHUB_REPOSITORY` | Fails when the tag no longer points at the commit the run built |
+| `sign-release-assets.sh` | `<asset-dir>` | `MINISIGN_SECRET_KEY` | Writes a `.minisig` next to every asset |
+
 ## Downstream packagers
 
 A distribution package that must not self-update sets
