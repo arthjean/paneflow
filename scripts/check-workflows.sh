@@ -8,6 +8,9 @@ GHOSTTY_PIN_RE='^[[:space:]]*-?[[:space:]]*GHOSTTY_SHA:[[:space:]]*(.*)$'
 RUST_CACHE_RE='^([[:space:]]*)(-[[:space:]]+)?uses:[[:space:]]*Swatinem/rust-cache@'
 SAVE_ON_MAIN="save-if:\${{github.ref=='refs/heads/main'}}"
 RUNS_ON_RE='^[[:space:]]*(-[[:space:]]+)?runs-on:[[:space:]]*(.*)$'
+SECRETS_INHERIT_RE='^[[:space:]]*secrets:[[:space:]]*inherit[[:space:]]*(#.*)?$'
+RUNNER_OS_RE='^[[:space:]]*[^#[:space:]].*runner\.os'
+MAX_ORCHESTRATOR_LINES=400
 SCRIPT_RE='(^|[^A-Za-z0-9_-])(scripts/[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.(sh|ps1))($|[^A-Za-z0-9_.-])'
 
 case "$REMOTE_MODE" in
@@ -191,14 +194,35 @@ for file in "${trace_files[@]}"; do
   mapfile -t lines < "$file"
   total=${#lines[@]}
   is_release=0
+  is_orchestrator=0
+  is_platform=0
   cache_mode_none=0
-  if [ "$(basename "$file")" = "release.yml" ]; then
-    is_release=1
+  case "$(basename "$file")" in
+    release.yml)
+      is_release=1
+      is_orchestrator=1
+      ;;
+    release-*.yml)
+      is_release=1
+      is_platform=1
+      ;;
+  esac
+  if ((is_orchestrator == 1 && total > MAX_ORCHESTRATOR_LINES)); then
+    echo "::error file=$(relative "$file"),line=$((MAX_ORCHESTRATOR_LINES + 1))::$(relative "$file"):$((MAX_ORCHESTRATOR_LINES + 1)): the release orchestrator holds $total lines, above its cap of $MAX_ORCHESTRATOR_LINES; move the steps into a script or into the workflow of their platform"
+    status=1
   fi
   for ((i = 0; i < total; i++)); do
     line="${lines[i]%$'\r'}"
     if [[ "$line" =~ ^cache-mode:[[:space:]]*none[[:space:]]*$ ]]; then
       cache_mode_none=1
+    fi
+    if [[ "$line" =~ $SECRETS_INHERIT_RE ]]; then
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): 'secrets: inherit' hands every secret of the caller to the called workflow; map the secrets it needs by name"
+      status=1
+    fi
+    if ((is_platform == 1)) && [[ "$line" =~ $RUNNER_OS_RE ]]; then
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): a platform release workflow runs on one platform; move this step to the workflow of its platform instead of testing runner.os"
+      status=1
     fi
     if ! [[ "$line" =~ $RUST_CACHE_RE ]]; then
       continue
@@ -209,7 +233,7 @@ for file in "${trace_files[@]}"; do
     fi
     cache_steps=$((cache_steps + 1))
     if ((is_release == 1)); then
-      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): the release workflow builds without a cache; remove this Swatinem/rust-cache step"
+      echo "::error file=$(relative "$file"),line=$((i + 1))::$(relative "$file"):$((i + 1)): a release workflow builds without a cache; remove this Swatinem/rust-cache step"
       status=1
       continue
     fi
@@ -234,7 +258,7 @@ for file in "${trace_files[@]}"; do
     fi
   done
   if ((is_release == 1 && cache_mode_none == 0)); then
-    echo "::error file=$(relative "$file"),line=1::$(relative "$file"):1: the release workflow must declare cache-mode: none at the top level"
+    echo "::error file=$(relative "$file"),line=1::$(relative "$file"):1: a release workflow must declare cache-mode: none at the top level"
     status=1
   fi
 
@@ -291,7 +315,8 @@ if [ "$status" -eq 0 ]; then
   echo "no shell xtrace and no literal GHOSTTY_SHA pin in $traced workflow or composite action file(s)"
   echo "no deprecated or floating runner image in $runner_lines runs-on line(s)"
   echo "every script a workflow or composite action cites exists (${#script_state[@]} script(s))"
-  echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and the release workflow uses no cache"
+  echo "every Swatinem/rust-cache step saves from main only ($cache_steps step(s)), and no release workflow uses a cache"
+  echo "the release orchestrator holds at most $MAX_ORCHESTRATOR_LINES lines, no call passes 'secrets: inherit', and no platform release workflow tests runner.os"
   echo "every job declares timeout-minutes ($jobs_checked job(s))"
 fi
 exit "$status"

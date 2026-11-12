@@ -1,0 +1,311 @@
+name: release-macos
+
+# Called by `release.yml`, never on its own.
+# The macOS aarch64 leg, through bundle, signature, notarization and .dmg.
+# It receives only the secrets of its platform, by name. A job that signs
+# declares the `release` environment, whose deployment policy admits `main`
+# and `v*` tags, and the secrets of that environment then replace the empty
+# values a dry-run from another ref passes.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: "Commit to build, resolved once by the preflight job"
+        required: true
+        type: string
+      tag:
+        description: "Release tag, v followed by the version"
+        required: true
+        type: string
+      mode:
+        description: "release for a tag push, dry-run for a dispatch"
+        required: true
+        type: string
+      signed:
+        description: "True when the run may use the release environment and its signing secrets"
+        required: true
+        type: boolean
+    secrets:
+      POSTHOG_API_KEY:
+        required: false
+      APPLE_DEVELOPER_CERT_P12:
+        required: false
+      APPLE_DEVELOPER_CERT_PASSWORD:
+        required: false
+      APPLE_ID:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_MODE: ${{ inputs.mode }}
+
+jobs:
+  build:
+    name: Build aarch64-apple-darwin
+    runs-on: macos-15
+    timeout-minutes: 100
+    environment: ${{ inputs.signed && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+
+      # Every release leg links the published archive for its own target, which
+      # fetch-libghostty verifies against `archive_sha256` in the manifest.
+      # The Linux legs used to rebuild it from the Ghostty source, twice, to
+      # reproduce those same bytes: 12 minutes on the slowest leg.
+      # `libghostty-linux.yml` owns that reproducibility proof, on every
+      # recipe change and every night.
+      - uses: ./.github/actions/fetch-libghostty
+
+      # The macos-15 image ships sips (Apple's built-in resizer) and iconutil
+      # but not ImageMagick, and scripts/build-icons.sh prefers `magick` for
+      # multi-resolution .ico assembly.
+      - name: Install ImageMagick (macOS)
+        run: brew install --quiet imagemagick
+
+      # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
+      # `@master` ref + explicit `toolchain` input so the action reads the
+      # same channel everywhere instead of resolving `@stable` at runtime,
+      # which drifts each Rust point release and broke fmt mid-v0.2.11.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          # Must match `rust-toolchain.toml` channel verbatim. The
+          # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
+          # requires rustc >= 1.92, so this can't drift below 1.92.
+          toolchain: "1.98.0"
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin
+
+      # Regenerate every icon asset (.png hicolor set, .icns, .ico,
+      # rust-embed runtime icon) from the master PNGs under
+      # `assets/icons/master/`. Script is a no-op when no master is present,
+      # so this step is safe to land before the masters are committed.
+      # Placement rationale: runs BEFORE `Build release binary` and all
+      # packaging steps, so cargo-deb / cargo-generate-rpm / bundle-macos.sh
+      # / cargo-wix all see fresh icons from this same checkout.
+      - name: Regenerate icons from master
+        shell: bash
+        run: bash scripts/build-icons.sh
+
+      # --- Release build ---
+      # `POSTHOG_API_KEY` is resolved by `option_env!` at compile time
+      # (see `src-app/src/app/bootstrap.rs`); embedding it here at the
+      # single `cargo build --release` step is sufficient for every
+      # downstream artifact (tar.gz, .deb, .rpm, AppImage, .dmg, and the
+      # cargo-wix MSI which consumes this build via `--no-build`). If the
+      # secret is absent the startup log::warn! surfaces and events are
+      # silently dropped - never a user-facing failure.
+      - name: Build release binary
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          # US-002 (prd-audit-remediation): bake the minisign public key(s)
+          # into the binary so the self-updater can verify downloaded
+          # artifacts (option_env! in update/signature.rs). PUBLIC keys →
+          # repository *variables*, never secrets. Two slots (current + next)
+          # for zero-downtime rotation; an unset var resolves to "" which
+          # the verifier treats as "no key in this slot".
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+          TARGET: aarch64-apple-darwin
+        run: cargo build --release -p paneflow-app -p paneflow-host --locked --target "$TARGET"
+
+      # US-016 AC2: the Mach-O analog of the ELF check in `release-linux.yml`. It runs on the
+      # freshly built binary, before bundling, so a leg that produced an
+      # engine-less or dynamically linked artifact fails here rather than
+      # reaching signing and notarization.
+      - name: Verify packaged libghostty identity and static linkage (macOS)
+        env:
+          TARGET: aarch64-apple-darwin
+        run: |
+          scripts/verify-libghostty-macos.sh \
+            --binary "target/$TARGET/release/paneflow" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      # ─── US-019 macOS .app assembly ──────────────────────────────────
+      # Mirrors the run_tests.yml Xcode preflight (kept intentionally duplicated
+      # - a drift here, e.g. an old runner image missing the Metal
+      # toolchain, surfaces as a labelled preflight failure rather than a
+      # cryptic mid-compile error).
+      - name: Verify Xcode CLT + Metal toolchain (macOS)
+        run: scripts/check-xcode-metal.sh
+
+      # Assemble the .app bundle from the release binary cargo just built
+      # (the preceding "Build release binary" step, so
+      # target/<triple>/release/paneflow exists).
+      # `--version "${TAG#v}"` strips the leading 'v': Apple's
+      # CFBundleShortVersionString (stamped into Info.plist) must be
+      # bare semver. The .dmg filename US-008 matches on is also
+      # v-stripped (paneflow-0.2.0-aarch64-apple-darwin.dmg).
+      - name: Produce .app bundle
+        env:
+          ARCH: aarch64
+          TAG: ${{ env.RELEASE_TAG }}
+        run: bash scripts/bundle-macos.sh --version "${TAG#v}" --arch "$ARCH"
+
+      # ─── US-015 / US-023 macOS codesign + notarize ───────────────────
+      # Secrets used (must be populated in repo settings before the first
+      # signed macOS release can ship; see docs/release/macos-signing.md):
+      #   APPLE_DEVELOPER_CERT_P12        - base64-encoded .p12
+      #   APPLE_DEVELOPER_CERT_PASSWORD   - password to decrypt the .p12
+      #   APPLE_ID                        - Apple Developer account email
+      #   APPLE_APP_SPECIFIC_PASSWORD     - app-specific password (not the
+      #                                     Apple ID password itself)
+      #   APPLE_TEAM_ID                   - 10-char team ID
+      #
+      # US-023 AC7: dry-runs can degrade to an unsigned build when Apple
+      # secrets are missing. Tag-push releases fail hard instead, because
+      # shipping a public macOS artifact without signing and notarization
+      # breaks the release contract. The "Detect macOS signing secrets"
+      # step exposes a boolean output consumed by the sign + notarize
+      # step guards below.
+      #
+      # The `.app` input comes from `scripts/bundle-macos.sh`, run earlier
+      # in this leg. Sign → notarize → staple is the mandatory order:
+      # codesign attaches a signature with the release entitlements,
+      # notarytool validates + registers it with Apple, stapler glues the
+      # ticket to the bundle so Gatekeeper accepts it offline.
+      - name: Detect macOS signing secrets
+        id: macos_signing
+        env:
+          # Secrets are routed through env: so an empty secret resolves
+          # to an empty env var (rather than the literal string
+          # `${{ secrets.NAME }}` which would always look "present").
+          APPLE_DEVELOPER_CERT_P12: ${{ secrets.APPLE_DEVELOPER_CERT_P12 }}
+          APPLE_DEVELOPER_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: scripts/detect-macos-signing.sh
+
+      - name: Sign macOS .app bundle
+        if: steps.macos_signing.outputs.signing_available == 'true'
+        env:
+          APPLE_DEVELOPER_CERT_P12: ${{ secrets.APPLE_DEVELOPER_CERT_P12 }}
+          APPLE_DEVELOPER_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # No --entitlements override: sign-macos.sh defaults to
+        # packaging/macos/paneflow.entitlements via REPO_ROOT-relative
+        # absolute path, which is more robust than this step's working
+        # directory assumption.
+        run: bash scripts/sign-macos.sh dist/PaneFlow.app
+
+      - name: Notarize + staple macOS .app bundle
+        if: steps.macos_signing.outputs.signing_available == 'true'
+        # US-003 AC6: in dry-run mode a transient Apple Notary outage
+        # must not fail the entire leg - the release engineer still
+        # wants the un-notarized .app + the Linux/Windows artifacts to
+        # land in the workflow artifact bundle for inspection. In
+        # tag-push mode this stays hard-required: shipping an
+        # un-notarized .dmg under v0.X.Y would block first-launch on
+        # every macOS user's box.
+        continue-on-error: ${{ env.RELEASE_MODE == 'dry-run' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/notarize-macos.sh dist/PaneFlow.app
+
+      - name: Record unsigned macOS build in job summary
+        if: steps.macos_signing.outputs.signing_available != 'true'
+        env:
+          ARCH: aarch64
+          TAG: ${{ env.RELEASE_TAG }}
+        run: scripts/summarize-unsigned-macos.sh "$ARCH" "$TAG"
+
+      # ─── Free disk space before .dmg ─────────────────────────────────
+      # macos-15 hosted runners ship with ~14 GB free. A workspace-wide
+      # `cargo build --release` for the GPUI graph routinely consumes
+      # 11-13 GB of `target/` (Zed monorepo deps, libghostty,
+      # gpui_macos with Metal shaders, all release-mode codegen). By the
+      # time we reach `Produce .dmg`, the runner has <100 MB free, and
+      # `hdiutil create` aborts with `No space left on device` while
+      # asking for a 75 MB staging image (observed in v0.2.9-rc.1).
+      #
+      # `target/` is disposable here: the release binary was already
+      # copied into `dist/PaneFlow.app/Contents/MacOS/paneflow` by
+      # `bundle-macos.sh`, signed by `sign-macos.sh`, and stapled by
+      # `notarize-macos.sh`. Nothing downstream in this leg reads
+      # `target/`. `df -h` brackets give us the disk delta in the CI log
+      # for future capacity-planning.
+      - name: Free disk space before .dmg packaging
+        run: |
+          set -euo pipefail
+          echo "::group::Disk space before cleanup"
+          df -h /
+          du -sh target/ 2>/dev/null || true
+          echo "::endgroup::"
+          rm -rf target/
+          echo "::group::Disk space after cleanup"
+          df -h /
+          echo "::endgroup::"
+
+      # ─── US-016 .dmg assembly ────────────────────────────────────────
+      # Wraps the stapled .app in a drag-to-Applications .dmg. Zero new
+      # dependencies - hdiutil + osascript are built into macOS. Runs
+      # *after* notarization so the enclosed bundle already carries its
+      # Apple-issued stapled ticket.
+      #
+      # US-023 AC7 (publish-safety guard): `.dmg` production and staging
+      # are gated on `steps.macos_signing.outputs.signing_available`. An
+      # unsigned `.app` MUST NOT reach the published GitHub Release -
+      # users would hit Gatekeeper "can't be opened" with no in-band
+      # signal that the asset was published unsigned. When secrets are
+      # absent the leg leaves the unsigned `.app` in `dist/` for local
+      # inspection, prints the warning banner from the previous step, and
+      # produces no release asset.
+      #
+      # The output filename `paneflow-<tag>-<arch>-apple-darwin.dmg` is
+      # chosen to match US-008's `update/checker.rs::pick_asset`; any
+      # other shape would silently break the in-app update prompt for
+      # macOS users.
+      - name: Produce .dmg
+        if: steps.macos_signing.outputs.signing_available == 'true'
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+          ARCH: aarch64
+        run: bash scripts/create-dmg.sh --version "${TAG#v}" --arch "$ARCH"
+
+      # Stage the .dmg + SHA-256 sibling into release-assets/ so the
+      # publish job of `release.yml` picks it up alongside the Linux and
+      # Windows artifacts. Mirrors the sha256 pattern used by the tar.gz
+      # step. US-023: gated on signing_available so an unsigned leg
+      # produces no release asset.
+      - name: Stage macOS .dmg
+        if: steps.macos_signing.outputs.signing_available == 'true'
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+          ARCH: aarch64
+        run: scripts/stage-macos-assets.sh "${TAG#v}" "$ARCH"
+
+      # Upload the artifacts for the publish job of `release.yml`.
+      # `compression-level: 0`: the .dmg is already compressed.
+      - name: Verify release artifacts staged
+        run: scripts/check-staged-assets.sh
+
+      - name: Upload release artifacts (for smoke-test jobs)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The platform is part of the name: Linux aarch64 and macOS
+          # aarch64 would otherwise collide on `release-assets-aarch64`.
+          # The publish and summary jobs of `release.yml` glob
+          # `release-assets-*`.
+          name: release-assets-aarch64-macOS
+          path: release-assets/
+          retention-days: 7
+          compression-level: 0

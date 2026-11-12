@@ -12,7 +12,8 @@ secrets named in `keys/README.md` are populated, and a container runtime
 
 ## Supported release targets
 
-Cross-reference the matrix in `.github/workflows/release.yml`.
+Cross-reference `.github/workflows/release-linux.yml`,
+`release-macos.yml` and `release-windows.yml`, one per platform.
 
 | Target | Status | Ships | Gate |
 |---|---|---|---|
@@ -33,9 +34,11 @@ path, a docs update, and a release-gate decision in the same change.
 Every signing and publishing secret (`APPLE_*`, `AZURE_*`, `GPG_*`, `R2_*`,
 `CLOUDFLARE_*`, `HOMEBREW_TAP_DEPLOY_KEY`, and `MINISIGN_SECRET_KEY`) belongs
 to the `release` environment, which only the branch `main` and the tags `v*`
-may deploy to. The jobs that consume them declare the environment: `build`,
-`auto-update-e2e` and `release` in `release.yml`, `publish` in
-`repo_publish.yml`, `update-cask` in `update_cask.yml`. `build` declares it
+may deploy to. The jobs that consume them declare the environment: `build`
+in each of `release-linux.yml`, `release-macos.yml` and
+`release-windows.yml`, `auto-update-e2e` in `release-linux.yml`, `release`
+in `release.yml`, `publish` in `repo_publish.yml`, `update-cask` in
+`update_cask.yml`. `build` declares it
 only for a `v*` tag push, or for a dispatch from `main` whose `target_ref` is
 `main`. The deployment policy checks the dispatch ref, not the `target_ref`,
 so this second condition is what stops a dispatch from `main` from signing a
@@ -150,7 +153,7 @@ Three edits the block does not make:
 - `assets/io.github.arthurdev44.paneflow.metainfo.xml`: prepend a
   `<release version="X.Y.Z" date="YYYY-MM-DD">` entry under `<releases>`,
   with a one-paragraph summary and a short `<ul>`. The
-  `Validate AppStream metainfo` step of `release.yml` runs
+  `Validate AppStream metainfo` step of `release-linux.yml` runs
   `appstreamcli validate` on every leg, so validate it locally first when
   `appstreamcli` is installed.
 - The GitHub release notes, written by the skill outside the repository.
@@ -340,9 +343,37 @@ There is no hosted `paneflow.repo` descriptor: the RPM's own `%post`
 a first install from a GitHub Release, which is why the Fedora block writes
 it by hand. Both commands must exit 0 and print `paneflow X.Y.Z`.
 
+## Workflow layout
+
+`release.yml` is the orchestrator and the only file that triggers. It holds
+`preflight`, `ci-verdict`, one call per platform, the Linux package smoke
+matrix, the dry-run summary and the publish job. The builds live in three
+reusable workflows, which nothing else calls:
+
+| File | Jobs | Secrets it receives |
+|---|---|---|
+| `release-linux.yml` | `build` (x86_64 and aarch64), `auto-update-e2e` | `POSTHOG_API_KEY`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, `GPG_KEY_ID`, `MINISIGN_SECRET_KEY` |
+| `release-macos.yml` | `build` | `POSTHOG_API_KEY`, the five `APPLE_*` secrets |
+| `release-windows.yml` | `build`, `smoke-test-windows-msi`, `smoke-test-windows-msi-live-host` | `POSTHOG_API_KEY`, the six `AZURE_*` secrets |
+
+The orchestrator maps each secret by name and never passes `secrets: inherit`,
+so a platform never sees the keys of another. The mapping only names the
+secret: the value a signing job reads is the one of the `release` environment
+it declares. A called workflow gets the tag, the mode, the commit and the
+`signed` flag as inputs, because the `env` of the caller does not reach it,
+and it may not ask for more permissions than the orchestrator grants: GitHub
+refuses to start such a run.
+
+In the run view a called job reads `Windows / Build x86_64-pc-windows-msvc`.
+When one platform fails, "Re-run failed jobs" re-runs the failed jobs of that
+platform and the jobs that depend on them, and keeps the artifacts of the two
+others. `scripts/check-workflows.sh` holds the structure: `release.yml` stays
+at 400 lines or fewer, no call inherits secrets, no platform workflow tests
+`runner.os`, and all four files declare `cache-mode: none`.
+
 ## Release scripts
 
-The release workflow holds no logic of its own: each step calls a script under
+The release workflows hold no logic of their own: each step calls a script under
 `scripts/`, so a step can be run and debugged from a checkout. Run every
 script from the repository root. The bash scripts print their usage when
 called with the wrong number of arguments; the PowerShell scripts need
@@ -353,7 +384,7 @@ set to `dry-run`.
 `scripts/test-ci-scripts.sh` runs the scripts marked "fixtures" against
 fixtures, on any machine.
 
-### Linux legs
+### Linux legs (`release-linux.yml`)
 
 The two Linux legs build in the `ubuntu:22.04` image on an `ubuntu-24.04`
 host, so every binary and every library the AppImage bundles comes from
@@ -382,7 +413,7 @@ ships no initialized system one. A release without the key fails with
 The package smoke on Ubuntu 22.04 runs `paneflow --version`: that is the run
 that proves the binary starts on glibc 2.35.
 
-### macOS leg
+### macOS leg (`release-macos.yml`)
 
 | Script | Arguments | Environment | What it does |
 |---|---|---|---|
@@ -391,7 +422,7 @@ that proves the binary starts on glibc 2.35.
 | `summarize-unsigned-macos.sh` | `<arch> <tag>` | | Writes the unsigned-build notice to the job summary |
 | `stage-macos-assets.sh` | `<version> <arch>` | | Copies the `.dmg` into `release-assets/` with its `.sha256` |
 
-### Windows leg
+### Windows leg (`release-windows.yml`)
 
 Load the MSVC environment first (`scripts/msvc-dev-env.ps1 -Arch x64`). The
 MSI chain runs only when the six `AZURE_*` secrets are present: Paneflow

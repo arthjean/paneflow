@@ -115,7 +115,7 @@ jobs:
           save-if: \${{ github.ref == 'refs/heads/main' }}
 EOF
 )"
-  expect "a rust-cache step in the release workflow is refused" 1 "release\.yml:7: the release workflow builds without a cache" "$check" "$file"
+  expect "a rust-cache step in the release workflow is refused" 1 "release\.yml:7: a release workflow builds without a cache" "$check" "$file"
 
   file="$(workflow release-open/release.yml <<EOF
 jobs:
@@ -126,7 +126,94 @@ jobs:
       - uses: actions/checkout@v5
 EOF
 )"
-  expect "a release workflow without cache-mode: none is refused" 1 "release\.yml:1: the release workflow must declare cache-mode: none" "$check" "$file"
+  expect "a release workflow without cache-mode: none is refused" 1 "release\.yml:1: a release workflow must declare cache-mode: none" "$check" "$file"
+
+  file="$(workflow release-platform-cached/release-linux.yml <<EOF
+cache-mode: none
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: $PINNED_CACHE
+        with:
+          save-if: \${{ github.ref == 'refs/heads/main' }}
+EOF
+)"
+  expect "a rust-cache step in a platform release workflow is refused" 1 "release-linux\.yml:7: a release workflow builds without a cache" "$check" "$file"
+
+  file="$(workflow release-platform-open/release-macos.yml <<EOF
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/fetch-libghostty
+EOF
+)"
+  expect "a platform release workflow without cache-mode: none is refused" 1 "release-macos\.yml:1: a release workflow must declare cache-mode: none" "$check" "$file"
+
+  file="$(workflow release-platform-os/release-windows.yml <<EOF
+cache-mode: none
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: ./.github/actions/fetch-libghostty
+      - if: runner.os == 'Windows'
+        run: true
+EOF
+)"
+  expect "a runner.os condition in a platform release workflow is refused" 1 "release-windows\.yml:8: a platform release workflow runs on one platform" "$check" "$file"
+
+  file="$(workflow release-platform-comment/release-windows.yml <<EOF
+cache-mode: none
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      # no runner.os condition here
+      - uses: ./.github/actions/fetch-libghostty
+EOF
+)"
+  expect "a comment that names runner.os in a platform release workflow passes" 0 "no platform release workflow tests runner\.os" "$check" "$file"
+
+  file="$(workflow inherit/caller.yml <<EOF
+jobs:
+  call:
+    uses: ./.github/workflows/called.yml
+    secrets: inherit
+EOF
+)"
+  expect "a call that inherits every secret is refused" 1 "caller\.yml:4: 'secrets: inherit' hands every secret of the caller" "$check" "$file"
+
+  file="$(workflow mapped/caller.yml <<EOF
+jobs:
+  call:
+    uses: ./.github/workflows/called.yml
+    secrets:
+      TOKEN: \${{ secrets.TOKEN }}
+EOF
+)"
+  expect "a call that maps its secrets by name passes" 0 "no call passes 'secrets: inherit'" "$check" "$file"
+
+  file="$(
+    {
+      printf 'cache-mode: none\njobs:\n  build:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - uses: ./.github/actions/fetch-libghostty\n'
+      for _ in $(seq 394); do printf '      - run: true\n'; done
+    } | workflow release-long/release.yml
+  )"
+  expect "a release orchestrator of 401 lines is refused" 1 "release\.yml:401: the release orchestrator holds 401 lines, above its cap of 400" "$check" "$file"
+
+  file="$(
+    {
+      printf 'cache-mode: none\njobs:\n  build:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - uses: ./.github/actions/fetch-libghostty\n'
+      for _ in $(seq 393); do printf '      - run: true\n'; done
+    } | workflow release-short/release.yml
+  )"
+  expect "a release orchestrator of 400 lines passes" 0 "the release orchestrator holds at most 400 lines" "$check" "$file"
 
   file="$(workflow timeout/unbounded.yml <<EOF
 jobs:
