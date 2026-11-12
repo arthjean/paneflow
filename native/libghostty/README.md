@@ -241,6 +241,20 @@ four archives with `actions/attest-build-provenance`, publishes them as the
 manifest, bindings, headers, and metadata. Nothing merges on its own. A bump
 that is closed unmerged leaves its pre-release behind; delete it by hand.
 
+The Linux and macOS rebuilds exist once, in
+`.github/workflows/libghostty-recipe.yml`, a reusable workflow with three
+callers. `libghostty-linux.yml` calls it for the two Linux targets when the
+recipe changes, every night and on demand; `libghostty-macos.yml` calls it
+for `aarch64-apple-darwin` every night and on demand; the bump calls it for
+all three with its staged manifest and `allow_hash_drift`. Each target is
+built twice from clean trees. Without `allow_hash_drift` the job fails,
+naming the target and both hashes, when the archive differs from
+`archive_sha256` in the manifest or from the published release asset
+(`scripts/compare-libghostty-archive.sh`). The Linux targets build in the
+`ubuntu:22.04` image, because the recipe normalizes the archive with the
+system `ar` and `eu-strip`, and the published archives were normalized by
+the Ubuntu 22.04 ones.
+
 Provenance is established in the bump run itself, not on the resulting pull
 request: a pull request lane only checks a published archive against its
 manifest hash, and a bump commit writes that hash, so the pull request alone

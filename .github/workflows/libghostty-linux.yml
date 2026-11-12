@@ -40,9 +40,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `recipe` gates the engine lanes (reproducible rebuild, bindings, fuzz):
-    # only the manifest, the build scripts, the -sys crate and this workflow
-    # change what the engine build produces. `native` gates the consumer
-    # lanes, which link the published archive.
+    # only the manifest, the build scripts, the -sys crate, this workflow and
+    # the recipe workflow change what the engine build produces. `native`
+    # gates the consumer lanes, which link the published archive.
     outputs:
       native: ${{ steps.filter.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
       recipe: ${{ steps.filter.outputs.recipe == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -85,11 +85,23 @@ jobs:
             recipe:
               - '.github/actions/libghostty-manifest/action.yml'
               - '.github/workflows/libghostty-linux.yml'
+              - '.github/workflows/libghostty-recipe.yml'
               - 'crates/paneflow-libghostty-sys/**'
               - 'native/libghostty/**'
               - 'scripts/*libghostty*'
               - 'scripts/install-minisign.sh'
               - 'scripts/install-zig.sh'
+
+  # The reproducibility proof: two clean builds per Linux target, compared
+  # with the manifest and with the published archive. It runs when the
+  # recipe changed, on the nightly and on demand.
+  recipe:
+    name: Reproducible rebuild
+    needs: changes
+    if: needs.changes.outputs.recipe == 'true'
+    uses: ./.github/workflows/libghostty-recipe.yml
+    with:
+      targets: linux
 
   native:
     name: Native, release, package (${{ matrix.arch }})
@@ -112,8 +124,9 @@ jobs:
     # would not start.
     container:
       image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
-    # Two clean Ghostty builds (--verify-reproducible), a release build and
-    # four package formats. The workspace tests and cargo-deny do not run
+    # A release build against the published archive, and four package
+    # formats. The engine rebuild is the `recipe` job above, in
+    # `libghostty-recipe.yml`. The workspace tests and cargo-deny do not run
     # here: `run_tests.yml` runs them on both arches against the same
     # published archive, and `audit.yml` re-runs the advisory check daily.
     # The release build stays because the static-link check, the PTY stress
@@ -129,31 +142,6 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           persist-credentials: false
-
-      # The engine steps (pins, Ghostty source, Zig, reproducible rebuild,
-      # comparison, upload) run only when the recipe changed or on the
-      # nightly. A consumer-only change links the published archive that
-      # fetch-libghostty places, exactly as run_tests.yml and release.yml do.
-      - name: Read libghostty pins
-        id: pins
-        if: needs.changes.outputs.recipe == 'true'
-        uses: ./.github/actions/libghostty-manifest
-
-      - name: Checkout pinned Ghostty source
-        if: needs.changes.outputs.recipe == 'true'
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          repository: ghostty-org/ghostty
-          ref: ${{ steps.pins.outputs.source_sha }}
-          path: .ghostty-source
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the pinned Zig, signature checked
-        if: needs.changes.outputs.recipe == 'true'
-        env:
-          ZIG_VERSION: ${{ steps.pins.outputs.zig_version }}
-        run: bash scripts/install-zig.sh "$ZIG_VERSION"
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
@@ -173,50 +161,10 @@ jobs:
           cargo install cargo-deb --version 3.6.3 --locked
           cargo install cargo-generate-rpm --version 0.20.0 --locked
 
-      - name: Prepare reproducible libghostty archive
-        if: needs.changes.outputs.recipe == 'true'
-        env:
-          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
-        run: |
-          scripts/ci-retry-network.sh \
-            scripts/build-libghostty-linux.sh \
-            --target "${{ matrix.target }}" \
-            --verify-reproducible
-          cp .ghostty-source/build.zig.zon \
-             "target/libghostty/${{ matrix.target }}/build.zig.zon"
-          sha256sum "target/libghostty/${{ matrix.target }}/build.zig.zon" \
-            > "target/libghostty/${{ matrix.target }}/build.zig.zon.sha256"
-          cp native/libghostty/manifest.toml \
-             native/libghostty/THIRD_PARTY_NOTICES.md \
-             "target/libghostty/${{ matrix.target }}/"
-          echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/${{ matrix.target }}" \
-            >> "$GITHUB_ENV"
-
-      # `--verify-reproducible` above only proves build-1 == build-2, and the
-      # script now also pins the result to `manifest.archive_sha256`. This step
-      # closes the last link: it proves the archive published on the pinned
-      # GitHub Release - the one every release actually links, because
-      # run_tests.yml and release.yml leave PANEFLOW_LIBGHOSTTY_DIR unset - is
-      # byte-identical to what the recipe produces. Mirrors
-      # `libghostty-macos.yml::Compare against the published archive`.
+      # The consumer lanes link the published archive, exactly as
+      # run_tests.yml and the release workflows do. The `recipe` job proves
+      # that archive is the one the recipe produces.
       - uses: ./.github/actions/fetch-libghostty
-
-      - name: Compare against the published archive
-        if: needs.changes.outputs.recipe == 'true'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
-          published="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
-          for path in "$rebuilt" "$published"; do
-            [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
-          done
-          if ! cmp "$rebuilt" "$published"; then
-            echo "::error::the published $TARGET archive is not the one scripts/build-libghostty-linux.sh produces"
-            sha256sum "$rebuilt" "$published"
-            exit 1
-          fi
-          sha256sum "$published"
 
       - name: Release candidate and package smoke binary
         run: |
@@ -289,14 +237,6 @@ jobs:
           trap 'rm -rf "$extract_dir"' EXIT
           (cd "$extract_dir" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
           test -f "$extract_dir/squashfs-root/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md"
-
-      - name: Upload prepared native input
-        if: needs.changes.outputs.recipe == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: libghostty-native-${{ matrix.target }}
-          path: target/libghostty/${{ matrix.target }}
-          retention-days: 14
 
       - name: Upload candidate packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -541,7 +481,7 @@ jobs:
   validation-summary:
     name: libghostty validation
     if: ${{ !cancelled() }}
-    needs: [changes, native, bindings, fuzz, distro-smoke]
+    needs: [changes, recipe, native, bindings, fuzz, distro-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -551,17 +491,19 @@ jobs:
           # green, and a lane whose inputs did not must have actually skipped.
           # `skipped` is never silently accepted, so a lane dropped because
           # `native` failed still turns this job red. The consumer lanes follow
-          # `native`, the engine lanes (bindings, fuzz) follow `recipe`.
+          # `native`, the engine lanes (recipe, bindings, fuzz) follow `recipe`.
           CONSUMER_EXPECTED: ${{ needs.changes.outputs.native }}
           ENGINE_EXPECTED: ${{ needs.changes.outputs.recipe }}
           NATIVE: ${{ needs.native.result }}
           BINDINGS: ${{ needs.bindings.result }}
           FUZZ: ${{ needs.fuzz.result }}
           DISTRO: ${{ needs.distro-smoke.result }}
+          RECIPE: ${{ needs.recipe.result }}
         run: |
           status=0
           for lane in "native:$CONSUMER_EXPECTED:$NATIVE" \
                       "distro-smoke:$CONSUMER_EXPECTED:$DISTRO" \
+                      "recipe:$ENGINE_EXPECTED:$RECIPE" \
                       "bindings:$ENGINE_EXPECTED:$BINDINGS" \
                       "fuzz:$ENGINE_EXPECTED:$FUZZ"; do
             name="${lane%%:*}"

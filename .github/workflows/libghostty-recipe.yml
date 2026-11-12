@@ -1,0 +1,243 @@
+name: libghostty recipe
+
+# The one place that rebuilds libghostty-vt from the Ghostty source. Each
+# target is built twice from clean trees (`--verify-reproducible`), the result
+# is compared with `archive_sha256` in the manifest, then with the archive
+# published on the pinned GitHub Release, the one every build links.
+#
+# Called by `libghostty-linux.yml` (recipe changes and the nightly),
+# `libghostty-macos.yml` (the nightly) and `libghostty-bump.yml`, which passes
+# its staged manifest and `allow_hash_drift`, because a bump produces the
+# hashes instead of matching them. The Windows archive is not reproducible
+# upstream: it is built once, in `libghostty-bump.yml`.
+on:
+  workflow_call:
+    inputs:
+      targets:
+        description: "Which archives to rebuild: linux, macos or all"
+        required: false
+        type: string
+        default: all
+      allow_hash_drift:
+        description: "Accept an archive whose hash differs from the manifest, and skip the comparison with the published archive"
+        required: false
+        type: boolean
+        default: false
+      manifest_artifact:
+        description: "Artifact of the calling run that holds a candidate manifest.toml (and bindings.rs), placed over native/libghostty"
+        required: false
+        type: string
+        default: ""
+      artifact_prefix:
+        description: "The rebuilt tree of each target is uploaded as <prefix>-<target>"
+        required: false
+        type: string
+        default: libghostty-recipe
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Rebuild ${{ matrix.target }}
+    if: inputs.targets != 'macos'
+    runs-on: ${{ matrix.runs-on }}
+    # The recipe normalizes the archive with the `ar` and `eu-strip` of the
+    # system, so it runs in the Ubuntu 22.04 userland that produced the
+    # published archives, on a 24.04 host: same image and digest as the
+    # `build` job of `release-linux.yml`.
+    container:
+      image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+    # Two clean Ghostty builds on one CPU, plus the system packages.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Prepare the Ubuntu 22.04 build container
+        run: |
+          apt-get -o Acquire::Retries=3 update
+          apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl git sudo xz-utils
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Place the candidate manifest
+        if: inputs.manifest_artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.manifest_artifact }}
+          path: native/libghostty
+
+      - name: Read libghostty pins
+        id: pins
+        uses: ./.github/actions/libghostty-manifest
+
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ steps.pins.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the pinned Zig, signature checked
+        env:
+          ZIG_VERSION: ${{ steps.pins.outputs.zig_version }}
+        run: bash scripts/install-zig.sh "$ZIG_VERSION"
+
+      - uses: ./.github/actions/linux-build-deps
+        with:
+          container-toolchain: "true"
+          extra-packages: binutils elfutils
+
+      # No native object cache: the canonical source and cache prefixes are
+      # part of the reproducibility contract. The script fails, naming the
+      # target and both hashes, when the archive differs from the manifest,
+      # unless the caller allows the drift.
+      - name: Rebuild twice and compare with the manifest
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          TARGET: ${{ matrix.target }}
+          ALLOW_HASH_DRIFT: ${{ inputs.allow_hash_drift }}
+        run: |
+          drift=()
+          if [ "$ALLOW_HASH_DRIFT" = true ]; then
+            drift=(--allow-hash-drift)
+          fi
+          scripts/ci-retry-network.sh \
+            scripts/build-libghostty-linux.sh \
+            --target "$TARGET" \
+            --verify-reproducible \
+            "${drift[@]}"
+
+      # The manifest gate above does not cover a tampered release asset that
+      # matches a tampered manifest. This does: the archive every build
+      # links is byte-identical to what the recipe produces. A bump has no
+      # published archive yet, it publishes the one built here.
+      - name: Fetch the published archives
+        if: ${{ !inputs.allow_hash_drift }}
+        uses: ./.github/actions/fetch-libghostty
+
+      - name: Compare with the published archive
+        if: ${{ !inputs.allow_hash_drift }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/compare-libghostty-archive.sh "$TARGET" \
+            "target/libghostty/$TARGET/lib/libghostty-vt.a" \
+            "native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+
+      - name: Upload the rebuilt tree
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_prefix }}-${{ matrix.target }}
+          path: target/libghostty/${{ matrix.target }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # Cross-built on a Linux host on purpose: Ghostty only takes the Apple
+  # `libtool` combine path when the build host is Darwin, and the reviewed
+  # recipe normalizes the `zig ar -M` combine that a Linux host keeps, with
+  # `llvm-ar --format=darwin`. See docs/release/macos-libghostty.md.
+  macos:
+    name: Rebuild aarch64-apple-darwin (Linux host)
+    if: inputs.targets != 'linux'
+    runs-on: ubuntu-24.04
+    # Two clean ReleaseFast builds at -j1, which is what the reproducibility
+    # contract requires; the seed and job count are manifest-pinned.
+    timeout-minutes: 19
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Place the candidate manifest
+        if: inputs.manifest_artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.manifest_artifact }}
+          path: native/libghostty
+
+      - name: Read libghostty pins
+        id: pins
+        uses: ./.github/actions/libghostty-manifest
+
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ steps.pins.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the pinned Zig, signature checked
+        env:
+          ZIG_VERSION: ${{ steps.pins.outputs.zig_version }}
+        run: bash scripts/install-zig.sh "$ZIG_VERSION"
+
+      # `llvm-tools` carries llvm-strip, llvm-ar, llvm-nm and llvm-objdump at
+      # exactly `macos_llvm_version` in the manifest. The build script refuses
+      # any other LLVM, because the normalization is version-sensitive. This
+      # toolchain is deliberately NOT the channel of `rust-toolchain.toml`: it
+      # moves only with `macos_llvm_version` and a fresh `archive_sha256`,
+      # never with a workspace toolchain bump.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: ${{ steps.pins.outputs.macos_rust_toolchain }}
+          components: llvm-tools
+
+      # The build script resolves llvm-strip through `rustc --print sysroot`,
+      # and the `rust-toolchain.toml` of the directory outranks the toolchain
+      # the step above made default. Only RUSTUP_TOOLCHAIN wins.
+      - name: Rebuild twice and compare with the manifest
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          RUSTUP_TOOLCHAIN: ${{ steps.pins.outputs.macos_rust_toolchain }}
+          ALLOW_HASH_DRIFT: ${{ inputs.allow_hash_drift }}
+        run: |
+          drift=()
+          if [ "$ALLOW_HASH_DRIFT" = true ]; then
+            drift=(--allow-hash-drift)
+          fi
+          scripts/ci-retry-network.sh \
+            scripts/build-libghostty-macos.sh \
+            --target "$TARGET" \
+            --verify-reproducible \
+            "${drift[@]}"
+
+      - name: Fetch the published archives
+        if: ${{ !inputs.allow_hash_drift }}
+        uses: ./.github/actions/fetch-libghostty
+
+      - name: Compare with the published archive
+        if: ${{ !inputs.allow_hash_drift }}
+        run: |
+          scripts/compare-libghostty-archive.sh "$TARGET" \
+            "target/libghostty/$TARGET/lib/libghostty-vt.a" \
+            "native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+
+      - name: Upload the rebuilt tree
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_prefix }}-aarch64-apple-darwin
+          path: target/libghostty/aarch64-apple-darwin
+          retention-days: 14
+          if-no-files-found: error

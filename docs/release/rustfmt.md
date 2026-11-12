@@ -12,7 +12,7 @@ mid-release (the failure mode that broke CI on v0.2.11).
   step passes the same `toolchain: "1.98.0"` input. Both must move together.
 
 One step is deliberately exempt: the `llvm-tools` install in
-`libghostty-macos.yml`. It is not a workspace toolchain, it is the LLVM that
+`libghostty-recipe.yml`. It is not a workspace toolchain, it is the LLVM that
 normalized the committed macOS archive, recorded as `macos_llvm_version` in
 `native/libghostty/manifest.toml`. It moves only with a fresh
 `archive_sha256`, never with a workspace bump. See
@@ -43,7 +43,7 @@ forces a sooner bump).
    - `rust-toolchain.toml` -> `channel = "<new-version>"`
    - `Cargo.toml` -> `rust-version = "<new-version>"`
    - `.github/workflows/*.yml` -> every explicit `toolchain: "<new-version>"`,
-     except the `llvm-tools` step in `libghostty-macos.yml`
+     except the `llvm-tools` step in `libghostty-recipe.yml`
    - `README.md` and `AGENTS.md` prose references
 5. Open the PR titled `chore(rust): bump pinned toolchain to <new-version>`
    and let CI run. Both fmt and clippy must be green; if not, fix in the

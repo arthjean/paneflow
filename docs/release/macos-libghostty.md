@@ -211,7 +211,7 @@ does.
 
 Because of that cost the two pins are decoupled: bumping
 `rust-toolchain.toml` does **not** move `macos_llvm_version`. The `llvm-tools`
-step in `.github/workflows/libghostty-macos.yml` stays on the toolchain that
+step in `.github/workflows/libghostty-recipe.yml` stays on the toolchain that
 normalized the committed archive and sets `RUSTUP_TOOLCHAIN` so the root
 `rust-toolchain.toml` cannot outrank it in `rustc --print sysroot`. Re-normalize
 on purpose, as its own change: bump `macos_llvm_version`, the workflow pin, and

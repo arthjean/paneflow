@@ -334,9 +334,9 @@ build_one() {
   expected_archive_sha="$(target_manifest_string "$rust_target" archive_sha256)"
   if [[ "$archive_sha" != "$expected_archive_sha" ]]; then
     if ((ALLOW_HASH_DRIFT)); then
-      echo "warning: canonical macOS archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
+      echo "warning: $rust_target: canonical macOS archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
     else
-      echo "canonical macOS archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
+      echo "$rust_target: canonical macOS archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
       return 1
     fi
   fi

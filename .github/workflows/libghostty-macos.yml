@@ -17,141 +17,46 @@ concurrency:
   group: ${{ github.event_name == 'schedule' && format('{0}-schedule', github.workflow) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
-env:
-  CARGO_TERM_COLOR: always
-  TARGET: aarch64-apple-darwin
-
 jobs:
-  # US-015 AC5: the US-004 spike selected the Linux-host cross-build, so the
-  # archive is produced on a Linux runner. Ghostty's CombineArchivesStep only
-  # takes the Apple `libtool` path when the build host is Darwin; a Linux host
-  # keeps the `zig ar -M` combine that `scripts/build-libghostty-macos.sh`
-  # normalizes with `llvm-ar --format=darwin`. The macOS-host fallback recipe
-  # stays documented in the manifest, but nothing here needs it.
-  native-rebuild:
-    name: Rebuild pinned macOS archive (Linux host)
-    # Two clean ReleaseFast builds at -j1 ran on every push and PR touching
-    # these paths. What a PR actually needs to know is
-    # that the committed archive is intact, which `paneflow-libghostty-sys`
-    # asserts against `manifest.archive_sha256` on every cargo invocation in
-    # `run_tests.yml::macos_check`. That job also owns the consumer gates
-    # this workflow used to repeat on a second macos-15 runner: the
-    # static-link and notices contract and the end-to-end PTY smoke. The full
-    # reproducibility proof runs nightly and on demand, and must be run by
-    # hand before re-pinning the archive.
+  # Two clean ReleaseFast builds at -j1 are too slow for every push and PR.
+  # What a PR needs to know is that the committed archive is intact, which
+  # `paneflow-libghostty-sys` asserts against `manifest.archive_sha256` on
+  # every cargo invocation in `run_tests.yml::macos_check`. That job also
+  # owns the consumer gates: the static-link and notices contract and the
+  # end-to-end PTY smoke. The full reproducibility proof, in
+  # `libghostty-recipe.yml`, runs nightly and on demand, and must be run by
+  # hand before re-pinning the archive.
+  recipe:
+    name: Reproducible rebuild
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    # Two clean ReleaseFast builds at -j1, which is what the reproducibility
-    # contract requires; the seed and job count are manifest-pinned.
-    timeout-minutes: 19
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          persist-credentials: false
-
-      - name: Read libghostty pins
-        id: pins
-        uses: ./.github/actions/libghostty-manifest
-
-      - name: Checkout pinned Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          repository: ghostty-org/ghostty
-          ref: ${{ steps.pins.outputs.source_sha }}
-          path: .ghostty-source
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the pinned Zig, signature checked
-        env:
-          ZIG_VERSION: ${{ steps.pins.outputs.zig_version }}
-        run: bash scripts/install-zig.sh "$ZIG_VERSION"
-
-      # `llvm-tools` carries llvm-strip / llvm-ar / llvm-nm / llvm-objdump at
-      # exactly `macos_llvm_version` in the manifest. The build script refuses
-      # any other LLVM, because the normalization recipe is version-sensitive.
-      #
-      # This toolchain is deliberately NOT `rust-toolchain.toml`'s channel. It
-      # is the one whose llvm-tools normalized the committed archive, read out
-      # of `macos_llvm_version`, so it moves only with that key and a fresh
-      # `archive_sha256`, not with a workspace toolchain bump. See
-      # docs/release/macos-libghostty.md.
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
-        with:
-          toolchain: ${{ steps.pins.outputs.macos_rust_toolchain }}
-          components: llvm-tools
-
-      # No native object cache: the canonical source and cache prefixes are
-      # part of the reproducibility contract, and the script performs two
-      # independent clean builds before comparing them.
-      - name: Rebuild and compare canonical archive
-        env:
-          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
-          # The build script resolves llvm-strip through `rustc --print
-          # sysroot`, and a directory `rust-toolchain.toml` outranks the
-          # toolchain the step above made default. Only RUSTUP_TOOLCHAIN wins,
-          # the same way the nightly fuzz job in libghostty-linux.yml pins its.
-          RUSTUP_TOOLCHAIN: ${{ steps.pins.outputs.macos_rust_toolchain }}
-        run: |
-          scripts/ci-retry-network.sh \
-            scripts/build-libghostty-macos.sh \
-            --target "$TARGET" \
-            --verify-reproducible
-
-      # The script already fails when the produced archive diverges from the
-      # manifest's `archive_sha256`. This step closes the remaining gap: it
-      # proves the *published* archive is the one the recipe produces, so a
-      # tampered release asset cannot pass by matching a tampered manifest.
-      - uses: ./.github/actions/fetch-libghostty
-
-      - name: Compare against the published archive
-        run: |
-          set -euo pipefail
-          rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
-          published="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
-          for path in "$rebuilt" "$published"; do
-            [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
-          done
-          if ! cmp "$rebuilt" "$published"; then
-            echo "::error::the published macOS archive is not the one scripts/build-libghostty-macos.sh produces"
-            sha256sum "$rebuilt" "$published"
-            exit 1
-          fi
-          sha256sum "$published"
-
-      - name: Upload rebuilt native input
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: libghostty-macos-native-${{ github.sha }}
-          path: target/libghostty/aarch64-apple-darwin
-          if-no-files-found: error
-          retention-days: 14
+    uses: ./.github/workflows/libghostty-recipe.yml
+    with:
+      targets: macos
 
   validation-summary:
     name: libghostty macOS validation
     if: ${{ !cancelled() }}
-    needs: native-rebuild
+    needs: recipe
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      # `native-rebuild` is schedule/dispatch-only, so on a push or a PR it
+      # `recipe` is schedule/dispatch-only, so on a push or a PR it
       # must report `skipped`, and on a scheduled or dispatched run it must
       # report `success`. `skipped` is never silently accepted for a lane
       # that was supposed to run. The consumer gates live in
       # `run_tests.yml::macos_check`, behind the `tests_pass` check.
-      - name: Require the native rebuild when it was due
+      - name: Require the reproducible rebuild when it was due
         env:
-          NATIVE: ${{ needs.native-rebuild.result }}
+          RECIPE: ${{ needs.recipe.result }}
         run: |
           case "$GITHUB_EVENT_NAME" in
             schedule|workflow_dispatch) want=success ;;
             *) want=skipped ;;
           esac
-          if [ "$NATIVE" != "$want" ]; then
-            echo "::error::native-rebuild reported '$NATIVE', expected '$want'"
+          if [ "$RECIPE" != "$want" ]; then
+            echo "::error::recipe reported '$RECIPE', expected '$want'"
             exit 1
           fi
-          echo "native-rebuild: $NATIVE (expected $want)"
+          echo "recipe: $RECIPE (expected $want)"
