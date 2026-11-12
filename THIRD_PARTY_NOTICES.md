@@ -64,6 +64,7 @@ is unchanged; only the wrapping `<svg>` attributes were normalized to the shape
 the GPUI asset loader expects.
 
 - `arrow_left.svg`
+- `chat-bot.svg`
 - `clock.svg`
 - `close.svg`
 - `detach-pane.svg`
@@ -84,7 +85,6 @@ the GPUI asset loader expects.
 - `preference-horizontal.svg`
 - `settings.svg`
 - `sidebar.svg`
-- `sparkles.svg`
 - `split_horizontal.svg`
 - `split_vertical.svg`
 - `square-slash.svg`

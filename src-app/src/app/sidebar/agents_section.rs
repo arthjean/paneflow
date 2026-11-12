@@ -46,6 +46,8 @@ const AGENTS_TOGGLE_GROUP: &str = "agents-section-toggle-group";
 const AGENTS_DISPLAY_GROUP: &str = "agents-display-group";
 const AGENTS_DISPLAY_MENU_WIDTH: f32 = 172.;
 const AGENTS_DISPLAY_MENU_GAP: f32 = 10.;
+const AGENT_LOGO_ICON: &str = "icons/chat-bot.svg";
+const AGENT_WORKSPACE_ICON: &str = "icons/folder.svg";
 
 type PickAgent = Rc<dyn Fn(u64, &mut Window, &mut App)>;
 type ResizeAgents = Rc<dyn Fn(AgentsResizeInput, &mut Window, &mut App)>;
@@ -1443,7 +1445,7 @@ fn render_agents_display_menu(
         )
         .child(render_show_option(
             "Agent logo",
-            "icons/sparkles.svg",
+            AGENT_LOGO_ICON,
             SidebarShowLine::AgentLogo,
             show.agent_logo_enabled(),
             ui,
@@ -1451,7 +1453,7 @@ fn render_agents_display_menu(
         ))
         .child(render_show_option(
             "Workspace",
-            "icons/folder.svg",
+            AGENT_WORKSPACE_ICON,
             SidebarShowLine::AgentWorkspace,
             show.agent_workspace_enabled(),
             ui,
@@ -1481,6 +1483,16 @@ fn render_agents_display_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_customize_agent_rows_line_points_at_an_embedded_icon() {
+        for icon in [AGENT_LOGO_ICON, AGENT_WORKSPACE_ICON, SHIMMER_ICON] {
+            assert!(
+                crate::assets::Assets::get(icon).is_some(),
+                "the Customize agent rows menu points at the missing icon {icon}"
+            );
+        }
+    }
     use crate::ai_types::{AgentSession, AgentState};
     use crate::pane::Pane;
     use crate::terminal::TerminalView;

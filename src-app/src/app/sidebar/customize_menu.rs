@@ -121,7 +121,10 @@ impl SidebarShowLine {
     }
 }
 
-pub(super) const SHIMMER_ICON: &str = "icons/palette/ai-magic.svg";
+pub(super) const SHIMMER_ICON: &str = "icons/palette/sparkles.svg";
+pub(crate) const STATUS_ICON: &str = "icons/palette/activity-01.svg";
+pub(crate) const INDENT_GUIDE_ICON: &str = "icons/palette/list-tree.svg";
+pub(crate) const AGENTS_ICON: &str = "icons/palette/bot.svg";
 
 const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 6] = [
     (
@@ -131,26 +134,26 @@ const SHOW_SUBMENU_LINES: [(&str, &str, SidebarShowLine); 6] = [
     ),
     (
         "Diffstat",
-        "icons/diff-unified.svg",
+        "icons/palette/plus-minus-01.svg",
         SidebarShowLine::Diffstat,
     ),
     ("PR", "icons/git-pull-request.svg", SidebarShowLine::Pr),
-    (
-        "Status",
-        "icons/palette/notification-01.svg",
-        SidebarShowLine::Status,
-    ),
+    ("Status", STATUS_ICON, SidebarShowLine::Status),
     ("Shimmer", SHIMMER_ICON, SidebarShowLine::Shimmer),
     (
         "Indent guide",
-        "icons/list.svg",
+        INDENT_GUIDE_ICON,
         SidebarShowLine::IndentGuide,
     ),
 ];
 
 const SHOW_SUBMENU_SECTIONS: [(&str, &str, SidebarShowLine); 2] = [
-    ("Agents", "icons/sparkles.svg", SidebarShowLine::Agents),
-    ("Usage", "icons/plan-usage.svg", SidebarShowLine::Usage),
+    ("Agents", AGENTS_ICON, SidebarShowLine::Agents),
+    (
+        "Usage",
+        "icons/palette/limitation.svg",
+        SidebarShowLine::Usage,
+    ),
 ];
 
 pub(super) fn render_customize_sidebar_button(
@@ -441,7 +444,7 @@ mod tests {
             ["Agents", "Usage"]
         );
         let (_, icon, line) = SHOW_SUBMENU_LINES[3];
-        assert_eq!(icon, "icons/palette/notification-01.svg");
+        assert_eq!(icon, "icons/palette/activity-01.svg");
         assert!(matches!(line, SidebarShowLine::Status));
         for (label, icon, _) in SHOW_SUBMENU_LINES.into_iter().chain(SHOW_SUBMENU_SECTIONS) {
             assert!(

@@ -1376,7 +1376,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show agent status in the sidebar",
-        icon: Some("icons/palette/notification-01.svg"),
+        icon: Some(crate::app::sidebar::customize_menu::STATUS_ICON),
         keywords: "agents tree badge working done appearance hide",
         needs: Needs::Always,
         section: Section::Sidebar,
@@ -1387,7 +1387,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the indent guide in the sidebar",
-        icon: Some("icons/palette/text-indent.svg"),
+        icon: Some(crate::app::sidebar::customize_menu::INDENT_GUIDE_ICON),
         keywords: "appearance tree",
         needs: Needs::Always,
         section: Section::Sidebar,
@@ -1398,7 +1398,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Show the Agents section in the sidebar",
-        icon: Some("icons/palette/sparkles.svg"),
+        icon: Some(crate::app::sidebar::customize_menu::AGENTS_ICON),
         keywords: "agents attention appearance hide",
         needs: Needs::Always,
         section: Section::Sidebar,
@@ -1654,7 +1654,7 @@ mod tests {
             .expect("the palette lists the tree status toggle");
         assert_eq!(command.section, Section::Sidebar);
         assert_eq!(command.needs, Needs::Always);
-        assert_eq!(command.icon, Some("icons/palette/notification-01.svg"));
+        assert_eq!(command.icon, Some("icons/palette/activity-01.svg"));
         assert!(matches!(command.kind, Kind::Toggle { .. }));
 
         let config: paneflow_config::schema::PaneFlowConfig =
