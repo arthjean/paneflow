@@ -941,11 +941,18 @@ mod tests {
         );
         assert!(job.contains("scripts/perf-gates.sh"), "{job}");
         assert!(job.contains("retention-days: 14"), "{job}");
-        let release = workflow("release.yml");
-        assert!(
-            release.lines().any(|line| line == "cache-mode: none"),
-            "release.yml may read or write the Actions cache"
-        );
+        for name in [
+            "release.yml",
+            "release-linux.yml",
+            "release-macos.yml",
+            "release-windows.yml",
+        ] {
+            let release = workflow(name);
+            assert!(
+                release.lines().any(|line| line == "cache-mode: none"),
+                "{name} may read or write the Actions cache"
+            );
+        }
         let tests_pass = job_block(&run_tests, "tests_pass");
         assert!(
             tests_pass.contains("\n      - perf_gates\n"),

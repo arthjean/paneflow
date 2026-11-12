@@ -43,7 +43,7 @@ env:
 
 jobs:
   # Mirrors Zed's `orchestrate` job pattern (run_tests.yml in
-  # zed-industries/zed): a cheap ubuntu-latest filter that gates every
+  # zed-industries/zed): a cheap ubuntu-24.04 filter that gates every
   # expensive downstream leg on what the PR actually touched.
   #
   # Outputs:
@@ -56,7 +56,7 @@ jobs:
   #                       smoke jobs are designed to protect
   #
   # Gating posture (US-018 AC5 etc.): the macos-15 / windows-2022
-  # runners are 14× / 2× pricier than ubuntu-latest and contribute
+  # runners are 14× / 2× pricier than ubuntu-24.04 and contribute
   # most of CI wall-clock. The path filter short-circuits them on
   # docs-only / non-workflow .github/** PRs.
   #
@@ -429,7 +429,7 @@ jobs:
   macos_check:
     name: macOS aarch64 smoke build
     # US-018 AC5: only run when Rust-relevant files change. `needs: orchestrate`
-    # waits for the cheap filter job (runs on ubuntu-latest, ~seconds) and
+    # waits for the cheap filter job (runs on ubuntu-24.04, ~seconds) and
     # short-circuits the 14× pricier macos-15 runner on docs-only /
     # non-workflow .github/** PRs.
     #
@@ -885,7 +885,7 @@ jobs:
         run: ./scripts/msvc-dev-env.ps1 -Arch x64
 
       # AC-2 - the compiler and the linker are on PATH. Nothing in this
-      # workflow signs, so signtool.exe is only resolved by `release.yml`.
+      # workflow signs, so signtool.exe is only resolved by `release-windows.yml`.
       - name: Verify cl.exe / link.exe on PATH
         shell: pwsh
         run: |
@@ -1259,8 +1259,8 @@ jobs:
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     # Native ARM runner (GitHub public preview since late 2024, used
-    # by release.yml on the same pattern - see the comment at
-    # release.yml:34-37). Same image basis as ubuntu-24.04 so the
+    # by the aarch64 leg of release-linux.yml on the same pattern).
+    # Same image basis as ubuntu-24.04 so the
     # system-deps list mirrors the x86_64 `check` job above without
     # drift.
     #
