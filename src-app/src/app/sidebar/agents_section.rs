@@ -826,7 +826,7 @@ fn render_agent_row(
                 )),
         );
     let title_text = div()
-        .flex_none()
+        .flex_initial()
         .max_w_full()
         .min_w_0()
         .overflow_x_hidden()
@@ -856,7 +856,7 @@ fn render_agent_row(
     };
     let workspace_suffix = row.details.workspace.then(|| {
         div()
-            .flex_1()
+            .flex_initial()
             .min_w_0()
             .overflow_x_hidden()
             .whitespace_nowrap()
@@ -865,16 +865,10 @@ fn render_agent_row(
             .debug_selector(move || format!("agent-workspace-{surface_id}"))
             .child(agent_workspace_suffix(row))
     });
-    let name = div()
+    let name = sidebar_title_with_trailing(title, workspace_suffix, 0.)
         .flex_1()
-        .min_w_0()
-        .overflow_x_hidden()
-        .flex()
-        .flex_row()
         .text_size(crate::ui_primitives::TITLE)
-        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-        .child(title)
-        .children(workspace_suffix);
+        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT));
     let line = div()
         .flex()
         .flex_row()
@@ -2971,10 +2965,7 @@ mod tests {
         );
         assert_eq!(title.center().y, row.center().y);
         assert_eq!(suffix.center().y, row.center().y);
-        assert!(close(
-            suffix.right(),
-            status.left() - px(SIDEBAR_TITLE_ROW_GAP)
-        ));
+        assert!(suffix.right() <= status.left() - px(SIDEBAR_TITLE_ROW_GAP));
         assert!(status.contains(&badge.center()));
         assert!(
             close(status.right(), row.right() - px(SIDEBAR_ROW_PADDING_X)),
@@ -2990,10 +2981,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_long_name_ellipses_on_one_line_and_cuts_the_workspace_suffix_first(
+    fn a_long_name_ellipses_on_one_line_and_cuts_the_title_before_the_workspace(
         cx: &mut TestAppContext,
     ) {
-        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Blocked]);
+        let mut rows = ranked_rows(&[AgentRank::Blocked, AgentRank::Blocked, AgentRank::Blocked]);
         rows[0].workspace = "a-workspace-name-far-longer-than-the-sidebar-row-can-show".to_string();
         rows[1].title =
             "A tab title far longer than the sidebar row can show on one line".to_string();
@@ -3003,30 +2994,34 @@ mod tests {
         let title = cx.debug_bounds("agent-title-1").expect("title");
         let suffix = cx.debug_bounds("agent-workspace-1").expect("workspace");
         let badge = cx.debug_bounds("status-badge-agent-1").expect("badge");
+        let natural_title = cx.debug_bounds("agent-title-3").expect("title 3");
+        let natural_suffix = cx.debug_bounds("agent-workspace-3").expect("workspace 3");
         assert_eq!(row.size.height, px(32.), "the text does not wrap");
         assert!(
             close(suffix.left(), title.right()),
             "a short title keeps its width"
         );
+        assert!(close(title.size.width, natural_title.size.width));
+        assert!(suffix.right() <= badge.left() - px(SIDEBAR_TITLE_ROW_GAP));
+        let name_width = badge.left() - px(SIDEBAR_TITLE_ROW_GAP) - title.left();
         assert!(
-            close(suffix.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
-            "the suffix is cut where the status begins"
+            suffix.size.width <= name_width * SIDEBAR_TRAILING_MAX_SHARE + px(0.01),
+            "a long workspace stops at its share of the line: {suffix:?}"
         );
-        assert!(suffix.size.width > px(0.));
-        assert!(title.size.width > px(100.), "{title:?}");
 
         let row = cx.debug_bounds("agent-row-2").expect("row 2");
         let title = cx.debug_bounds("agent-title-2").expect("title");
+        let suffix = cx.debug_bounds("agent-workspace-2").expect("workspace");
         let badge = cx.debug_bounds("status-badge-agent-2").expect("badge");
         assert_eq!(row.size.height, px(32.), "the text does not wrap");
         assert!(
-            close(title.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
-            "the title is cut only once the suffix has no room left: {title:?} {badge:?}"
+            close(suffix.size.width, natural_suffix.size.width),
+            "the workspace stays whole: {suffix:?} {natural_suffix:?}"
         );
+        assert!(close(suffix.left(), title.right()));
         assert!(
-            cx.debug_bounds("agent-workspace-2")
-                .is_none_or(|suffix| suffix.size.width == px(0.)),
-            "the suffix gave up all of its width first"
+            close(suffix.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
+            "the title gives up its width so the workspace fits: {title:?} {badge:?}"
         );
     }
 

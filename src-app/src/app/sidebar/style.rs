@@ -7,6 +7,8 @@ pub(super) const SIDEBAR_ROW_GAP: f32 = 3.0;
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 20.0;
 pub(super) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 pub(super) const SIDEBAR_BRANCH_GAP: f32 = 6.0;
+const SIDEBAR_TITLE_SHRINK_WEIGHT: f32 = 1000.0;
+pub(super) const SIDEBAR_TRAILING_MAX_SHARE: f32 = 0.5;
 const SIDEBAR_ROW_MIN_HEIGHT: f32 = 32.0;
 pub(super) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
 pub(super) const ROW_RADIUS: gpui::Pixels = px(9.0);
@@ -24,6 +26,43 @@ pub(super) const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
 pub(super) const SIDEBAR_HEADER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_TITLE_TOOLTIP_MIN_CHARS: usize = 13;
+
+pub(super) fn sidebar_title_with_trailing(
+    title: impl IntoElement,
+    trailing: Option<impl IntoElement>,
+    gap: f32,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(gap))
+        .flex_initial()
+        .min_w_0()
+        .overflow_x_hidden()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .flex_initial()
+                .flex_shrink(SIDEBAR_TITLE_SHRINK_WEIGHT)
+                .min_w_0()
+                .overflow_x_hidden()
+                .child(title),
+        )
+        .children(trailing.map(|trailing| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .flex_initial()
+                .min_w_0()
+                .max_w(gpui::relative(SIDEBAR_TRAILING_MAX_SHARE))
+                .overflow_x_hidden()
+                .child(trailing)
+        }))
+}
 
 pub(super) fn sidebar_row_shell() -> gpui::Div {
     div()

@@ -99,7 +99,7 @@ impl PaneFlowApp {
             self.inline_rename_field(ui)
         } else {
             let title_text = div()
-                .flex_none()
+                .flex_initial()
                 .max_w_full()
                 .min_w_0()
                 .overflow_x_hidden()
@@ -164,18 +164,11 @@ impl PaneFlowApp {
             .when(!indent_guide, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(SIDEBAR_BRANCH_GAP))
-                    .flex_initial()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .child(title_el)
-                    .children(branch),
-            )
+            .child(sidebar_title_with_trailing(
+                title_el,
+                branch,
+                SIDEBAR_BRANCH_GAP,
+            ))
             .when(!detached_panes.is_empty(), |titled| {
                 titled.child(
                     sidebar_action_button(
@@ -506,6 +499,71 @@ mod tests {
             "a clean checkout prints its branch and stops"
         );
         assert!(tab_diffstat_visible(show(true), &dirty()));
+    }
+
+    fn title_and_branch_widths(
+        cx: &mut gpui::TestAppContext,
+        row_width: f32,
+        title_width: f32,
+        branch_width: f32,
+    ) -> (f32, f32) {
+        use gpui::{AvailableSpace, point, size};
+
+        let cx = cx.add_empty_window();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(row_width)),
+                AvailableSpace::Definite(px(SIDEBAR_ROW_LINE_HEIGHT)),
+            ),
+            |_, _| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .w(px(row_width))
+                    .child(sidebar_title_with_trailing(
+                        div()
+                            .flex_initial()
+                            .min_w_0()
+                            .debug_selector(|| "title".into())
+                            .child(div().flex_none().w(px(title_width)).h(px(10.))),
+                        Some(
+                            div()
+                                .flex_initial()
+                                .min_w_0()
+                                .debug_selector(|| "branch".into())
+                                .child(div().flex_none().w(px(branch_width)).h(px(10.))),
+                        ),
+                        SIDEBAR_BRANCH_GAP,
+                    ))
+            },
+        );
+        let mut width = |selector: &'static str| {
+            cx.debug_bounds(selector)
+                .map(|bounds| bounds.size.width.as_f32())
+                .unwrap_or_default()
+        };
+        (width("title"), width("branch"))
+    }
+
+    #[gpui::test]
+    fn a_long_title_gives_way_so_the_branch_stays_whole(cx: &mut gpui::TestAppContext) {
+        let (title, branch) = title_and_branch_widths(cx, 240., 400., 50.);
+        assert_eq!(branch, 50.);
+        assert_eq!(title, 240. - 50. - SIDEBAR_BRANCH_GAP);
+    }
+
+    #[gpui::test]
+    fn a_long_branch_stops_at_its_share_so_the_title_stays_readable(cx: &mut gpui::TestAppContext) {
+        let (title, branch) = title_and_branch_widths(cx, 240., 400., 400.);
+        assert_eq!(branch, 240. * SIDEBAR_TRAILING_MAX_SHARE);
+        assert_eq!(title, 240. - branch - SIDEBAR_BRANCH_GAP);
+    }
+
+    #[gpui::test]
+    fn a_short_title_and_branch_keep_their_natural_widths(cx: &mut gpui::TestAppContext) {
+        let (title, branch) = title_and_branch_widths(cx, 240., 80., 40.);
+        assert_eq!((title, branch), (80., 40.));
     }
 
     #[test]
