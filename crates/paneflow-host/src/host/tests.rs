@@ -2676,15 +2676,23 @@ fn a_hook_reaching_a_stopped_persistence_writer_is_answered_not_durable_at_once(
 }
 
 fn next_frame_of_type(subscription: &crate::agent::AgentSubscription, kind: &str) -> Value {
+    next_frame_where(subscription, kind, |_| true)
+}
+
+fn next_frame_where(
+    subscription: &crate::agent::AgentSubscription,
+    kind: &str,
+    accepts: impl Fn(&Value) -> bool,
+) -> Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         match subscription.frames.recv_timeout(remaining) {
-            Ok(frame) if frame["type"] == kind => return frame,
+            Ok(frame) if frame["type"] == kind && accepts(&frame) => return frame,
             Ok(_) => {}
             Err(_) => break,
         }
     }
-    panic!("no {kind} frame was broadcast");
+    panic!("no matching {kind} frame was broadcast");
 }
 
 #[test]
@@ -2708,8 +2716,10 @@ fn manifest_changes_are_pushed_to_agent_followers_as_session_frames() {
         host.commit_scan(&target, |record| record.program_status_capable = true),
         Some(true)
     );
-    let observed = next_frame_of_type(&subscription, "session");
-    assert_eq!(observed["entry"]["program_status_capable"], true);
+    let observed = next_frame_where(&subscription, "session", |frame| {
+        frame["entry"]["program_status_capable"] == true
+    });
+    assert_eq!(observed["entry"]["session"], session.to_string());
 
     while subscription.frames.try_recv().is_ok() {}
     host.ingest_agent_event(&burst_event(&session, 0)).unwrap();
