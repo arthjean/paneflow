@@ -64,6 +64,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.19.1" date="2026-11-13">
+      <description>
+        <p>The Agents section groups agents by status and can list the agents of every space, and new menus choose what the Agents rows and the workspace tree show. Closing a pane, a tab or a workspace takes one click and stops what it closes.</p>
+        <ul>
+          <li>Agents are grouped under Need you, Error, Done, Working, Idle and No status, one line each</li>
+          <li>The workspace tree can leave each agent's status to the Agents section</li>
+          <li>The sidebar usage gauge refreshes on its own and can count only the agents you pick</li>
+          <li>Ended session rows and the Keep running choice on close are removed</li>
+          <li>A redrawn app icon, and the sidebar and Settings navigation use the Geist font</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.0" date="2026-11-01">
       <description>
         <p>An Agents section in the sidebar lists the agents of the active space by urgency, and a plan usage capsule shows how much of a Claude Code or Codex subscription is left. Restore relaunches the panes the host lost, and the terminal engine moves to Ghostty 1.4.0 with three security fixes.</p>
