@@ -2646,11 +2646,19 @@ mod tests {
                             let tab_surfaces = workspace.tabs()[0].surface_ids(cx);
                             (
                                 shown.rows,
-                                tab_row_agent_summary(Default::default(), workspace, &tab_surfaces),
-                                folder_row_agent_summary(Default::default(), workspace, false),
+                                tab_row_agent_summary(TreeStatus::Shown, workspace, &tab_surfaces),
+                                folder_row_agent_summary(TreeStatus::Shown, workspace, false),
                                 hidden.rows,
-                                tab_row_agent_summary(tree_status_hidden, workspace, &tab_surfaces),
-                                folder_row_agent_summary(tree_status_hidden, workspace, false),
+                                tab_row_agent_summary(
+                                    TreeStatus::resolve(tree_status_hidden, false),
+                                    workspace,
+                                    &tab_surfaces,
+                                ),
+                                folder_row_agent_summary(
+                                    TreeStatus::resolve(tree_status_hidden, false),
+                                    workspace,
+                                    false,
+                                ),
                             )
                         });
                     let case = format!("{state:?} unread={unread} capable={capable}");

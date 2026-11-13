@@ -131,7 +131,7 @@
         },
         "status": {
           "type": ["boolean", "null"],
-          "description": "Show agent status on workspace and tab rows: the Need you, Error and Done badges, the working matrix, the title shimmer and the status tooltip. false leaves the status to the Agents section, and a pull request takes the freed place. Default true.",
+          "description": "Show agent status on workspace and tab rows: the Need you, Error and Done badges, the working matrix, the title shimmer and the status tooltip. false leaves the status to the Agents section, and a pull request takes the freed place; while the Agents section is folded or hidden, the rows show their status again. Default true.",
           "default": true
         },
         "indent_guide": {

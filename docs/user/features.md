@@ -131,7 +131,9 @@ Workspace and tab rows in the tree show the same status as the Agents
 section. To see each status only once, turn off **Customize sidebar > Show >
 Status** or set [`sidebar_show.status`](/docs/configuration/schema) to
 `false`: tree rows then drop their status badges and their working
-animation, and a tab's pull request takes their place. The Agents section,
+animation, and a tab's pull request takes their place. While the Agents
+section is folded or hidden, tree rows show their status again, so you never
+lose it. The Agents section,
 `Cmd/Ctrl+Shift+J`, the pane header, and notifications are unaffected.
 
 On Linux and macOS, the **Claude Code (team)** launcher entry starts Claude

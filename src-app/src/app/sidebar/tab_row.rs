@@ -74,8 +74,7 @@ impl PaneFlowApp {
             }
         }
         let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
-        let row_agent_status =
-            tab_row_agent_summary(self.cached_config.sidebar_show, ws, &surfaces);
+        let row_agent_status = tab_row_agent_summary(self.tree_status(), ws, &surfaces);
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
         let lane = infer_lane(row_agent_status, None);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();

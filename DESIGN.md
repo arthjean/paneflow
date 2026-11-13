@@ -555,7 +555,10 @@ on by default) and the usage capsule. `Status` sits behind the
 `notification-01` glyph (`sidebar_show.status`, on by default); turned off, the
 workspace and tab rows lose their status badge, their matrix, the title
 shimmer and the status tooltip, and a folded workspace's pull request takes
-the trailing slot by the same rule as a row with no agent. The Agents section, the hidden-space
+the trailing slot by the same rule as a row with no agent. Off means the
+status shows once, not never: while the Agents section is folded or hidden
+(`sidebar_show.agents: false`), the tree rows show their status again, so the
+sidebar never loses it. The Agents section, the hidden-space
 attention button, the pane header marker, notifications and
 `Cmd/Ctrl+Shift+J` do not read it. `Shimmer` follows `Status` behind the
 `ai-magic` glyph (`sidebar_show.shimmer`, on by default): a working tab's

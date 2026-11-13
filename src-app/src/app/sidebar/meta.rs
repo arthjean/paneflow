@@ -109,12 +109,41 @@ where
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TreeStatus {
+    Shown,
+    LeftToAgentsSection,
+}
+
+impl TreeStatus {
+    pub(super) fn resolve(
+        show: paneflow_config::schema::SidebarShow,
+        agents_section_collapsed: bool,
+    ) -> Self {
+        let agents_section_open = show.agents_enabled() && !agents_section_collapsed;
+        if show.status_enabled() || !agents_section_open {
+            Self::Shown
+        } else {
+            Self::LeftToAgentsSection
+        }
+    }
+}
+
+impl PaneFlowApp {
+    pub(super) fn tree_status(&self) -> TreeStatus {
+        TreeStatus::resolve(
+            self.cached_config.sidebar_show,
+            self.agents_section.borrow().collapsed(),
+        )
+    }
+}
+
 pub(super) fn tab_row_agent_summary(
-    show: paneflow_config::schema::SidebarShow,
+    tree_status: TreeStatus,
     workspace: &crate::workspace::Workspace,
     surfaces: &std::collections::HashSet<u64>,
 ) -> Option<SidebarAgentSummary> {
-    if !show.status_enabled() {
+    if tree_status == TreeStatus::LeftToAgentsSection {
         return None;
     }
     sidebar_agent_summary(
@@ -127,11 +156,11 @@ pub(super) fn tab_row_agent_summary(
 }
 
 pub(super) fn folder_row_agent_summary(
-    show: paneflow_config::schema::SidebarShow,
+    tree_status: TreeStatus,
     workspace: &crate::workspace::Workspace,
     expanded: bool,
 ) -> Option<SidebarAgentSummary> {
-    if !show.status_enabled() {
+    if tree_status == TreeStatus::LeftToAgentsSection {
         return None;
     }
     sidebar_agent_summary(
@@ -499,16 +528,65 @@ mod tests {
         workspace
     }
 
-    fn status_hidden() -> paneflow_config::schema::SidebarShow {
-        paneflow_config::schema::SidebarShow {
-            status: Some(false),
+    fn status_hidden() -> TreeStatus {
+        TreeStatus::LeftToAgentsSection
+    }
+
+    #[test]
+    fn a_hidden_tree_status_comes_back_while_the_agents_section_is_folded_or_off() {
+        use paneflow_config::schema::SidebarShow;
+
+        let with = |status, agents| SidebarShow {
+            status: Some(status),
+            agents: Some(agents),
             ..Default::default()
+        };
+        for agents in [true, false] {
+            for collapsed in [false, true] {
+                assert_eq!(
+                    TreeStatus::resolve(with(true, agents), collapsed),
+                    TreeStatus::Shown,
+                    "status on, agents={agents} collapsed={collapsed}"
+                );
+            }
         }
+        assert_eq!(
+            TreeStatus::resolve(with(false, true), false),
+            TreeStatus::LeftToAgentsSection
+        );
+        assert_eq!(
+            TreeStatus::resolve(with(false, true), true),
+            TreeStatus::Shown,
+            "a folded Agents section hands the status back to the tree"
+        );
+        for collapsed in [false, true] {
+            assert_eq!(
+                TreeStatus::resolve(with(false, false), collapsed),
+                TreeStatus::Shown,
+                "a hidden Agents section hands the status back to the tree, collapsed={collapsed}"
+            );
+        }
+        assert_eq!(
+            TreeStatus::resolve(SidebarShow::default(), false),
+            TreeStatus::Shown
+        );
+
+        let workspace = workspace_with([on_surface(AgentState::WaitingForInput, 7)]);
+        let surfaces = HashSet::from([7u64]);
+        let folded = TreeStatus::resolve(with(false, true), true);
+        assert_eq!(
+            tab_row_agent_summary(folded, &workspace, &surfaces).map(|summary| summary.state),
+            Some(SidebarAgentState::NeedsInput)
+        );
+        assert_eq!(
+            folder_row_agent_summary(folded, &workspace, false).map(|summary| summary.state),
+            Some(SidebarAgentState::NeedsInput)
+        );
     }
 
     #[test]
     fn a_hidden_tree_status_leaves_tab_and_workspace_rows_without_a_summary() {
-        let shown = paneflow_config::schema::SidebarShow::default();
+        let shown = TreeStatus::Shown;
         let surfaces = HashSet::from([7u64]);
         let mut with_a_status = 0;
         for state in [
@@ -564,7 +642,7 @@ mod tests {
         workspace
             .agent_completion_notification
             .record_finished(false, None);
-        let shown = paneflow_config::schema::SidebarShow::default();
+        let shown = TreeStatus::Shown;
         for expanded in [false, true] {
             assert_eq!(
                 folder_row_agent_summary(shown, &workspace, expanded).map(|summary| summary.state),
@@ -587,7 +665,7 @@ mod tests {
         };
         let workspace = workspace_with([on_surface(AgentState::WaitingForInput, 7)]);
         let surfaces = HashSet::from([7u64]);
-        let shown = paneflow_config::schema::SidebarShow::default();
+        let shown = TreeStatus::Shown;
 
         assert!(matches!(
             infer_lane(
