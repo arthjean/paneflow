@@ -19,6 +19,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- **Branch and diffstat show once per checkout.** With **Customize sidebar › Show › Branch** or **Diffstat** on, every tab of a workspace used to repeat the same branch and the same counts. The workspace row now carries them, folded or not, and a tab row shows a branch and counts only when the tab is bound to a worktree of its own, so a tab with a branch is a worktree. Grouped by status, where no workspace row stands above the tabs, each tab keeps its own. A folded workspace's trailing pull request glyph now reports its worktree tabs, since its own request is on its branch label.
 - **Workspace rows are gray.** In the Workspaces sidebar, a workspace's name now rests in the muted gray of its folder icon and turns to the text color under the pointer, so the tabs under it read first.
 - **Menus, selects and settings cards draw circular corners.** Context menus and the other popup menus, select popups, the usage panel of the sidebar and the cards of the Settings pages no longer use the continuous corners: menus are 14 px with 30 px rows, 13 px labels and a soft shadow, and settings cards are 12 px with no border. Pane cards, tabs, sidebar rows, dialogs, toasts and the command palette keep the continuous corners.
 

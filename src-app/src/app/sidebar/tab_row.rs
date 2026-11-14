@@ -2,11 +2,33 @@ use super::*;
 
 use crate::ui_primitives::AnimatedHoverExt;
 
-fn tab_diffstat_visible(
+pub(super) fn checkout_diffstat_visible(
     show: paneflow_config::schema::SidebarShow,
     stats: &crate::workspace::GitDiffStats,
 ) -> bool {
     show.diffstat_enabled() && (stats.insertions > 0 || stats.deletions > 0)
+}
+
+pub(super) fn tab_has_own_checkout(
+    tab_worktree: Option<&std::path::Path>,
+    workspace_root: &std::path::Path,
+) -> bool {
+    tab_worktree.is_some_and(|path| path != workspace_root)
+}
+
+pub(super) fn workspace_checkout(
+    ws: &Workspace,
+) -> Option<(String, crate::workspace::GitDiffStats)> {
+    ws.is_git_repo.then(|| {
+        (
+            crate::workspace::worktree::checkout_label(
+                Some(&ws.git_branch),
+                &ws.worktree_root,
+                &ws.worktree_root,
+            ),
+            ws.git_stats.clone(),
+        )
+    })
 }
 
 fn tab_title_shimmers(
@@ -133,8 +155,12 @@ impl PaneFlowApp {
         let title_indent = SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP;
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
-        let diffstat = self.render_tab_diffstat_chip(ws, tab);
-        let branch = (!is_renaming)
+        let shows_checkout =
+            grouped_by_status || tab_has_own_checkout(tab.worktree.as_deref(), &ws.worktree_root);
+        let diffstat = shows_checkout
+            .then(|| self.render_tab_diffstat_chip(ws, tab))
+            .flatten();
+        let branch = (shows_checkout && !is_renaming)
             .then(|| self.render_tab_branch_label(ws, tab, cx))
             .flatten();
         let workspace_suffix = (grouped_by_status && !is_renaming).then(|| {
@@ -362,12 +388,7 @@ impl PaneFlowApp {
                 git.is_repo
                     .then(|| (label(&git.branch, path), git.stats.clone()))
             }
-            None => ws.is_git_repo.then(|| {
-                (
-                    label(&ws.git_branch, &ws.worktree_root),
-                    ws.git_stats.clone(),
-                )
-            }),
+            None => workspace_checkout(ws),
         }
     }
 
@@ -377,7 +398,7 @@ impl PaneFlowApp {
             return None;
         }
         let (_, stats) = self.tab_row_checkout(ws, tab)?;
-        if !tab_diffstat_visible(show, &stats) {
+        if !checkout_diffstat_visible(show, &stats) {
             return None;
         }
         Some(render_diffstat_counts(&stats, crate::theme::ui_colors()).into_any_element())
@@ -389,7 +410,6 @@ impl PaneFlowApp {
         tab: &Tab,
         cx: &gpui::App,
     ) -> Option<AnyElement> {
-        let ui = crate::theme::ui_colors();
         let show = self.cached_config.sidebar_show;
         if !show.branch_enabled() {
             return None;
@@ -400,6 +420,22 @@ impl PaneFlowApp {
         }
 
         let pr = self.tab_pull_request(ws, tab);
+        Some(self.render_checkout_branch_label(
+            SharedString::from(format!("tab-branch-{}", tab.id)),
+            label,
+            pr,
+            cx,
+        ))
+    }
+
+    pub(super) fn render_checkout_branch_label(
+        &self,
+        id: SharedString,
+        label: String,
+        pr: Option<PullRequest>,
+        cx: &gpui::App,
+    ) -> AnyElement {
+        let ui = crate::theme::ui_colors();
         let branch_tooltip = match pr {
             Some(pr) => Some(format!("{label}\n{}", lane::pull_request_tooltip(pr))),
             None => {
@@ -407,45 +443,43 @@ impl PaneFlowApp {
             }
         };
 
-        Some(
-            div()
-                .id(SharedString::from(format!("tab-branch-{}", tab.id)))
-                .when_some(branch_tooltip, |branch, text| {
-                    branch.delayed_tooltip(crate::ui_primitives::text_tooltip(text))
-                })
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(3.))
-                .flex_initial()
-                .min_w_0()
-                .child(
-                    svg()
-                        .size(px(12.))
-                        .flex_none()
-                        .path(match pr {
-                            Some(pr) => lane::pull_request_glyph(pr.state),
-                            None => "icons/git-branch-sidebar.svg",
-                        })
-                        .text_color(match pr {
-                            Some(pr) => pr.state.color(ui),
-                            None => ui.muted,
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_initial()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(14.))
-                        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                        .text_color(ui.muted)
-                        .child(self.sidebar_filter_label(label, cx)),
-                )
-                .into_any_element(),
-        )
+        div()
+            .id(id)
+            .when_some(branch_tooltip, |branch, text| {
+                branch.delayed_tooltip(crate::ui_primitives::text_tooltip(text))
+            })
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(3.))
+            .flex_initial()
+            .min_w_0()
+            .child(
+                svg()
+                    .size(px(12.))
+                    .flex_none()
+                    .path(match pr {
+                        Some(pr) => lane::pull_request_glyph(pr.state),
+                        None => "icons/git-branch-sidebar.svg",
+                    })
+                    .text_color(match pr {
+                        Some(pr) => pr.state.color(ui),
+                        None => ui.muted,
+                    }),
+            )
+            .child(
+                div()
+                    .flex_initial()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(14.))
+                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                    .text_color(ui.muted)
+                    .child(self.sidebar_filter_label(label, cx)),
+            )
+            .into_any_element()
     }
 }
 
@@ -520,14 +554,41 @@ mod tests {
     fn the_diffstat_needs_both_a_switch_and_something_to_report() {
         let clean = crate::workspace::GitDiffStats::default();
         assert!(
-            !tab_diffstat_visible(show(false), &dirty()),
+            !checkout_diffstat_visible(show(false), &dirty()),
             "the counts are opt-in even on a dirty checkout"
         );
         assert!(
-            !tab_diffstat_visible(show(true), &clean),
+            !checkout_diffstat_visible(show(true), &clean),
             "a clean checkout prints its branch and stops"
         );
-        assert!(tab_diffstat_visible(show(true), &dirty()));
+        assert!(checkout_diffstat_visible(show(true), &dirty()));
+    }
+
+    #[test]
+    fn only_a_tab_bound_to_another_worktree_has_a_checkout_of_its_own() {
+        let root = std::path::Path::new("repo");
+        let worktree = std::path::Path::new("repo.worktrees/feat");
+        assert!(!tab_has_own_checkout(None, root));
+        assert!(
+            !tab_has_own_checkout(Some(root), root),
+            "a tab bound to the workspace's checkout repeats the workspace row"
+        );
+        assert!(tab_has_own_checkout(Some(worktree), root));
+    }
+
+    #[test]
+    fn a_workspace_row_reads_its_own_checkout_and_none_outside_a_repository() {
+        let mut ws = Workspace::empty_with_cwd_and_id(
+            1,
+            "paneflow".to_string(),
+            std::path::PathBuf::from("repo"),
+        );
+        assert_eq!(workspace_checkout(&ws), None);
+
+        ws.is_git_repo = true;
+        ws.git_branch = "main".to_string();
+        ws.git_stats = dirty();
+        assert_eq!(workspace_checkout(&ws), Some(("main".to_string(), dirty())));
     }
 
     fn title_and_branch_widths(

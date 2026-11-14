@@ -116,7 +116,7 @@
       "properties": {
         "branch": {
           "type": ["boolean", "null"],
-          "description": "Show a session tab's git branch: its bound worktree's, or its workspace's when the tab is unbound. Default false.",
+          "description": "Show a checkout's git branch: on the workspace row for the workspace's own checkout, and on a tab row only when the tab is bound to a worktree of its own (on every tab row when the sidebar is grouped by status). Default false.",
           "default": false
         },
         "diffstat": {

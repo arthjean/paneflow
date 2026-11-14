@@ -620,7 +620,7 @@ it from the content.
 
 ### 5.2 Primary sidebar, Agents mode
 
-The primary sidebar uses the bundled Geist at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px Geist text in the same family as workspace titles; diff statistics use 12 px Geist text. Simple rows have a 32 px minimum height and 9 px corners; A tab row fits on one line: the title, then its branch in muted text after a 6 px gap with the branch or pull request glyph, the branch truncating before the title, and the diff statistics on the trailing edge. Folder glyphs are 15 px inside 20 px slots. A workspace title rests in `muted`, the color of its folder glyph, and turns `text` under the pointer, so the tab titles, in `text`, read first. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
+The primary sidebar uses the bundled Geist at 14 px, Medium for workspace and tab titles, with more generous row sizing than the Unpeel reference. Branch labels use 14 px Geist text in the same family as workspace titles; diff statistics use 12 px Geist text. Simple rows have a 32 px minimum height and 9 px corners; A row fits on one line: the title, then its checkout's branch in muted text after a 6 px gap with the branch or pull request glyph, the branch truncating before the title, and the diff statistics on the trailing edge. A checkout is printed once: the workspace row carries the branch and the diff statistics of the workspace's checkout, folded or not, and a tab row carries them only when the tab is bound to a worktree of its own, so a tab row with a branch is a worktree. Grouped by status, where no workspace row stands above it, every tab row carries its checkout's. Folder glyphs are 15 px inside 20 px slots. A workspace title rests in `muted`, the color of its folder glyph, and turns `text` under the pointer, so the tab titles, in `text`, read first. The active tab takes the active row tint, every other row the hover tint under the pointer. A workspace title, tab title, or branch longer than 13 characters shows its full value in a tooltip, and a session row's tooltip leads with its label. Other application surfaces retain Geist.
 
 All squircle fills and borders use three cubic Bezier segments per
 corner in `src-app/src/ui_primitives/squircle.rs`. This is an approximation of
@@ -656,9 +656,10 @@ space has an agent waiting, failed, or finished unseen, a 22 px button beside
 the trigger shows the most urgent row glyph (bell, circle-x, or dot) and the
 total above one; it goes to that agent, and its tooltip names the space. A
 space color fills a swatch and never tints text. A workspace is a folder row; its tabs are child rows with
-inline rename, hover actions, and reorder by drag. A tab row shows the tab
-title, the branch with its glyph, and the
-diffstat in `vc_added` and `vc_deleted`. Status sits at the trailing edge of
+inline rename, hover actions, and reorder by drag. A workspace row shows its
+title, the branch of its checkout with its glyph, and the
+diffstat in `vc_added` and `vc_deleted`; a tab row shows its title, and the
+same two only for a worktree of its own. Status sits at the trailing edge of
 both row kinds, on one X. An agent that needs you, failed, or finished shows a
 status badge and no glyph: `Need you` in amber, `Error` in `agent_error`, and
 `Done` in light blue with the unread count, each in 12 px Medium on its own
@@ -671,7 +672,9 @@ row and its agent never disagree. A tab's pull request never takes the slot: it
 replaces the branch glyph in front of the branch, in GitHub's state color, with
 the merge glyph once merged and the pull request glyph otherwise, and the state
 lives in the branch tooltip. A folded workspace with no agent to report shows
-its best pull request in the slot as that 11 px glyph alone, with no word. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
+its best pull request in the slot as that 11 px glyph alone, with no word;
+while branches are shown, its own checkout's request already sits on its
+branch label, and the slot takes the best one among its worktree tabs. Amber and light blue are the fixed colors from 4.3. The slot is shared with the hover action: under the
 pointer the status turns invisible, its width kept, and the button paints
 over it. A `Customize sidebar` menu on the rail header toggles branch,
 diffstat, pull request, status, and indent guide per value, then, below a menu

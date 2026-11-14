@@ -82,7 +82,8 @@ impl PaneFlowApp {
                 .flatten(),
         );
         let title_el = div()
-            .flex_1()
+            .flex_initial()
+            .max_w_full()
             .min_w_0()
             .overflow_x_hidden()
             .whitespace_nowrap()
@@ -135,7 +136,16 @@ impl PaneFlowApp {
             .min_w_0()
             .overflow_x_hidden()
             .child(disclosure)
-            .child(title_el);
+            .child(sidebar_title_with_trailing(
+                title_el,
+                self.render_workspace_branch_label(ws, cx),
+                SIDEBAR_BRANCH_GAP,
+            ))
+            .child(div().flex_1())
+            .children(
+                self.render_workspace_diffstat(ws)
+                    .map(|counts| div().flex_none().child(counts)),
+            );
         let lane_slot = lane.is_some().then(|| {
             render_lane_slot(
                 lane,
@@ -192,5 +202,27 @@ impl PaneFlowApp {
             .flex_col()
             .rounded(rail_row_radius())
             .child(row)
+    }
+
+    fn render_workspace_branch_label(&self, ws: &Workspace, cx: &gpui::App) -> Option<AnyElement> {
+        if !self.cached_config.sidebar_show.branch_enabled() {
+            return None;
+        }
+        let (label, _) = workspace_checkout(ws)?;
+        if label.is_empty() {
+            return None;
+        }
+        Some(self.render_checkout_branch_label(
+            SharedString::from(format!("ws-branch-{}", ws.id)),
+            label,
+            self.workspace_checkout_pull_request(ws),
+            cx,
+        ))
+    }
+
+    fn render_workspace_diffstat(&self, ws: &Workspace) -> Option<AnyElement> {
+        let (_, stats) = workspace_checkout(ws)?;
+        checkout_diffstat_visible(self.cached_config.sidebar_show, &stats)
+            .then(|| render_diffstat_counts(&stats, crate::theme::ui_colors()).into_any_element())
     }
 }
