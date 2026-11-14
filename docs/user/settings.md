@@ -23,7 +23,7 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
 | General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
-| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, and material changes hot-reload. |
+| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Background style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `interface_style`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, style, and material changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
 | Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
@@ -35,10 +35,24 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 
 ## Interface style
 
-On Windows, macOS, and Linux, Settings > Appearance offers **Interface
-style** under the theme preset, and the command palette carries the same
-choice under `Interface style`. It sets every window material of the
-platform at once.
+Settings > Appearance offers **Interface style** under the theme preset,
+and the command palette carries the same choice under `Interface style`.
+It chooses the corner and surface language of the whole app and is stored
+in `interface_style`.
+
+| Style | What it draws |
+| --- | --- |
+| Paneflow (default) | Continuous corners (squircles) with generous radii: 24 px pane cards and capsule pane tabs. Menus, select popups, and settings cards draw circular corners: 14 px menus with 30 px rows and 12 px cards. |
+| Classic | Circular corners on a tighter scale: 12 px pane cards, dialogs, and toasts, 8 px rows, buttons, and pane tabs, and 14 px menus with 28 px rows. The command palette and the Clone repository dialog keep the Paneflow look. |
+
+The change applies at once to every open window.
+
+## Background style
+
+On Windows, macOS, and Linux, Settings > Appearance offers **Background
+style** under the interface style, and the command palette carries the
+same choice under `Background style`. It sets every window material of
+the platform at once. Up to 0.19 this setting was named Interface style.
 
 | Style | Windows | macOS | Linux |
 | --- | --- | --- | --- |
@@ -49,7 +63,7 @@ On Linux, Paneflow requests no blur itself: the compositor supplies it,
 for example the Blur my Shell extension on GNOME. Without one, the
 wallpaper shows through the veil unblurred.
 
-There is no `interface_style` key: Paneflow reads the style back from
+There is no `background_style` key: Paneflow reads the style back from
 those switches. When they disagree, for example after turning one of
 them on by hand, the row reads **Custom**.
 

@@ -39,6 +39,11 @@ pub(crate) const THEME_PRESET: SettingCopy = SettingCopy {
 };
 pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
     title: "Interface style",
+    description: "Paneflow draws continuous corners with generous radii. Classic draws \
+                  circular corners on a tighter scale, with denser menus and soft shadows.",
+};
+pub(crate) const BACKGROUND_STYLE: SettingCopy = SettingCopy {
+    title: "Background style",
     description: if cfg!(target_os = "macos") {
         "Themed paints the app in solid theme colors. Blended shows the native macOS material \
          behind the sidebar."
@@ -203,6 +208,7 @@ const GENERAL_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &BACKGROUND_STYLE,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &CHROME_MATERIAL,
@@ -211,6 +217,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &BACKGROUND_STYLE,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &SIDEBAR_TRANSPARENCY,
@@ -219,12 +226,18 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &BACKGROUND_STYLE,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &CHROME_TRANSPARENCY,
 ];
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[&THEME_PRESET, &REDUCE_MOTION, &COMFORTABLE_DENSITY];
+const APPEARANCE_COPIES: &[&SettingCopy] = &[
+    &THEME_PRESET,
+    &INTERFACE_STYLE,
+    &REDUCE_MOTION,
+    &COMFORTABLE_DENSITY,
+];
 #[cfg(target_os = "windows")]
 const TERMINAL_COPIES: &[&SettingCopy] = &[
     &CURSOR_SHAPE,

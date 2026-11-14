@@ -8,7 +8,7 @@ use paneflow_config::schema::{DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceI
 use crate::app::attention::{AttentionLevel, SpaceAttention};
 use crate::app::spaces::{SPACE_LIMIT_REASON, space_label, space_order};
 use crate::app::workspace_ops::WorkspaceFocusTarget;
-use crate::settings::components::{menu_panel, menu_row};
+use crate::settings::components::{floating_menu_panel, menu_row};
 
 use super::context_menu::context_menu_divider;
 use super::customize_menu::menu_label;
@@ -409,7 +409,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = menu_panel(div().id("sidebar-space-menu"), ui)
+        let mut menu = floating_menu_panel(div().id("sidebar-space-menu"), ui)
             .font_family("Geist")
             .w(px(SPACE_MENU_WIDTH))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

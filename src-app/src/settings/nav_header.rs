@@ -1,13 +1,12 @@
 use crate::PaneFlowApp;
 use crate::settings::chrome::{
-    SETTINGS_NAV_ICON_BASELINE_NUDGE, SETTINGS_NAV_ICON_SIZE, SETTINGS_NAV_ROW_MARGIN_X,
-    SETTINGS_NAV_ROW_PADDING_X,
+    SETTINGS_NAV_ROW_GAP, SETTINGS_NAV_ROW_MARGIN_X, SETTINGS_NAV_ROW_PADDING_X, settings_nav_icon,
 };
 use crate::theme::UiColors;
 use crate::ui_primitives::squircle_skin;
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Role,
-    StatefulInteractiveElement, Styled, div, px, svg,
+    StatefulInteractiveElement, Styled, div, px,
 };
 
 impl PaneFlowApp {
@@ -38,9 +37,9 @@ impl PaneFlowApp {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(8.)),
+                        .gap(px(SETTINGS_NAV_ROW_GAP)),
                     "settings-back-group",
-                    px(9.),
+                    crate::app::constants::rail_row_radius(),
                     None,
                     Some(hover_background),
                 )
@@ -48,15 +47,7 @@ impl PaneFlowApp {
                     this.close_settings(cx);
                     cx.notify();
                 }))
-                .child(
-                    svg()
-                        .size(px(SETTINGS_NAV_ICON_SIZE))
-                        .flex_none()
-                        .relative()
-                        .top(px(SETTINGS_NAV_ICON_BASELINE_NUDGE))
-                        .path("icons/settings/arrow-left-02.svg")
-                        .text_color(ui.muted),
-                )
+                .child(settings_nav_icon("icons/settings/arrow-left-02.svg", ui))
                 .child(
                     div()
                         .flex_1()

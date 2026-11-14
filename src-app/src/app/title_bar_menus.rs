@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_divider_color, menu_row, select_menu};
+use crate::settings::components::{menu_divider, menu_row, select_menu};
 
 const TITLE_BAR_FILES_MENU_WIDTH: Pixels = px(200.);
 const TITLE_BAR_HELP_MENU_WIDTH: Pixels = px(220.);
@@ -199,13 +199,7 @@ impl PaneFlowApp {
                 .child(automations)
                 .child(troubleshooting)
                 .child(system_info)
-                .child(
-                    div()
-                        .mx(px(6.))
-                        .my(px(4.))
-                        .h(px(1.))
-                        .bg(menu_divider_color(ui)),
-                )
+                .child(menu_divider(ui))
                 .child(about),
         ))
         .with_priority(4)

@@ -1,4 +1,5 @@
 pub(crate) mod animation_clock;
+pub(crate) mod interface_style;
 pub(crate) mod quick_pick;
 pub(crate) mod ring;
 pub(crate) mod shimmer;
@@ -782,6 +783,8 @@ pub(crate) enum FilterFieldShape {
     Well(Pixels),
 }
 
+const CLASSIC_FIELD_REST_ALPHA: f32 = 0.05;
+
 #[derive(Clone, Copy)]
 pub(crate) struct FilterFieldStyle {
     pub(crate) glyph: FilterFieldGlyph,
@@ -864,6 +867,13 @@ pub(crate) fn filter_field(
         .gap(px(8.));
     let filled = focused || has_query;
     let shaped = match style.shape {
+        FilterFieldShape::Capsule if interface_style::classic() => base
+            .rounded(interface_style::CLASSIC_CONTROL)
+            .when(filled, |field| field.bg(active_bg))
+            .when(input_visible && !filled, |field| {
+                field.bg(with_alpha(ui.text, CLASSIC_FIELD_REST_ALPHA))
+            })
+            .hover(move |hovered| hovered.bg(if filled { active_bg } else { hover_bg })),
         FilterFieldShape::Capsule => base
             .rounded_full()
             .when(filled, |field| field.bg(active_bg))
@@ -873,7 +883,7 @@ pub(crate) fn filter_field(
             .child(squircle::squircle_fill(radius, with_alpha(ui.text, 0.07))),
     };
     let glyph = style.glyph;
-    let glyph_lit = focused && !matches!(style.shape, FilterFieldShape::Well(_));
+    let glyph_lit = focused && style.shape == FilterFieldShape::Capsule;
     shaped
         .cursor_text()
         .child(match prefix {
@@ -1354,6 +1364,59 @@ mod tests {
                 "row hover must not invalidate a cached sibling"
             );
         }
+    }
+
+    struct StyledSurfaces;
+
+    impl Render for StyledSurfaces {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .size_full()
+                .relative()
+                .child(squircle::squircle_fill(px(24.), gpui::white()))
+                .child(squircle::squircle_border(px(24.), px(1.), gpui::black()))
+                .child(squircle::squircle_fill_blend(
+                    px(14.),
+                    gpui::white(),
+                    gpui::black(),
+                    Rc::new(Cell::new(0.5)),
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn circular_fills_and_borders_paint_quads_without_building_a_path(cx: &mut TestAppContext) {
+        use interface_style::Shape;
+
+        let (_view, cx) = cx.add_window_view(|_, _| StyledSurfaces);
+        cx.simulate_resize(size(px(200.), px(100.)));
+        let before = squircle::squircle_builds();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        let continuous = squircle::squircle_builds();
+        assert!(
+            continuous > before,
+            "the Paneflow style traces its continuous corners as paths"
+        );
+        for shape in [Shape::Surface, Shape::Classic] {
+            interface_style::scoped(shape, || {
+                cx.update(|window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                });
+            });
+        }
+        assert_eq!(
+            squircle::squircle_builds(),
+            continuous,
+            "the surface and Classic shapes paint their fills and borders as quads"
+        );
     }
 
     impl Render for HoverHarness {

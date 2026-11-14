@@ -13,14 +13,13 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::pane::PaneSurface;
-use crate::settings::components::{
-    MENU_MAX_HEIGHT, select_item_shaped, select_menu_surface, with_alpha,
-};
+use crate::settings::components::{MENU_MAX_HEIGHT, select_item_shaped, with_alpha};
+use crate::ui_primitives::interface_style::with_paneflow_shape;
 use crate::ui_primitives::quick_pick::{
-    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PANEL_RADIUS, ROW_GAP,
-    ROW_HEIGHT, ROW_RADIUS, ROW_SPACING, ROW_TEXT_INSET, highlighted_label,
+    self, FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, ROW_GAP, ROW_HEIGHT, ROW_RADIUS,
+    ROW_SPACING, ROW_TEXT_INSET, highlighted_label,
 };
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
 
 use catalog::{Apply, COMMANDS, Command, Kind, Needs, ScopeValue};
@@ -204,7 +203,7 @@ impl PaneFlowApp {
                 .active_workspace()
                 .is_some_and(|workspace| workspace.tab_count() > 1),
             Needs::NativeMaterial => {
-                !paneflow_config::schema::PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty()
+                !paneflow_config::schema::PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty()
             }
         }
     }
@@ -441,7 +440,7 @@ impl PaneFlowApp {
                 let preset = self.current_theme_preset();
                 self.apply_theme_preset(preset, window, cx);
             }
-            Apply::InterfaceStyle(style) => self.apply_interface_style(style, cx),
+            Apply::BackgroundStyle(style) => self.apply_background_style(style, cx),
             Apply::Workspace(idx) => self.select_workspace(idx, window, cx),
             Apply::Space(space) => {
                 self.activate_space(space, Some(window), cx);
@@ -647,16 +646,9 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selected = idx == self.command_palette_selected;
-        let label_color = if selected {
-            crate::theme::on_selection_color()
-        } else {
-            ui.text
-        };
-        let muted_color = if selected {
-            crate::theme::on_selection_muted()
-        } else {
-            ui.muted
-        };
+        let colors = quick_pick::row_colors(selected, ui);
+        let label_color = colors.label;
+        let muted_color = colors.muted;
 
         let mut label = div()
             .relative()
@@ -689,7 +681,7 @@ impl PaneFlowApp {
             SharedString::from(format!("command-palette-row-{idx}")),
             selected,
             ui,
-            crate::theme::selection_color(),
+            colors.fill,
             ROW_RADIUS,
         )
         .h(px(ROW_HEIGHT))
@@ -760,6 +752,10 @@ impl PaneFlowApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        with_paneflow_shape(|| self.build_command_palette(window, cx))
+    }
+
+    fn build_command_palette(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let rows = Rc::new(self.command_palette_rows(cx));
 
@@ -782,14 +778,9 @@ impl PaneFlowApp {
                     range
                         .filter_map(|idx| {
                             let row = items.get(idx)?;
-                            Some(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .flex_col()
-                                    .pb(px(ROW_SPACING))
-                                    .child(this.render_palette_row(idx, row, ui, cx)),
-                            )
+                            Some(div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
+                                with_paneflow_shape(|| this.render_palette_row(idx, row, ui, cx)),
+                            ))
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -802,26 +793,20 @@ impl PaneFlowApp {
 
         let panel = div()
             .id("command-palette")
-            .relative()
-            .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
-            .child(squircle_border(
-                PANEL_RADIUS,
-                px(1.),
-                with_alpha(ui.border, 0.6),
-            ))
-            .flex()
-            .flex_col()
-            .p(px(PANEL_PADDING))
-            .w(px(PALETTE_WIDTH))
             .occlude()
             .capture_key_down(cx.listener(Self::handle_command_palette_capture_key_down))
             .on_key_down(cx.listener(Self::handle_command_palette_key_down))
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.close_command_palette(window, cx);
             }))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(self.render_palette_field(ui, window, cx))
-            .child(list);
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        let panel = quick_pick::shell(
+            panel,
+            px(PALETTE_WIDTH),
+            ui,
+            self.render_palette_field(ui, window, cx),
+            list,
+        );
 
         deferred(
             div()

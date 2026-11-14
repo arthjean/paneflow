@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn a_current_value_matches_without_highlighting_the_label() {
-        let matched = match_entry("Interface style", Some("Themed"), "", "them").unwrap();
+        let matched = match_entry("Background style", Some("Themed"), "", "them").unwrap();
         assert_eq!(matched.rank, Rank::Value);
         assert!(matched.highlights.is_empty());
     }

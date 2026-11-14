@@ -13,8 +13,9 @@ use super::listing::{Listing, Row};
 use super::{PathPicker, PathPickerEvent};
 use crate::settings::components::{select_item_shaped, select_menu_surface, with_alpha};
 use crate::ui_primitives::quick_pick::{
-    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PANEL_RADIUS, ROW_GAP,
-    ROW_HEIGHT, ROW_RADIUS, ROW_SPACING, ROW_TEXT_INSET, highlighted_label,
+    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, ROW_GAP,
+    ROW_TEXT_INSET, highlighted_label, panel_radius, row_colors, row_height, row_radius,
+    row_spacing,
 };
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{FilterFieldStyle, filter_field, menu_reveal};
@@ -60,7 +61,7 @@ fn placement(cursor: Bounds<Pixels>, viewport: Size<Pixels>, field_height: Pixel
 }
 
 fn row_stride() -> Pixels {
-    px(ROW_HEIGHT + ROW_SPACING)
+    px(row_height() + row_spacing())
 }
 
 impl PathPicker {
@@ -105,16 +106,9 @@ impl PathPicker {
     fn render_row(&self, index: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let selected = index == self.selected;
-        let label_color = if selected {
-            crate::theme::on_selection_color()
-        } else {
-            ui.text
-        };
-        let muted_color = if selected {
-            crate::theme::on_selection_muted()
-        } else {
-            ui.muted
-        };
+        let colors = row_colors(selected, ui);
+        let label_color = colors.label;
+        let muted_color = colors.muted;
         let icon = if row.is_dir {
             svg()
                 .flex_none()
@@ -137,10 +131,10 @@ impl PathPicker {
             SharedString::from(format!("path-picker-row-{index}")),
             selected,
             ui,
-            crate::theme::selection_color(),
-            ROW_RADIUS,
+            colors.fill,
+            row_radius(),
         )
-        .h(px(ROW_HEIGHT))
+        .h(px(row_height()))
         .px(px(ROW_TEXT_INSET))
         .gap(px(ROW_GAP))
         .text_size(px(LABEL_SIZE))
@@ -188,7 +182,7 @@ impl PathPicker {
             Listing::Status(status) => {
                 return Some(
                     div()
-                        .h(px(ROW_HEIGHT))
+                        .h(px(row_height()))
                         .px(px(ROW_TEXT_INSET))
                         .flex()
                         .items_center()
@@ -217,7 +211,7 @@ impl PathPicker {
                                     .w_full()
                                     .flex()
                                     .flex_col()
-                                    .pb(px(ROW_SPACING))
+                                    .pb(px(row_spacing()))
                                     .child(picker.render_row(index, row, cx)),
                             )
                         })
@@ -258,9 +252,9 @@ impl Render for PathPicker {
             .id("path-picker")
             .key_context("PathPicker")
             .relative()
-            .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
+            .child(squircle_fill(panel_radius(), select_menu_surface(ui)))
             .child(squircle_border(
-                PANEL_RADIUS,
+                panel_radius(),
                 px(1.),
                 with_alpha(ui.border, 0.6),
             ))

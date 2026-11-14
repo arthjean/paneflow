@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_panel, menu_row};
+use crate::settings::components::{floating_menu_panel, menu_row};
 
 const MENU_WIDTH: f32 = 236.0;
 
@@ -26,7 +26,7 @@ pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_panel(div().id("diff-dock-new-tab-menu"), ui)
+    let menu = floating_menu_panel(div().id("diff-dock-new-tab-menu"), ui)
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(

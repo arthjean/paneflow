@@ -137,14 +137,14 @@ impl PaneFlowApp {
             .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_popup("workspace-layout-menu", ui).on_mouse_down_out(
-                cx.listener(|this, _, _w, cx| {
+            let mut menu = select_menu("workspace-layout-menu", ui).on_mouse_down_out(cx.listener(
+                |this, _, _w, cx| {
                     if this.workspace_template_dropdown == Some(WorkspaceTemplateDropdown::Layout) {
                         this.workspace_template_dropdown = None;
                         cx.notify();
                     }
-                }),
-            );
+                },
+            ));
             for (i, (value, label)) in LAYOUT_PRESETS.iter().enumerate() {
                 let selected = preset == *value;
                 let next = (*value).to_string();

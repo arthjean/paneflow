@@ -107,7 +107,9 @@ Nerd Font as the default.
    and from inset cards with masked corners. Drop shadows were removed in
    0.5.4 and MUST NOT return on chrome outside the contextual Zed Editor
    Controls menu in 5.4; the other shadows are the client-side window, the
-   drag ghost, and the dialog card (`modal_card`) over its scrim.
+   drag ghost, and the dialog card (`modal_card`) over its scrim. The menus
+   and select popups of 4.9 carry a soft shadow, as do the floating
+   surfaces of the Classic interface style.
 3. One highlight material. Hovered, active, and selected states are alpha
    tints of one color per theme lightness, never a per-component fill.
 4. Every rounded surface takes its radius from section 4.4. New radii are not
@@ -174,7 +176,7 @@ hides the workspace name while Settings is open.
 | --- | --- | --- | --- |
 | Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 24 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
 | Diff dock surface picker | Fills a fresh dock | Three cards 122 by 98, gap 12, radius 10, grid padding 16 | `src-app/src/app/diff_dock/surface_picker.rs` |
-| Menus and selects | Deferred, anchored under the trigger | Squircle 18, list padding 4, item height 28 | `src-app/src/settings/components.rs` |
+| Menus and selects | Deferred, anchored under the trigger | Radius 14 with circular corners, list padding 6, item height 30: the surface contract of 4.9 | `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Path picker | Anchored to the terminal cursor: under it, or above it with the field last when the space below cannot hold ten rows | The command palette panel of 5.7 at 420 wide, ten rows before the list scrolls | `src-app/src/terminal/path_picker/` |
@@ -274,7 +276,7 @@ theme load until it clears APCA Lc 45 against the selection background.
 | Menu item selected | `text` at 0.10 | same | `select_item` |
 | Menu item hover | `text` at 0.05 | same | `select_item` |
 | Menu surface | `surface` lifted by 0.035 lightness | `overlay` | `select_menu_surface` |
-| Menu border | `border` at 0.6 | same | `menu_surface` |
+| Menu border | `text` at 0.12 | same | `menu_surface`, on the surface shape of 4.9 |
 | Control hover | `subtle` moved 6 percent toward `text` | same | `select_trigger`, `secondary_button` |
 | Hairline | `border` at 0.5 | same | `hairline` |
 | Unfocused pane dim | terminal background at `1 - unfocused_pane_opacity` | same | `unfocused_pane_opacity`, default 1.0, so off unless set |
@@ -316,9 +318,10 @@ activity registers use their own ramp, never the level colors: level 0 is
 | Window | 10 | round | 1 px `border` on free edges |
 | Main panel | 10 | round, masked | none |
 | Pane card and right diff dock | 24 | squircle | 1 px `border`, or `vc_conflict` at 0.7 with attention; content stays inside the corner curve through its inset, 10 by 6 for a pane and 8 for the dock body, because GPUI clips to rectangles only. In compact density a pane rounds only the corners it shares with the outer edge of the grid, at the main panel radius 10, and draws its `border` only on those outer sides; attention outlines the whole pane. The dock keeps a full 1 px `border`, which is the line between the grid and the dock |
-| Settings card, System Info and About dialogs, toast | 20 | squircle | 1 px `border` at 0.6 on a settings card and a dialog, none on a toast |
+| System Info and About dialogs, toast | 20 | squircle | 1 px `border` at 0.6 on a dialog, none on a toast |
+| Settings card | 12 | circular, the surface contract of 4.9 | none |
 | Pane palette ground | 24 | squircle | none |
-| Menu, select popup | 18 | squircle | 1 px `border` at 0.6 |
+| Menu, select popup, usage bubble | 14 | circular, the surface contract of 4.9 | 1 px `text` at 0.12 and the surface shadow |
 | Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
 | Primary sidebar header controls | 7 | continuous corner approximation | no border |
 | Primary sidebar Settings button | 12 | continuous corner approximation | 36 px high, glyph 18 px for optical balance with the 20 px filter glyph |
@@ -343,6 +346,12 @@ Squircle means `squircle_fill` and `squircle_border` from
 `setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
 small circular controls and the explicitly round surfaces in the table.
 
+This table is the Paneflow interface style, and its radii are the design
+radii every call site passes. The surface shape and the Classic style of 4.9
+resolve the same design radii to their own scales inside the squircle
+primitives, so a
+call site never branches on the style to pick a radius.
+
 ### 4.5 Spacing and sizes
 
 | Measure | Value |
@@ -360,7 +369,7 @@ small circular controls and the explicitly round surfaces in the table.
 | Sessions row | minimum height 32, terminal glyph on the tab title column; 5 rows per agent group before Show all |
 | Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
-| Menu | list padding 4, item gap 1, item height 28, width 200 to 280, max height 320 |
+| Menu | list padding 6, no item gap, item height 30, a 13 px divider slot, width 200 to 280, max height 400 |
 | Toggle | track 36 by 22, knob 18 |
 | Icon buttons | small 20 outer with 12 icon, medium 24 outer with 13 icon |
 | Toolbar pill | height 24, padding 8, gap 5 |
@@ -471,6 +480,103 @@ waiting for a scroll event. The unfocused pane dim does not read the flag and
 keeps fading. The config description promises a static frame for decorative
 animations; that promise is **Proposed** until every remaining animation reads
 the flag. Feedback is never removed, only its interpolation.
+
+### 4.9 Interface styles
+
+`interface_style` (Settings, Appearance, **Interface style**) selects the
+shape language of the whole app. `ui_primitives/interface_style.rs` holds the
+active style, set at boot, on every config reload, and when the setting
+changes, which also refreshes every window. Color roles, type, spacing outside
+menus and the path picker, and motion are shared by every style.
+
+| Style | Corners | Floating surfaces |
+| --- | --- | --- |
+| Paneflow (default) | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 and a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10) on menus and select popups; a `border` edge at 0.6 and no shadow elsewhere |
+| Classic | Circular corners on a 6, 8, 12, 14 scale | A `text` edge at 0.07 and a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12) |
+
+The Paneflow style draws two shapes. Its chrome (pane cards, tabs, rail rows,
+dialogs, toasts, the command palette, the pane palette, buttons) keeps the
+squircles of 4.4. Four surface families draw the surface shape instead: popup
+and context menus, select popups, the sidebar usage bubble, and settings
+cards. `interface_style::Shape` names the three shapes (`Paneflow`, `Surface`,
+`Classic`), and `surface_shape` maps Paneflow to Surface and leaves Classic
+unchanged. The builders of those surfaces in `settings/components.rs`
+(`menu_surface_filled`, `floating_menu_panel`, `select_menu`, `select_option`,
+`menu_row`, `menu_divider`, `setting_card`, `list_card`, `card_tint`) and the
+usage bubble run inside `with_surface_shape`, and a squircle primitive keeps
+the shape it was built under until it paints. `pick(paneflow, classic)` chooses
+a value by style; `pick_surface(paneflow, surface, classic)` is for a value
+that changes on a surface, such as the menu label size. The generic
+`select_item` row keeps its 12 px text outside a menu.
+
+The command palette and the Clone repository dialog keep the Paneflow shape
+in every style: `render_command_palette` and `render_clone_repo` build inside
+`with_paneflow_shape`, as do the lazily built rows of the palette list, and
+they read the Paneflow constants of `ui_primitives/quick_pick.rs` directly.
+
+`surface_corner` maps a design radius from 4.4 to the surface scale at paint
+time, reached through `interface_style::corner`:
+
+| Design radius (4.4) | Surface radius | Surfaces |
+| --- | --- | --- |
+| 20 and above | 12 | Settings card |
+| 16 to 19 | 14 | Menu, select popup, usage bubble |
+| 8 to 15 | 6 under 30 px of height, 8 from 30 px | Menu rows, select options, focus rings |
+| Under 8 | The design radius, capped at 6 | Small marks inside a menu |
+
+The surface contract:
+
+| Surface | Contract | Source |
+| --- | --- | --- |
+| Menus, context menus, select popups, usage bubble | Radius 14, padding 6, rows 30 tall at radius 8 with no gap: 6 plus 8 keeps a row concentric in the surface. A `text` edge at 0.12, and the surface shadow on floating menus and select popups. Labels are 13 px Regular with an 8 px inset; shortcuts are 12 px in `muted`; dividers are `text` at 0.07, inset 8 px from the row edges with 6 px above and below (a 13 px `menu_divider_slot`); the submenu chevron is 16 px and overhangs the inset by 2 px. A select popup adds a 1 px edge highlight under its fill | `settings/components.rs` |
+| Settings card | Radius 12 and no border: `setting_card`, and the `list_card` of the Keyboard shortcuts groups, paint only their fill, and the card reads through its surface step above the page | `settings/components.rs` |
+
+Classic takes its geometry from the Claude Code side of the Claude desktop
+app, measured on 2026-11-13 at 100% scale from its accessibility tree and from
+circle fits on screenshots: 32 px sidebar rows, 28 px toolbar buttons, 28 px
+menu items, selects, inputs and 36 px picker rows at radius 8; 24 px inline
+buttons at radius 6; code chips at radius 4; the dialog, the message bubble
+and the composer at radius 12; a menu at radius 14 with 6 px of padding.
+`classic_corner` maps a design radius to it:
+
+| Design radius (4.4) | Classic radius | Surfaces |
+| --- | --- | --- |
+| 20 and above | 12 | Pane card, right dock, pane palette ground, settings card, dialog, toast |
+| 16 to 19 | 14 | Menu, select popup, path picker panel |
+| 8 to 15 | 6 under 26 px of height, 8 from 26 px | Buttons, sidebar controls, tooltips, inputs, terminal search, tab icon cards |
+| Under 8 | The design radius, capped at 6 | Header controls, inline actions, badges, chips |
+
+A corner never exceeds half the short side of its surface. Fills and borders
+paint as quads; the path API (`squircle_path`, `cached_squircle_path`) traces
+the same circular corners, and the shape cache keys on the shape. A radius
+passed to a squircle primitive is always a design radius: resolving it twice
+gives a wrong corner, so a surface that needs an exact value passes one that
+its scale maps to itself (under 8, or 8 on a control at least 26 px tall in
+Classic and 30 px tall on a surface), passes a design radius whose band gives
+it, or paints its own `rounded()` quad.
+
+Classic overrides, each behind `interface_style::pick`, `classic()` or
+`circular()`, which is true on a surface and in Classic:
+
+| Surface | Classic contract | Source |
+| --- | --- | --- |
+| Menus and context menus | Radius 14, padding 6, rows 28 tall at radius 8 with no gap: 6 plus 8 keeps a row concentric in the surface. Labels are 13 px Medium with a 10 px inset on both sides; shortcuts are 12 px Medium in `muted`; dividers are `text` at 0.12 with the same 10 px inset and 4 px above and below; the submenu chevron is 16 px and overhangs the inset by 4 px. In Geist, 13 px Medium reproduces the label width and stem weight measured on Claude Code desktop, which sets 14 px Medium in the system font. Every value comes from `menu_text_size`, `menu_text_weight`, `menu_row_inset`, `menu_shortcut`, `menu_divider` and `menu_chevron` | `settings/components.rs` |
+| Path picker | The panel takes the menu design radius (14 in Classic), so its radius 8 rows stay concentric in 6 px of padding; rows are 36 px tall with no spacing, and the highlighted row is a `text` wash at 0.14 with the regular text colors, not the selection blue | `terminal/path_picker/render.rs` |
+| Toast | Radius 12 on the menu surface with the edge and shadow, padding 14 by 10, one row: the 16 px error glyph, the message in Medium, then the actions as raised buttons in the inverse fill on the trailing edge | `app/notifications.rs` |
+| Pane tabs | Radius 8 instead of the capsule, in the pane and in the dock; the close slot is a radius 4 square | `pane.rs` |
+| Pane drop veil | Radius 8 | `pane.rs` |
+| Settings card | Radius 12 and no border, as on a surface | `settings/components.rs` |
+| New pane branch select | The 28 px trigger takes radius 8, the radius of the launcher rows stacked under it at the same width: `menu_item_radius` | `app/pane_palette.rs` |
+| Rail rows | Radius 8 instead of 9 on the 32 px rows of the Workspaces rail (workspace, tab, agent, keyboard cursor ring) and of the Settings navigation: `rail_row_radius` | `app/constants.rs` |
+| Sidebar filter and Settings search | Radius 8 instead of the capsule, with no edge; a `text` fill at 0.05 while the input shows | `ui_primitives.rs` |
+| Dialogs | Every `modal_card` resolves to radius 12 | `settings/components.rs` |
+
+The Classic toast was not observed in the reference app, so its layout is
+Paneflow's own. Colors stay the theme's in every style: the reference greys
+are not imported.
+
+Toggles, status dots, avatars, segmented pills, and the usage ring keep their
+full radius in every style. The window and the main panel keep radius 10.
 
 ## 5. Component Contracts
 
@@ -943,7 +1049,12 @@ change shows its final state directly. When only a navigation keyword matches
 the section, the page stays whole.
 
 Navigation reuses the sidebar width: `Back to the app`, a search field, and
-three groups labeled Personal, Terminal, Integrations. Pages are a centered
+three groups labeled Personal, Terminal, Integrations. A navigation row keeps
+the geometry of a Workspaces rail row: the 15 px glyph is centered in the 20 px
+slot of the rail, its top on `sidebar_glyph_top` (the whole pixel that puts its
+center between the cap-height and x-height axes of the 14 px label), then the
+8 px title gap, so a glyph stands as far from the leading edge of the row tint
+as from its top and bottom (`settings_nav_icon`). Pages are a centered
 column with a 26 px heading, eyebrow labels at 11 px muted, and cards
 (squircle 20 on the `card` role). Rows are `toggle_row` or a
 `setting_text` plus control: title 12 Medium, description 11 muted, control
@@ -962,8 +1073,8 @@ label or an ASCII spelling of the chord, `Key` captures the next chord and
 shows what owns it. Groups are the 11 px muted eyebrow of 5.5 with the count
 on the trailing edge and, for context-bound groups, the context after a
 middle dot (`Terminal · while a pane has focus`); they never fold. Each group
-is one `menu_panel` of 5.6 (squircle 18, lifted surface, 0.6 border, 7 px
-padding, 1 px gap) whose rows are `menu_row` (34 px, squircle 14, `text` at
+is one `list_card` of 5.6 (radius 14, lifted surface, no border, 6 px
+padding, no gap) whose rows are `menu_row` (30 px, radius 8, `text` at
 0.05 on hover): a 5 px accent dot when the binding differs from the default,
 the action at 12 px, and the chord as keycaps (20 px, radius 5, `subtle` with
 a 1 px edge lifted 8 percent toward `text`, 11 Medium, gap 3), or a dashed
@@ -1044,14 +1155,14 @@ anywhere, the register card is one muted line.
 ### 5.6 Menus, selects, tooltips
 
 Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:
-squircle 18, lifted surface, 0.6 border.
+radius 14 with circular corners, lifted surface, a `text` edge at 0.12 and
+the surface shadow on floating menus (4.9).
 Every menu is built from `menu_panel` and `menu_row` in
-`settings/components.rs`, which own the geometry: 34 px squircle rows at radius
-14, a 1 px gap, and 7 px of surface padding. The squircle clamps a corner to a
-third of the row height, so a 34 px row paints 11 and the 7 px inset lands it
-concentrically inside the 18 surface; a unit test in that module fails if the
-three constants stop agreeing. Rows carry `text` washes for hover and
-selection, 12 px text, a 12 px chevron on triggers, and a 13 px check on the
+`settings/components.rs`, which own the geometry: 30 px rows at radius 8, no
+gap, and 6 px of surface padding, so a row sits concentrically inside the 14
+surface; a unit test in that module fails if the constants stop agreeing.
+Rows carry `text` washes for hover and selection, 13 px text, 12 px
+shortcuts, a 16 px chevron on submenu rows, and a 13 px check on the
 selected item. Widths run from 200 to 280 and the list scrolls past 400 px.
 Panels that are not menus, the command palette, the pane palette list, the
 theme picker, the clone dialog and the Welcome rows, keep the 28 px
@@ -1295,8 +1406,9 @@ These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
 - Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
-  Editor Controls menu in 5.4. The window, the drag ghost, and the dialog card
-  (`modal_card`) retain their shadows.
+  Editor Controls menu in 5.4, the menus and select popups of 4.9, and the
+  floating surfaces of the Classic style in 4.9. The window, the drag ghost, and the dialog card (`modal_card`) retain
+  their shadows.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
   language replaced full-height bordered tabs in 0.5.5.
 - Identity pills, badges, or logos in the pane header. The sidebar owns
@@ -1304,10 +1416,11 @@ design review would raise anywhere.
 - Accent fills on anything larger than a button, or at more than 0.15. A
   button tinted with `accent` at 0.15, like the branch prompt's `Create
   branch`, is the ceiling.
-- Hue in a neutral. If a gray reads warm or cool, it is a bug unless the
-  preset is Claude, whose paper and graphite are the identity.
+- Hue in a neutral. If a gray reads warm or cool, it is a bug.
 - A new radius, a new text size, or a new hover color. Pick from sections
   4.4, 4.6, and 4.3.
+- A style branch at a call site to pick a radius. Pass the design radius of
+  4.4 and let the primitives of 4.9 resolve it.
 - A per-component light or dark branch when a `UiColors` role models the
   state. Lightness checks belong in `constants.rs` and `components.rs`.
 - Motion that does not explain a state change, and any animation that keeps

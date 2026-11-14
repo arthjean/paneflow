@@ -283,28 +283,34 @@ impl PaneFlowApp {
             0.
         };
 
-        let row = squircle_skin(row_shell, tab_group, ROW_RADIUS, resting_bg, hovered_bg)
-            .animated_hover_element(move |row, reveal| {
-                let close_button = sidebar_hover_revealed_glyph_button(
-                    SharedString::from(format!("tab-close-{tab_id}")),
-                    "icons/close.svg",
-                    "Close tab".into(),
-                    reveal,
-                    close_trailing_space,
-                    ui,
-                )
-                .on_click(close_tab);
-                let title_row = title_row.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .child(close_button)
-                        .children(lane_slot),
-                );
-                row.extend([title_row.into_any_element()]);
-            })
-            .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
+        let row = squircle_skin(
+            row_shell,
+            tab_group,
+            rail_row_radius(),
+            resting_bg,
+            hovered_bg,
+        )
+        .animated_hover_element(move |row, reveal| {
+            let close_button = sidebar_hover_revealed_glyph_button(
+                SharedString::from(format!("tab-close-{tab_id}")),
+                "icons/close.svg",
+                "Close tab".into(),
+                reveal,
+                close_trailing_space,
+                ui,
+            )
+            .on_click(close_tab);
+            let title_row = title_row.child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .child(close_button)
+                    .children(lane_slot),
+            );
+            row.extend([title_row.into_any_element()]);
+        })
+        .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
 
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
@@ -313,7 +319,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .relative()
-            .rounded(ROW_RADIUS)
+            .rounded(rail_row_radius())
             .gap(px(SIDEBAR_ROW_SPACING))
             .when(indent_guide, |el| el.child(render_sidebar_indent_guide(ui)))
             .child(row)

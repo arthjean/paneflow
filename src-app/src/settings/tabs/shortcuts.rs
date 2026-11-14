@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::keybindings::ShortcutGroup;
 use crate::settings::chrome::{SETTINGS_COLUMN_PADDING, settings_column};
 use crate::settings::components::{
-    MENU_ROW_HEIGHT, destructive_color, ghost_skin, menu_panel, menu_row, raised_button, with_alpha,
+    destructive_color, ghost_skin, list_card, menu_row, menu_row_height, raised_button, with_alpha,
 };
 use crate::ui_primitives::{
     BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt, lerp_color,
@@ -127,9 +127,9 @@ impl PaneFlowApp {
                 "No shortcut matches this filter".to_string()
             };
             list_column(
-                menu_panel(div(), ui).child(
+                list_card(div(), ui).child(
                     div()
-                        .h(MENU_ROW_HEIGHT)
+                        .h(menu_row_height())
                         .px(px(8.))
                         .flex()
                         .items_center()
@@ -551,7 +551,7 @@ impl PaneFlowApp {
             .count();
 
         let row = div()
-            .h(MENU_ROW_HEIGHT)
+            .h(menu_row_height())
             .pl(px(8.))
             .flex()
             .flex_row()
@@ -615,7 +615,7 @@ impl PaneFlowApp {
             div()
                 .pt(SHORTCUT_SECTION_GAP)
                 .pb(px(20.))
-                .child(menu_panel(div(), ui).child(row)),
+                .child(list_card(div(), ui).child(row)),
         )
         .into_any_element()
     }
@@ -625,7 +625,7 @@ fn shortcut_group_card(
     ui: crate::theme::UiColors,
     rows: impl IntoIterator<Item = AnyElement>,
 ) -> Div {
-    menu_panel(div(), ui).children(rows)
+    list_card(div(), ui).children(rows)
 }
 
 fn list_column(inner: impl IntoElement) -> Div {

@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    Logo, deferred_select_menu, render_logo, section_header, select_chevron, select_option,
-    select_popup, select_trigger, setting_text, toggle_row_with,
+    Logo, deferred_select_menu, render_logo, section_header, select_chevron, select_menu,
+    select_option, select_trigger, setting_text, toggle_row_with,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::AccessibleControlExt;
@@ -255,7 +255,7 @@ impl PaneFlowApp {
         .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_popup(
+            let mut menu = select_menu(
                 SharedString::from(format!("general-dd-list-{config_key}")),
                 ui,
             )

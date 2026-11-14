@@ -7,7 +7,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Upgrade notes
 
+- **Interface style is now Background style.** The setting that picks Themed, Mica or Blended keeps its values and its keys, under a new name in Settings › Appearance and in the command palette. **Interface style** now names the new setting below.
 - **The Claude theme now follows Claude Code desktop.** Claude Dark and Claude Light take the neutral greys of the Claude Code side of the Claude desktop app in place of the warm paper and graphite: a `#191919` work area under a `#1f1f1f` sidebar in dark, white under `#fafafa` in light, a blue link accent instead of the orange one, and the syntax and diff colors of its Claude Dark and Claude Light code themes. The terminal cursor keeps the Claude orange.
+
+### Added
+
+- **Interface style: Paneflow or Classic.** Settings › Appearance › Interface style, the **Interface style** command, or `interface_style` chooses the shape language of the app. **Paneflow**, the default, keeps the continuous corners and generous radii. **Classic** draws circular corners on a tighter scale: 12 px pane cards, dialogs and toasts, 8 px rows, buttons and pane tabs, 14 px menus with 28 px rows, and 13 px medium menu labels with 12 px shortcuts. The command palette and the Clone repository dialog look the same in both styles. The change applies at once to every window.
+
+### Changed
+
+- **Menus, selects and settings cards draw circular corners.** Context menus and the other popup menus, select popups, the usage panel of the sidebar and the cards of the Settings pages no longer use the continuous corners: menus are 14 px with 30 px rows, 13 px labels and a soft shadow, and settings cards are 12 px with no border. Pane cards, tabs, sidebar rows, dialogs, toasts and the command palette keep the continuous corners.
 
 ## [0.19.1] - 2026-11-13
 

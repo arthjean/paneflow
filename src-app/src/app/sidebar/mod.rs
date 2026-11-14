@@ -463,7 +463,7 @@ impl PaneFlowApp {
             .mb(px(4.))
             .px(px(SIDEBAR_ROW_PADDING_X))
             .py(px(SIDEBAR_ROW_PADDING_Y))
-            .rounded(ROW_RADIUS)
+            .rounded(rail_row_radius())
             .bg(with_alpha(ui.agent_error, 0.08))
             .flex()
             .flex_col()

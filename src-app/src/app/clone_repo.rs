@@ -8,14 +8,12 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{
-    MENU_MAX_HEIGHT, select_item_shaped, select_menu_surface, with_alpha,
-};
+use crate::settings::components::{MENU_MAX_HEIGHT, select_item_shaped, with_alpha};
+use crate::ui_primitives::interface_style::with_paneflow_shape;
 use crate::ui_primitives::quick_pick::{
-    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PANEL_RADIUS, ROW_GAP,
-    ROW_HEIGHT, ROW_RADIUS, ROW_SPACING, ROW_TEXT_INSET,
+    self, FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, ROW_GAP, ROW_HEIGHT, ROW_RADIUS,
+    ROW_SPACING, ROW_TEXT_INSET,
 };
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
 use crate::widgets::text_input::TextInput;
 
@@ -666,21 +664,14 @@ impl PaneFlowApp {
             CloneRow::Url(url) => (format!("Clone {url}"), Some("repository URL")),
             CloneRow::Repo(repo) => (repo.name_with_owner.clone(), None),
         };
-        let label_color = if selected {
-            crate::theme::on_selection_color()
-        } else {
-            ui.text
-        };
-        let muted_color = if selected {
-            crate::theme::on_selection_muted()
-        } else {
-            ui.muted
-        };
+        let colors = quick_pick::row_colors(selected, ui);
+        let label_color = colors.label;
+        let muted_color = colors.muted;
         select_item_shaped(
             SharedString::from(format!("clone-repo-row-{idx}")),
             selected,
             ui,
-            crate::theme::selection_color(),
+            colors.fill,
             ROW_RADIUS,
         )
         .h(px(ROW_HEIGHT))
@@ -771,6 +762,10 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn render_clone_repo(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        with_paneflow_shape(|| self.build_clone_repo(window, cx))
+    }
+
+    fn build_clone_repo(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(clone) = self.clone_repo.as_ref() else {
             return div().into_any_element();
         };
@@ -818,17 +813,6 @@ impl PaneFlowApp {
 
         let panel = div()
             .id("clone-repo")
-            .relative()
-            .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
-            .child(squircle_border(
-                PANEL_RADIUS,
-                px(1.),
-                with_alpha(ui.border, 0.6),
-            ))
-            .flex()
-            .flex_col()
-            .p(px(PANEL_PADDING))
-            .w(px(CLONE_PANEL_WIDTH))
             .occlude()
             .track_focus(&self.clone_repo_focus)
             .on_key_down(cx.listener(Self::handle_clone_repo_key_down))
@@ -836,9 +820,14 @@ impl PaneFlowApp {
                 this.close_clone_repo(cx);
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(self.render_clone_field(url_input, ui, window, cx))
-            .child(list);
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        let panel = quick_pick::shell(
+            panel,
+            px(CLONE_PANEL_WIDTH),
+            ui,
+            self.render_clone_field(url_input, ui, window, cx),
+            list.into_any_element(),
+        );
 
         deferred(
             div()

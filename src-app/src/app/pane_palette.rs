@@ -14,7 +14,7 @@ use crate::settings::components::{
     menu_divider_color, menu_row, select_item, select_menu, with_alpha,
 };
 use crate::ui_primitives::squircle::squircle_fill;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::squircle_skin;
 use crate::widgets::text_input::TextInput;
 
 pub(crate) const PALETTE_TITLE: &str = "New pane";
@@ -875,7 +875,7 @@ impl PaneFlowApp {
                 .gap(px(6.))
                 .w(px(PICKER_WIDTH)),
             "palette-branch-group",
-            ROW_RADIUS,
+            crate::settings::components::menu_item_radius(),
             open.then_some(fill),
             Some(fill),
         )
@@ -953,7 +953,7 @@ impl PaneFlowApp {
                 .child(
                     div()
                         .h(px(1.))
-                        .mx(px(8.))
+                        .mx(crate::settings::components::menu_divider_inset(px(8.)))
                         .my(px(4.))
                         .bg(menu_divider_color(ui)),
                 );

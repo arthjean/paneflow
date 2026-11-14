@@ -13,8 +13,27 @@ pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
 pub(super) const SETTINGS_NAV_ROW_MARGIN_X: f32 = 8.0;
 pub(super) const SETTINGS_NAV_ROW_PADDING_X: f32 = 7.0;
 const SETTINGS_NAV_GROUP_LABEL_INDENT: f32 = SETTINGS_NAV_ROW_MARGIN_X + SETTINGS_NAV_ROW_PADDING_X;
-pub(super) const SETTINGS_NAV_ICON_SIZE: f32 = 15.0;
-pub(super) const SETTINGS_NAV_ICON_BASELINE_NUDGE: f32 = 2.0;
+const SETTINGS_NAV_ICON_SIZE: f32 = 15.0;
+pub(super) const SETTINGS_NAV_ROW_GAP: f32 = crate::app::sidebar::SIDEBAR_TITLE_ROW_GAP;
+
+pub(super) fn settings_nav_icon(path: &'static str, ui: crate::theme::UiColors) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(crate::app::sidebar::SIDEBAR_FOLDER_SLOT_WIDTH))
+        .h(px(crate::app::sidebar::SIDEBAR_ROW_LINE_HEIGHT))
+        .pt(px(crate::app::sidebar::sidebar_glyph_top(
+            SETTINGS_NAV_ICON_SIZE,
+        )))
+        .flex()
+        .justify_center()
+        .child(
+            svg()
+                .size(px(SETTINGS_NAV_ICON_SIZE))
+                .flex_none()
+                .path(path)
+                .text_color(ui.muted),
+        )
+}
 
 struct NavItem {
     section: SettingsSection,
@@ -262,21 +281,13 @@ impl PaneFlowApp {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(8.)),
+                        .gap(px(SETTINGS_NAV_ROW_GAP)),
                     SharedString::from(format!("settings-nav-{}-group", it.label)),
-                    px(9.),
+                    crate::app::constants::rail_row_radius(),
                     is_active.then_some(row_background),
                     (!is_active).then_some(row_background),
                 )
-                .child(
-                    svg()
-                        .size(px(SETTINGS_NAV_ICON_SIZE))
-                        .flex_none()
-                        .relative()
-                        .top(px(SETTINGS_NAV_ICON_BASELINE_NUDGE))
-                        .path(it.icon)
-                        .text_color(ui.muted),
-                )
+                .child(settings_nav_icon(it.icon, ui))
                 .child(
                     div()
                         .flex_1()
@@ -312,7 +323,7 @@ impl PaneFlowApp {
                         .px(px(8.))
                         .py(px(10.)),
                     "settings-nav-empty-group",
-                    px(9.),
+                    crate::app::constants::rail_row_radius(),
                     Some(ui.subtle),
                     None,
                 )
@@ -649,7 +660,24 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
-    use super::NAV_GROUPS;
+    use super::{NAV_GROUPS, SETTINGS_NAV_ICON_SIZE};
+
+    #[test]
+    fn a_nav_icon_sits_between_the_cap_and_x_height_axes_of_its_label() {
+        use crate::app::sidebar::{
+            GEIST_CAP_HEIGHT_EM, GEIST_X_HEIGHT_EM, sidebar_glyph_top, sidebar_text_ink_axis,
+        };
+
+        let top = sidebar_glyph_top(SETTINGS_NAV_ICON_SIZE);
+        assert_eq!(top.fract(), 0., "the glyph lands on a whole pixel");
+        let center = top + SETTINGS_NAV_ICON_SIZE / 2.;
+        let capitals = sidebar_text_ink_axis(14., GEIST_CAP_HEIGHT_EM);
+        let lowercase = sidebar_text_ink_axis(14., GEIST_X_HEIGHT_EM);
+        assert!(
+            capitals <= center && center <= lowercase,
+            "glyph center {center} must sit between the label axes {capitals} and {lowercase}"
+        );
+    }
 
     #[test]
     fn every_nav_item_has_an_embedded_icon() {

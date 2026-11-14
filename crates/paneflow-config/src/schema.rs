@@ -66,6 +66,7 @@ mod tests {
             unfocused_pane_opacity: Some(0.7),
             reduce_motion: Some(false),
             comfortable_density: Some(true),
+            interface_style: Some(InterfaceStyle::Classic),
             sidebar_show: SidebarShow {
                 branch: Some(true),
                 diffstat: Some(true),
@@ -489,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn linux_materials_default_off_and_drive_the_interface_style() {
+    fn linux_materials_default_off_and_drive_the_background_style() {
         let themed = PaneFlowConfig::default();
         assert!(!themed.terminal_material_enabled());
         assert!(!themed.native_material_requested());
@@ -508,14 +509,14 @@ mod tests {
             cfg!(target_os = "linux")
         );
         if cfg!(target_os = "linux") {
-            assert_eq!(themed.interface_style(), Some(InterfaceStyle::Themed));
-            assert_eq!(blended.interface_style(), Some(InterfaceStyle::Blended));
+            assert_eq!(themed.background_style(), Some(BackgroundStyle::Themed));
+            assert_eq!(blended.background_style(), Some(BackgroundStyle::Blended));
             assert_eq!(
                 PaneFlowConfig {
                     linux_terminal_material: Some(true),
                     ..Default::default()
                 }
-                .interface_style(),
+                .background_style(),
                 None
             );
         }

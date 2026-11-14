@@ -153,29 +153,35 @@ impl PaneFlowApp {
             cx.stop_propagation();
         });
 
-        let row = squircle_skin(row_shell, group_name, ROW_RADIUS, None, Some(hover_bg))
-            .animated_hover_element(move |row, reveal| {
-                let new_tab_button = sidebar_hover_revealed_glyph_button(
-                    SharedString::from(format!("ws-new-tab-{ws_id}")),
-                    "icons/plus.svg",
-                    SharedString::from(format!("New tab in {ws_title}")),
-                    reveal,
-                    new_tab_trailing_space,
-                    ui,
+        let row = squircle_skin(
+            row_shell,
+            group_name,
+            rail_row_radius(),
+            None,
+            Some(hover_bg),
+        )
+        .animated_hover_element(move |row, reveal| {
+            let new_tab_button = sidebar_hover_revealed_glyph_button(
+                SharedString::from(format!("ws-new-tab-{ws_id}")),
+                "icons/plus.svg",
+                SharedString::from(format!("New tab in {ws_title}")),
+                reveal,
+                new_tab_trailing_space,
+                ui,
+            )
+            .on_click(open_new_tab);
+            row.extend([title_row
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .child(new_tab_button)
+                        .children(lane_slot),
                 )
-                .on_click(open_new_tab);
-                row.extend([title_row
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_row()
-                            .child(new_tab_button)
-                            .children(lane_slot),
-                    )
-                    .into_any_element()]);
-            })
-            .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
+                .into_any_element()]);
+        })
+        .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
 
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))
@@ -183,7 +189,7 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(ROW_RADIUS)
+            .rounded(rail_row_radius())
             .child(row)
     }
 }

@@ -10,7 +10,7 @@ use gpui::{
 use super::model::{DiffChrome, DiffOptionsSubmenu};
 use crate::PaneFlowApp;
 use crate::diff::{ComparisonPolicy, DiffOptions, HighlightPolicy};
-use crate::settings::components::{menu_divider_color, menu_panel, menu_row};
+use crate::settings::components::{floating_menu_panel, menu_divider_color, menu_row};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 const MENU_WIDTH: f32 = 232.0;
@@ -277,7 +277,7 @@ fn render_diff_options_menu(
     let dismiss = actions.dismiss.clone();
     let submenu_bounds: SubmenuBounds = Rc::default();
     let dismiss_bounds = submenu_bounds.clone();
-    let mut menu = menu_panel(div().id("diff-options-menu"), ui)
+    let mut menu = floating_menu_panel(div().id("diff-options-menu"), ui)
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_up_out(MouseButton::Left, move |event: &MouseUpEvent, _w, cx| {
@@ -331,7 +331,7 @@ fn render_diff_options_menu(
             .flex_none()
             .h(px(1.))
             .my(px(4.))
-            .mx(px(4.))
+            .mx(crate::settings::components::menu_divider_inset(px(4.)))
             .bg(menu_divider_color(ui)),
     );
 
@@ -443,7 +443,7 @@ fn render_submenu(
     submenu_bounds: SubmenuBounds,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let mut menu = menu_panel(div().id(id), ui)
+    let mut menu = floating_menu_panel(div().id(id), ui)
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(

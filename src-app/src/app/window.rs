@@ -90,6 +90,7 @@ pub(crate) enum GeneralDropdown {
     Shell,
     OnQuit,
     InterfaceStyle,
+    BackgroundStyle,
 }
 
 #[derive(Clone, Copy, PartialEq)]

@@ -6,6 +6,10 @@ use gpui::{
 
 use std::time::Duration;
 
+use crate::ui_primitives::interface_style::{
+    CLASSIC_CONTROL, SURFACE_ROW, circular, classic, corner, frame_corner, pick, pick_surface,
+    with_surface_shape,
+};
 use crate::ui_primitives::{
     AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, animated_squircle_skin,
     ease_out_cubic, highlight_matches, lerp_color, reduce_motion, squircle,
@@ -120,23 +124,22 @@ pub fn card_color() -> Hsla {
 }
 
 pub fn setting_card(ui: crate::theme::UiColors) -> Div {
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .child(squircle::squircle_fill(
-            crate::app::constants::SETTINGS_CARD_RADIUS,
-            select_menu_surface(ui),
-        ))
-        .child(squircle::squircle_border(
-            crate::app::constants::SETTINGS_CARD_RADIUS,
-            px(1.),
-            with_alpha(ui.border, 0.6),
-        ))
+    with_surface_shape(|| {
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(squircle::squircle_fill(
+                crate::app::constants::SETTINGS_CARD_RADIUS,
+                select_menu_surface(ui),
+            ))
+    })
 }
 
 pub fn card_tint(color: Hsla) -> impl IntoElement {
-    squircle::squircle_fill(crate::app::constants::SETTINGS_CARD_RADIUS, color)
+    with_surface_shape(|| {
+        squircle::squircle_fill(crate::app::constants::SETTINGS_CARD_RADIUS, color)
+    })
 }
 
 pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
@@ -385,6 +388,32 @@ fn paint_input_focus(
     };
     let full = px(INPUT_FOCUS_RING_WIDTH);
     let width = full * progress;
+    if circular() {
+        let frame = bounds.inset(full);
+        let radius = corner(
+            SETTINGS_CONTROL_CORNER_RADIUS,
+            frame.size.width.min(frame.size.height),
+        );
+        if width > px(0.) {
+            window.paint_quad(gpui::quad(
+                bounds.inset(full - width),
+                radius + width,
+                gpui::transparent_black(),
+                width,
+                ring.opacity(progress),
+                gpui::BorderStyle::default(),
+            ));
+        }
+        window.paint_quad(gpui::quad(
+            frame,
+            radius,
+            gpui::transparent_black(),
+            px(1.),
+            border.opacity(progress),
+            gpui::BorderStyle::default(),
+        ));
+        return;
+    }
     if width > px(0.)
         && let Some(path) = squircle::squircle_stroke_path(
             bounds.inset(full - width),
@@ -489,6 +518,8 @@ pub(crate) fn inverse_fill(ui: crate::theme::UiColors) -> (Hsla, Hsla) {
     }
 }
 
+const RAISED_BUTTON_HEIGHT: Pixels = px(24.);
+
 pub(crate) fn raised_skin(
     element: Stateful<Div>,
     group: impl Into<SharedString>,
@@ -497,7 +528,9 @@ pub(crate) fn raised_skin(
     enabled: bool,
 ) -> AnimatedHover {
     let group: SharedString = group.into();
-    let element = element.relative().rounded(radius);
+    let element = element
+        .relative()
+        .rounded(corner(radius, RAISED_BUTTON_HEIGHT));
     if !enabled {
         return element
             .opacity(0.64)
@@ -827,22 +860,20 @@ pub(crate) fn modal_card(
     ui: crate::theme::UiColors,
     content: Div,
 ) -> Stateful<Div> {
+    let framed = radius.min(crate::app::constants::SETTINGS_CARD_RADIUS);
+    let radius = pick(radius, framed);
     div()
         .id(id)
         .occlude()
         .relative()
         .w(width)
-        .rounded(radius)
+        .rounded(frame_corner(radius))
         .shadow_lg()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
         .child(squircle::squircle_fill(radius, card_color()))
         .child(content.relative().flex().flex_col())
-        .child(squircle::squircle_border(
-            radius,
-            px(1.),
-            with_alpha(ui.border, 0.6),
-        ))
+        .child(squircle::squircle_border(radius, px(1.), surface_edge(ui)))
 }
 
 pub(crate) fn modal_header(
@@ -1018,8 +1049,18 @@ pub fn select_menu_surface(ui: crate::theme::UiColors) -> Hsla {
     }
 }
 
+const MENU_DIVIDER_ALPHA: f32 = 0.12;
+const SURFACE_MENU_DIVIDER_ALPHA: f32 = 0.07;
+
 pub fn menu_divider_color(ui: crate::theme::UiColors) -> Hsla {
-    with_alpha(ui.text, 0.12)
+    with_alpha(
+        ui.text,
+        pick_surface(
+            MENU_DIVIDER_ALPHA,
+            SURFACE_MENU_DIVIDER_ALPHA,
+            MENU_DIVIDER_ALPHA,
+        ),
+    )
 }
 
 pub(crate) const MENU_RADIUS: Pixels = px(18.);
@@ -1033,26 +1074,163 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
     fill: Hsla,
     ui: crate::theme::UiColors,
 ) -> E {
-    el.relative()
-        .child(squircle::squircle_fill(MENU_RADIUS, fill))
-        .child(squircle::squircle_border(
-            MENU_RADIUS,
-            px(1.),
-            with_alpha(ui.border, 0.6),
-        ))
+    with_surface_shape(|| {
+        el.relative()
+            .child(squircle::squircle_fill(MENU_RADIUS, fill))
+            .child(squircle::squircle_border(
+                MENU_RADIUS,
+                px(1.),
+                surface_edge(ui),
+            ))
+    })
 }
 
-pub(crate) const MENU_ROW_HEIGHT: Pixels = px(34.);
-pub(crate) const MENU_ROW_GAP: Pixels = px(1.);
-pub(crate) const MENU_PADDING: Pixels = px(7.);
 pub(crate) const MENU_MAX_HEIGHT: Pixels = px(400.);
+
+const MENU_ROW_HEIGHT: Pixels = px(30.);
+const MENU_ROW_GAP: Pixels = px(0.);
+const MENU_PADDING: Pixels = px(6.);
+const CLASSIC_MENU_ROW_HEIGHT: Pixels = px(28.);
+const CLASSIC_MENU_ROW_GAP: Pixels = px(0.);
+const CLASSIC_MENU_PADDING: Pixels = px(6.);
+const CHROME_EDGE_ALPHA: f32 = 0.6;
+const SURFACE_EDGE_ALPHA: f32 = 0.12;
+const CLASSIC_EDGE_ALPHA: f32 = 0.07;
+
+pub(crate) fn menu_row_height() -> Pixels {
+    pick(MENU_ROW_HEIGHT, CLASSIC_MENU_ROW_HEIGHT)
+}
+
+pub(crate) fn menu_row_gap() -> Pixels {
+    pick(MENU_ROW_GAP, CLASSIC_MENU_ROW_GAP)
+}
+
+pub(crate) fn menu_padding() -> Pixels {
+    pick(MENU_PADDING, CLASSIC_MENU_PADDING)
+}
+
+pub(crate) fn menu_item_radius() -> Pixels {
+    pick_surface(ROW_RADIUS, SURFACE_ROW, CLASSIC_CONTROL)
+}
+
+const MENU_TEXT: Pixels = px(12.);
+const SURFACE_MENU_TEXT: Pixels = px(13.);
+const CLASSIC_MENU_TEXT: Pixels = px(13.);
+const MENU_SHORTCUT_TEXT: Pixels = px(12.);
+const MENU_ROW_INSET: Pixels = px(8.);
+const CLASSIC_MENU_ROW_INSET: Pixels = px(10.);
+const MENU_DIVIDER_GAP: Pixels = px(6.);
+const CLASSIC_MENU_DIVIDER_GAP: Pixels = px(4.);
+const MENU_CHEVRON: Pixels = px(16.);
+const MENU_CHEVRON_OVERHANG: Pixels = px(2.);
+const CLASSIC_MENU_CHEVRON_OVERHANG: Pixels = px(4.);
+
+pub(crate) fn menu_text_size() -> Pixels {
+    pick_surface(MENU_TEXT, SURFACE_MENU_TEXT, CLASSIC_MENU_TEXT)
+}
+
+pub(crate) fn menu_text_weight() -> FontWeight {
+    pick(FontWeight::NORMAL, FontWeight::MEDIUM)
+}
+
+pub(crate) fn menu_row_inset() -> Pixels {
+    pick(MENU_ROW_INSET, CLASSIC_MENU_ROW_INSET)
+}
+
+pub(crate) fn menu_divider_inset(resting: Pixels) -> Pixels {
+    pick_surface(resting, MENU_ROW_INSET, CLASSIC_MENU_ROW_INSET)
+}
+
+fn menu_divider_gap() -> Pixels {
+    pick(MENU_DIVIDER_GAP, CLASSIC_MENU_DIVIDER_GAP)
+}
+
+pub(crate) fn menu_divider_slot() -> f32 {
+    f32::from(menu_divider_gap()) * 2. + 1.
+}
+
+pub(crate) fn menu_divider(ui: crate::theme::UiColors) -> Div {
+    with_surface_shape(|| {
+        div()
+            .flex_none()
+            .mx(menu_row_inset())
+            .my(menu_divider_gap())
+            .h(px(1.))
+            .bg(menu_divider_color(ui))
+    })
+}
+
+pub(crate) fn menu_label_text_size() -> Pixels {
+    with_surface_shape(menu_text_size)
+}
+
+pub(crate) fn menu_shortcut(shortcut: impl Into<SharedString>, ui: crate::theme::UiColors) -> Div {
+    div()
+        .flex_none()
+        .text_size(MENU_SHORTCUT_TEXT)
+        .font_weight(menu_text_weight())
+        .text_color(ui.muted)
+        .child(shortcut.into())
+}
+
+pub(crate) fn menu_chevron(ui: crate::theme::UiColors) -> gpui::Svg {
+    svg()
+        .size(MENU_CHEVRON)
+        .mr(-pick(MENU_CHEVRON_OVERHANG, CLASSIC_MENU_CHEVRON_OVERHANG))
+        .flex_none()
+        .path("icons/chevron-right.svg")
+        .text_color(ui.muted)
+}
+
+pub(crate) fn surface_edge(ui: crate::theme::UiColors) -> Hsla {
+    pick_surface(
+        with_alpha(ui.border, CHROME_EDGE_ALPHA),
+        with_alpha(ui.text, SURFACE_EDGE_ALPHA),
+        with_alpha(ui.text, CLASSIC_EDGE_ALPHA),
+    )
+}
+
+pub(crate) fn floating_shadow() -> Vec<gpui::BoxShadow> {
+    if classic() {
+        return vec![
+            gpui::BoxShadow::new(px(0.), px(4.), gpui::black().opacity(0.16)).blur_radius(px(16.)),
+            gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.12)).blur_radius(px(4.)),
+        ];
+    }
+    vec![
+        gpui::BoxShadow::new(px(0.), px(6.), gpui::black().opacity(0.10)).blur_radius(px(20.)),
+        gpui::BoxShadow::new(px(0.), px(1.), gpui::black().opacity(0.10)).blur_radius(px(3.)),
+    ]
+}
 
 pub fn menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
     menu_surface(el, ui)
         .flex()
         .flex_col()
-        .gap(MENU_ROW_GAP)
-        .p(MENU_PADDING)
+        .gap(menu_row_gap())
+        .p(menu_padding())
+}
+
+pub fn list_card<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
+    with_surface_shape(|| {
+        el.relative()
+            .child(squircle::squircle_fill(
+                MENU_RADIUS,
+                select_menu_surface(ui),
+            ))
+            .flex()
+            .flex_col()
+            .gap(menu_row_gap())
+            .p(menu_padding())
+    })
+}
+
+pub fn floating_menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
+    with_surface_shape(|| {
+        menu_panel(el, ui)
+            .rounded(frame_corner(MENU_RADIUS))
+            .shadow(floating_shadow())
+    })
 }
 
 pub fn menu_row(
@@ -1060,29 +1238,44 @@ pub fn menu_row(
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
-    select_item(id, selected, ui).h(MENU_ROW_HEIGHT)
+    with_surface_shape(|| select_item(id, selected, ui).h(menu_row_height()))
 }
 
 pub fn menu_height(rows: f32, extra: f32) -> Pixels {
-    px(f32::from(MENU_PADDING) * 2.
-        + rows * (f32::from(MENU_ROW_HEIGHT) + f32::from(MENU_ROW_GAP))
+    px(f32::from(menu_padding()) * 2.
+        + rows * (f32::from(menu_row_height()) + f32::from(menu_row_gap()))
         + extra)
 }
 
 pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
-    build_select_menu(id.into(), ui, |shell| shell)
+    with_surface_shape(|| styled_select_menu(id.into(), ui))
 }
 
-fn build_select_menu(
-    id: ElementId,
-    ui: crate::theme::UiColors,
-    underlay: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
-) -> SelectMenu {
+fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
+    let light_theme = ui.surface.l > 0.5;
+    let (edge_color, edge_offset) = if light_theme {
+        (gpui::black().opacity(0.04), px(1.))
+    } else {
+        (gpui::white().opacity(0.06), px(-1.))
+    };
     let list_id: ElementId = (id.clone(), "list").into();
     let reveal_id: ElementId = (id.clone(), "reveal").into();
+    let shell = div()
+        .id(id)
+        .rounded(frame_corner(MENU_RADIUS))
+        .shadow(floating_shadow())
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(edge_offset)
+                .bottom(-edge_offset)
+                .child(squircle::squircle_fill(MENU_RADIUS, edge_color)),
+        );
     SelectMenu {
         reveal_id,
-        shell: menu_surface(underlay(div().id(id)), ui)
+        shell: menu_surface(shell, ui)
             .flex()
             .flex_col()
             .min_w(px(200.))
@@ -1093,40 +1286,11 @@ fn build_select_menu(
             .id(list_id)
             .flex()
             .flex_col()
-            .gap(MENU_ROW_GAP)
-            .p(MENU_PADDING)
+            .gap(menu_row_gap())
+            .p(menu_padding())
             .min_h_0()
             .overflow_y_scroll(),
     }
-}
-
-pub fn select_popup(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
-    let id: ElementId = id.into();
-    let light_theme = ui.surface.l > 0.5;
-    let (edge_color, edge_offset) = if light_theme {
-        (gpui::black().opacity(0.04), px(1.))
-    } else {
-        (gpui::white().opacity(0.06), px(-1.))
-    };
-    let shadow = vec![
-        gpui::BoxShadow::new(px(0.), px(10.), gpui::black().opacity(0.05))
-            .blur_radius(px(15.))
-            .spread_radius(px(-3.)),
-        gpui::BoxShadow::new(px(0.), px(4.), gpui::black().opacity(0.05))
-            .blur_radius(px(6.))
-            .spread_radius(px(-4.)),
-    ];
-    build_select_menu(id, ui, |shell| {
-        shell.rounded(MENU_RADIUS).shadow(shadow).child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(edge_offset)
-                .bottom(-edge_offset)
-                .child(squircle::squircle_fill(MENU_RADIUS, edge_color)),
-        )
-    })
 }
 
 pub fn select_option(
@@ -1134,22 +1298,30 @@ pub fn select_option(
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
-    let id: ElementId = id.into();
+    with_surface_shape(|| styled_select_option(id.into(), selected, ui))
+}
+
+fn styled_select_option(
+    id: ElementId,
+    selected: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
     squircle_skin(
         div()
             .id(id.clone())
             .flex_none()
-            .h(MENU_ROW_HEIGHT)
-            .pl(px(8.))
+            .h(menu_row_height())
+            .pl(menu_row_inset())
             .pr(px(32.))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .cursor(CursorStyle::PointingHand)
-            .text_size(px(12.)),
+            .text_size(menu_text_size())
+            .font_weight(menu_text_weight()),
         format!("{id}-squircle"),
-        ROW_RADIUS,
+        menu_item_radius(),
         None,
         Some(with_alpha(ui.text, 0.05)),
     )
@@ -1220,7 +1392,7 @@ pub fn select_item_tinted(
     ui: crate::theme::UiColors,
     selected_bg: Hsla,
 ) -> Stateful<Div> {
-    select_item_shaped(id, selected, ui, selected_bg, ROW_RADIUS)
+    select_item_shaped(id, selected, ui, selected_bg, menu_item_radius())
 }
 
 pub fn select_item_shaped(
@@ -1248,13 +1420,14 @@ pub fn select_item_shaped(
             .id(id)
             .flex_none()
             .h(px(28.))
-            .px(px(8.))
+            .px(menu_row_inset())
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .cursor(CursorStyle::PointingHand)
-            .text_size(px(12.)),
+            .text_size(menu_text_size())
+            .font_weight(menu_text_weight()),
         group,
         radius,
         (resting_bg.a > f32::EPSILON).then_some(resting_bg),
@@ -1364,14 +1537,55 @@ mod tests {
     }
 
     #[test]
-    fn menu_rows_nest_concentrically_inside_the_menu_surface() {
-        let painted = f32::from(squircle::corner_for_height(MENU_ROW_HEIGHT, ROW_RADIUS));
-        let nested = f32::from(MENU_PADDING) + painted;
-        let surface = f32::from(MENU_RADIUS);
-        assert!(
-            (nested - surface).abs() <= 0.5,
-            "a menu row corner must sit concentrically inside the {surface} surface corner: {} padding plus a {painted} painted corner is {nested}",
-            f32::from(MENU_PADDING)
+    fn menu_rows_nest_concentrically_inside_their_menu_surface() {
+        use crate::ui_primitives::interface_style::{Shape, scoped};
+
+        assert_eq!(
+            (menu_row_height(), menu_row_gap(), menu_padding()),
+            (px(30.), px(0.), px(6.))
         );
+        assert!(!circular());
+        with_surface_shape(|| {
+            let row = corner(menu_item_radius(), menu_row_height());
+            let surface = frame_corner(MENU_RADIUS);
+            assert_eq!((row, surface), (px(8.), px(14.)));
+            assert_eq!(menu_padding() + row, surface);
+            assert_eq!(
+                frame_corner(crate::app::constants::SETTINGS_CARD_RADIUS),
+                px(12.)
+            );
+            assert!(circular());
+        });
+        scoped(Shape::Classic, || {
+            let row = corner(menu_item_radius(), menu_row_height());
+            let surface = frame_corner(MENU_RADIUS);
+            assert_eq!((row, surface), (px(8.), px(14.)));
+            assert_eq!(menu_row_height(), px(28.));
+            assert_eq!(menu_padding() + row, surface);
+        });
+    }
+
+    #[test]
+    fn menu_rows_carry_the_label_and_divider_metrics_of_their_shape() {
+        use crate::ui_primitives::interface_style::{Shape, scoped};
+
+        assert_eq!(menu_text_size(), px(12.));
+        assert_eq!(menu_label_text_size(), px(13.));
+        assert_eq!(menu_text_weight(), FontWeight::NORMAL);
+        assert_eq!(menu_row_inset(), px(8.));
+        assert_eq!(menu_divider_inset(px(6.)), px(6.));
+        assert_eq!(menu_divider_slot(), 13.);
+        with_surface_shape(|| {
+            assert_eq!(menu_text_size(), px(13.));
+            assert_eq!(menu_divider_inset(px(6.)), menu_row_inset());
+        });
+        scoped(Shape::Classic, || {
+            assert_eq!(menu_text_size(), px(13.));
+            assert_eq!(menu_label_text_size(), px(13.));
+            assert_eq!(menu_text_weight(), FontWeight::MEDIUM);
+            assert_eq!(menu_row_inset(), px(10.));
+            assert_eq!(menu_divider_inset(px(6.)), menu_row_inset());
+            assert_eq!(menu_divider_slot(), 9.);
+        });
     }
 }

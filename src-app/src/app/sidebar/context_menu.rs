@@ -11,9 +11,11 @@ use gpui::{
 use crate::app::files_tree;
 use crate::pane::PaneSurface;
 use crate::settings::components::{
-    MENU_ROW_HEIGHT, menu_divider_color, menu_height, menu_row, select_menu, with_alpha,
+    menu_chevron, menu_divider, menu_divider_slot, menu_height, menu_row, menu_row_height,
+    menu_row_inset, menu_shortcut, menu_text_size, menu_text_weight, select_menu,
 };
-use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt};
+use crate::ui_primitives::TooltipDelayExt;
+use crate::ui_primitives::interface_style::with_surface_shape;
 use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
@@ -58,11 +60,7 @@ fn is_inside_submenu(bounds: &SubmenuBounds, position: Point<Pixels>) -> bool {
 }
 
 pub(super) fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
-    div()
-        .mx(px(6.))
-        .my(px(4.))
-        .h(px(1.))
-        .bg(menu_divider_color(ui))
+    menu_divider(ui)
 }
 
 pub(crate) fn clamped_context_menu_position(
@@ -93,47 +91,6 @@ impl PaneFlowApp {
             .map(|entry| entry.key.as_str())
     }
 
-    pub(crate) fn render_context_menu_item(
-        &self,
-        id: SharedString,
-        label: &str,
-        shortcut: Option<SharedString>,
-        ui: crate::theme::UiColors,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        div()
-            .id(id)
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(10.))
-            .px(px(8.))
-            .py(px(5.))
-            .rounded(px(4.))
-            .text_size(px(11.))
-            .text_color(ui.text)
-            .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
-            .on_click(on_click)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(label.to_string()),
-            )
-            .when_some(shortcut, |d, shortcut| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .text_size(px(10.))
-                        .text_color(ui.muted)
-                        .child(shortcut),
-                )
-            })
-    }
-
     pub(crate) fn render_select_menu_item(
         &self,
         id: SharedString,
@@ -155,15 +112,7 @@ impl PaneFlowApp {
                     .text_color(ui.text)
                     .child(label.to_string()),
             )
-            .when_some(shortcut, |d, shortcut| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .text_size(px(10.))
-                        .text_color(ui.muted)
-                        .child(shortcut),
-                )
-            })
+            .when_some(shortcut, |d, shortcut| d.child(menu_shortcut(shortcut, ui)))
     }
 
     pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
@@ -220,7 +169,10 @@ impl PaneFlowApp {
             + service_rows
             + notification_rows
             + space_rows;
-        let menu_height = menu_height(menu_rows as f32, separator_rows as f32 * 9.);
+        let menu_height = menu_height(
+            menu_rows as f32,
+            separator_rows as f32 * menu_divider_slot(),
+        );
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let space_submenu_bounds = SubmenuBounds::default();
@@ -462,13 +414,7 @@ impl PaneFlowApp {
                     .text_color(ui.text)
                     .child("Move to space"),
             )
-            .child(
-                svg()
-                    .size(px(13.))
-                    .flex_none()
-                    .path("icons/chevron-right.svg")
-                    .text_color(ui.muted),
-            );
+            .child(menu_chevron(ui));
         if !open {
             return row.into_any_element();
         }
@@ -484,7 +430,7 @@ impl PaneFlowApp {
                 })
                 .collect();
         let at_limit = self.cached_config.spaces.len() >= paneflow_config::schema::MAX_SPACES;
-        let mut submenu = crate::settings::components::menu_panel(
+        let mut submenu = crate::settings::components::floating_menu_panel(
             div().id("workspace-context-space-submenu"),
             ui,
         )
@@ -693,7 +639,7 @@ impl PaneFlowApp {
             .when(show_worktrees, |menu| {
                 let mut menu = menu.child(context_menu_divider(ui)).child(
                     div()
-                        .px(px(8.))
+                        .px(menu_row_inset())
                         .pb(px(4.))
                         .text_size(px(10.))
                         .text_color(ui.muted)
@@ -808,7 +754,7 @@ impl PaneFlowApp {
             .is_some_and(|terminal| terminal.read(cx).can_fork_conversation())
             .then(|| source.clone());
         let rows = 2 + usize::from(fork_source.is_some()) + 2;
-        let menu_height = menu_height(rows as f32, 18.);
+        let menu_height = menu_height(rows as f32, 2. * menu_divider_slot());
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let mut context_menu = select_menu("pane-context-menu", ui)
@@ -890,13 +836,7 @@ impl PaneFlowApp {
             );
         }
 
-        context_menu = context_menu.child(
-            div()
-                .mx(px(6.))
-                .my(px(4.))
-                .h(px(1.))
-                .bg(menu_divider_color(ui)),
-        );
+        context_menu = context_menu.child(menu_divider(ui));
 
         let source_for_close = source.clone();
         let source_for_detach = source.clone();
@@ -942,25 +882,28 @@ impl PaneFlowApp {
         label: &str,
         ui: crate::theme::UiColors,
     ) -> impl IntoElement {
-        div()
-            .id(id)
-            .h(MENU_ROW_HEIGHT)
-            .px(px(8.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .text_size(px(12.))
-            .text_color(ui.muted)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(label.to_string()),
-            )
+        with_surface_shape(|| {
+            div()
+                .id(id)
+                .h(menu_row_height())
+                .px(menu_row_inset())
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .text_size(menu_text_size())
+                .font_weight(menu_text_weight())
+                .text_color(ui.muted)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(label.to_string()),
+                )
+        })
     }
 
     fn surface_context_path(surface: &PaneSurface, cx: &App) -> Option<PathBuf> {
@@ -989,7 +932,7 @@ mod tests {
     };
 
     use super::{SubmenuBounds, is_inside_submenu, submenu_bounds_probe};
-    use crate::settings::components::{menu_panel, menu_row, select_menu};
+    use crate::settings::components::{floating_menu_panel, menu_row, select_menu};
 
     struct SubmenuHarness {
         open: bool,
@@ -1006,7 +949,7 @@ mod tests {
             let bounds = SubmenuBounds::default();
             let dismiss_bounds = bounds.clone();
             let picked = self.picked.clone();
-            let submenu = menu_panel(div().id("submenu"), ui)
+            let submenu = floating_menu_panel(div().id("submenu"), ui)
                 .w(px(super::MOVE_TO_SPACE_SUBMENU_WIDTH))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(submenu_bounds_probe(bounds))

@@ -14,7 +14,7 @@ use super::model::{
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 
-use crate::settings::components::{menu_divider_color, menu_row, menu_surface_filled, with_alpha};
+use crate::settings::components::{menu_divider, menu_row, menu_surface_filled, with_alpha};
 use crate::theme::UiColors;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::ring::{RingSize, level_color, ring};
@@ -121,6 +121,17 @@ impl PaneFlowApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        crate::ui_primitives::interface_style::with_surface_shape(|| {
+            self.render_styled_usage_bubble(view, window, cx)
+        })
+    }
+
+    fn render_styled_usage_bubble(
+        &self,
+        view: &UsageView,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let cursor = self.usage.cursor;
         let settings_stop = view.blocks.len();
@@ -190,7 +201,7 @@ impl PaneFlowApp {
                 )
             });
         let fill = crate::app::constants::sidebar_menu_background(
-            self.cached_config.interface_style(),
+            self.cached_config.background_style(),
             ui,
         );
         let top = self.usage.bubble_top();
@@ -207,7 +218,7 @@ impl PaneFlowApp {
             .w(px(BUBBLE_WIDTH))
             .flex()
             .flex_col()
-            .p(crate::settings::components::MENU_PADDING)
+            .p(crate::settings::components::menu_padding())
             .track_focus(&self.usage.bubble_focus)
             .role(Role::Dialog)
             .aria_label("Plan usage")
@@ -238,12 +249,7 @@ impl PaneFlowApp {
 }
 
 fn bubble_divider(ui: UiColors) -> gpui::Div {
-    div()
-        .flex_none()
-        .mx(px(6.))
-        .my(px(4.))
-        .h(px(1.))
-        .bg(menu_divider_color(ui))
+    menu_divider(ui)
 }
 
 fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors) -> AnyElement {

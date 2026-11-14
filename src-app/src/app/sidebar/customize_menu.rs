@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_panel, menu_row};
+use crate::settings::components::{floating_menu_panel, menu_row};
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::squircle_skin;
 
@@ -211,7 +211,7 @@ fn render_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_panel(div().id("sidebar-customize-menu"), ui)
+    let menu = floating_menu_panel(div().id("sidebar-customize-menu"), ui)
         .font_family("Geist")
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -289,13 +289,7 @@ fn render_show_row(
             cx.notify();
         }))
         .child(menu_label("Show", ui))
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path("icons/chevron-right.svg")
-                .text_color(ui.muted),
-        )
+        .child(crate::settings::components::menu_chevron(ui))
         .when(submenu_open, |row| {
             row.child(render_show_submenu(state.show, ui, cx))
         })
@@ -307,7 +301,7 @@ fn render_show_submenu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_panel(div().id("sidebar-show-submenu"), ui)
+    let menu = floating_menu_panel(div().id("sidebar-show-submenu"), ui)
         .font_family("Geist")
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -387,11 +381,7 @@ pub(super) fn render_show_option(
 }
 
 pub(super) fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
-    div()
-        .mx(px(6.))
-        .my(px(4.))
-        .h(px(1.))
-        .bg(crate::settings::components::menu_divider_color(ui))
+    crate::settings::components::menu_divider(ui)
 }
 
 pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiColors) -> AnyElement {
@@ -401,7 +391,7 @@ pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiCol
         .overflow_x_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .text_size(crate::ui_primitives::BODY)
+        .text_size(crate::settings::components::menu_label_text_size())
         .text_color(ui.text)
         .child(Into::<SharedString>::into(label))
         .into_any_element()

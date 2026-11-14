@@ -14,7 +14,7 @@ use crate::agent_updates::{self, AgentUpdateState, UpdateMethod, UpdatePhase};
 use crate::settings::components::{
     deferred_select_menu, destructive_color, ghost_icon_button, ghost_skin, hairline,
     hairline_inset, raised_button, section_header_with_action, section_title, select_chevron,
-    select_option, select_popup, select_trigger, setting_card, setting_text, soft_button,
+    select_menu, select_option, select_trigger, setting_card, setting_text, soft_button,
     toggle_row, toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
@@ -771,7 +771,7 @@ impl PaneFlowApp {
         )
         .child(select_chevron(ui));
         if is_open {
-            let mut menu = select_popup(
+            let mut menu = select_menu(
                 SharedString::from(format!("agent-update-method-list-{tag}")),
                 ui,
             )
@@ -1374,7 +1374,7 @@ impl PaneFlowApp {
         )
         .child(select_chevron(ui));
         if is_open {
-            let mut menu = select_popup(SharedString::from("agent-profile-agent-list"), ui)
+            let mut menu = select_menu(SharedString::from("agent-profile-agent-list"), ui)
                 .on_mouse_down_out(cx.listener(|this, _, _w, cx| {
                     if let Some(editor) = this.agent_profile_editor.as_mut() {
                         editor.agent_menu_open = false;

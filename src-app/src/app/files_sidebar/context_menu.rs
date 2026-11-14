@@ -25,7 +25,7 @@ impl PaneFlowApp {
         let rel_path = menu.path.clone();
 
         let context_menu =
-            crate::settings::components::menu_panel(div().id("files-context-menu"), ui)
+            crate::settings::components::floating_menu_panel(div().id("files-context-menu"), ui)
                 .occlude()
                 .absolute()
                 .left(menu_pos.x)
@@ -37,7 +37,7 @@ impl PaneFlowApp {
                 }))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(self.render_context_menu_item(
+                .child(self.render_select_menu_item(
                     "files-context-copy-path".into(),
                     "Copy Path",
                     None,
@@ -50,7 +50,7 @@ impl PaneFlowApp {
                         cx.stop_propagation();
                     }),
                 ))
-                .child(self.render_context_menu_item(
+                .child(self.render_select_menu_item(
                     "files-context-copy-rel".into(),
                     "Copy Relative Path",
                     None,

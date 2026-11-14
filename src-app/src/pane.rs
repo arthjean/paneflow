@@ -182,7 +182,10 @@ impl CardShape {
 
     fn drop_veil_radius(self) -> Pixels {
         match self {
-            Self::Squircle(radius) => (radius - px(OVERLAY_MARGIN)).max(px(OVERLAY_RADIUS)),
+            Self::Squircle(radius) => crate::ui_primitives::interface_style::pick(
+                (radius - px(OVERLAY_MARGIN)).max(px(OVERLAY_RADIUS)),
+                px(OVERLAY_RADIUS),
+            ),
             Self::Flush(_) | Self::Morph { .. } => px(OVERLAY_RADIUS),
         }
     }
@@ -190,7 +193,10 @@ impl CardShape {
     pub(crate) fn tab_chip_radius(self) -> Option<Pixels> {
         let compact = crate::app::constants::PANEL_CORNER_RADIUS - px(UNIFIED_TAB_BAR_INSET);
         match self {
-            Self::Squircle(_) => None,
+            Self::Squircle(_) => crate::ui_primitives::interface_style::pick(
+                None,
+                Some(crate::ui_primitives::interface_style::CLASSIC_CONTROL),
+            ),
             Self::Flush(_) => Some(compact),
             Self::Morph { comfort, .. } => {
                 Some(compact + (px(UNIFIED_TAB_HEIGHT / 2.) - compact) * comfort)
@@ -220,7 +226,9 @@ impl CardShape {
 }
 
 fn card_paints_quads(background: Hsla) -> bool {
-    cfg!(target_os = "linux") && background.a < 1.0
+    cfg!(target_os = "linux")
+        && background.a < 1.0
+        && !crate::ui_primitives::interface_style::circular()
 }
 
 fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
@@ -1515,7 +1523,7 @@ impl Pane {
         } else {
             (ACTION_BUTTON_SIZE, 0.)
         };
-        let mut menu = crate::settings::components::menu_panel(
+        let mut menu = crate::settings::components::floating_menu_panel(
             div().id(SharedString::from(format!("pane-{pane_id}-new-tab-menu"))),
             ui,
         )

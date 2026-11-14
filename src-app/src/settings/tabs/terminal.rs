@@ -8,7 +8,7 @@ use paneflow_config::schema::{CursorShapeConfig, MinimumContrast, TerminalConfig
 
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, section_header, select_chevron,
-    select_option, select_popup, select_trigger, setting_text, soft_skin, toggle_switch,
+    select_menu, select_option, select_trigger, setting_text, soft_skin, toggle_switch,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::squircle::squircle_fill;
@@ -496,7 +496,7 @@ impl PaneFlowApp {
                 names: filtered,
             } = FontMatches::new(&self.mono_font_names, &default_font, &self.font_search);
 
-            let mut menu = select_popup("terminal-font-dropdown", ui).on_mouse_down_out(
+            let mut menu = select_menu("terminal-font-dropdown", ui).on_mouse_down_out(
                 cx.listener(|this, _, _w, cx| {
                     if this.font_dropdown_open {
                         this.font_dropdown_open = false;
@@ -777,7 +777,7 @@ impl PaneFlowApp {
 
         if is_open {
             let mut menu =
-                select_popup(SharedString::from(format!("term-dd-list-{config_key}")), ui)
+                select_menu(SharedString::from(format!("term-dd-list-{config_key}")), ui)
                     .on_mouse_down_out(cx.listener(move |this, _, _w, cx| {
                         if this.terminal_dropdown == Some(which) {
                             this.terminal_dropdown = None;

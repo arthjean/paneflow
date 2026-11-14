@@ -13,7 +13,7 @@ use crate::app::workspace_ops::templates::*;
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, apple_red, card_tint, deferred_select_menu, ghost_skin,
     hairline, inverse_fill, quiet_card, raised_icon_button, section_header_with_action,
-    select_chevron, select_option, select_popup, select_trigger, setting_card, settings_label,
+    select_chevron, select_menu, select_option, select_trigger, setting_card, settings_label,
     soft_icon_button, switch_blue, text_field, with_alpha,
 };
 use crate::settings::search::Block;

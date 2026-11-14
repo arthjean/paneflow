@@ -96,7 +96,8 @@ Some appearance settings are separate:
 
 - `terminal.cursor_color` overrides the terminal cursor color. Set it to
   `null` to use the theme's cursor color.
-- **Interface style** controls window materials and transparency. See
+- **Interface style** chooses the corner and surface language of the app,
+  and **Background style** controls window materials and transparency. See
   [appearance settings](/docs/settings).
 - `commands[].workspace.color` sets a workspace template's color.
 

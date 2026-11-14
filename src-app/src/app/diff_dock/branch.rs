@@ -242,14 +242,15 @@ fn render_diff_branch_menu(
     let query_input = menu_state.query_input.clone();
     let query_lc = query_input.read(cx).value().trim().to_lowercase();
 
-    let mut menu = crate::settings::components::menu_panel(div().id("diff-branch-menu"), ui)
-        .w(px(280.))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
-            this.close_diff_branch_menu(window, cx);
-        }))
-        .on_key_down(cx.listener(PaneFlowApp::handle_diff_branch_menu_key_down))
-        .child(render_diff_branch_search_row(query_input, ui));
+    let mut menu =
+        crate::settings::components::floating_menu_panel(div().id("diff-branch-menu"), ui)
+            .w(px(280.))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+                this.close_diff_branch_menu(window, cx);
+            }))
+            .on_key_down(cx.listener(PaneFlowApp::handle_diff_branch_menu_key_down))
+            .child(render_diff_branch_search_row(query_input, ui));
 
     if menu_state.loading {
         menu = menu.child(render_diff_branch_menu_status("Loading branches…", ui));
@@ -361,7 +362,7 @@ fn render_diff_branch_item(
         ui,
     )
     .h_auto()
-    .min_h(crate::settings::components::MENU_ROW_HEIGHT)
+    .min_h(crate::settings::components::menu_row_height())
     .py(px(6.))
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

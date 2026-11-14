@@ -1,5 +1,5 @@
 use gpui::{Context, Window};
-use paneflow_config::schema::InterfaceStyle;
+use paneflow_config::schema::BackgroundStyle;
 use serde_json::{Value, json};
 
 use paneflow_config::schema::SpaceId;
@@ -33,6 +33,7 @@ pub(crate) enum Scope {
     Theme,
     ThemeMode,
     InterfaceStyle,
+    BackgroundStyle,
     Workspace,
     Space,
     MoveToSpace,
@@ -159,7 +160,7 @@ pub(crate) enum Apply {
     },
     Theme(usize),
     Mode(ThemeMode),
-    InterfaceStyle(InterfaceStyle),
+    BackgroundStyle(BackgroundStyle),
     Workspace(usize),
     Space(Option<SpaceId>),
     MoveToSpace(Option<SpaceId>),
@@ -172,9 +173,10 @@ pub(crate) enum Apply {
 impl Apply {
     pub(crate) fn applies_in_place(&self) -> bool {
         match self {
-            Apply::Setting { .. } | Apply::Theme(_) | Apply::Mode(_) | Apply::InterfaceStyle(_) => {
-                true
-            }
+            Apply::Setting { .. }
+            | Apply::Theme(_)
+            | Apply::Mode(_)
+            | Apply::BackgroundStyle(_) => true,
             Apply::Workspace(_)
             | Apply::Space(_)
             | Apply::MoveToSpace(_)
@@ -198,6 +200,7 @@ impl Scope {
             Scope::Theme => "Theme",
             Scope::ThemeMode => "Theme mode",
             Scope::InterfaceStyle => "Interface style",
+            Scope::BackgroundStyle => "Background style",
             Scope::Workspace => "Workspace",
             Scope::Space => "Space",
             Scope::MoveToSpace => "Destination space",
@@ -234,6 +237,7 @@ impl Scope {
             Scope::Theme => theme_values(app),
             Scope::ThemeMode => mode_values(app),
             Scope::InterfaceStyle => interface_style_values(app),
+            Scope::BackgroundStyle => background_style_values(app),
             Scope::Workspace => workspace_values(app),
             Scope::Space => space_values(app),
             Scope::MoveToSpace => move_to_space_values(app),
@@ -297,13 +301,29 @@ fn mode_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
 }
 
 fn interface_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
-    let current = app.cached_config.interface_style();
-    InterfaceStyle::ALL
+    let current = app.cached_config.resolved_interface_style();
+    paneflow_config::schema::InterfaceStyle::ALL
+        .iter()
+        .map(|&style| ScopeValue {
+            label: style.label().to_string(),
+            current: current == style,
+            apply: Apply::Setting {
+                key: "interface_style",
+                nested: false,
+                value: json!(style.wire_str()),
+            },
+        })
+        .collect()
+}
+
+fn background_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
+    let current = app.cached_config.background_style();
+    BackgroundStyle::ALL
         .iter()
         .map(|&style| ScopeValue {
             label: style.label().to_string(),
             current: current == Some(style),
-            apply: Apply::InterfaceStyle(style),
+            apply: Apply::BackgroundStyle(style),
         })
         .collect()
 }
@@ -1222,11 +1242,19 @@ pub(crate) const COMMANDS: &[Command] = &[
     },
     Command {
         label: "Interface style",
+        icon: Some("icons/palette/shapes.svg"),
+        keywords: "appearance corners radius rounded squircle circular paneflow classic shape",
+        needs: Needs::Always,
+        section: Section::Appearance,
+        kind: Kind::Scope(Scope::InterfaceStyle),
+    },
+    Command {
+        label: "Background style",
         icon: Some("icons/palette/layers-01.svg"),
         keywords: "appearance themed blended transparency translucent blur material mica vibrancy",
         needs: Needs::NativeMaterial,
         section: Section::Appearance,
-        kind: Kind::Scope(Scope::InterfaceStyle),
+        kind: Kind::Scope(Scope::BackgroundStyle),
     },
     Command {
         label: "Terminal font",
@@ -1706,6 +1734,7 @@ mod tests {
             Scope::Theme,
             Scope::ThemeMode,
             Scope::InterfaceStyle,
+            Scope::BackgroundStyle,
             Scope::Workspace,
             Scope::Space,
             Scope::MoveToSpace,
@@ -1784,7 +1813,7 @@ mod tests {
         );
         assert!(Apply::Theme(0).applies_in_place());
         assert!(Apply::Mode(ThemeMode::Dark).applies_in_place());
-        assert!(Apply::InterfaceStyle(InterfaceStyle::Blended).applies_in_place());
+        assert!(Apply::BackgroundStyle(BackgroundStyle::Blended).applies_in_place());
         assert!(!Apply::Workspace(0).applies_in_place());
         assert!(!Apply::Tab(0).applies_in_place());
         assert!(!Apply::Action("split_vertically").applies_in_place());

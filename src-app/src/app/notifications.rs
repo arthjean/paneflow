@@ -9,8 +9,11 @@ use crate::agents::notifications::{self as desktop_notifications, DesktopNotific
 use crate::app::constants::{
     CLOSED_SESSION_GRACE_MS, TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS, TOAST_RADIUS,
 };
-use crate::settings::components::with_alpha;
+use crate::settings::components::{
+    floating_shadow, inverse_fill, raised_button, select_menu_surface, surface_edge, with_alpha,
+};
 use crate::theme::UiColors;
+use crate::ui_primitives::interface_style::{circular, frame_corner};
 use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
@@ -81,7 +84,32 @@ impl ToastAction {
             Self::ReopenTab(_) | Self::OpenReleaseNotes(_) | Self::ShowSpace(_)
         )
     }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::RetryUpdate => "Retry",
+            Self::OpenReleasesPage(_) => "Open releases",
+            Self::OpenReleaseNotes(_) => "View release notes",
+            Self::ReopenTab(_) => "Undo",
+            Self::ShowSpace(_) => "Show",
+        }
+    }
+
+    fn button_id(&self, idx: usize) -> String {
+        let slug = match self {
+            Self::RetryUpdate => "retry",
+            Self::OpenReleasesPage(_) => "releases",
+            Self::OpenReleaseNotes(_) => "release-notes",
+            Self::ReopenTab(_) => "undo",
+            Self::ShowSpace(_) => "show-space",
+        };
+        format!("toast-{slug}-{idx}")
+    }
 }
+
+const FRAMED_TOAST_INSET_X: f32 = 14.;
+const FRAMED_TOAST_INSET_Y: f32 = 10.;
+const FRAMED_TOAST_ICON_SIZE: f32 = 16.;
 
 impl PaneFlowApp {
     pub(crate) fn open_external_url(&mut self, url: String, cx: &mut Context<Self>) {
@@ -188,12 +216,86 @@ impl PaneFlowApp {
         }
     }
 
+    fn run_toast_action(
+        &mut self,
+        action: &ToastAction,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            ToastAction::RetryUpdate => {
+                window.dispatch_action(Box::new(StartSelfUpdate), cx);
+            }
+            ToastAction::OpenReleasesPage(url) => {
+                self.open_external_url(url.clone(), cx);
+            }
+            ToastAction::OpenReleaseNotes(url) => {
+                self.open_external_url(url.clone(), cx);
+                self.dismiss_toast(cx);
+            }
+            ToastAction::ReopenTab(tab_id) => {
+                self.reopen_closed_tab(*tab_id, window, cx);
+                self.dismiss_toast(cx);
+            }
+            ToastAction::ShowSpace(space) => {
+                self.activate_space(space.clone(), Some(window), cx);
+                self.dismiss_toast(cx);
+            }
+        }
+    }
+
+    fn render_toast_action(
+        &self,
+        idx: usize,
+        action: &ToastAction,
+        ui: UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let label = action.label();
+        let button_id = action.button_id(idx);
+        let action = action.clone();
+        let on_click = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.run_toast_action(&action, window, cx);
+        });
+        if circular() {
+            let (fill, ink) = inverse_fill(ui);
+            return raised_button(button_id, label, fill, ink)
+                .flex_none()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(on_click)
+                .into_any_element();
+        }
+        let group = SharedString::from(format!("{button_id}-squircle"));
+        squircle_skin(
+            div()
+                .id(SharedString::from(button_id))
+                .h(px(26.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .text_color(ui.text)
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::MEDIUM),
+            group,
+            ROW_RADIUS,
+            Some(with_alpha(ui.text, 0.08)),
+            Some(with_alpha(ui.text, 0.12)),
+        )
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(label)
+        .child(label)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(on_click)
+        .into_any_element()
+    }
+
     pub(crate) fn render_toast(
         &self,
         toast: &Toast,
         ui: UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let framed = circular();
         let has_actions = !toast.actions.is_empty();
         let is_error = toast.actions.iter().any(ToastAction::reports_failure)
             || toast_message_reads_like_error(&toast.message);
@@ -208,10 +310,11 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(9.))
+            .when(framed, |header| header.flex_1().min_w_0())
             .when(is_error, |header| {
                 header.child(
                     svg()
-                        .size(px(15.))
+                        .size(px(if framed { FRAMED_TOAST_ICON_SIZE } else { 15. }))
                         .flex_none()
                         .path("icons/triangle-alert.svg")
                         .text_color(ui.agent_error),
@@ -225,83 +328,24 @@ impl PaneFlowApp {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .text_size(px(12.5))
+                    .when(framed, |message| {
+                        message.font_weight(gpui::FontWeight::MEDIUM)
+                    })
                     .text_color(ui.text)
                     .child(toast.message.clone()),
             );
 
-        let action_row = if has_actions {
-            let mut row = div()
-                .flex()
-                .flex_row()
-                .gap(px(8.))
-                .mt(px(10.))
-                .when(is_error, |row| row.pl(px(24.)));
-            for (idx, action) in toast.actions.iter().enumerate() {
-                let (label, button_id): (&str, String) = match action {
-                    ToastAction::RetryUpdate => ("Retry", format!("toast-retry-{idx}")),
-                    ToastAction::OpenReleasesPage(_) => {
-                        ("Open releases", format!("toast-releases-{idx}"))
-                    }
-                    ToastAction::OpenReleaseNotes(_) => {
-                        ("View release notes", format!("toast-release-notes-{idx}"))
-                    }
-                    ToastAction::ReopenTab(_) => ("Undo", format!("toast-undo-{idx}")),
-                    ToastAction::ShowSpace(_) => ("Show", format!("toast-show-space-{idx}")),
-                };
-                let action_clone = action.clone();
-                let group = SharedString::from(format!("{button_id}-squircle"));
-                let btn = squircle_skin(
-                    div()
-                        .id(SharedString::from(button_id))
-                        .h(px(26.))
-                        .px(px(10.))
-                        .flex()
-                        .items_center()
-                        .text_color(ui.text)
-                        .text_size(px(12.))
-                        .font_weight(gpui::FontWeight::MEDIUM),
-                    group,
-                    ROW_RADIUS,
-                    Some(with_alpha(ui.text, 0.08)),
-                    Some(with_alpha(ui.text, 0.12)),
-                )
-                .role(gpui::accesskit::Role::Button)
-                .aria_label(label)
-                .child(label)
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| match &action_clone {
-                        ToastAction::RetryUpdate => {
-                            window.dispatch_action(Box::new(StartSelfUpdate), cx);
-                        }
-                        ToastAction::OpenReleasesPage(url) => {
-                            this.open_external_url(url.clone(), cx);
-                        }
-                        ToastAction::OpenReleaseNotes(url) => {
-                            this.open_external_url(url.clone(), cx);
-                            this.dismiss_toast(cx);
-                        }
-                        ToastAction::ReopenTab(tab_id) => {
-                            this.reopen_closed_tab(*tab_id, window, cx);
-                            this.dismiss_toast(cx);
-                        }
-                        ToastAction::ShowSpace(space) => {
-                            this.activate_space(space.clone(), Some(window), cx);
-                            this.dismiss_toast(cx);
-                        }
-                    },
-                ));
-                row = row.child(btn);
-            }
-            Some(row)
-        } else {
-            None
-        };
+        let buttons: Vec<AnyElement> = toast
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(idx, action)| self.render_toast_action(idx, action, ui, cx))
+            .collect();
 
         let hold_ms = toast.hold_ms;
         let static_motion = toast_motion_is_static(cx);
         let rest = 20.0 + self.clone_bubble_clearance();
-        let toast_el = div()
+        let frame = div()
             .id(SharedString::from(format!("copy-toast-{}", toast.id)))
             .absolute()
             .right(px(18.))
@@ -310,18 +354,58 @@ impl PaneFlowApp {
             .min_w(px(220.))
             .text_sm()
             .text_color(ui.text)
-            .overflow_hidden()
-            .cursor(CursorStyle::Arrow)
-            .child(squircle_fill(TOAST_RADIUS, ui.subtle))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .px(px(16.))
-                    .py(px(12.))
-                    .child(header)
-                    .children(action_row),
-            );
+            .cursor(CursorStyle::Arrow);
+        let toast_el = if framed {
+            frame
+                .rounded(frame_corner(TOAST_RADIUS))
+                .bg(select_menu_surface(ui))
+                .border_1()
+                .border_color(surface_edge(ui))
+                .shadow(floating_shadow())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.))
+                        .px(px(FRAMED_TOAST_INSET_X))
+                        .py(px(FRAMED_TOAST_INSET_Y))
+                        .child(header)
+                        .when(has_actions, |body| {
+                            body.child(
+                                div()
+                                    .flex_none()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(px(6.))
+                                    .children(buttons),
+                            )
+                        }),
+                )
+        } else {
+            frame
+                .overflow_hidden()
+                .child(squircle_fill(TOAST_RADIUS, ui.subtle))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .px(px(16.))
+                        .py(px(12.))
+                        .child(header)
+                        .when(has_actions, |body| {
+                            body.child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(px(8.))
+                                    .mt(px(10.))
+                                    .when(is_error, |row| row.pl(px(24.)))
+                                    .children(buttons),
+                            )
+                        }),
+                )
+        };
         let toast_el = if static_motion {
             let (opacity, lift) = toast_frame(TOAST_HOLD_STAGE, 0.0);
             toast_el
@@ -431,6 +515,24 @@ mod tests {
 
     fn messages(queue: &std::collections::VecDeque<Toast>) -> Vec<&str> {
         queue.iter().map(|toast| toast.message.as_str()).collect()
+    }
+
+    #[test]
+    fn every_toast_action_names_its_button_and_its_outcome() {
+        let actions = [
+            ToastAction::RetryUpdate,
+            ToastAction::OpenReleasesPage(String::new()),
+            ToastAction::OpenReleaseNotes(String::new()),
+            ToastAction::ReopenTab(1),
+            ToastAction::ShowSpace(None),
+        ];
+        let ids: std::collections::BTreeSet<String> =
+            actions.iter().map(|action| action.button_id(0)).collect();
+        assert_eq!(ids.len(), actions.len());
+        for action in &actions {
+            assert!(!action.label().trim().is_empty());
+        }
+        assert_eq!(ToastAction::ReopenTab(7).button_id(2), "toast-undo-2");
     }
 
     #[test]

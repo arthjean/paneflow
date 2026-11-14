@@ -258,7 +258,7 @@
     },
     "windows_material_veil": {
       "type": ["boolean", "null"],
-      "description": "Windows-only. When true, the system backdrop switches from Mica to Acrylic, a blur of what lies behind the window, and the shell paints a theme veil over it (0.72 on dark themes, 0.80 on light ones) while the terminal card adds a 0.35 shade, like Linux: this is the Blended interface style. When false or null, the backdrop shows through unveiled: the Mica interface style. Only matters while windows_chrome_material or windows_terminal_material is on. Other platforms ignore this field.",
+      "description": "Windows-only. When true, the system backdrop switches from Mica to Acrylic, a blur of what lies behind the window, and the shell paints a theme veil over it (0.72 on dark themes, 0.80 on light ones) while the terminal card adds a 0.35 shade, like Linux: this is the Blended background style. When false or null, the backdrop shows through unveiled: the Mica background style. Only matters while windows_chrome_material or windows_terminal_material is on. Other platforms ignore this field.",
       "default": false
     },
     "macos_chrome_material": {
@@ -275,6 +275,12 @@
       "type": ["boolean", "null"],
       "description": "Linux-only. When true, the window surface turns transparent and the sidebar and title bar show a translucent theme veil, so a compositor blur shows through. Other platforms ignore this field.",
       "default": false
+    },
+    "interface_style": {
+      "type": ["string", "null"],
+      "description": "Shape language of the interface. 'paneflow' draws continuous corners (squircles) with generous radii, and circular corners on menus, select popups and settings cards. 'classic' draws circular corners on a tighter 6, 8, 12 and 14 px scale. Hot-reloads.",
+      "enum": ["paneflow", "classic", null],
+      "default": "paneflow"
     },
     "option_as_meta": {
       "type": ["boolean", "null"],

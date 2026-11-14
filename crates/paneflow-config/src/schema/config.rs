@@ -41,6 +41,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub comfortable_density: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub interface_style: Option<InterfaceStyle>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
@@ -324,7 +326,7 @@ impl PaneFlowConfig {
             && self.macos_chrome_material.unwrap_or(false)
     }
 
-    pub const INTERFACE_STYLE_KEYS: &'static [&'static str] = if cfg!(target_os = "windows") {
+    pub const BACKGROUND_STYLE_KEYS: &'static [&'static str] = if cfg!(target_os = "windows") {
         &["windows_chrome_material", "windows_terminal_material"]
     } else if cfg!(target_os = "macos") {
         &["macos_chrome_material"]
@@ -344,7 +346,7 @@ impl PaneFlowConfig {
         }
     }
 
-    pub fn interface_style(&self) -> Option<InterfaceStyle> {
+    pub fn background_style(&self) -> Option<BackgroundStyle> {
         let dual = [
             self.cockpit_chrome_material_enabled(),
             self.terminal_material_enabled(),
@@ -357,27 +359,27 @@ impl PaneFlowConfig {
         } else {
             &[]
         };
-        let style = InterfaceStyle::from_materials(materials)?;
+        let style = BackgroundStyle::from_materials(materials)?;
         Some(
-            if style == InterfaceStyle::Blended
+            if style == BackgroundStyle::Blended
                 && cfg!(target_os = "windows")
                 && !self.material_veiled()
             {
-                InterfaceStyle::Mica
+                BackgroundStyle::Mica
             } else {
                 style
             },
         )
     }
 
-    pub fn interface_style_settings(style: InterfaceStyle) -> Vec<(&'static str, bool)> {
-        let materials = style != InterfaceStyle::Themed;
-        let mut settings: Vec<(&'static str, bool)> = Self::INTERFACE_STYLE_KEYS
+    pub fn background_style_settings(style: BackgroundStyle) -> Vec<(&'static str, bool)> {
+        let materials = style != BackgroundStyle::Themed;
+        let mut settings: Vec<(&'static str, bool)> = Self::BACKGROUND_STYLE_KEYS
             .iter()
             .map(|&key| (key, materials))
             .collect();
         if cfg!(target_os = "windows") {
-            settings.push(("windows_material_veil", style == InterfaceStyle::Blended));
+            settings.push(("windows_material_veil", style == BackgroundStyle::Blended));
         }
         settings
     }
@@ -404,6 +406,10 @@ impl PaneFlowConfig {
 
     pub fn comfortable_density_enabled(&self) -> bool {
         self.comfortable_density.unwrap_or(true)
+    }
+
+    pub fn resolved_interface_style(&self) -> InterfaceStyle {
+        self.interface_style.unwrap_or_default()
     }
 
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {
@@ -568,14 +574,40 @@ impl OnQuit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InterfaceStyle {
+    #[default]
+    Paneflow,
+    Classic,
+}
+
+impl InterfaceStyle {
+    pub const ALL: &'static [Self] = &[Self::Paneflow, Self::Classic];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Paneflow => "Paneflow",
+            Self::Classic => "Classic",
+        }
+    }
+
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Paneflow => "paneflow",
+            Self::Classic => "classic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundStyle {
     Themed,
     Mica,
     Blended,
 }
 
-impl InterfaceStyle {
+impl BackgroundStyle {
     pub const ALL: &'static [Self] = if cfg!(target_os = "windows") {
         &[Self::Themed, Self::Mica, Self::Blended]
     } else {
@@ -674,48 +706,80 @@ mod tests {
     }
 
     #[test]
-    fn interface_style_is_themed_or_blended_only_when_every_material_agrees() {
-        assert_eq!(
-            InterfaceStyle::from_materials(&[]),
-            Some(InterfaceStyle::Themed)
-        );
-        assert_eq!(
-            InterfaceStyle::from_materials(&[false, false]),
-            Some(InterfaceStyle::Themed)
-        );
-        assert_eq!(
-            InterfaceStyle::from_materials(&[true, true]),
-            Some(InterfaceStyle::Blended)
-        );
-        assert_eq!(InterfaceStyle::from_materials(&[true, false]), None);
+    fn interface_style_defaults_to_paneflow_and_tolerates_garbage() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"interface_style": "classic"}"#).unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Classic);
+        for retired in ["crisp", "cursor", "claude"] {
+            let json = serde_json::json!({ "interface_style": retired });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+        }
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"interface_style": "brutalist"}"#).unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"interface_style": 2}"#).unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
     }
 
     #[test]
-    fn interface_style_defaults_to_themed_and_its_settings_round_trip() {
+    fn every_interface_style_round_trips_through_its_wire_name() {
+        for &style in InterfaceStyle::ALL {
+            let json = serde_json::json!({ "interface_style": style.wire_str() });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert_eq!(config.interface_style, Some(style));
+            assert_eq!(
+                serde_json::to_value(style).unwrap(),
+                serde_json::Value::String(style.wire_str().to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn background_style_is_themed_or_blended_only_when_every_material_agrees() {
         assert_eq!(
-            PaneFlowConfig::default().interface_style(),
-            Some(InterfaceStyle::Themed)
+            BackgroundStyle::from_materials(&[]),
+            Some(BackgroundStyle::Themed)
         );
-        if PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty() {
+        assert_eq!(
+            BackgroundStyle::from_materials(&[false, false]),
+            Some(BackgroundStyle::Themed)
+        );
+        assert_eq!(
+            BackgroundStyle::from_materials(&[true, true]),
+            Some(BackgroundStyle::Blended)
+        );
+        assert_eq!(BackgroundStyle::from_materials(&[true, false]), None);
+    }
+
+    #[test]
+    fn background_style_defaults_to_themed_and_its_settings_round_trip() {
+        assert_eq!(
+            PaneFlowConfig::default().background_style(),
+            Some(BackgroundStyle::Themed)
+        );
+        if PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty() {
             return;
         }
 
-        for &style in InterfaceStyle::ALL {
+        for &style in BackgroundStyle::ALL {
             let settings: serde_json::Map<String, serde_json::Value> =
-                PaneFlowConfig::interface_style_settings(style)
+                PaneFlowConfig::background_style_settings(style)
                     .into_iter()
                     .map(|(key, value)| (key.to_string(), serde_json::Value::Bool(value)))
                     .collect();
             let config: PaneFlowConfig =
                 serde_json::from_value(serde_json::Value::Object(settings)).unwrap();
-            assert_eq!(config.interface_style(), Some(style), "{style:?}");
+            assert_eq!(config.background_style(), Some(style), "{style:?}");
         }
     }
 
     #[test]
     fn mica_is_offered_on_windows_only() {
         assert_eq!(
-            InterfaceStyle::ALL.contains(&InterfaceStyle::Mica),
+            BackgroundStyle::ALL.contains(&BackgroundStyle::Mica),
             cfg!(target_os = "windows")
         );
     }
@@ -732,8 +796,8 @@ mod tests {
             ..mica.clone()
         };
         if cfg!(target_os = "windows") {
-            assert_eq!(mica.interface_style(), Some(InterfaceStyle::Mica));
-            assert_eq!(blended.interface_style(), Some(InterfaceStyle::Blended));
+            assert_eq!(mica.background_style(), Some(BackgroundStyle::Mica));
+            assert_eq!(blended.background_style(), Some(BackgroundStyle::Blended));
             assert!(blended.material_veiled());
             assert!(!mica.material_veiled());
         }

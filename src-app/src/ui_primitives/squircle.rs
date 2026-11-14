@@ -5,6 +5,8 @@ use gpui::{
     Point, Styled, canvas, div, point, px, size,
 };
 
+use super::interface_style::{Shape, circular, corner, corners, scoped, shape};
+
 const CORNER_EXTENT: f32 = 1.528_665;
 const CORNER_CURVES: [[(f32, f32); 3]; 3] = [
     [(1.088_493, 0.), (0.868_407, 0.), (0.631_494, 0.074_911)],
@@ -15,12 +17,18 @@ const CORNER_CURVES: [[(f32, f32); 3]; 3] = [
     ],
     [(0., 0.868_407), (0., 1.088_493), (0., CORNER_EXTENT)],
 ];
+const ARC_EXTENT: f32 = 1.;
+const ARC_HANDLE: f32 = 0.447_715_25;
+const ARC_CURVES: [[(f32, f32); 3]; 1] = [[(ARC_HANDLE, 0.), (0., ARC_HANDLE), (0., ARC_EXTENT)]];
 
 pub(crate) fn corner_for_height(height: Pixels, radius: Pixels) -> Pixels {
     radius.min(height / (2. * CORNER_EXTENT)).max(px(0.))
 }
 
 fn limited_radius(bounds: Bounds<Pixels>, radius: Pixels) -> Pixels {
+    if circular() {
+        return corner(radius, bounds.size.width.min(bounds.size.height));
+    }
     corner_for_height(bounds.size.height, radius)
         .min(bounds.size.width / (2. * CORNER_EXTENT))
         .max(px(0.))
@@ -34,9 +42,14 @@ fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixel
         radii.top_left,
     ]
     .map(|radius| limited_radius(bounds, radius));
+    let (extent, curves): (f32, &[[(f32, f32); 3]]) = if circular() {
+        (ARC_EXTENT, &ARC_CURVES)
+    } else {
+        (CORNER_EXTENT, &CORNER_CURVES)
+    };
     let (left, right) = (bounds.left(), bounds.right());
     let (top, bottom) = (bounds.top(), bounds.bottom());
-    builder.move_to(point(left + radii[3] * CORNER_EXTENT, top));
+    builder.move_to(point(left + radii[3] * extent, top));
     for (corner, radius) in radii.into_iter().enumerate() {
         let transform = |(x, y): (f32, f32)| match corner {
             0 => point(right - radius * x, top + radius * y),
@@ -44,8 +57,8 @@ fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixel
             2 => point(left + radius * x, bottom - radius * y),
             _ => point(left + radius * y, top + radius * x),
         };
-        builder.line_to(transform((CORNER_EXTENT, 0.)));
-        for [control_a, control_b, end] in CORNER_CURVES {
+        builder.line_to(transform((extent, 0.)));
+        for &[control_a, control_b, end] in curves {
             builder.cubic_bezier_to(transform(end), transform(control_a), transform(control_b));
         }
     }
@@ -67,6 +80,7 @@ struct ShapeKey {
     height: Pixels,
     radius: Pixels,
     scale_factor: f32,
+    shape: Shape,
 }
 
 thread_local! {
@@ -115,6 +129,7 @@ fn cached_shape(
         height: bounds.size.height,
         radius,
         scale_factor,
+        shape: shape(),
     };
     SHAPES.with(|shapes| {
         let mut shapes = shapes.borrow_mut();
@@ -196,6 +211,28 @@ pub(crate) fn squircle_fill(radius: Pixels, color: Hsla) -> AnyElement {
 }
 
 pub(crate) fn squircle_corners_fill(radii: Corners<Pixels>, color: Hsla) -> AnyElement {
+    if circular() {
+        let shape = shape();
+        return div()
+            .absolute()
+            .inset_0()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        if color.a <= f32::EPSILON {
+                            return;
+                        }
+                        window.paint_quad(
+                            gpui::fill(bounds, color)
+                                .corner_radii(scoped(shape, || corners(bounds, radii))),
+                        );
+                    },
+                )
+                .size_full(),
+            )
+            .into_any_element();
+    }
     if translucent_over_transparent_window(color) {
         return div()
             .absolute()
@@ -233,6 +270,8 @@ pub(crate) fn squircle_fill_blend(
     to: Hsla,
     progress: std::rc::Rc<std::cell::Cell<f32>>,
 ) -> AnyElement {
+    let circular = circular();
+    let shape = shape();
     div()
         .absolute()
         .inset_0()
@@ -244,7 +283,13 @@ pub(crate) fn squircle_fill_blend(
                     if color.a <= f32::EPSILON {
                         return;
                     }
-                    if translucent_over_transparent_window(color) {
+                    if circular {
+                        window.paint_quad(
+                            gpui::fill(bounds, color).corner_radii(scoped(shape, || {
+                                corners(bounds, Corners::all(radius))
+                            })),
+                        );
+                    } else if translucent_over_transparent_window(color) {
                         window.paint_quad(gpui::fill(bounds, color).corner_radii(radius));
                     } else if let Some(path) = squircle_path(bounds, radius) {
                         window.paint_path(path, color);
@@ -277,6 +322,8 @@ pub(crate) fn squircle_corners_border(
     width: Pixels,
     color: Hsla,
 ) -> impl IntoElement {
+    let circular = circular();
+    let shape = shape();
     div().absolute().inset_0().child(
         canvas(
             |_, _, _| {},
@@ -284,7 +331,16 @@ pub(crate) fn squircle_corners_border(
                 if color.a <= f32::EPSILON {
                     return;
                 }
-                if let Some(path) = squircle_corners_stroke_path(bounds, radii, width) {
+                if circular {
+                    window.paint_quad(gpui::quad(
+                        bounds,
+                        scoped(shape, || corners(bounds, radii)),
+                        gpui::transparent_black(),
+                        width,
+                        color,
+                        gpui::BorderStyle::default(),
+                    ));
+                } else if let Some(path) = squircle_corners_stroke_path(bounds, radii, width) {
                     window.paint_path(path, color);
                 }
             },
@@ -366,6 +422,74 @@ mod tests {
         }
         assert_eq!(SHAPES.with(|shapes| shapes.borrow().len()), before);
         assert_eq!(squircle_builds(), builds);
+    }
+
+    #[test]
+    fn a_surface_shape_is_a_circular_rounded_rectangle_on_the_surface_scale() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(200.)));
+        scoped(Shape::Surface, || {
+            assert_eq!(limited_radius(bounds, px(24.)), px(12.));
+            assert_eq!(limited_radius(bounds, px(18.)), px(14.));
+            let mut builder = PathBuilder::fill();
+            trace(&mut builder, bounds, Corners::all(px(24.)));
+            let shape = builder.build().unwrap();
+            assert!(close(shape.bounds.origin, bounds.origin));
+            let arc_start = point(px(300. - 12.), px(0.));
+            assert!(
+                shape
+                    .vertices
+                    .iter()
+                    .any(|vertex| close(vertex.xy_position, arc_start)),
+                "the top edge runs to one corner radius before the corner"
+            );
+            assert!(squircle_stroke_path(bounds, px(24.), px(1.)).is_some());
+        });
+        assert_eq!(limited_radius(bounds, px(24.)), px(24.));
+    }
+
+    #[test]
+    fn a_classic_shape_is_a_circular_rounded_rectangle_on_the_classic_scale() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(200.)));
+        let row = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(28.)));
+        let surface = scoped(Shape::Surface, || {
+            cached_squircle_path(row, px(14.), 1.5).unwrap()
+        });
+        scoped(Shape::Classic, || {
+            assert_eq!(limited_radius(bounds, px(24.)), px(12.));
+            assert_eq!(limited_radius(bounds, px(18.)), px(14.));
+            let mut builder = PathBuilder::fill();
+            trace(&mut builder, bounds, Corners::all(px(24.)));
+            let shape = builder.build().unwrap();
+            let arc_start = point(px(300. - 12.), px(0.));
+            assert!(
+                shape
+                    .vertices
+                    .iter()
+                    .any(|vertex| close(vertex.xy_position, arc_start)),
+                "the top edge runs to one corner radius before the corner"
+            );
+            let classic = cached_squircle_path(row, px(14.), 1.5).unwrap();
+            assert!(
+                classic
+                    .vertices
+                    .iter()
+                    .zip(&surface.vertices)
+                    .any(|(classic, surface)| !close(classic.xy_position, surface.xy_position)),
+                "the shape cache keeps the surface and the Classic corner apart"
+            );
+        });
+    }
+
+    #[test]
+    fn the_shape_cache_keeps_one_entry_per_shape() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(120.), px(90.)));
+        let continuous = cached_squircle_path(bounds, px(24.), 1.25).unwrap();
+        let circular = scoped(Shape::Surface, || {
+            cached_squircle_path(bounds, px(24.), 1.25).unwrap()
+        });
+        assert_ne!(continuous.vertices.len(), circular.vertices.len());
+        let again = cached_squircle_path(bounds, px(24.), 1.25).unwrap();
+        assert_same_shape(&again, &continuous);
     }
 
     #[test]

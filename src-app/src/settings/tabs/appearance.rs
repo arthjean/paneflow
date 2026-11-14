@@ -3,14 +3,13 @@ use gpui::{
     SharedString, Styled, div, prelude::*, px,
 };
 
-use paneflow_config::schema::{InterfaceStyle, PaneFlowConfig};
+use paneflow_config::schema::{BackgroundStyle, InterfaceStyle, PaneFlowConfig};
 
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    deferred_select_menu, section_header, section_header_with_action, select_chevron,
-    select_option, select_popup, select_trigger, setting_text, soft_button, toggle_switch,
-    with_alpha,
+    deferred_select_menu, section_header, section_header_with_action, select_chevron, select_menu,
+    select_option, select_trigger, setting_text, soft_button, toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
@@ -58,11 +57,16 @@ impl PaneFlowApp {
         }
 
         let preset_row = self.render_theme_preset_select(preset, ui, cx);
-        let mut preset_card = SearchCard::new(ui).row(&search::THEME_PRESET, preset_row);
-        if !PaneFlowConfig::INTERFACE_STYLE_KEYS.is_empty() {
-            preset_card = preset_card.row(
+        let mut preset_card = SearchCard::new(ui)
+            .row(&search::THEME_PRESET, preset_row)
+            .row(
                 &search::INTERFACE_STYLE,
                 self.render_interface_style_select(ui, cx),
+            );
+        if !PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty() {
+            preset_card = preset_card.row(
+                &search::BACKGROUND_STYLE,
+                self.render_background_style_select(ui, cx),
             );
         }
 
@@ -425,7 +429,7 @@ impl PaneFlowApp {
             .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_popup("theme-preset-list", ui).on_mouse_down_out(cx.listener(
+            let mut menu = select_menu("theme-preset-list", ui).on_mouse_down_out(cx.listener(
                 |this, _, _w, cx| {
                     if this.theme_dropdown_open {
                         this.theme_dropdown_open = false;
@@ -479,32 +483,37 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let is_open = self.general_dropdown == Some(GeneralDropdown::InterfaceStyle);
-        let current = self.cached_config.interface_style();
+        let current = self.cached_config.resolved_interface_style();
 
-        let mut trigger = select_trigger("interface-style-select", "Interface style", is_open, ui)
-            .on_press(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.general_dropdown = if is_open {
-                    None
-                } else {
-                    Some(GeneralDropdown::InterfaceStyle)
-                };
-                this.settings_focus.focus(window, cx);
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(ui.text)
-                    .truncate()
-                    .child(current.map_or("Custom", InterfaceStyle::label)),
-            )
-            .child(select_chevron(ui));
+        let mut trigger = select_trigger(
+            "interface-style-select",
+            search::INTERFACE_STYLE.title,
+            is_open,
+            ui,
+        )
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.general_dropdown = if is_open {
+                None
+            } else {
+                Some(GeneralDropdown::InterfaceStyle)
+            };
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(crate::ui_primitives::BODY)
+                .text_color(ui.text)
+                .truncate()
+                .child(current.label()),
+        )
+        .child(select_chevron(ui));
 
         if is_open {
-            let mut menu = select_popup("interface-style-list", ui).on_mouse_down_out(cx.listener(
+            let mut menu = select_menu("interface-style-list", ui).on_mouse_down_out(cx.listener(
                 |this, _, _w, cx| {
                     if this.general_dropdown == Some(GeneralDropdown::InterfaceStyle) {
                         this.general_dropdown = None;
@@ -513,9 +522,8 @@ impl PaneFlowApp {
                 },
             ));
             for (idx, &style) in InterfaceStyle::ALL.iter().enumerate() {
-                let is_current = current == Some(style);
                 menu = menu.child(
-                    select_option(("interface-style", idx), is_current, ui)
+                    select_option(("interface-style", idx), current == style, ui)
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             this.general_dropdown = None;
@@ -552,7 +560,99 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn apply_interface_style(&mut self, style: InterfaceStyle, cx: &mut Context<Self>) {
-        for (key, enabled) in PaneFlowConfig::interface_style_settings(style) {
+        self.persist_setting(
+            false,
+            "interface_style",
+            serde_json::Value::String(style.wire_str().to_string()),
+            cx,
+        );
+    }
+
+    fn render_background_style_select(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_open = self.general_dropdown == Some(GeneralDropdown::BackgroundStyle);
+        let current = self.cached_config.background_style();
+
+        let mut trigger =
+            select_trigger("background-style-select", "Background style", is_open, ui)
+                .on_press(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.general_dropdown = if is_open {
+                        None
+                    } else {
+                        Some(GeneralDropdown::BackgroundStyle)
+                    };
+                    this.settings_focus.focus(window, cx);
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(crate::ui_primitives::BODY)
+                        .text_color(ui.text)
+                        .truncate()
+                        .child(current.map_or("Custom", BackgroundStyle::label)),
+                )
+                .child(select_chevron(ui));
+
+        if is_open {
+            let mut menu = select_menu("background-style-list", ui).on_mouse_down_out(cx.listener(
+                |this, _, _w, cx| {
+                    if this.general_dropdown == Some(GeneralDropdown::BackgroundStyle) {
+                        this.general_dropdown = None;
+                        cx.notify();
+                    }
+                },
+            ));
+            for (idx, &style) in BackgroundStyle::ALL.iter().enumerate() {
+                let is_current = current == Some(style);
+                menu = menu.child(
+                    select_option(("background-style", idx), is_current, ui)
+                        .cursor(CursorStyle::Arrow)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.general_dropdown = None;
+                            this.apply_background_style(style, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(ui.text)
+                                .child(style.label()),
+                        ),
+                );
+            }
+            trigger = trigger.child(deferred_select_menu(menu));
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .px(px(12.))
+            .py(px(10.))
+            .child(setting_text(
+                ui,
+                search::BACKGROUND_STYLE.title,
+                search::BACKGROUND_STYLE.description,
+            ))
+            .child(div().flex_shrink_0().child(trigger))
+            .into_any_element()
+    }
+
+    pub(crate) fn apply_background_style(
+        &mut self,
+        style: BackgroundStyle,
+        cx: &mut Context<Self>,
+    ) {
+        for (key, enabled) in PaneFlowConfig::background_style_settings(style) {
             self.persist_setting(false, key, serde_json::Value::Bool(enabled), cx);
         }
     }

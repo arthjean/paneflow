@@ -743,7 +743,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let focused = self.usage.open_agents_focus.is_focused(window);
         setting_card(ui)
-            .p(crate::settings::components::MENU_PADDING)
+            .p(crate::settings::components::menu_padding())
             .child(
                 div()
                     .px(px(10.))

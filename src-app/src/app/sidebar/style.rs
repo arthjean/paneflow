@@ -5,20 +5,20 @@ pub(crate) const SIDEBAR_ROW_PADDING_X: f32 = 7.0;
 pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
 pub(super) const SIDEBAR_ROW_GAP: f32 = 3.0;
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 20.0;
-pub(super) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
+pub(crate) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 pub(super) const SIDEBAR_BRANCH_GAP: f32 = 6.0;
 const SIDEBAR_TITLE_SHRINK_WEIGHT: f32 = 1000.0;
 pub(super) const SIDEBAR_TRAILING_MAX_SHARE: f32 = 0.5;
 const SIDEBAR_ROW_MIN_HEIGHT: f32 = 32.0;
-pub(super) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
-pub(super) const ROW_RADIUS: gpui::Pixels = px(9.0);
+pub(crate) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
+pub(super) use crate::app::constants::rail_row_radius;
 pub(super) const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 22.0;
 pub(super) const SIDEBAR_ACTION_BUTTON_GAP: f32 = 1.0;
 pub(super) const SIDEBAR_LANE_GLYPH_SIZE: f32 = 11.0;
 const GEIST_ASCENT_EM: f32 = 1.005;
 const GEIST_DESCENT_EM: f32 = 0.295;
-pub(super) const GEIST_X_HEIGHT_EM: f32 = 0.532;
-pub(super) const GEIST_CAP_HEIGHT_EM: f32 = 0.710;
+pub(crate) const GEIST_X_HEIGHT_EM: f32 = 0.532;
+pub(crate) const GEIST_CAP_HEIGHT_EM: f32 = 0.710;
 pub(super) const SIDEBAR_ROW_SPACING: f32 = 2.0;
 pub(super) const SIDEBAR_GROUP_SPACING: f32 = SIDEBAR_ROW_SPACING + SIDEBAR_TITLE_ROW_GAP;
 pub(super) const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
@@ -91,7 +91,11 @@ pub(super) fn render_sidebar_indent_guide(ui: crate::theme::UiColors) -> gpui::D
 }
 
 pub(super) fn sidebar_cursor_ring(ui: crate::theme::UiColors) -> impl IntoElement {
-    crate::ui_primitives::squircle::squircle_border(ROW_RADIUS, px(1.), ui.text.opacity(0.35))
+    crate::ui_primitives::squircle::squircle_border(
+        rail_row_radius(),
+        px(1.),
+        ui.text.opacity(0.35),
+    )
 }
 
 pub(super) fn sidebar_action_button(
@@ -130,12 +134,12 @@ pub(super) fn sidebar_action_button(
     )
 }
 
-pub(super) fn sidebar_text_ink_axis(font_size: f32, ink_height_em: f32) -> f32 {
+pub(crate) fn sidebar_text_ink_axis(font_size: f32, ink_height_em: f32) -> f32 {
     SIDEBAR_ROW_LINE_HEIGHT / 2.
         + font_size * (GEIST_ASCENT_EM - GEIST_DESCENT_EM - ink_height_em) / 2.
 }
 
-pub(super) fn sidebar_glyph_top(glyph_size: f32) -> f32 {
+pub(crate) fn sidebar_glyph_top(glyph_size: f32) -> f32 {
     ((SIDEBAR_ROW_LINE_HEIGHT - glyph_size) / 2.).ceil()
 }
 
@@ -332,8 +336,9 @@ mod tests {
         );
         assert_eq!(bounds.size.height, px(32.));
         assert!(
-            ROW_RADIUS <= bounds.size.height / 2.,
-            "row corner {ROW_RADIUS:?} exceeds half of a {:?} row",
+            crate::app::constants::RAIL_ROW_RADIUS <= bounds.size.height / 2.,
+            "row corner {:?} exceeds half of a {:?} row",
+            crate::app::constants::RAIL_ROW_RADIUS,
             bounds.size.height
         );
     }

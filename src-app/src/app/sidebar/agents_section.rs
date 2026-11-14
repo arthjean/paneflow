@@ -12,7 +12,7 @@ use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
-use crate::settings::components::{MENU_PADDING, MENU_ROW_GAP, menu_surface_filled};
+use crate::settings::components::{menu_padding, menu_row_gap, menu_surface_filled};
 use crate::window_state::AgentsSectionState;
 
 pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
@@ -891,7 +891,7 @@ fn render_agent_row(
         .mx(px(SIDEBAR_ROW_MARGIN_X))
         .id(SharedString::from(format!("agent-row-{surface_id}")))
         .debug_selector(move || format!("agent-row-{surface_id}"));
-    squircle_skin(shell, group, ROW_RADIUS, resting, hovered)
+    squircle_skin(shell, group, rail_row_radius(), resting, hovered)
         .role(Role::ListItem)
         .aria_label(SharedString::from(agent_row_label(row)))
         .aria_selected(row.active)
@@ -1440,7 +1440,7 @@ impl PaneFlowApp {
         let show = self.cached_config.sidebar_show;
         let spaces_declared = !self.cached_config.spaces.is_empty();
         let fill = crate::app::constants::sidebar_menu_background(
-            self.cached_config.interface_style(),
+            self.cached_config.background_style(),
             ui,
         );
         squircle_skin(
@@ -1496,8 +1496,8 @@ fn render_agents_display_menu(
     let menu = menu_surface_filled(div().id("agents-display-menu"), fill, ui)
         .flex()
         .flex_col()
-        .gap(MENU_ROW_GAP)
-        .p(MENU_PADDING)
+        .gap(menu_row_gap())
+        .p(menu_padding())
         .font_family("Geist")
         .w(px(AGENTS_DISPLAY_MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

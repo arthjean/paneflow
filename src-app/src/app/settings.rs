@@ -254,6 +254,12 @@ impl PaneFlowApp {
         if !nested && key == "reduce_motion" {
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
         }
+        if !nested && key == "interface_style" {
+            crate::ui_primitives::interface_style::set_interface_style(
+                self.cached_config.resolved_interface_style(),
+                cx,
+            );
+        }
         if !nested && key == "editor" {
             self.apply_editor_display(cx);
         }
@@ -563,6 +569,10 @@ impl PaneFlowApp {
             crate::config_snapshot::publish(&self.cached_config, cx);
             self.theme_mode = theme_mode;
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
+            crate::ui_primitives::interface_style::set_interface_style(
+                self.cached_config.resolved_interface_style(),
+                cx,
+            );
             self.apply_editor_display(cx);
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);

@@ -20,6 +20,14 @@ const DARK_SHELL_VEIL_OPACITY: f32 = 0.72;
 const LIGHT_SHELL_VEIL_OPACITY: f32 = 0.80;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
+pub(crate) const RAIL_ROW_RADIUS: Pixels = px(9.);
+
+pub(crate) fn rail_row_radius() -> Pixels {
+    crate::ui_primitives::interface_style::pick(
+        RAIL_ROW_RADIUS,
+        crate::ui_primitives::interface_style::CLASSIC_CONTROL,
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowBackdropPreference {
@@ -211,10 +219,10 @@ pub(crate) fn sidebar_tab_active_background() -> Hsla {
 }
 
 pub(crate) fn sidebar_menu_background(
-    style: Option<paneflow_config::schema::InterfaceStyle>,
+    style: Option<paneflow_config::schema::BackgroundStyle>,
     ui: crate::theme::UiColors,
 ) -> Hsla {
-    if style.is_some_and(|style| style != paneflow_config::schema::InterfaceStyle::Themed) {
+    if style.is_some_and(|style| style != paneflow_config::schema::BackgroundStyle::Themed) {
         sidebar_tab_active_background()
     } else {
         crate::settings::components::select_menu_surface(ui)
