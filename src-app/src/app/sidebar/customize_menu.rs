@@ -9,13 +9,20 @@ use crate::settings::components::{floating_menu_panel, menu_row};
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::squircle_skin;
 
-use paneflow_config::schema::SidebarShow;
+use paneflow_config::schema::{SidebarGroupBy, SidebarShow};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CustomizeSubmenu {
+    Show,
+    GroupBy,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct CustomizeMenuState {
     pub open: bool,
-    pub submenu_open: bool,
+    pub submenu: Option<CustomizeSubmenu>,
     pub show: SidebarShow,
+    pub group_by: SidebarGroupBy,
     pub all_expanded: Option<bool>,
 }
 
@@ -26,9 +33,34 @@ impl PaneFlowApp {
     pub(crate) fn close_sidebar_customize_menu(&mut self, cx: &mut Context<Self>) {
         if self.sidebar_customize_menu_open {
             self.sidebar_customize_menu_open = false;
-            self.sidebar_show_submenu_open = false;
+            self.sidebar_customize_submenu = None;
             cx.notify();
         }
+    }
+
+    fn toggle_customize_submenu(&mut self, submenu: CustomizeSubmenu, cx: &mut Context<Self>) {
+        self.sidebar_customize_submenu =
+            (self.sidebar_customize_submenu != Some(submenu)).then_some(submenu);
+        cx.notify();
+    }
+
+    pub(crate) fn set_sidebar_group_by(
+        &mut self,
+        group_by: SidebarGroupBy,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cached_config.resolved_sidebar_group_by() != group_by {
+            self.persist_setting(
+                false,
+                "sidebar_group_by",
+                serde_json::json!(group_by.wire_str()),
+                cx,
+            );
+            self.agents_display_menu_open = false;
+            self.sidebar_new_tab_menu_open = false;
+            self.sidebar_scroll.set_offset(gpui::Point::default());
+        }
+        cx.notify();
     }
 
     fn toggle_sidebar_show(&mut self, line: SidebarShowLine, cx: &mut Context<Self>) {
@@ -36,7 +68,7 @@ impl PaneFlowApp {
             self.agents_display_menu_open = true;
         } else {
             self.sidebar_customize_menu_open = true;
-            self.sidebar_show_submenu_open = true;
+            self.sidebar_customize_submenu = Some(CustomizeSubmenu::Show);
         }
 
         let value = sidebar_show_value(line.toggled(self.cached_config.sidebar_show));
@@ -80,6 +112,10 @@ pub(super) enum SidebarShowLine {
 }
 
 impl SidebarShowLine {
+    fn applies_to(self, group_by: SidebarGroupBy) -> bool {
+        group_by == SidebarGroupBy::Folder || !matches!(self, Self::Agents | Self::IndentGuide)
+    }
+
     fn is_agent_row_detail(self) -> bool {
         matches!(
             self,
@@ -191,7 +227,7 @@ pub(super) fn render_customize_sidebar_button(
     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.sidebar_customize_menu_open = !open;
         if open {
-            this.sidebar_show_submenu_open = false;
+            this.sidebar_customize_submenu = None;
         }
         cx.notify();
     }))
@@ -222,6 +258,7 @@ fn render_menu(
             }),
         )
         .child(render_show_row(state, ui, cx))
+        .child(render_group_by_row(state, ui, cx))
         .when_some(state.all_expanded, |menu, all_expanded| {
             menu.child(menu_divider(ui))
                 .child(render_expand_all_row(all_expanded, ui, cx))
@@ -281,40 +318,61 @@ fn render_show_row(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let submenu_open = state.submenu_open;
+    let submenu_open = state.submenu == Some(CustomizeSubmenu::Show);
     menu_row("sidebar-customize-show", submenu_open, ui)
         .relative()
         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.sidebar_show_submenu_open = !this.sidebar_show_submenu_open;
-            cx.notify();
+            this.toggle_customize_submenu(CustomizeSubmenu::Show, cx);
         }))
         .child(menu_label("Show", ui))
         .child(crate::settings::components::menu_chevron(ui))
         .when(submenu_open, |row| {
-            row.child(render_show_submenu(state.show, ui, cx))
+            row.child(render_show_submenu(state.show, state.group_by, ui, cx))
         })
         .into_any_element()
 }
 
+type ShowSubmenuLine = (&'static str, &'static str, SidebarShowLine);
+
+fn show_submenu_lines(
+    lines: &'static [ShowSubmenuLine],
+    group_by: SidebarGroupBy,
+) -> impl Iterator<Item = ShowSubmenuLine> {
+    lines
+        .iter()
+        .copied()
+        .filter(move |(_, _, line)| line.applies_to(group_by))
+}
+
 fn render_show_submenu(
     show: SidebarShow,
+    group_by: SidebarGroupBy,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let mut option = |(label, icon, line): ShowSubmenuLine| {
+        render_show_option(label, icon, line, line.checked(show), ui, cx)
+    };
+    let lines: Vec<AnyElement> = show_submenu_lines(&SHOW_SUBMENU_LINES, group_by)
+        .map(&mut option)
+        .collect();
+    let sections: Vec<AnyElement> = show_submenu_lines(&SHOW_SUBMENU_SECTIONS, group_by)
+        .map(&mut option)
+        .collect();
     let menu = floating_menu_panel(div().id("sidebar-show-submenu"), ui)
         .font_family("Geist")
         .w(px(SUBMENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .children(SHOW_SUBMENU_LINES.map(|(label, icon, line)| {
-            render_show_option(label, icon, line, line.checked(show), ui, cx)
-        }))
+        .children(lines)
         .child(menu_divider(ui))
-        .children(SHOW_SUBMENU_SECTIONS.map(|(label, icon, line)| {
-            render_show_option(label, icon, line, line.checked(show), ui, cx)
-        }));
+        .children(sections);
 
+    render_submenu("sidebar-show-submenu-reveal", menu)
+}
+
+fn render_submenu(reveal_id: &'static str, menu: impl IntoElement) -> AnyElement {
     deferred(crate::ui_primitives::menu_reveal(
-        "sidebar-show-submenu-reveal",
+        reveal_id,
         div()
             .absolute()
             .top(px(-5.))
@@ -324,6 +382,79 @@ fn render_show_submenu(
     ))
     .with_priority(4)
     .into_any_element()
+}
+
+fn group_by_icon(group_by: SidebarGroupBy) -> &'static str {
+    match group_by {
+        SidebarGroupBy::Folder => "icons/folder.svg",
+        SidebarGroupBy::Status => STATUS_ICON,
+    }
+}
+
+fn group_by_option_id(group_by: SidebarGroupBy) -> &'static str {
+    match group_by {
+        SidebarGroupBy::Folder => "sidebar-group-by-folder",
+        SidebarGroupBy::Status => "sidebar-group-by-status",
+    }
+}
+
+fn render_group_by_row(
+    state: CustomizeMenuState,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let submenu_open = state.submenu == Some(CustomizeSubmenu::GroupBy);
+    menu_row("sidebar-customize-group-by", submenu_open, ui)
+        .relative()
+        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            this.toggle_customize_submenu(CustomizeSubmenu::GroupBy, cx);
+        }))
+        .child(menu_label("Group by", ui))
+        .child(
+            div()
+                .flex_none()
+                .text_size(crate::settings::components::menu_label_text_size())
+                .text_color(ui.muted)
+                .child(state.group_by.label()),
+        )
+        .child(crate::settings::components::menu_chevron(ui))
+        .when(submenu_open, |row| {
+            row.child(render_group_by_submenu(state.group_by, ui, cx))
+        })
+        .into_any_element()
+}
+
+fn render_group_by_submenu(
+    current: SidebarGroupBy,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let options: Vec<AnyElement> = SidebarGroupBy::ALL
+        .iter()
+        .map(|&group_by| {
+            render_menu_option(
+                group_by_option_id(group_by),
+                group_by.label(),
+                group_by_icon(group_by),
+                group_by == current,
+                Role::MenuItemRadio,
+                ui,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.sidebar_customize_menu_open = true;
+                this.sidebar_customize_submenu = Some(CustomizeSubmenu::GroupBy);
+                this.set_sidebar_group_by(group_by, cx);
+            }))
+            .into_any_element()
+        })
+        .collect();
+    let menu = floating_menu_panel(div().id("sidebar-group-by-submenu"), ui)
+        .font_family("Geist")
+        .w(px(SUBMENU_WIDTH))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(options);
+
+    render_submenu("sidebar-group-by-submenu-reveal", menu)
 }
 
 pub(super) fn render_show_option(
@@ -349,17 +480,29 @@ pub(super) fn render_show_option(
         SidebarShowLine::AgentAllSpaces => "agents-show-all-spaces",
     };
 
+    render_menu_option(id, label, icon, checked, Role::MenuItemCheckBox, ui)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.toggle_sidebar_show(line, cx);
+        }))
+        .into_any_element()
+}
+
+fn render_menu_option(
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    checked: bool,
+    role: Role,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
     menu_row(id, false, ui)
-        .role(Role::MenuItemCheckBox)
+        .role(role)
         .aria_label(label)
         .aria_toggled(if checked {
             gpui::Toggled::True
         } else {
             gpui::Toggled::False
         })
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.toggle_sidebar_show(line, cx);
-        }))
         .child(
             svg()
                 .size(px(13.))
@@ -377,7 +520,6 @@ pub(super) fn render_show_option(
         } else {
             div().size(px(13.)).into_any_element()
         }))
-        .into_any_element()
 }
 
 pub(super) fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
@@ -450,6 +592,82 @@ mod tests {
                 "{label} points at the missing icon {icon}"
             );
         }
+    }
+
+    #[test]
+    fn grouping_by_status_drops_the_agents_section_and_the_indent_guide_from_show() {
+        let labels = |lines: &'static [ShowSubmenuLine], group_by| {
+            show_submenu_lines(lines, group_by)
+                .map(|(label, _, _)| label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(&SHOW_SUBMENU_LINES, SidebarGroupBy::Folder).len(),
+            SHOW_SUBMENU_LINES.len()
+        );
+        assert_eq!(
+            labels(&SHOW_SUBMENU_SECTIONS, SidebarGroupBy::Folder),
+            ["Agents", "Usage"]
+        );
+        assert_eq!(
+            labels(&SHOW_SUBMENU_LINES, SidebarGroupBy::Status),
+            ["Branch", "Diffstat", "PR", "Status", "Shimmer"]
+        );
+        assert_eq!(
+            labels(&SHOW_SUBMENU_SECTIONS, SidebarGroupBy::Status),
+            ["Usage"]
+        );
+    }
+
+    #[test]
+    fn every_grouping_has_its_own_option_and_an_embedded_icon() {
+        let ids: Vec<_> = SidebarGroupBy::ALL
+            .iter()
+            .map(|&group_by| group_by_option_id(group_by))
+            .collect();
+        assert_eq!(ids, ["sidebar-group-by-folder", "sidebar-group-by-status"]);
+        for &group_by in SidebarGroupBy::ALL {
+            assert!(
+                crate::assets::Assets::get(group_by_icon(group_by)).is_some(),
+                "{} points at a missing icon",
+                group_by.label()
+            );
+        }
+    }
+
+    #[test]
+    fn choosing_a_grouping_writes_only_its_key_through_the_config_writer() {
+        let config: PaneFlowConfig = serde_json::from_str(
+            r#"{"theme": "One Dark", "sidebar_show": {"pr": true, "agents": false}}"#,
+        )
+        .expect("loads");
+        assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Folder);
+
+        let by_status = crate::config_writer::with_field(
+            &config,
+            false,
+            "sidebar_group_by",
+            serde_json::json!(SidebarGroupBy::Status.wire_str()),
+        )
+        .expect("written");
+        assert_eq!(
+            by_status.resolved_sidebar_group_by(),
+            SidebarGroupBy::Status
+        );
+        assert_eq!(by_status.theme.as_deref(), Some("One Dark"));
+        assert_eq!(by_status.sidebar_show, config.sidebar_show);
+
+        let by_folder = crate::config_writer::with_field(
+            &by_status,
+            false,
+            "sidebar_group_by",
+            serde_json::json!(SidebarGroupBy::Folder.wire_str()),
+        )
+        .expect("written");
+        assert_eq!(
+            by_folder.resolved_sidebar_group_by(),
+            SidebarGroupBy::Folder
+        );
     }
 
     #[test]

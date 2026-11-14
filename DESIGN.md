@@ -638,7 +638,8 @@ pane surfaces, and the diff dock. Each component retains its own radius.
 
 Header row `Workspaces` at label size with two 22 px icon buttons (the
 Customize sidebar menu behind a filter glyph, and new workspace behind a
-folder-plus glyph). Once a space is declared, the space picker replaces the
+folder-plus glyph), and a third, `New tab` behind a 15 px plus glyph, while
+the rail is grouped by status. Once a space is declared, the space picker replaces the
 `Workspaces` label: a 22 px trigger at radius 7 holding, in a 20 px slot on
 the folder column, the active space's 16 px mark (its image cropped to a
 circle, else the mesh gradient of its color, else a 1 px `muted` outline;
@@ -688,6 +689,37 @@ attention button, the pane header marker, notifications and
 title rests in `muted` while a band sweeps it up to white, or to black on a
 light theme, the extreme on the side of `text`. Turned off, the title keeps
 `text` and holds still, and the matrix alone says the agent works.
+
+`Group by` follows `Show` in the `Customize sidebar` menu, with the current
+grouping in `muted` before its chevron; its submenu holds `Folder` and
+`Status`, a check on the current one (`sidebar_group_by`, `folder` by
+default). `Folder` is the tree above. `Status` replaces the folder rows with
+the Agents section's group headers, same order, colors, 24 px height, count
+and 8 px gap above every header but the first: `Need you`, `Error`, `Done`,
+`Working`, `Idle`. Under them sit the tab rows of every workspace of the
+active space, in workspace then tab order, 2 px apart. A tab takes the status
+of its most urgent agent, the one its row badge shows, and `Idle` when it runs
+none; there is no `No status` group. A tab row loses the folder slot and the
+indent guide, so its title starts on the header's edge, 15 px from the rail
+edge, and the title is followed by ` · ` and the workspace name in `muted`,
+as on an Agents row, the title shrinking first; the branch, the diffstat, the
+status and the close button keep their places, and the tooltip of a long name
+gives `title · workspace`. The rows always show their status, whatever
+`sidebar_show.status` says, since the rail is grouped by it. Grouped by
+status, the rail hides the Agents section, which would list the same agents
+twice, and `Show` drops its `Agents` and `Indent guide` lines; `Expand all`
+leaves the menu; the drop dividers are not drawn, so rows do not reorder by
+drag, and the workspace menu is reached by returning to `Folder`. With no tab
+open, one 32 px row reads `No tabs open` at 13 px `muted`, inset 15.
+
+`New tab`, shown only while grouped by status, is the third header button,
+after `New workspace`, on the hover tint and the same tint while its menu is
+open. It opens the launcher in a new tab of a workspace: at once when the
+active space has one workspace, the folder picker when it has none, and
+otherwise through a 208 px menu 32 px below the button, right-aligned: the
+caption `New tab in` at 12 px Medium `muted`, then one row per workspace of
+the active space in rail order, a 13 px folder glyph and the name, scrolling
+past 320 px.
 
 The Agents section sits between the workspace tree and the footer, with no
 separator. Its 36 px header (padding 8 horizontal) holds a 20 px toggle with
@@ -1328,7 +1360,7 @@ every modal answers Enter and Escape.
 | Focus across the grid | `alt-arrow` |
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
-| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move, on into the Agents section rows; enter opens, or focuses an agent's pane; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; tab focuses the Agents resize handle; escape returns to the pane |
+| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move, on into the Agents section rows; enter opens, or focuses an agent's pane; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; tab focuses the Agents resize handle; escape returns to the pane. Grouped by status, the cursor walks the tab rows in group order and skips the headers; fold and reorder keys do nothing |
 | File tree in the dock | `secondary-alt-f` |
 | Jump to next waiting agent | `secondary-shift-j`: agents waiting for input, then errored, then finished and not yet seen, in the Agents section order, active space first |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |

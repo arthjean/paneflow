@@ -127,7 +127,9 @@ impl PaneFlowApp {
         };
 
         let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
-        let indent_guide = self.cached_config.sidebar_show.indent_guide_enabled();
+        let grouped_by_status = self.grouped_by_status();
+        let indent_guide =
+            !grouped_by_status && self.cached_config.sidebar_show.indent_guide_enabled();
         let title_indent = SIDEBAR_FOLDER_SLOT_WIDTH + SIDEBAR_TITLE_ROW_GAP;
         let row_inset = if indent_guide { title_indent } else { 0. };
         let content_width = SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - row_inset;
@@ -135,6 +137,27 @@ impl PaneFlowApp {
         let branch = (!is_renaming)
             .then(|| self.render_tab_branch_label(ws, tab, cx))
             .flatten();
+        let workspace_suffix = (grouped_by_status && !is_renaming).then(|| {
+            div()
+                .flex_initial()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(14.))
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .text_color(ui.muted)
+                .child(self.sidebar_filter_label(tab_row_workspace_suffix(&ws.title), cx))
+        });
+        let titled = match workspace_suffix {
+            Some(suffix) => sidebar_title_with_trailing(title_el, Some(suffix), 0.),
+            None => title_el,
+        };
+        let row_name = if grouped_by_status {
+            format!("{title}{}", tab_row_workspace_suffix(&ws.title))
+        } else {
+            title.clone()
+        };
         let close_tab = cx.listener(move |this, _: &ClickEvent, window, cx| {
             if let Some((at_ws, at_tab)) = this
                 .workspaces
@@ -161,11 +184,11 @@ impl PaneFlowApp {
             .w(px(content_width))
             .max_w(px(content_width))
             .min_w_0()
-            .when(!indent_guide, |row| {
+            .when(!indent_guide && !grouped_by_status, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
             .child(sidebar_title_with_trailing(
-                title_el,
+                titled,
                 branch,
                 SIDEBAR_BRANCH_GAP,
             ))
@@ -199,14 +222,14 @@ impl PaneFlowApp {
             .children(diffstat.map(|chip| div().flex_none().child(chip)));
 
         let title_tooltip = (!is_renaming
-            && title.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
-            .then(|| SharedString::from(title.clone()));
+            && row_name.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
+            .then(|| SharedString::from(row_name.clone()));
         let row_shell = sidebar_row_shell()
             .ml(px(row_inset))
             .id(SharedString::from(format!("tab-row-{tab_id}")))
             .role(Role::TreeItem)
-            .aria_level(2)
-            .aria_label(SharedString::from(title.clone()))
+            .aria_level(if grouped_by_status { 1 } else { 2 })
+            .aria_label(SharedString::from(row_name))
             .aria_selected(is_active_tab && is_active_workspace)
             .when_some(title_tooltip, |shell, title| {
                 shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))

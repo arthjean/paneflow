@@ -131,6 +131,9 @@ impl TreeStatus {
 
 impl PaneFlowApp {
     pub(super) fn tree_status(&self) -> TreeStatus {
+        if self.grouped_by_status() {
+            return TreeStatus::Shown;
+        }
         TreeStatus::resolve(
             self.cached_config.sidebar_show,
             self.agents_section.borrow().collapsed(),

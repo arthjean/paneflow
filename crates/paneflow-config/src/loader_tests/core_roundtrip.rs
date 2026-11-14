@@ -37,6 +37,7 @@ fn test_serialization_roundtrip() {
             status: Some(false),
             ..SidebarShow::default()
         },
+        sidebar_group_by: None,
         editor: EditorDisplayConfig::default(),
         automation: AutomationConfig::default(),
         worktrees: WorktreesConfig::default(),

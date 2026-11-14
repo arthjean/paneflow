@@ -1436,6 +1436,26 @@ pub(crate) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        label: "Group the sidebar by status",
+        icon: Some(crate::app::sidebar::customize_menu::STATUS_ICON),
+        keywords: "agents tabs folder workspace need you working idle appearance",
+        needs: Needs::Always,
+        section: Section::Sidebar,
+        kind: Kind::Toggle {
+            read: |app| app.grouped_by_status(),
+            write: |app, next, cx| {
+                app.set_sidebar_group_by(
+                    if next {
+                        paneflow_config::schema::SidebarGroupBy::Status
+                    } else {
+                        paneflow_config::schema::SidebarGroupBy::Folder
+                    },
+                    cx,
+                )
+            },
+        },
+    },
+    Command {
         label: "Expand the Agents section in the sidebar",
         icon: Some("icons/palette/arrow-expand-01.svg"),
         keywords: "agents collapse fold attention",

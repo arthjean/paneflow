@@ -45,6 +45,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub sidebar_group_by: Option<SidebarGroupBy>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub automation: AutomationConfig,
@@ -412,6 +414,10 @@ impl PaneFlowConfig {
         self.interface_style.unwrap_or_default()
     }
 
+    pub fn resolved_sidebar_group_by(&self) -> SidebarGroupBy {
+        self.sidebar_group_by.unwrap_or_default()
+    }
+
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {
         let raw = self
             .submit_paste_delay_ms
@@ -600,6 +606,32 @@ impl InterfaceStyle {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarGroupBy {
+    #[default]
+    Folder,
+    Status,
+}
+
+impl SidebarGroupBy {
+    pub const ALL: &'static [Self] = &[Self::Folder, Self::Status];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Folder => "Folder",
+            Self::Status => "Status",
+        }
+    }
+
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Folder => "folder",
+            Self::Status => "status",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundStyle {
     Themed,
@@ -733,6 +765,34 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(style).unwrap(),
                 serde_json::Value::String(style.wire_str().to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_group_by_defaults_to_folder_and_tolerates_garbage() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Folder);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_group_by": "status"}"#).unwrap();
+        assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Status);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"theme": "One Dark", "sidebar_group_by": "date"}"#).unwrap();
+        assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Folder);
+        assert_eq!(config.theme.as_deref(), Some("One Dark"));
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"sidebar_group_by": 1}"#).unwrap();
+        assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Folder);
+    }
+
+    #[test]
+    fn every_sidebar_grouping_round_trips_through_its_wire_name() {
+        for &group_by in SidebarGroupBy::ALL {
+            let json = serde_json::json!({ "sidebar_group_by": group_by.wire_str() });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert_eq!(config.sidebar_group_by, Some(group_by));
+            assert_eq!(
+                serde_json::to_value(group_by).unwrap(),
+                serde_json::Value::String(group_by.wire_str().to_string())
             );
         }
     }

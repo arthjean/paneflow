@@ -282,6 +282,12 @@
       "enum": ["paneflow", "classic", null],
       "default": "paneflow"
     },
+    "sidebar_group_by": {
+      "type": ["string", "null"],
+      "description": "How the Workspaces sidebar groups its rows. 'folder' lists each workspace as a folder row with its tabs under it. 'status' lists the tabs of every workspace of the active space under status headings (Need you, Error, Done, Working, Idle), each tab naming its workspace, hides the Agents section, and adds a New tab button to the sidebar header.",
+      "enum": ["folder", "status", null],
+      "default": "folder"
+    },
     "option_as_meta": {
       "type": ["boolean", "null"],
       "description": "Treat Alt/Option as Meta and send an ESC prefix. Default true on Linux and Windows. On macOS, set to false if you rely on Option to produce Unicode characters.",

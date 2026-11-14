@@ -308,7 +308,7 @@ pub(super) enum AgentGroupStatus {
 }
 
 impl AgentGroupStatus {
-    const ORDER: [Self; 6] = [
+    pub(super) const ORDER: [Self; 6] = [
         Self::NeedYou,
         Self::Error,
         Self::Done,
@@ -382,9 +382,36 @@ pub(super) fn agent_groups(rows: &[AgentRow]) -> Vec<AgentGroup<'_>> {
         .collect()
 }
 
-pub(super) fn agent_group_label(status: AgentGroupStatus, count: usize) -> String {
-    let noun = if count == 1 { "agent" } else { "agents" };
-    format!("{}, {count} {noun}", status.label())
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StatusGroupKind {
+    Agents,
+    Tabs,
+}
+
+impl StatusGroupKind {
+    fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Agents => "agent-group",
+            Self::Tabs => "tab-group",
+        }
+    }
+
+    fn noun(self, count: usize) -> &'static str {
+        match (self, count == 1) {
+            (Self::Agents, true) => "agent",
+            (Self::Agents, false) => "agents",
+            (Self::Tabs, true) => "tab",
+            (Self::Tabs, false) => "tabs",
+        }
+    }
+}
+
+pub(super) fn status_group_label(
+    status: AgentGroupStatus,
+    count: usize,
+    kind: StatusGroupKind,
+) -> String {
+    format!("{}, {count} {}", status.label(), kind.noun(count))
 }
 
 pub(super) fn agent_rows(
@@ -693,16 +720,29 @@ fn render_agent_group_header(
     leads_the_list: bool,
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
-    let status = group.status;
+    render_status_group_header(
+        group.status,
+        group.rows.len(),
+        StatusGroupKind::Agents,
+        leads_the_list,
+        ui,
+    )
+}
+
+pub(super) fn render_status_group_header(
+    status: AgentGroupStatus,
+    count: usize,
+    kind: StatusGroupKind,
+    leads_the_list: bool,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
     let key = status.key();
+    let prefix = kind.id_prefix();
     div()
-        .id(SharedString::from(format!("agent-group-{key}")))
+        .id(SharedString::from(format!("{prefix}-{key}")))
         .role(Role::Heading)
         .aria_level(AGENT_GROUP_HEADING_LEVEL)
-        .aria_label(SharedString::from(agent_group_label(
-            status,
-            group.rows.len(),
-        )))
+        .aria_label(SharedString::from(status_group_label(status, count, kind)))
         .flex_none()
         .h(px(AGENT_GROUP_HEADER_HEIGHT))
         .when(!leads_the_list, |header| header.mt(px(AGENT_GROUP_SPACING)))
@@ -716,12 +756,12 @@ fn render_agent_group_header(
         .text_size(crate::ui_primitives::BODY)
         .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
         .font_weight(FontWeight::MEDIUM)
-        .debug_selector(move || format!("agent-group-{key}"))
+        .debug_selector(move || format!("{prefix}-{key}"))
         .child(
             div()
                 .flex_none()
                 .text_color(status.color(ui))
-                .debug_selector(move || format!("agent-group-label-{key}"))
+                .debug_selector(move || format!("{prefix}-label-{key}"))
                 .child(status.label()),
         )
         .child(
@@ -729,8 +769,8 @@ fn render_agent_group_header(
                 .flex_none()
                 .text_color(ui.muted)
                 .font_features(tabular_numerals())
-                .debug_selector(move || format!("agent-group-count-{key}"))
-                .child(group.rows.len().to_string()),
+                .debug_selector(move || format!("{prefix}-count-{key}"))
+                .child(count.to_string()),
         )
 }
 
@@ -1351,7 +1391,7 @@ impl PaneFlowApp {
 
     pub(super) fn agents_nav_surfaces(&self, cx: &App) -> Vec<u64> {
         agents_nav_targets(
-            self.cached_config.sidebar_show.agents_enabled(),
+            self.agents_section_shown(),
             self.agents_section.borrow().collapsed,
             &agent_groups(&self.shown_agent_rows(cx)),
         )
@@ -3142,7 +3182,11 @@ mod tests {
             shown.rows[0].workspace.clone(),
             agent_row_full_name(&shown.rows[0]),
             agent_row_label(&shown.rows[0]),
-            agent_group_label(groups[0].status, groups[0].rows.len()),
+            status_group_label(
+                groups[0].status,
+                groups[0].rows.len(),
+                StatusGroupKind::Agents,
+            ),
             groups[0].status.label().to_string(),
         ];
         assert_eq!(texts[0], "Docs nav");
@@ -3376,8 +3420,16 @@ mod tests {
             assert_eq!(node.level(), Some(AGENT_GROUP_HEADING_LEVEL));
         }
         assert_eq!(
-            agent_group_label(AgentGroupStatus::NoStatus, 12),
+            status_group_label(AgentGroupStatus::NoStatus, 12, StatusGroupKind::Agents),
             "No status, 12 agents"
+        );
+        assert_eq!(
+            status_group_label(AgentGroupStatus::Idle, 1, StatusGroupKind::Tabs),
+            "Idle, 1 tab"
+        );
+        assert_eq!(
+            status_group_label(AgentGroupStatus::Working, 3, StatusGroupKind::Tabs),
+            "Working, 3 tabs"
         );
     }
 

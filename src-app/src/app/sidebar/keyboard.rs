@@ -60,9 +60,10 @@ impl PaneFlowApp {
             self.toggle_primary_sidebar(cx);
         }
         if self.sidebar_cursor_row(cx).is_none() {
+            let on_tab = self.grouped_by_status();
             self.sidebar_cursor = self.active_workspace().map(|ws| SidebarCursor::Tree {
                 workspace_id: ws.id,
-                tab_id: None,
+                tab_id: on_tab.then(|| ws.active_tab().id),
             });
         }
         self.sidebar_focus.focus(window, cx);
@@ -123,7 +124,7 @@ impl PaneFlowApp {
             .value()
             .trim()
             .to_lowercase();
-        sidebar_nav_order(self.sidebar_rows(&query), &self.agents_nav_surfaces(cx))
+        sidebar_nav_order(self.sidebar_rows(&query, cx), &self.agents_nav_surfaces(cx))
     }
 
     fn sidebar_cursor_position(&self, rows: &[SidebarNavRow]) -> Option<usize> {
@@ -135,7 +136,16 @@ impl PaneFlowApp {
     fn scroll_sidebar_to(&self, rows: &[SidebarNavRow], index: usize, cx: &Context<Self>) {
         match rows.get(index) {
             Some(SidebarNavRow::Agent(surface_id)) => self.scroll_agents_to(*surface_id, cx),
-            Some(SidebarNavRow::Tree(_)) => self.sidebar_scroll.scroll_to_item(index * 2 + 1),
+            Some(SidebarNavRow::Tree(row)) => {
+                let child = if self.grouped_by_status() {
+                    self.status_row_child(*row, cx)
+                } else {
+                    Some(index * 2 + 1)
+                };
+                if let Some(child) = child {
+                    self.sidebar_scroll.scroll_to_item(child);
+                }
+            }
             None => {}
         }
     }
@@ -167,6 +177,7 @@ impl PaneFlowApp {
         self.workspace_menu_open.is_some()
             || self.tab_menu_open.is_some()
             || self.sidebar_customize_menu_open
+            || self.sidebar_new_tab_menu_open
             || self.sidebar_space_menu_open
             || self.agents_display_menu_open
     }
@@ -247,7 +258,9 @@ impl PaneFlowApp {
                 "down" => true,
                 _ => return,
             };
-            if let Some(SidebarNavRow::Tree(row)) = self.sidebar_cursor_row(cx) {
+            if !self.grouped_by_status()
+                && let Some(SidebarNavRow::Tree(row)) = self.sidebar_cursor_row(cx)
+            {
                 self.move_cursor_row(row, down, cx);
             }
             cx.stop_propagation();
@@ -304,7 +317,7 @@ impl PaneFlowApp {
                     self.toggle_workspace_expanded(ws_idx, cx);
                 }
             }
-            ("left", SidebarRow::Tab(ws_idx, _)) => {
+            ("left", SidebarRow::Tab(ws_idx, _)) if !self.grouped_by_status() => {
                 self.sidebar_cursor = self.sidebar_cursor_for(SidebarRow::Folder(ws_idx));
                 cx.notify();
             }

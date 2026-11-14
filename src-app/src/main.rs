@@ -274,7 +274,9 @@ struct PaneFlowApp {
     pub(crate) cwd_probes: crate::app::event_handlers::CwdProbeSequence,
     pub(crate) pr_states: crate::app::pull_request::PrStates,
     pub(crate) sidebar_customize_menu_open: bool,
-    pub(crate) sidebar_show_submenu_open: bool,
+    pub(crate) sidebar_customize_submenu:
+        Option<crate::app::sidebar::customize_menu::CustomizeSubmenu>,
+    pub(crate) sidebar_new_tab_menu_open: bool,
     pub(crate) sidebar_space_menu_open: bool,
     pub(crate) agents_display_menu_open: bool,
     tab_menu_open: Option<TabContextMenu>,

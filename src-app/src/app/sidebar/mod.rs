@@ -8,6 +8,7 @@ mod lane;
 mod meta;
 mod pull_request;
 mod space_switcher;
+mod status_groups;
 mod style;
 mod tab_row;
 pub(crate) mod view;
@@ -27,6 +28,7 @@ pub(crate) use lane::SpinnerClock;
 use lane::{Lane, infer_lane, render_lane_slot};
 use meta::*;
 pub(crate) use space_switcher::{default_space_mark, space_mark};
+use status_groups::tab_row_workspace_suffix;
 pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
@@ -58,6 +60,35 @@ fn sidebar_motion_topology(workspaces: &[Workspace], shown: &[usize]) -> Vec<(u6
             (ws.id, ws.tabs().iter().map(|tab| tab.id).collect())
         })
         .collect()
+}
+
+fn sidebar_matching_tabs(workspace: &Workspace, query: &str) -> Option<Vec<usize>> {
+    let workspace_matches = query.is_empty()
+        || [&workspace.title, &workspace.cwd, &workspace.git_branch]
+            .iter()
+            .any(|value| value.to_lowercase().contains(query));
+    let tabs: Vec<_> = workspace
+        .tabs()
+        .iter()
+        .enumerate()
+        .filter(|(index, tab)| {
+            workspace_matches
+                || tab_display_title(tab, *index)
+                    .to_lowercase()
+                    .contains(query)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    (workspace_matches || !tabs.is_empty()).then_some(tabs)
+}
+
+fn sidebar_no_match_message(query: &str, ui: crate::theme::UiColors) -> gpui::Div {
+    div()
+        .px(px(SIDEBAR_ROW_MARGIN_X + SIDEBAR_ROW_PADDING_X))
+        .py(px(8.))
+        .text_color(ui.muted)
+        .text_size(crate::ui_primitives::BODY_EMPHASIS)
+        .child(format!("No workspaces or tabs match \"{query}\""))
 }
 
 fn sidebar_empty_state_message(
@@ -357,8 +388,9 @@ impl PaneFlowApp {
                         .child(customize_menu::render_customize_sidebar_button(
                             customize_menu::CustomizeMenuState {
                                 open: self.sidebar_customize_menu_open,
-                                submenu_open: self.sidebar_show_submenu_open,
+                                submenu: self.sidebar_customize_submenu,
                                 show: self.cached_config.sidebar_show,
+                                group_by: self.cached_config.resolved_sidebar_group_by(),
                                 all_expanded: self.all_workspaces_expanded(),
                             },
                             SIDEBAR_HEADER_ICON_WIDTH,
@@ -397,6 +429,9 @@ impl PaneFlowApp {
                                         style.text_color(ui.text)
                                     }),
                             )
+                        })
+                        .when(self.grouped_by_status(), |actions| {
+                            actions.child(self.render_sidebar_new_tab_button(ui, cx))
                         }),
                 ),
         );
@@ -431,7 +466,7 @@ impl PaneFlowApp {
         }
 
         list = self.render_workspace_rows(list, ui, window, cx);
-        let agents_shown = self.cached_config.sidebar_show.agents_enabled();
+        let agents_shown = self.agents_section_shown();
         let bubble_top = self.usage.bubble_top();
         sidebar = sidebar.child(crate::ui_primitives::clip_below_line(
             self.sidebar_list_wrapper(list, cx)
@@ -579,7 +614,7 @@ impl PaneFlowApp {
         sidebar_empty_state_message(&self.cached_config, self.active_space.as_ref())
     }
 
-    fn sidebar_rows(&self, query: &str) -> Vec<SidebarRow> {
+    fn sidebar_display_order(&self) -> Vec<usize> {
         let signature = Self::sidebar_order_signature(&self.workspaces, self.active_space.as_ref());
         if self.sidebar_order_cache.borrow().signature != Some(signature) {
             let order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
@@ -587,29 +622,25 @@ impl PaneFlowApp {
             cache.order = order;
             cache.signature = Some(signature);
         }
-        let order_cache = self.sidebar_order_cache.borrow();
-        let mut rows = Vec::with_capacity(order_cache.order.len());
-        for &i in &order_cache.order {
-            let ws = &self.workspaces[i];
-            let workspace_matches = query.is_empty()
-                || [&ws.title, &ws.cwd, &ws.git_branch]
-                    .iter()
-                    .any(|value| value.to_lowercase().contains(query));
-            let tabs: Vec<_> = ws
-                .tabs()
-                .iter()
-                .enumerate()
-                .filter(|(index, tab)| {
-                    workspace_matches
-                        || tab_display_title(tab, *index)
-                            .to_lowercase()
-                            .contains(query)
-                })
-                .map(|(index, _)| index)
+        self.sidebar_order_cache.borrow().order.clone()
+    }
+
+    fn sidebar_rows(&self, query: &str, cx: &gpui::App) -> Vec<SidebarRow> {
+        if self.grouped_by_status() {
+            return self
+                .tab_status_groups(query, cx)
+                .into_iter()
+                .flat_map(|group| group.tabs)
+                .map(|(ws_idx, tab_idx)| SidebarRow::Tab(ws_idx, tab_idx))
                 .collect();
-            if !workspace_matches && tabs.is_empty() {
+        }
+        let order = self.sidebar_display_order();
+        let mut rows = Vec::with_capacity(order.len());
+        for i in order {
+            let ws = &self.workspaces[i];
+            let Some(tabs) = sidebar_matching_tabs(ws, query) else {
                 continue;
-            }
+            };
             rows.push(SidebarRow::Folder(i));
             if (ws.sidebar_expanded || !query.is_empty()) && !ws.is_empty_shell() {
                 for tab_idx in tabs {
@@ -621,6 +652,9 @@ impl PaneFlowApp {
     }
 
     fn all_workspaces_expanded(&self) -> Option<bool> {
+        if self.grouped_by_status() {
+            return None;
+        }
         let mut rows_somewhere = false;
         let mut all = true;
         for ws in self
@@ -650,7 +684,10 @@ impl PaneFlowApp {
             .value()
             .trim()
             .to_lowercase();
-        let rows = self.sidebar_rows(&query);
+        if self.grouped_by_status() {
+            return self.render_status_rows(list, &query, ui, window, cx);
+        }
+        let rows = self.sidebar_rows(&query, cx);
         let keyboard_focused = self.sidebar_focus.is_focused(window);
         let shown_order = Self::compute_display_order(&self.workspaces, self.active_space.as_ref());
         let topology = sidebar_motion_topology(&self.workspaces, &shown_order);
@@ -671,14 +708,7 @@ impl PaneFlowApp {
             window.request_animation_frame();
         }
         if rows.is_empty() && !query.is_empty() && !animating {
-            list = list.child(
-                div()
-                    .px(px(SIDEBAR_ROW_MARGIN_X + SIDEBAR_ROW_PADDING_X))
-                    .py(px(8.))
-                    .text_color(ui.muted)
-                    .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                    .child(format!("No workspaces or tabs match \"{query}\"")),
-            );
+            list = list.child(sidebar_no_match_message(&query, ui));
         }
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
         for (k, (row, amount)) in animated_rows.iter().enumerate() {

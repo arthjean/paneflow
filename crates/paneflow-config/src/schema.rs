@@ -81,6 +81,7 @@ mod tests {
                 agent_shimmer: Some(false),
                 agent_all_spaces: Some(true),
             },
+            sidebar_group_by: Some(SidebarGroupBy::Status),
             editor: EditorDisplayConfig {
                 minimap: Some(true),
                 scrollbar: Some(false),
