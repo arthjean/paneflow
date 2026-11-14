@@ -16,6 +16,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- **Workspace rows are gray.** In the Workspaces sidebar, a workspace's name now rests in the muted gray of its folder icon and turns to the text color under the pointer, so the tabs under it read first.
 - **Menus, selects and settings cards draw circular corners.** Context menus and the other popup menus, select popups, the usage panel of the sidebar and the cards of the Settings pages no longer use the continuous corners: menus are 14 px with 30 px rows, 13 px labels and a soft shadow, and settings cards are 12 px with no border. Pane cards, tabs, sidebar rows, dialogs, toasts and the command palette keep the continuous corners.
 
 ## [0.19.1] - 2026-11-13
