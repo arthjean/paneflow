@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **The Claude theme now follows Claude Code desktop.** Claude Dark and Claude Light take the neutral greys of the Claude Code side of the Claude desktop app in place of the warm paper and graphite: a `#191919` work area under a `#1f1f1f` sidebar in dark, white under `#fafafa` in light, a blue link accent instead of the orange one, and the syntax and diff colors of its Claude Dark and Claude Light code themes. The terminal cursor keeps the Claude orange.
+
 ## [0.19.1] - 2026-11-13
 
 ### Upgrade notes

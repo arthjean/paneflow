@@ -175,35 +175,35 @@ impl SyntaxPalette {
 
     pub fn claude_dark() -> Self {
         Self {
-            comment: h(0x75736d),
-            comment_doc: h(0x93938b),
-            keyword: h(0xd97757),
-            function: h(0xddd5c8),
-            r#type: h(0xb9b9ae),
-            constructor: h(0xddd5c8),
-            string: h(0x9ab38a),
-            string_escape: h(0x95b8b2),
-            string_special: h(0xd9905f),
-            number: h(0xc3a45f),
-            boolean: h(0xd97757),
-            constant: h(0xc3c2b7),
-            constant_builtin: h(0x8fa4b8),
-            property: h(0xd3a082),
-            variable: h(0xe3dacc),
-            variable_builtin: h(0xd5b976),
-            operator: h(0x93938b),
-            punctuation: h(0xe3dacc),
-            punctuation_special: h(0xd97757),
-            attribute: h(0xb9b9ae),
-            tag: h(0xe68a6d),
-            label: h(0xc3c2b7),
-            namespace: h(0xe3dacc),
-            title: h(0xc3c2b7),
-            text_literal: h(0x9ab38a),
-            link_uri: h(0x8fa4b8),
-            link_text: h(0xd97757),
-            emphasis: h(0xd9905f),
-            emphasis_strong: h(0xf2eee8),
+            comment: h(0x878787),
+            comment_doc: h(0x9c9c9c),
+            keyword: h(0xcc7bf4),
+            function: h(0x70b8ff),
+            r#type: h(0xfbad60),
+            constructor: h(0x70b8ff),
+            string: h(0x9be963),
+            string_escape: h(0x5fd0c8),
+            string_special: h(0xf7ab5f),
+            number: h(0xf5c56b),
+            boolean: h(0xcc7bf4),
+            constant: h(0xfdc98a),
+            constant_builtin: h(0x5fd0c8),
+            property: h(0x9fd0ff),
+            variable: h(0xf0f0f0),
+            variable_builtin: h(0xf7ab5f),
+            operator: h(0xd3d7de),
+            punctuation: h(0xf0f0f0),
+            punctuation_special: h(0xd3d7de),
+            attribute: h(0xfbad60),
+            tag: h(0xff707b),
+            label: h(0xd3d7de),
+            namespace: h(0xf0f0f0),
+            title: h(0x70b8ff),
+            text_literal: h(0x9be963),
+            link_uri: h(0x6aabf1),
+            link_text: h(0x70b8ff),
+            emphasis: h(0xf7ab5f),
+            emphasis_strong: h(0xffffff),
         }
     }
 
@@ -277,35 +277,35 @@ impl SyntaxPalette {
 
     pub fn claude_light() -> Self {
         Self {
-            comment: h(0x8f8b7d),
-            comment_doc: h(0x7a7667),
-            keyword: h(0xc2552f),
-            function: h(0x4a6fa5),
-            r#type: h(0x2f7d72),
-            constructor: h(0x4a6fa5),
-            string: h(0x4f7a3f),
-            string_escape: h(0x2b7f8f),
-            string_special: h(0xb0562e),
-            number: h(0x9a6b1f),
-            boolean: h(0xc2552f),
-            constant: h(0x6b5f3d),
-            constant_builtin: h(0x3f6b8a),
-            property: h(0xa14d5a),
-            variable: h(0x3d3929),
-            variable_builtin: h(0x8a6b2a),
-            operator: h(0x6f6a58),
-            punctuation: h(0x3d3929),
-            punctuation_special: h(0xc2552f),
-            attribute: h(0x2f7d72),
-            tag: h(0xb4442a),
-            label: h(0x6b6552),
-            namespace: h(0x3d3929),
-            title: h(0x8a4a2a),
-            text_literal: h(0x4f7a3f),
-            link_uri: h(0x2b6f9a),
-            link_text: h(0xc2552f),
-            emphasis: h(0xb0562e),
-            emphasis_strong: h(0x2e2b1e),
+            comment: h(0x7a7a7a),
+            comment_doc: h(0x666666),
+            keyword: h(0x8100c2),
+            function: h(0x0051c2),
+            r#type: h(0xb34a00),
+            constructor: h(0x0051c2),
+            string: h(0x007900),
+            string_escape: h(0x00707a),
+            string_special: h(0xb84f05),
+            number: h(0x8a5a00),
+            boolean: h(0x8100c2),
+            constant: h(0x9a3f00),
+            constant_builtin: h(0x00707a),
+            property: h(0x1757ac),
+            variable: h(0x191919),
+            variable_builtin: h(0xb84f05),
+            operator: h(0x2b303b),
+            punctuation: h(0x191919),
+            punctuation_special: h(0x2b303b),
+            attribute: h(0xb34a00),
+            tag: h(0xb7214c),
+            label: h(0x2b303b),
+            namespace: h(0x191919),
+            title: h(0x0051c2),
+            text_literal: h(0x007900),
+            link_uri: h(0x1757ac),
+            link_text: h(0x0051c2),
+            emphasis: h(0xb84f05),
+            emphasis_strong: h(0x000000),
         }
     }
 
@@ -621,11 +621,11 @@ mod tests {
             (
                 "Claude Dark",
                 claude_dark(),
-                h(0x1f1f1e),
-                h(0x1f1f1e),
-                h(0x262626),
-                h(0xe78363),
-                false,
+                h(0x191919),
+                h(0x1f1f1f),
+                h(0x252525),
+                h(0x6aabf1),
+                true,
             ),
             (
                 "Cursor Dark",
@@ -739,15 +739,12 @@ mod tests {
 
         let claude = ui_colors_with(&claude_dark());
         let diff = claude.diff_colors();
-        let canonical_dark_diff = dark.diff_colors();
-        assert_eq!(diff.added, canonical_dark_diff.added);
-        assert_eq!(diff.deleted, canonical_dark_diff.deleted);
-        assert_eq!(diff.added_background, canonical_dark_diff.added_background);
-        assert_eq!(
-            diff.deleted_background,
-            canonical_dark_diff.deleted_background
-        );
+        assert_eq!(diff.added, claude.vc_added);
+        assert_eq!(diff.deleted, claude.vc_deleted);
+        assert_eq!(diff.added_background, claude.vc_added_background);
+        assert_eq!(diff.deleted_background, claude.vc_deleted_background);
         assert_eq!(claude.vc_modified, dark.vc_modified);
+        let canonical_dark_diff = dark.diff_colors();
 
         let cursor = ui_colors_with(&cursor_dark());
         let diff = cursor.diff_colors();

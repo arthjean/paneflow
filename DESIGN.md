@@ -235,7 +235,7 @@ changes. Light presets keep their own surfaces.
 
 Diff colors on a dark theme fall back to Paneflow's canonical green and red
 with opaque row washes unless the preset sets `use_theme_diff_washes`;
-Vercel and Tailwind do. Status hues are functional and MUST NOT be recolored
+Vercel, Claude, and Tailwind do. Status hues are functional and MUST NOT be recolored
 to match a brand when doing so weakens the meaning.
 
 In every light preset, `vc_added` and `vc_deleted` are darkened from the wash
@@ -243,6 +243,23 @@ hue until they clear 4.5:1 on the title bar, the active and hover row tints,
 `base`, `surface`, and the diff gutter where the row wash and the gutter wash
 stack; the washes keep the lighter hue. `muted` clears 4.5:1 on the same
 sidebar tints.
+
+The Claude preset takes its palette from the Claude Code side of the Claude
+desktop app, sampled on 2026-11-13 from screenshots of both themes at 100%
+scale. Measured: the surfaces (dark `#191919` work area, `#1f1f1f` sidebar
+and dialog, `#252525` bubble and field, `#2a2a2a` control fill, `#303030`
+separator; light `#ffffff`, `#fafafa`, `#f3f3f3`, `#eeeeee`, `#e5e5e5`), the
+text pair (`#f0f0f0` and `#9c9c9c`; `#191919` and `#666666`), the link blue
+used as `accent` (`#6aabf1`; `#1757ac`), the danger red used as `agent_error`
+(`#f17778`; `#a42528`), the scrollbar thumb, and, from the Claude Dark and
+Claude Light code themes of its Settings, the keyword, function, type, string
+and punctuation colors plus the diff rows, word chips and gutters that the
+washes reproduce. Derived, because the app shows no source for them: cyan,
+the bright ANSI column, the comment, number and constant syntax slots,
+`vc_modified`, `vc_conflict`, the terminal selection (the app's `#257de0`
+focus blue at 0.35 and 0.20), and the `#D97757` cursor, kept as the brand
+mark of 4.3. Both variants are neutral greys: the earlier paper and graphite
+values came from the chat side of the product.
 
 The terminal selection foreground is never hand-tuned: it is recomputed at
 theme load until it clears APCA Lc 45 against the selection background.
