@@ -49,6 +49,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_group_by: Option<SidebarGroupBy>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub workspace_icon: Option<WorkspaceIcon>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub automation: AutomationConfig,
@@ -424,6 +426,10 @@ impl PaneFlowConfig {
         self.sidebar_group_by.unwrap_or_default()
     }
 
+    pub fn resolved_workspace_icon(&self) -> WorkspaceIcon {
+        self.workspace_icon.unwrap_or_default()
+    }
+
     pub fn resolved_submit_paste_delay_ms(&self) -> u64 {
         let raw = self
             .submit_paste_delay_ms
@@ -743,6 +749,51 @@ impl SidebarGroupBy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceIcon {
+    #[default]
+    Default,
+    Standard,
+    Metal,
+    Windows,
+    Windows95,
+    Pixel,
+}
+
+impl WorkspaceIcon {
+    pub const ALL: &'static [Self] = &[
+        Self::Default,
+        Self::Standard,
+        Self::Metal,
+        Self::Windows,
+        Self::Windows95,
+        Self::Pixel,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Standard => "Standard",
+            Self::Metal => "Metal",
+            Self::Windows => "Windows",
+            Self::Windows95 => "Windows 95",
+            Self::Pixel => "Pixel",
+        }
+    }
+
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Standard => "standard",
+            Self::Metal => "metal",
+            Self::Windows => "windows",
+            Self::Windows95 => "windows95",
+            Self::Pixel => "pixel",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundStyle {
     Themed,
@@ -924,6 +975,34 @@ mod tests {
         assert_eq!(config.theme.as_deref(), Some("One Dark"));
         let config: PaneFlowConfig = serde_json::from_str(r#"{"sidebar_group_by": 1}"#).unwrap();
         assert_eq!(config.resolved_sidebar_group_by(), SidebarGroupBy::Folder);
+    }
+
+    #[test]
+    fn workspace_icon_defaults_to_the_paneflow_folder_and_tolerates_garbage() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_workspace_icon(), WorkspaceIcon::Default);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"workspace_icon": "windows95"}"#).unwrap();
+        assert_eq!(config.resolved_workspace_icon(), WorkspaceIcon::Windows95);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"theme": "One Dark", "workspace_icon": "vista"}"#).unwrap();
+        assert_eq!(config.resolved_workspace_icon(), WorkspaceIcon::Default);
+        assert_eq!(config.theme.as_deref(), Some("One Dark"));
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"workspace_icon": 95}"#).unwrap();
+        assert_eq!(config.resolved_workspace_icon(), WorkspaceIcon::Default);
+    }
+
+    #[test]
+    fn every_workspace_icon_round_trips_through_its_wire_name() {
+        for &icon in WorkspaceIcon::ALL {
+            let json = serde_json::json!({ "workspace_icon": icon.wire_str() });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert_eq!(config.workspace_icon, Some(icon));
+            assert_eq!(
+                serde_json::to_value(icon).unwrap(),
+                serde_json::Value::String(icon.wire_str().to_string())
+            );
+        }
     }
 
     #[test]

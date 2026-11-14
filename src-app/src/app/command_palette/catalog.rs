@@ -33,6 +33,7 @@ pub(crate) enum Scope {
     Theme,
     ThemeMode,
     InterfaceStyle,
+    WorkspaceIcon,
     BackgroundStyle,
     Workspace,
     Space,
@@ -200,6 +201,7 @@ impl Scope {
             Scope::Theme => "Theme",
             Scope::ThemeMode => "Theme mode",
             Scope::InterfaceStyle => "Interface style",
+            Scope::WorkspaceIcon => "Workspace icon",
             Scope::BackgroundStyle => "Background style",
             Scope::Workspace => "Workspace",
             Scope::Space => "Space",
@@ -237,6 +239,7 @@ impl Scope {
             Scope::Theme => theme_values(app),
             Scope::ThemeMode => mode_values(app),
             Scope::InterfaceStyle => interface_style_values(app),
+            Scope::WorkspaceIcon => workspace_icon_values(app),
             Scope::BackgroundStyle => background_style_values(app),
             Scope::Workspace => workspace_values(app),
             Scope::Space => space_values(app),
@@ -311,6 +314,22 @@ fn interface_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
                 key: "interface_style",
                 nested: false,
                 value: json!(style.wire_str()),
+            },
+        })
+        .collect()
+}
+
+fn workspace_icon_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
+    let current = app.cached_config.resolved_workspace_icon();
+    paneflow_config::schema::WorkspaceIcon::ALL
+        .iter()
+        .map(|&icon| ScopeValue {
+            label: icon.label().to_string(),
+            current: current == icon,
+            apply: Apply::Setting {
+                key: "workspace_icon",
+                nested: false,
+                value: json!(icon.wire_str()),
             },
         })
         .collect()
@@ -1249,6 +1268,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         kind: Kind::Scope(Scope::InterfaceStyle),
     },
     Command {
+        label: "Workspace icon",
+        icon: Some("icons/folder.svg"),
+        keywords: "appearance sidebar folder chevron disclosure metal glass windows 95 pixel retro",
+        needs: Needs::Always,
+        section: Section::Appearance,
+        kind: Kind::Scope(Scope::WorkspaceIcon),
+    },
+    Command {
         label: "Background style",
         icon: Some("icons/palette/layers-01.svg"),
         keywords: "appearance themed blended transparency translucent blur material mica vibrancy",
@@ -1754,6 +1781,7 @@ mod tests {
             Scope::Theme,
             Scope::ThemeMode,
             Scope::InterfaceStyle,
+            Scope::WorkspaceIcon,
             Scope::BackgroundStyle,
             Scope::Workspace,
             Scope::Space,

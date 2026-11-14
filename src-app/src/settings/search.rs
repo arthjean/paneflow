@@ -42,6 +42,11 @@ pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
     description: "Paneflow draws continuous corners with generous radii. Classic draws \
                   circular corners on a tighter scale, with denser menus and soft shadows.",
 };
+pub(crate) const WORKSPACE_ICON: SettingCopy = SettingCopy {
+    title: "Workspace icon",
+    description: "Glyph in front of each workspace in the sidebar. Standard shows a \
+                  disclosure chevron in place of the folder.",
+};
 pub(crate) const APP_ICON: SettingCopy = SettingCopy {
     title: "App icon",
     description: if cfg!(target_os = "windows") {
@@ -221,6 +226,7 @@ const GENERAL_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &WORKSPACE_ICON,
     &BACKGROUND_STYLE,
     &APP_ICON,
     &REDUCE_MOTION,
@@ -231,6 +237,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &WORKSPACE_ICON,
     &BACKGROUND_STYLE,
     &APP_ICON,
     &REDUCE_MOTION,
@@ -241,6 +248,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &WORKSPACE_ICON,
     &BACKGROUND_STYLE,
     &APP_ICON,
     &REDUCE_MOTION,
@@ -251,6 +259,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &WORKSPACE_ICON,
     &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,

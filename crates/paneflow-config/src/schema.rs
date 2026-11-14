@@ -83,6 +83,7 @@ mod tests {
                 agent_all_spaces: Some(true),
             },
             sidebar_group_by: Some(SidebarGroupBy::Status),
+            workspace_icon: Some(WorkspaceIcon::Pixel),
             editor: EditorDisplayConfig {
                 minimap: Some(true),
                 scrollbar: Some(false),

@@ -7,6 +7,7 @@ impl PaneFlowApp {
         &self,
         i: usize,
         cursor: bool,
+        folder: FolderGlyphs,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -107,23 +108,18 @@ impl PaneFlowApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    svg()
-                        .size(px(SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH))
-                        .flex_none()
-                        .path(path)
-                        .text_color(ui.muted.opacity(visibility)),
-                )
+                .opacity(visibility)
+                .child(folder.render(path, ui))
         };
         let disclosure = div()
             .relative()
             .flex_none()
             .size(px(SIDEBAR_FOLDER_SLOT_WIDTH))
             .when(openness < 1., |slot| {
-                slot.child(folder_glyph("icons/folder.svg", 1. - openness))
+                slot.child(folder_glyph(folder.closed, 1. - openness))
             })
             .when(openness > 0., |slot| {
-                slot.child(folder_glyph("icons/folder-open.svg", openness))
+                slot.child(folder_glyph(folder.open, openness))
             });
 
         let title_row = div()

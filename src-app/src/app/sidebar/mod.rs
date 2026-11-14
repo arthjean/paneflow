@@ -3,6 +3,7 @@ mod agents_section;
 pub(crate) mod context_menu;
 pub(crate) mod customize_menu;
 mod drop;
+mod folder_glyph;
 pub(crate) mod keyboard;
 mod lane;
 mod meta;
@@ -24,6 +25,7 @@ use gpui::{
 use crate::ui_primitives::squircle_skin;
 pub(crate) use agents_section::AgentsSection;
 use drop::*;
+pub(crate) use folder_glyph::{FolderGlyphs, folder_glyphs};
 pub(crate) use lane::SpinnerClock;
 use lane::{Lane, infer_lane, render_lane_slot};
 use meta::*;
@@ -711,6 +713,10 @@ impl PaneFlowApp {
             list = list.child(sidebar_no_match_message(&query, ui));
         }
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
+        let folder = folder_glyphs(
+            self.cached_config.resolved_workspace_icon(),
+            window.scale_factor(),
+        );
         for (k, (row, amount)) in animated_rows.iter().enumerate() {
             let group_opening = match row {
                 SidebarRow::Folder(_) => k
@@ -732,6 +738,7 @@ impl PaneFlowApp {
                     .render_workspace_row(
                         i,
                         keyboard_focused && self.sidebar_cursor_matches(*row),
+                        folder,
                         ui,
                         cx,
                     )

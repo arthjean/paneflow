@@ -5,6 +5,8 @@ use gpui::{
 
 use paneflow_config::schema::{AppIcon, BackgroundStyle, InterfaceStyle, PaneFlowConfig};
 
+use paneflow_config::schema::WorkspaceIcon;
+
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
@@ -72,6 +74,10 @@ impl PaneFlowApp {
             .row(
                 &search::INTERFACE_STYLE,
                 self.render_interface_style_select(ui, cx),
+            )
+            .row(
+                &search::WORKSPACE_ICON,
+                self.render_workspace_icon_select(window.scale_factor(), ui, cx),
             );
         if !PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty() {
             preset_card = preset_card.row(
@@ -578,6 +584,110 @@ impl PaneFlowApp {
             false,
             "interface_style",
             serde_json::Value::String(style.wire_str().to_string()),
+            cx,
+        );
+    }
+
+    fn render_workspace_icon_select(
+        &self,
+        scale_factor: f32,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let is_open = self.general_dropdown == Some(GeneralDropdown::WorkspaceIcon);
+        let current = self.cached_config.resolved_workspace_icon();
+        let preview = move |icon: WorkspaceIcon| {
+            let glyphs = crate::app::sidebar::folder_glyphs(icon, scale_factor);
+            div()
+                .flex_none()
+                .size(px(crate::app::sidebar::SIDEBAR_FOLDER_SLOT_WIDTH))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(glyphs.render(glyphs.closed, ui))
+        };
+
+        let mut trigger = select_trigger(
+            "workspace-icon-select",
+            search::WORKSPACE_ICON.title,
+            is_open,
+            ui,
+        )
+        .on_press(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.general_dropdown = if is_open {
+                None
+            } else {
+                Some(GeneralDropdown::WorkspaceIcon)
+            };
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(preview(current))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(crate::ui_primitives::BODY)
+                .text_color(ui.text)
+                .truncate()
+                .child(current.label()),
+        )
+        .child(select_chevron(ui));
+
+        if is_open {
+            let mut menu = select_menu("workspace-icon-list", ui).on_mouse_down_out(cx.listener(
+                |this, _, _w, cx| {
+                    if this.general_dropdown == Some(GeneralDropdown::WorkspaceIcon) {
+                        this.general_dropdown = None;
+                        cx.notify();
+                    }
+                },
+            ));
+            for (idx, &icon) in WorkspaceIcon::ALL.iter().enumerate() {
+                menu = menu.child(
+                    select_option(("workspace-icon", idx), current == icon, ui)
+                        .cursor(CursorStyle::Arrow)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.general_dropdown = None;
+                            this.apply_workspace_icon(icon, cx);
+                        }))
+                        .child(preview(icon))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(ui.text)
+                                .child(icon.label()),
+                        ),
+                );
+            }
+            trigger = trigger.child(deferred_select_menu(menu));
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .px(px(12.))
+            .py(px(10.))
+            .child(setting_text(
+                ui,
+                search::WORKSPACE_ICON.title,
+                search::WORKSPACE_ICON.description,
+            ))
+            .child(div().flex_shrink_0().child(trigger))
+            .into_any_element()
+    }
+
+    pub(crate) fn apply_workspace_icon(&mut self, icon: WorkspaceIcon, cx: &mut Context<Self>) {
+        self.persist_setting(
+            false,
+            "workspace_icon",
+            serde_json::Value::String(icon.wire_str().to_string()),
             cx,
         );
     }

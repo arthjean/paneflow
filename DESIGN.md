@@ -416,9 +416,26 @@ live in `src-app/assets/agents/` and in the icons folder for Claude, Codex,
 OpenCode, and Pi; a mark ships monochrome when the brand allows it and as a
 multicolor image otherwise (`render_logo` decides per logo).
 
-Workspace folder rows use the shared Hugeicons `folder.svg` and
-`folder-open.svg` stroke glyphs, tinted with `muted` at 15 px. The welcome
-screen, the diff dock, and the workspace settings use the same two files. The
+Workspace folder rows draw the glyph pair that `workspace_icon` (Settings,
+Appearance, **Workspace icon**) selects, centered in the 20 px folder slot and
+crossfading from closed to open with the disclosure. `sidebar/folder_glyph.rs`
+owns the table:
+
+| Style | Closed and open glyph | Size | Ink |
+| --- | --- | --- | --- |
+| `Default` | the shared Hugeicons `folder.svg` and `folder-open.svg` stroke glyphs | 15 px | `muted` |
+| `Standard` | Hugeicons chevron right and chevron down, no folder | 16 px | `muted` |
+| `Metal` | filled glass folder, an alpha gradient mask | 16 px | `text` |
+| `Windows` | yellow gradient folder | 16 px | its own colors |
+| `Windows 95` | 16-color pixel folder on a 16-cell grid, on the original 32-cell grid at a scale factor of 2 or more | 16 px | its own colors |
+| `Pixel` | outlined pixel folder on a 16-cell grid | 16 px | `muted` |
+
+A masked glyph takes its ink from the theme; a colored one is drawn as an
+image and keeps its own. A pixel-grid glyph is sized so one cell covers a whole
+device pixel at scale 1 and 2, and its slot margin is even so it never sits on
+a half pixel: do not give it a size that is not a multiple of its grid. The
+setting restyles workspace rows only. The welcome
+screen, the diff dock, and the workspace settings keep the two `Default` files. The
 sidebar footer settings button uses the matching `settings.svg` gear.
 
 | Size | Use |

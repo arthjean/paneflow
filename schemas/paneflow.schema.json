@@ -282,6 +282,12 @@
       "enum": ["paneflow", "classic", null],
       "default": "paneflow"
     },
+    "workspace_icon": {
+      "type": ["string", "null"],
+      "description": "Glyph drawn in front of each workspace row of the sidebar, closed while the workspace is folded and open while its tabs show. 'default' is Paneflow's outlined folder. 'standard' draws a disclosure chevron, right when folded and down when open, in place of a folder. 'metal' is a filled glass folder. 'windows' is a yellow gradient folder. 'windows95' is the 16-color pixel folder, on a 16-cell grid, or on the original 32-cell grid when the display scale is 2 or more. 'pixel' is an outlined pixel folder on a 16-cell grid. Hot-reloads.",
+      "enum": ["default", "standard", "metal", "windows", "windows95", "pixel", null],
+      "default": "default"
+    },
     "app_icon": {
       "type": ["string", "null"],
       "description": "Icon Paneflow shows for its running windows. 'glass' is the installed violet glass icon. 'black' and 'white' draw the mark in horizontal bars on a black or a white tile; 'black-solid' and 'white-solid' draw its panes as solid shapes. The other values are illustrated icons that show the same mark in another material. Applies at once on Windows (Alt+Tab, and the shortcuts of the user profile that open this Paneflow, the pinned taskbar one and the Start menu entry included; the taskbar button follows at the next sign-in) and macOS (Dock, while Paneflow runs), and to new windows on Linux under X11. Wayland takes the icon from the installed desktop entry and ignores this field.",

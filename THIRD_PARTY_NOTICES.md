@@ -122,6 +122,29 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Workspace folder icons
+
+The files under `src-app/assets/icons/workspace/` come from several sources.
+
+- `chevron-right.svg` and `chevron-down.svg` are the free Hugeicons stroke
+  rounded chevrons, under the Hugeicons notice above.
+- `metal-folder.svg` and `metal-folder-open.svg` are the glass folder marks of
+  Unpeel (https://github.com/unpeel-com/unpeel), file
+  `clients/native/UnpeelNative/Sources/UnpeelNative/ChromeIcons.swift`, under
+  the Unpeel MIT license above. Their outlines are the Phosphor Icons
+  (https://phosphoricons.com) `folder-fill` and `folder-open-fill` glyphs, also
+  MIT, Copyright (c) 2023 Phosphor Icons.
+- `windows-folder.svg` and `windows-folder-open.svg` are the Icons8
+  (https://icons8.com) `Folder` and `Opened Folder` icons. Their path data and
+  gradients are unchanged; only the wrapping `<svg>` attributes were
+  normalized.
+- `windows95-folder*.svg` redraw the folder icon of Microsoft Windows 95 as
+  SVG rectangles, one per run of pixels. The 32-cell closed folder follows the
+  original pixel for pixel; the 16-cell pair and both open folders are
+  Paneflow's drawings in the same 16-color palette.
+- `pixel-folder.svg` and `pixel-folder-open.svg` are redrawn on a 16-cell grid
+  from a third-party pixel icon pair.
+
 ## portable-pty
 
 `vendor/portable-pty/` is portable-pty 0.9.0 by Wez Furlong, as published on
