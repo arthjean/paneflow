@@ -42,6 +42,19 @@ pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
     description: "Paneflow draws continuous corners with generous radii. Classic draws \
                   circular corners on a tighter scale, with denser menus and soft shadows.",
 };
+pub(crate) const APP_ICON: SettingCopy = SettingCopy {
+    title: "App icon",
+    description: if cfg!(target_os = "windows") {
+        "Icon of the app in Alt+Tab, in the Start menu and on its shortcuts. A pinned \
+         taskbar button changes at the next sign-in."
+    } else if cfg!(target_os = "macos") {
+        "Icon of the running app in the Dock. The Dock shows the installed icon again once \
+         Paneflow quits."
+    } else {
+        "Icon of new Paneflow windows under X11. Wayland takes the icon from the installed \
+         desktop entry."
+    },
+};
 pub(crate) const BACKGROUND_STYLE: SettingCopy = SettingCopy {
     title: "Background style",
     description: if cfg!(target_os = "macos") {
@@ -209,6 +222,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &BACKGROUND_STYLE,
+    &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &CHROME_MATERIAL,
@@ -218,6 +232,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &BACKGROUND_STYLE,
+    &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &SIDEBAR_TRANSPARENCY,
@@ -227,6 +242,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
     &BACKGROUND_STYLE,
+    &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
     &CHROME_TRANSPARENCY,
@@ -235,6 +251,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
+    &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
 ];

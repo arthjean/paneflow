@@ -477,7 +477,9 @@ impl PaneFlowApp {
         }
         let body = match section {
             SettingsSection::General => self.render_general_content(cx).into_any_element(),
-            SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
+            SettingsSection::Appearance => self
+                .render_appearance_content(window, cx)
+                .into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
             SettingsSection::Agents => self.render_agents_content(cx).into_any_element(),
             SettingsSection::Usage => self.render_usage_content(window, cx),

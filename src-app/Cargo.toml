@@ -337,6 +337,9 @@ windows-sys = { version = "0.59", features = [
     # Custom caption controls need an explicit SW_MAXIMIZE/SW_RESTORE toggle;
     # GPUI's Windows zoom implementation only sends SW_MAXIMIZE.
     "Win32_UI_WindowsAndMessaging",
+    # App icon setting: GetDpiForWindow picks the bitmap size WM_SETICON
+    # receives for the small and the taskbar icon (see `app_icon`).
+    "Win32_UI_HiDpi",
     "Win32_System_Registry",
     # EP-006 US-013 (agent-control-plane-hardening): PeekNamedPipe gates every
     # events.subscribe push on the named pipe's liveness, so a disconnected
@@ -370,6 +373,16 @@ win32job = "2.0.3"
 # per-user AppUserModelID registration under
 # HKCU\Software\Classes\AppUserModelId.
 windows-registry = "0.5"
+# App icon setting: IShellLinkW and IPersistFile point the user's pinned
+# taskbar shortcut at the chosen icon (see `app_icon::shortcut`). Same version
+# as GPUI's own `windows` dependency and a subset of its features, so no new
+# crate or binding module is compiled.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"

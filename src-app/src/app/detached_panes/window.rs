@@ -93,9 +93,11 @@ impl PaneFlowApp {
                     config.window_backdrop.as_deref(),
                 ),
                 focus: restored_bounds.is_none(),
+                icon: crate::app_icon::window_icon(config.resolved_app_icon()),
                 ..Default::default()
             },
             move |window, cx| {
+                crate::app_icon::apply_to_window(window, config.resolved_app_icon());
                 #[cfg(target_os = "windows")]
                 if crate::app::constants::window_backdrop_uses_mica(
                     config.window_backdrop.as_deref(),

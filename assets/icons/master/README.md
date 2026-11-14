@@ -42,6 +42,67 @@ the size of the full source: an earlier version enlarged it by 12%, and the
 smaller padding inside the tile was visible in the taskbar next to the large
 renders.
 
+## App icon variants
+
+Settings > Appearance > App icon offers twenty more icons besides the glass
+one: the mark drawn in horizontal bars, on a black tile and on a white tile,
+the same panes as solid shapes on the same two tiles, and sixteen illustrated
+skins. They
+never reach the ICO, the ICNS, or Linux hicolor: the installed icon stays the
+glass one, and `src-app/src/app_icon.rs` applies a variant to the running app
+from the PNGs under `src-app/assets/icons/app/`. On Windows it also encodes
+those PNGs into `icons/paneflow-<name>-<hash>.ico` in the Paneflow home and
+points the user's own shortcuts to this Paneflow at that file, because a pinned
+taskbar button shows the icon of its shortcut, not of the window. Windows
+caches the image of that button and reads the shortcut again only when it
+reloads the taskbar, at sign-in or when Explorer restarts: no shell
+notification refreshed it on Windows 11 build 26300. A machine-wide Start
+menu shortcut cannot be rewritten, so Paneflow copies it to the same
+relative path in the user's Start menu folder, which the shell prefers,
+lists the copy in `icons/start-menu-shortcuts`, and deletes it again when
+Glass comes back. The hash in
+the name changes with the artwork, so the shell never serves a stale cached
+icon.
+
+The sources live under `svg/bars/` and `svg/solid/`, flat fills with no
+filter, on the plate outline of the glass icon. `<name>` is `black` or
+`white`:
+
+| Source | Render | Used for |
+|---|---|---|
+| `paneflow-icon-bars-<name>.svg` | none shipped | The reference drawing: 28 bars on a 24 px pitch, so bars land on whole pixels at 256 and 512 px. |
+| `paneflow-icon-bars-<name>-<size>.svg`, sizes 16, 24, 32, 48, 64, 96, 128 | `<name>-<size>.png` at exactly `<size>` px | Windows `WM_SETICON` bitmaps, the X11 window icon (128), and the Settings preview (64, 96 or 128 by display scale). Each is drawn for its own pixel grid, with 6 to 21 bars, because 28 bars blur into grey below 256 px. Up to 64 px a bar is one pixel of ink over one pixel of gap: thicker bars leave too few of them to draw the panes and the wave. |
+| `paneflow-icon-bars-<name>-shell-<size>.svg`, sizes 32, 40, 48, 64, 96 | `<name>-shell-<size>.png` at exactly `<size>` px | The large-icon entries of the Windows icon file. The Windows 11 taskbar never shows them at their own size: it takes the large icon, 32 px at 100% display scale, and draws it at three quarters, 24 px. One-pixel bars over an empty gap turn into uneven grey stripes under that reduction and the panes disappear, so these drawings fill each gap with the ink at 42% of the bar: the reduced image keeps the silhouette of the three panes and the wave, with the bars as a texture. Wider bars on a 4 px pitch stayed sharp but left six of them, too few to draw the mark. |
+| `paneflow-icon-bars-<name>-macos.svg` | `<name>-macos-512.png` at 512 px | The Dock image: 21 bars on a tile inset to 80.47%, the body the ICNS uses. |
+| `paneflow-icon-solid-<name>.svg` | none shipped | The reference drawing of the solid variant: the three pane outlines and the stream of `paneflow-icon-portable.svg`, as flat fills. Each pane is painted over the plate colour first, so a pane never shows through the one in front, and the stream is painted in the plate colour. An earlier version stacked the 28 rows of the bar mark with no gap: its stepped edges looked rough next to the glass icon. |
+| `paneflow-icon-solid-<name>-<size>.svg`, sizes 16, 24, 32, 40, 48, 64, 96, 128 | `<name>-solid-<size>.png` | The solid variant at every size. One drawing serves both families, so no `-shell-` file exists: solid shapes carry no fine pattern, and the taskbar reduction costs them nothing. At 16 and 24 px the stream is widened by 34 units, as the simplified plated source does, so the cut survives. |
+| `paneflow-icon-solid-<name>-macos.svg` | `<name>-solid-macos-512.png` at 512 px | The Dock image of the solid variant. |
+
+### Illustrated skins
+
+The sixteen skins are raster illustrations, not drawings: the same mark in
+another material, on the plate outline of the glass icon, with transparent
+corners. Their masters are `skins/<name>-1024.png`:
+`aubergine`, `paper`, `midnight-matte`, `polar`,
+`melon`, `honeydew`, `berry`, `rainbow`, `solarwave`, `neon`,
+`phosphor`, `holo`, `amethyst`, `blueprint`, `chip`, `nostalgia`.
+
+| Master | Render | Used for |
+|---|---|---|
+| `skins/<name>-1024.png` | `<name>-<size>.png`, sizes 16, 24, 32, 40, 48, 64, 96, 128 | Every Windows bitmap and icon file entry, the X11 window icon and the Settings preview. A skin has no pixel-fitted drawing and no `-shell-` file: each size is a Lanczos reduction of the master, computed on premultiplied alpha so the transparent corners leave no fringe. |
+| `skins/<name>-1024.png` | `<name>-macos-512.png` | The Dock image: the master reduced to 412 px, the 80.47% body, centered on a transparent 512 px canvas. |
+
+`src-app/src/assets.rs` leaves every `*-macos-*.png` out of the Windows and
+Linux binaries, which never read them.
+
+`glass-64.png`, `glass-96.png` and `glass-128.png` are the Settings preview of
+the glass icon, downscaled from `paneflow-icon-windows-1024.png`.
+
+Render each SVG source at the size its name states, never from a larger
+render: a downscale breaks the pixel fit the size-specific drawings exist for.
+Any SVG renderer works, since these sources use no filter. A test in
+`src-app/src/app_icon.rs` checks that every PNG is embedded at its named size.
+
 ## Windows plating geometry
 
 The three desktop platforms ship the same plated icon. On Windows the tile

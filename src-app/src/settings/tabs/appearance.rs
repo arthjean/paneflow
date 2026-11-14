@@ -1,9 +1,9 @@
 use gpui::{
     ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px,
+    SharedString, Styled, div, img, prelude::*, px,
 };
 
-use paneflow_config::schema::{BackgroundStyle, InterfaceStyle, PaneFlowConfig};
+use paneflow_config::schema::{AppIcon, BackgroundStyle, InterfaceStyle, PaneFlowConfig};
 
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
@@ -12,12 +12,18 @@ use crate::settings::components::{
     select_option, select_trigger, setting_text, soft_button, toggle_switch, with_alpha,
 };
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AccessibleControlExt, AnimatedHover, AnimatedHoverExt, lerp_color};
 
 const THEME_MODE_TILE_HEIGHT: f32 = 134.;
 const THEME_MODE_TILE_RADIUS: f32 = 10.;
 const THEME_MODE_TILE_BORDER: f32 = 2.;
 const THEME_PREVIEW_CORNER_RADIUS: f32 = 8.;
+
+const APP_ICON_TILE: f32 = 64.;
+const APP_ICON_RING_GAP: f32 = 2.;
+const APP_ICON_RING_RADIUS: f32 = 18.;
+const APP_ICON_TILE_GAP: f32 = 6.;
+const APP_ICON_ROW_GAP: f32 = 10.;
 
 const PREVIEW_BAR_W: f32 = 4.;
 const PREVIEW_BAR_PAD: f32 = 4.;
@@ -33,7 +39,11 @@ enum MockupHalf {
 }
 
 impl PaneFlowApp {
-    pub(crate) fn render_appearance_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_appearance_content(
+        &self,
+        window: &gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let reset_btn = soft_button(
             "reset-theme",
@@ -69,6 +79,10 @@ impl PaneFlowApp {
                 self.render_background_style_select(ui, cx),
             );
         }
+        let preset_card = preset_card.row(
+            &search::APP_ICON,
+            self.render_app_icon_row(window.scale_factor(), ui, cx),
+        );
 
         let reduce_motion = self.cached_config.reduce_motion_enabled();
         let motion_row = div()
@@ -568,6 +582,53 @@ impl PaneFlowApp {
         );
     }
 
+    fn render_app_icon_row(
+        &self,
+        scale_factor: f32,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let current = self.cached_config.resolved_app_icon();
+        let mut tiles = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(APP_ICON_TILE_GAP));
+        for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
+            tiles = tiles.child(
+                app_icon_tile(idx, icon, current == icon, scale_factor, ui).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _window, cx| {
+                        this.apply_app_icon(icon, cx);
+                    },
+                )),
+            );
+        }
+
+        div()
+            .id("row-app-icon")
+            .flex()
+            .flex_col()
+            .gap(px(APP_ICON_ROW_GAP))
+            .px(px(12.))
+            .py(px(10.))
+            .child(setting_text(
+                ui,
+                search::APP_ICON.title,
+                search::APP_ICON.description,
+            ))
+            .child(tiles)
+            .into_any_element()
+    }
+
+    pub(crate) fn apply_app_icon(&mut self, icon: AppIcon, cx: &mut Context<Self>) {
+        self.persist_setting(
+            false,
+            "app_icon",
+            serde_json::Value::String(icon.wire_str().to_string()),
+            cx,
+        );
+    }
+
     fn render_background_style_select(
         &self,
         ui: crate::theme::UiColors,
@@ -1005,4 +1066,44 @@ fn preview_diff_column(
     }
 
     column
+}
+
+fn app_icon_tile(
+    idx: usize,
+    icon: AppIcon,
+    is_active: bool,
+    scale_factor: f32,
+    ui: crate::theme::UiColors,
+) -> AnimatedHover {
+    let resting = with_alpha(ui.text, if is_active { 0.85 } else { 0. });
+    let hovered = with_alpha(ui.text, if is_active { 0.85 } else { 0.32 });
+    div()
+        .id(("app-icon", idx))
+        .flex_none()
+        .p(px(APP_ICON_RING_GAP))
+        .rounded(px(APP_ICON_RING_RADIUS))
+        .border_2()
+        .border_color(resting)
+        .focusable()
+        .accessible_control(gpui::accesskit::Role::Button, icon.label())
+        .animated_hover(move |style, delta| {
+            style.border_color(lerp_color(resting, hovered, delta));
+        })
+        .child(
+            img(crate::app_icon::preview_asset(icon, scale_factor))
+                .size(px(APP_ICON_TILE))
+                .flex_none(),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_app_icon_tile_builds_with_a_single_tooltip() {
+        for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
+            let _ = app_icon_tile(idx, icon, idx == 0, 1.0, crate::theme::ui_colors());
+        }
+    }
 }

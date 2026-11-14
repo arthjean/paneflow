@@ -511,6 +511,7 @@ impl PaneFlowApp {
             app.cached_config.resolved_interface_style(),
             cx,
         );
+        crate::app_icon::apply(app.cached_config.resolved_app_icon(), cx);
         crate::app::diff_dock::code::controls::set_editor_display(
             crate::app::diff_dock::code::controls::EditorDisplay::from_config(
                 &app.cached_config.editor,

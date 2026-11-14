@@ -332,6 +332,7 @@ activity registers use their own ramp, never the level colors: level 0 is
 | Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
 | Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
+| App icon tile | 18 | round, concentric with the 64 px icon plate through a 2 px gap | 2 px `text` at 0 at rest, 0.32 on hover, 0.85 when selected; tiles sit 6 px apart, in a wrapping row 10 px under the setting text; a tile carries no label, its name is the tooltip |
 | Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
 | Drop overlay, drop placeholder | 8 | round | drop overlay 2 px blue |
 | Theme mockup inner frame | 7 | round | none |
@@ -462,7 +463,7 @@ middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 | Comet spinner | 700 ms loop | linear rotate | `comet_spinner` on `icons/comet.svg`: a ring stroked at 0.12 of its size whose opacity ramps linearly from 0 to 1 clockwise from the top, with a round head at the top; every busy state of the title bar update pill. Static under reduced motion |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
-| Tooltip | 800 ms delay | none | `delayed_tooltip` |
+| Tooltip | 800 ms delay | none | `delayed_tooltip`. `accessible_control` already calls it with the control's label, and GPUI panics in a debug build on a second tooltip for one element: a control built with `accessible_control` takes no other tooltip, and a test that builds the element catches the mistake (`every_app_icon_tile_builds_with_a_single_tooltip`) |
 
 `reduce_motion` (Settings, Appearance) sets both
 `ui_primitives::reduce_motion()` and GPUI's `cx.reduce_motion()`

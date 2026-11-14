@@ -33,6 +33,7 @@ fn test_serialization_roundtrip() {
         reduce_motion: None,
         comfortable_density: None,
         interface_style: None,
+        app_icon: None,
         sidebar_show: SidebarShow {
             status: Some(false),
             ..SidebarShow::default()

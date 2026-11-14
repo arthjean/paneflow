@@ -43,6 +43,8 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub interface_style: Option<InterfaceStyle>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub app_icon: Option<AppIcon>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_show: SidebarShow,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub sidebar_group_by: Option<SidebarGroupBy>,
@@ -414,6 +416,10 @@ impl PaneFlowConfig {
         self.interface_style.unwrap_or_default()
     }
 
+    pub fn resolved_app_icon(&self) -> AppIcon {
+        self.app_icon.unwrap_or_default()
+    }
+
     pub fn resolved_sidebar_group_by(&self) -> SidebarGroupBy {
         self.sidebar_group_by.unwrap_or_default()
     }
@@ -607,6 +613,111 @@ impl InterfaceStyle {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppIcon {
+    #[default]
+    Glass,
+    Black,
+    White,
+    BlackSolid,
+    WhiteSolid,
+    Aubergine,
+    Paper,
+    MidnightMatte,
+    Polar,
+    Melon,
+    Honeydew,
+    Berry,
+    Rainbow,
+    Solarwave,
+    Neon,
+    Phosphor,
+    Holo,
+    Amethyst,
+    Blueprint,
+    Chip,
+    Nostalgia,
+}
+
+impl AppIcon {
+    pub const ALL: &'static [Self] = &[
+        Self::Glass,
+        Self::Black,
+        Self::White,
+        Self::BlackSolid,
+        Self::WhiteSolid,
+        Self::Aubergine,
+        Self::Paper,
+        Self::MidnightMatte,
+        Self::Polar,
+        Self::Melon,
+        Self::Honeydew,
+        Self::Berry,
+        Self::Rainbow,
+        Self::Solarwave,
+        Self::Neon,
+        Self::Phosphor,
+        Self::Holo,
+        Self::Amethyst,
+        Self::Blueprint,
+        Self::Chip,
+        Self::Nostalgia,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Glass => "Glass",
+            Self::Black => "Black",
+            Self::White => "White",
+            Self::BlackSolid => "Black solid",
+            Self::WhiteSolid => "White solid",
+            Self::Aubergine => "Aubergine",
+            Self::Paper => "Paper",
+            Self::MidnightMatte => "Midnight matte",
+            Self::Polar => "Polar",
+            Self::Melon => "Melon",
+            Self::Honeydew => "Honeydew",
+            Self::Berry => "Berry",
+            Self::Rainbow => "Rainbow",
+            Self::Solarwave => "Solarwave",
+            Self::Neon => "Neon",
+            Self::Phosphor => "Phosphor",
+            Self::Holo => "Holo",
+            Self::Amethyst => "Amethyst",
+            Self::Blueprint => "Blueprint",
+            Self::Chip => "Chip",
+            Self::Nostalgia => "Nostalgia",
+        }
+    }
+
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Glass => "glass",
+            Self::Black => "black",
+            Self::White => "white",
+            Self::BlackSolid => "black-solid",
+            Self::WhiteSolid => "white-solid",
+            Self::Aubergine => "aubergine",
+            Self::Paper => "paper",
+            Self::MidnightMatte => "midnight-matte",
+            Self::Polar => "polar",
+            Self::Melon => "melon",
+            Self::Honeydew => "honeydew",
+            Self::Berry => "berry",
+            Self::Rainbow => "rainbow",
+            Self::Solarwave => "solarwave",
+            Self::Neon => "neon",
+            Self::Phosphor => "phosphor",
+            Self::Holo => "holo",
+            Self::Amethyst => "amethyst",
+            Self::Blueprint => "blueprint",
+            Self::Chip => "chip",
+            Self::Nostalgia => "nostalgia",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarGroupBy {
     #[default]
@@ -765,6 +876,37 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(style).unwrap(),
                 serde_json::Value::String(style.wire_str().to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn app_icon_defaults_to_glass_and_tolerates_garbage() {
+        let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::Glass);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"app_icon": "black"}"#).unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::Black);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"app_icon": "white-solid"}"#).unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::WhiteSolid);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"app_icon": "midnight-matte"}"#).unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::MidnightMatte);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"app_icon": "plaid"}"#).unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::Glass);
+        let config: PaneFlowConfig = serde_json::from_str(r#"{"app_icon": 2}"#).unwrap();
+        assert_eq!(config.resolved_app_icon(), AppIcon::Glass);
+    }
+
+    #[test]
+    fn every_app_icon_round_trips_through_its_wire_name() {
+        for &icon in AppIcon::ALL {
+            let json = serde_json::json!({ "app_icon": icon.wire_str() });
+            let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
+            assert_eq!(config.app_icon, Some(icon));
+            assert_eq!(
+                serde_json::to_value(icon).unwrap(),
+                serde_json::Value::String(icon.wire_str().to_string())
             );
         }
     }

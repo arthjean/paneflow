@@ -260,6 +260,9 @@ impl PaneFlowApp {
                 cx,
             );
         }
+        if !nested && key == "app_icon" {
+            crate::app_icon::apply(self.cached_config.resolved_app_icon(), cx);
+        }
         if !nested && key == "editor" {
             self.apply_editor_display(cx);
         }
@@ -573,6 +576,7 @@ impl PaneFlowApp {
                 self.cached_config.resolved_interface_style(),
                 cx,
             );
+            crate::app_icon::apply(self.cached_config.resolved_app_icon(), cx);
             self.apply_editor_display(cx);
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);

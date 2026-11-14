@@ -16,6 +16,7 @@ mod agents;
 mod ai_hooks;
 mod ai_types;
 mod app;
+mod app_icon;
 mod assets;
 mod auto_naming;
 #[cfg(test)]

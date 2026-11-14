@@ -67,6 +67,7 @@ mod tests {
             reduce_motion: Some(false),
             comfortable_density: Some(true),
             interface_style: Some(InterfaceStyle::Classic),
+            app_icon: Some(AppIcon::Black),
             sidebar_show: SidebarShow {
                 branch: Some(true),
                 diffstat: Some(true),

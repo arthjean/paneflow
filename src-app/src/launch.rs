@@ -422,9 +422,11 @@ pub(crate) fn run() {
                         config.window_backdrop.as_deref(),
                     ),
                     app_id: Some("paneflow".into()),
+                    icon: crate::app_icon::window_icon(config.resolved_app_icon()),
                     ..Default::default()
                 },
                 |window, cx| {
+                    crate::app_icon::apply_to_window(window, config.resolved_app_icon());
                     #[cfg(target_os = "windows")]
                     if crate::app::constants::window_backdrop_uses_mica(
                         config.window_backdrop.as_deref(),

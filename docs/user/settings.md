@@ -23,7 +23,7 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
 | General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
-| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Background style** on Windows, macOS, and Linux, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `interface_style`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, style, and material changes hot-reload. |
+| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Background style** on Windows, macOS, and Linux, **App icon**, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `interface_style`, `app_icon`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, style, and material changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
 | Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
@@ -66,6 +66,67 @@ wallpaper shows through the veil unblurred.
 There is no `background_style` key: Paneflow reads the style back from
 those switches. When they disagree, for example after turning one of
 them on by hand, the row reads **Custom**.
+
+## App icon
+
+Settings > Appearance offers **App icon** at the bottom of the theme
+card. It chooses the icon Paneflow shows for its running windows and is
+stored in `app_icon`.
+
+| Icon | What it draws |
+| --- | --- |
+| Glass (default) | The installed icon: three glass panes on a violet tile. |
+| Black | The Paneflow mark in off-white horizontal bars on a black tile. |
+| White | The same bars in dark ink on a white tile. |
+| Black solid | The three panes as solid off-white shapes on a black tile. |
+| White solid | The same solid panes in dark ink on a white tile. |
+
+Sixteen illustrated icons follow. Each one shows the same mark in another
+material; hover a tile in Settings to read its name.
+
+| Icon | `app_icon` | What it draws |
+| --- | --- | --- |
+| Aubergine | `aubergine` | Lilac panes on a deep aubergine tile. |
+| Paper | `paper` | Panes in aubergine ink on an off-white paper tile. |
+| Midnight matte | `midnight-matte` | Dark gray panes on a matte black tile. |
+| Polar | `polar` | Blue and cyan panes on an ice-white tile. |
+| Melon | `melon` | Coral and orange panes on a cream tile. |
+| Honeydew | `honeydew` | Dark green panes on a mint and lime tile. |
+| Berry | `berry` | Plum panes on a violet and pink tile. |
+| Rainbow | `rainbow` | Panes in six retro stripes on a black tile. |
+| Solarwave | `solarwave` | Chrome sunset bands on a deep purple tile. |
+| Neon | `neon` | Cyan and pink neon outlines on a dark violet tile. |
+| Phosphor | `phosphor` | Glowing green panes on a black screen tile. |
+| Holo | `holo` | Dark panes on an iridescent foil tile. |
+| Amethyst | `amethyst` | Lilac panes on a faceted violet gem. |
+| Blueprint | `blueprint` | Pale blue panes on a blueprint tile. |
+| Chip | `chip` | Brushed metal panes on a chip, set in a green circuit board. |
+| Nostalgia | `nostalgia` | Chrome-white panes on a glossy blue tile. |
+
+| Platform | Where the choice shows | When |
+| --- | --- | --- |
+| Windows | The taskbar button, Alt+Tab, and the shortcuts in your profile that open this Paneflow: the one pinned to the taskbar, a desktop shortcut, the Start menu entry. | Alt+Tab at once. The taskbar button at the next sign-in or restart of Windows Explorer. A shortcut keeps the icon while Paneflow is closed. |
+| macOS | The Dock and the app switcher, while Paneflow runs. | At once. |
+| Linux, X11 | The window icon the window manager and the task switcher read. | Windows opened after the change; restart Paneflow to apply it to all. |
+| Linux, Wayland | Nowhere: the compositor takes the icon from the installed desktop entry. | Never. |
+
+On Windows a pinned taskbar button shows the icon of its shortcut, not
+of the window, so Paneflow points that shortcut at an icon file it
+writes under `icons/` in the Paneflow home, and checks it again at each
+launch. Windows caches the image of a taskbar button and reads the
+shortcut again only when it reloads the taskbar, so the button changes
+at the next sign-in, or once Windows Explorer restarts. Choosing Glass
+restores the shortcut's own icon.
+
+The Start menu shortcut of a machine-wide install is not yours to
+modify. For Black and White, Paneflow copies it to the same place in
+your own Start menu folder, which Windows prefers, and gives that copy
+the icon; choosing Glass deletes the copy. If you uninstall Paneflow
+while Black or White is selected, the copy stays behind: delete it
+from `%APPDATA%\Microsoft\Windows\Start Menu\Programs`.
+
+On macOS and Linux the installed launcher and the Dock tile
+of a Paneflow that is not running keep the Glass icon.
 
 ## Terminal contrast
 
