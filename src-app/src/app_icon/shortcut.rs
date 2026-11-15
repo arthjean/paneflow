@@ -87,7 +87,20 @@ fn load(
 fn opens(link: &IShellLinkW, target: &Path) -> windows::core::Result<bool> {
     let mut linked = [0u16; PATH_BUFFER_UNITS];
     unsafe { link.GetPath(&mut linked, std::ptr::null_mut(), 0)? };
-    Ok(text(&linked).eq_ignore_ascii_case(&target.to_string_lossy()))
+    Ok(same_file(Path::new(&text(&linked)), target))
+}
+
+fn same_file(linked: &Path, target: &Path) -> bool {
+    if linked.as_os_str().is_empty() {
+        return false;
+    }
+    if linked.as_os_str().eq_ignore_ascii_case(target.as_os_str()) {
+        return true;
+    }
+    match (std::fs::canonicalize(linked), std::fs::canonicalize(target)) {
+        (Ok(linked), Ok(target)) => linked == target,
+        _ => false,
+    }
 }
 
 fn notify(event: SHCNE_ID, path: &Path) {
@@ -378,6 +391,26 @@ mod tests {
 
         assert_eq!(point_shortcuts_at(&roots, &app, ""), 2);
         assert_eq!(icon_of(&pinned), (String::new(), 0));
+    }
+
+    #[test]
+    fn a_target_named_through_another_path_form_is_still_recognized() {
+        let _apartment = Apartment::enter();
+        let directory = tempfile::tempdir().unwrap();
+        let app = directory.path().join("app.exe");
+        std::fs::write(&app, b"app").unwrap();
+        std::fs::create_dir_all(directory.path().join("detour")).unwrap();
+        let detoured = directory.path().join("detour").join("..").join("app.exe");
+        let pins = directory.path().join("pins");
+        std::fs::create_dir_all(&pins).unwrap();
+        let pinned = pins.join("App.lnk");
+        write_shortcut(&pinned, &app);
+        let roots = [(pins, 0)];
+
+        assert_eq!(point_shortcuts_at(&roots, &detoured, "black.ico"), 1);
+        assert_eq!(icon_of(&pinned), ("black.ico".to_string(), 0));
+        assert!(!same_file(Path::new(""), &app));
+        assert!(!same_file(&directory.path().join("missing.exe"), &app));
     }
 
     fn menu_in(directory: &Path) -> StartMenu {
