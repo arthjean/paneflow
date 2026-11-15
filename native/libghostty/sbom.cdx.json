@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:4d5095de-df50-4d58-bda5-7102569eca0a",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-28T00:00:00Z",
+    "timestamp": "2026-11-15T00:00:00Z",
     "authors": [
       {
         "name": "Strivex"
@@ -14,7 +14,7 @@
       "type": "application",
       "bom-ref": "paneflow-libghostty-windows",
       "name": "Paneflow libghostty Windows integration",
-      "version": "0.1.0-dev+83fb95624",
+      "version": "1.0.1+108cacb17",
       "properties": [
         {
           "name": "paneflow:rust-target",
@@ -34,14 +34,14 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "libghostty-vt@83fb95624b0439ee660c2679b43b38c8b63769cd",
+      "bom-ref": "libghostty-vt@108cacb17ed8990840cd14abfce43d8ed8503ca1",
       "name": "libghostty-vt",
-      "version": "0.1.0-dev+83fb95624",
-      "purl": "pkg:github/ghostty-org/ghostty@83fb95624b0439ee660c2679b43b38c8b63769cd",
+      "version": "1.0.1",
+      "purl": "pkg:github/ghostty-org/ghostty@108cacb17ed8990840cd14abfce43d8ed8503ca1",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "c949db7da4f272f5fc2990a205b35a118f111732cd99e9b2ba6f9713c3fbcc9b"
+          "content": "2eaa9c8736a5bf93f53d52700cf7020c4f1d1f0c5dbf5320e164e5455cf90e9a"
         }
       ],
       "licenses": [
@@ -77,9 +77,21 @@
     },
     {
       "type": "library",
-      "bom-ref": "uucode@ea62149739404a73c202b48a33bf6dd2af4bd9b0",
+      "bom-ref": "translate_c@02ff0c523fb92a38939b04d0145c4a9602a74d56",
+      "name": "translate_c",
+      "version": "2.0.0+02ff0c52",
+      "purl": "pkg:generic/translate-c@02ff0c523fb92a38939b04d0145c4a9602a74d56?vcs_url=git%2Bhttps://codeberg.org/ziglang/translate-c",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "uucode@1fb73433bba5d93366c57f23ff2e9d7939746500",
       "name": "uucode",
-      "version": "0.2.0+ea621497",
+      "version": "0.2.0+1fb73433",
       "licenses": [
         {
           "expression": "MIT"
@@ -156,7 +168,7 @@
       "type": "library",
       "bom-ref": "wuffs@7411f488fe2e2c205c3d3b3d28638b7356522930",
       "name": "wuffs",
-      "version": "0.4.0-alpha.9+3837.20240914",
+      "version": "0.4.0-alpha.10+3966.20260623",
       "purl": "pkg:github/google/wuffs@7411f488fe2e2c205c3d3b3d28638b7356522930",
       "licenses": [
         {
@@ -180,9 +192,10 @@
     {
       "ref": "paneflow-libghostty-windows",
       "dependsOn": [
-        "libghostty-vt@83fb95624b0439ee660c2679b43b38c8b63769cd",
+        "libghostty-vt@108cacb17ed8990840cd14abfce43d8ed8503ca1",
         "zig-runtime@0.17.0",
-        "uucode@ea62149739404a73c202b48a33bf6dd2af4bd9b0",
+        "translate_c@02ff0c523fb92a38939b04d0145c4a9602a74d56",
+        "uucode@1fb73433bba5d93366c57f23ff2e9d7939746500",
         "unicode-character-database@18.0.0",
         "bjoern-hoehmann-utf8-dfa@uucode-0.2.0",
         "xorg-rgb@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e",
