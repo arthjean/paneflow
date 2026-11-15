@@ -101,14 +101,6 @@ fn title_line_space(width: gpui::AvailableSpace) -> gpui::Size<gpui::AvailableSp
     gpui::size(width, gpui::AvailableSpace::MinContent)
 }
 
-impl IntoElement for TitleLine {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl gpui::Element for TitleLine {
     type RequestLayoutState = TitleLineNaturalSizes;
     type PrepaintState = ();

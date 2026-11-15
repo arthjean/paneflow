@@ -1,11 +1,9 @@
-use std::cell::RefCell;
-
 use gpui::{
     AnyElement, Bounds, Corners, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels,
-    Point, Styled, canvas, div, point, px, size,
+    Point, Styled, Window, canvas, div, point, px, size,
 };
 
-use super::interface_style::{Shape, circular, corner, corners, scoped, shape};
+use super::interface_style::{circular, corner, corners, scoped, shape};
 
 const CORNER_EXTENT: f32 = 1.528_665;
 const CORNER_CURVES: [[(f32, f32); 3]; 3] = [
@@ -34,7 +32,32 @@ fn limited_radius(bounds: Bounds<Pixels>, radius: Pixels) -> Pixels {
         .max(px(0.))
 }
 
-fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixels>) {
+trait Contour {
+    fn move_to(&mut self, to: Point<Pixels>);
+    fn line_to(&mut self, to: Point<Pixels>);
+    fn cubic_to(&mut self, to: Point<Pixels>, control_a: Point<Pixels>, control_b: Point<Pixels>);
+    fn close(&mut self);
+}
+
+impl Contour for PathBuilder {
+    fn move_to(&mut self, to: Point<Pixels>) {
+        PathBuilder::move_to(self, to);
+    }
+
+    fn line_to(&mut self, to: Point<Pixels>) {
+        PathBuilder::line_to(self, to);
+    }
+
+    fn cubic_to(&mut self, to: Point<Pixels>, control_a: Point<Pixels>, control_b: Point<Pixels>) {
+        self.cubic_bezier_to(to, control_a, control_b);
+    }
+
+    fn close(&mut self) {
+        PathBuilder::close(self);
+    }
+}
+
+fn trace(contour: &mut impl Contour, bounds: Bounds<Pixels>, radii: Corners<Pixels>) {
     let radii = [
         radii.top_right,
         radii.bottom_right,
@@ -49,7 +72,7 @@ fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixel
     };
     let (left, right) = (bounds.left(), bounds.right());
     let (top, bottom) = (bounds.top(), bounds.bottom());
-    builder.move_to(point(left + radii[3] * extent, top));
+    contour.move_to(point(left + radii[3] * extent, top));
     for (corner, radius) in radii.into_iter().enumerate() {
         let transform = |(x, y): (f32, f32)| match corner {
             0 => point(right - radius * x, top + radius * y),
@@ -57,115 +80,61 @@ fn trace(builder: &mut PathBuilder, bounds: Bounds<Pixels>, radii: Corners<Pixel
             2 => point(left + radius * x, bottom - radius * y),
             _ => point(left + radius * y, top + radius * x),
         };
-        builder.line_to(transform((extent, 0.)));
+        contour.line_to(transform((extent, 0.)));
         for &[control_a, control_b, end] in curves {
-            builder.cubic_bezier_to(transform(end), transform(control_a), transform(control_b));
+            contour.cubic_to(transform(end), transform(control_a), transform(control_b));
         }
     }
-    builder.close();
-}
-
-const MAX_CACHED_SHAPES: usize = 32;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Outline {
-    Fill,
-    Stroke(Pixels),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct ShapeKey {
-    outline: Outline,
-    width: Pixels,
-    height: Pixels,
-    radius: Pixels,
-    scale_factor: f32,
-    shape: Shape,
-}
-
-thread_local! {
-    static SHAPES: RefCell<Vec<(ShapeKey, Path<Pixels>)>> = const { RefCell::new(Vec::new()) };
+    contour.close();
 }
 
 #[cfg(test)]
 thread_local! {
-    static BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BUILDS: std::cell::RefCell<Vec<Bounds<Pixels>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
 pub(crate) fn squircle_builds() -> usize {
-    BUILDS.with(std::cell::Cell::get)
+    BUILDS.with(|builds| builds.borrow().len())
 }
 
-pub(crate) fn cached_squircle_path(
-    bounds: Bounds<Pixels>,
-    radius: Pixels,
-    scale_factor: f32,
-) -> Option<Path<Pixels>> {
-    cached_shape(bounds, radius, Outline::Fill, scale_factor)
+#[cfg(test)]
+pub(crate) fn squircle_builds_since(start: usize) -> Vec<Bounds<Pixels>> {
+    BUILDS.with(|builds| builds.borrow().get(start..).unwrap_or_default().to_vec())
 }
 
-pub(crate) fn cached_squircle_stroke_path(
-    bounds: Bounds<Pixels>,
-    radius: Pixels,
-    width: Pixels,
-    scale_factor: f32,
-) -> Option<Path<Pixels>> {
-    cached_shape(bounds, radius, Outline::Stroke(width), scale_factor)
+fn positive(value: Pixels) -> bool {
+    let value = f32::from(value);
+    value.is_finite() && value > 0.
 }
 
-fn cached_shape(
-    bounds: Bounds<Pixels>,
-    radius: Pixels,
-    outline: Outline,
-    scale_factor: f32,
-) -> Option<Path<Pixels>> {
-    if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
-        return None;
-    }
-    let key = ShapeKey {
-        outline,
-        width: bounds.size.width,
-        height: bounds.size.height,
-        radius,
-        scale_factor,
-        shape: shape(),
-    };
-    SHAPES.with(|shapes| {
-        let mut shapes = shapes.borrow_mut();
-        if let Some((_, shape)) = shapes.iter().find(|(held, _)| *held == key) {
-            return Some(translated(shape, bounds.origin));
-        }
-        let local = Bounds::new(point(px(0.), px(0.)), bounds.size);
-        let shape = match outline {
-            Outline::Fill => squircle_path(local, radius),
-            Outline::Stroke(width) => squircle_stroke_path(local, radius, width),
-        }?;
-        if shapes.len() >= MAX_CACHED_SHAPES {
-            shapes.clear();
-        }
-        let placed = translated(&shape, bounds.origin);
-        shapes.push((key, shape));
-        Some(placed)
-    })
+fn traceable(bounds: Bounds<Pixels>, radii: Corners<Pixels>) -> bool {
+    let edges = [bounds.left(), bounds.right(), bounds.top(), bounds.bottom()];
+    let radii = [
+        radii.top_left,
+        radii.top_right,
+        radii.bottom_right,
+        radii.bottom_left,
+    ];
+    positive(bounds.size.width)
+        && positive(bounds.size.height)
+        && edges
+            .into_iter()
+            .chain(radii)
+            .all(|value| f32::from(value).is_finite())
 }
 
-fn translated(shape: &Path<Pixels>, offset: Point<Pixels>) -> Path<Pixels> {
-    let mut placed = shape.clone();
-    placed.bounds.origin += offset;
-    for vertex in &mut placed.vertices {
-        vertex.xy_position += offset;
-    }
-    placed
-}
-
-pub(crate) fn squircle_path(bounds: Bounds<Pixels>, radius: Pixels) -> Option<Path<Pixels>> {
+pub(crate) fn squircle_path(bounds: Bounds<Pixels>, radius: Pixels) -> Option<Path> {
     squircle_corners_path(bounds, Corners::all(radius))
 }
 
-fn squircle_corners_path(bounds: Bounds<Pixels>, radii: Corners<Pixels>) -> Option<Path<Pixels>> {
+fn squircle_corners_path(bounds: Bounds<Pixels>, radii: Corners<Pixels>) -> Option<Path> {
+    if !traceable(bounds, radii) {
+        return None;
+    }
     #[cfg(test)]
-    BUILDS.with(|builds| builds.set(builds.get() + 1));
+    BUILDS.with(|builds| builds.borrow_mut().push(bounds));
     let mut builder = PathBuilder::fill();
     trace(&mut builder, bounds, radii);
     builder.build().ok()
@@ -175,7 +144,7 @@ pub(crate) fn squircle_stroke_path(
     bounds: Bounds<Pixels>,
     radius: Pixels,
     width: Pixels,
-) -> Option<Path<Pixels>> {
+) -> Option<Path> {
     squircle_corners_stroke_path(bounds, Corners::all(radius), width)
 }
 
@@ -183,9 +152,12 @@ fn squircle_corners_stroke_path(
     bounds: Bounds<Pixels>,
     radii: Corners<Pixels>,
     width: Pixels,
-) -> Option<Path<Pixels>> {
+) -> Option<Path> {
+    if !traceable(bounds, radii) || !positive(width) {
+        return None;
+    }
     #[cfg(test)]
-    BUILDS.with(|builds| builds.set(builds.get() + 1));
+    BUILDS.with(|builds| builds.borrow_mut().push(bounds));
     let half = width / 2.;
     let inset = |radius: Pixels| (limited_radius(bounds, radius) - half).max(px(0.));
     let inner = Bounds {
@@ -250,18 +222,25 @@ pub(crate) fn squircle_corners_fill(radii: Corners<Pixels>, color: Hsla) -> AnyE
         .child(
             canvas(
                 |_, _, _| {},
-                move |bounds, _, window, _| {
-                    if color.a <= f32::EPSILON {
-                        return;
-                    }
-                    if let Some(path) = squircle_corners_path(bounds, radii) {
-                        window.paint_path(path, color);
-                    }
-                },
+                move |bounds, _, window, _| paint_squircle_fill(bounds, radii, color, window),
             )
             .size_full(),
         )
         .into_any_element()
+}
+
+fn paint_squircle_fill(
+    bounds: Bounds<Pixels>,
+    radii: Corners<Pixels>,
+    color: Hsla,
+    window: &mut Window,
+) {
+    if color.a <= f32::EPSILON {
+        return;
+    }
+    if let Some(path) = squircle_corners_path(bounds, radii) {
+        window.paint_path(path, color);
+    }
 }
 
 pub(crate) fn squircle_fill_blend(
@@ -352,7 +331,43 @@ pub(crate) fn squircle_corners_border(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::size;
+    use crate::ui_primitives::interface_style::Shape;
+    use gpui::{Render, TestAppContext, size};
+
+    #[derive(Default)]
+    struct Trace(Vec<Point<Pixels>>);
+
+    impl Contour for Trace {
+        fn move_to(&mut self, to: Point<Pixels>) {
+            self.0.push(to);
+        }
+
+        fn line_to(&mut self, to: Point<Pixels>) {
+            self.0.push(to);
+        }
+
+        fn cubic_to(
+            &mut self,
+            to: Point<Pixels>,
+            control_a: Point<Pixels>,
+            control_b: Point<Pixels>,
+        ) {
+            self.0.extend([control_a, control_b, to]);
+        }
+
+        fn close(&mut self) {}
+    }
+
+    fn traced(bounds: Bounds<Pixels>, radius: Pixels) -> Vec<Point<Pixels>> {
+        let mut recorder = Trace::default();
+        trace(&mut recorder, bounds, Corners::all(radius));
+        recorder.0
+    }
+
+    fn close(a: Point<Pixels>, b: Point<Pixels>) -> bool {
+        let delta = a - b;
+        delta.x.abs() < px(0.001) && delta.y.abs() < px(0.001)
+    }
 
     #[test]
     fn component_radii_fit_without_scaling() {
@@ -366,62 +381,103 @@ mod tests {
         ] {
             let bounds = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
             assert_eq!(limited_radius(bounds, px(radius)), px(radius));
-            let mut builder = PathBuilder::fill();
-            trace(&mut builder, bounds, Corners::all(px(radius)));
-            assert!(builder.build().is_ok());
-        }
-    }
-
-    fn close(a: Point<Pixels>, b: Point<Pixels>) -> bool {
-        let delta = a - b;
-        delta.x.abs() < px(0.001) && delta.y.abs() < px(0.001)
-    }
-
-    fn assert_same_shape(cached: &Path<Pixels>, fresh: &Path<Pixels>) {
-        assert!(close(cached.bounds.origin, fresh.bounds.origin));
-        assert!(close(
-            point(cached.bounds.size.width, cached.bounds.size.height),
-            point(fresh.bounds.size.width, fresh.bounds.size.height)
-        ));
-        assert_eq!(cached.vertices.len(), fresh.vertices.len());
-        for (cached, fresh) in cached.vertices.iter().zip(&fresh.vertices) {
-            assert!(close(cached.xy_position, fresh.xy_position));
-            assert_eq!(cached.st_position, fresh.st_position);
+            assert!(squircle_path(bounds, px(radius)).is_some());
         }
     }
 
     #[test]
-    fn a_cached_shape_matches_a_fresh_build_at_any_origin() {
+    fn every_request_builds_one_shape_at_the_requested_bounds() {
         let radius = px(5.);
+        let start = squircle_builds();
+        let mut requested = Vec::new();
         for origin in [
             point(px(0.), px(0.)),
             point(px(37.5), px(-1.)),
             point(px(400.), px(12.)),
         ] {
             let bounds = Bounds::new(origin, size(px(24.), px(18.)));
-            let fresh = squircle_path(bounds, radius).unwrap();
-            let cached = cached_squircle_path(bounds, radius, 2.).unwrap();
-            assert_same_shape(&cached, &fresh);
-            let stroke = squircle_stroke_path(bounds, radius, px(1.)).unwrap();
-            let cached_stroke = cached_squircle_stroke_path(bounds, radius, px(1.), 2.).unwrap();
-            assert_same_shape(&cached_stroke, &stroke);
+            for _ in 0..2 {
+                assert!(squircle_path(bounds, radius).is_some());
+                assert!(squircle_stroke_path(bounds, radius, px(1.)).is_some());
+                requested.extend([bounds, bounds]);
+            }
         }
+        assert_eq!(squircle_builds_since(start), requested);
     }
 
     #[test]
-    fn zero_sized_bounds_draw_nothing_and_cache_nothing() {
-        let before = SHAPES.with(|shapes| shapes.borrow().len());
+    fn zero_sized_or_negative_bounds_build_nothing() {
         let builds = squircle_builds();
         for bounds in [
             Bounds::new(point(px(3.), px(3.)), size(px(0.), px(18.))),
             Bounds::new(point(px(3.), px(3.)), size(px(24.), px(0.))),
             Bounds::new(point(px(3.), px(3.)), size(px(24.), px(-1.))),
+            Bounds::new(point(px(3.), px(3.)), size(px(-24.), px(18.))),
         ] {
-            assert!(cached_squircle_path(bounds, px(5.), 1.).is_none());
-            assert!(cached_squircle_stroke_path(bounds, px(5.), px(1.), 1.).is_none());
+            assert!(squircle_path(bounds, px(5.)).is_none());
+            assert!(squircle_stroke_path(bounds, px(5.), px(1.)).is_none());
+            assert!(squircle_corners_path(bounds, Corners::all(px(5.))).is_none());
+            assert!(squircle_corners_stroke_path(bounds, Corners::all(px(5.)), px(1.)).is_none());
         }
-        assert_eq!(SHAPES.with(|shapes| shapes.borrow().len()), before);
         assert_eq!(squircle_builds(), builds);
+    }
+
+    #[test]
+    fn non_finite_geometry_never_reaches_the_path_builder() {
+        let builds = squircle_builds();
+        let shape = size(px(24.), px(18.));
+        for bounds in [
+            Bounds::new(point(px(f32::INFINITY), px(0.)), shape),
+            Bounds::new(point(px(0.), px(f32::NAN)), shape),
+            Bounds::new(point(px(0.), px(0.)), size(px(f32::NAN), px(18.))),
+            Bounds::new(point(px(0.), px(0.)), size(px(24.), px(f32::INFINITY))),
+            Bounds::new(point(px(f32::MAX), px(0.)), size(px(f32::MAX), px(18.))),
+        ] {
+            assert!(squircle_path(bounds, px(5.)).is_none());
+            assert!(squircle_stroke_path(bounds, px(5.), px(1.)).is_none());
+        }
+        let bounds = Bounds::new(point(px(0.), px(0.)), shape);
+        assert!(squircle_path(bounds, px(f32::NAN)).is_none());
+        assert!(squircle_stroke_path(bounds, px(f32::INFINITY), px(1.)).is_none());
+        for width in [px(f32::NAN), px(0.), px(-1.)] {
+            assert!(squircle_stroke_path(bounds, px(5.), width).is_none());
+        }
+        assert_eq!(squircle_builds(), builds);
+    }
+
+    struct BrokenThenValid;
+
+    impl Render for BrokenThenValid {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            canvas(
+                |_, _, _| {},
+                |bounds, _, window, _| {
+                    let broken = Bounds::new(point(px(f32::NAN), px(0.)), bounds.size);
+                    paint_squircle_fill(broken, Corners::all(px(8.)), gpui::white(), window);
+                    paint_squircle_fill(bounds, Corners::all(px(8.)), gpui::white(), window);
+                },
+            )
+            .size_full()
+        }
+    }
+
+    #[gpui::test]
+    fn a_shape_that_cannot_be_built_is_skipped_and_the_frame_completes(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| BrokenThenValid);
+        cx.simulate_resize(size(px(120.), px(60.)));
+        let valid = Bounds::new(point(px(0.), px(0.)), size(px(120.), px(60.)));
+        let start = squircle_builds();
+        for _ in 0..2 {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
+        assert_eq!(squircle_builds_since(start), vec![valid, valid]);
     }
 
     #[test]
@@ -430,18 +486,14 @@ mod tests {
         scoped(Shape::Surface, || {
             assert_eq!(limited_radius(bounds, px(24.)), px(12.));
             assert_eq!(limited_radius(bounds, px(18.)), px(14.));
-            let mut builder = PathBuilder::fill();
-            trace(&mut builder, bounds, Corners::all(px(24.)));
-            let shape = builder.build().unwrap();
-            assert!(close(shape.bounds.origin, bounds.origin));
             let arc_start = point(px(300. - 12.), px(0.));
             assert!(
-                shape
-                    .vertices
+                traced(bounds, px(24.))
                     .iter()
-                    .any(|vertex| close(vertex.xy_position, arc_start)),
+                    .any(|&vertex| close(vertex, arc_start)),
                 "the top edge runs to one corner radius before the corner"
             );
+            assert!(squircle_path(bounds, px(24.)).is_some());
             assert!(squircle_stroke_path(bounds, px(24.), px(1.)).is_some());
         });
         assert_eq!(limited_radius(bounds, px(24.)), px(24.));
@@ -451,45 +503,36 @@ mod tests {
     fn a_classic_shape_is_a_circular_rounded_rectangle_on_the_classic_scale() {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(200.)));
         let row = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(28.)));
-        let surface = scoped(Shape::Surface, || {
-            cached_squircle_path(row, px(14.), 1.5).unwrap()
-        });
+        let surface = scoped(Shape::Surface, || traced(row, px(14.)));
         scoped(Shape::Classic, || {
             assert_eq!(limited_radius(bounds, px(24.)), px(12.));
             assert_eq!(limited_radius(bounds, px(18.)), px(14.));
-            let mut builder = PathBuilder::fill();
-            trace(&mut builder, bounds, Corners::all(px(24.)));
-            let shape = builder.build().unwrap();
             let arc_start = point(px(300. - 12.), px(0.));
             assert!(
-                shape
-                    .vertices
+                traced(bounds, px(24.))
                     .iter()
-                    .any(|vertex| close(vertex.xy_position, arc_start)),
+                    .any(|&vertex| close(vertex, arc_start)),
                 "the top edge runs to one corner radius before the corner"
             );
-            let classic = cached_squircle_path(row, px(14.), 1.5).unwrap();
+            let classic = traced(row, px(14.));
+            assert_eq!(classic.len(), surface.len());
             assert!(
                 classic
-                    .vertices
                     .iter()
-                    .zip(&surface.vertices)
-                    .any(|(classic, surface)| !close(classic.xy_position, surface.xy_position)),
-                "the shape cache keeps the surface and the Classic corner apart"
+                    .zip(&surface)
+                    .any(|(&classic, &surface)| !close(classic, surface)),
+                "the surface and the Classic corner trace different outlines"
             );
         });
     }
 
     #[test]
-    fn the_shape_cache_keeps_one_entry_per_shape() {
+    fn continuous_corners_trace_three_curves_where_circular_corners_trace_one() {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(120.), px(90.)));
-        let continuous = cached_squircle_path(bounds, px(24.), 1.25).unwrap();
-        let circular = scoped(Shape::Surface, || {
-            cached_squircle_path(bounds, px(24.), 1.25).unwrap()
-        });
-        assert_ne!(continuous.vertices.len(), circular.vertices.len());
-        let again = cached_squircle_path(bounds, px(24.), 1.25).unwrap();
-        assert_same_shape(&again, &continuous);
+        let continuous = traced(bounds, px(24.));
+        let circular = scoped(Shape::Surface, || traced(bounds, px(24.)));
+        assert_eq!(continuous.len(), 1 + 4 * (1 + 3 * 3));
+        assert_eq!(circular.len(), 1 + 4 * (1 + 3));
     }
 
     #[test]

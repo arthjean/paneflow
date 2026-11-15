@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Length, Path, PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Length, Path,
+    PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
     TransformationMatrix, Window, fill, point, px, quad, relative, size,
 };
 
@@ -170,7 +170,7 @@ struct HatchLine {
 }
 
 struct HatchPath {
-    path: Path<Pixels>,
+    path: Path,
     color: Hsla,
 }
 
@@ -1547,7 +1547,7 @@ impl Element for DiffElement {
                 }
             }
             if !layout.scrollbars.is_empty() {
-                window.paint_layer(bounds, |window| {
+                window.paint_layer(|window| {
                     for q in &layout.scrollbars {
                         window.paint_quad(quad(
                             q.bounds,
@@ -1561,14 +1561,6 @@ impl Element for DiffElement {
                 });
             }
         });
-    }
-}
-
-impl IntoElement for DiffElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

@@ -195,13 +195,13 @@ fn on_circle(center: Point<Pixels>, radius: f32, radians: f32) -> Point<Pixels> 
     )
 }
 
-fn circle_stroke(center: Point<Pixels>, radius: f32, stroke: f32) -> Option<gpui::Path<Pixels>> {
+fn circle_stroke(center: Point<Pixels>, radius: f32, stroke: f32) -> Option<gpui::Path> {
     let mut builder = PathBuilder::stroke(px(stroke));
     trace_circle(&mut builder, center, radius);
     builder.build().ok()
 }
 
-fn disc(center: Point<Pixels>, radius: f32) -> Option<gpui::Path<Pixels>> {
+fn disc(center: Point<Pixels>, radius: f32) -> Option<gpui::Path> {
     let mut builder = PathBuilder::fill();
     trace_circle(&mut builder, center, radius);
     builder.build().ok()

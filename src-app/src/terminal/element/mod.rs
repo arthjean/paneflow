@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Element, ElementId, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseMoveEvent,
-    Pixels, Point, SharedString, Style, Window, px, relative,
+    GlobalElementId, Hsla, InspectorElementId, LayoutId, MouseButton, MouseMoveEvent, Pixels,
+    Point, SharedString, Style, Window, px, relative,
 };
 
 use crate::terminal::TerminalSessionBackend;
@@ -1692,7 +1692,7 @@ impl Element for TerminalElement {
         };
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.paint_layer(bounds, |window| {
+            window.paint_layer(|window| {
                 paint::background::paint_base_fill(&layout, bounds, window);
 
                 if let Some(above) = layout.overscan_above.as_deref()
@@ -1730,7 +1730,7 @@ impl Element for TerminalElement {
 
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
 
-            window.paint_layer(bounds, |window| {
+            window.paint_layer(|window| {
                 paint::sprites::paint_sprites(&layout, &geom, window);
                 paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
                 paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
@@ -1851,14 +1851,6 @@ fn paint_overscan_row(
     paint::decorations::paint_decorations(layout, geom, window);
     paint::text::paint_text_runs(layout, geom, base_font, font_size, window, cx);
     paint::text::paint_symbols(layout, geom, font_size, window, cx);
-}
-
-impl IntoElement for TerminalElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 struct TerminalInputHandler {

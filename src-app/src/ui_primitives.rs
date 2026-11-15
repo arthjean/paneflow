@@ -139,14 +139,6 @@ pub(crate) fn clip_below_line(child: impl IntoElement, line: ClipLine) -> ClipBe
     }
 }
 
-impl IntoElement for ClipBelowLine {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
 impl Element for ClipBelowLine {
     type RequestLayoutState = ();
     type PrepaintState = ();
@@ -471,14 +463,6 @@ impl Element for AnimatedHover {
             window,
             cx,
         )
-    }
-}
-
-impl IntoElement for AnimatedHover {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

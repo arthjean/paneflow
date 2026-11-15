@@ -12,8 +12,8 @@ use gpui::{
 
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle::{
-    cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_corners_border,
-    squircle_corners_fill, squircle_fill,
+    squircle_border, squircle_corners_border, squircle_corners_fill, squircle_fill, squircle_path,
+    squircle_stroke_path,
 };
 use crate::ui_primitives::{AccessibleControlExt, squircle_skin};
 
@@ -529,26 +529,20 @@ pub(crate) fn badge_tile(
     let tile = gpui::canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
-            let scale = window.scale_factor();
             let lowered = gpui::Bounds {
                 origin: bounds.origin + gpui::point(px(0.), px(1.)),
                 size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
             };
+            let body = squircle_path(bounds, radius);
             let layers = [
                 (
-                    cached_squircle_path(bounds.dilate(px(1.)), radius + px(1.), scale),
+                    squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
                     gpui::Background::from(ring),
                 ),
-                (cached_squircle_path(bounds, radius, scale), background),
-                (
-                    cached_squircle_path(bounds, radius, scale),
-                    highlight.into(),
-                ),
-                (cached_squircle_path(lowered, radius, scale), background),
-                (
-                    cached_squircle_stroke_path(bounds, radius, px(1.), scale),
-                    rim.into(),
-                ),
+                (body.clone(), background),
+                (body, highlight.into()),
+                (squircle_path(lowered, radius), background),
+                (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
             ];
             for (path, fill) in layers {
                 if let Some(path) = path {
@@ -2297,10 +2291,11 @@ mod tests {
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
-    use crate::ui_primitives::squircle::{cached_squircle_path, squircle_builds};
+    use crate::ui_primitives::squircle::{squircle_builds, squircle_builds_since};
 
     struct BadgeStrip {
         tabs: usize,
+        inset: gpui::Pixels,
     }
 
     impl gpui::Render for BadgeStrip {
@@ -2310,60 +2305,67 @@ mod tests {
             _cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
             use gpui::{ParentElement, Styled};
-            gpui::div().flex().children((0..self.tabs).map(|tab| {
-                tab_badge(match tab % 3 {
-                    0 => None,
-                    1 => Some(TerminalAgent::ClaudeCode),
-                    _ => Some(TerminalAgent::Codex),
-                })
-            }))
+            gpui::div()
+                .flex()
+                .pl(self.inset)
+                .children((0..self.tabs).map(|tab| {
+                    tab_badge(match tab % 3 {
+                        0 => None,
+                        1 => Some(TerminalAgent::ClaudeCode),
+                        _ => Some(TerminalAgent::Codex),
+                    })
+                }))
         }
+    }
+
+    const BADGE_SHAPES: usize = 4;
+
+    fn draw_badge_frame(cx: &mut gpui::VisualTestContext) -> Vec<gpui::Bounds<gpui::Pixels>> {
+        let start = squircle_builds();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        squircle_builds_since(start)
     }
 
     #[gpui::test]
-    fn twelve_tab_badges_paint_the_next_frame_without_rebuilding_a_squircle(
-        cx: &mut TestAppContext,
-    ) {
-        let before = squircle_builds();
-        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip { tabs: 12 });
+    fn twelve_tab_badges_build_one_path_per_painted_shape_on_every_frame(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 12,
+            inset: gpui::px(0.),
+        });
         cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(80.)));
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        let first_frame = squircle_builds();
-        assert!(
-            first_frame > before && first_frame - before <= 4,
-            "the first frame builds the four badge shapes once: {}",
-            first_frame - before
+        let first = draw_badge_frame(cx);
+        assert_eq!(
+            first.len(),
+            12 * BADGE_SHAPES,
+            "the ring, the body, the lowered body and the rim, once per badge"
         );
         view.update(cx, |_, cx| cx.notify());
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert_eq!(
-            squircle_builds(),
-            first_frame,
-            "the second frame rebuilt a squircle"
-        );
+        let second = draw_badge_frame(cx);
+        assert_eq!(second, first, "every frame builds the same shapes again");
     }
 
-    #[test]
-    fn a_scale_change_rebuilds_each_badge_shape_once_then_reuses_it() {
-        let radius = gpui::px(5.);
-        let shape = |x: f32| {
-            gpui::Bounds::new(
-                gpui::point(gpui::px(x), gpui::px(4.)),
-                gpui::size(gpui::px(26.), gpui::px(17.)),
-            )
-        };
-        cached_squircle_path(shape(0.), radius, 1.5).unwrap();
-        let held = squircle_builds();
-        for tab in 0..12 {
-            cached_squircle_path(shape(30. * tab as f32), radius, 1.5).unwrap();
+    #[gpui::test]
+    fn a_badge_strip_that_moves_builds_its_shapes_at_the_new_origin(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 12,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(80.)));
+        let before = draw_badge_frame(cx);
+        let shift = gpui::px(40.);
+        view.update(cx, |strip, cx| {
+            strip.inset = shift;
+            cx.notify();
+        });
+        let after = draw_badge_frame(cx);
+        assert_eq!(after.len(), before.len());
+        for (moved, held) in after.iter().zip(&before) {
+            assert_eq!(moved.size, held.size);
+            assert_eq!(moved.origin, held.origin + gpui::point(shift, gpui::px(0.)));
         }
-        assert_eq!(squircle_builds(), held);
-        cached_squircle_path(shape(0.), radius, 3.).unwrap();
-        assert_eq!(squircle_builds(), held + 1);
-        for tab in 0..12 {
-            cached_squircle_path(shape(30. * tab as f32), radius, 3.).unwrap();
-        }
-        assert_eq!(squircle_builds(), held + 1);
     }
 
     #[test]

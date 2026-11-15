@@ -8,9 +8,9 @@ use std::rc::Rc;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window,
-    WindowTextSystem, fill, point, px, quad, relative, size,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, LayoutId, Pixels, Point,
+    ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowTextSystem,
+    fill, point, px, quad, relative, size,
 };
 use paneflow_textdiff::BlockKind;
 use ropey::RopeSlice;
@@ -1117,14 +1117,6 @@ impl Element for CodeElement {
             self.colors.scrollbar_thumb,
             window,
         );
-    }
-}
-
-impl IntoElement for CodeElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
