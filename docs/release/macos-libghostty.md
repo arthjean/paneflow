@@ -226,7 +226,7 @@ table is stale.
 
 | Input | Manifest key | Value |
 |---|---|---|
-| Ghostty source revision | `source_sha` | `83fb95624b0439ee660c2679b43b38c8b63769cd` (`v1.4.0`) |
+| Ghostty source revision | `source_sha` | `108cacb17ed8990840cd14abfce43d8ed8503ca1` (`vt-1.0.1`) |
 | Zig | `zig_version` | `0.17.0` |
 | LLVM binutils | `macos_llvm_version` | `22.1.2-rust-1.96.1-stable` |
 | Rust target | `[targets."aarch64-apple-darwin"]` | `aarch64-apple-darwin` |
@@ -235,7 +235,7 @@ table is stale.
 | Build seed | `macos_build_seed` | `0` |
 | Build jobs | `macos_build_jobs` | `1` |
 | Compiler CPUs | build flag (`taskset -c <first allowed CPU>`) | `1` |
-| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-83fb9562` |
+| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-108cacb1` |
 | Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.17.0` |
 | Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
 | Archive digest | `archive_sha256` | `816da087126fd024107e9a7b4202ff9b68b768f7e416926119ba6ee4649d2ce3` |
