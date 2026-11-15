@@ -35,7 +35,7 @@ int main(void) {
         GhosttyPoint point = {.tag = GHOSTTY_POINT_TAG_ACTIVE};
         point.value.coordinate.x = columns[index];
         point.value.coordinate.y = 0;
-        GhosttyGridRef ref = {.size = sizeof(GhosttyGridRef)};
+        GhosttyGridRef ref = {0};
         uint32_t codepoints[4] = {0};
         size_t count = 0;
         if (ghostty_terminal_grid_ref(terminal, point, &ref) != GHOSTTY_SUCCESS ||
