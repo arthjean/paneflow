@@ -18,6 +18,7 @@ const MAX_LISTED_FILES: usize = 6;
 #[derive(Clone)]
 pub(crate) enum UnsavedContinuation {
     Close(CloseTarget),
+    CloseSelection(Vec<crate::app::sidebar::SidebarPick>),
     Quit,
     UpdateRestart,
 }
@@ -27,6 +28,7 @@ impl UnsavedContinuation {
         match self {
             Self::Close(CloseTarget::Workspace(_)) => "Save changes before closing this workspace?",
             Self::Close(_) => "Save changes before closing this tab?",
+            Self::CloseSelection(_) => "Save changes before closing the selection?",
             Self::Quit => "Save changes before quitting?",
             Self::UpdateRestart => "Save changes before restarting to update?",
         }
@@ -105,6 +107,7 @@ impl PaneFlowApp {
             self.dismiss_transient_surfaces();
             let tabs = match &then {
                 UnsavedContinuation::Close(target) => close_target_tabs(&self.workspaces, target),
+                UnsavedContinuation::CloseSelection(picks) => self.sidebar_pick_tabs(picks),
                 _ => Vec::new(),
             };
             self.unsaved_dialog = Some(UnsavedDialog {
@@ -144,6 +147,13 @@ impl PaneFlowApp {
                     return;
                 }
                 self.request_close_checked(target, discard, Some(window), cx)
+            }
+            UnsavedContinuation::CloseSelection(picks) => {
+                if self.sidebar_pick_tabs(&picks) != tabs {
+                    self.show_toast(STALE_CLOSE_MESSAGE, cx);
+                    return;
+                }
+                self.close_sidebar_picks_checked(picks, discard, window, cx)
             }
             UnsavedContinuation::Quit => self.request_quit_checked(cx),
             UnsavedContinuation::UpdateRestart => self.request_update_restart_checked(cx),

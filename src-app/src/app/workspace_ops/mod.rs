@@ -20,7 +20,7 @@ use crate::workspace::{Workspace, next_workspace_id_in};
 use crate::{
     ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedSurfaceRecord, CopyWorkspacePath,
     HeldSession, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace, OpenWorkspaceInCursor,
-    OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed, PaneFlowApp,
+    OpenWorkspaceInVsCode, OpenWorkspaceInWebStorm, OpenWorkspaceInZed, PaneFlowApp,
     RevealWorkspaceInFileManager, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3,
     SelectWorkspace4, SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8,
     SelectWorkspace9, SessionHold, SplitHorizontally, SplitVertically, UndoClosePane,
@@ -449,11 +449,11 @@ impl PaneFlowApp {
         self.title_bar_help_menu_open = None;
         self.workspace_menu_open = None;
         self.sidebar_customize_menu_open = false;
-        self.sidebar_customize_submenu = None;
         self.sidebar_new_tab_menu_open = false;
         self.sidebar_space_menu_open = false;
         self.agents_display_menu_open = false;
         self.tab_menu_open = None;
+        self.sidebar_selection.close_menu();
         self.pane_menu_open = None;
         self.files_menu_open = None;
         self.usage.close();
@@ -1024,14 +1024,14 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn handle_open_workspace_in_windsurf(
+    pub(crate) fn handle_open_workspace_in_webstorm(
         &mut self,
-        _: &OpenWorkspaceInWindsurf,
+        _: &OpenWorkspaceInWebStorm,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(idx) = self.shown_workspace_idx() {
-            self.open_workspace_in_editor(idx, "windsurf", "Windsurf", cx);
+            self.open_workspace_in_editor(idx, "webstorm", "WebStorm", cx);
         }
     }
 
@@ -1381,12 +1381,130 @@ fn resolve_editor_binary_in(
     }
     if !fallback_paths.is_empty()
         && let Ok(joined) = std::env::join_paths(fallback_paths)
-        && let Ok(path) = which::which_in(command, Some(&joined), ".")
-        && let Some(path) = normalize_editor_candidate(path)
     {
-        return path;
+        for name in editor_binary_names(command) {
+            if let Ok(path) = which::which_in(name, Some(&joined), ".")
+                && let Some(path) = normalize_editor_candidate(path)
+            {
+                return path;
+            }
+        }
     }
     std::path::PathBuf::from(command)
+}
+
+struct JetBrainsProduct {
+    command: &'static str,
+    install_name: &'static str,
+}
+
+const JETBRAINS_PRODUCTS: &[JetBrainsProduct] = &[JetBrainsProduct {
+    command: "webstorm",
+    install_name: "WebStorm",
+}];
+
+fn editor_binary_names(command: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    if cfg!(target_os = "windows")
+        && JETBRAINS_PRODUCTS
+            .iter()
+            .any(|product| product.command == command)
+    {
+        names.push(format!("{command}64"));
+    }
+    names.push(command.to_string());
+    names
+}
+
+fn is_install_of(entry: &str, install_name: &str) -> bool {
+    let entry = entry.strip_suffix(".app").unwrap_or(entry);
+    entry == install_name
+        || entry
+            .strip_prefix(install_name)
+            .is_some_and(|rest| rest.starts_with(' ') || rest.starts_with('-'))
+}
+
+fn push_jetbrains_install_dirs(
+    paths: &mut Vec<std::path::PathBuf>,
+    roots: &[std::path::PathBuf],
+    executable_dir: &[&str],
+) {
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut installs: Vec<std::path::PathBuf> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                JETBRAINS_PRODUCTS
+                    .iter()
+                    .any(|product| is_install_of(&name, product.install_name))
+            })
+            .map(|entry| {
+                executable_dir
+                    .iter()
+                    .fold(entry.path(), |dir, part| dir.join(part))
+            })
+            .collect();
+        installs.sort_unstable_by(|a, b| b.cmp(a));
+        paths.extend(installs);
+    }
+}
+
+fn push_jetbrains_search_paths(paths: &mut Vec<std::path::PathBuf>) {
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "windows")]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        if let Some(local) = &local_app_data {
+            paths.push(local.join("JetBrains").join("Toolbox").join("scripts"));
+        }
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if let Some(local) = &local_app_data {
+            roots.push(local.join("Programs"));
+        }
+        for var in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(dir) = std::env::var_os(var) {
+                roots.push(PathBuf::from(dir));
+            }
+        }
+        let roots: Vec<PathBuf> = roots
+            .iter()
+            .flat_map(|root| [root.clone(), root.join("JetBrains")])
+            .collect();
+        push_jetbrains_install_dirs(paths, &roots, &["bin"]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir();
+        if let Some(home) = &home {
+            paths.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("JetBrains")
+                    .join("Toolbox")
+                    .join("scripts"),
+            );
+        }
+        let mut roots: Vec<PathBuf> = home.iter().map(|home| home.join("Applications")).collect();
+        roots.push(PathBuf::from("/Applications"));
+        push_jetbrains_install_dirs(paths, &roots, &["Contents", "MacOS"]);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local").join("share")));
+        if let Some(data_home) = data_home {
+            paths.push(data_home.join("JetBrains").join("Toolbox").join("scripts"));
+        }
+        paths.push(PathBuf::from("/snap/bin"));
+        push_jetbrains_install_dirs(paths, &[PathBuf::from("/opt")], &["bin"]);
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1438,6 +1556,7 @@ fn editor_search_paths() -> Vec<std::path::PathBuf> {
     {
         push_windows_editor_search_paths(&mut paths);
     }
+    push_jetbrains_search_paths(&mut paths);
     paths
 }
 
@@ -1464,20 +1583,6 @@ fn push_windows_editor_search_paths(paths: &mut Vec<std::path::PathBuf>) {
         );
         paths.push(programs.join("Microsoft VS Code").join("bin"));
         paths.push(programs.join("Microsoft VS Code Insiders").join("bin"));
-        paths.push(
-            programs
-                .join("Windsurf")
-                .join("resources")
-                .join("app")
-                .join("bin"),
-        );
-        paths.push(
-            programs
-                .join("windsurf")
-                .join("resources")
-                .join("app")
-                .join("bin"),
-        );
     }
 
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
@@ -2308,13 +2413,59 @@ mod tests {
         );
         assert!(
             paths.contains(
-                &programs
-                    .join("Windsurf")
-                    .join("resources")
-                    .join("app")
-                    .join("bin")
+                &local_app_data
+                    .join("JetBrains")
+                    .join("Toolbox")
+                    .join("scripts")
             ),
-            "missing %LOCALAPPDATA%\\Programs\\Windsurf\\resources\\app\\bin"
+            "missing %LOCALAPPDATA%\\JetBrains\\Toolbox\\scripts"
         );
+    }
+
+    #[test]
+    fn jetbrains_install_dirs_find_versioned_webstorm_installs_newest_first() {
+        let root = tempfile::TempDir::new().unwrap();
+        for name in [
+            "WebStorm 2025.1",
+            "WebStorm 2025.3",
+            "WebStorm.app",
+            "WebStorm-2024.2.app",
+            "WebStormish",
+            "PyCharm 2025.3",
+        ] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        let mut paths = Vec::new();
+        push_jetbrains_install_dirs(&mut paths, &[root.path().to_path_buf()], &["bin"]);
+        let found: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                path.parent()
+                    .and_then(|install| install.file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                "WebStorm.app",
+                "WebStorm-2024.2.app",
+                "WebStorm 2025.3",
+                "WebStorm 2025.1",
+            ]
+        );
+        assert!(paths.iter().all(|path| path.ends_with("bin")));
+    }
+
+    #[test]
+    fn editor_binary_names_try_the_64_bit_jetbrains_launcher_on_windows() {
+        let names = editor_binary_names("webstorm");
+        if cfg!(target_os = "windows") {
+            assert_eq!(names, vec!["webstorm64", "webstorm"]);
+        } else {
+            assert_eq!(names, vec!["webstorm"]);
+        }
+        assert_eq!(editor_binary_names("code"), vec!["code"]);
     }
 }

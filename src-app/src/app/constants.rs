@@ -1,6 +1,8 @@
 use gpui::{Hsla, Pixels, WindowBackgroundAppearance, px};
 
-pub(crate) const SIDEBAR_WIDTH: f32 = 300.;
+pub(crate) const SIDEBAR_MAX_WIDTH: f32 = 480.;
+const SIDEBAR_DEFAULT_SHARE_OF_MAX: f32 = 0.9;
+pub(crate) const SIDEBAR_WIDTH: f32 = SIDEBAR_MAX_WIDTH * SIDEBAR_DEFAULT_SHARE_OF_MAX;
 pub(crate) const TITLE_BAR_EDGE_INSET: Pixels = px(8.);
 pub(crate) const TITLE_BAR_CONTROL_SPACING: Pixels = px(12.);
 pub(crate) const TITLE_BAR_CONTROL_SIZE: Pixels = px(20.);

@@ -1,52 +1,65 @@
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
-    FontStyle, FontWeight, GlobalElementId, Hsla, ImgResourceLoader, InspectorElementId,
-    IntoElement, LayoutId, Length, Path, PathBuilder, Pixels, Point, RenderImage, Resource,
-    ShapedLine, SharedString, Style, TextAlign, TextRun, Window, fill, point, px, quad, relative,
-    size,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
+    Length, Path, PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
+    TransformationMatrix, Window, fill, point, px, quad, relative, size,
 };
 
 use super::align::CellKind;
 use super::engine::{ChangeTone, HighlightPolicy};
+use super::git::FileChange;
 use super::hscroll::{
-    H_SCROLLBAR_TRACK_HEIGHT, file_at_row, file_side_offset, h_scrollbar_segments,
+    H_SCROLLBAR_TRACK_HEIGHT, SPLIT_DIVIDER_W, file_at_row, file_side_offset, h_scrollbar_segments,
 };
 use super::rows::{
-    DisplayRow, FileSpan, HalfCell, HeaderParts, ROW_HEIGHT, RowKind, RowPalette, SplitRow,
+    DisplayRow, FILE_HEADER_HEIGHT, FileSpan, HalfCell, HeaderParts, ROW_HEIGHT, RowKind,
+    RowPalette, SplitRow,
 };
 
-const PAD: f32 = 6.0;
-const STAT_GAP: f32 = 16.0;
-const FILE_HEADER_ICON_X: f32 = 16.0;
-const FILE_HEADER_ICON_SLOT_W: f32 = 20.0;
-const FILE_HEADER_ICON_SIZE: f32 = 17.0;
-const FILE_HEADER_FILE_ICON_SIZE: f32 = 16.0;
-const FILE_HEADER_RUST_ICON_SIZE: f32 = 20.0;
-const FILE_HEADER_PATH_X: f32 = 42.0;
-const FILE_HEADER_STAT_PAD_R: f32 = 14.0;
-const FILE_HEADER_SEPARATOR_H: f32 = 2.0;
-const HALF_PAD: f32 = 4.0;
-const GUTTER_W: f32 = 36.0;
-const NUM_GAP: f32 = 6.0;
-const GUTTER_PAD_L: f32 = 8.0;
-const STICKY_HEADER_HEIGHT: f32 = 24.0;
+const UI_FONT_FAMILY: &str = "Geist";
+const CODE_FONT_SIZE: f32 = 13.0;
+const HEADER_FONT_SIZE: f32 = 12.0;
+const SEPARATOR_FONT_SIZE: f32 = 11.0;
+const NOTE_PAD_X: f32 = 8.0;
+const FILE_HEADER_CHEVRON_X: f32 = 8.0;
+const FILE_HEADER_ICON_X: f32 = 34.0;
+const FILE_HEADER_TITLE_X: f32 = 58.0;
+const FILE_HEADER_ICON_SIZE: f32 = 16.0;
+const FILE_HEADER_GAP: f32 = 8.0;
+const FILE_HEADER_PAD_R: f32 = 12.0;
+const FILE_HEADER_STAT_COLUMN_CH: f32 = 4.0;
+const FILE_HEADER_HOVER_EDGE_W: f32 = 3.0;
+const FILE_HEADER_PREVIOUS_PATH_ALPHA: f32 = 0.7;
+const FILE_HEADER_CHEVRON_ALPHA: f32 = 0.8;
+const FILE_HEADER_EXPANDED_ICON: &str = "icons/chevron-down.svg";
+const FILE_HEADER_COLLAPSED_ICON: &str = "icons/chevron-right.svg";
+const FILE_ADDED_ICON: &str = "icons/diff/file-added.svg";
+const FILE_MODIFIED_ICON: &str = "icons/diff/file-modified.svg";
+const FILE_DELETED_ICON: &str = "icons/diff/file-deleted.svg";
+const FILE_MOVED_ICON: &str = "icons/diff/file-moved.svg";
+const RENAME_ARROW_ICON: &str = "icons/diff/arrow-right-short.svg";
+const EXPAND_UP_ICON: &str = "icons/diff/expand-up.svg";
+const EXPAND_DOWN_ICON: &str = "icons/diff/expand-down.svg";
+const EXPAND_ALL_ICON: &str = "icons/diff/expand-all.svg";
+const GUTTER_PAD_L_CH: f32 = 2.0;
+const GUTTER_PAD_R_CH: f32 = 1.0;
+const GUTTER_MIN_DIGITS: usize = 3;
+const GUTTER_BORDER_W: f32 = 2.0;
+const LINE_PAD_CH: f32 = 1.0;
 const BAR_W: f32 = 4.0;
 const DELETED_BAR_DASH_H: f32 = 1.0;
 const DELETED_BAR_DASH_STEP: f32 = 2.0;
-const FOLD_RADIUS: f32 = 6.0;
-const FOLD_SEGMENT_GAP: f32 = 2.0;
-const FOLD_LABEL_PAD_X: f32 = 8.0;
-const FOLD_CHEVRON_W: f32 = 3.5;
-const FOLD_CHEVRON_H: f32 = 2.5;
-const FOLD_CHEVRON_OFFSET: f32 = 4.0;
+const SEPARATOR_INSET_X: f32 = 8.0;
+const SEPARATOR_BUTTON_W: f32 = 32.0;
+const SEPARATOR_BUTTON_GAP: f32 = 2.0;
+const SEPARATOR_RADIUS: f32 = 6.0;
+const SEPARATOR_ICON_SIZE: f32 = 16.0;
+const SEPARATOR_LABEL_PAD_X: f32 = 6.0;
 const PHANTOM_HATCH_SPACING: f32 = 8.0;
-const PHANTOM_HATCH_STROKE: f32 = 1.0;
-const SPLIT_DIVIDER_W: f32 = 3.0;
-const PAD2: f32 = 6.0;
+const PHANTOM_HATCH_STROKE: f32 = 1.4;
 pub(crate) const REVERT_CHIP_W: f32 = 56.0;
 pub(crate) const REVERT_CHIP_H: f32 = 16.0;
 pub(crate) const REVERT_CHIP_PAD_R: f32 = 10.0;
@@ -161,22 +174,115 @@ struct HatchPath {
     color: Hsla,
 }
 
-struct ImagePaint {
+struct MaskIcon {
     bounds: Bounds<Pixels>,
-    image: Arc<RenderImage>,
+    path: &'static str,
+    color: Hsla,
+}
+
+fn paint_icons(icons: &[MaskIcon], window: &mut Window, cx: &App) {
+    for icon in icons {
+        let _ = window.paint_svg(
+            icon.bounds,
+            icon.path.into(),
+            None,
+            TransformationMatrix::unit(),
+            icon.color,
+            cx,
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FoldEdge {
+    Leading,
+    Between,
+    Trailing,
+}
+
+impl FoldEdge {
+    fn between(after_header: bool, before_header: bool) -> Self {
+        match (after_header, before_header) {
+            (true, false) => FoldEdge::Leading,
+            (false, true) => FoldEdge::Trailing,
+            _ => FoldEdge::Between,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            FoldEdge::Leading => EXPAND_UP_ICON,
+            FoldEdge::Between => EXPAND_ALL_ICON,
+            FoldEdge::Trailing => EXPAND_DOWN_ICON,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RowContext {
+    collapsed: bool,
+    hovered: bool,
+    fold_edge: FoldEdge,
+}
+
+struct LineCell<'a> {
+    added: Option<bool>,
+    tone: ChangeTone,
+    number: Option<u32>,
+    text: &'a SharedString,
+    syntax_runs: &'a [(Range<usize>, Hsla)],
+    change_runs: &'a [Range<usize>],
+}
+
+fn change_icon(change: FileChange, palette: &RowPalette) -> (&'static str, Hsla) {
+    match change {
+        FileChange::Added => (FILE_ADDED_ICON, palette.icon_added),
+        FileChange::Deleted => (FILE_DELETED_ICON, palette.icon_deleted),
+        FileChange::Renamed => (FILE_MOVED_ICON, palette.icon_modified),
+        FileChange::Modified | FileChange::TypeChanged => {
+            (FILE_MODIFIED_ICON, palette.icon_modified)
+        }
+    }
+}
+
+fn sticky_header(
+    spans: &[FileSpan],
+    offsets: &[f32],
+    first: usize,
+    vtop: f32,
+    content_top: Pixels,
+    viewport_top: Pixels,
+) -> Option<(usize, Pixels)> {
+    let header_top = |row: usize| offsets[row + 1] - FILE_HEADER_HEIGHT;
+    let file = spans
+        .partition_point(|span| span.header_row <= first)
+        .checked_sub(1)?;
+    let header_row = spans.get(file)?.header_row;
+    if header_top(header_row) >= vtop {
+        return None;
+    }
+    let height = px(FILE_HEADER_HEIGHT);
+    let mut y = viewport_top;
+    if let Some(next) = spans.get(file + 1) {
+        let next_top = content_top + px(header_top(next.header_row));
+        if next_top < viewport_top + height {
+            y = next_top - height;
+        }
+    }
+    (y + height > viewport_top).then_some((header_row, y))
 }
 
 pub struct DiffPrepaint {
     quads: Vec<Quad>,
     rounded_quads: Vec<RoundedQuad>,
-    images: Vec<ImagePaint>,
+    images: Vec<MaskIcon>,
     glyphs: Vec<Glyphs>,
     hatches: Vec<HatchPath>,
     chips: Vec<RoundedQuad>,
     chip_glyphs: Vec<Glyphs>,
     scrollbars: Vec<RoundedQuad>,
     sticky_quads: Vec<Quad>,
-    sticky_images: Vec<ImagePaint>,
+    sticky_images: Vec<MaskIcon>,
     sticky_glyphs: Vec<Glyphs>,
 }
 
@@ -184,10 +290,13 @@ pub struct DiffElement {
     body: DiffBody,
     palette: RowPalette,
     font: Font,
+    ui_font: Font,
     font_size: Pixels,
     line_height: Pixels,
+    ch: Pixels,
     gutter_w: Pixels,
     revert_chip: Option<usize>,
+    hovered_header: Option<usize>,
     highlight: HighlightPolicy,
 }
 
@@ -198,6 +307,7 @@ impl DiffElement {
                 crate::terminal::element::resolve_font_family(None).into();
         }
         let family = MONO_FAMILY.with(|f| f.clone());
+        let ch = CODE_FONT_SIZE * 0.6;
         Self {
             body,
             palette,
@@ -208,10 +318,19 @@ impl DiffElement {
                 weight: FontWeight::NORMAL,
                 style: FontStyle::Normal,
             },
-            font_size: px(12.),
+            ui_font: Font {
+                family: UI_FONT_FAMILY.into(),
+                features: FontFeatures::default(),
+                fallbacks: None,
+                weight: FontWeight::NORMAL,
+                style: FontStyle::Normal,
+            },
+            font_size: px(CODE_FONT_SIZE),
             line_height: px(ROW_HEIGHT),
-            gutter_w: px(GUTTER_W),
+            ch: px(ch),
+            gutter_w: px(ch * (GUTTER_PAD_L_CH + GUTTER_MIN_DIGITS as f32 + GUTTER_PAD_R_CH)),
             revert_chip: None,
+            hovered_header: None,
             highlight: HighlightPolicy::Words,
         }
     }
@@ -223,6 +342,11 @@ impl DiffElement {
 
     pub fn with_revert_chip(mut self, row: Option<usize>) -> Self {
         self.revert_chip = row;
+        self
+    }
+
+    pub fn with_hovered_header(mut self, row: Option<usize>) -> Self {
+        self.hovered_header = row;
         self
     }
 
@@ -284,199 +408,152 @@ impl DiffElement {
             .shape_line(text.clone(), self.font_size, &runs, None)
     }
 
-    fn shape_weighted(
+    fn shape_ui(
         &self,
         window: &mut Window,
         text: SharedString,
+        font_size: f32,
         color: Hsla,
-        weight: FontWeight,
     ) -> ShapedLine {
-        let font = Font {
-            weight,
-            ..self.font.clone()
-        };
-        let runs = [TextRun {
-            len: text.len(),
-            font,
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-        window
-            .text_system()
-            .shape_line(text, self.font_size, &runs, None)
-    }
-
-    fn language_icon_size(icon_path: &str) -> f32 {
-        match icon_path {
-            "icons/languages/file.svg" => FILE_HEADER_FILE_ICON_SIZE,
-            "icons/languages/rust-small.svg" => FILE_HEADER_RUST_ICON_SIZE,
-            _ => FILE_HEADER_ICON_SIZE,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn push_file_icon(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-        basename: &str,
-        origin: Point<Pixels>,
-        row_h: Pixels,
-        bounds: Bounds<Pixels>,
-        images: &mut Vec<ImagePaint>,
-        glyphs: &mut Vec<Glyphs>,
-    ) {
-        let icon_path = crate::file_icons::language_icon_path(basename);
-        let source = Resource::Embedded(icon_path.into());
-        if let Some(Ok(image)) = window.use_asset::<ImgResourceLoader>(&source, cx) {
-            let image_size = image.size(0);
-            let image_w = i32::from(image_size.width).max(1) as f32;
-            let image_h = i32::from(image_size.height).max(1) as f32;
-            let target_size = Self::language_icon_size(icon_path);
-            let scale = (target_size / image_w).min(target_size / image_h);
-            let paint_w = px(image_w * scale);
-            let paint_h = px(image_h * scale);
-            let icon_x = origin.x
-                + px(FILE_HEADER_ICON_X)
-                + ((px(FILE_HEADER_ICON_SLOT_W) - paint_w) / 2.0).max(px(0.));
-            images.push(ImagePaint {
-                bounds: Bounds::new(
-                    point(icon_x, origin.y + (row_h - paint_h) / 2.0),
-                    size(paint_w, paint_h),
-                ),
-                image,
-            });
-            return;
-        }
-
-        let is_rust = icon_path == "icons/languages/rust-small.svg";
-        let fallback = if is_rust { "R" } else { "◻" };
-        let color = if is_rust {
-            self.palette.file_icon_hot
-        } else {
-            self.palette.muted.opacity(0.72)
-        };
-        let icon_line = if is_rust {
-            self.shape_weighted(window, fallback.into(), color, FontWeight::SEMIBOLD)
-        } else {
-            shape_plain(window, &self.font, self.font_size, fallback.into(), color)
-        };
-        let icon_x = origin.x
-            + px(FILE_HEADER_ICON_X)
-            + ((px(FILE_HEADER_ICON_SLOT_W) - icon_line.width()) / 2.0).max(px(0.));
-        glyphs.push(Glyphs {
-            origin: point(icon_x, origin.y + (row_h - self.line_height) / 2.0),
-            line: icon_line,
-            clip: Some(bounds),
-        });
+        shape_plain(window, &self.ui_font, px(font_size), text, color)
     }
 
     #[allow(clippy::too_many_arguments)]
     fn paint_file_header(
         &self,
         window: &mut Window,
-        cx: &mut App,
         parts: &HeaderParts,
         origin: Point<Pixels>,
         width: Pixels,
-        row_h: Pixels,
-        _collapsed: bool,
-        sticky: bool,
+        collapsed: bool,
+        hovered: bool,
         quads: &mut Vec<Quad>,
-        images: &mut Vec<ImagePaint>,
+        icons: &mut Vec<MaskIcon>,
         glyphs: &mut Vec<Glyphs>,
     ) {
         let p = &self.palette;
-        let lh = self.line_height;
+        let row_h = px(FILE_HEADER_HEIGHT);
         let bounds = Bounds::new(origin, size(width, row_h));
-        let sep_h = px(FILE_HEADER_SEPARATOR_H);
-        let (header_fill, sep_y) = if sticky {
-            (bounds, origin.y + row_h - sep_h)
-        } else {
-            (
-                Bounds::new(
-                    point(origin.x, origin.y + sep_h),
-                    size(width, row_h - sep_h),
-                ),
-                origin.y,
-            )
-        };
         quads.push(Quad {
-            bounds: header_fill,
-            color: if sticky {
-                p.sticky_header_bg
+            bounds,
+            color: p.header_bg,
+        });
+        if hovered {
+            quads.push(Quad {
+                bounds: Bounds::new(origin, size(px(FILE_HEADER_HOVER_EDGE_W), row_h)),
+                color: p.header_hover_edge,
+            });
+        }
+
+        let icon = px(FILE_HEADER_ICON_SIZE);
+        let gap = px(FILE_HEADER_GAP);
+        let icon_y = origin.y + (row_h - icon) / 2.0;
+        let icon_at = |x: Pixels| Bounds::new(point(x, icon_y), size(icon, icon));
+        icons.push(MaskIcon {
+            bounds: icon_at(origin.x + px(FILE_HEADER_CHEVRON_X)),
+            path: if collapsed {
+                FILE_HEADER_COLLAPSED_ICON
             } else {
-                p.header_bg
+                FILE_HEADER_EXPANDED_ICON
             },
+            color: p.muted.opacity(FILE_HEADER_CHEVRON_ALPHA),
         });
-        quads.push(Quad {
-            bounds: Bounds::new(point(origin.x, sep_y), size(width, sep_h)),
-            color: p.context_bg,
+        let (change_path, change_color) = change_icon(parts.change, p);
+        icons.push(MaskIcon {
+            bounds: icon_at(origin.x + px(FILE_HEADER_ICON_X)),
+            path: change_path,
+            color: change_color,
         });
 
-        let basename: &str = parts.basename.as_ref();
-        self.push_file_icon(window, cx, basename, origin, row_h, bounds, images, glyphs);
-
-        let ty = origin.y + (row_h - lh) / 2.0;
-
-        let stat_text = format!("+{} -{}", parts.added, parts.removed);
-        let split = stat_text.find(" -").unwrap_or(stat_text.len());
-        let stat_runs = [(0..split, p.add_fg), (split..stat_text.len(), p.del_fg)];
-        let stat_ss: SharedString = stat_text.into();
-        let stat_line = self.shape(window, &stat_ss, &stat_runs, p.muted);
-        let stat_w = stat_line.width();
-        let path_x = origin.x + px(FILE_HEADER_PATH_X);
-        let stat_x = (bounds.right() - px(FILE_HEADER_STAT_PAD_R) - stat_w).max(path_x);
+        let ty = origin.y + (row_h - self.line_height) / 2.0;
+        let stat_size = px(HEADER_FONT_SIZE);
+        let column_w = shape_plain(window, &self.font, stat_size, "0".into(), p.muted).width()
+            * FILE_HEADER_STAT_COLUMN_CH;
+        let added_line = shape_plain(
+            window,
+            &self.font,
+            stat_size,
+            format!("+{}", parts.added).into(),
+            p.add_fg,
+        );
+        let removed_line = shape_plain(
+            window,
+            &self.font,
+            stat_size,
+            format!("-{}", parts.removed).into(),
+            p.del_fg,
+        );
+        let removed_right = bounds.right() - px(FILE_HEADER_PAD_R);
+        let added_right = removed_right - column_w.max(removed_line.width()) - gap;
+        let added_x = added_right - added_line.width();
+        let stats_left = added_x.min(added_right - column_w);
         glyphs.push(Glyphs {
-            origin: point(stat_x, ty),
-            line: stat_line,
+            origin: point(added_x, ty),
+            line: added_line,
+            clip: Some(bounds),
+        });
+        glyphs.push(Glyphs {
+            origin: point(removed_right - removed_line.width(), ty),
+            line: removed_line,
             clip: Some(bounds),
         });
 
-        let region_right = (stat_x - px(STAT_GAP)).max(path_x);
-        let avail = (region_right - path_x).max(px(0.));
-        let base_line =
-            self.shape_weighted(window, parts.basename.clone(), p.text, FontWeight::SEMIBOLD);
-        let dir_line = shape_plain(
-            window,
-            &self.font,
-            self.font_size,
-            parts.dir_prefix.clone(),
-            p.muted,
-        );
-        let bw = base_line.width().min(avail);
-        let dir_avail = (avail - bw).max(px(0.));
-        let dw = dir_line.width();
-        if dw <= dir_avail {
-            let base_x = path_x + dw;
-            if dw > px(0.) {
+        let title_x = origin.x + px(FILE_HEADER_TITLE_X);
+        let title_right = (stats_left - gap).max(title_x);
+        let title = self.shape_ui(window, parts.path.clone(), HEADER_FONT_SIZE, p.text);
+        let mut name_x = title_x;
+        if let Some(old_path) = &parts.old_path {
+            let previous = self.shape_ui(
+                window,
+                old_path.clone(),
+                HEADER_FONT_SIZE,
+                p.text.opacity(FILE_HEADER_PREVIOUS_PATH_ALPHA),
+            );
+            let arrow_x = title_x + previous.width() + gap;
+            let renamed_x = arrow_x + icon + gap;
+            if renamed_x + title.width() <= title_right {
                 glyphs.push(Glyphs {
-                    origin: point(path_x, ty),
-                    line: dir_line,
+                    origin: point(title_x, ty),
+                    line: previous,
                     clip: Some(bounds),
                 });
+                icons.push(MaskIcon {
+                    bounds: icon_at(arrow_x),
+                    path: RENAME_ARROW_ICON,
+                    color: p.text,
+                });
+                name_x = renamed_x;
             }
-            glyphs.push(Glyphs {
-                origin: point(base_x, ty),
-                line: base_line,
-                clip: Some(Bounds::new(point(base_x, origin.y), size(bw, row_h))),
-            });
-        } else {
-            let base_x = path_x + dir_avail;
-            let dir_origin_x = base_x - dw;
-            glyphs.push(Glyphs {
-                origin: point(dir_origin_x, ty),
-                line: dir_line,
-                clip: Some(Bounds::new(point(path_x, origin.y), size(dir_avail, row_h))),
-            });
-            glyphs.push(Glyphs {
-                origin: point(base_x, ty),
-                line: base_line,
-                clip: Some(Bounds::new(point(base_x, origin.y), size(bw, row_h))),
-            });
         }
+
+        let name_w = (title_right - name_x).max(px(0.));
+        if title.width() <= name_w {
+            glyphs.push(Glyphs {
+                origin: point(name_x, ty),
+                line: title,
+                clip: Some(bounds),
+            });
+            return;
+        }
+        let ellipsis = self.shape_ui(window, "\u{2026}".into(), HEADER_FONT_SIZE, p.text);
+        let ellipsis_w = ellipsis.width().min(name_w);
+        let clip_x = name_x + ellipsis_w;
+        glyphs.push(Glyphs {
+            origin: point(name_x, ty),
+            line: ellipsis,
+            clip: Some(Bounds::new(
+                point(name_x, origin.y),
+                size(ellipsis_w, row_h),
+            )),
+        });
+        glyphs.push(Glyphs {
+            origin: point(title_right - title.width(), ty),
+            line: title,
+            clip: Some(Bounds::new(
+                point(clip_x, origin.y),
+                size((title_right - clip_x).max(px(0.)), row_h),
+            )),
+        });
     }
 
     fn change_colors(&self, added: bool, tone: ChangeTone) -> (Hsla, Hsla, Option<Hsla>) {
@@ -528,17 +605,19 @@ impl DiffElement {
         origin: Point<Pixels>,
         height: Pixels,
         color: Hsla,
-        dashed: bool,
+        dash_gap: Option<Hsla>,
         quads: &mut Vec<Quad>,
     ) {
-        if !dashed {
-            quads.push(Quad {
-                bounds: Bounds::new(origin, size(px(BAR_W), height)),
-                color,
-            });
+        let bar = Bounds::new(origin, size(px(BAR_W), height));
+        let Some(dash_gap) = dash_gap else {
+            quads.push(Quad { bounds: bar, color });
             return;
-        }
+        };
 
+        quads.push(Quad {
+            bounds: bar,
+            color: dash_gap,
+        });
         let height = f32::from(height).max(0.0);
         let mut y = 0.0;
         while y < height {
@@ -592,53 +671,6 @@ impl DiffElement {
                 });
             }
             k += PHANTOM_HATCH_SPACING;
-        }
-    }
-
-    fn push_fold_icon(&self, bounds: Bounds<Pixels>, hatches: &mut Vec<HatchLine>) {
-        if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
-            return;
-        }
-
-        let cx = bounds.origin.x + bounds.size.width / 2.0;
-        let cy = bounds.origin.y + bounds.size.height / 2.0;
-        let w = px(FOLD_CHEVRON_W);
-        let h = px(FOLD_CHEVRON_H);
-        let offset = px(FOLD_CHEVRON_OFFSET);
-        let color = self.palette.muted.blend(self.palette.text.opacity(0.25));
-
-        let top_y = cy - offset;
-        hatches.push(HatchLine {
-            start: point(cx - w, top_y + h / 2.0),
-            end: point(cx, top_y - h / 2.0),
-            color,
-        });
-        hatches.push(HatchLine {
-            start: point(cx, top_y - h / 2.0),
-            end: point(cx + w, top_y + h / 2.0),
-            color,
-        });
-
-        let bottom_y = cy + offset;
-        hatches.push(HatchLine {
-            start: point(cx - w, bottom_y - h / 2.0),
-            end: point(cx, bottom_y + h / 2.0),
-            color,
-        });
-        hatches.push(HatchLine {
-            start: point(cx, bottom_y + h / 2.0),
-            end: point(cx + w, bottom_y - h / 2.0),
-            color,
-        });
-    }
-
-    fn fold_corners(&self, round_left: bool, round_right: bool) -> Corners<Pixels> {
-        let r = px(FOLD_RADIUS);
-        Corners {
-            top_left: if round_left { r } else { px(0.) },
-            top_right: if round_right { r } else { px(0.) },
-            bottom_right: if round_right { r } else { px(0.) },
-            bottom_left: if round_left { r } else { px(0.) },
         }
     }
 
@@ -715,212 +747,283 @@ impl DiffElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_fold_region(
+    fn layout_separator(
         &self,
         window: &mut Window,
         label: Option<&SharedString>,
-        origin: Point<Pixels>,
-        width: Pixels,
+        icon: Option<&'static str>,
+        left: Pixels,
+        right: Pixels,
+        top: Pixels,
         row_h: Pixels,
-        icon_w: Pixels,
-        round_left: bool,
         round_right: bool,
-        quads: &mut Vec<RoundedQuad>,
+        rounded_quads: &mut Vec<RoundedQuad>,
+        icons: &mut Vec<MaskIcon>,
         glyphs: &mut Vec<Glyphs>,
-        hatches: &mut Vec<HatchLine>,
     ) {
-        if width <= px(0.) || row_h <= px(0.) {
+        if right <= left || row_h <= px(0.) {
             return;
         }
 
         let p = &self.palette;
-        let bg = p.header_bg.blend(p.text.opacity(0.04));
-        let icon_bg = p.header_bg.blend(p.text.opacity(0.02));
-        let text_color = p.muted.blend(p.text.opacity(0.28));
-        let icon_w = icon_w.clamp(px(0.), width);
-
-        if icon_w > px(0.) {
-            let icon_bounds = Bounds::new(origin, size(icon_w, row_h));
-            quads.push(RoundedQuad {
-                bounds: icon_bounds,
-                color: icon_bg,
-                corners: self.fold_corners(round_left, label.is_none() && round_right),
+        let radius = px(SEPARATOR_RADIUS);
+        let square = px(0.);
+        let mut content_left = left;
+        if let Some(icon) = icon {
+            let button_w = px(SEPARATOR_BUTTON_W).min(right - left);
+            rounded_quads.push(RoundedQuad {
+                bounds: Bounds::new(point(left, top), size(button_w, row_h)),
+                color: p.separator_bg,
+                corners: Corners {
+                    top_left: radius,
+                    top_right: square,
+                    bottom_right: square,
+                    bottom_left: radius,
+                },
             });
-            self.push_fold_icon(icon_bounds, hatches);
+            let icon_size = px(SEPARATOR_ICON_SIZE);
+            icons.push(MaskIcon {
+                bounds: Bounds::new(
+                    point(
+                        left + (button_w - icon_size) / 2.0,
+                        top + (row_h - icon_size) / 2.0,
+                    ),
+                    size(icon_size, icon_size),
+                ),
+                path: icon,
+                color: p.separator_fg,
+            });
+            content_left = left + button_w + px(SEPARATOR_BUTTON_GAP);
         }
-
-        let gap = if icon_w > px(0.) {
-            px(FOLD_SEGMENT_GAP)
-        } else {
-            px(0.)
-        };
-        let label_x = origin.x + icon_w + gap;
-        let label_w = (width - icon_w - gap).max(px(0.));
-        if label_w <= px(0.) {
+        if right <= content_left {
             return;
         }
 
-        let label_bounds = Bounds::new(point(label_x, origin.y), size(label_w, row_h));
-        quads.push(RoundedQuad {
-            bounds: label_bounds,
-            color: bg,
-            corners: self.fold_corners(icon_w <= px(0.) && round_left, round_right),
+        let content = Bounds::new(point(content_left, top), size(right - content_left, row_h));
+        let right_radius = if round_right { radius } else { square };
+        rounded_quads.push(RoundedQuad {
+            bounds: content,
+            color: p.separator_bg,
+            corners: Corners {
+                top_left: square,
+                top_right: right_radius,
+                bottom_right: right_radius,
+                bottom_left: square,
+            },
         });
-
         if let Some(label) = label {
             glyphs.push(Glyphs {
                 origin: point(
-                    label_x + px(FOLD_LABEL_PAD_X),
-                    origin.y + (row_h - self.line_height) / 2.0,
+                    content_left + px(SEPARATOR_LABEL_PAD_X),
+                    top + (row_h - self.line_height) / 2.0,
                 ),
-                line: shape_plain(
-                    window,
-                    &self.font,
-                    self.font_size,
-                    label.clone(),
-                    text_color,
-                ),
-                clip: Some(label_bounds),
+                line: self.shape_ui(window, label.clone(), SEPARATOR_FONT_SIZE, p.separator_fg),
+                clip: Some(content),
             });
         }
+    }
+
+    fn layout_note(
+        &self,
+        window: &mut Window,
+        text: &SharedString,
+        row_bounds: Bounds<Pixels>,
+        quads: &mut Vec<Quad>,
+        glyphs: &mut Vec<Glyphs>,
+    ) {
+        let p = &self.palette;
+        quads.push(Quad {
+            bounds: row_bounds,
+            color: p.context_bg,
+        });
+        glyphs.push(Glyphs {
+            origin: point(
+                row_bounds.origin.x + px(NOTE_PAD_X),
+                row_bounds.origin.y + (row_bounds.size.height - self.line_height) / 2.0,
+            ),
+            line: shape_plain(window, &self.font, self.font_size, text.clone(), p.muted),
+            clip: Some(row_bounds),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_header_row(
+        &self,
+        window: &mut Window,
+        parts: &HeaderParts,
+        origin: Point<Pixels>,
+        width: Pixels,
+        row_h: Pixels,
+        ctx: RowContext,
+        quads: &mut Vec<Quad>,
+        icons: &mut Vec<MaskIcon>,
+        glyphs: &mut Vec<Glyphs>,
+    ) {
+        let gap = (row_h - px(FILE_HEADER_HEIGHT)).max(px(0.));
+        if gap > px(0.) {
+            quads.push(Quad {
+                bounds: Bounds::new(origin, size(width, gap)),
+                color: self.palette.context_bg,
+            });
+        }
+        self.paint_file_header(
+            window,
+            parts,
+            point(origin.x, origin.y + gap),
+            width,
+            ctx.collapsed,
+            ctx.hovered,
+            quads,
+            icons,
+            glyphs,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_line(
+        &self,
+        window: &mut Window,
+        cell: LineCell<'_>,
+        origin: Point<Pixels>,
+        width: Pixels,
+        h_offset: Pixels,
+        quads: &mut Vec<Quad>,
+        glyphs: &mut Vec<Glyphs>,
+    ) {
+        let p = &self.palette;
+        let lh = self.line_height;
+        let bounds = Bounds::new(origin, size(width, lh));
+        let content_x = origin.x + self.gutter_w + px(GUTTER_BORDER_W);
+        let content_w = (bounds.right() - content_x).max(px(0.));
+        quads.push(Quad {
+            bounds,
+            color: p.context_bg,
+        });
+
+        let mut number_color = p.number;
+        let mut word_color = None;
+        if let Some(added) = cell.added {
+            let (bg, bar, word) = self.change_colors(added, cell.tone);
+            if bg != p.context_bg {
+                let gutter_bg = if bg == p.add_bg {
+                    p.add_gutter_bg
+                } else if bg == p.del_bg {
+                    p.del_gutter_bg
+                } else {
+                    bg
+                };
+                quads.push(Quad {
+                    bounds: Bounds::new(origin, size(self.gutter_w, lh)),
+                    color: gutter_bg,
+                });
+                quads.push(Quad {
+                    bounds: Bounds::new(point(content_x, origin.y), size(content_w, lh)),
+                    color: bg,
+                });
+            }
+            let dash_gap = (!added).then_some(if bar == p.del_bar {
+                p.del_bar_gap
+            } else {
+                gpui::transparent_black()
+            });
+            Self::push_hunk_bar(origin, lh, bar, dash_gap, quads);
+            number_color = if added { p.gutter_add } else { p.gutter_del };
+            word_color = word;
+        }
+
+        self.gutter(window, cell.number, origin, number_color, glyphs);
+        if cell.text.is_empty() {
+            return;
+        }
+        let code_x = content_x + self.ch * LINE_PAD_CH - h_offset;
+        let line = self.shape(window, cell.text, cell.syntax_runs, p.text);
+        if let Some(word) = word_color {
+            self.push_word_rects(
+                &line,
+                cell.change_runs,
+                code_x,
+                content_x,
+                bounds.right(),
+                origin.y,
+                word,
+                quads,
+            );
+        }
+        glyphs.push(Glyphs {
+            origin: point(code_x, origin.y),
+            line,
+            clip: Some(Bounds::new(point(content_x, origin.y), size(content_w, lh))),
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
     fn layout_unified(
         &self,
         window: &mut Window,
-        cx: &mut App,
         row: &DisplayRow,
         origin: Point<Pixels>,
         width: Pixels,
         row_h: Pixels,
-        collapsed: bool,
+        ctx: RowContext,
         h_offset: Pixels,
         quads: &mut Vec<Quad>,
         rounded_quads: &mut Vec<RoundedQuad>,
-        images: &mut Vec<ImagePaint>,
+        icons: &mut Vec<MaskIcon>,
         glyphs: &mut Vec<Glyphs>,
-        hatches: &mut Vec<HatchLine>,
     ) {
-        let p = &self.palette;
-        let lh = self.line_height;
         let row_bounds = Bounds::new(origin, size(width, row_h));
 
         match row.kind {
             RowKind::FileHeader => match &row.header {
-                Some(parts) => self.paint_file_header(
-                    window, cx, parts, origin, width, row_h, collapsed, false, quads, images,
-                    glyphs,
+                Some(parts) => self.layout_header_row(
+                    window, parts, origin, width, row_h, ctx, quads, icons, glyphs,
                 ),
-                None => {
-                    quads.push(Quad {
-                        bounds: row_bounds,
-                        color: p.header_bg,
-                    });
-                    glyphs.push(Glyphs {
-                        origin: point(origin.x + px(PAD), origin.y + (row_h - lh) / 2.0),
-                        line: shape_plain(
-                            window,
-                            &self.font,
-                            self.font_size,
-                            row.text.clone(),
-                            p.text,
-                        ),
-                        clip: Some(row_bounds),
-                    });
-                }
+                None => self.layout_note(window, &row.text, row_bounds, quads, glyphs),
             },
             RowKind::Binary | RowKind::Truncated => {
-                glyphs.push(Glyphs {
-                    origin: point(origin.x + px(PAD), origin.y),
-                    line: shape_plain(
-                        window,
-                        &self.font,
-                        self.font_size,
-                        row.text.clone(),
-                        p.muted,
-                    ),
-                    clip: Some(row_bounds),
-                });
+                self.layout_note(window, &row.text, row_bounds, quads, glyphs);
             }
             RowKind::Fold => {
-                let icon_w = px(BAR_W + PAD2) + self.gutter_w;
-                self.layout_fold_region(
+                quads.push(Quad {
+                    bounds: row_bounds,
+                    color: self.palette.context_bg,
+                });
+                self.layout_separator(
                     window,
                     Some(&row.text),
-                    origin,
-                    width,
+                    Some(ctx.fold_edge.icon()),
+                    origin.x + px(SEPARATOR_INSET_X),
+                    row_bounds.right() - px(SEPARATOR_INSET_X),
+                    origin.y,
                     row_h,
-                    icon_w,
-                    true,
                     true,
                     rounded_quads,
+                    icons,
                     glyphs,
-                    hatches,
                 );
             }
             RowKind::Context | RowKind::Added | RowKind::Removed => {
-                let (bg, gutter_bg, bar_color, word_color) = match row.kind {
-                    RowKind::Added => {
-                        let (bg, bar, word) = self.change_colors(true, row.tone);
-                        (bg, p.add_gutter_bg, Some(bar), word)
-                    }
-                    RowKind::Removed => {
-                        let (bg, bar, word) = self.change_colors(false, row.tone);
-                        (bg, p.del_gutter_bg, Some(bar), word)
-                    }
-                    _ => (p.context_bg, p.gutter_bg, None, None),
+                let added = match row.kind {
+                    RowKind::Added => Some(true),
+                    RowKind::Removed => Some(false),
+                    _ => None,
                 };
-                quads.push(Quad {
-                    bounds: row_bounds,
-                    color: bg,
-                });
-                quads.push(Quad {
-                    bounds: Bounds::new(origin, size(px(BAR_W + PAD2) + self.gutter_w, row_h)),
-                    color: gutter_bg,
-                });
-                if let Some(c) = bar_color {
-                    Self::push_hunk_bar(origin, lh, c, row.kind == RowKind::Removed, quads);
-                }
-                let line_no = row.new_no.or(row.old_no);
-                let num_color = match row.kind {
-                    RowKind::Added => p.gutter_add,
-                    RowKind::Removed => p.gutter_del,
-                    _ => p.muted,
-                };
-                self.gutter(
+                self.layout_line(
                     window,
-                    line_no,
-                    origin.x + px(BAR_W + PAD2),
-                    origin.y,
-                    num_color,
+                    LineCell {
+                        added,
+                        tone: row.tone,
+                        number: row.new_no.or(row.old_no),
+                        text: &row.text,
+                        syntax_runs: &row.syntax_runs,
+                        change_runs: &row.change_runs,
+                    },
+                    origin,
+                    width,
+                    h_offset,
+                    quads,
                     glyphs,
                 );
-                let text_x = origin.x + px(BAR_W + PAD2) + self.gutter_w;
-                let code_x = text_x - h_offset;
-                if !row.text.is_empty() {
-                    let line = self.shape(window, &row.text, &row.syntax_runs, p.text);
-                    if let Some(word) = word_color {
-                        self.push_word_rects(
-                            &line,
-                            &row.change_runs,
-                            code_x,
-                            text_x,
-                            row_bounds.right(),
-                            origin.y,
-                            word,
-                            quads,
-                        );
-                    }
-                    glyphs.push(Glyphs {
-                        origin: point(code_x, origin.y),
-                        line,
-                        clip: Some(Bounds::new(
-                            point(text_x, origin.y),
-                            size((row_bounds.right() - text_x).max(px(0.)), lh),
-                        )),
-                    });
-                }
             }
         }
     }
@@ -929,82 +1032,70 @@ impl DiffElement {
     fn layout_split(
         &self,
         window: &mut Window,
-        cx: &mut App,
         row: &SplitRow,
         origin: Point<Pixels>,
         width: Pixels,
         row_h: Pixels,
-        collapsed: bool,
+        ctx: RowContext,
         h_offset_left: Pixels,
         h_offset_right: Pixels,
         quads: &mut Vec<Quad>,
         rounded_quads: &mut Vec<RoundedQuad>,
-        images: &mut Vec<ImagePaint>,
+        icons: &mut Vec<MaskIcon>,
         glyphs: &mut Vec<Glyphs>,
         hatches: &mut Vec<HatchLine>,
     ) {
         let p = &self.palette;
         let lh = self.line_height;
         let row_bounds = Bounds::new(origin, size(width, row_h));
+        let divider_w = px(SPLIT_DIVIDER_W);
+        let half_w = ((width - divider_w) / 2.0).max(px(0.));
+        let right_x = origin.x + half_w + divider_w;
 
         match row {
             SplitRow::Header(parts) => {
-                self.paint_file_header(
-                    window, cx, parts, origin, width, row_h, collapsed, false, quads, images,
-                    glyphs,
+                self.layout_header_row(
+                    window, parts, origin, width, row_h, ctx, quads, icons, glyphs,
                 );
             }
-            SplitRow::Note(text) => {
-                glyphs.push(Glyphs {
-                    origin: point(origin.x + px(PAD), origin.y),
-                    line: shape_plain(window, &self.font, self.font_size, text.clone(), p.muted),
-                    clip: Some(row_bounds),
-                });
-            }
+            SplitRow::Note(text) => self.layout_note(window, text, row_bounds, quads, glyphs),
             SplitRow::Fold(fold) => {
-                let divider_w = px(SPLIT_DIVIDER_W);
-                let half_w = ((width - divider_w) / 2.0).max(px(0.));
-                let right_x = origin.x + half_w + divider_w;
-                self.layout_fold_region(
-                    window,
-                    Some(&fold.text),
-                    origin,
-                    half_w,
-                    row_h,
-                    px(BAR_W + HALF_PAD) + self.gutter_w,
-                    true,
-                    false,
-                    rounded_quads,
-                    glyphs,
-                    hatches,
-                );
                 quads.push(Quad {
-                    bounds: Bounds::new(point(origin.x + half_w, origin.y), size(divider_w, row_h)),
+                    bounds: row_bounds,
                     color: p.context_bg,
                 });
-                self.layout_fold_region(
+                self.layout_separator(
+                    window,
+                    Some(&fold.text),
+                    Some(ctx.fold_edge.icon()),
+                    origin.x + px(SEPARATOR_INSET_X),
+                    origin.x + half_w,
+                    origin.y,
+                    row_h,
+                    false,
+                    rounded_quads,
+                    icons,
+                    glyphs,
+                );
+                self.layout_separator(
                     window,
                     None,
-                    point(right_x, origin.y),
-                    half_w,
+                    None,
+                    right_x,
+                    row_bounds.right() - px(SEPARATOR_INSET_X),
+                    origin.y,
                     row_h,
-                    px(0.),
-                    false,
                     true,
                     rounded_quads,
+                    icons,
                     glyphs,
-                    hatches,
                 );
             }
             SplitRow::Pair { left, right } => {
-                let divider_w = px(SPLIT_DIVIDER_W);
-                let half_w = ((width - divider_w) / 2.0).max(px(0.));
-                let left_x = origin.x;
-                let right_x = origin.x + half_w + divider_w;
                 self.layout_half(
                     window,
                     left,
-                    point(left_x, origin.y),
+                    origin,
                     half_w,
                     h_offset_left,
                     quads,
@@ -1041,87 +1132,48 @@ impl DiffElement {
         glyphs: &mut Vec<Glyphs>,
         hatches: &mut Vec<HatchLine>,
     ) {
-        let p = &self.palette;
-        let lh = self.line_height;
-        let half_bounds = Bounds::new(origin, size(width, lh));
-        let (bg, gutter_bg, bar_color, word_color) = match cell.kind {
-            CellKind::Added => {
-                let (bg, bar, word) = self.change_colors(true, cell.tone);
-                (bg, p.add_gutter_bg, Some(bar), word)
+        let added = match cell.kind {
+            CellKind::Added => Some(true),
+            CellKind::Removed => Some(false),
+            CellKind::Context => None,
+            CellKind::Phantom => {
+                let lh = self.line_height;
+                quads.push(Quad {
+                    bounds: Bounds::new(origin, size(width, lh)),
+                    color: self.palette.phantom_bg,
+                });
+                let hatch_x = origin.x + self.gutter_w + px(GUTTER_BORDER_W);
+                let hatch_w = (origin.x + width - hatch_x).max(px(0.));
+                self.push_phantom_hatches(
+                    Bounds::new(point(hatch_x, origin.y), size(hatch_w, lh)),
+                    hatches,
+                );
+                return;
             }
-            CellKind::Removed => {
-                let (bg, bar, word) = self.change_colors(false, cell.tone);
-                (bg, p.del_gutter_bg, Some(bar), word)
-            }
-            CellKind::Phantom => (p.phantom_bg, p.gutter_bg, None, None),
-            CellKind::Context => (p.context_bg, p.gutter_bg, None, None),
         };
-        quads.push(Quad {
-            bounds: half_bounds,
-            color: bg,
-        });
-        if matches!(cell.kind, CellKind::Phantom) {
-            let hatch_x = origin.x + px(BAR_W + HALF_PAD) + self.gutter_w;
-            let hatch_w = (half_bounds.right() - hatch_x).max(px(0.));
-            self.push_phantom_hatches(
-                Bounds::new(point(hatch_x, origin.y), size(hatch_w, lh)),
-                hatches,
-            );
-            return;
-        }
-        quads.push(Quad {
-            bounds: Bounds::new(origin, size(px(BAR_W + HALF_PAD) + self.gutter_w, lh)),
-            color: gutter_bg,
-        });
-        if let Some(c) = bar_color {
-            Self::push_hunk_bar(origin, lh, c, cell.kind == CellKind::Removed, quads);
-        }
-        let num_color = match cell.kind {
-            CellKind::Added => p.gutter_add,
-            CellKind::Removed => p.gutter_del,
-            _ => p.muted,
-        };
-        self.gutter(
+        self.layout_line(
             window,
-            cell.no,
-            origin.x + px(BAR_W + HALF_PAD),
-            origin.y,
-            num_color,
+            LineCell {
+                added,
+                tone: cell.tone,
+                number: cell.no,
+                text: &cell.text,
+                syntax_runs: &cell.syntax_runs,
+                change_runs: &cell.change_runs,
+            },
+            origin,
+            width,
+            h_offset,
+            quads,
             glyphs,
         );
-        let text_x = origin.x + px(BAR_W + HALF_PAD) + self.gutter_w;
-        let code_x = text_x - h_offset;
-        if !cell.text.is_empty() {
-            let line = self.shape(window, &cell.text, &cell.syntax_runs, p.text);
-            if let Some(word) = word_color {
-                self.push_word_rects(
-                    &line,
-                    &cell.change_runs,
-                    code_x,
-                    text_x,
-                    half_bounds.right(),
-                    origin.y,
-                    word,
-                    quads,
-                );
-            }
-            glyphs.push(Glyphs {
-                origin: point(code_x, origin.y),
-                line,
-                clip: Some(Bounds::new(
-                    point(text_x, origin.y),
-                    size((half_bounds.right() - text_x).max(px(0.)), lh),
-                )),
-            });
-        }
     }
 
     fn gutter(
         &self,
         window: &mut Window,
         n: Option<u32>,
-        x: Pixels,
-        y: Pixels,
+        origin: Point<Pixels>,
         color: Hsla,
         glyphs: &mut Vec<Glyphs>,
     ) {
@@ -1133,9 +1185,9 @@ impl DiffElement {
             n.to_string().into(),
             color,
         );
-        let right_x = (x + self.gutter_w - px(NUM_GAP) - line.width()).max(x);
+        let right = origin.x + self.gutter_w - self.ch * GUTTER_PAD_R_CH;
         glyphs.push(Glyphs {
-            origin: point(right_x, y),
+            origin: point((right - line.width()).max(origin.x), origin.y),
             line,
             clip: None,
         });
@@ -1175,7 +1227,7 @@ impl Element for DiffElement {
         bounds: Bounds<Pixels>,
         _request_layout: &mut (),
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
         let row_count = self.body.len();
 
@@ -1202,7 +1254,7 @@ impl Element for DiffElement {
                 count += 1;
                 n /= 10;
             }
-            count.max(2)
+            count.max(GUTTER_MIN_DIGITS)
         };
         let digit_w = f32::from(
             shape_plain(
@@ -1214,7 +1266,8 @@ impl Element for DiffElement {
             )
             .width(),
         );
-        self.gutter_w = px((GUTTER_PAD_L + digits as f32 * digit_w + NUM_GAP).max(GUTTER_W));
+        self.ch = px(digit_w);
+        self.gutter_w = px(digit_w * (GUTTER_PAD_L_CH + digits as f32 + GUTTER_PAD_R_CH));
 
         let spans = self.body.spans_rc();
         let h_offsets = self.body.h_offsets_rc();
@@ -1233,15 +1286,28 @@ impl Element for DiffElement {
         let mut sticky_images = Vec::with_capacity(1);
         let mut sticky_glyphs = Vec::with_capacity(3);
 
+        let sticky = sticky_header(
+            &spans,
+            &offsets,
+            first,
+            vtop,
+            bounds.origin.y,
+            mask.bounds.origin.y,
+        );
+
         match &self.body {
             DiffBody::Unified { rows, .. } => {
                 let rows = rows.clone();
+                let is_header =
+                    |i: usize| rows.get(i).is_none_or(|r| r.kind == RowKind::FileHeader);
                 for i in first..last {
                     let origin = point(bounds.origin.x, bounds.origin.y + px(offsets[i]));
                     let row_h = px(offsets[i + 1] - offsets[i]);
-                    let collapsed = rows
-                        .get(i + 1)
-                        .is_none_or(|r| r.kind == RowKind::FileHeader);
+                    let ctx = RowContext {
+                        collapsed: is_header(i + 1),
+                        hovered: self.hovered_header == Some(i),
+                        fold_edge: FoldEdge::between(i > 0 && is_header(i - 1), is_header(i + 1)),
+                    };
                     let h_offset = px(file_at_row(&spans, i)
                         .map(|f| {
                             file_side_offset(&spans, &h_offsets, f, false, false, f32::from(width))
@@ -1249,64 +1315,46 @@ impl Element for DiffElement {
                         .unwrap_or(0.0));
                     self.layout_unified(
                         window,
-                        cx,
                         &rows[i],
                         origin,
                         width,
                         row_h,
-                        collapsed,
+                        ctx,
                         h_offset,
                         &mut quads,
                         &mut rounded_quads,
                         &mut images,
                         &mut glyphs,
-                        &mut hatches,
                     );
                 }
-                let cur = spans
-                    .partition_point(|span| span.header_row <= first)
-                    .checked_sub(1)
-                    .and_then(|file_idx| {
-                        spans.get(file_idx).map(|span| (file_idx, span.header_row))
-                    });
-                if let Some((file_idx, hidx)) = cur
-                    && offsets[hidx] < vtop
+                if let Some((header_row, sticky_y)) = sticky
+                    && let Some(parts) = rows[header_row].header.as_ref()
                 {
-                    let nh = spans.get(file_idx + 1).map(|span| span.header_row);
-                    let mut sticky_y = mask.bounds.origin.y;
-                    if let Some(nh) = nh {
-                        let nh_abs = bounds.origin.y + px(offsets[nh]);
-                        if nh_abs < mask.bounds.origin.y + px(STICKY_HEADER_HEIGHT) {
-                            sticky_y = nh_abs - px(STICKY_HEADER_HEIGHT);
-                        }
-                    }
-                    if sticky_y + px(STICKY_HEADER_HEIGHT) > mask.bounds.origin.y
-                        && let Some(parts) = rows[hidx].header.as_ref()
-                    {
-                        self.paint_file_header(
-                            window,
-                            cx,
-                            parts,
-                            point(bounds.origin.x, sticky_y),
-                            width,
-                            px(STICKY_HEADER_HEIGHT),
-                            false,
-                            true,
-                            &mut sticky_quads,
-                            &mut sticky_images,
-                            &mut sticky_glyphs,
-                        );
-                    }
+                    self.paint_file_header(
+                        window,
+                        parts,
+                        point(bounds.origin.x, sticky_y),
+                        width,
+                        is_header(header_row + 1),
+                        false,
+                        &mut sticky_quads,
+                        &mut sticky_images,
+                        &mut sticky_glyphs,
+                    );
                 }
             }
             DiffBody::Split { rows, .. } => {
                 let rows = rows.clone();
+                let is_header =
+                    |i: usize| rows.get(i).is_none_or(|r| matches!(r, SplitRow::Header(_)));
                 for i in first..last {
                     let origin = point(bounds.origin.x, bounds.origin.y + px(offsets[i]));
                     let row_h = px(offsets[i + 1] - offsets[i]);
-                    let collapsed = rows
-                        .get(i + 1)
-                        .is_none_or(|r| matches!(r, SplitRow::Header(_)));
+                    let ctx = RowContext {
+                        collapsed: is_header(i + 1),
+                        hovered: self.hovered_header == Some(i),
+                        fold_edge: FoldEdge::between(i > 0 && is_header(i - 1), is_header(i + 1)),
+                    };
                     let (h_offset_left, h_offset_right) = file_at_row(&spans, i)
                         .map(|f| {
                             (
@@ -1331,12 +1379,11 @@ impl Element for DiffElement {
                         .unwrap_or((px(0.0), px(0.0)));
                     self.layout_split(
                         window,
-                        cx,
                         &rows[i],
                         origin,
                         width,
                         row_h,
-                        collapsed,
+                        ctx,
                         h_offset_left,
                         h_offset_right,
                         &mut quads,
@@ -1346,40 +1393,20 @@ impl Element for DiffElement {
                         &mut hatches,
                     );
                 }
-                let cur = spans
-                    .partition_point(|span| span.header_row <= first)
-                    .checked_sub(1)
-                    .and_then(|file_idx| {
-                        spans.get(file_idx).map(|span| (file_idx, span.header_row))
-                    });
-                if let Some((file_idx, hidx)) = cur
-                    && offsets[hidx] < vtop
+                if let Some((header_row, sticky_y)) = sticky
+                    && let SplitRow::Header(parts) = &rows[header_row]
                 {
-                    let nh = spans.get(file_idx + 1).map(|span| span.header_row);
-                    let mut sticky_y = mask.bounds.origin.y;
-                    if let Some(nh) = nh {
-                        let nh_abs = bounds.origin.y + px(offsets[nh]);
-                        if nh_abs < mask.bounds.origin.y + px(STICKY_HEADER_HEIGHT) {
-                            sticky_y = nh_abs - px(STICKY_HEADER_HEIGHT);
-                        }
-                    }
-                    if sticky_y + px(STICKY_HEADER_HEIGHT) > mask.bounds.origin.y
-                        && let SplitRow::Header(parts) = &rows[hidx]
-                    {
-                        self.paint_file_header(
-                            window,
-                            cx,
-                            parts,
-                            point(bounds.origin.x, sticky_y),
-                            width,
-                            px(STICKY_HEADER_HEIGHT),
-                            false,
-                            true,
-                            &mut sticky_quads,
-                            &mut sticky_images,
-                            &mut sticky_glyphs,
-                        );
-                    }
+                    self.paint_file_header(
+                        window,
+                        parts,
+                        point(bounds.origin.x, sticky_y),
+                        width,
+                        is_header(header_row + 1),
+                        false,
+                        &mut sticky_quads,
+                        &mut sticky_images,
+                        &mut sticky_glyphs,
+                    );
                 }
             }
         }
@@ -1470,16 +1497,7 @@ impl Element for DiffElement {
                     BorderStyle::Solid,
                 ));
             }
-            for image in &layout.images {
-                let _ = window.paint_image(
-                    image.bounds,
-                    image.bounds,
-                    Corners::default(),
-                    image.image.clone(),
-                    0,
-                    false,
-                );
-            }
+            paint_icons(&layout.images, window, cx);
             for hatch in layout.hatches {
                 window.paint_path(hatch.path, hatch.color);
             }
@@ -1514,16 +1532,7 @@ impl Element for DiffElement {
             for q in &layout.sticky_quads {
                 window.paint_quad(fill(q.bounds, q.color));
             }
-            for image in &layout.sticky_images {
-                let _ = window.paint_image(
-                    image.bounds,
-                    image.bounds,
-                    Corners::default(),
-                    image.image.clone(),
-                    0,
-                    false,
-                );
-            }
+            paint_icons(&layout.sticky_images, window, cx);
             for g in layout.sticky_glyphs {
                 if let Some(clip) = g.clip {
                     window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
@@ -1723,7 +1732,10 @@ mod tests {
             bounds.origin.x,
             px(100. + 400. - REVERT_CHIP_PAD_R - REVERT_CHIP_W)
         );
-        assert_eq!(bounds.origin.y, px(201.));
+        assert_eq!(
+            bounds.origin.y,
+            px(200. + (ROW_HEIGHT - REVERT_CHIP_H) / 2.0)
+        );
         assert_eq!(bounds.size.width, px(REVERT_CHIP_W));
         assert_eq!(bounds.size.height, px(REVERT_CHIP_H));
         assert!(bounds.contains(&point(px(440.), px(210.))));

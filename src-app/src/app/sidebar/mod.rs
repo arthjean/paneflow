@@ -8,6 +8,8 @@ pub(crate) mod keyboard;
 mod lane;
 mod meta;
 mod pull_request;
+mod resize;
+mod selection;
 mod space_switcher;
 mod status_groups;
 mod style;
@@ -29,6 +31,8 @@ pub(crate) use folder_glyph::{FolderGlyphs, folder_glyphs};
 pub(crate) use lane::SpinnerClock;
 use lane::{Lane, infer_lane, render_lane_slot};
 use meta::*;
+pub(crate) use resize::SidebarResize;
+pub(crate) use selection::*;
 pub(crate) use space_switcher::{default_space_mark, space_mark};
 use status_groups::tab_row_workspace_suffix;
 pub(crate) use style::*;
@@ -347,7 +351,7 @@ impl PaneFlowApp {
             .text_size(px(13.))
             .font_weight(FontWeight::NORMAL)
             .relative()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width()))
             .flex_shrink_0()
             .h_full()
             .bg(crate::app::constants::cockpit_chrome_background(
@@ -390,7 +394,6 @@ impl PaneFlowApp {
                         .child(customize_menu::render_customize_sidebar_button(
                             customize_menu::CustomizeMenuState {
                                 open: self.sidebar_customize_menu_open,
-                                submenu: self.sidebar_customize_submenu,
                                 show: self.cached_config.sidebar_show,
                                 group_by: self.cached_config.resolved_sidebar_group_by(),
                                 all_expanded: self.all_workspaces_expanded(),
@@ -477,6 +480,7 @@ impl PaneFlowApp {
                 }),
             bubble_top.clone(),
         ));
+        self.advance_sidebar_selection_motion(window);
         if agents_shown {
             sidebar = sidebar.child(crate::ui_primitives::clip_below_line(
                 self.render_sidebar_agents(window, cx),
@@ -634,6 +638,7 @@ impl PaneFlowApp {
                 .into_iter()
                 .flat_map(|group| group.tabs)
                 .map(|(ws_idx, tab_idx)| SidebarRow::Tab(ws_idx, tab_idx))
+                .filter(|row| !self.sidebar_row_leaving(*row))
                 .collect();
         }
         let order = self.sidebar_display_order();
@@ -643,10 +648,16 @@ impl PaneFlowApp {
             let Some(tabs) = sidebar_matching_tabs(ws, query) else {
                 continue;
             };
+            if self.sidebar_row_leaving(SidebarRow::Folder(i)) {
+                continue;
+            }
             rows.push(SidebarRow::Folder(i));
             if (ws.sidebar_expanded || !query.is_empty()) && !ws.is_empty_shell() {
                 for tab_idx in tabs {
-                    rows.push(SidebarRow::Tab(i, tab_idx));
+                    let row = SidebarRow::Tab(i, tab_idx);
+                    if !self.sidebar_row_leaving(row) {
+                        rows.push(row);
+                    }
                 }
             }
         }
@@ -717,6 +728,19 @@ impl PaneFlowApp {
             self.cached_config.resolved_workspace_icon(),
             window.scale_factor(),
         );
+        let indent_guide = self.cached_config.sidebar_show.indent_guide_enabled();
+        let seams: Vec<_> = (0..animated_rows.len())
+            .map(|k| {
+                let (above, _) = *animated_rows.get(k.checked_sub(1)?)?;
+                let (below, _) = animated_rows[k];
+                self.sidebar_selection_seam(
+                    above,
+                    below,
+                    sidebar_seam_inset(above, below, indent_guide),
+                )
+            })
+            .collect();
+        self.join_sidebar_selection(&seams);
         for (k, (row, amount)) in animated_rows.iter().enumerate() {
             let group_opening = match row {
                 SidebarRow::Folder(_) => k
@@ -728,10 +752,28 @@ impl PaneFlowApp {
             };
             let spacing =
                 SIDEBAR_ROW_SPACING + (SIDEBAR_GROUP_SPACING - SIDEBAR_ROW_SPACING) * group_opening;
+            let bridge = self.render_sidebar_seam(seams[k], ui);
             if query.is_empty() && !animating {
-                list = list.child(self.render_drop_divider(k, slots[k], spacing, ui, cx));
+                let divider = self.render_drop_divider(k, slots[k], spacing, ui, cx);
+                list = match bridge {
+                    Some(bridge) => list.child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .w_full()
+                            .child(bridge)
+                            .child(divider),
+                    ),
+                    None => list.child(divider),
+                };
             } else {
-                list = list.child(div().flex_none().h(px(spacing * amount)));
+                list = list.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .h(px(spacing * amount))
+                        .children(bridge),
+                );
             }
             let content = match *row {
                 SidebarRow::Folder(i) => self

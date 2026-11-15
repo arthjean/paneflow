@@ -180,7 +180,6 @@ impl PaneFlowApp {
         self.diff_dock.picked = false;
         self.diff_dock.diff_tab_close_armed = None;
         self.diff_dock.diff_options_menu_open = false;
-        self.diff_dock.diff_options_submenu = None;
         self.diff_dock.diff_new_tab_menu_open = false;
         self.diff_dock.diff_branch_menu = None;
 
@@ -229,20 +228,43 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn toggle_cli_diff_dock(&mut self, cwd: String, cx: &mut Context<Self>) {
-        let cwd = cwd.trim().to_string();
-        let showing = self.diff_dock.open
-            && self
-                .diff_dock
-                .data
-                .as_ref()
-                .is_some_and(|data| data.cwd == cwd);
-        if showing {
-            self.dismiss_diff_dock_panel(cx);
-        } else {
-            self.diff_dock.picker = !self.diff_dock.picked;
-            self.open_diff_dock_panel(cwd, cx);
+    pub(crate) fn flush_shell(&self) -> bool {
+        matches!(
+            self.cached_config.resolved_interface_style(),
+            paneflow_config::schema::InterfaceStyle::Classic
+        )
+    }
+
+    pub(crate) fn diff_dock_toggle_available(&self) -> bool {
+        self.settings_section.is_none() && self.active_workspace().is_some()
+    }
+
+    pub(crate) fn handle_toggle_diff_dock(
+        &mut self,
+        _: &crate::ToggleDiffDock,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_diff_dock(cx);
+    }
+
+    pub(crate) fn toggle_diff_dock(&mut self, cx: &mut Context<Self>) {
+        if !self.diff_dock_toggle_available() {
+            return;
         }
+        if self.diff_dock.open {
+            self.dismiss_diff_dock_panel(cx);
+            return;
+        }
+        let Some(cwd) = self
+            .active_checkout()
+            .or_else(|| self.active_workspace().map(|ws| ws.cwd.clone()))
+        else {
+            return;
+        };
+        self.diff_dock.picker = !self.diff_dock.picked;
+        self.diff_dock.picker_focus_pending = self.diff_dock.picker;
+        self.open_diff_dock_panel(cwd, cx);
     }
 
     pub(crate) fn handle_toggle_diff_dock_maximize(
@@ -389,17 +411,23 @@ impl PaneFlowApp {
     pub(crate) fn wrap_cli_diff_dock(
         &mut self,
         body: AnyElement,
-        available_width: f32,
-        left_gutter: f32,
+        slot: DockSlot,
         density: crate::layout::PaneDensity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let DockSlot {
+            available_width,
+            left_gutter,
+            top: dock_top,
+        } = slot;
         self.sync_files_sidebar_session(cx);
         let files_width = self.rendered_files_sidebar_width(window, cx);
+        self.diff_dock.title_bar_zone_left = None;
         if !self.diff_dock_visible() && !self.diff_dock_closing() {
             return body;
         }
+        let flush_shell = self.flush_shell();
         let ui = crate::theme::ui_colors();
         let grid = self.rendered_pane_grid_layout(window);
         let fills_panel = grid != PaneGridLayout::Flex;
@@ -417,6 +445,14 @@ impl PaneFlowApp {
             self.rendered_dock_reveal(window)
         };
         let dock_column_width = width + outer_gutter;
+        if flush_shell {
+            self.diff_dock.title_bar_zone_left = Some(title_bar_zone_left(
+                grid,
+                available_width,
+                dock_column_width,
+                reveal,
+            ));
+        }
         let dock_frame = density.frame(gpui::Edges {
             top: true,
             right: true,
@@ -491,8 +527,10 @@ impl PaneFlowApp {
                     })
                     .pl(px(grid.dock_left_gutter(left_gutter)))
                     .h_full()
+                    .relative()
                     .flex()
                     .flex_col()
+                    .pt(dock_top)
                     .pb(px(outer_gutter))
                     .pr(px(outer_gutter))
                     .child(self.render_diff_dock_panel(
@@ -502,7 +540,18 @@ impl PaneFlowApp {
                         dock_frame,
                         ui,
                         cx,
-                    ));
+                    ))
+                    .when(flush_shell && grid != PaneGridLayout::Hidden, |dock| {
+                        dock.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .bottom_0()
+                                .w(px(1.))
+                                .bg(ui.border),
+                        )
+                    });
                 match reveal {
                     Some(progress) => div()
                         .relative()
@@ -527,9 +576,58 @@ impl PaneFlowApp {
     }
 }
 
+pub(crate) struct DockSlot {
+    pub(crate) available_width: f32,
+    pub(crate) left_gutter: f32,
+    pub(crate) top: gpui::Pixels,
+}
+
+fn title_bar_zone_left(
+    grid: PaneGridLayout,
+    available_width: f32,
+    dock_column_width: f32,
+    reveal: Option<f32>,
+) -> f32 {
+    match grid {
+        PaneGridLayout::Flex => {
+            (available_width - dock_column_width * reveal.unwrap_or(1.)).max(0.)
+        }
+        PaneGridLayout::Clipped { visible, .. } => visible.max(0.),
+        PaneGridLayout::Hidden => 0.,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_title_bar_zone_starts_where_the_dock_column_does() {
+        assert_eq!(
+            title_bar_zone_left(PaneGridLayout::Flex, 1200., 540., None),
+            660.
+        );
+        assert_eq!(
+            title_bar_zone_left(PaneGridLayout::Flex, 1200., 540., Some(0.5)),
+            930.
+        );
+        assert_eq!(
+            title_bar_zone_left(PaneGridLayout::Hidden, 1200., 1200., None),
+            0.
+        );
+        assert_eq!(
+            title_bar_zone_left(
+                PaneGridLayout::Clipped {
+                    visible: 300.,
+                    full: 660.
+                },
+                1200.,
+                1200.,
+                None
+            ),
+            300.
+        );
+    }
 
     #[gpui::test]
     fn a_dock_without_an_owner_hands_back_every_unsaved_file(cx: &mut gpui::TestAppContext) {

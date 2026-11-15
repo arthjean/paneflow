@@ -72,7 +72,7 @@ pub(crate) enum CardFrame {
 
 pub(crate) fn morph_corners(outer: Edges<bool>, comfort: f32) -> Corners<Pixels> {
     let card = crate::app::constants::PANE_CARD_RADIUS;
-    let flush = crate::app::constants::PANEL_CORNER_RADIUS;
+    let flush = flush_radius();
     let corner = |a: bool, b: bool| {
         let from = if a && b { flush } else { px(0.) };
         from + (card - from) * comfort
@@ -83,6 +83,10 @@ pub(crate) fn morph_corners(outer: Edges<bool>, comfort: f32) -> Corners<Pixels>
         bottom_right: corner(outer.bottom, outer.right),
         bottom_left: corner(outer.bottom, outer.left),
     }
+}
+
+fn flush_radius() -> Pixels {
+    crate::ui_primitives::interface_style::pick(crate::app::constants::PANEL_CORNER_RADIUS, px(0.))
 }
 
 pub(crate) fn grid_edges(right_is_outer: bool) -> Edges<bool> {
@@ -115,7 +119,7 @@ pub(crate) fn child_edges(
 }
 
 pub(crate) fn flush_corners(div: Div, outer: Edges<bool>) -> Div {
-    let radius = crate::app::constants::PANEL_CORNER_RADIUS;
+    let radius = flush_radius();
     let corner = |a: bool, b: bool| if a && b { radius } else { px(0.) };
     div.rounded_tl(corner(outer.top, outer.left))
         .rounded_tr(corner(outer.top, outer.right))
@@ -128,7 +132,14 @@ pub(crate) fn flush_fill(outer: Edges<bool>, color: Hsla) -> Div {
 }
 
 pub(crate) fn flush_border(outer: Edges<bool>, color: Hsla) -> Div {
-    let width = |outer: bool| if outer { px(1.) } else { px(0.) };
+    let edge_to_edge = crate::ui_primitives::interface_style::classic();
+    let width = |outer: bool| {
+        if outer && !edge_to_edge {
+            px(1.)
+        } else {
+            px(0.)
+        }
+    };
     flush_corners(div().absolute().inset_0(), outer)
         .border_t(width(outer.top))
         .border_r(width(outer.right))
@@ -184,6 +195,15 @@ mod tests {
         let card = morph_corners(inner_right, 1.0);
         assert_eq!(card.top_right, crate::app::constants::PANE_CARD_RADIUS);
         assert_eq!(card.top_left, crate::app::constants::PANE_CARD_RADIUS);
+    }
+
+    #[test]
+    fn an_edge_to_edge_shell_squares_the_outer_corners() {
+        let corners = crate::ui_primitives::interface_style::scoped(
+            crate::ui_primitives::interface_style::Shape::Classic,
+            || morph_corners(all(), 0.0),
+        );
+        assert_eq!(corners, Corners::all(px(0.)));
     }
 
     #[test]

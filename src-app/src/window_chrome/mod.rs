@@ -5,6 +5,7 @@ pub mod csd;
 pub mod linux_backdrop;
 #[cfg(target_os = "macos")]
 pub mod macos_backdrop;
+pub(crate) mod title_band;
 pub mod title_bar;
 
 use gpui::{IntoElement, PathBuilder, Styled, canvas, point};

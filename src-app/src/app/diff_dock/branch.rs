@@ -1,10 +1,17 @@
 use gpui::{
-    AnyElement, AppContext, ClickEvent, Context, Entity, FocusHandle, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    Window, deferred, div, prelude::FluentBuilder, px, svg,
+    AnyElement, AppContext, ClickEvent, Context, CursorStyle, Entity, FocusHandle,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, deferred, div, prelude::FluentBuilder, px, svg,
 };
 
 use crate::PaneFlowApp;
+use crate::app::menu_icons as icon;
+use crate::settings::components::with_alpha;
+use crate::ui_primitives::action_menu::{
+    CHECK_SIZE, GLYPH_SIZE, HIGHLIGHT_ALPHA, LABEL_TEXT, PANEL_PADDING, ROW_GAP, ROW_HEIGHT,
+    ROW_INSET, ROW_RADIUS as MENU_ROW_RADIUS, SEPARATOR_ALPHA, SHORTCUT_TEXT, menu_heading,
+    panel_shell,
+};
 use crate::ui_primitives::{AccessibleControlExt, ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
@@ -179,7 +186,8 @@ pub(super) fn render_diff_branch_chip(
     squircle_skin(
         div()
             .id("diff-branch-chip")
-            .flex_none()
+            .flex_shrink(1.)
+            .min_w_0()
             .flex()
             .flex_row()
             .items_center()
@@ -242,30 +250,22 @@ fn render_diff_branch_menu(
     let query_input = menu_state.query_input.clone();
     let query_lc = query_input.read(cx).value().trim().to_lowercase();
 
-    let mut menu =
-        crate::settings::components::floating_menu_panel(div().id("diff-branch-menu"), ui)
-            .w(px(280.))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
-                this.close_diff_branch_menu(window, cx);
-            }))
-            .on_key_down(cx.listener(PaneFlowApp::handle_diff_branch_menu_key_down))
-            .child(render_diff_branch_search_row(query_input, ui));
+    let mut menu = panel_shell(div().id("diff-branch-menu"), ui)
+        .w(px(280.))
+        .p(PANEL_PADDING)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+            this.close_diff_branch_menu(window, cx);
+        }))
+        .on_key_down(cx.listener(PaneFlowApp::handle_diff_branch_menu_key_down))
+        .child(render_diff_branch_search_row(query_input, ui));
 
     if menu_state.loading {
         menu = menu.child(render_diff_branch_menu_status("Loading branches…", ui));
     } else if let Some(error) = &menu_state.error {
         menu = menu.child(render_diff_branch_menu_status(error.clone(), ui));
     } else {
-        menu = menu.child(
-            div()
-                .px(px(8.))
-                .pt(px(4.))
-                .pb(px(2.))
-                .text_size(px(11.))
-                .text_color(ui.muted)
-                .child("Branches"),
-        );
+        menu = menu.child(menu_heading("Branches".into(), ui));
 
         let filtered: Vec<String> = menu_state
             .branches
@@ -281,7 +281,6 @@ fn render_diff_branch_menu(
                 .id("diff-branch-list")
                 .flex()
                 .flex_col()
-                .gap(px(1.))
                 .max_h(px(240.))
                 .overflow_y_scroll();
             for (idx, branch) in filtered.into_iter().enumerate() {
@@ -318,29 +317,36 @@ fn render_diff_branch_search_row(
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .px(px(8.))
-        .h(px(30.))
-        .child(
-            svg()
-                .size(px(14.))
-                .flex_none()
-                .path("icons/dock/search-01.svg")
-                .text_color(ui.muted),
-        )
+        .px(ROW_INSET)
+        .pt(px(6.))
+        .pb(px(4.))
         .child(
             div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(13.))
-                .text_color(ui.text)
-                .child(query_input.into_any_element()),
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(ROW_GAP)
+                .pb(px(6.))
+                .border_b_1()
+                .border_color(with_alpha(ui.text, SEPARATOR_ALPHA))
+                .child(
+                    svg()
+                        .size(GLYPH_SIZE)
+                        .flex_none()
+                        .path("icons/dock/search-01.svg")
+                        .text_color(with_alpha(ui.muted, 0.55)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(LABEL_TEXT)
+                        .text_color(ui.text)
+                        .child(query_input.into_any_element()),
+                ),
         )
         .into_any_element()
 }
@@ -356,56 +362,67 @@ fn render_diff_branch_item(
 ) -> AnyElement {
     let item_branch = branch.clone();
 
-    crate::settings::components::menu_row(
-        SharedString::from(format!("diff-branch-{idx}")),
-        selected,
-        ui,
-    )
-    .h_auto()
-    .min_h(crate::settings::components::menu_row_height())
-    .py(px(6.))
-    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-        this.close_diff_branch_menu(window, cx);
-        this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
-    }))
-    .child(
-        svg()
-            .size(px(16.))
-            .flex_none()
-            .path("icons/dock/git-branch.svg")
-            .text_color(ui.muted),
-    )
-    .child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(1.))
-            .child(
-                div()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(px(13.))
-                    .text_color(ui.text)
-                    .child(branch),
-            )
-            .when_some(uncommitted, |d, label| {
-                d.child(div().text_size(px(11.)).text_color(ui.muted).child(label))
-            }),
-    )
-    .child(div().w(px(14.)).flex_none().child(if selected {
-        svg()
-            .size(px(14.))
-            .path("icons/dock/tick-02.svg")
-            .text_color(ui.text)
-            .into_any_element()
-    } else {
-        div().size(px(14.)).into_any_element()
-    }))
-    .into_any_element()
+    div()
+        .id(SharedString::from(format!("diff-branch-{idx}")))
+        .flex_none()
+        .min_h(ROW_HEIGHT)
+        .py(px(4.))
+        .px(ROW_INSET)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(ROW_GAP)
+        .rounded(MENU_ROW_RADIUS)
+        .cursor(CursorStyle::Arrow)
+        .hover(|style| style.bg(with_alpha(ui.text, HIGHLIGHT_ALPHA)))
+        .role(gpui::Role::MenuItemRadio)
+        .aria_label(SharedString::from(branch.clone()))
+        .aria_toggled(if selected {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.close_diff_branch_menu(window, cx);
+            this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
+        }))
+        .child(
+            svg()
+                .size(GLYPH_SIZE)
+                .flex_none()
+                .path(icon::GIT_BRANCH)
+                .text_color(with_alpha(ui.muted, 0.8)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .child(
+                    div()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(LABEL_TEXT)
+                        .text_color(ui.text)
+                        .child(branch),
+                )
+                .when_some(uncommitted, |d, label| {
+                    d.child(
+                        div()
+                            .text_size(SHORTCUT_TEXT)
+                            .text_color(ui.muted)
+                            .child(label),
+                    )
+                }),
+        )
+        .child(div().size(CHECK_SIZE).flex_none().when(selected, |slot| {
+            slot.child(svg().size(CHECK_SIZE).path(icon::CHECK).text_color(ui.text))
+        }))
+        .into_any_element()
 }
 
 fn render_diff_branch_menu_status(
@@ -413,11 +430,11 @@ fn render_diff_branch_menu_status(
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     div()
-        .h(px(28.))
-        .px(px(8.))
+        .h(ROW_HEIGHT)
+        .px(ROW_INSET)
         .flex()
         .items_center()
-        .text_size(px(12.))
+        .text_size(SHORTCUT_TEXT)
         .text_color(ui.muted)
         .child(label.into())
         .into_any_element()

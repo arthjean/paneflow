@@ -7,12 +7,12 @@ use gpui::{
 };
 
 use super::agents::{AgentRank, agent_candidates, order_agents};
-use super::customize_menu::{SHIMMER_ICON, SidebarShowLine, menu_divider, render_show_option};
+use super::customize_menu::{SHIMMER_ICON, SidebarShowLine, show_option};
 use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
-use crate::settings::components::{menu_padding, menu_row_gap, menu_surface_filled};
+use crate::ui_primitives::action_menu::ActionMenu;
 use crate::window_state::AgentsSectionState;
 
 pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
@@ -44,7 +44,6 @@ const AGENTS_CHEVRON_TURN_SECS: f32 = 0.18;
 const NO_STATUS_GRACE: Duration = Duration::from_secs(3);
 const AGENTS_TOGGLE_GROUP: &str = "agents-section-toggle-group";
 const AGENTS_DISPLAY_GROUP: &str = "agents-display-group";
-const AGENTS_DISPLAY_MENU_WIDTH: f32 = 172.;
 const AGENTS_DISPLAY_MENU_GAP: f32 = 10.;
 const AGENT_LOGO_ICON: &str = "icons/chat-bot.svg";
 const AGENT_WORKSPACE_ICON: &str = "icons/folder.svg";
@@ -1463,13 +1462,6 @@ impl PaneFlowApp {
         );
     }
 
-    fn close_agents_display_menu(&mut self, cx: &mut Context<Self>) {
-        if self.agents_display_menu_open {
-            self.agents_display_menu_open = false;
-            cx.notify();
-        }
-    }
-
     fn render_agents_display_button(
         &self,
         ui: crate::theme::UiColors,
@@ -1533,52 +1525,38 @@ fn render_agents_display_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface_filled(div().id("agents-display-menu"), fill, ui)
-        .flex()
-        .flex_col()
-        .gap(menu_row_gap())
-        .p(menu_padding())
-        .font_family("Geist")
-        .w(px(AGENTS_DISPLAY_MENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _, cx| this.close_agents_display_menu(cx)),
-        )
-        .child(render_show_option(
+    let menu = ActionMenu::new()
+        .fill(fill)
+        .item(show_option(
             "Agent logo",
             AGENT_LOGO_ICON,
             SidebarShowLine::AgentLogo,
-            show.agent_logo_enabled(),
-            ui,
-            cx,
+            show,
         ))
-        .child(render_show_option(
+        .item(show_option(
             "Workspace",
             AGENT_WORKSPACE_ICON,
             SidebarShowLine::AgentWorkspace,
-            show.agent_workspace_enabled(),
-            ui,
-            cx,
+            show,
         ))
-        .child(render_show_option(
+        .item(show_option(
             "Shimmer",
             SHIMMER_ICON,
             SidebarShowLine::AgentShimmer,
-            show.agent_shimmer_enabled(),
-            ui,
-            cx,
+            show,
         ))
-        .when(spaces_declared, |menu| {
-            menu.child(menu_divider(ui)).child(render_show_option(
+        .separator()
+        .items(spaces_declared.then(|| {
+            show_option(
                 "All spaces",
                 AGENT_ALL_SPACES_ICON,
                 SidebarShowLine::AgentAllSpaces,
-                show.agent_all_spaces_enabled(),
-                ui,
-                cx,
-            ))
-        });
+                show,
+            )
+        }));
+    let handlers = PaneFlowApp::customize_handlers(cx, |this| {
+        this.agents_display_menu_open = false;
+    });
     gpui::deferred(crate::ui_primitives::menu_reveal(
         "agents-display-menu-reveal",
         div()
@@ -1586,7 +1564,7 @@ fn render_agents_display_menu(
             .bottom(px(SIDEBAR_ACTION_BUTTON_SIZE + AGENTS_DISPLAY_MENU_GAP))
             .right(px(0.))
             .occlude()
-            .child(menu),
+            .child(menu.element("agents-display-menu", handlers, ui)),
     ))
     .with_priority(3)
     .into_any_element()

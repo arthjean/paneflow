@@ -80,8 +80,9 @@ pane. Search actions apply while the corresponding search is active.
 | Workspaces | `open_workspace_in_zed` | `Ctrl+Alt+Z` |
 | Workspaces | `open_workspace_in_cursor` | `Ctrl+Alt+C` |
 | Workspaces | `open_workspace_in_vscode` | `Ctrl+Alt+V` |
-| Workspaces | `open_workspace_in_windsurf` | `Ctrl+Alt+W` |
+| Workspaces | `open_workspace_in_webstorm` | `Ctrl+Alt+W` |
 | App views | `toggle_files_sidebar` | `Cmd/Ctrl+Alt+F` |
+| App views | `toggle_diff_dock` | `Cmd/Ctrl+Alt+B` |
 | App views | `toggle_diff_dock_maximize` | `Cmd/Ctrl+Alt+M` |
 | App views | `open_command_palette` | `Cmd/Ctrl+Shift+P` |
 | App views | `open_settings` | `Cmd/Ctrl+,` |

@@ -21,11 +21,13 @@ pub(crate) const GEIST_X_HEIGHT_EM: f32 = 0.532;
 pub(crate) const GEIST_CAP_HEIGHT_EM: f32 = 0.710;
 pub(super) const SIDEBAR_ROW_SPACING: f32 = 2.0;
 pub(super) const SIDEBAR_GROUP_SPACING: f32 = SIDEBAR_ROW_SPACING + SIDEBAR_TITLE_ROW_GAP;
-pub(super) const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
-    SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
 pub(super) const SIDEBAR_HEADER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_WORKSPACE_FOLDER_ICON_WIDTH: f32 = 15.0;
 pub(super) const SIDEBAR_TITLE_TOOLTIP_MIN_CHARS: usize = 13;
+
+pub(super) fn sidebar_workspace_row_content_width(sidebar_width: f32) -> f32 {
+    sidebar_width - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0
+}
 
 pub(super) fn sidebar_title_with_trailing(
     title: impl IntoElement,

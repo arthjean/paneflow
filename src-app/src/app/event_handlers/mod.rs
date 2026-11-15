@@ -78,16 +78,17 @@ impl PaneFlowApp {
                     self.title_bar_help_menu_open = None;
                 }
             }
-            title_bar::TitleBarEvent::ToggleFilesMenu(anchor) => {
-                let open = self.title_bar_files_menu_open.is_none();
+            title_bar::TitleBarEvent::ToggleDiffDock => {
+                self.toggle_diff_dock(cx);
+            }
+            title_bar::TitleBarEvent::ToggleFilesMenu { anchor, was_open } => {
                 self.dismiss_transient_surfaces();
-                self.title_bar_files_menu_open = open.then_some(*anchor);
+                self.title_bar_files_menu_open = (!was_open).then_some(*anchor);
                 cx.notify();
             }
-            title_bar::TitleBarEvent::ToggleHelpMenu(anchor) => {
-                let open = self.title_bar_help_menu_open.is_none();
+            title_bar::TitleBarEvent::ToggleHelpMenu { anchor, was_open } => {
                 self.dismiss_transient_surfaces();
-                self.title_bar_help_menu_open = open.then_some(*anchor);
+                self.title_bar_help_menu_open = (!was_open).then_some(*anchor);
                 cx.notify();
             }
         }
@@ -236,18 +237,6 @@ impl PaneFlowApp {
                     return;
                 }
                 self.open_sessions_sidebar_for_pane(&pane, None, cx);
-            }
-            pane::PaneEvent::ToggleDiffDock => {
-                let owner_id = pane.read(cx).workspace_id;
-                let Some(cwd) = self.checkout_for_pane(&pane).or_else(|| {
-                    self.workspaces
-                        .iter()
-                        .find(|ws| ws.id == owner_id)
-                        .map(|ws| ws.cwd.clone())
-                }) else {
-                    return;
-                };
-                self.toggle_cli_diff_dock(cwd, cx);
             }
             pane::PaneEvent::OpenPaneMenu { position } => {
                 self.dismiss_transient_surfaces();

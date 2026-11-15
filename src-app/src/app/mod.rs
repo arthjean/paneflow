@@ -27,6 +27,7 @@ pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
 #[cfg(target_os = "macos")]
 pub mod macos_menu;
+pub(crate) mod menu_icons;
 pub mod notifications;
 pub mod pane_palette;
 pub mod pull_request;

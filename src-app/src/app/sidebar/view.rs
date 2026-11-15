@@ -5,8 +5,8 @@ use gpui::{
     Window, div, px,
 };
 
+use crate::PaneFlowApp;
 use crate::worker_bootstrap::WorkerBoot;
-use crate::{PaneFlowApp, SIDEBAR_WIDTH};
 
 use super::SpinnerClock;
 
@@ -29,9 +29,9 @@ impl SidebarView {
         }
     }
 
-    pub(crate) fn cached_style() -> StyleRefinement {
+    pub(crate) fn cached_style(width: f32) -> StyleRefinement {
         StyleRefinement::default()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(width))
             .h_full()
             .flex_shrink_0()
     }
@@ -61,6 +61,7 @@ impl Render for SidebarView {
         let sidebar = self
             .app
             .update(cx, |app, cx| {
+                app.prune_sidebar_selection();
                 app.render_sidebar(window, cx).into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element());

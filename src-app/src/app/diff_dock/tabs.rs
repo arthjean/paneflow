@@ -284,6 +284,7 @@ impl PaneFlowApp {
         if self.diff_dock.diff_tabs.is_empty() {
             self.diff_dock.picker = true;
             self.diff_dock.picked = false;
+            self.diff_dock.picker_focus_pending = true;
         }
         self.close_diff_options_menu(cx);
         self.close_diff_new_tab_menu(cx);

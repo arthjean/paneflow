@@ -62,7 +62,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     },
     DefaultBinding {
         key: "ctrl-alt-w",
-        action_name: "open_workspace_in_windsurf",
+        action_name: "open_workspace_in_webstorm",
         context: None,
     },
     DefaultBinding {
@@ -358,6 +358,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "secondary-alt-s",
         action_name: "focus_workspaces_sidebar",
+        context: None,
+    },
+    DefaultBinding {
+        key: "secondary-alt-b",
+        action_name: "toggle_diff_dock",
         context: None,
     },
     DefaultBinding {

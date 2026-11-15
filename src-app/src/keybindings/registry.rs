@@ -10,7 +10,7 @@ use crate::{
     LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
     MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
     MarkdownScrollPageDown, MarkdownScrollPageUp, NewTab, NewWorkspace, NextTab, NextWorkspace,
-    OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
+    OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWebStorm, OpenWorkspaceInZed,
     PreviousTab, Quit, ResetTerminal, RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp,
     SearchNext, SearchPrev, SelectWorkspace1, SelectWorkspace2, SelectWorkspace3, SelectWorkspace4,
     SelectWorkspace5, SelectWorkspace6, SelectWorkspace7, SelectWorkspace8, SelectWorkspace9,
@@ -157,10 +157,10 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Workspaces,
     },
     ActionMeta {
-        name: "open_workspace_in_windsurf",
-        factory: || Box::new(OpenWorkspaceInWindsurf),
+        name: "open_workspace_in_webstorm",
+        factory: || Box::new(OpenWorkspaceInWebStorm),
         context: "",
-        description: "Open in Windsurf",
+        description: "Open in WebStorm",
         group: ShortcutGroup::Workspaces,
     },
     ActionMeta {
@@ -602,6 +602,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(crate::ToggleFilesSidebar),
         context: "",
         description: "Toggle Files sidebar",
+        group: ShortcutGroup::Diff,
+    },
+    ActionMeta {
+        name: "toggle_diff_dock",
+        factory: || Box::new(crate::ToggleDiffDock),
+        context: "",
+        description: "Toggle the Changes dock",
         group: ShortcutGroup::Diff,
     },
     ActionMeta {

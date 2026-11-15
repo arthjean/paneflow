@@ -27,10 +27,10 @@ use super::navigation::{
     scrollbar_track,
 };
 use super::view::CodeView;
-use crate::diff::{ROW_HEIGHT, RowPalette, fill_text_runs, shape_plain};
+use crate::diff::{RowPalette, fill_text_runs, shape_plain};
 use crate::widgets::scrollbar::ScrollableHandle;
 
-pub(crate) const CODE_ROW_HEIGHT: f32 = ROW_HEIGHT;
+pub(crate) const CODE_ROW_HEIGHT: f32 = 18.0;
 pub(crate) const CODE_FONT_SIZE: f32 = 12.0;
 const NUM_GAP: f32 = 6.0;
 const GUTTER_PAD_L: f32 = 8.0;

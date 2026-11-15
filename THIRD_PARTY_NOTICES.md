@@ -91,6 +91,9 @@ the GPUI asset loader expects.
 - `tool_search.svg`
 - every file under `caption/`, the window caption buttons, taken from
   `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
+- every file under `menu/` except `webstorm.svg`, the action menu glyphs,
+  taken from `@hugeicons/core-free-icons` 4.4.0 and named after the menu action
+  they mark
 - every file under `dock/`, the right dock glyphs, taken from
   `@hugeicons/core-free-icons` 4.4.0 and named after their Hugeicons icon
 - every file under `palette/`, the command palette glyphs, taken from
@@ -120,6 +123,66 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## WebStorm marks from T3 Code
+
+`src-app/assets/icons/editor-webstorm.svg` is the WebStorm logo as drawn in
+T3 Code (https://github.com/pingdotgg/t3code), file
+`apps/web/src/components/JetBrainsIcons.tsx`, under the MIT license below. Its
+path data and gradients are unchanged; only the gradient ids were renamed.
+`src-app/assets/icons/menu/webstorm.svg` keeps the black square and the
+letterforms of the same drawing as a single-color mask for the action menu.
+WebStorm is a trademark of JetBrains s.r.o.
+
+```
+MIT License
+
+Copyright (c) 2026 T3 Tools Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Diff status icons from Pierre Diffs
+
+The files under `src-app/assets/icons/diff/` are icons from `@pierre/diffs`
+1.7.0-beta.3 (https://diffs.com), taken from its icon sprite under the Apache
+License 2.0. `file-added.svg`, `file-deleted.svg`, `file-modified.svg` and
+`file-moved.svg` are the `symbol-added`, `symbol-deleted`, `symbol-modified`
+and `symbol-moved` glyphs, `arrow-right-short.svg` and `expand-all.svg` keep
+their names, and `expand-down.svg` is the `expand` glyph. Their path data is
+unchanged. `expand-up.svg` is the same `expand` glyph mirrored vertically.
+
+```
+Copyright 2025 Pierre Computer Company
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
 
 ## Workspace folder icons

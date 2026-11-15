@@ -17,13 +17,14 @@ pub(crate) struct TabDrag {
 
 pub(crate) struct WorkspaceDragPreview {
     pub(crate) title: SharedString,
+    pub(crate) width: f32,
 }
 
 impl Render for WorkspaceDragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         div()
-            .w(px(crate::app::constants::SIDEBAR_WIDTH - 16.))
+            .w(px(self.width))
             .px(px(8.))
             .py(px(6.))
             .rounded(px(6.))

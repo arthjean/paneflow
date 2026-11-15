@@ -122,20 +122,6 @@ impl PaneFlowApp {
             .or_else(|| (!ws.cwd.is_empty()).then(|| ws.cwd.clone()))
     }
 
-    pub(crate) fn checkout_for_pane(
-        &self,
-        pane: &gpui::Entity<crate::pane::Pane>,
-    ) -> Option<String> {
-        let ws = self
-            .workspaces
-            .iter()
-            .find(|ws| ws.tab_for_pane(pane).is_some())?;
-        ws.tab_for_pane(pane)
-            .and_then(|tab| tab.worktree.as_ref())
-            .map(|path| path.to_string_lossy().into_owned())
-            .or_else(|| (!ws.cwd.is_empty()).then(|| ws.cwd.clone()))
-    }
-
     pub(crate) fn workspace_checkout_label(&self, ws_idx: usize) -> String {
         let Some(ws) = self.workspaces.get(ws_idx) else {
             return "Project root".to_string();

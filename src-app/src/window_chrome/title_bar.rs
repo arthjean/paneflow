@@ -1,5 +1,8 @@
 use crate::ui_primitives::AccessibleControlExt;
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, Context, Decorations, EventEmitter, IntoElement, MouseButton, Render, Styled,
     Window, WindowControlArea, div, prelude::*, px, svg,
@@ -16,6 +19,7 @@ pub struct TitleBar {
     should_move: bool,
     pub workspace_name: Option<String>,
     pub sidebar_visible: bool,
+    pub diff_dock_open: Option<bool>,
     pub left_rail_width: f32,
     pub files_menu_open: bool,
     pub help_menu_open: bool,
@@ -23,6 +27,9 @@ pub struct TitleBar {
     pub update_pill: Option<UpdatePill>,
     pub cockpit: bool,
     pub cockpit_material_active: bool,
+    pub detached: bool,
+    pub brand_extent: Rc<Cell<f32>>,
+    pub trailing_origin: Rc<Cell<f32>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +198,7 @@ impl TitleBar {
             should_move: false,
             workspace_name: None,
             sidebar_visible: true,
+            diff_dock_open: None,
             left_rail_width: SIDEBAR_WIDTH,
             files_menu_open: false,
             help_menu_open: false,
@@ -198,56 +206,14 @@ impl TitleBar {
             update_pill: None,
             cockpit: false,
             cockpit_material_active: !cfg!(target_os = "windows"),
+            detached: false,
+            brand_extent: Rc::default(),
+            trailing_origin: Rc::default(),
         }
     }
-}
 
-pub enum TitleBarEvent {
-    CloseRequested,
-    ToggleSidebar,
-    ToggleFilesMenu(gpui::Point<gpui::Pixels>),
-    ToggleHelpMenu(gpui::Point<gpui::Pixels>),
-}
-
-impl EventEmitter<TitleBarEvent> for TitleBar {}
-
-impl Render for TitleBar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_brand(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
-        let decorations = window.window_decorations();
-        let is_csd = matches!(decorations, Decorations::Client { .. });
-
-        let theme = crate::theme::active_theme();
-        let is_window_active = window.is_window_active();
-        let bg_color = if is_window_active {
-            theme.title_bar_background
-        } else {
-            theme.title_bar_inactive_background
-        };
-        let chrome_bg = crate::app::constants::cockpit_chrome_background(
-            bg_color,
-            self.cockpit_material_active,
-        );
-
-        let is_maximized = window.is_maximized();
-        let supported = window.window_controls();
-
-        let close_handle = cx.entity().downgrade();
-        let on_close = move |_window: &mut Window, cx: &mut gpui::App| {
-            if let Some(entity) = close_handle.upgrade() {
-                entity.update(cx, |_this, cx| cx.emit(TitleBarEvent::CloseRequested));
-            }
-        };
-
-        let render_controls = !window.is_fullscreen() && (is_csd || cfg!(target_os = "windows"));
-
-        let right_controls = if render_controls {
-            super::csd::render_button_group("r", is_maximized, height, &supported, on_close)
-        } else {
-            None
-        };
-        let right_controls_present = right_controls.is_some();
-
         let ui = crate::theme::ui_colors();
         let brand_pl = if cfg!(target_os = "macos") && !window.is_fullscreen() {
             gpui::px(80.0)
@@ -263,6 +229,8 @@ impl Render for TitleBar {
         } else {
             control_hover_bg
         };
+        let files_menu_open = self.files_menu_open;
+        let help_menu_open = self.help_menu_open;
         let files_menu_resting_bg = if self.files_menu_open {
             control_hover_bg
         } else {
@@ -290,15 +258,19 @@ impl Render for TitleBar {
         }
         .into();
         let brand = div()
-            .flex_1()
-            .min_w_0()
+            .map(|brand| {
+                if self.detached {
+                    brand.flex_none()
+                } else {
+                    brand.flex_1().min_w_0().overflow_x_hidden()
+                }
+            })
             .flex()
             .flex_row()
             .items_center()
             .gap(px(4.))
             .pl(brand_pl)
             .pr(px(4.))
-            .overflow_x_hidden()
             .child(
                 div()
                     .id("toggle-primary-sidebar")
@@ -353,7 +325,10 @@ impl Render for TitleBar {
                         if let Some(entity) = toggle_files_menu_handle.upgrade() {
                             let anchor = gpui::point(event.position.x, height);
                             entity.update(cx, |_this, cx| {
-                                cx.emit(TitleBarEvent::ToggleFilesMenu(anchor));
+                                cx.emit(TitleBarEvent::ToggleFilesMenu {
+                                    anchor,
+                                    was_open: files_menu_open,
+                                });
                             });
                         }
                     })
@@ -381,12 +356,202 @@ impl Render for TitleBar {
                         if let Some(entity) = toggle_help_menu_handle.upgrade() {
                             let anchor = gpui::point(event.position.x, height);
                             entity.update(cx, |_this, cx| {
-                                cx.emit(TitleBarEvent::ToggleHelpMenu(anchor));
+                                cx.emit(TitleBarEvent::ToggleHelpMenu {
+                                    anchor,
+                                    was_open: help_menu_open,
+                                });
                             });
                         }
                     })
                     .child("Help"),
             );
+        brand
+            .child(position_probe(self.brand_extent.clone()))
+            .into_any_element()
+    }
+
+    pub(crate) fn render_trailing(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
+        let is_csd = matches!(window.window_decorations(), Decorations::Client { .. });
+        let ui = crate::theme::ui_colors();
+        let control_hover_bg = crate::app::constants::sidebar_tab_active_background();
+        let is_maximized = window.is_maximized();
+        let supported = window.window_controls();
+
+        let close_handle = cx.entity().downgrade();
+        let on_close = move |_window: &mut Window, cx: &mut gpui::App| {
+            if let Some(entity) = close_handle.upgrade() {
+                entity.update(cx, |_this, cx| cx.emit(TitleBarEvent::CloseRequested));
+            }
+        };
+
+        let render_controls = !window.is_fullscreen() && (is_csd || cfg!(target_os = "windows"));
+
+        let right_controls = if render_controls {
+            super::csd::render_button_group("r", is_maximized, height, &supported, on_close)
+        } else {
+            None
+        };
+        let right_controls_present = right_controls.is_some();
+
+        let ipc_pill =
+            (!self.cockpit && self.ipc_state == crate::ipc::IpcState::Disabled).then(|| {
+                div()
+                    .id("ipc-offline-pill")
+                    .mr_2()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(5.))
+                    .px(px(8.))
+                    .h(px(24.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(ui.border)
+                    .bg(ui.subtle)
+                    .text_color(ui.text)
+                    .text_size(px(11.))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child(
+                        svg()
+                            .size(px(11.))
+                            .flex_none()
+                            .path("icons/triangle-alert.svg")
+                            .text_color(ui.muted),
+                    )
+                    .child("IPC offline")
+            });
+
+        let update_pill = self.render_update_pill(ui);
+
+        let diff_dock_toggle = self.diff_dock_open.map(|open| {
+            let toggle_diff_dock_handle = cx.entity().downgrade();
+            let resting_bg = if open {
+                control_hover_bg
+            } else {
+                control_hover_bg.opacity(0.0)
+            };
+            let tooltip: gpui::SharedString = if open {
+                "Hide Changes dock"
+            } else {
+                "Show Changes dock"
+            }
+            .into();
+            let toggle = div()
+                .id("toggle-diff-dock")
+                .flex_none()
+                .size(TITLE_BAR_CONTROL_SIZE)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .animated_hover(move |style, delta| {
+                    style.bg(lerp_color(resting_bg, control_hover_bg, delta));
+                })
+                .accessible_control(gpui::accesskit::Role::Button, tooltip)
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(entity) = toggle_diff_dock_handle.upgrade() {
+                        entity.update(cx, |_this, cx| {
+                            cx.emit(TitleBarEvent::ToggleDiffDock);
+                        });
+                    }
+                })
+                .child(
+                    svg()
+                        .size(px(14.))
+                        .path("icons/layout-sidebar-right.svg")
+                        .text_color(ui.muted),
+                );
+            #[cfg(test)]
+            let toggle = toggle.debug_selector(|| "toggle-diff-dock".into());
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(TITLE_BAR_EDGE_INSET)
+                .child(toggle)
+                .when(cfg!(target_os = "windows"), |trailing| {
+                    if right_controls_present {
+                        trailing.child(div().flex_none().w(px(1.)).h(px(16.)).bg(ui.border))
+                    } else {
+                        trailing.mr(TITLE_BAR_EDGE_INSET)
+                    }
+                })
+        });
+
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .when(
+                !cfg!(target_os = "windows") && !right_controls_present,
+                |trailing| trailing.pr(TITLE_BAR_EDGE_INSET),
+            )
+            .child(position_probe(self.trailing_origin.clone()))
+            .children(update_pill)
+            .children(ipc_pill)
+            .children(diff_dock_toggle)
+            .children(right_controls)
+            .into_any_element()
+    }
+}
+
+fn position_probe(position: Rc<Cell<f32>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let x = f32::from(bounds.origin.x);
+            if position.replace(x) != x {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .flex_none()
+    .w(px(0.))
+    .h(px(0.))
+}
+
+pub enum TitleBarEvent {
+    CloseRequested,
+    ToggleSidebar,
+    ToggleDiffDock,
+    ToggleFilesMenu {
+        anchor: gpui::Point<gpui::Pixels>,
+        was_open: bool,
+    },
+    ToggleHelpMenu {
+        anchor: gpui::Point<gpui::Pixels>,
+        was_open: bool,
+    },
+}
+
+impl EventEmitter<TitleBarEvent> for TitleBar {}
+
+impl Render for TitleBar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
+        let theme = crate::theme::active_theme();
+        let is_window_active = window.is_window_active();
+        let bg_color = if is_window_active {
+            theme.title_bar_background
+        } else {
+            theme.title_bar_inactive_background
+        };
+        let chrome_bg = crate::app::constants::cockpit_chrome_background(
+            bg_color,
+            self.cockpit_material_active,
+        );
+
+        let ui = crate::theme::ui_colors();
         let left_rail = div()
             .flex_none()
             .w(px(self.left_rail_width))
@@ -395,7 +560,7 @@ impl Render for TitleBar {
             .flex_row()
             .items_center()
             .overflow_x_hidden()
-            .child(brand);
+            .children((!self.detached).then(|| self.render_brand(window, cx)));
 
         let mut content = div()
             .flex_1()
@@ -434,37 +599,6 @@ impl Render for TitleBar {
             );
         }
 
-        let ipc_pill =
-            (!self.cockpit && self.ipc_state == crate::ipc::IpcState::Disabled).then(|| {
-                div()
-                    .id("ipc-offline-pill")
-                    .mr_2()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(5.))
-                    .px(px(8.))
-                    .h(px(24.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(ui.border)
-                    .bg(ui.subtle)
-                    .text_color(ui.text)
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(
-                        svg()
-                            .size(px(11.))
-                            .flex_none()
-                            .path("icons/triangle-alert.svg")
-                            .text_color(ui.muted),
-                    )
-                    .child("IPC offline")
-            });
-
-        let update_pill = self.render_update_pill(ui);
-
         let bar = div()
             .id("title-bar")
             .window_control_area(WindowControlArea::Drag)
@@ -474,11 +608,9 @@ impl Render for TitleBar {
             .items_center()
             .w_full()
             .h(height)
-            .bg(chrome_bg)
-            .when(
-                !cfg!(target_os = "windows") && !right_controls_present,
-                |d| d.pr(TITLE_BAR_EDGE_INSET),
-            );
+            .bg(chrome_bg);
+        let supported = window.window_controls();
+        let trailing = (!self.detached).then(|| self.render_trailing(window, cx));
 
         bar.on_mouse_down(
             MouseButton::Left,
@@ -513,9 +645,7 @@ impl Render for TitleBar {
         })
         .child(left_rail)
         .child(content)
-        .children(update_pill)
-        .children(ipc_pill)
-        .children(right_controls)
+        .children(trailing)
         .when(!self.cockpit, |this| {
             this.child(
                 div()
@@ -553,5 +683,106 @@ mod tests {
             move |_, _| div().size_full().child(bar.clone()),
         );
         assert!(cx.debug_bounds("update-pill").is_some());
+    }
+
+    struct TrailingHost {
+        bar: gpui::Entity<TitleBar>,
+    }
+
+    impl Render for TrailingHost {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let trailing = self
+                .bar
+                .update(cx, |bar, cx| bar.render_trailing(window, cx));
+            div()
+                .size_full()
+                .flex()
+                .flex_row()
+                .child(div().w(px(300.)).h_full())
+                .child(trailing)
+        }
+    }
+
+    fn draw_bar(cx: &mut gpui::VisualTestContext, diff_dock_open: Option<bool>) {
+        let bar = cx.new(|cx| {
+            let mut bar = TitleBar::new(cx);
+            bar.cockpit = true;
+            bar.diff_dock_open = diff_dock_open;
+            bar
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(1400.)),
+                AvailableSpace::Definite(px(40.)),
+            ),
+            move |_, _| div().size_full().child(bar.clone()),
+        );
+    }
+
+    #[gpui::test]
+    fn the_diff_dock_toggle_sits_at_the_right_of_the_bar(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        draw_bar(cx, Some(false));
+        let toggle = cx
+            .debug_bounds("toggle-diff-dock")
+            .expect("the toggle paints while a workspace is shown");
+        assert_eq!(toggle.size, size(px(20.), px(20.)));
+        assert!(toggle.origin.x > px(700.), "{toggle:?}");
+    }
+
+    #[gpui::test]
+    fn the_diff_dock_toggle_is_absent_without_a_workspace_view(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        draw_bar(cx, None);
+        assert!(cx.debug_bounds("toggle-diff-dock").is_none());
+    }
+
+    #[gpui::test]
+    fn detached_trailing_controls_paint_where_the_host_places_them(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let bar = cx.new(|cx| {
+            let mut bar = TitleBar::new(cx);
+            bar.cockpit = true;
+            bar.diff_dock_open = Some(true);
+            bar.detached = true;
+            bar
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(1400.)),
+                AvailableSpace::Definite(px(40.)),
+            ),
+            {
+                let bar = bar.clone();
+                move |_, _| div().size_full().child(bar.clone())
+            },
+        );
+        assert!(
+            cx.debug_bounds("toggle-diff-dock").is_none(),
+            "the bar leaves its trailing controls to the host"
+        );
+
+        let host_bar = bar.clone();
+        let host = cx.new(|_| TrailingHost { bar });
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(1400.)),
+                AvailableSpace::Definite(px(40.)),
+            ),
+            move |_, _| div().size_full().child(host.clone()),
+        );
+        let toggle = cx
+            .debug_bounds("toggle-diff-dock")
+            .expect("the host paints the trailing controls");
+        assert_eq!(toggle.origin.x, px(300.));
+        assert_eq!(toggle.size, size(px(20.), px(20.)));
+        assert_eq!(
+            cx.read(|cx| host_bar.read(cx).trailing_origin.get()),
+            300.,
+            "the bar reports where its trailing controls start"
+        );
     }
 }

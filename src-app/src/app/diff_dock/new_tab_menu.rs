@@ -1,12 +1,20 @@
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, StatefulInteractiveElement, Styled, deferred, div, px, svg,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
+    deferred, div, px,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{floating_menu_panel, menu_row};
+use crate::app::menu_icons as icon;
+use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 
-const MENU_WIDTH: f32 = 236.0;
+#[derive(Clone, Copy)]
+enum NewTabAction {
+    Changes,
+    File,
+    Terminal,
+}
 
 impl PaneFlowApp {
     pub(crate) fn toggle_diff_new_tab_menu(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -26,54 +34,43 @@ pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = floating_menu_panel(div().id("diff-dock-new-tab-menu"), ui)
-        .w(px(MENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                this.close_diff_new_tab_menu(cx);
-            }),
+    let shortcut = |key: &str| {
+        Some(SharedString::from(crate::keybindings::format_keystroke(
+            key,
+        )))
+    };
+    let menu = ActionMenu::new()
+        .item(
+            MenuItem::new("Changes", NewTabAction::Changes)
+                .id("diff-dock-new-tab-changes")
+                .icon(icon::COMPARE)
+                .mnemonic('c'),
         )
-        .child(
-            option_row(
-                "diff-dock-new-tab-changes",
-                "icons/dock/git-compare.svg",
-                "Changes",
-                None,
-                ui,
-            )
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                this.close_diff_new_tab_menu(cx);
-                this.open_diff_changes_tab(cx);
-            })),
+        .item(
+            MenuItem::new("File", NewTabAction::File)
+                .id("diff-dock-new-tab-file")
+                .icon(icon::FILE_CODE)
+                .mnemonic('f')
+                .shortcut(shortcut("secondary-g")),
         )
-        .child(
-            option_row(
-                "diff-dock-new-tab-file",
-                "icons/dock/file-code.svg",
-                "File",
-                Some("secondary-g"),
-                ui,
-            )
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.close_diff_new_tab_menu(cx);
-                this.open_diff_file_picker(window, cx);
-            })),
-        )
-        .child(
-            option_row(
-                "diff-dock-new-tab-terminal",
-                "icons/dock/computer-terminal-01.svg",
-                "Terminal",
-                Some("secondary-j"),
-                ui,
-            )
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.close_diff_new_tab_menu(cx);
-                this.open_diff_terminal_tab(window, cx);
-            })),
+        .item(
+            MenuItem::new("Terminal", NewTabAction::Terminal)
+                .id("diff-dock-new-tab-terminal")
+                .icon(icon::TERMINAL)
+                .mnemonic('t')
+                .shortcut(shortcut("secondary-j")),
         );
+    let handlers = MenuHandlers {
+        activate: Rc::new(cx.listener(|this, action: &NewTabAction, window, cx| {
+            this.close_diff_new_tab_menu(cx);
+            match action {
+                NewTabAction::Changes => this.open_diff_changes_tab(cx),
+                NewTabAction::File => this.open_diff_file_picker(window, cx),
+                NewTabAction::Terminal => this.open_diff_terminal_tab(window, cx),
+            }
+        })),
+        dismiss: Rc::new(cx.listener(|this, _: &(), _, cx| this.close_diff_new_tab_menu(cx))),
+    };
 
     deferred(crate::ui_primitives::menu_reveal(
         "diff-dock-new-tab-menu-reveal",
@@ -82,43 +79,8 @@ pub(super) fn render_diff_new_tab_menu(
             .top(px(30.))
             .right(px(0.))
             .occlude()
-            .child(menu),
+            .child(menu.element("diff-dock-new-tab-menu", handlers, ui)),
     ))
     .with_priority(3)
     .into_any_element()
-}
-
-fn option_row(
-    id: &'static str,
-    icon: &'static str,
-    label: &'static str,
-    shortcut: Option<&'static str>,
-    ui: crate::theme::UiColors,
-) -> gpui::Stateful<gpui::Div> {
-    menu_row(id, false, ui)
-        .gap(px(9.))
-        .child(
-            svg()
-                .size(px(15.))
-                .flex_none()
-                .path(icon)
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_nowrap()
-                .text_size(px(13.))
-                .text_color(ui.text)
-                .child(label),
-        )
-        .children(shortcut.map(|shortcut| {
-            div()
-                .flex_none()
-                .whitespace_nowrap()
-                .text_size(px(12.))
-                .text_color(ui.muted)
-                .child(crate::keybindings::format_keystroke(shortcut))
-        }))
 }

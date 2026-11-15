@@ -14,7 +14,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::pane::PaneSurface;
 use crate::settings::components::{MENU_MAX_HEIGHT, select_item_shaped, with_alpha};
-use crate::ui_primitives::interface_style::with_paneflow_shape;
+use crate::ui_primitives::interface_style::with_rounded_shape;
 use crate::ui_primitives::quick_pick::{
     self, FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, ROW_GAP, ROW_HEIGHT, ROW_RADIUS,
     ROW_SPACING, ROW_TEXT_INSET, highlighted_label,
@@ -752,7 +752,7 @@ impl PaneFlowApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        with_paneflow_shape(|| self.build_command_palette(window, cx))
+        with_rounded_shape(|| self.build_command_palette(window, cx))
     }
 
     fn build_command_palette(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -779,7 +779,7 @@ impl PaneFlowApp {
                         .filter_map(|idx| {
                             let row = items.get(idx)?;
                             Some(div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
-                                with_paneflow_shape(|| this.render_palette_row(idx, row, ui, cx)),
+                                with_rounded_shape(|| this.render_palette_row(idx, row, ui, cx)),
                             ))
                         })
                         .collect::<Vec<_>>()

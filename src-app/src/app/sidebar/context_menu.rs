@@ -1,66 +1,89 @@
-use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, InteractiveElement,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, SharedString, Styled,
-    Window, canvas, deferred, div, point, prelude::*, px, svg,
+    AnyElement, App, ClipboardItem, Context, ElementId, InteractiveElement, IntoElement, Pixels,
+    SharedString, Styled, Window, deferred, div, point, px,
 };
 
 use crate::app::files_tree;
+use crate::app::menu_icons as icon;
 use crate::pane::PaneSurface;
-use crate::settings::components::{
-    menu_chevron, menu_divider, menu_divider_slot, menu_height, menu_row, menu_row_height,
-    menu_row_inset, menu_shortcut, menu_text_size, menu_text_weight, select_menu,
-};
-use crate::ui_primitives::TooltipDelayExt;
-use crate::ui_primitives::interface_style::with_surface_shape;
-use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
+use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
+use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, TabKey, WorkspaceContextMenu};
 
-pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
-    ("zed", "Open in Zed", "zed", "open_workspace_in_zed"),
-    (
-        "cursor",
-        "Open in Cursor",
-        "cursor",
-        "open_workspace_in_cursor",
-    ),
-    (
-        "vscode",
-        "Open in VS Code",
-        "code",
-        "open_workspace_in_vscode",
-    ),
-    (
-        "windsurf",
-        "Open in Windsurf",
-        "windsurf",
-        "open_workspace_in_windsurf",
-    ),
+struct EditorMenuEntry {
+    label: &'static str,
+    command: &'static str,
+    icon: &'static str,
+    mnemonic: char,
+}
+
+const EDITOR_MENU_ENTRIES: &[EditorMenuEntry] = &[
+    EditorMenuEntry {
+        label: "Open in Zed",
+        command: "zed",
+        icon: "icons/editor-zed.svg",
+        mnemonic: 'z',
+    },
+    EditorMenuEntry {
+        label: "Open in Cursor",
+        command: "cursor",
+        icon: "icons/editor-cursor.svg",
+        mnemonic: 'c',
+    },
+    EditorMenuEntry {
+        label: "Open in VS Code",
+        command: "code",
+        icon: icon::VSCODE,
+        mnemonic: 'v',
+    },
+    EditorMenuEntry {
+        label: "Open in WebStorm",
+        command: "webstorm",
+        icon: icon::WEBSTORM,
+        mnemonic: 'w',
+    },
 ];
 
-const MOVE_TO_SPACE_SUBMENU_WIDTH: f32 = 180.;
+const SPACE_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-type SubmenuBounds = Rc<Cell<Option<Bounds<Pixels>>>>;
-
-fn submenu_bounds_probe(bounds: SubmenuBounds) -> impl IntoElement {
-    canvas(
-        move |painted, _, _| bounds.set(Some(painted)),
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .size_full()
+#[derive(Clone)]
+pub(crate) enum WorkspaceMenuAction {
+    RunWorkflow(usize),
+    OpenService(String),
+    OpenInEditor {
+        command: &'static str,
+        label: &'static str,
+    },
+    Reveal,
+    CopyPath,
+    CustomButtons,
+    MoveToSpace(Option<paneflow_config::schema::SpaceId>),
+    MoveToNewSpace,
+    MarkRead,
+    ToggleMute,
+    Close,
 }
 
-fn is_inside_submenu(bounds: &SubmenuBounds, position: Point<Pixels>) -> bool {
-    bounds
-        .get()
-        .is_some_and(|painted| painted.contains(&position))
+#[derive(Clone)]
+pub(crate) enum TabMenuAction {
+    Rename,
+    ResetName,
+    Close,
+    NewBranch,
+    BindBranch(String),
+    BindWorktree(PathBuf),
+    CreateBranchHere(PathBuf),
+    RemoveWorktree,
 }
 
-pub(super) fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
-    menu_divider(ui)
+#[derive(Clone)]
+pub(crate) enum PaneMenuAction {
+    Copy { value: String, toast: &'static str },
+    Fork,
+    ToggleDetached,
+    Close,
 }
 
 pub(crate) fn clamped_context_menu_position(
@@ -83,6 +106,29 @@ pub(crate) fn clamped_context_menu_position(
     point(x, y)
 }
 
+pub(crate) fn render_context_menu<A: Clone + 'static>(
+    id: impl Into<ElementId>,
+    menu: ActionMenu<A>,
+    position: gpui::Point<Pixels>,
+    handlers: MenuHandlers<A>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let id: ElementId = id.into();
+    let ui = crate::theme::ui_colors();
+    let size = menu.size(window);
+    let at = clamped_context_menu_position(position, size.width, size.height, window);
+    let panel = menu
+        .render(id.clone(), handlers, ui, window, cx)
+        .occlude()
+        .absolute()
+        .left(at.x)
+        .top(at.y);
+    deferred(crate::ui_primitives::menu_reveal((id, "reveal"), panel))
+        .priority(3)
+        .into_any_element()
+}
+
 impl PaneFlowApp {
     pub(crate) fn shortcut_for_action(&self, action_name: &str) -> Option<&str> {
         self.effective_shortcuts
@@ -91,422 +137,152 @@ impl PaneFlowApp {
             .map(|entry| entry.key.as_str())
     }
 
-    pub(crate) fn render_select_menu_item(
-        &self,
-        id: SharedString,
-        label: &str,
-        shortcut: Option<SharedString>,
-        ui: crate::theme::UiColors,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        menu_row(id, false, ui)
-            .cursor(CursorStyle::Arrow)
-            .on_click(on_click)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(ui.text)
-                    .child(label.to_string()),
-            )
-            .when_some(shortcut, |d, shortcut| d.child(menu_shortcut(shortcut, ui)))
-    }
-
     pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
         self.open_external_url(url.to_string(), cx);
     }
 
-    pub(crate) fn render_workspace_context_menu(
+    pub(crate) fn menu_handlers<A: Clone + 'static>(
         &self,
-        menu: WorkspaceContextMenu,
-        ui: crate::theme::UiColors,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let idx = menu.idx;
-        let can_close = !self.workspaces.is_empty();
-        let workflow_template = self.workspace_template_for_workspace(idx);
-        let services: Vec<_> = self
-            .workspaces
-            .get(idx)
-            .map(|workspace| {
-                workspace
-                    .active_ports
-                    .iter()
-                    .filter_map(|port| {
-                        workspace
-                            .service_labels
-                            .get(port)
-                            .cloned()
-                            .map(|info| (*port, info))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let (has_unread, muted) = self
-            .workspaces
-            .get(idx)
-            .map(|workspace| {
-                (
-                    workspace.agent_completion_notification.is_unread(),
-                    workspace.muted,
-                )
-            })
-            .unwrap_or((false, false));
-
-        let workflow_rows = usize::from(workflow_template.is_some());
-        let service_rows = services.len();
-        let notification_rows = 1 + usize::from(has_unread);
-        let space_rows = usize::from(!self.cached_config.spaces.is_empty());
-        let separator_rows = 3 + workflow_rows + usize::from(service_rows > 0);
-        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len()
-            + 4
-            + workflow_rows
-            + service_rows
-            + notification_rows
-            + space_rows;
-        let menu_height = menu_height(
-            menu_rows as f32,
-            separator_rows as f32 * menu_divider_slot(),
-        );
-        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
-
-        let space_submenu_bounds = SubmenuBounds::default();
-        let dismiss_bounds = space_submenu_bounds.clone();
-        let mut context_menu = select_menu("workspace-context-menu", ui)
-            .occlude()
-            .absolute()
-            .left(menu_pos.x)
-            .top(menu_pos.y)
-            .w(px(248.))
-            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if is_inside_submenu(&dismiss_bounds, event.position) {
-                    return;
-                }
-                this.workspace_menu_open = None;
+        activate: impl Fn(&mut Self, &A, &mut Window, &mut Context<Self>) + 'static,
+        dismiss: impl Fn(&mut Self) + 'static,
+    ) -> MenuHandlers<A> {
+        MenuHandlers {
+            activate: Rc::new(cx.listener(move |this, action: &A, window, cx| {
+                activate(this, action, window, cx);
                 cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-
-        if let Some(template_idx) = workflow_template {
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "workspace-context-run-workflow".into(),
-                "Run workflow",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.workspace_menu_open = None;
-                    this.run_saved_workspace_template_for_workspace(idx, template_idx, cx);
-                    cx.stop_propagation();
-                }),
-            ));
+            })),
+            dismiss: Rc::new(cx.listener(move |this, _: &(), _, cx| {
+                dismiss(this);
+                cx.notify();
+            })),
         }
+    }
 
-        if workflow_rows > 0 {
-            context_menu = context_menu.child(context_menu_divider(ui));
-        }
-
-        for (port, info) in services {
-            let service_name = info
-                .label
-                .clone()
-                .unwrap_or_else(|| "Local service".to_string());
-            if info.is_frontend {
-                let label = format!("Open {service_name} :{port}");
+    fn workspace_menu(&self, idx: usize) -> ActionMenu<WorkspaceMenuAction> {
+        let Some(workspace) = self.workspaces.get(idx) else {
+            return ActionMenu::new();
+        };
+        let services = workspace.active_ports.iter().filter_map(|port| {
+            let info = workspace.service_labels.get(port)?;
+            let name = info.label.as_deref().unwrap_or("Local service");
+            Some(if info.is_frontend {
                 let url = info
                     .url
                     .clone()
                     .unwrap_or_else(|| format!("http://localhost:{port}"));
-                context_menu = context_menu.child(self.render_select_menu_item(
-                    SharedString::from(format!("workspace-context-service-{port}")),
-                    &label,
-                    None,
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.workspace_menu_open = None;
-                        this.open_workspace_service_url(&url, cx);
-                        cx.stop_propagation();
-                    }),
-                ));
+                MenuItem::new(
+                    format!("Open {name} :{port}"),
+                    WorkspaceMenuAction::OpenService(url),
+                )
+                .icon(icon::GLOBE)
             } else {
-                context_menu = context_menu.child(Self::render_disabled_select_menu_item(
-                    SharedString::from(format!("workspace-context-service-{port}-info")),
-                    &format!("{service_name} :{port}"),
-                    ui,
-                ));
-            }
-        }
-
-        if service_rows > 0 {
-            context_menu = context_menu.child(context_menu_divider(ui));
-        }
-
-        for &(id, label, command, shortcut_action) in EDITOR_CONTEXT_MENU_ITEMS {
-            let shortcut = self
-                .shortcut_for_action(shortcut_action)
-                .map(|s| SharedString::from(s.to_string()));
-            let command = command.to_string();
-            let label_owned = label.to_string();
-            context_menu = context_menu.child(self.render_select_menu_item(
-                SharedString::from(format!("workspace-context-{id}")),
-                label,
-                shortcut,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.open_workspace_in_editor(idx, &command, &label_owned, cx);
-                    cx.stop_propagation();
-                }),
-            ));
-        }
-
-        context_menu = context_menu.child(context_menu_divider(ui));
-
-        let reveal_shortcut = self
-            .shortcut_for_action("reveal_workspace_in_file_manager")
-            .map(|s| SharedString::from(s.to_string()));
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "workspace-context-reveal".into(),
-            if cfg!(target_os = "windows") {
-                "Open in File Explorer"
-            } else {
-                "Reveal in file manager"
-            },
-            reveal_shortcut,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.reveal_workspace_in_file_manager(idx, cx);
-                cx.stop_propagation();
-            }),
-        ));
-
-        let copy_shortcut = self
-            .shortcut_for_action("copy_workspace_path")
-            .map(|s| SharedString::from(s.to_string()));
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "workspace-context-copy".into(),
-            "Copy path",
-            copy_shortcut,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.copy_workspace_path(idx, cx);
-                cx.stop_propagation();
-            }),
-        ));
-
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "workspace-context-custom-buttons".into(),
-            "Manage Custom Buttons…",
-            None,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.open_custom_buttons_modal(idx, window, cx);
-                cx.stop_propagation();
-            }),
-        ));
-
-        if space_rows > 0 {
-            let opens_left = menu_pos.x + px(248. + MOVE_TO_SPACE_SUBMENU_WIDTH)
-                > window.window_bounds().get_bounds().size.width;
-            context_menu = context_menu.child(self.render_move_to_space_row(
-                &menu,
-                opens_left,
-                space_submenu_bounds,
-                ui,
-                cx,
-            ));
-        }
-
-        context_menu = context_menu.child(context_menu_divider(ui));
-
-        if has_unread {
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "workspace-context-mark-read".into(),
-                "Mark as read",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.workspace_menu_open = None;
-                    this.mark_workspace_read(idx, cx);
-                    cx.stop_propagation();
-                }),
-            ));
-        }
-
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "workspace-context-mute".into(),
-            if muted {
-                "Unmute notifications"
-            } else {
-                "Mute notifications"
-            },
-            None,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.workspace_menu_open = None;
-                this.toggle_workspace_muted(idx, cx);
-                cx.stop_propagation();
-            }),
-        ));
-
-        context_menu = context_menu.child(context_menu_divider(ui));
-
-        let close_shortcut = self
-            .shortcut_for_action("close_workspace")
-            .map(|s| SharedString::from(s.to_string()));
-        context_menu = context_menu.child(if can_close {
-            self.render_select_menu_item(
-                "workspace-context-close".into(),
-                "Close workspace (stops its sessions)",
-                close_shortcut,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.close_workspace_at(idx, window, cx);
-                }),
-            )
-            .into_any_element()
-        } else {
-            Self::render_disabled_select_menu_item(
-                "workspace-context-close".into(),
-                "Close workspace (stops its sessions)",
-                ui,
-            )
-            .into_any_element()
+                MenuItem::disabled(format!("{name} :{port}")).icon(icon::SERVER)
+            })
         });
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "workspace-context-menu-reveal",
-            context_menu,
-        ))
-        .priority(3)
-        .into_any_element()
-    }
-
-    fn render_move_to_space_row(
-        &self,
-        menu: &WorkspaceContextMenu,
-        opens_left: bool,
-        submenu_bounds: SubmenuBounds,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let idx = menu.idx;
-        let open = menu.space_submenu_open;
-        let row = menu_row("workspace-context-move-to-space", open, ui)
-            .relative()
-            .cursor(CursorStyle::Arrow)
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                if let Some(menu) = this.workspace_menu_open.as_mut() {
-                    menu.space_submenu_open = !menu.space_submenu_open;
-                }
-                cx.stop_propagation();
-                cx.notify();
+        let editors = EDITOR_MENU_ENTRIES.iter().map(|entry| {
+            MenuItem::new(
+                entry.label,
+                WorkspaceMenuAction::OpenInEditor {
+                    command: entry.command,
+                    label: entry.label,
+                },
+            )
+            .icon(entry.icon)
+            .mnemonic(entry.mnemonic)
+        });
+        let mute = if workspace.muted {
+            MenuItem::new("Unmute notifications", WorkspaceMenuAction::ToggleMute)
+                .icon(icon::NOTIFICATION)
+        } else {
+            MenuItem::new("Mute notifications", WorkspaceMenuAction::ToggleMute)
+                .icon(icon::NOTIFICATION_OFF)
+        };
+        let reveal_label = if cfg!(target_os = "windows") {
+            "Open in File Explorer"
+        } else {
+            "Reveal in file manager"
+        };
+        let unread = workspace.agent_completion_notification.is_unread();
+        ActionMenu::new()
+            .items(self.workspace_template_for_workspace(idx).map(|template| {
+                MenuItem::new("Run workflow", WorkspaceMenuAction::RunWorkflow(template))
+                    .icon(icon::PLAY)
+                    .mnemonic('r')
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .whitespace_nowrap()
-                    .text_color(ui.text)
-                    .child("Move to space"),
+            .separator()
+            .items(services)
+            .separator()
+            .items(editors)
+            .item(
+                MenuItem::new(reveal_label, WorkspaceMenuAction::Reveal)
+                    .icon(icon::FOLDER_OPEN)
+                    .mnemonic('e'),
             )
-            .child(menu_chevron(ui));
-        if !open {
-            return row.into_any_element();
-        }
-        let current = self.workspaces.get(idx).and_then(|ws| ws.space.clone());
-        let targets: Vec<(Option<paneflow_config::schema::SpaceId>, String)> =
-            crate::app::spaces::space_order(&self.cached_config)
-                .into_iter()
-                .filter(|space| *space != current)
-                .map(|space| {
-                    let name = crate::app::spaces::space_label(&self.cached_config, space.as_ref())
-                        .to_string();
-                    (space, name)
-                })
-                .collect();
-        let at_limit = self.cached_config.spaces.len() >= paneflow_config::schema::MAX_SPACES;
-        let mut submenu = crate::settings::components::floating_menu_panel(
-            div().id("workspace-context-space-submenu"),
-            ui,
-        )
-        .w(px(MOVE_TO_SPACE_SUBMENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(submenu_bounds_probe(submenu_bounds));
-        for (position, (space, name)) in targets.into_iter().enumerate() {
-            submenu = submenu.child(self.render_select_menu_item(
-                SharedString::from(format!("workspace-context-space-{position}")),
-                &name,
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.move_workspace_to_space(idx, space.clone(), window, cx);
-                }),
-            ));
-        }
-        submenu = submenu.child(context_menu_divider(ui));
-        submenu = submenu.child(if at_limit {
-            Self::render_disabled_select_menu_item(
-                "workspace-context-space-new".into(),
-                crate::app::spaces::SPACE_LIMIT_REASON,
-                ui,
+            .separator()
+            .item(
+                MenuItem::new("Copy path", WorkspaceMenuAction::CopyPath)
+                    .icon(icon::COPY)
+                    .mnemonic('p'),
             )
-            .into_any_element()
-        } else {
-            self.render_select_menu_item(
-                "workspace-context-space-new".into(),
-                "New space…",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.move_workspace_to_new_space(idx, window, cx);
-                }),
+            .item(
+                MenuItem::new("Manage custom buttons…", WorkspaceMenuAction::CustomButtons)
+                    .icon(icon::PREFERENCES)
+                    .mnemonic('b'),
             )
-            .into_any_element()
-        });
-        let left = if opens_left {
-            -MOVE_TO_SPACE_SUBMENU_WIDTH + 12.
-        } else {
-            248. - 20.
-        };
-        row.child(
-            deferred(
-                div()
-                    .absolute()
-                    .top(px(-5.))
-                    .left(px(left))
-                    .occlude()
-                    .child(submenu),
-            )
-            .priority(4),
-        )
-        .into_any_element()
+            .items((!self.cached_config.spaces.is_empty()).then(|| {
+                MenuItem::submenu("Move to space", self.space_menu(idx))
+                    .icon(icon::MOVE_TO_SPACE)
+                    .mnemonic('s')
+            }))
+            .separator()
+            .items(unread.then(|| {
+                MenuItem::new("Mark as read", WorkspaceMenuAction::MarkRead)
+                    .icon(icon::MARK_READ)
+                    .mnemonic('a')
+            }))
+            .item(mute.mnemonic('m'))
+            .separator()
+            .item(MenuItem::new("Close workspace", WorkspaceMenuAction::Close).icon(icon::CLOSE))
     }
 
-    pub(crate) fn render_tab_context_menu(
-        &self,
-        menu: TabContextMenu,
-        ui: crate::theme::UiColors,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let TabContextMenu { tab: key, position } = menu;
-        let Some((ws_idx, tab_idx)) = key.resolve(&self.workspaces) else {
-            return div().into_any_element();
+    fn space_menu(&self, idx: usize) -> ActionMenu<WorkspaceMenuAction> {
+        let current = self.workspaces.get(idx).and_then(|ws| ws.space.clone());
+        let digits = SPACE_DIGIT_MNEMONICS
+            .iter()
+            .copied()
+            .map(Some)
+            .chain(std::iter::repeat(None));
+        let targets = crate::app::spaces::space_order(&self.cached_config)
+            .into_iter()
+            .filter(|space| *space != current)
+            .zip(digits)
+            .map(|(space, digit)| {
+                let name = crate::app::spaces::space_label(&self.cached_config, space.as_ref())
+                    .to_string();
+                let item = MenuItem::new(name, WorkspaceMenuAction::MoveToSpace(space));
+                match digit {
+                    Some(digit) => item.mnemonic(digit),
+                    None => item,
+                }
+            });
+        let at_limit = self.cached_config.spaces.len() >= paneflow_config::schema::MAX_SPACES;
+        let new_space = if at_limit {
+            MenuItem::disabled(crate::app::spaces::SPACE_LIMIT_REASON)
+        } else {
+            MenuItem::new("New space…", WorkspaceMenuAction::MoveToNewSpace).mnemonic('n')
         };
+        ActionMenu::new().items(targets).separator().item(new_space)
+    }
+
+    fn tab_menu(&self, key: TabKey) -> Option<ActionMenu<TabMenuAction>> {
+        let (ws_idx, tab_idx) = key.resolve(&self.workspaces)?;
         let tab = self
             .workspaces
             .get(ws_idx)
             .and_then(|ws| ws.tabs().get(tab_idx));
         let can_reset_name = tab.is_some_and(|tab| tab.title_is_user_owned());
         let bound = tab.and_then(|tab| tab.worktree.clone());
-        let is_bound = bound.is_some();
         let root = self
             .workspaces
             .get(ws_idx)
@@ -520,15 +296,16 @@ impl PaneFlowApp {
                 .and_then(|entry| entry.branch.clone()),
             None => Some(self.workspace_checkout_label(ws_idx)),
         };
-        let mut branches: Vec<(Option<std::path::PathBuf>, String, bool)> = self
+        let mut checkouts: Vec<MenuItem<TabMenuAction>> = self
             .workspace_branches(ws_idx)
             .iter()
             .map(|branch| {
                 let selected = on_branch.as_deref() == Some(branch.as_str());
-                (None, branch.clone(), selected)
+                MenuItem::new(branch.clone(), TabMenuAction::BindBranch(branch.clone()))
+                    .radio(selected)
             })
             .collect();
-        branches.extend(
+        checkouts.extend(
             listing
                 .iter()
                 .filter(|entry| entry.branch.is_none() && entry.path != root)
@@ -536,207 +313,174 @@ impl PaneFlowApp {
                     let label =
                         crate::workspace::worktree::checkout_label(None, &entry.path, &root);
                     let selected = bound.as_deref() == Some(entry.path.as_path());
-                    (Some(entry.path.clone()), label, selected)
+                    MenuItem::new(label, TabMenuAction::BindWorktree(entry.path.clone()))
+                        .radio(selected)
                 }),
         );
-        let show_worktrees = branches.len() > 1;
-        let worktree_rows = if show_worktrees {
-            2. + branches.len() as f32
-        } else {
-            0.
-        };
+        let show_checkouts = checkouts.len() > 1;
         let detached = self.tab_detached_checkout(ws_idx, tab_idx);
-        let remove_rows = if is_bound { 1. } else { 0. } + if detached.is_some() { 1. } else { 0. };
-        let rows = if can_reset_name { 3. } else { 2. } + worktree_rows + remove_rows;
-        let menu_height = menu_height(rows, 0.);
-        let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
-        let close_shortcut = self
-            .shortcut_for_action("close_tab")
-            .map(|key| SharedString::from(key.to_string()));
-        let create_branch_item = detached.map(|path| {
-            self.render_select_menu_item(
-                "tab-context-create-branch".into(),
-                "Create branch here…",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.tab_menu_open = None;
-                    if let Some((ws_idx, _)) = key.resolve(&this.workspaces) {
-                        this.open_branch_prompt(ws_idx, path.clone(), window, cx);
-                    }
-                    cx.stop_propagation();
-                }),
+        let mut menu = ActionMenu::new()
+            .item(
+                MenuItem::new("Rename", TabMenuAction::Rename)
+                    .icon(icon::RENAME)
+                    .mnemonic('r'),
             )
-        });
-        let remove_worktree_item = is_bound.then(|| {
-            self.render_select_menu_item(
-                "tab-context-remove-worktree".into(),
-                "Remove worktree",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.tab_menu_open = None;
-                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
-                        this.remove_tab_worktree(ws_idx, tab_idx, cx);
-                    }
-                    cx.stop_propagation();
-                }),
-            )
-        });
-
-        let context_menu = select_menu("tab-context-menu", ui)
-            .occlude()
-            .absolute()
-            .left(menu_pos.x)
-            .top(menu_pos.y)
-            .w(px(248.))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.tab_menu_open = None;
-                cx.notify();
+            .items(can_reset_name.then(|| {
+                MenuItem::new("Reset name", TabMenuAction::ResetName)
+                    .icon(icon::RESET_NAME)
+                    .mnemonic('n')
             }))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(self.render_select_menu_item(
-                "tab-context-rename".into(),
-                "Rename",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.tab_menu_open = None;
-                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
-                        this.begin_tab_rename(ws_idx, tab_idx, cx);
-                    }
-                    cx.stop_propagation();
-                }),
-            ))
-            .when(can_reset_name, |menu| {
-                menu.child(self.render_select_menu_item(
-                    "tab-context-reset-name".into(),
-                    "Reset name",
-                    None,
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.tab_menu_open = None;
-                        if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
-                            this.reset_tab_name(ws_idx, tab_idx, cx);
-                        }
-                        cx.stop_propagation();
-                    }),
-                ))
-            })
-            .child(self.render_select_menu_item(
-                "tab-context-close".into(),
-                "Close tab (stops its sessions)",
-                close_shortcut,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.tab_menu_open = None;
-                    if let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) {
-                        this.close_workspace_tab(ws_idx, tab_idx, window, cx);
-                    }
-                    cx.stop_propagation();
-                }),
-            ))
-            .when(show_worktrees, |menu| {
-                let mut menu = menu.child(context_menu_divider(ui)).child(
-                    div()
-                        .px(menu_row_inset())
-                        .pb(px(4.))
-                        .text_size(px(10.))
-                        .text_color(ui.muted)
-                        .child("Branch"),
-                );
-                menu = menu.child(
-                    menu_row("tab-branch-new", false, ui)
-                        .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.tab_menu_open = None;
-                            if let Some((ws_idx, _)) = key.resolve(&this.workspaces) {
-                                this.open_pane_palette(ws_idx, window, cx);
-                                this.pane_palette_open_new_branch(window, cx);
-                            }
-                            cx.stop_propagation();
-                        }))
-                        .child(
-                            svg()
-                                .size(px(12.))
-                                .flex_none()
-                                .path("icons/plus.svg")
-                                .text_color(ui.text),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_color(ui.text)
-                                .child("New branch…"),
-                        ),
-                );
-                for (detached, label, selected) in branches {
-                    let branch = label.clone();
-                    menu = menu.child(
-                        menu_row(
-                            SharedString::from(format!("tab-branch-{label}")),
-                            selected,
-                            ui,
-                        )
-                        .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.tab_menu_open = None;
-                            let Some((ws_idx, tab_idx)) = key.resolve(&this.workspaces) else {
-                                return;
-                            };
-                            match detached.clone() {
-                                Some(path) => {
-                                    this.set_tab_worktree(ws_idx, tab_idx, Some(path), cx)
-                                }
-                                None => {
-                                    this.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx)
-                                }
-                            }
-                            cx.stop_propagation();
-                        }))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_x_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_color(ui.text)
-                                .child(label),
-                        ),
-                    );
-                }
-                menu
-            })
-            .when_some(create_branch_item, |menu, item| {
-                menu.child(context_menu_divider(ui)).child(item)
-            })
-            .when_some(remove_worktree_item, |menu, item| {
-                menu.child(context_menu_divider(ui)).child(item)
-            });
-        crate::ui_primitives::menu_reveal("tab-context-menu-reveal", context_menu)
+            .item(
+                MenuItem::new("Close tab (stops its sessions)", TabMenuAction::Close)
+                    .icon(icon::CLOSE),
+            );
+        if show_checkouts {
+            menu = menu
+                .separator()
+                .heading("Branch")
+                .item(
+                    MenuItem::new("New branch…", TabMenuAction::NewBranch)
+                        .icon(icon::ADD)
+                        .mnemonic('b'),
+                )
+                .items(checkouts);
+        }
+        if let Some(path) = detached {
+            menu = menu.separator().item(
+                MenuItem::new("Create branch here…", TabMenuAction::CreateBranchHere(path))
+                    .icon(icon::GIT_BRANCH)
+                    .mnemonic('h'),
+            );
+        }
+        if bound.is_some() {
+            menu = menu.separator().item(
+                MenuItem::new("Remove worktree", TabMenuAction::RemoveWorktree).icon(icon::TRASH),
+            );
+        }
+        Some(menu)
     }
 
-    pub(crate) fn render_pane_context_menu(
+    fn run_workspace_menu_action(
+        &mut self,
+        idx: usize,
+        action: &WorkspaceMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_menu_open = None;
+        match action {
+            WorkspaceMenuAction::RunWorkflow(template) => {
+                self.run_saved_workspace_template_for_workspace(idx, *template, cx);
+            }
+            WorkspaceMenuAction::OpenService(url) => self.open_workspace_service_url(url, cx),
+            WorkspaceMenuAction::OpenInEditor { command, label } => {
+                self.open_workspace_in_editor(idx, command, label, cx);
+            }
+            WorkspaceMenuAction::Reveal => self.reveal_workspace_in_file_manager(idx, cx),
+            WorkspaceMenuAction::CopyPath => self.copy_workspace_path(idx, cx),
+            WorkspaceMenuAction::CustomButtons => self.open_custom_buttons_modal(idx, window, cx),
+            WorkspaceMenuAction::MoveToSpace(space) => {
+                self.move_workspace_to_space(idx, space.clone(), window, cx);
+            }
+            WorkspaceMenuAction::MoveToNewSpace => {
+                self.move_workspace_to_new_space(idx, window, cx);
+            }
+            WorkspaceMenuAction::MarkRead => self.mark_workspace_read(idx, cx),
+            WorkspaceMenuAction::ToggleMute => self.toggle_workspace_muted(idx, cx),
+            WorkspaceMenuAction::Close => self.close_workspace_at(idx, window, cx),
+        }
+    }
+
+    fn run_tab_menu_action(
+        &mut self,
+        key: TabKey,
+        action: &TabMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.tab_menu_open = None;
+        let Some((ws_idx, tab_idx)) = key.resolve(&self.workspaces) else {
+            return;
+        };
+        match action {
+            TabMenuAction::Rename => self.begin_tab_rename(ws_idx, tab_idx, cx),
+            TabMenuAction::ResetName => self.reset_tab_name(ws_idx, tab_idx, cx),
+            TabMenuAction::Close => self.close_workspace_tab(ws_idx, tab_idx, window, cx),
+            TabMenuAction::NewBranch => {
+                self.open_pane_palette(ws_idx, window, cx);
+                self.pane_palette_open_new_branch(window, cx);
+            }
+            TabMenuAction::BindBranch(branch) => {
+                self.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx);
+            }
+            TabMenuAction::BindWorktree(path) => {
+                self.set_tab_worktree(ws_idx, tab_idx, Some(path.clone()), cx);
+            }
+            TabMenuAction::CreateBranchHere(path) => {
+                self.open_branch_prompt(ws_idx, path.clone(), window, cx);
+            }
+            TabMenuAction::RemoveWorktree => self.remove_tab_worktree(ws_idx, tab_idx, cx),
+        }
+    }
+
+    pub(crate) fn render_workspace_context_menu(
         &self,
-        menu: PaneContextMenu,
-        ui: crate::theme::UiColors,
+        menu: WorkspaceContextMenu,
+        _ui: crate::theme::UiColors,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(source) = menu.pane.upgrade() else {
+        let idx = menu.idx;
+        let handlers = self.menu_handlers(
+            cx,
+            move |this, action, window, cx| this.run_workspace_menu_action(idx, action, window, cx),
+            |this| this.workspace_menu_open = None,
+        );
+        render_context_menu(
+            SharedString::from(format!("workspace-context-menu-{idx}")),
+            self.workspace_menu(idx),
+            menu.position,
+            handlers,
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn render_tab_context_menu(
+        &self,
+        menu: TabContextMenu,
+        _ui: crate::theme::UiColors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = menu.tab;
+        let Some(actions) = self.tab_menu(key) else {
             return div().into_any_element();
         };
+        let handlers = self.menu_handlers(
+            cx,
+            move |this, action, window, cx| this.run_tab_menu_action(key, action, window, cx),
+            |this| this.tab_menu_open = None,
+        );
+        render_context_menu(
+            SharedString::from(format!("tab-context-menu-{}", key.tab_id)),
+            actions,
+            menu.position,
+            handlers,
+            window,
+            cx,
+        )
+    }
 
-        let owner_id = source.read(cx).workspace_id;
+    fn pane_menu(&self, menu: &PaneContextMenu, cx: &App) -> Option<ActionMenu<PaneMenuAction>> {
+        let source = menu.pane.upgrade()?;
+        let pane = source.read(cx);
         let workspace_cwd: Option<PathBuf> = self
             .workspaces
             .iter()
-            .find(|ws| ws.id == owner_id)
+            .find(|ws| ws.id == pane.workspace_id)
             .map(|ws| PathBuf::from(&ws.cwd));
-
-        let surface_path = Self::surface_context_path(source.read(cx).surface(), cx);
+        let surface_path = Self::surface_context_path(pane.surface(), cx);
         let full_path = surface_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned());
@@ -746,164 +490,104 @@ impl PaneFlowApp {
                 .map(|root| files_tree::workspace_relative_path(root, path))
                 .unwrap_or_else(|| path.to_string_lossy().into_owned())
         });
-
-        let fork_source = source
-            .read(cx)
+        let can_fork = pane
             .surface()
             .as_terminal()
-            .is_some_and(|terminal| terminal.read(cx).can_fork_conversation())
-            .then(|| source.clone());
-        let rows = 2 + usize::from(fork_source.is_some()) + 2;
-        let menu_height = menu_height(rows as f32, 2. * menu_divider_slot());
-        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
-
-        let mut context_menu = select_menu("pane-context-menu", ui)
-            .occlude()
-            .absolute()
-            .left(menu_pos.x)
-            .top(menu_pos.y)
-            .w(px(248.))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.pane_menu_open = None;
-                cx.notify();
-            }))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-
-        if let Some(value) = full_path {
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "pane-context-copy-path".into(),
+            .is_some_and(|terminal| terminal.read(cx).can_fork_conversation());
+        let copy_path = match full_path {
+            Some(value) => MenuItem::new(
                 "Copy path",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                    this.pane_menu_open = None;
-                    this.show_toast("Copied path", cx);
-                    cx.stop_propagation();
-                }),
-            ));
-        } else {
-            context_menu = context_menu.child(Self::render_disabled_select_menu_item(
-                "pane-context-copy-path-disabled".into(),
-                "Copy path unavailable",
-                ui,
-            ));
-        }
-
-        if let Some(value) = relative_path {
-            context_menu = context_menu.child(self.render_select_menu_item(
-                "pane-context-copy-relative-path".into(),
+                PaneMenuAction::Copy {
+                    value,
+                    toast: "Copied path",
+                },
+            ),
+            None => MenuItem::disabled("Copy path unavailable"),
+        };
+        let copy_relative = match relative_path {
+            Some(value) => MenuItem::new(
                 "Copy relative path",
-                None,
-                ui,
-                cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                    this.pane_menu_open = None;
-                    this.show_toast("Copied relative path", cx);
-                    cx.stop_propagation();
-                }),
-            ));
+                PaneMenuAction::Copy {
+                    value,
+                    toast: "Copied relative path",
+                },
+            ),
+            None => MenuItem::disabled("Copy relative path unavailable"),
+        };
+        let detach = if pane.is_detached() {
+            MenuItem::new("Return to workspace", PaneMenuAction::ToggleDetached).icon(icon::DOCK)
         } else {
-            context_menu = context_menu.child(Self::render_disabled_select_menu_item(
-                "pane-context-copy-relative-path-disabled".into(),
-                "Copy relative path unavailable",
-                ui,
-            ));
-        }
-
-        if let Some(fork_source) = fork_source {
-            context_menu = context_menu.child(
-                crate::settings::components::menu_row("pane-context-fork-conversation", false, ui)
-                    .cursor(CursorStyle::Arrow)
-                    .delayed_tooltip(crate::ui_primitives::text_tooltip(
-                        crate::app::conversation_restore::FORK_TOOLTIP,
-                    ))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.pane_menu_open = None;
-                        this.fork_conversation_in(fork_source.clone(), window, cx);
-                        cx.stop_propagation();
-                    }))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(ui.text)
-                            .child("Fork conversation"),
-                    ),
-            );
-        }
-
-        context_menu = context_menu.child(menu_divider(ui));
-
-        let source_for_close = source.clone();
-        let source_for_detach = source.clone();
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "pane-context-detach".into(),
-            if source.read(cx).is_detached() {
-                "Return to workspace"
-            } else {
-                "Detach into window"
-            },
-            None,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.pane_menu_open = None;
-                this.toggle_detached_pane(source_for_detach.clone(), window, cx);
-                cx.stop_propagation();
-            }),
-        ));
-        context_menu = context_menu.child(self.render_select_menu_item(
-            "pane-context-close".into(),
-            "Close pane (stops its sessions)",
-            None,
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.pane_menu_open = None;
-                source_for_close.update(cx, |pane, pane_cx| pane.close(pane_cx));
-                this.save_session(cx);
-                cx.stop_propagation();
-                cx.notify();
-            }),
-        ));
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "pane-context-menu-reveal",
-            context_menu,
-        ))
-        .priority(3)
-        .into_any_element()
+            MenuItem::new("Detach into window", PaneMenuAction::ToggleDetached).icon(icon::DETACH)
+        };
+        Some(
+            ActionMenu::new()
+                .item(copy_path.icon(icon::COPY).mnemonic('p'))
+                .item(copy_relative.icon(icon::LINK).mnemonic('l'))
+                .items(can_fork.then(|| {
+                    MenuItem::new("Fork conversation", PaneMenuAction::Fork)
+                        .icon(icon::FORK)
+                        .mnemonic('f')
+                        .tooltip(crate::app::conversation_restore::FORK_TOOLTIP)
+                }))
+                .separator()
+                .item(detach.mnemonic('d'))
+                .item(
+                    MenuItem::new("Close pane (stops its sessions)", PaneMenuAction::Close)
+                        .icon(icon::CLOSE),
+                ),
+        )
     }
 
-    pub(super) fn render_disabled_select_menu_item(
-        id: SharedString,
-        label: &str,
-        ui: crate::theme::UiColors,
-    ) -> impl IntoElement {
-        with_surface_shape(|| {
-            div()
-                .id(id)
-                .h(menu_row_height())
-                .px(menu_row_inset())
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .text_size(menu_text_size())
-                .font_weight(menu_text_weight())
-                .text_color(ui.muted)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(label.to_string()),
-                )
-        })
+    fn run_pane_menu_action(
+        &mut self,
+        pane: &gpui::WeakEntity<crate::pane::Pane>,
+        action: &PaneMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pane_menu_open = None;
+        let Some(source) = pane.upgrade() else {
+            return;
+        };
+        match action {
+            PaneMenuAction::Copy { value, toast } => {
+                cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
+                self.show_toast(*toast, cx);
+            }
+            PaneMenuAction::Fork => self.fork_conversation_in(source, window, cx),
+            PaneMenuAction::ToggleDetached => self.toggle_detached_pane(source, window, cx),
+            PaneMenuAction::Close => {
+                source.update(cx, |pane, pane_cx| pane.close(pane_cx));
+                self.save_session(cx);
+            }
+        }
+    }
+
+    pub(crate) fn render_pane_context_menu(
+        &self,
+        menu: PaneContextMenu,
+        _ui: crate::theme::UiColors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(actions) = self.pane_menu(&menu, cx) else {
+            return div().into_any_element();
+        };
+        let pane = menu.pane.clone();
+        let pane_id = pane.entity_id();
+        let handlers = self.menu_handlers(
+            cx,
+            move |this, action, window, cx| this.run_pane_menu_action(&pane, action, window, cx),
+            |this| this.pane_menu_open = None,
+        );
+        render_context_menu(
+            SharedString::from(format!("pane-context-menu-{pane_id}")),
+            actions,
+            menu.position,
+            handlers,
+            window,
+            cx,
+        )
     }
 
     fn surface_context_path(surface: &PaneSurface, cx: &App) -> Option<PathBuf> {
@@ -917,121 +601,5 @@ impl PaneFlowApp {
                 .map(PathBuf::from),
             PaneSurface::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    use gpui::{
-        ClickEvent, Context, InteractiveElement, IntoElement, Modifiers, MouseButton,
-        MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, TestAppContext,
-        Window, deferred, div, point, px, size,
-    };
-
-    use super::{SubmenuBounds, is_inside_submenu, submenu_bounds_probe};
-    use crate::settings::components::{floating_menu_panel, menu_row, select_menu};
-
-    struct SubmenuHarness {
-        open: bool,
-        picked: Rc<Cell<bool>>,
-    }
-
-    impl Render for SubmenuHarness {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let ui = crate::theme::ui_colors();
-            let root = div().size_full().relative();
-            if !self.open {
-                return root;
-            }
-            let bounds = SubmenuBounds::default();
-            let dismiss_bounds = bounds.clone();
-            let picked = self.picked.clone();
-            let submenu = floating_menu_panel(div().id("submenu"), ui)
-                .w(px(super::MOVE_TO_SPACE_SUBMENU_WIDTH))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(submenu_bounds_probe(bounds))
-                .child(
-                    menu_row("submenu-target", false, ui)
-                        .debug_selector(|| "submenu-target".into())
-                        .on_click(move |_: &ClickEvent, _, _| picked.set(true))
-                        .child("Target"),
-                );
-            let row = menu_row("submenu-row", true, ui)
-                .relative()
-                .child("Move to space")
-                .child(
-                    deferred(
-                        div()
-                            .absolute()
-                            .top(px(-5.))
-                            .left(px(248. - 20.))
-                            .occlude()
-                            .child(submenu),
-                    )
-                    .priority(4),
-                );
-            root.child(
-                select_menu("menu", ui)
-                    .occlude()
-                    .absolute()
-                    .left(px(20.))
-                    .top(px(20.))
-                    .w(px(248.))
-                    .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        if is_inside_submenu(&dismiss_bounds, event.position) {
-                            return;
-                        }
-                        this.open = false;
-                        cx.notify();
-                    }))
-                    .child(row),
-            )
-        }
-    }
-
-    fn harness(
-        cx: &mut TestAppContext,
-    ) -> (
-        gpui::Entity<SubmenuHarness>,
-        Rc<Cell<bool>>,
-        &mut gpui::VisualTestContext,
-    ) {
-        let picked = Rc::new(Cell::new(false));
-        let harness_picked = picked.clone();
-        let (view, cx) = cx.add_window_view(move |_, _| SubmenuHarness {
-            open: true,
-            picked: harness_picked,
-        });
-        cx.simulate_resize(size(px(800.), px(600.)));
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-        });
-        (view, picked, cx)
-    }
-
-    #[gpui::test]
-    fn test_submenu_item_click_outside_parent_menu_reaches_its_handler(cx: &mut TestAppContext) {
-        let (view, picked, cx) = harness(cx);
-        let target = cx
-            .debug_bounds("submenu-target")
-            .expect("submenu target is painted");
-        assert!(
-            target.center().x > px(20. + 248.),
-            "the click lands outside the parent menu"
-        );
-        cx.simulate_click(target.center(), Modifiers::default());
-        assert!(picked.get(), "clicking the submenu item runs its handler");
-        assert!(view.read_with(cx, |view, _| view.open));
-    }
-
-    #[gpui::test]
-    fn test_click_outside_menu_and_submenu_still_dismisses(cx: &mut TestAppContext) {
-        let (view, picked, cx) = harness(cx);
-        cx.simulate_click(point(px(700.), px(500.)), Modifiers::default());
-        assert!(!picked.get());
-        assert!(!view.read_with(cx, |view, _| view.open));
     }
 }

@@ -1,74 +1,56 @@
-use gpui::{
-    AnyElement, ClickEvent, Context, IntoElement, MouseButton, ParentElement, Styled, deferred,
-    div, prelude::*, px,
-};
+use gpui::{AnyElement, ClipboardItem, Context, SharedString};
 
 use crate::app::files_tree;
-use crate::app::sidebar::context_menu::clamped_context_menu_position;
+use crate::app::menu_icons as icon;
+use crate::app::sidebar::context_menu::render_context_menu;
+use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
 use crate::{FilesContextMenu, PaneFlowApp};
+
+#[derive(Clone, Copy)]
+enum FilesMenuAction {
+    CopyPath,
+    CopyRelativePath,
+}
 
 impl PaneFlowApp {
     pub(crate) fn render_files_context_menu(
         &self,
         menu: FilesContextMenu,
-        ui: crate::theme::UiColors,
+        _ui: crate::theme::UiColors,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let menu_height = crate::settings::components::menu_height(2., 0.);
-        let menu_width = px(220.);
-        let menu_pos =
-            clamped_context_menu_position(menu.position, menu_width, menu_height, window);
-
-        let abs_path = menu.path.clone();
-        let rel_root = menu.root.clone();
-        let rel_path = menu.path.clone();
-
-        let context_menu =
-            crate::settings::components::floating_menu_panel(div().id("files-context-menu"), ui)
-                .occlude()
-                .absolute()
-                .left(menu_pos.x)
-                .top(menu_pos.y)
-                .w(menu_width)
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.files_menu_open = None;
-                    cx.notify();
-                }))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(self.render_select_menu_item(
-                    "files-context-copy-path".into(),
-                    "Copy Path",
-                    None,
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        let value = abs_path.to_string_lossy().into_owned();
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(value));
-                        this.files_menu_open = None;
-                        this.show_toast("Copied path", cx);
-                        cx.stop_propagation();
-                    }),
-                ))
-                .child(self.render_select_menu_item(
-                    "files-context-copy-rel".into(),
-                    "Copy Relative Path",
-                    None,
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        let value = files_tree::workspace_relative_path(&rel_root, &rel_path);
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(value));
-                        this.files_menu_open = None;
-                        this.show_toast("Copied relative path", cx);
-                        cx.stop_propagation();
-                    }),
-                ));
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "files-context-menu-reveal",
-            context_menu,
-        ))
-        .priority(3)
-        .into_any_element()
+        let actions = ActionMenu::new()
+            .item(
+                MenuItem::new("Copy Path", FilesMenuAction::CopyPath)
+                    .icon(icon::COPY)
+                    .mnemonic('p'),
+            )
+            .item(
+                MenuItem::new("Copy Relative Path", FilesMenuAction::CopyRelativePath)
+                    .icon(icon::LINK)
+                    .mnemonic('r'),
+            );
+        let id = SharedString::from(format!("files-context-menu-{}", menu.path.display()));
+        let target = menu.clone();
+        let handlers = self.menu_handlers(
+            cx,
+            move |this, action: &FilesMenuAction, _, cx| {
+                this.files_menu_open = None;
+                let (value, toast) = match action {
+                    FilesMenuAction::CopyPath => {
+                        (target.path.to_string_lossy().into_owned(), "Copied path")
+                    }
+                    FilesMenuAction::CopyRelativePath => (
+                        files_tree::workspace_relative_path(&target.root, &target.path),
+                        "Copied relative path",
+                    ),
+                };
+                cx.write_to_clipboard(ClipboardItem::new_string(value));
+                this.show_toast(toast, cx);
+            },
+            |this| this.files_menu_open = None,
+        );
+        render_context_menu(id, actions, menu.position, handlers, window, cx)
     }
 }

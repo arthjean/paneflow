@@ -249,7 +249,7 @@ impl Scope {
                 ("Zed", "open_workspace_in_zed"),
                 ("Cursor", "open_workspace_in_cursor"),
                 ("VS Code", "open_workspace_in_vscode"),
-                ("Windsurf", "open_workspace_in_windsurf"),
+                ("WebStorm", "open_workspace_in_webstorm"),
                 ("File manager", "reveal_workspace_in_file_manager"),
             ]),
             Scope::PaneLayout => action_values(&[
@@ -974,7 +974,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         label: "Open workspace in",
         icon: Some("icons/palette/square-arrow-up-right.svg"),
-        keywords: "editor zed cursor vscode windsurf file manager reveal",
+        keywords: "editor zed cursor vscode webstorm jetbrains file manager reveal",
         needs: Needs::Workspace,
         section: Section::Workspaces,
         kind: Kind::Scope(Scope::OpenWorkspaceIn),
@@ -1026,6 +1026,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         needs: Needs::Workspace,
         section: Section::Sidebar,
         kind: Kind::Action("toggle_files_sidebar"),
+    },
+    Command {
+        label: "Toggle the Changes dock",
+        icon: Some("icons/palette/layout-two-column.svg"),
+        keywords: "diff git review panel right",
+        needs: Needs::Workspace,
+        section: Section::Workspaces,
+        kind: Kind::Action("toggle_diff_dock"),
     },
     Command {
         label: "Maximize or restore the Changes dock",

@@ -39,8 +39,9 @@ pub(crate) const THEME_PRESET: SettingCopy = SettingCopy {
 };
 pub(crate) const INTERFACE_STYLE: SettingCopy = SettingCopy {
     title: "Interface style",
-    description: "Paneflow draws continuous corners with generous radii. Classic draws \
-                  circular corners on a tighter scale, with denser menus and soft shadows.",
+    description: "Classic lays the window out edge to edge, with pane and dock tabs in \
+                  the title bar and circular corners on a tight scale. Rounded floats the \
+                  panes as cards with continuous corners and generous radii.",
 };
 pub(crate) const WORKSPACE_ICON: SettingCopy = SettingCopy {
     title: "Workspace icon",
@@ -82,7 +83,8 @@ pub(crate) const REDUCE_MOTION: SettingCopy = SettingCopy {
 pub(crate) const COMFORTABLE_DENSITY: SettingCopy = SettingCopy {
     title: "Comfortable density",
     description: "Separate panes into rounded cards with a gutter between them. Off joins them \
-                  edge to edge with a thin divider.",
+                  edge to edge with a thin divider. Applies to the Rounded interface style: \
+                  Classic is always edge to edge.",
 };
 #[cfg(target_os = "windows")]
 pub(crate) const CHROME_MATERIAL: SettingCopy = SettingCopy {

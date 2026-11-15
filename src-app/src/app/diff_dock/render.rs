@@ -8,6 +8,8 @@ use super::model::{DiffChrome, DiffDockTab};
 use super::new_tab_menu::render_diff_new_tab_menu;
 use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
+use crate::app::menu_icons as icon;
+use crate::diff::{ComparisonPolicy, DiffOptions};
 use crate::layout::CardFrame;
 use crate::pane::CardShape;
 use crate::settings::components::with_alpha;
@@ -76,6 +78,7 @@ pub(super) fn render_diff_tab_strip(
     close_armed: Option<usize>,
     new_tab_menu_open: bool,
     maximized: bool,
+    in_title_bar: bool,
     frame: CardFrame,
     card_background: Hsla,
     scroll: &gpui::ScrollHandle,
@@ -107,17 +110,23 @@ pub(super) fn render_diff_tab_strip(
 
     let open = new_tab_menu_open;
     let rail_hover = crate::app::constants::sidebar_tab_hover_background();
+    let divided = !in_title_bar && !matches!(tabs.get(active), Some(DiffDockTab::Changes));
 
     div()
-        .h(px(44.))
+        .map(|strip| {
+            if in_title_bar {
+                strip.h_full()
+            } else {
+                strip.h(px(44.))
+            }
+        })
         .flex_none()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(3.))
         .px(px(6.))
-        .border_b_1()
-        .border_color(ui.border)
+        .when(divided, |strip| strip.border_b_1().border_color(ui.border))
         .child(
             div()
                 .relative()
@@ -189,12 +198,6 @@ pub(super) fn render_diff_tab_strip(
                 this.toggle_diff_dock_maximize(window, cx);
             }),
             ui.muted,
-        ))
-        .child(render_diff_dock_close_button(
-            "diff-dock-close",
-            frame,
-            ui.muted,
-            cx,
         ))
         .into_any_element()
 }
@@ -330,7 +333,7 @@ fn icon_is_colored(icon: &str) -> bool {
     icon.starts_with("icons/languages/")
 }
 
-fn file_icon_element(icon: &'static str, size: Pixels, color: Hsla) -> AnyElement {
+pub(super) fn file_icon_element(icon: &'static str, size: Pixels, color: Hsla) -> AnyElement {
     if icon_is_colored(icon) {
         img(icon).size(size).flex_none().into_any_element()
     } else {
@@ -418,35 +421,6 @@ pub(crate) fn render_diff_header_icon_button(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
     color: Hsla,
 ) -> gpui::Stateful<gpui::Div> {
-    header_icon_button(id, label, icon, on_click, color, false)
-}
-
-pub(super) fn render_diff_dock_close_button(
-    id: &'static str,
-    frame: CardFrame,
-    color: Hsla,
-    cx: &mut Context<PaneFlowApp>,
-) -> gpui::Stateful<gpui::Div> {
-    header_icon_button(
-        id,
-        "Close panel",
-        "icons/dock/panel-right-close.svg",
-        cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.dismiss_diff_dock_panel(cx);
-        }),
-        color,
-        matches!(frame, CardFrame::Card),
-    )
-}
-
-fn header_icon_button(
-    id: &'static str,
-    label: &'static str,
-    icon: &'static str,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    color: Hsla,
-    round: bool,
-) -> gpui::Stateful<gpui::Div> {
     let group = SharedString::from(format!("{id}-group"));
     let hover = crate::app::constants::sidebar_tab_hover_background();
     let button = div()
@@ -456,24 +430,99 @@ fn header_icon_button(
         .flex()
         .items_center()
         .justify_center();
-    let button = if round {
-        button.relative().group(group.clone()).child(
-            div()
-                .absolute()
-                .inset_0()
-                .rounded_full()
-                .bg(hover)
-                .invisible()
-                .group_hover(group, |style| style.visible()),
-        )
-    } else {
-        squircle_skin(button, group, ROW_RADIUS, None, Some(hover))
-    };
-    button
+    squircle_skin(button, group, ROW_RADIUS, None, Some(hover))
         .accessible_control(gpui::accesskit::Role::Button, label)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(on_click)
         .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
+}
+
+const TOOLBAR_HEIGHT: f32 = 28.0;
+const TOOLBAR_GAP_BELOW: f32 = 8.0;
+const TOOLBAR_CONTROL: f32 = 24.0;
+const TOOLBAR_SEGMENT_HEIGHT: f32 = 20.0;
+const TOOLBAR_ICON: f32 = 14.0;
+const TOOLBAR_STAT_MIN_WIDTH: f32 = 460.0;
+const LAYOUT_UNIFIED_ICON: &str = "icons/palette/layout-two-row.svg";
+const LAYOUT_SPLIT_ICON: &str = icon::LAYOUT;
+const CHANGES_TREE_ICON: &str = "icons/dock/folder-tree.svg";
+
+fn toolbar_toggle(
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    height: f32,
+    pressed: bool,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = crate::app::constants::sidebar_tab_hover_background();
+    squircle_skin(
+        div()
+            .id(id)
+            .flex_none()
+            .w(px(TOOLBAR_CONTROL))
+            .h(px(height))
+            .flex()
+            .items_center()
+            .justify_center(),
+        SharedString::from(format!("{id}-group")),
+        ROW_RADIUS,
+        pressed.then_some(hover),
+        Some(hover),
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label)
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_click(on_click)
+    .child(
+        svg()
+            .size(px(TOOLBAR_ICON))
+            .flex_none()
+            .path(icon)
+            .text_color(if pressed { ui.text } else { ui.muted }),
+    )
+}
+
+fn render_layout_segments(
+    split: bool,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let unified = toolbar_toggle(
+        "diff-dock-layout-unified",
+        "Unified diff view",
+        LAYOUT_UNIFIED_ICON,
+        TOOLBAR_SEGMENT_HEIGHT,
+        !split,
+        ui,
+        cx.listener(|this, _: &ClickEvent, _w, cx| this.set_diff_dock_split(false, cx)),
+    );
+    let side_by_side = toolbar_toggle(
+        "diff-dock-layout-split",
+        "Split diff view",
+        LAYOUT_SPLIT_ICON,
+        TOOLBAR_SEGMENT_HEIGHT,
+        split,
+        ui,
+        cx.listener(|this, _: &ClickEvent, _w, cx| this.set_diff_dock_split(true, cx)),
+    );
+    squircle_skin(
+        div()
+            .id("diff-dock-layout")
+            .flex_none()
+            .h(px(TOOLBAR_CONTROL))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.))
+            .px(px(2.)),
+        "diff-dock-layout-group",
+        ROW_RADIUS,
+        Some(with_alpha(ui.text, 0.05)),
+        None,
+    )
+    .child(unified)
+    .child(side_by_side)
 }
 
 pub(super) fn render_diff_files_toolbar(
@@ -483,58 +532,157 @@ pub(super) fn render_diff_files_toolbar(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let loaded = chrome.data.as_ref().filter(|d| d.has_rows());
+    let files = loaded.filter(|d| d.file_count > 0);
     let diff = ui.diff_colors();
 
-    let mut row = div()
-        .flex_none()
-        .h(px(36.))
-        .w_full()
+    let left = div()
+        .flex_1()
+        .min_w_0()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(6.))
-        .px(px(10.))
-        .border_b_1()
-        .border_color(ui.border)
-        .child(
-            svg()
-                .size(px(14.))
-                .flex_none()
-                .path("icons/dock/file-code.svg")
-                .text_color(ui.muted),
-        )
         .child(
             div()
                 .flex_none()
+                .whitespace_nowrap()
                 .text_size(crate::ui_primitives::BODY)
+                .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(ui.text)
                 .child("Uncommitted"),
+        )
+        .children(branch_chip);
+
+    let mut right = div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(2.));
+
+    if let Some(data) = loaded.filter(|_| chrome.width >= TOOLBAR_STAT_MIN_WIDTH) {
+        right = right.child(
+            div()
+                .flex_none()
+                .mr(px(4.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .whitespace_nowrap()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .child(
+                    div()
+                        .text_color(diff.added)
+                        .child(format!("+{}", data.added)),
+                )
+                .child(
+                    div()
+                        .text_color(diff.deleted)
+                        .child(format!("-{}", data.removed)),
+                ),
         );
+    }
 
-    if let Some(data) = loaded {
-        row = row
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(diff.added)
-                    .child(format!("+{}", data.added)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(diff.deleted)
-                    .child(format!("-{}", data.removed)),
+    let cwd = chrome.cwd.clone();
+    right = right.child(toolbar_toggle(
+        "diff-dock-refresh",
+        "Refresh changes",
+        icon::REFRESH,
+        TOOLBAR_CONTROL,
+        false,
+        ui,
+        cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.refresh_diff_dock(cwd.clone(), cx);
+        }),
+    ));
+
+    if let Some(data) = files {
+        let all_collapsed = data.all_collapsed(chrome.collapsed);
+        let paths = data.paths();
+        right = right.child(toolbar_toggle(
+            "diff-dock-collapse-all",
+            if all_collapsed {
+                "Expand all files"
+            } else {
+                "Collapse all files"
+            },
+            if all_collapsed {
+                icon::EXPAND_ALL
+            } else {
+                icon::COLLAPSE_ALL
+            },
+            TOOLBAR_CONTROL,
+            false,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.set_all_diff_collapsed(&paths, !all_collapsed, cx);
+            }),
+        ));
+    }
+
+    right = right.child(render_layout_segments(chrome.split, ui, cx));
+
+    let options = chrome.options;
+    let hides_whitespace = options.whitespace == ComparisonPolicy::IgnoreWhitespaces;
+    right = right.child(toolbar_toggle(
+        "diff-dock-whitespace",
+        if hides_whitespace {
+            "Show whitespace changes"
+        } else {
+            "Hide whitespace changes"
+        },
+        icon::WHITESPACE,
+        TOOLBAR_CONTROL,
+        hides_whitespace,
+        ui,
+        cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            let whitespace = if hides_whitespace {
+                ComparisonPolicy::Default
+            } else {
+                ComparisonPolicy::IgnoreWhitespaces
+            };
+            this.set_diff_dock_options(
+                DiffOptions {
+                    whitespace,
+                    ..options
+                },
+                cx,
             );
+        }),
+    ));
+
+    if files.is_some() {
+        let tree_open = chrome.tree_open;
+        right = right.child(toolbar_toggle(
+            "diff-dock-changes-tree",
+            if tree_open {
+                "Hide file tree"
+            } else {
+                "Show file tree"
+            },
+            CHANGES_TREE_ICON,
+            TOOLBAR_CONTROL,
+            tree_open,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.set_diff_changes_tree_open(!tree_open, cx);
+            }),
+        ));
     }
 
-    if let Some(chip) = branch_chip {
-        row = row.child(chip);
-    }
-
-    row.child(div().flex_1().min_w_0())
-        .child(render_diff_options_button(chrome, ui, cx))
+    div()
+        .flex_none()
+        .h(px(TOOLBAR_HEIGHT))
+        .mb(px(TOOLBAR_GAP_BELOW))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .px(px(10.))
+        .child(left)
+        .child(right.child(render_diff_options_button(chrome, ui, cx)))
         .into_any_element()
 }
 

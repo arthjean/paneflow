@@ -12,6 +12,7 @@ enum EditorKind {
     Helix,
     Emacs,
     VisualStudio,
+    JetBrains,
     Unknown,
 }
 
@@ -23,13 +24,14 @@ impl EditorKind {
             .unwrap_or(name)
             .to_ascii_lowercase();
         match base.as_str() {
-            "code" | "code-insiders" | "codium" | "cursor" | "windsurf" => Self::VsCodeLike,
+            "code" | "code-insiders" | "codium" | "cursor" => Self::VsCodeLike,
             "zed" | "zed-preview" | "zed-nightly" => Self::Zed,
             "subl" | "sublime_text" => Self::Sublime,
             "nvim" | "vim" | "vi" | "nvim-qt" | "gvim" | "mvim" => Self::VimFamily,
             "hx" | "helix" => Self::Helix,
             "emacs" | "emacsclient" => Self::Emacs,
             "devenv" => Self::VisualStudio,
+            "webstorm" | "webstorm64" => Self::JetBrains,
             _ => Self::Unknown,
         }
     }
@@ -66,6 +68,19 @@ impl EditorKind {
                 args
             }
             Self::VisualStudio => vec!["/Edit".to_string(), path_str],
+            Self::JetBrains => {
+                let mut args = Vec::new();
+                if let Some(l) = line {
+                    args.push("--line".to_string());
+                    args.push(l.to_string());
+                    if let Some(c) = col {
+                        args.push("--column".to_string());
+                        args.push(c.saturating_sub(1).to_string());
+                    }
+                }
+                args.push(path_str);
+                args
+            }
             Self::Unknown => vec![path_str],
         }
     }
@@ -144,7 +159,7 @@ fn resolve_editor_command(command: &str) -> PathBuf {
     }
 }
 
-const FALLBACK_PROBES: &[&str] = &["code", "cursor", "zed", "subl", "code-insiders", "windsurf"];
+const FALLBACK_PROBES: &[&str] = &["code", "cursor", "zed", "subl", "code-insiders", "webstorm"];
 
 const TERMINAL_EDITORS: &[&str] = &[
     "vi", "vim", "nvim", "hx", "helix", "emacs", "nano", "micro", "kak",
@@ -177,7 +192,7 @@ fn preset_binary(preset: &str) -> Option<&'static str> {
     match preset {
         "zed" => Some("zed"),
         "cursor" => Some("cursor"),
-        "windsurf" => Some("windsurf"),
+        "webstorm" => Some("webstorm"),
         "code" => Some("code"),
         "visual_studio" => Some("devenv"),
         _ => None,
@@ -471,8 +486,8 @@ mod tests {
     #[test]
     fn preferred_editor_reports_a_missing_binary() {
         assert_eq!(
-            preferred_editor(Some("windsurf"), |_| None),
-            PreferredEditor::Missing { binary: "windsurf" }
+            preferred_editor(Some("webstorm"), |_| None),
+            PreferredEditor::Missing { binary: "webstorm" }
         );
         assert_eq!(
             preferred_editor(Some("notepad++"), resolve_all),
@@ -507,6 +522,18 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn argv_jetbrains_takes_line_and_a_zero_based_column() {
+        let args = EditorKind::JetBrains.argv_for(p("/x.ts"), Some(4), Some(2));
+        assert_eq!(args, vec!["--line", "4", "--column", "1", "/x.ts"]);
+        let bare = EditorKind::JetBrains.argv_for(p("/x.ts"), None, Some(2));
+        assert_eq!(bare, vec!["/x.ts"]);
+        assert_eq!(
+            EditorKind::from_binary_name("webstorm64.exe"),
+            EditorKind::JetBrains
+        );
     }
 
     #[test]

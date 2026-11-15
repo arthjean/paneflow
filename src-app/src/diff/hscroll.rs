@@ -1,6 +1,7 @@
 use super::rows::FileSpan;
 
-pub(crate) const DIFF_CHAR_WIDTH: f32 = 7.5;
+pub(crate) const DIFF_CHAR_WIDTH: f32 = 8.0;
+pub(crate) const SPLIT_DIVIDER_W: f32 = 2.0;
 pub(crate) const H_SCROLLBAR_TRACK_HEIGHT: f32 = 6.0;
 pub(crate) const H_SCROLLBAR_PAD_X: f32 = 12.0;
 pub(crate) const H_SCROLLBAR_BOTTOM_INSET: f32 = 3.0;
@@ -21,7 +22,7 @@ pub(crate) struct HScrollbarSegment {
 
 pub(crate) fn h_text_viewport(split: bool, panel_width: f32) -> f32 {
     if split {
-        (panel_width - 1.0) / 2.0 - 55.0
+        (panel_width - SPLIT_DIVIDER_W) / 2.0 - 72.0
     } else {
         panel_width - 92.0
     }
@@ -73,7 +74,7 @@ fn side_max_chars(span: &FileSpan, split: bool, right: bool) -> usize {
 }
 
 pub(crate) fn split_right_side_at_x(x: f32, panel_width: f32) -> bool {
-    let divider_w = 3.0;
+    let divider_w = SPLIT_DIVIDER_W;
     let half_w = ((panel_width - divider_w) / 2.0).max(0.0);
     x >= half_w + divider_w
 }
@@ -220,7 +221,7 @@ pub(crate) fn h_scrollbar_segments(
         let y = visible_file_bottom - track_y_inset;
 
         if split {
-            let divider_w = 3.0;
+            let divider_w = SPLIT_DIVIDER_W;
             let half_w = ((panel_width - divider_w) / 2.0).max(0.0);
             let track_w = (half_w - H_SCROLLBAR_PAD_X * 2.0).max(0.0);
             for (right, x) in [

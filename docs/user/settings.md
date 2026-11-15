@@ -37,13 +37,13 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 
 Settings > Appearance offers **Interface style** under the theme preset,
 and the command palette carries the same choice under `Interface style`.
-It chooses the corner and surface language of the whole app and is stored
-in `interface_style`.
+It chooses the layout and the corner language of the whole app and is
+stored in `interface_style`.
 
 | Style | What it draws |
 | --- | --- |
-| Paneflow (default) | Continuous corners (squircles) with generous radii: 24 px pane cards and capsule pane tabs. Menus, select popups, and settings cards draw circular corners: 14 px menus with 30 px rows and 12 px cards. |
-| Classic | Circular corners on a tighter scale: 12 px pane cards, dialogs, and toasts, 8 px rows, buttons, and pane tabs, and 14 px menus with 28 px rows. The command palette and the Clone repository dialog keep the Paneflow look. |
+| Classic (default) | An edge-to-edge window: the sidebar, the panes, and the Changes dock run to the window edges with thin lines between them, and the tabs of the top panes and of the dock sit in the title bar beside the window controls. Circular corners on a tight scale: 12 px dialogs and toasts, 8 px rows, buttons, and pane tabs, and 14 px menus with 28 px rows. **Comfortable density** has no effect. The command palette and the Clone repository dialog keep the Rounded look. |
+| Rounded | Pane cards floating under a full-width title bar, with continuous corners (squircles) and generous radii: 24 px pane cards and capsule pane tabs. Menus, select popups, and settings cards draw circular corners: 14 px menus with 30 px rows and 12 px cards. |
 
 The change applies at once to every open window.
 

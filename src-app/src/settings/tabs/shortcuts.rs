@@ -9,20 +9,16 @@ use std::collections::HashMap;
 use crate::keybindings::ShortcutGroup;
 use crate::settings::chrome::{SETTINGS_COLUMN_PADDING, settings_column};
 use crate::settings::components::{
-    destructive_color, ghost_skin, list_card, menu_row, menu_row_height, raised_button, with_alpha,
+    KEYCAP_HEIGHT, KEYCAP_RADIUS, destructive_color, ghost_skin, keycap, keycap_tones, list_card,
+    menu_row, menu_row_height, raised_button, with_alpha,
 };
 use crate::ui_primitives::{
-    BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt, lerp_color,
-    text_tooltip,
+    BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt, text_tooltip,
 };
 use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 const SHORTCUT_SECTION_GAP: Pixels = px(20.);
-
-const KEYCAP_HEIGHT: Pixels = px(20.);
-
-const KEYCAP_RADIUS: Pixels = px(5.);
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ShortcutListRow {
@@ -694,7 +690,7 @@ enum KeycapTone {
 
 fn keycaps(ui: crate::theme::UiColors, formatted: &str, tone: KeycapTone) -> Div {
     let (fill, edge, ink) = match tone {
-        KeycapTone::Normal => (ui.subtle, lerp_color(ui.subtle, ui.text, 0.08), ui.text),
+        KeycapTone::Normal => keycap_tones(ui),
         KeycapTone::Conflict => (
             with_alpha(ui.vc_conflict, 0.14),
             with_alpha(ui.vc_conflict, 0.5),
@@ -710,23 +706,7 @@ fn keycaps(ui: crate::theme::UiColors, formatted: &str, tone: KeycapTone) -> Div
         .children(
             keybindings::keystroke_caps(formatted)
                 .into_iter()
-                .map(|cap| {
-                    div()
-                        .h(KEYCAP_HEIGHT)
-                        .min_w(KEYCAP_HEIGHT)
-                        .px(px(6.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(KEYCAP_RADIUS)
-                        .bg(fill)
-                        .border_1()
-                        .border_color(edge)
-                        .text_size(LABEL_SM)
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(ink)
-                        .child(cap)
-                }),
+                .map(|cap| keycap(cap, fill, edge, ink)),
         )
 }
 

@@ -1,13 +1,11 @@
-use gpui::{App, MouseUpEvent, deferred};
+use gpui::{App, deferred};
 use paneflow_config::schema::SidebarGroupBy;
 
 use super::agents_section::{AgentGroupStatus, StatusGroupKind, render_status_group_header};
-use super::customize_menu::menu_label;
 use super::*;
-use crate::settings::components::{floating_menu_panel, menu_row, menu_row_gap, menu_row_inset};
+use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
 
-const NEW_TAB_MENU_WIDTH: f32 = 208.;
-const NEW_TAB_MENU_MAX_HEIGHT: f32 = 320.;
+const NEW_TAB_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const NEW_TAB_MENU_TOP: f32 = 32.;
 const NEW_TAB_ICON: &str = "icons/plus.svg";
 const NEW_TAB_WORKSPACE_ICON: &str = "icons/folder.svg";
@@ -148,6 +146,20 @@ impl PaneFlowApp {
                     .child("No tabs open"),
             );
         }
+        let seam = |index: usize, tabs: &[(usize, usize)]| {
+            let (above_ws, above_tab) = *tabs.get(index.checked_sub(1)?)?;
+            let (ws_idx, tab_idx) = tabs[index];
+            self.sidebar_selection_seam(
+                SidebarRow::Tab(above_ws, above_tab),
+                SidebarRow::Tab(ws_idx, tab_idx),
+                Some(0.),
+            )
+        };
+        let seams: Vec<_> = groups
+            .iter()
+            .flat_map(|group| (0..group.tabs.len()).map(|index| seam(index, &group.tabs)))
+            .collect();
+        self.join_sidebar_selection(&seams);
         for (group_index, group) in groups.iter().enumerate() {
             list = list.child(render_status_group_header(
                 group.status,
@@ -159,23 +171,28 @@ impl PaneFlowApp {
             for (index, &(ws_idx, tab_idx)) in group.tabs.iter().enumerate() {
                 let cursor = keyboard_focused
                     && self.sidebar_cursor_matches(SidebarRow::Tab(ws_idx, tab_idx));
+                let spacing = if index > 0 { SIDEBAR_ROW_SPACING } else { 0. };
+                let gap = div()
+                    .relative()
+                    .flex_none()
+                    .h(px(spacing))
+                    .children(self.render_sidebar_seam(seam(index, &group.tabs), ui));
+                let row = div()
+                    .flex_none()
+                    .w_full()
+                    .child(gap)
+                    .child(self.render_tab_row(ws_idx, tab_idx, cursor, ui, cx));
                 list = list.child(
-                    div()
-                        .flex_none()
-                        .w_full()
-                        .when(index > 0, |row| row.mt(px(SIDEBAR_ROW_SPACING)))
-                        .child(self.render_tab_row(ws_idx, tab_idx, cursor, ui, cx)),
+                    if self.sidebar_row_leaving(SidebarRow::Tab(ws_idx, tab_idx)) {
+                        let tab_id = self.workspaces[ws_idx].tabs()[tab_idx].id;
+                        sidebar_leaving_row(tab_id, row, spacing)
+                    } else {
+                        row.into_any_element()
+                    },
                 );
             }
         }
         list
-    }
-
-    fn close_sidebar_new_tab_menu(&mut self, cx: &mut Context<Self>) {
-        if self.sidebar_new_tab_menu_open {
-            self.sidebar_new_tab_menu_open = false;
-            cx.notify();
-        }
     }
 
     fn open_new_tab_in(&mut self, ws_id: u64, window: &mut Window, cx: &mut Context<Self>) {
@@ -253,66 +270,32 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let rows: Vec<AnyElement> = self
+        let digits = NEW_TAB_DIGIT_MNEMONICS
+            .iter()
+            .copied()
+            .map(Some)
+            .chain(std::iter::repeat(None));
+        let rows = self
             .sidebar_display_order()
             .into_iter()
-            .map(|ws_idx| {
+            .zip(digits)
+            .map(|(ws_idx, digit)| {
                 let ws = &self.workspaces[ws_idx];
-                let ws_id = ws.id;
-                let title = SharedString::from(ws.title.clone());
-                menu_row(
-                    SharedString::from(format!("sidebar-new-tab-in-{ws_id}")),
-                    false,
-                    ui,
-                )
-                .role(Role::MenuItem)
-                .aria_label(SharedString::from(format!("New tab in {title}")))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_new_tab_in(ws_id, window, cx);
-                    cx.stop_propagation();
-                }))
-                .child(
-                    svg()
-                        .size(px(13.))
-                        .flex_none()
-                        .path(NEW_TAB_WORKSPACE_ICON)
-                        .text_color(ui.muted),
-                )
-                .child(menu_label(title, ui))
-                .into_any_element()
-            })
-            .collect();
-        let menu = floating_menu_panel(div().id("sidebar-new-tab-menu"), ui)
-            .font_family("Geist")
-            .w(px(NEW_TAB_MENU_WIDTH))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                    this.close_sidebar_new_tab_menu(cx);
-                }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .px(menu_row_inset())
-                    .pt(px(4.))
-                    .pb(px(2.))
-                    .text_size(crate::ui_primitives::BODY)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted)
-                    .child("New tab in"),
-            )
-            .child(
-                div()
-                    .id("sidebar-new-tab-workspaces")
-                    .flex()
-                    .flex_col()
-                    .gap(menu_row_gap())
-                    .max_h(px(NEW_TAB_MENU_MAX_HEIGHT))
-                    .overflow_y_scroll()
-                    .children(rows),
-            );
+                let item = MenuItem::new(ws.title.clone(), ws.id)
+                    .id(format!("sidebar-new-tab-in-{}", ws.id))
+                    .icon(NEW_TAB_WORKSPACE_ICON)
+                    .describe(format!("New tab in {}", ws.title));
+                match digit {
+                    Some(digit) => item.mnemonic(digit),
+                    None => item,
+                }
+            });
+        let menu = ActionMenu::new().heading("New tab in").items(rows);
+        let handlers = self.menu_handlers(
+            cx,
+            |this, ws_id: &u64, window, cx| this.open_new_tab_in(*ws_id, window, cx),
+            |this| this.sidebar_new_tab_menu_open = false,
+        );
 
         deferred(crate::ui_primitives::menu_reveal(
             "sidebar-new-tab-menu-reveal",
@@ -321,7 +304,7 @@ impl PaneFlowApp {
                 .top(px(NEW_TAB_MENU_TOP))
                 .right(px(0.))
                 .occlude()
-                .child(menu),
+                .child(menu.element("sidebar-new-tab-menu", handlers, ui)),
         ))
         .with_priority(3)
         .into_any_element()

@@ -46,7 +46,7 @@ impl PaneFlowApp {
         if self.settings_section.is_some() {
             crate::settings::chrome::SETTINGS_NAV_WIDTH
         } else {
-            SIDEBAR_WIDTH
+            self.sidebar_width()
         }
     }
 
@@ -86,7 +86,11 @@ impl PaneFlowApp {
     }
 
     fn rendered_pane_density(&mut self, window: &mut Window) -> crate::layout::PaneDensity {
-        let target = crate::layout::PaneDensity::from_config(&self.cached_config);
+        let target = if self.flush_shell() {
+            crate::layout::PaneDensity::COMPACT
+        } else {
+            crate::layout::PaneDensity::from_config(&self.cached_config)
+        };
         let now = std::time::Instant::now();
         if let Some(previous) = self.density_target
             && previous != target
@@ -195,6 +199,17 @@ impl Render for PaneFlowApp {
         } else {
             0.
         };
+        let sidebar_ceiling = crate::app::sidebar::SidebarResize::ceiling_for(
+            f32::from(window.viewport_size().width),
+            right_rail_width,
+        );
+        if self.sidebar_resize.begin_frame(
+            std::time::Instant::now(),
+            sidebar_ceiling,
+            !crate::ui_primitives::reduce_motion(),
+        ) {
+            window.request_animation_frame();
+        }
         let terminal_material_active = self.cached_config.terminal_material_enabled();
         let chrome_material_active =
             self.cached_config.cockpit_chrome_material_enabled() && !chrome_material_suppressed;
@@ -234,18 +249,34 @@ impl Render for PaneFlowApp {
         let panel_corner_mask_bg =
             crate::app::constants::cockpit_backdrop_background(shell_color, chrome_material_active);
         let panel_top = title_bar_h;
+        let flush_shell = self.flush_shell();
+        let panel_inset = if flush_shell {
+            0.
+        } else {
+            crate::app::constants::PANEL_INSET
+        };
+        let panel_radius = if flush_shell {
+            px(0.)
+        } else {
+            crate::app::constants::PANEL_CORNER_RADIUS
+        };
         let primary_sidebar_width = self.rendered_primary_sidebar_width(window);
         let title_bar_rail_width = self.primary_sidebar_expanded_width();
         let primary_sidebar_mounted = self.settings_section.is_some()
             || self.primary_sidebar_visible
             || self.primary_sidebar_animation.is_some();
+        let primary_sidebar_resizable = self.settings_section.is_none()
+            && self.primary_sidebar_visible
+            && self.primary_sidebar_animation.is_none();
+        let primary_sidebar_resize_dragging =
+            primary_sidebar_resizable && self.sidebar_resize.dragging();
         let primary_sidebar_opacity = if self.settings_section.is_some() {
             1.
         } else {
             (primary_sidebar_width / self.primary_sidebar_expanded_width().max(1.)).clamp(0., 1.)
         };
         let panel_edge_share = 1. - primary_sidebar_opacity;
-        let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
+        let main_panel_left_inset = panel_inset * panel_edge_share;
         let density = self.rendered_pane_density(window);
         let pane_grid_left_gutter = density.outer_gutter_px() * panel_edge_share;
         let comfortable_right_gutter = if self.diff_dock_visible() {
@@ -256,12 +287,13 @@ impl Render for PaneFlowApp {
         let pane_grid_right_gutter = comfortable_right_gutter * density.comfort();
         let welcome_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
         let grid_edges = crate::layout::grid_edges(!self.diff_dock_beside_grid());
+        let panes_in_title_band = flush_shell && !settings_open && terminal_surface_mounted;
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
         let main_panel_width = f32::from(window.viewport_size().width)
             - primary_sidebar_width
             - right_rail_width
             - main_panel_left_inset
-            - crate::app::constants::PANEL_INSET;
+            - panel_inset;
         #[cfg(target_os = "linux")]
         crate::window_chrome::linux_backdrop::refresh_blur_region(
             window,
@@ -269,6 +301,7 @@ impl Render for PaneFlowApp {
         );
 
         self.settle_dock_restore_focus(window, cx);
+        self.settle_diff_dock_picker_focus(window, cx);
         if let Some(pane) = self.pending_pane_focus.take()
             && !Self::focus_pane_window(pane.clone(), cx)
         {
@@ -377,21 +410,62 @@ impl Render for PaneFlowApp {
         };
         let main_content = self.wrap_cli_diff_dock(
             main_content,
-            main_panel_width,
-            pane_grid_left_gutter,
+            crate::app::cli_diff_dock::DockSlot {
+                available_width: main_panel_width,
+                left_gutter: pane_grid_left_gutter,
+                top: if panes_in_title_band {
+                    title_bar_h
+                } else {
+                    px(0.)
+                },
+            },
             density,
             window,
             cx,
         );
+        let viewport_width = f32::from(window.viewport_size().width);
+        let dock_zone_x = self
+            .diff_dock
+            .title_bar_zone_left
+            .map(|left| primary_sidebar_width + main_panel_left_inset + left);
+        let (brand_extent, trailing_origin) = {
+            let title_bar = self.title_bar.read(cx);
+            (
+                title_bar.brand_extent.get(),
+                title_bar.trailing_origin.get(),
+            )
+        };
+        let title_band = flush_shell.then(|| crate::window_chrome::title_band::TitleBand {
+            height: f32::from(title_bar_h),
+            leading_inset: crate::window_chrome::title_band::leading_inset(
+                brand_extent,
+                primary_sidebar_width,
+            ),
+            trailing_inset: if dock_zone_x.is_some() {
+                0.
+            } else {
+                crate::window_chrome::title_band::trailing_inset(
+                    trailing_origin,
+                    viewport_width - right_rail_width,
+                )
+            },
+        });
+        if crate::window_chrome::title_band::set(title_band) {
+            cx.refresh_windows();
+        }
         let ws_name = if self.settings_section.is_some() {
             None
         } else {
             self.active_workspace().map(|ws| ws.title.clone())
         };
         let update_pill = self.update_pill();
+        let diff_dock_toggle = self
+            .diff_dock_toggle_available()
+            .then_some(self.diff_dock.open);
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
             tb.sidebar_visible = self.primary_sidebar_visible;
+            tb.diff_dock_open = diff_dock_toggle;
             tb.left_rail_width = title_bar_rail_width;
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
@@ -399,6 +473,7 @@ impl Render for PaneFlowApp {
             tb.ipc_state = self.ipc_status.state();
             tb.cockpit = true;
             tb.cockpit_material_active = chrome_material_active;
+            tb.detached = flush_shell;
         });
 
         let mut app_content = div()
@@ -429,7 +504,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_workspace_in_zed))
             .on_action(cx.listener(Self::handle_open_workspace_in_cursor))
             .on_action(cx.listener(Self::handle_open_workspace_in_vscode))
-            .on_action(cx.listener(Self::handle_open_workspace_in_windsurf))
+            .on_action(cx.listener(Self::handle_open_workspace_in_webstorm))
             .on_action(cx.listener(Self::handle_next_workspace))
             .on_action(cx.listener(|this: &mut Self, _: &NextSpace, window, cx| {
                 this.cycle_space(true, window, cx);
@@ -501,6 +576,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_dismiss_update))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
             .on_action(cx.listener(Self::handle_focus_workspaces_sidebar))
+            .on_action(cx.listener(Self::handle_toggle_diff_dock))
             .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
             .on_action(cx.listener(Self::handle_open_command_palette))
             .on_action(cx.listener(Self::handle_clone_repository))
@@ -513,6 +589,17 @@ impl Render for PaneFlowApp {
                 }
             }))
             .on_mouse_move(|_e, _, cx| cx.stop_propagation())
+            .when(flush_shell, |content| {
+                content.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .overflow_hidden()
+                        .child(self.title_bar.clone()),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -570,7 +657,11 @@ impl Render for PaneFlowApp {
                                 .overflow_hidden()
                                 .opacity(primary_sidebar_opacity)
                                 .pt(title_bar_h)
-                                .child(sidebar_view.clone().cached(SidebarView::cached_style())),
+                                .child(
+                                    sidebar_view
+                                        .clone()
+                                        .cached(SidebarView::cached_style(self.sidebar_width())),
+                                ),
                         )
                     })
                     .child(
@@ -581,7 +672,9 @@ impl Render for PaneFlowApp {
                             .relative()
                             .flex()
                             .flex_col()
-                            .child(div().h(title_bar_h).flex_none())
+                            .when(!panes_in_title_band, |column| {
+                                column.child(div().h(title_bar_h).flex_none())
+                            })
                             .child(
                                 div()
                                     .flex_1()
@@ -592,9 +685,9 @@ impl Render for PaneFlowApp {
                                     .overflow_hidden()
                                     .bg(panel_bg)
                                     .ml(px(main_panel_left_inset))
-                                    .mr(px(crate::app::constants::PANEL_INSET))
-                                    .mb(px(crate::app::constants::PANEL_INSET))
-                                    .rounded(crate::app::constants::PANEL_CORNER_RADIUS)
+                                    .mr(px(panel_inset))
+                                    .mb(px(panel_inset))
+                                    .rounded(panel_radius)
                                     .capture_any_mouse_down(cx.listener(
                                         |this, event: &gpui::MouseDownEvent, _window, cx| {
                                             if event.button == gpui::MouseButton::Left
@@ -606,7 +699,7 @@ impl Render for PaneFlowApp {
                                     ))
                                     .child(main_content),
                             )
-                            .when(panel_inset_shell_visible, |panel_shell| {
+                            .when(panel_inset_shell_visible && !flush_shell, |panel_shell| {
                                 panel_shell
                                     .child(
                                         div()
@@ -638,50 +731,53 @@ impl Render for PaneFlowApp {
                                         )
                                     })
                             })
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left(px(main_panel_left_inset))
-                                    .top(panel_top)
-                                    .size(crate::app::constants::PANEL_CORNER_RADIUS)
-                                    .child(panel_corner_mask(
-                                        PanelCorner::TopLeft,
-                                        main_panel_corner_mask_bg,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(px(crate::app::constants::PANEL_INSET))
-                                    .top(panel_top)
-                                    .size(crate::app::constants::PANEL_CORNER_RADIUS)
-                                    .child(panel_corner_mask(
-                                        PanelCorner::TopRight,
-                                        main_panel_corner_mask_bg,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left(px(main_panel_left_inset))
-                                    .bottom(px(crate::app::constants::PANEL_INSET))
-                                    .size(crate::app::constants::PANEL_CORNER_RADIUS)
-                                    .child(panel_corner_mask(
-                                        PanelCorner::BottomLeft,
-                                        main_panel_corner_mask_bg,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .right(px(crate::app::constants::PANEL_INSET))
-                                    .bottom(px(crate::app::constants::PANEL_INSET))
-                                    .size(crate::app::constants::PANEL_CORNER_RADIUS)
-                                    .child(panel_corner_mask(
-                                        PanelCorner::BottomRight,
-                                        main_panel_corner_mask_bg,
-                                    )),
-                            ),
+                            .when(!flush_shell, |panel_shell| {
+                                panel_shell
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px(main_panel_left_inset))
+                                            .top(panel_top)
+                                            .size(panel_radius)
+                                            .child(panel_corner_mask(
+                                                PanelCorner::TopLeft,
+                                                main_panel_corner_mask_bg,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .right(px(panel_inset))
+                                            .top(panel_top)
+                                            .size(panel_radius)
+                                            .child(panel_corner_mask(
+                                                PanelCorner::TopRight,
+                                                main_panel_corner_mask_bg,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px(main_panel_left_inset))
+                                            .bottom(px(panel_inset))
+                                            .size(panel_radius)
+                                            .child(panel_corner_mask(
+                                                PanelCorner::BottomLeft,
+                                                main_panel_corner_mask_bg,
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .right(px(panel_inset))
+                                            .bottom(px(panel_inset))
+                                            .size(panel_radius)
+                                            .child(panel_corner_mask(
+                                                PanelCorner::BottomRight,
+                                                main_panel_corner_mask_bg,
+                                            )),
+                                    )
+                            }),
                     )
                     .when(sessions_sidebar_mounted, |row| {
                         row.child(
@@ -697,10 +793,17 @@ impl Render for PaneFlowApp {
                                 .child(self.render_sessions_sidebar(cx))
                                 .into_any_element(),
                         )
+                    })
+                    .when(primary_sidebar_resizable, |row| {
+                        row.child(self.render_primary_sidebar_resize_handle(
+                            primary_sidebar_width,
+                            title_bar_h,
+                            cx,
+                        ))
                     }),
             );
 
-        {
+        if !flush_shell {
             app_content = app_content.child(
                 div()
                     .absolute()
@@ -710,6 +813,119 @@ impl Render for PaneFlowApp {
                     .overflow_hidden()
                     .child(self.title_bar.clone()),
             );
+        }
+
+        if flush_shell {
+            let zone_x = dock_zone_x;
+            if !panes_in_title_band {
+                let top_line_right = zone_x.unwrap_or(viewport_width - right_rail_width);
+                app_content = app_content.child(
+                    div()
+                        .absolute()
+                        .top(title_bar_h)
+                        .left(px(primary_sidebar_width))
+                        .w(px((top_line_right - primary_sidebar_width).max(0.)))
+                        .h(px(1.))
+                        .bg(ui.border),
+                );
+            }
+            if primary_sidebar_mounted {
+                app_content = app_content.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(px(primary_sidebar_width))
+                        .w(px(1.))
+                        .bg(ui.border)
+                        .opacity(primary_sidebar_opacity),
+                );
+            }
+            if sessions_sidebar_mounted {
+                app_content = app_content.child(
+                    div()
+                        .absolute()
+                        .top(title_bar_h)
+                        .bottom_0()
+                        .right(px(sessions_sidebar_width))
+                        .w(px(1.))
+                        .bg(ui.border)
+                        .opacity(sessions_sidebar_opacity),
+                );
+            }
+            if let Some(zone_x) = zone_x {
+                let strip = self.render_diff_dock_title_strip(ui, cx);
+                let trailing = self
+                    .title_bar
+                    .update(cx, |title_bar, cx| title_bar.render_trailing(window, cx));
+                app_content = app_content.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(zone_x))
+                        .right_0()
+                        .h(title_bar_h)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_end()
+                        .bg(self.diff_dock_card_background(ui))
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .bottom_0()
+                                .w(px(1.))
+                                .bg(ui.border),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .pl(px(crate::window_chrome::title_band::leading_inset(
+                                    brand_extent,
+                                    zone_x,
+                                )))
+                                .children(strip),
+                        )
+                        .child(trailing),
+                );
+            } else {
+                let trailing = self
+                    .title_bar
+                    .update(cx, |title_bar, cx| title_bar.render_trailing(window, cx));
+                app_content = app_content.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .h(title_bar_h)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(trailing),
+                );
+            }
+            let brand = self
+                .title_bar
+                .update(cx, |title_bar, cx| title_bar.render_brand(window, cx));
+            app_content = app_content.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .h(title_bar_h)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(brand),
+            );
+        }
+
+        if primary_sidebar_resize_dragging {
+            app_content = app_content.child(self.render_primary_sidebar_resize_veil(cx));
         }
 
         if self.clone_job.is_some() {
@@ -768,6 +984,15 @@ impl Render for PaneFlowApp {
 
         if self.worktree_remove_dialog.is_some() {
             app_content = app_content.child(self.render_worktree_remove_dialog(window, cx));
+        }
+
+        if self.sidebar_selection.dialog_open() {
+            app_content = app_content.child(self.render_selection_close_dialog(window, cx));
+        }
+
+        if let Some(position) = self.sidebar_selection.menu() {
+            app_content =
+                app_content.child(self.render_sidebar_selection_menu(position, window, cx));
         }
 
         if let Some(menu) = self.workspace_menu_open

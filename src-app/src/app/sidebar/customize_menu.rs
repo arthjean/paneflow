@@ -1,49 +1,34 @@
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, Role, SharedString, StatefulInteractiveElement, Styled, deferred, div,
-    prelude::FluentBuilder, px, svg,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Role, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder, px, svg,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{floating_menu_panel, menu_row};
+use crate::app::menu_icons as icon;
 use crate::ui_primitives::TooltipDelayExt;
+use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle_skin;
 
 use paneflow_config::schema::{SidebarGroupBy, SidebarShow};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CustomizeSubmenu {
-    Show,
-    GroupBy,
-}
-
 #[derive(Clone, Copy)]
 pub(super) struct CustomizeMenuState {
     pub open: bool,
-    pub submenu: Option<CustomizeSubmenu>,
     pub show: SidebarShow,
     pub group_by: SidebarGroupBy,
     pub all_expanded: Option<bool>,
 }
 
-const MENU_WIDTH: f32 = 208.0;
-const SUBMENU_WIDTH: f32 = 156.0;
+#[derive(Clone, Copy)]
+pub(super) enum CustomizeAction {
+    Show(SidebarShowLine),
+    GroupBy(SidebarGroupBy),
+    SetAllExpanded(bool),
+}
 
 impl PaneFlowApp {
-    pub(crate) fn close_sidebar_customize_menu(&mut self, cx: &mut Context<Self>) {
-        if self.sidebar_customize_menu_open {
-            self.sidebar_customize_menu_open = false;
-            self.sidebar_customize_submenu = None;
-            cx.notify();
-        }
-    }
-
-    fn toggle_customize_submenu(&mut self, submenu: CustomizeSubmenu, cx: &mut Context<Self>) {
-        self.sidebar_customize_submenu =
-            (self.sidebar_customize_submenu != Some(submenu)).then_some(submenu);
-        cx.notify();
-    }
-
     pub(crate) fn set_sidebar_group_by(
         &mut self,
         group_by: SidebarGroupBy,
@@ -68,12 +53,53 @@ impl PaneFlowApp {
             self.agents_display_menu_open = true;
         } else {
             self.sidebar_customize_menu_open = true;
-            self.sidebar_customize_submenu = Some(CustomizeSubmenu::Show);
         }
 
         let value = sidebar_show_value(line.toggled(self.cached_config.sidebar_show));
         self.persist_setting(false, "sidebar_show", value, cx);
         self.refresh_pull_requests(cx);
+        cx.notify();
+    }
+
+    fn run_customize_action(&mut self, action: CustomizeAction, cx: &mut Context<Self>) {
+        match action {
+            CustomizeAction::Show(line) => self.toggle_sidebar_show(line, cx),
+            CustomizeAction::GroupBy(group_by) => {
+                self.sidebar_customize_menu_open = true;
+                self.set_sidebar_group_by(group_by, cx);
+            }
+            CustomizeAction::SetAllExpanded(expanded) => {
+                self.set_all_workspaces_expanded(expanded, cx);
+            }
+        }
+    }
+
+    pub(super) fn customize_handlers(
+        cx: &mut Context<Self>,
+        dismiss: impl Fn(&mut Self) + 'static,
+    ) -> MenuHandlers<CustomizeAction> {
+        MenuHandlers {
+            activate: Rc::new(cx.listener(|this, action: &CustomizeAction, _, cx| {
+                this.run_customize_action(*action, cx);
+            })),
+            dismiss: Rc::new(cx.listener(move |this, _: &(), _, cx| {
+                dismiss(this);
+                cx.notify();
+            })),
+        }
+    }
+
+    fn set_all_workspaces_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.sidebar_customize_menu_open = true;
+        let space = self.active_space.clone();
+        for ws in self
+            .workspaces
+            .iter_mut()
+            .filter(|ws| crate::app::spaces::in_space(ws, space.as_ref()))
+        {
+            ws.sidebar_expanded = expanded;
+        }
+        self.save_session(cx);
         cx.notify();
     }
 }
@@ -226,9 +252,6 @@ pub(super) fn render_customize_sidebar_button(
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.sidebar_customize_menu_open = !open;
-        if open {
-            this.sidebar_customize_submenu = None;
-        }
         cx.notify();
     }))
     .child(
@@ -247,22 +270,35 @@ fn render_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = floating_menu_panel(div().id("sidebar-customize-menu"), ui)
-        .font_family("Geist")
-        .w(px(MENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                this.close_sidebar_customize_menu(cx);
-            }),
+    let menu = ActionMenu::new()
+        .item(
+            MenuItem::submenu("Show", show_submenu(state.show, state.group_by))
+                .id("sidebar-customize-show")
+                .icon(icon::SHOW)
+                .mnemonic('s'),
         )
-        .child(render_show_row(state, ui, cx))
-        .child(render_group_by_row(state, ui, cx))
-        .when_some(state.all_expanded, |menu, all_expanded| {
-            menu.child(menu_divider(ui))
-                .child(render_expand_all_row(all_expanded, ui, cx))
-        });
+        .item(
+            MenuItem::submenu("Group by", group_by_submenu(state.group_by))
+                .id("sidebar-customize-group-by")
+                .icon(icon::GROUP_BY)
+                .detail(state.group_by.label())
+                .mnemonic('g'),
+        )
+        .separator()
+        .items(state.all_expanded.map(|all_expanded| {
+            let (label, glyph, key) = if all_expanded {
+                ("Collapse all", icon::COLLAPSE_ALL, 'c')
+            } else {
+                ("Expand all", icon::EXPAND_ALL, 'e')
+            };
+            MenuItem::new(label, CustomizeAction::SetAllExpanded(!all_expanded))
+                .id("sidebar-customize-expand-all")
+                .icon(glyph)
+                .mnemonic(key)
+                .keep_open()
+        }));
+    let handlers =
+        PaneFlowApp::customize_handlers(cx, |this| this.sidebar_customize_menu_open = false);
 
     deferred(crate::ui_primitives::menu_reveal(
         "sidebar-customize-menu-reveal",
@@ -271,65 +307,10 @@ fn render_menu(
             .top(px(32.))
             .left(px(0.))
             .occlude()
-            .child(menu),
+            .child(menu.element("sidebar-customize-menu", handlers, ui)),
     ))
     .with_priority(3)
     .into_any_element()
-}
-
-impl PaneFlowApp {
-    fn set_all_workspaces_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
-        self.sidebar_customize_menu_open = true;
-        let space = self.active_space.clone();
-        for ws in self
-            .workspaces
-            .iter_mut()
-            .filter(|ws| crate::app::spaces::in_space(ws, space.as_ref()))
-        {
-            ws.sidebar_expanded = expanded;
-        }
-        self.save_session(cx);
-        cx.notify();
-    }
-}
-
-fn render_expand_all_row(
-    all_expanded: bool,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    menu_row("sidebar-customize-expand-all", false, ui)
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.set_all_workspaces_expanded(!all_expanded, cx);
-        }))
-        .child(menu_label(
-            if all_expanded {
-                "Collapse all"
-            } else {
-                "Expand all"
-            },
-            ui,
-        ))
-        .into_any_element()
-}
-
-fn render_show_row(
-    state: CustomizeMenuState,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let submenu_open = state.submenu == Some(CustomizeSubmenu::Show);
-    menu_row("sidebar-customize-show", submenu_open, ui)
-        .relative()
-        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.toggle_customize_submenu(CustomizeSubmenu::Show, cx);
-        }))
-        .child(menu_label("Show", ui))
-        .child(crate::settings::components::menu_chevron(ui))
-        .when(submenu_open, |row| {
-            row.child(render_show_submenu(state.show, state.group_by, ui, cx))
-        })
-        .into_any_element()
 }
 
 type ShowSubmenuLine = (&'static str, &'static str, SidebarShowLine);
@@ -344,44 +325,23 @@ fn show_submenu_lines(
         .filter(move |(_, _, line)| line.applies_to(group_by))
 }
 
-fn render_show_submenu(
-    show: SidebarShow,
-    group_by: SidebarGroupBy,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let mut option = |(label, icon, line): ShowSubmenuLine| {
-        render_show_option(label, icon, line, line.checked(show), ui, cx)
-    };
-    let lines: Vec<AnyElement> = show_submenu_lines(&SHOW_SUBMENU_LINES, group_by)
-        .map(&mut option)
-        .collect();
-    let sections: Vec<AnyElement> = show_submenu_lines(&SHOW_SUBMENU_SECTIONS, group_by)
-        .map(&mut option)
-        .collect();
-    let menu = floating_menu_panel(div().id("sidebar-show-submenu"), ui)
-        .font_family("Geist")
-        .w(px(SUBMENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .children(lines)
-        .child(menu_divider(ui))
-        .children(sections);
-
-    render_submenu("sidebar-show-submenu-reveal", menu)
+fn show_submenu(show: SidebarShow, group_by: SidebarGroupBy) -> ActionMenu<CustomizeAction> {
+    let option = |(label, glyph, line): ShowSubmenuLine| show_option(label, glyph, line, show);
+    ActionMenu::new()
+        .items(show_submenu_lines(&SHOW_SUBMENU_LINES, group_by).map(option))
+        .separator()
+        .items(show_submenu_lines(&SHOW_SUBMENU_SECTIONS, group_by).map(option))
 }
 
-fn render_submenu(reveal_id: &'static str, menu: impl IntoElement) -> AnyElement {
-    deferred(crate::ui_primitives::menu_reveal(
-        reveal_id,
-        div()
-            .absolute()
-            .top(px(-5.))
-            .left(px(MENU_WIDTH - 12.))
-            .occlude()
-            .child(menu),
-    ))
-    .with_priority(4)
-    .into_any_element()
+fn group_by_submenu(current: SidebarGroupBy) -> ActionMenu<CustomizeAction> {
+    ActionMenu::new().items(SidebarGroupBy::ALL.iter().map(|&group_by| {
+        MenuItem::new(group_by.label(), CustomizeAction::GroupBy(group_by))
+            .id(group_by_option_id(group_by))
+            .icon(group_by_icon(group_by))
+            .radio(group_by == current)
+            .mnemonic(group_by_mnemonic(group_by))
+            .keep_open()
+    }))
 }
 
 fn group_by_icon(group_by: SidebarGroupBy) -> &'static str {
@@ -398,74 +358,15 @@ fn group_by_option_id(group_by: SidebarGroupBy) -> &'static str {
     }
 }
 
-fn render_group_by_row(
-    state: CustomizeMenuState,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let submenu_open = state.submenu == Some(CustomizeSubmenu::GroupBy);
-    menu_row("sidebar-customize-group-by", submenu_open, ui)
-        .relative()
-        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.toggle_customize_submenu(CustomizeSubmenu::GroupBy, cx);
-        }))
-        .child(menu_label("Group by", ui))
-        .child(
-            div()
-                .flex_none()
-                .text_size(crate::settings::components::menu_label_text_size())
-                .text_color(ui.muted)
-                .child(state.group_by.label()),
-        )
-        .child(crate::settings::components::menu_chevron(ui))
-        .when(submenu_open, |row| {
-            row.child(render_group_by_submenu(state.group_by, ui, cx))
-        })
-        .into_any_element()
+fn group_by_mnemonic(group_by: SidebarGroupBy) -> char {
+    match group_by {
+        SidebarGroupBy::Folder => 'f',
+        SidebarGroupBy::Status => 's',
+    }
 }
 
-fn render_group_by_submenu(
-    current: SidebarGroupBy,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let options: Vec<AnyElement> = SidebarGroupBy::ALL
-        .iter()
-        .map(|&group_by| {
-            render_menu_option(
-                group_by_option_id(group_by),
-                group_by.label(),
-                group_by_icon(group_by),
-                group_by == current,
-                Role::MenuItemRadio,
-                ui,
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.sidebar_customize_menu_open = true;
-                this.sidebar_customize_submenu = Some(CustomizeSubmenu::GroupBy);
-                this.set_sidebar_group_by(group_by, cx);
-            }))
-            .into_any_element()
-        })
-        .collect();
-    let menu = floating_menu_panel(div().id("sidebar-group-by-submenu"), ui)
-        .font_family("Geist")
-        .w(px(SUBMENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .children(options);
-
-    render_submenu("sidebar-group-by-submenu-reveal", menu)
-}
-
-pub(super) fn render_show_option(
-    label: &'static str,
-    icon: &'static str,
-    line: SidebarShowLine,
-    checked: bool,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let id = match line {
+fn show_line_id(line: SidebarShowLine) -> &'static str {
+    match line {
         SidebarShowLine::Branch => "sidebar-show-branch",
         SidebarShowLine::Diffstat => "sidebar-show-diffstat",
         SidebarShowLine::Pr => "sidebar-show-pr",
@@ -478,65 +379,37 @@ pub(super) fn render_show_option(
         SidebarShowLine::Shimmer => "sidebar-show-shimmer",
         SidebarShowLine::AgentShimmer => "agents-show-shimmer",
         SidebarShowLine::AgentAllSpaces => "agents-show-all-spaces",
-    };
-
-    render_menu_option(id, label, icon, checked, Role::MenuItemCheckBox, ui)
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.toggle_sidebar_show(line, cx);
-        }))
-        .into_any_element()
+    }
 }
 
-fn render_menu_option(
-    id: &'static str,
+fn show_line_mnemonic(line: SidebarShowLine) -> char {
+    match line {
+        SidebarShowLine::Branch => 'b',
+        SidebarShowLine::Diffstat => 'd',
+        SidebarShowLine::Pr => 'p',
+        SidebarShowLine::Status => 's',
+        SidebarShowLine::IndentGuide => 'i',
+        SidebarShowLine::Agents => 'a',
+        SidebarShowLine::Usage => 'u',
+        SidebarShowLine::AgentLogo => 'l',
+        SidebarShowLine::AgentWorkspace => 'w',
+        SidebarShowLine::Shimmer | SidebarShowLine::AgentShimmer => 'h',
+        SidebarShowLine::AgentAllSpaces => 'a',
+    }
+}
+
+pub(super) fn show_option(
     label: &'static str,
-    icon: &'static str,
-    checked: bool,
-    role: Role,
-    ui: crate::theme::UiColors,
-) -> gpui::Stateful<gpui::Div> {
-    menu_row(id, false, ui)
-        .role(role)
-        .aria_label(label)
-        .aria_toggled(if checked {
-            gpui::Toggled::True
-        } else {
-            gpui::Toggled::False
-        })
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(ui.muted),
-        )
-        .child(menu_label(label, ui))
-        .child(div().w(px(14.)).flex_none().child(if checked {
-            svg()
-                .size(px(13.))
-                .path("icons/check.svg")
-                .text_color(ui.text)
-                .into_any_element()
-        } else {
-            div().size(px(13.)).into_any_element()
-        }))
-}
-
-pub(super) fn menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
-    crate::settings::components::menu_divider(ui)
-}
-
-pub(super) fn menu_label(label: impl Into<SharedString>, ui: crate::theme::UiColors) -> AnyElement {
-    div()
-        .flex_1()
-        .min_w_0()
-        .overflow_x_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis()
-        .text_size(crate::settings::components::menu_label_text_size())
-        .text_color(ui.text)
-        .child(Into::<SharedString>::into(label))
-        .into_any_element()
+    glyph: &'static str,
+    line: SidebarShowLine,
+    show: SidebarShow,
+) -> MenuItem<CustomizeAction> {
+    MenuItem::new(label, CustomizeAction::Show(line))
+        .id(show_line_id(line))
+        .icon(glyph)
+        .toggle(line.checked(show))
+        .mnemonic(show_line_mnemonic(line))
+        .keep_open()
 }
 
 #[cfg(test)]

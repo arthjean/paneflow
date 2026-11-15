@@ -288,14 +288,40 @@ impl PaneFlowApp {
         })
     }
 
+    fn diff_dock_header_row_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let active = self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab);
+        if !matches!(active, Some(DiffDockTab::Changes)) {
+            return None;
+        }
+        let data = self.diff_dock.data.as_ref()?;
+        let bounds = self.diff_dock.scroll.bounds();
+        if !bounds.contains(&position) {
+            return None;
+        }
+        let content_y =
+            f32::from(position.y - bounds.top() - self.diff_dock.scroll.offset().y).max(0.0);
+        if self.diff_dock.split {
+            let row = row_at_offset(&data.disp_split_offsets, content_y)?;
+            matches!(data.disp_split.get(row), Some(SplitRow::Header(_))).then_some(row)
+        } else {
+            let row = row_at_offset(&data.disp_unified_offsets, content_y)?;
+            data.disp_unified
+                .get(row)
+                .is_some_and(|r| r.kind == RowKind::FileHeader)
+                .then_some(row)
+        }
+    }
+
     pub(crate) fn update_diff_dock_hover(
         &mut self,
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
         let next = self.diff_dock_revert_target_at(position);
-        if next != self.diff_dock.hover {
+        let next_header = self.diff_dock_header_row_at(position);
+        if next != self.diff_dock.hover || next_header != self.diff_dock.header_hover {
             self.diff_dock.hover = next;
+            self.diff_dock.header_hover = next_header;
             cx.notify();
         }
     }

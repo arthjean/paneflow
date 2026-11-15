@@ -5,7 +5,7 @@ use paneflow_config::schema::InterfaceStyle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
-    Paneflow,
+    Rounded,
     Surface,
     Classic,
 }
@@ -13,14 +13,14 @@ pub(crate) enum Shape {
 impl From<InterfaceStyle> for Shape {
     fn from(style: InterfaceStyle) -> Self {
         match style {
-            InterfaceStyle::Paneflow => Self::Paneflow,
+            InterfaceStyle::Rounded => Self::Rounded,
             InterfaceStyle::Classic => Self::Classic,
         }
     }
 }
 
 thread_local! {
-    static ACTIVE: Cell<Shape> = const { Cell::new(Shape::Paneflow) };
+    static ACTIVE: Cell<Shape> = const { Cell::new(Shape::Rounded) };
 }
 
 pub(crate) fn set_interface_style(style: InterfaceStyle, cx: &mut App) {
@@ -49,7 +49,7 @@ pub(crate) fn scoped<T>(shape: Shape, run: impl FnOnce() -> T) -> T {
 
 pub(crate) fn surface_shape() -> Shape {
     match shape() {
-        Shape::Paneflow => Shape::Surface,
+        Shape::Rounded => Shape::Surface,
         shape => shape,
     }
 }
@@ -58,28 +58,28 @@ pub(crate) fn with_surface_shape<T>(run: impl FnOnce() -> T) -> T {
     scoped(surface_shape(), run)
 }
 
-pub(crate) fn with_paneflow_shape<T>(run: impl FnOnce() -> T) -> T {
-    scoped(Shape::Paneflow, run)
+pub(crate) fn with_rounded_shape<T>(run: impl FnOnce() -> T) -> T {
+    scoped(Shape::Rounded, run)
 }
 
 pub(crate) fn circular() -> bool {
-    shape() != Shape::Paneflow
+    shape() != Shape::Rounded
 }
 
 pub(crate) fn classic() -> bool {
     shape() == Shape::Classic
 }
 
-pub(crate) fn pick<T>(paneflow: T, classic: T) -> T {
+pub(crate) fn pick<T>(rounded: T, classic: T) -> T {
     match shape() {
-        Shape::Paneflow | Shape::Surface => paneflow,
+        Shape::Rounded | Shape::Surface => rounded,
         Shape::Classic => classic,
     }
 }
 
-pub(crate) fn pick_surface<T>(paneflow: T, surface: T, classic: T) -> T {
+pub(crate) fn pick_surface<T>(rounded: T, surface: T, classic: T) -> T {
     match shape() {
-        Shape::Paneflow => paneflow,
+        Shape::Rounded => rounded,
         Shape::Surface => surface,
         Shape::Classic => classic,
     }
@@ -139,7 +139,7 @@ fn classic_corner(design: Pixels, short_side: Pixels) -> Pixels {
 
 pub(crate) fn corner(design: Pixels, short_side: Pixels) -> Pixels {
     match shape() {
-        Shape::Paneflow => design,
+        Shape::Rounded => design,
         Shape::Surface => surface_corner(design, short_side),
         Shape::Classic => classic_corner(design, short_side),
     }
@@ -159,7 +159,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paneflow_keeps_every_design_radius() {
+    fn rounded_keeps_every_design_radius() {
         for design in [3., 6., 9., 14., 18., 20., 24.] {
             assert_eq!(corner(px(design), px(32.)), px(design));
         }
@@ -231,12 +231,12 @@ mod tests {
 
     #[test]
     fn every_interface_style_selects_its_own_shape() {
-        assert_eq!(Shape::from(InterfaceStyle::Paneflow), Shape::Paneflow);
+        assert_eq!(Shape::from(InterfaceStyle::Rounded), Shape::Rounded);
         assert_eq!(Shape::from(InterfaceStyle::Classic), Shape::Classic);
     }
 
     #[test]
-    fn paneflow_menus_and_cards_take_the_surface_shape_and_classic_keeps_its_own() {
+    fn rounded_menus_and_cards_take_the_surface_shape_and_classic_keeps_its_own() {
         assert_eq!(surface_shape(), Shape::Surface);
         with_surface_shape(|| {
             assert!(circular());
@@ -246,7 +246,7 @@ mod tests {
             assert_eq!(pick(1, 2), 1);
             assert_eq!(pick_surface(1, 2, 3), 2);
         });
-        assert_eq!(shape(), Shape::Paneflow);
+        assert_eq!(shape(), Shape::Rounded);
         scoped(Shape::Classic, || {
             assert_eq!(surface_shape(), Shape::Classic);
             with_surface_shape(|| assert_eq!(shape(), Shape::Classic));
@@ -254,9 +254,9 @@ mod tests {
     }
 
     #[test]
-    fn a_paneflow_scope_keeps_the_continuous_corners_in_the_classic_style() {
+    fn a_rounded_scope_keeps_the_continuous_corners_in_the_classic_style() {
         scoped(Shape::Classic, || {
-            with_paneflow_shape(|| {
+            with_rounded_shape(|| {
                 assert!(!circular());
                 assert_eq!(corner(px(13.), px(400.)), px(13.));
                 assert_eq!(pick(1, 2), 1);

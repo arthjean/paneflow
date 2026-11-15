@@ -32,17 +32,29 @@ struct PersistedWindowState {
     agents_section_height: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agents_section_collapsed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sidebar_width: Option<f32>,
 }
 
 impl PersistedWindowState {
-    fn new(size: PersistedWindowSize, agents: AgentsSectionState) -> Self {
+    fn new(
+        size: PersistedWindowSize,
+        agents: AgentsSectionState,
+        sidebar_width: Option<f32>,
+    ) -> Self {
         Self {
             size,
             agents_section_height: agents
                 .height
                 .filter(|height| is_valid_section_height(*height)),
             agents_section_collapsed: agents.collapsed.then_some(true),
+            sidebar_width: sidebar_width.filter(|width| is_valid_section_height(*width)),
         }
+    }
+
+    fn sidebar_width(&self) -> Option<f32> {
+        self.sidebar_width
+            .filter(|width| is_valid_section_height(*width))
     }
 
     fn agents_section(&self) -> AgentsSectionState {
@@ -60,6 +72,7 @@ static AGENTS_SECTION: Mutex<AgentsSectionState> = Mutex::new(AgentsSectionState
     height: None,
     collapsed: false,
 });
+static SIDEBAR_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
 
 pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
     let loaded = load();
@@ -74,6 +87,7 @@ pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
     *agents_section_guard() = loaded
         .map(|state| state.agents_section())
         .unwrap_or_default();
+    *sidebar_width_guard() = loaded.and_then(|state| state.sidebar_width());
     let visible_bounds = cx.primary_display().map(|display| display.visible_bounds());
     let display_size = visible_bounds.map(|bounds| bounds.size).unwrap_or_else(|| {
         size(
@@ -125,11 +139,19 @@ pub(crate) fn record_agents_section(state: AgentsSectionState) {
     *agents_section_guard() = state;
 }
 
+pub(crate) fn sidebar_width() -> Option<f32> {
+    *sidebar_width_guard()
+}
+
+pub(crate) fn record_sidebar_width(width: Option<f32>) {
+    *sidebar_width_guard() = width;
+}
+
 pub(crate) fn save() {
     let Some(size) = *last_windowed_size_guard() else {
         return;
     };
-    let state = PersistedWindowState::new(size, *agents_section_guard());
+    let state = PersistedWindowState::new(size, *agents_section_guard(), *sidebar_width_guard());
 
     let Some(path) = state_path() else {
         return;
@@ -201,6 +223,10 @@ fn agents_section_guard() -> MutexGuard<'static, AgentsSectionState> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+fn sidebar_width_guard() -> MutexGuard<'static, Option<f32>> {
+    SIDEBAR_WIDTH.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,7 +272,7 @@ mod tests {
 
         write_state(
             &link,
-            &PersistedWindowState::new(size(), AgentsSectionState::default()),
+            &PersistedWindowState::new(size(), AgentsSectionState::default(), None),
         )
         .expect("write");
 
@@ -276,7 +302,7 @@ mod tests {
             collapsed: true,
         };
 
-        write_state(&path, &PersistedWindowState::new(size(), chosen)).expect("write");
+        write_state(&path, &PersistedWindowState::new(size(), chosen, None)).expect("write");
 
         let raw = read_json(&path);
         assert_eq!(raw["agents_section_height"], 240.);
@@ -293,7 +319,7 @@ mod tests {
 
         write_state(
             &path,
-            &PersistedWindowState::new(size(), AgentsSectionState::default()),
+            &PersistedWindowState::new(size(), AgentsSectionState::default(), None),
         )
         .expect("write");
 
@@ -327,6 +353,39 @@ mod tests {
             load_from(&path).expect("loaded").agents_section(),
             AgentsSectionState::default()
         );
+    }
+
+    #[test]
+    fn the_sidebar_width_round_trips_through_the_window_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+
+        write_state(
+            &path,
+            &PersistedWindowState::new(size(), AgentsSectionState::default(), Some(372.)),
+        )
+        .expect("write");
+
+        assert_eq!(read_json(&path)["sidebar_width"], 372.);
+        assert_eq!(
+            load_from(&path).expect("loaded").sidebar_width(),
+            Some(372.)
+        );
+    }
+
+    #[test]
+    fn an_older_or_unusable_sidebar_width_loads_as_unset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        std::fs::write(&path, r#"{"width": 1400.0, "height": 950.0}"#).expect("seed");
+        assert_eq!(load_from(&path).expect("loaded").sidebar_width(), None);
+
+        std::fs::write(
+            &path,
+            r#"{"width": 1400.0, "height": 950.0, "sidebar_width": -3.0}"#,
+        )
+        .expect("seed");
+        assert_eq!(load_from(&path).expect("loaded").sidebar_width(), None);
     }
 
     #[test]

@@ -44,8 +44,7 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let open = self.usage.bubble_open;
         let focused = self.usage.capsule_focus.is_focused(window);
-        let footer_width =
-            crate::app::constants::SIDEBAR_WIDTH - 2. * crate::app::sidebar::SIDEBAR_ROW_MARGIN_X;
+        let footer_width = self.sidebar_width() - 2. * crate::app::sidebar::SIDEBAR_ROW_MARGIN_X;
         let (value, level, percent) = match &view.capsule {
             CapsuleView::Binding {
                 fraction,

@@ -9,7 +9,7 @@ use crate::ui_primitives::squircle_skin;
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
-pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
+pub(crate) const SETTINGS_NAV_WIDTH: f32 = 300.;
 pub(super) const SETTINGS_NAV_ROW_MARGIN_X: f32 = 8.0;
 pub(super) const SETTINGS_NAV_ROW_PADDING_X: f32 = 7.0;
 const SETTINGS_NAV_GROUP_LABEL_INDENT: f32 = SETTINGS_NAV_ROW_MARGIN_X + SETTINGS_NAV_ROW_PADDING_X;

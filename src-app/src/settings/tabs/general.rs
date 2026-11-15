@@ -306,7 +306,7 @@ pub(crate) const EDITOR_PRESETS: &[(&str, &str)] = &[
     ("Auto-detect", "auto"),
     ("Zed", "zed"),
     ("Cursor", "cursor"),
-    ("Windsurf", "windsurf"),
+    ("WebStorm", "webstorm"),
     ("VS Code", "code"),
     ("Visual Studio", "visual_studio"),
     ("System default", "system"),
@@ -318,7 +318,7 @@ pub(crate) fn editor_icon(value: &str) -> Option<Logo> {
         "code" => Some(("icons/editor-vscode.png", true)),
         "visual_studio" => Some(("icons/editor-visual-studio.png", true)),
         "cursor" => Some(("icons/editor-cursor.svg", false)),
-        "windsurf" => Some(("icons/editor-windsurf.svg", false)),
+        "webstorm" => Some(("icons/editor-webstorm.svg", true)),
         _ => None,
     }
 }

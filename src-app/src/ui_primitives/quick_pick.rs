@@ -100,7 +100,7 @@ pub(crate) fn highlighted_label(label: &str, highlights: &[Range<usize>]) -> Sty
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui_primitives::interface_style::{Shape, scoped, with_paneflow_shape};
+    use crate::ui_primitives::interface_style::{Shape, scoped, with_rounded_shape};
 
     #[test]
     fn classic_rows_swap_the_selection_fill_for_a_neutral_wash() {
@@ -120,10 +120,10 @@ mod tests {
     }
 
     #[test]
-    fn the_command_palette_scope_keeps_the_paneflow_rows_in_the_classic_style() {
+    fn the_command_palette_scope_keeps_the_rounded_rows_in_the_classic_style() {
         let ui = crate::theme::ui_colors();
         scoped(Shape::Classic, || {
-            with_paneflow_shape(|| {
+            with_rounded_shape(|| {
                 assert_eq!(row_colors(true, ui).fill, crate::theme::selection_color());
             });
         });

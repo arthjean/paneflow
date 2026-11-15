@@ -1,4 +1,5 @@
 mod branch;
+mod changes_tree;
 pub(crate) mod code;
 mod file_chrome;
 mod git;
@@ -15,7 +16,7 @@ mod tabs;
 pub(crate) use branch::DiffBranchMenuState;
 pub(crate) use model::{
     DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag,
-    DiffDockTab, DiffHover, DiffOptionsSubmenu,
+    DiffDockTab, DiffHover,
 };
 
 use gpui::{
@@ -208,6 +209,7 @@ impl PaneFlowApp {
         self.diff_dock.vertical_scrollbar.cancel_drag();
         self.diff_dock.h_offsets = std::rc::Rc::new(Vec::new());
         self.diff_dock.hover = None;
+        self.diff_dock.header_hover = None;
     }
 
     fn reload_file_tab_bases(&mut self, cx: &mut Context<Self>) {
@@ -299,6 +301,7 @@ impl PaneFlowApp {
                                     data.apply_built(built, &collapsed, &expanded);
                                 }
                                 app.diff_dock.hover = None;
+                                app.diff_dock.header_hover = None;
                                 if head_changed {
                                     app.reload_file_tab_bases(cx);
                                 }
@@ -379,6 +382,7 @@ impl PaneFlowApp {
         self.diff_dock.split = split;
         self.diff_dock.h_scroll_drag = None;
         self.diff_dock.hover = None;
+        self.diff_dock.header_hover = None;
         cx.notify();
     }
 
@@ -406,18 +410,22 @@ impl PaneFlowApp {
         let maximized = self.diff_dock.maximized.is_some();
         let fills_panel = self.diff_dock_fills_panel();
         let card_background = self.diff_dock_card_background(ui);
-        let header = render_diff_tab_strip(
-            &tabs,
-            active,
-            self.diff_dock.diff_tab_close_armed.map(|(index, _)| index),
-            self.diff_dock.diff_new_tab_menu_open,
-            maximized,
-            frame,
-            card_background,
-            &self.diff_dock.tab_scroll,
-            ui,
-            cx,
-        );
+        let in_title_bar = self.diff_dock.title_bar_zone_left.is_some();
+        let header = (!in_title_bar).then(|| {
+            render_diff_tab_strip(
+                &tabs,
+                active,
+                self.diff_dock.diff_tab_close_armed.map(|(index, _)| index),
+                self.diff_dock.diff_new_tab_menu_open,
+                maximized,
+                false,
+                frame,
+                card_background,
+                &self.diff_dock.tab_scroll,
+                ui,
+                cx,
+            )
+        });
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
             Some(DiffDockTab::PendingFile) => (
@@ -463,11 +471,40 @@ impl PaneFlowApp {
                     view.clone().into_any_element(),
                 )
             }
-            Some(DiffDockTab::Changes) => (
-                Some(self.render_diff_toolbar(&cwd, &data, ui, cx)),
-                self.render_diff_dock_body(&data, ui, cx),
+            Some(DiffDockTab::Changes) => {
+                let toolbar = self.render_diff_toolbar(&cwd, &data, width, ui, cx);
+                let diff = self.render_diff_dock_body(&data, ui, cx);
+                let tree = self.render_diff_changes_tree(&data, width, ui, cx);
+                (
+                    Some(toolbar),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .child(diff),
+                        )
+                        .children(tree)
+                        .into_any_element(),
+                )
+            }
+            None => (
+                None,
+                render_diff_surface_picker(
+                    self.diff_dock.picker_highlight,
+                    &self.diff_dock.picker_focus,
+                    ui,
+                    cx,
+                ),
             ),
-            None => (None, render_diff_surface_picker(ui, cx)),
         };
 
         let sidebar_width = (width - 200.).clamp(0., super::files_sidebar::FILES_SIDEBAR_WIDTH);
@@ -522,14 +559,44 @@ impl PaneFlowApp {
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
-            .child(header)
+            .children(header)
             .children(toolbar)
             .child(body)
-            .child(dock_card_border(frame, card_background, ui))
+            .when(!in_title_bar, |panel| {
+                panel.child(dock_card_border(frame, card_background, ui))
+            })
             .into_any_element()
     }
 
-    fn diff_dock_card_background(&self, ui: crate::theme::UiColors) -> gpui::Hsla {
+    pub(crate) fn render_diff_dock_title_strip(
+        &mut self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty() {
+            return None;
+        }
+        let active = self
+            .diff_dock
+            .diff_active_tab
+            .min(self.diff_dock.diff_tabs.len().saturating_sub(1));
+        let tabs = self.diff_dock.diff_tabs.clone();
+        Some(render_diff_tab_strip(
+            &tabs,
+            active,
+            self.diff_dock.diff_tab_close_armed.map(|(index, _)| index),
+            self.diff_dock.diff_new_tab_menu_open,
+            self.diff_dock.maximized.is_some(),
+            true,
+            crate::layout::CardFrame::Flush(gpui::Edges::default()),
+            self.diff_dock_card_background(ui),
+            &self.diff_dock.tab_scroll,
+            ui,
+            cx,
+        ))
+    }
+
+    pub(crate) fn diff_dock_card_background(&self, ui: crate::theme::UiColors) -> gpui::Hsla {
         dock_card_background(
             &crate::theme::active_theme(),
             ui,
@@ -565,9 +632,16 @@ impl PaneFlowApp {
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
-            .child(render_diff_picker_header(frame, ui, cx))
-            .child(render_diff_surface_picker(ui, cx))
-            .child(dock_card_border(frame, card_background, ui))
+            .child(render_diff_picker_header())
+            .child(render_diff_surface_picker(
+                self.diff_dock.picker_highlight,
+                &self.diff_dock.picker_focus,
+                ui,
+                cx,
+            ))
+            .when(self.diff_dock.title_bar_zone_left.is_none(), |panel| {
+                panel.child(dock_card_border(frame, card_background, ui))
+            })
             .into_any_element()
     }
 
@@ -593,6 +667,7 @@ impl PaneFlowApp {
         &mut self,
         cwd: &str,
         data: &Option<DiffDockData>,
+        width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -612,8 +687,9 @@ impl PaneFlowApp {
             split: self.diff_dock.split,
             options: self.diff_dock.diff_options,
             options_open: self.diff_dock.diff_options_menu_open,
-            options_submenu: self.diff_dock.diff_options_submenu,
             collapsed: &self.diff_dock.collapsed,
+            tree_open: self.diff_dock.changes_tree_open,
+            width,
         };
         render_diff_files_toolbar(&chrome, chip, ui, cx)
     }
@@ -716,7 +792,8 @@ impl PaneFlowApp {
             .child(
                 DiffElement::new(body, pal)
                     .with_highlight(self.diff_dock.diff_options.highlight)
-                    .with_revert_chip(chip_row),
+                    .with_revert_chip(chip_row)
+                    .with_hovered_header(self.diff_dock.header_hover),
             );
         element.style().restrict_scroll_to_axis = Some(true);
 

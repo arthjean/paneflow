@@ -1,6 +1,8 @@
+pub(crate) mod action_menu;
 pub(crate) mod animation_clock;
 pub(crate) mod interface_style;
 pub(crate) mod quick_pick;
+pub(crate) mod resize_edge;
 pub(crate) mod ring;
 pub(crate) mod shimmer;
 pub(crate) mod squircle;
@@ -1402,7 +1404,7 @@ mod tests {
         let continuous = squircle::squircle_builds();
         assert!(
             continuous > before,
-            "the Paneflow style traces its continuous corners as paths"
+            "the Rounded style traces its continuous corners as paths"
         );
         for shape in [Shape::Surface, Shape::Classic] {
             interface_style::scoped(shape, || {

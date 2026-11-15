@@ -6,10 +6,11 @@ use std::time::Duration;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, DragMoveEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseUpEvent, Pixels, Point, Render, SharedString, Size, StyleRefinement,
-    Styled, Window, deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
+    MouseDownEvent, Pixels, Point, Render, SharedString, Size, StyleRefinement, Styled, Window,
+    deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
 };
 
+use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle::{
     cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_corners_border,
     squircle_corners_fill, squircle_fill,
@@ -273,7 +274,7 @@ const TAB_BAR_HEIGHT: f32 = 26.0;
 const TAB_BAR_GAP: f32 = 3.0;
 const TAB_BAR_BOTTOM_INSET: f32 = 6.0;
 const TAB_ICON_SIZE: f32 = 13.0;
-const NEW_TAB_MENU_WIDTH: f32 = 216.0;
+const NEW_TAB_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
 pub(crate) const TAB_FADE_WIDTH: f32 = 28.0;
@@ -592,7 +593,6 @@ pub enum PaneEvent {
     CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
-    ToggleDiffDock,
     OpenPaneMenu {
         position: Point<Pixels>,
     },
@@ -868,6 +868,18 @@ impl Pane {
     #[cfg(test)]
     pub(crate) fn card_frame(&self) -> crate::layout::CardFrame {
         self.card_frame
+    }
+
+    fn title_band_slot(&self) -> Option<crate::window_chrome::title_band::HeaderSlot> {
+        if self.is_detached() {
+            return None;
+        }
+        let outer = match self.card_frame {
+            crate::layout::CardFrame::Card => gpui::Edges::default(),
+            crate::layout::CardFrame::Flush(outer)
+            | crate::layout::CardFrame::Morph { outer, .. } => outer,
+        };
+        crate::window_chrome::title_band::active().map(|band| band.header_slot(outer))
     }
 
     fn card_shape(&self) -> CardShape {
@@ -1460,6 +1472,10 @@ impl Pane {
             .pr(px(SECTION_PX))
             .gap(px(HEADER_GAP))
             .overflow_hidden()
+            .when(
+                self.title_band_slot().is_some_and(|slot| slot.in_band),
+                |header| header.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
+            )
             .on_drag(
                 PaneDrag {
                     pane_id: cx.entity().entity_id().as_u64(),
@@ -1523,87 +1539,57 @@ impl Pane {
         } else {
             (ACTION_BUTTON_SIZE, 0.)
         };
-        let mut menu = crate::settings::components::floating_menu_panel(
-            div().id(SharedString::from(format!("pane-{pane_id}-new-tab-menu"))),
-            ui,
-        )
-        .w(px(NEW_TAB_MENU_WIDTH))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _window, cx| {
+        let digits = NEW_TAB_DIGIT_MNEMONICS
+            .iter()
+            .copied()
+            .map(Some)
+            .chain(std::iter::repeat(None));
+        let rows = presets
+            .iter()
+            .zip(digits)
+            .enumerate()
+            .map(|(index, (preset, digit))| {
+                let item = new_tab_menu_item(pane_id, index, preset);
+                match digit {
+                    Some(digit) => item.mnemonic(digit),
+                    None => item,
+                }
+            });
+        let menu = ActionMenu::new().items(rows);
+        let handlers = MenuHandlers {
+            activate: Rc::new(cx.listener(
+                |this, preset: &crate::app::pane_palette::Preset, _window, cx| {
+                    this.close_new_tab_menu(cx);
+                    cx.emit(PaneEvent::NewTabPreset(preset.clone()));
+                },
+            )),
+            dismiss: Rc::new(cx.listener(|this, _: &(), _window, cx| {
                 this.close_new_tab_menu(cx);
-            }),
-        );
-        for (index, preset) in presets.iter().enumerate() {
-            menu = menu.child(self.render_new_tab_menu_row(pane_id, index, preset, ui, cx));
-        }
+            })),
+        };
         Some(
             deferred(crate::ui_primitives::menu_reveal(
                 SharedString::from(format!("pane-{pane_id}-new-tab-menu-reveal")),
                 div()
                     .absolute()
                     .top(px(button_size + 8.))
-                    .left(px(button_inset + button_size - NEW_TAB_MENU_WIDTH))
-                    .occlude()
-                    .child(menu),
+                    .left(px(button_inset + button_size))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .occlude()
+                            .child(menu.element(
+                                SharedString::from(format!("pane-{pane_id}-new-tab-menu")),
+                                handlers,
+                                ui,
+                            )),
+                    ),
             ))
             .with_priority(4)
             .into_any_element(),
         )
-    }
-
-    fn render_new_tab_menu_row(
-        &self,
-        pane_id: u64,
-        index: usize,
-        preset: &crate::app::pane_palette::Preset,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let launchable = preset.ensure_launchable().is_ok();
-        let icon_path = preset.icon_path();
-        let icon = crate::settings::components::render_logo(
-            icon_path,
-            preset.icon_multicolor(),
-            px(15.),
-            preset
-                .accent()
-                .map_or(ui.muted, |accent| rgb(accent).into()),
-        );
-        let chosen = preset.clone();
-        crate::settings::components::menu_row(
-            SharedString::from(format!("pane-{pane_id}-new-tab-{index}")),
-            false,
-            ui,
-        )
-        .gap(px(9.))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-            this.close_new_tab_menu(cx);
-            cx.emit(PaneEvent::NewTabPreset(chosen.clone()));
-            cx.stop_propagation();
-        }))
-        .child(icon)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(13.))
-                .text_color(if launchable { ui.text } else { ui.muted })
-                .child(preset.label.clone()),
-        )
-        .when(!launchable, |row| {
-            row.child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .child("not installed"),
-            )
-        })
-        .into_any_element()
     }
 
     pub(crate) fn render_tab_bar(
@@ -1618,6 +1604,7 @@ impl Pane {
         let rail_active = crate::app::constants::sidebar_tab_active_background();
         let content_group = SharedString::from(format!("pane-content-{pane_id}"));
         let chip_radius = self.card_shape().tab_chip_radius();
+        let band_slot = self.title_band_slot().filter(|_| unified);
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1760,7 +1747,9 @@ impl Pane {
             .items_center()
             .w_full()
             .h(px(if unified {
-                UNIFIED_TAB_HEIGHT + 2. * UNIFIED_TAB_BAR_INSET
+                band_slot.map_or(UNIFIED_TAB_HEIGHT + 2. * UNIFIED_TAB_BAR_INSET, |slot| {
+                    slot.height
+                })
             } else {
                 TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET
             }))
@@ -1770,6 +1759,10 @@ impl Pane {
                 bar.pl(px(UNIFIED_TAB_BAR_INSET))
             })
             .when(unified && self.is_detached(), |bar| bar.pl(px(0.)))
+            .when_some(band_slot, |bar, slot| {
+                bar.pl(px(UNIFIED_TAB_BAR_INSET + slot.leading))
+                    .pr(px(2. + slot.trailing))
+            })
             .gap(px(TAB_BAR_GAP))
             .overflow_hidden();
 
@@ -1817,6 +1810,7 @@ impl Pane {
         );
 
         if self.can_add_surface() {
+            let menu_open = self.new_tab_menu.is_some();
             let new_tab_button = squircle_skin(
                 div()
                     .id(SharedString::from(format!("pane-{pane_id}-tab-new")))
@@ -1847,8 +1841,9 @@ impl Pane {
             .when(unified, |button| {
                 button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             })
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                if this.new_tab_menu.take().is_some() {
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                if menu_open {
+                    this.new_tab_menu = None;
                     cx.notify();
                 } else {
                     cx.emit(PaneEvent::OpenNewTabMenu);
@@ -1974,16 +1969,6 @@ impl Pane {
                 "icons/split_horizontal.svg",
                 cx.listener(|_this, _, _window, cx| {
                     cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Horizontal));
-                }),
-                cx,
-            ))
-            .child(self.action_button(
-                "pane-btn-diff-dock",
-                "Toggle diff dock",
-                "icons/layout-sidebar-right.svg",
-                cx.listener(|_this, _e: &ClickEvent, _window, cx| {
-                    cx.emit(PaneEvent::ToggleDiffDock);
-                    cx.stop_propagation();
                 }),
                 cx,
             ));
@@ -2281,6 +2266,21 @@ fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Opt
         ProgressState::Indeterminate => Some(SharedString::new_static("working")),
         ProgressState::Pause => Some(SharedString::new_static("paused")),
         ProgressState::Remove => None,
+    }
+}
+
+fn new_tab_menu_item(
+    pane_id: u64,
+    index: usize,
+    preset: &crate::app::pane_palette::Preset,
+) -> MenuItem<crate::app::pane_palette::Preset> {
+    let item = MenuItem::new(preset.label.clone(), preset.clone())
+        .id(format!("pane-{pane_id}-new-tab-{index}"))
+        .icon(preset.icon_path());
+    if preset.ensure_launchable().is_ok() {
+        item
+    } else {
+        item.detail("not installed")
     }
 }
 

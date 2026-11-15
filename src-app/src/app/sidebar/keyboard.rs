@@ -89,6 +89,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.sidebar_cursor = self.sidebar_cursor_for(row);
+        self.sidebar_selection.reveal_cursor_ring();
         self.sidebar_focus.focus(window, cx);
     }
 
@@ -160,6 +161,24 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    fn extend_sidebar_selection(&mut self, step: CursorMove, cx: &mut Context<Self>) {
+        let rows = self.sidebar_nav_rows(cx);
+        let current = self.sidebar_cursor_position(&rows);
+        let from = current.and_then(|index| match rows[index] {
+            SidebarNavRow::Tree(row) => Some(row),
+            SidebarNavRow::Agent(_) => None,
+        });
+        let Some(index) = moved_cursor_index(current, rows.len(), step) else {
+            return;
+        };
+        let SidebarNavRow::Tree(target) = rows[index] else {
+            return;
+        };
+        self.sidebar_cursor = self.sidebar_nav_cursor_for(rows[index]);
+        self.scroll_sidebar_to(&rows, index, cx);
+        self.select_sidebar_range(from, target, cx);
+    }
+
     fn sidebar_cursor_row(&self, cx: &Context<Self>) -> Option<SidebarNavRow> {
         let rows = self.sidebar_nav_rows(cx);
         let index = self.sidebar_cursor_position(&rows)?;
@@ -180,6 +199,7 @@ impl PaneFlowApp {
             || self.sidebar_new_tab_menu_open
             || self.sidebar_space_menu_open
             || self.agents_display_menu_open
+            || self.sidebar_selection.menu().is_some()
     }
 
     fn move_cursor_row(&mut self, row: SidebarRow, down: bool, cx: &mut Context<Self>) {
@@ -243,7 +263,12 @@ impl PaneFlowApp {
         if modifiers.control || modifiers.platform || modifiers.function {
             return;
         }
+        self.sidebar_selection.reveal_cursor_ring();
         let key = event.keystroke.key.as_str();
+        if key == "escape" && !self.sidebar_menu_open() && self.clear_sidebar_selection(cx) {
+            cx.stop_propagation();
+            return;
+        }
         if key == "escape" {
             if self.sidebar_menu_open() {
                 self.dismiss_transient_surfaces();
@@ -267,6 +292,22 @@ impl PaneFlowApp {
             return;
         }
         if key == "tab" && !modifiers.shift && self.focus_agents_resize_handle(window, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.shift && matches!(key, "up" | "down") {
+            let step = if key == "up" {
+                CursorMove::Previous
+            } else {
+                CursorMove::Next
+            };
+            self.dismiss_transient_surfaces();
+            self.extend_sidebar_selection(step, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(key, "delete" | "backspace") && !self.sidebar_selection.is_empty() {
+            self.request_close_sidebar_selection(window, cx);
             cx.stop_propagation();
             return;
         }

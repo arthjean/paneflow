@@ -21,14 +21,23 @@ impl PaneFlowApp {
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
         let group_name = SharedString::from(format!("ws-row-{ws_id}"));
         let is_expanded = ws.sidebar_expanded;
+        let pick = SidebarPick::Workspace(ws_id);
+        let shape = self.sidebar_pick_shape(pick);
+        let picked = shape.picked;
+        let row_name: SharedString = if picked >= 0.5 {
+            format!("{}, selected", ws.title).into()
+        } else {
+            ws_title.clone()
+        };
 
         let title_tooltip =
             (title.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS).then(|| ws_title.clone());
+        let drag_preview_width = self.sidebar_width() - 2. * SIDEBAR_ROW_MARGIN_X;
         let row_shell = sidebar_row_shell()
             .id(SharedString::from(format!("ws-{ws_id}")))
             .role(Role::TreeItem)
             .aria_level(1)
-            .aria_label(ws_title.clone())
+            .aria_label(row_name)
             .aria_expanded(is_expanded)
             .aria_selected(self.shown_workspace_idx() == Some(i))
             .when_some(title_tooltip, |shell, title| {
@@ -40,13 +49,18 @@ impl PaneFlowApp {
                     id: ws_id,
                     title: ws_title.clone(),
                 },
-                |drag, _offset, _window, cx| {
+                move |drag, _offset, _window, cx| {
                     cx.new(|_| WorkspaceDragPreview {
                         title: drag.title.clone(),
+                        width: drag_preview_width,
                     })
                 },
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                if this.sidebar_selection_click(SidebarRow::Folder(idx), e.modifiers(), window, cx)
+                {
+                    return;
+                }
                 this.dismiss_transient_surfaces();
                 let was_renaming = this.renaming_tab.is_some();
                 this.commit_rename(cx);
@@ -60,14 +74,19 @@ impl PaneFlowApp {
                 if e.is_right_click()
                     && let Some(position) = e.mouse_position()
                 {
+                    cx.stop_propagation();
+                    if this.open_sidebar_selection_menu(
+                        SidebarRow::Folder(idx),
+                        position,
+                        window,
+                        cx,
+                    ) {
+                        return;
+                    }
                     this.commit_rename(cx);
                     this.dismiss_transient_surfaces();
                     this.place_sidebar_cursor(SidebarRow::Folder(idx), window, cx);
-                    this.workspace_menu_open = Some(WorkspaceContextMenu {
-                        idx,
-                        position,
-                        space_submenu_open: false,
-                    });
+                    this.workspace_menu_open = Some(WorkspaceContextMenu::at(idx, position));
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -89,7 +108,7 @@ impl PaneFlowApp {
             .overflow_x_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
-            .text_color(ui.muted)
+            .text_color(sidebar_row_title_color(ui, picked))
             .group_hover(group_name.clone(), move |style| style.text_color(ui.text))
             .text_size(px(14.))
             .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
@@ -122,13 +141,14 @@ impl PaneFlowApp {
                 slot.child(folder_glyph(folder.open, openness))
             });
 
+        let row_content_width = sidebar_workspace_row_content_width(self.sidebar_width());
         let title_row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .w(px(row_content_width))
+            .max_w(px(row_content_width))
             .min_w_0()
             .overflow_x_hidden()
             .child(disclosure)
@@ -160,35 +180,34 @@ impl PaneFlowApp {
             cx.stop_propagation();
         });
 
-        let row = squircle_skin(
-            row_shell,
-            group_name,
-            rail_row_radius(),
-            None,
-            Some(hover_bg),
-        )
-        .animated_hover_element(move |row, reveal| {
-            let new_tab_button = sidebar_hover_revealed_glyph_button(
-                SharedString::from(format!("ws-new-tab-{ws_id}")),
-                "icons/plus.svg",
-                SharedString::from(format!("New tab in {ws_title}")),
-                reveal,
-                new_tab_trailing_space,
-                ui,
-            )
-            .on_click(open_new_tab);
-            row.extend([title_row
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .child(new_tab_button)
-                        .children(lane_slot),
+        let row = sidebar_row_skin(row_shell, group_name, shape, None, Some(hover_bg))
+            .animated_hover_element(move |row, reveal| {
+                let new_tab_button = sidebar_hover_revealed_glyph_button(
+                    SharedString::from(format!("ws-new-tab-{ws_id}")),
+                    "icons/plus.svg",
+                    SharedString::from(format!("New tab in {ws_title}")),
+                    reveal,
+                    new_tab_trailing_space,
+                    ui,
                 )
-                .into_any_element()]);
-        })
-        .when(cursor, |row| row.child(sidebar_cursor_ring(ui)));
+                .on_click(open_new_tab);
+                row.extend([title_row
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .child(new_tab_button)
+                            .children(lane_slot),
+                    )
+                    .into_any_element()]);
+            })
+            .when(picked > 0., |row| {
+                row.child(sidebar_selection_fill(ui, shape))
+            })
+            .when(cursor, |row| {
+                row.children(self.sidebar_cursor_ring_for(shape, ui))
+            });
 
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))

@@ -9,11 +9,13 @@ use super::syntax::DiffSyntax;
 
 const MAX_FULL_SPLIT_ALIGN_LINES: usize = 20_000;
 
-pub const ROW_HEIGHT: f32 = 18.0;
+pub const ROW_HEIGHT: f32 = 20.0;
 
 pub const FILE_HEADER_HEIGHT: f32 = 32.0;
 
-pub const FOLD_ROW_HEIGHT: f32 = 32.0;
+pub const FILE_BODY_GAP: f32 = 8.0;
+
+pub const FOLD_ROW_HEIGHT: f32 = 24.0;
 
 pub fn display_row_height(row: &DisplayRow) -> f32 {
     match row.kind {
@@ -31,26 +33,36 @@ pub fn split_row_height(row: &SplitRow) -> f32 {
     }
 }
 
-pub fn unified_offsets(rows: &[DisplayRow]) -> Vec<f32> {
+fn offsets_with_body_gaps(heights: impl Iterator<Item = (f32, bool)>, len: usize) -> Vec<f32> {
     let mut acc = 0.0;
-    let mut out = Vec::with_capacity(rows.len() + 1);
+    let mut out = Vec::with_capacity(len + 1);
     out.push(0.0);
-    for r in rows {
-        acc += display_row_height(r);
+    let mut after_body = false;
+    for (height, is_header) in heights {
+        if is_header && after_body {
+            acc += FILE_BODY_GAP;
+        }
+        acc += height;
         out.push(acc);
+        after_body = !is_header;
     }
     out
 }
 
+pub fn unified_offsets(rows: &[DisplayRow]) -> Vec<f32> {
+    offsets_with_body_gaps(
+        rows.iter()
+            .map(|r| (display_row_height(r), r.kind == RowKind::FileHeader)),
+        rows.len(),
+    )
+}
+
 pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
-    let mut acc = 0.0;
-    let mut out = Vec::with_capacity(rows.len() + 1);
-    out.push(0.0);
-    for r in rows {
-        acc += split_row_height(r);
-        out.push(acc);
-    }
-    out
+    offsets_with_body_gaps(
+        rows.iter()
+            .map(|r| (split_row_height(r), matches!(r, SplitRow::Header(_)))),
+        rows.len(),
+    )
 }
 
 pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
@@ -169,19 +181,26 @@ pub struct FoldBlock<T> {
 
 #[derive(Clone)]
 pub struct HeaderParts {
-    pub dir_prefix: SharedString,
-    pub basename: SharedString,
+    pub path: SharedString,
+    pub old_path: Option<SharedString>,
+    pub change: FileChange,
     pub added: u32,
     pub removed: u32,
 }
 
-fn split_header_path(shown_path: &str) -> (String, String) {
-    match shown_path.rfind('/') {
-        Some(i) => (
-            shown_path[..=i].to_string(),
-            shown_path[i + 1..].to_string(),
-        ),
-        None => (String::new(), shown_path.to_string()),
+impl HeaderParts {
+    fn for_file(file: &FileDiff, added: u32, removed: u32) -> Self {
+        let old_path = match (file.change, &file.old_path) {
+            (FileChange::Renamed, Some(old)) => Some(old.clone().into()),
+            _ => None,
+        };
+        Self {
+            path: file.path.clone().into(),
+            old_path,
+            change: file.change,
+            added,
+            removed,
+        }
     }
 }
 
@@ -190,16 +209,22 @@ pub struct RowPalette {
     pub text: Hsla,
     pub muted: Hsla,
     pub header_bg: Hsla,
-    pub sticky_header_bg: Hsla,
+    pub header_hover_edge: Hsla,
     pub add_bg: Hsla,
     pub del_bg: Hsla,
     pub add_fg: Hsla,
     pub del_fg: Hsla,
+    pub number: Hsla,
     pub gutter_add: Hsla,
     pub gutter_del: Hsla,
-    pub file_icon_hot: Hsla,
+    pub icon_added: Hsla,
+    pub icon_modified: Hsla,
+    pub icon_deleted: Hsla,
+    pub separator_bg: Hsla,
+    pub separator_fg: Hsla,
     pub add_bar: Hsla,
     pub del_bar: Hsla,
+    pub del_bar_gap: Hsla,
     pub phantom_bg: Hsla,
     pub phantom_hatch: Hsla,
     pub context_bg: Hsla,
@@ -418,33 +443,64 @@ pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) ->
 
 pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     let diff = ui.diff_colors();
+    let light = ui.base.l > 0.5;
+    let wash = |color: Hsla| ui.base.blend(color.opacity(LINE_WASH_ALPHA));
+    let word = |color: Hsla| color.opacity(if light { 0.15 } else { 0.20 });
+    let (add_bg, del_bg, add_gutter_bg, del_gutter_bg, word_add, word_del) =
+        if ui.use_theme_diff_washes {
+            (
+                diff.added_background,
+                diff.deleted_background,
+                diff.added_gutter_background,
+                diff.deleted_gutter_background,
+                ui.vc_word_added,
+                ui.vc_word_deleted,
+            )
+        } else {
+            (
+                wash(diff.added),
+                wash(diff.deleted),
+                wash(diff.added),
+                wash(diff.deleted),
+                word(diff.added),
+                word(diff.deleted),
+            )
+        };
     RowPalette {
         text: ui.text,
         muted: ui.muted,
-        header_bg: ui.surface,
-        sticky_header_bg: ui.surface.blend(ui.text.opacity(0.06)),
-        add_bg: diff.added_background,
-        del_bg: diff.deleted_background,
+        header_bg: ui.base,
+        header_hover_edge: ui.text.opacity(0.24),
+        add_bg,
+        del_bg,
         add_fg: diff.added,
         del_fg: diff.deleted,
+        number: ui.text.opacity(0.65),
         gutter_add: diff.added,
         gutter_del: diff.deleted,
-        file_icon_hot: ui.vc_conflict,
-        add_bar: ui.base.blend(diff.added),
-        del_bar: ui.base.blend(diff.deleted),
+        icon_added: diff.added,
+        icon_modified: ui.vc_modified.opacity(0.65),
+        icon_deleted: diff.deleted,
+        separator_bg: ui.text.opacity(0.03),
+        separator_fg: ui.text.opacity(0.5),
+        add_bar: diff.added,
+        del_bar: diff.deleted,
+        del_bar_gap: ui
+            .base
+            .blend(diff.deleted.opacity(if light { 0.5 } else { 0.3 })),
         phantom_bg: ui.base,
-        phantom_hatch: ui.surface,
+        phantom_hatch: ui.text.opacity(0.10),
         context_bg: ui.base,
         gutter_bg: ui.base,
-        add_gutter_bg: diff.added_gutter_background,
-        del_gutter_bg: diff.deleted_gutter_background,
+        add_gutter_bg,
+        del_gutter_bg,
         cursor_line_bg: ui.text.opacity(0.05),
         add_bg_muted: diff.added.opacity(MUTED_WASH_ALPHA),
         del_bg_muted: diff.deleted.opacity(MUTED_WASH_ALPHA),
-        add_bar_muted: ui.base.blend(diff.added).opacity(MUTED_BAR_ALPHA),
-        del_bar_muted: ui.base.blend(diff.deleted).opacity(MUTED_BAR_ALPHA),
-        word_add: ui.vc_word_added,
-        word_del: ui.vc_word_deleted,
+        add_bar_muted: diff.added.opacity(MUTED_BAR_ALPHA),
+        del_bar_muted: diff.deleted.opacity(MUTED_BAR_ALPHA),
+        word_add,
+        word_del,
         chip_bg: crate::app::constants::sidebar_tab_hover_background(),
         chip_fg: ui.text,
     }
@@ -465,7 +521,9 @@ impl RowPalette {
     }
 }
 
-pub const MUTED_WASH_ALPHA: f32 = 0.08;
+pub const LINE_WASH_ALPHA: f32 = 0.07;
+
+pub const MUTED_WASH_ALPHA: f32 = 0.035;
 
 pub const MUTED_BAR_ALPHA: f32 = 0.5;
 
@@ -507,7 +565,6 @@ pub fn build_display_rows_with_caches(
             (FileChange::Renamed, Some(old)) => format!("{old} → {}", file.path),
             _ => file.path.clone(),
         };
-        let (dir_prefix, basename) = split_header_path(&shown_path);
         rows.push(DisplayRow {
             kind: RowKind::FileHeader,
             text: format!("{shown_path}   +{added} -{removed}").into(),
@@ -516,12 +573,7 @@ pub fn build_display_rows_with_caches(
             syntax_runs: Vec::new(),
             change_runs: Vec::new(),
             tone: ChangeTone::Full,
-            header: Some(HeaderParts {
-                dir_prefix: dir_prefix.into(),
-                basename: basename.into(),
-                added,
-                removed,
-            }),
+            header: Some(HeaderParts::for_file(file, added, removed)),
             fold_key: None,
             fold_base_start: None,
             fold_new_start: None,
@@ -916,17 +968,9 @@ pub fn build_split_rows_with_caches(
             continue;
         }
         let (added, removed) = file.line_counts();
-        let shown_path = match (file.change, &file.old_path) {
-            (FileChange::Renamed, Some(old)) => format!("{old} → {}", file.path),
-            _ => file.path.clone(),
-        };
-        let (dir_prefix, basename) = split_header_path(&shown_path);
-        rows.push(SplitRow::Header(HeaderParts {
-            dir_prefix: dir_prefix.into(),
-            basename: basename.into(),
-            added,
-            removed,
-        }));
+        rows.push(SplitRow::Header(HeaderParts::for_file(
+            file, added, removed,
+        )));
 
         if file.is_binary {
             rows.push(SplitRow::Note(
@@ -1298,7 +1342,7 @@ mod tests {
         assert_eq!(material.gutter_bg, clear);
         assert_eq!(material.phantom_bg, clear);
         assert_eq!(material.header_bg, base.header_bg);
-        assert_eq!(material.sticky_header_bg, base.sticky_header_bg);
+        assert_eq!(material.header_bg.a, 1.0);
         assert_eq!(material.add_bg, base.add_bg);
         assert_eq!(material.add_bar, base.add_bar);
         assert_eq!(material.add_gutter_bg, base.add_gutter_bg);
@@ -1520,22 +1564,6 @@ mod tests {
     }
 
     #[test]
-    fn split_header_path_separates_dir_from_basename() {
-        assert_eq!(
-            split_header_path("src/app/view.rs"),
-            ("src/app/".to_string(), "view.rs".to_string())
-        );
-        assert_eq!(
-            split_header_path("Cargo.toml"),
-            (String::new(), "Cargo.toml".to_string())
-        );
-        assert_eq!(
-            split_header_path("old/a.rs → new/b.rs"),
-            ("old/a.rs → new/".to_string(), "b.rs".to_string())
-        );
-    }
-
-    #[test]
     fn file_header_row_carries_typed_segments() {
         let file = FileDiff {
             path: "src/diff/rows.rs".into(),
@@ -1553,9 +1581,56 @@ mod tests {
             .find(|r| r.kind == RowKind::FileHeader)
             .and_then(|r| r.header.as_ref())
             .expect("file-header row must carry HeaderParts");
-        assert_eq!(header.dir_prefix.as_ref(), "src/diff/");
-        assert_eq!(header.basename.as_ref(), "rows.rs");
+        assert_eq!(header.path.as_ref(), "src/diff/rows.rs");
+        assert!(header.old_path.is_none());
+        assert_eq!(header.change, FileChange::Modified);
         assert_eq!((header.added, header.removed), (added, removed));
+    }
+
+    #[test]
+    fn a_renamed_file_header_keeps_its_previous_path() {
+        let file = FileDiff {
+            path: "src/new.rs".into(),
+            change: FileChange::Renamed,
+            old_path: Some("src/old.rs".into()),
+            base_text: "a\n".into(),
+            new_text: "a\n".into(),
+            hunks: Vec::new(),
+            is_binary: false,
+        };
+        let (rows, _) = build_split_rows(std::slice::from_ref(&file), None);
+        let Some(SplitRow::Header(header)) = rows.first() else {
+            panic!("a split file starts with its header row");
+        };
+        assert_eq!(header.path.as_ref(), "src/new.rs");
+        assert_eq!(
+            header.old_path.as_ref().map(|p| p.as_ref()),
+            Some("src/old.rs")
+        );
+    }
+
+    #[test]
+    fn a_header_that_follows_a_file_body_starts_after_the_body_gap() {
+        let offsets = offsets_with_body_gaps(
+            [
+                (FILE_HEADER_HEIGHT, true),
+                (ROW_HEIGHT, false),
+                (FILE_HEADER_HEIGHT, true),
+                (FILE_HEADER_HEIGHT, true),
+            ]
+            .into_iter(),
+            4,
+        );
+        assert_eq!(
+            offsets,
+            vec![
+                0.0,
+                FILE_HEADER_HEIGHT,
+                FILE_HEADER_HEIGHT + ROW_HEIGHT,
+                FILE_HEADER_HEIGHT * 2.0 + ROW_HEIGHT + FILE_BODY_GAP,
+                FILE_HEADER_HEIGHT * 3.0 + ROW_HEIGHT + FILE_BODY_GAP,
+            ]
+        );
     }
 
     #[test]

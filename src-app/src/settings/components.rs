@@ -6,6 +6,7 @@ use gpui::{
 
 use std::time::Duration;
 
+use crate::ui_primitives::action_menu;
 use crate::ui_primitives::interface_style::{
     CLASSIC_CONTROL, SURFACE_ROW, circular, classic, corner, frame_corner, pick, pick_surface,
     with_surface_shape,
@@ -23,6 +24,31 @@ const INPUT_FOCUS_DURATION: Duration = Duration::from_millis(160);
 
 pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
     Hsla { a: alpha, ..color }
+}
+
+pub(crate) const KEYCAP_HEIGHT: Pixels = px(20.);
+pub(crate) const KEYCAP_RADIUS: Pixels = px(5.);
+
+pub(crate) fn keycap_tones(ui: crate::theme::UiColors) -> (Hsla, Hsla, Hsla) {
+    (ui.subtle, lerp_color(ui.subtle, ui.text, 0.08), ui.text)
+}
+
+pub(crate) fn keycap(label: impl Into<SharedString>, fill: Hsla, edge: Hsla, ink: Hsla) -> Div {
+    div()
+        .h(KEYCAP_HEIGHT)
+        .min_w(KEYCAP_HEIGHT)
+        .px(px(6.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(KEYCAP_RADIUS)
+        .bg(fill)
+        .border_1()
+        .border_color(edge)
+        .text_size(crate::ui_primitives::LABEL_SM)
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink)
+        .child(label.into())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1049,18 +1075,8 @@ pub fn select_menu_surface(ui: crate::theme::UiColors) -> Hsla {
     }
 }
 
-const MENU_DIVIDER_ALPHA: f32 = 0.12;
-const SURFACE_MENU_DIVIDER_ALPHA: f32 = 0.07;
-
 pub fn menu_divider_color(ui: crate::theme::UiColors) -> Hsla {
-    with_alpha(
-        ui.text,
-        pick_surface(
-            MENU_DIVIDER_ALPHA,
-            SURFACE_MENU_DIVIDER_ALPHA,
-            MENU_DIVIDER_ALPHA,
-        ),
-    )
+    with_alpha(ui.text, action_menu::SEPARATOR_ALPHA)
 }
 
 pub(crate) const MENU_RADIUS: Pixels = px(18.);
@@ -1087,26 +1103,17 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
 
 pub(crate) const MENU_MAX_HEIGHT: Pixels = px(400.);
 
-const MENU_ROW_HEIGHT: Pixels = px(30.);
-const MENU_ROW_GAP: Pixels = px(0.);
-const MENU_PADDING: Pixels = px(6.);
-const CLASSIC_MENU_ROW_HEIGHT: Pixels = px(28.);
-const CLASSIC_MENU_ROW_GAP: Pixels = px(0.);
-const CLASSIC_MENU_PADDING: Pixels = px(6.);
+const LIST_CARD_PADDING: Pixels = px(6.);
 const CHROME_EDGE_ALPHA: f32 = 0.6;
 const SURFACE_EDGE_ALPHA: f32 = 0.12;
 const CLASSIC_EDGE_ALPHA: f32 = 0.07;
 
 pub(crate) fn menu_row_height() -> Pixels {
-    pick(MENU_ROW_HEIGHT, CLASSIC_MENU_ROW_HEIGHT)
-}
-
-pub(crate) fn menu_row_gap() -> Pixels {
-    pick(MENU_ROW_GAP, CLASSIC_MENU_ROW_GAP)
+    action_menu::ROW_HEIGHT
 }
 
 pub(crate) fn menu_padding() -> Pixels {
-    pick(MENU_PADDING, CLASSIC_MENU_PADDING)
+    action_menu::PANEL_PADDING
 }
 
 pub(crate) fn menu_item_radius() -> Pixels {
@@ -1116,14 +1123,6 @@ pub(crate) fn menu_item_radius() -> Pixels {
 const MENU_TEXT: Pixels = px(12.);
 const SURFACE_MENU_TEXT: Pixels = px(13.);
 const CLASSIC_MENU_TEXT: Pixels = px(13.);
-const MENU_SHORTCUT_TEXT: Pixels = px(12.);
-const MENU_ROW_INSET: Pixels = px(8.);
-const CLASSIC_MENU_ROW_INSET: Pixels = px(10.);
-const MENU_DIVIDER_GAP: Pixels = px(6.);
-const CLASSIC_MENU_DIVIDER_GAP: Pixels = px(4.);
-const MENU_CHEVRON: Pixels = px(16.);
-const MENU_CHEVRON_OVERHANG: Pixels = px(2.);
-const CLASSIC_MENU_CHEVRON_OVERHANG: Pixels = px(4.);
 
 pub(crate) fn menu_text_size() -> Pixels {
     pick_surface(MENU_TEXT, SURFACE_MENU_TEXT, CLASSIC_MENU_TEXT)
@@ -1134,52 +1133,15 @@ pub(crate) fn menu_text_weight() -> FontWeight {
 }
 
 pub(crate) fn menu_row_inset() -> Pixels {
-    pick(MENU_ROW_INSET, CLASSIC_MENU_ROW_INSET)
+    action_menu::ROW_INSET
 }
 
-pub(crate) fn menu_divider_inset(resting: Pixels) -> Pixels {
-    pick_surface(resting, MENU_ROW_INSET, CLASSIC_MENU_ROW_INSET)
-}
-
-fn menu_divider_gap() -> Pixels {
-    pick(MENU_DIVIDER_GAP, CLASSIC_MENU_DIVIDER_GAP)
-}
-
-pub(crate) fn menu_divider_slot() -> f32 {
-    f32::from(menu_divider_gap()) * 2. + 1.
+pub(crate) fn menu_divider_inset(_resting: Pixels) -> Pixels {
+    action_menu::ROW_INSET
 }
 
 pub(crate) fn menu_divider(ui: crate::theme::UiColors) -> Div {
-    with_surface_shape(|| {
-        div()
-            .flex_none()
-            .mx(menu_row_inset())
-            .my(menu_divider_gap())
-            .h(px(1.))
-            .bg(menu_divider_color(ui))
-    })
-}
-
-pub(crate) fn menu_label_text_size() -> Pixels {
-    with_surface_shape(menu_text_size)
-}
-
-pub(crate) fn menu_shortcut(shortcut: impl Into<SharedString>, ui: crate::theme::UiColors) -> Div {
-    div()
-        .flex_none()
-        .text_size(MENU_SHORTCUT_TEXT)
-        .font_weight(menu_text_weight())
-        .text_color(ui.muted)
-        .child(shortcut.into())
-}
-
-pub(crate) fn menu_chevron(ui: crate::theme::UiColors) -> gpui::Svg {
-    svg()
-        .size(MENU_CHEVRON)
-        .mr(-pick(MENU_CHEVRON_OVERHANG, CLASSIC_MENU_CHEVRON_OVERHANG))
-        .flex_none()
-        .path("icons/chevron-right.svg")
-        .text_color(ui.muted)
+    action_menu::menu_separator(ui)
 }
 
 pub(crate) fn surface_edge(ui: crate::theme::UiColors) -> Hsla {
@@ -1204,11 +1166,15 @@ pub(crate) fn floating_shadow() -> Vec<gpui::BoxShadow> {
 }
 
 pub fn menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
-    menu_surface(el, ui)
+    el.relative()
         .flex()
         .flex_col()
-        .gap(menu_row_gap())
-        .p(menu_padding())
+        .p(action_menu::PANEL_PADDING)
+        .rounded(action_menu::PANEL_RADIUS)
+        .border(action_menu::PANEL_BORDER)
+        .border_color(with_alpha(ui.text, action_menu::EDGE_ALPHA))
+        .bg(select_menu_surface(ui))
+        .font_family(action_menu::FONT_FAMILY)
 }
 
 pub fn list_card<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
@@ -1220,16 +1186,7 @@ pub fn list_card<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -
             ))
             .flex()
             .flex_col()
-            .gap(menu_row_gap())
-            .p(menu_padding())
-    })
-}
-
-pub fn floating_menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
-    with_surface_shape(|| {
-        menu_panel(el, ui)
-            .rounded(frame_corner(MENU_RADIUS))
-            .shadow(floating_shadow())
+            .p(LIST_CARD_PADDING)
     })
 }
 
@@ -1238,13 +1195,18 @@ pub fn menu_row(
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
-    with_surface_shape(|| select_item(id, selected, ui).h(menu_row_height()))
-}
-
-pub fn menu_height(rows: f32, extra: f32) -> Pixels {
-    px(f32::from(menu_padding()) * 2.
-        + rows * (f32::from(menu_row_height()) + f32::from(menu_row_gap()))
-        + extra)
+    with_surface_shape(|| {
+        select_item_shaped(
+            id,
+            selected,
+            ui,
+            with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA),
+            action_menu::ROW_RADIUS,
+        )
+        .h(action_menu::ROW_HEIGHT)
+        .text_size(action_menu::LABEL_TEXT)
+        .cursor(CursorStyle::Arrow)
+    })
 }
 
 pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> SelectMenu {
@@ -1252,42 +1214,30 @@ pub fn select_menu(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Sele
 }
 
 fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
-    let light_theme = ui.surface.l > 0.5;
-    let (edge_color, edge_offset) = if light_theme {
-        (gpui::black().opacity(0.04), px(1.))
-    } else {
-        (gpui::white().opacity(0.06), px(-1.))
-    };
     let list_id: ElementId = (id.clone(), "list").into();
     let reveal_id: ElementId = (id.clone(), "reveal").into();
-    let shell = div()
-        .id(id)
-        .rounded(frame_corner(MENU_RADIUS))
-        .shadow(floating_shadow())
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .top(edge_offset)
-                .bottom(-edge_offset)
-                .child(squircle::squircle_fill(MENU_RADIUS, edge_color)),
-        );
     SelectMenu {
         reveal_id,
-        shell: menu_surface(shell, ui)
+        shell: div()
+            .id(id)
+            .relative()
             .flex()
             .flex_col()
             .min_w(px(200.))
             .max_w(px(280.))
             .max_h(MENU_MAX_HEIGHT)
+            .rounded(action_menu::PANEL_RADIUS)
+            .border(action_menu::PANEL_BORDER)
+            .border_color(with_alpha(ui.text, action_menu::EDGE_ALPHA))
+            .bg(select_menu_surface(ui))
+            .shadow(action_menu::panel_shadow(ui))
+            .font_family(action_menu::FONT_FAMILY)
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation()),
         list: div()
             .id(list_id)
             .flex()
             .flex_col()
-            .gap(menu_row_gap())
-            .p(menu_padding())
+            .p(action_menu::PANEL_PADDING)
             .min_h_0()
             .overflow_y_scroll(),
     }
@@ -1310,20 +1260,20 @@ fn styled_select_option(
         div()
             .id(id.clone())
             .flex_none()
-            .h(menu_row_height())
-            .pl(menu_row_inset())
+            .h(action_menu::ROW_HEIGHT)
+            .pl(action_menu::ROW_INSET)
             .pr(px(32.))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
-            .cursor(CursorStyle::PointingHand)
-            .text_size(menu_text_size())
-            .font_weight(menu_text_weight()),
+            .gap(action_menu::ROW_GAP)
+            .cursor(CursorStyle::Arrow)
+            .text_size(action_menu::LABEL_TEXT)
+            .font_weight(FontWeight::NORMAL),
         format!("{id}-squircle"),
-        menu_item_radius(),
+        action_menu::ROW_RADIUS,
         None,
-        Some(with_alpha(ui.text, 0.05)),
+        Some(with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA)),
     )
     .when(selected, |row| {
         row.child(
@@ -1331,13 +1281,13 @@ fn styled_select_option(
                 .absolute()
                 .top_0()
                 .bottom_0()
-                .right(px(10.))
+                .right(action_menu::ROW_INSET)
                 .flex()
                 .items_center()
                 .child(
                     svg()
-                        .size(px(14.))
-                        .path("icons/settings/tick-02.svg")
+                        .size(action_menu::CHECK_SIZE)
+                        .path("icons/menu/check.svg")
                         .text_color(ui.text),
                 ),
         )
@@ -1538,54 +1488,38 @@ mod tests {
 
     #[test]
     fn menu_rows_nest_concentrically_inside_their_menu_surface() {
+        use crate::ui_primitives::action_menu::{PANEL_PADDING, PANEL_RADIUS, ROW_RADIUS};
         use crate::ui_primitives::interface_style::{Shape, scoped};
 
-        assert_eq!(
-            (menu_row_height(), menu_row_gap(), menu_padding()),
-            (px(30.), px(0.), px(6.))
-        );
-        assert!(!circular());
+        for shape in [Shape::Rounded, Shape::Surface, Shape::Classic] {
+            scoped(shape, || {
+                assert_eq!((menu_row_height(), menu_padding()), (px(28.), px(4.)));
+                assert_eq!(PANEL_PADDING + ROW_RADIUS, PANEL_RADIUS);
+            });
+        }
         with_surface_shape(|| {
-            let row = corner(menu_item_radius(), menu_row_height());
-            let surface = frame_corner(MENU_RADIUS);
-            assert_eq!((row, surface), (px(8.), px(14.)));
-            assert_eq!(menu_padding() + row, surface);
             assert_eq!(
                 frame_corner(crate::app::constants::SETTINGS_CARD_RADIUS),
                 px(12.)
             );
-            assert!(circular());
-        });
-        scoped(Shape::Classic, || {
-            let row = corner(menu_item_radius(), menu_row_height());
-            let surface = frame_corner(MENU_RADIUS);
-            assert_eq!((row, surface), (px(8.), px(14.)));
-            assert_eq!(menu_row_height(), px(28.));
-            assert_eq!(menu_padding() + row, surface);
         });
     }
 
     #[test]
-    fn menu_rows_carry_the_label_and_divider_metrics_of_their_shape() {
+    fn menu_rows_carry_the_label_and_divider_metrics_of_every_shape() {
         use crate::ui_primitives::interface_style::{Shape, scoped};
 
+        for shape in [Shape::Rounded, Shape::Surface, Shape::Classic] {
+            scoped(shape, || {
+                assert_eq!(menu_row_inset(), px(8.));
+                assert_eq!(menu_divider_inset(px(6.)), menu_row_inset());
+            });
+        }
         assert_eq!(menu_text_size(), px(12.));
-        assert_eq!(menu_label_text_size(), px(13.));
         assert_eq!(menu_text_weight(), FontWeight::NORMAL);
-        assert_eq!(menu_row_inset(), px(8.));
-        assert_eq!(menu_divider_inset(px(6.)), px(6.));
-        assert_eq!(menu_divider_slot(), 13.);
-        with_surface_shape(|| {
-            assert_eq!(menu_text_size(), px(13.));
-            assert_eq!(menu_divider_inset(px(6.)), menu_row_inset());
-        });
         scoped(Shape::Classic, || {
             assert_eq!(menu_text_size(), px(13.));
-            assert_eq!(menu_label_text_size(), px(13.));
             assert_eq!(menu_text_weight(), FontWeight::MEDIUM);
-            assert_eq!(menu_row_inset(), px(10.));
-            assert_eq!(menu_divider_inset(px(6.)), menu_row_inset());
-            assert_eq!(menu_divider_slot(), 9.);
         });
     }
 }

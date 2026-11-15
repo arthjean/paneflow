@@ -13,7 +13,7 @@ use crate::diff::{
     unified_offsets,
 };
 
-pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 880.0;
+pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 540.0;
 
 pub(crate) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
 pub(super) const DIFF_DOCK_PANEL_MAX_WIDTH: f32 = 1400.0;
@@ -28,21 +28,15 @@ pub(crate) enum DiffDockTab {
     PendingFile,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiffOptionsSubmenu {
-    Layout,
-    Highlight,
-    Whitespace,
-}
-
 pub(super) struct DiffChrome<'a> {
     pub(super) data: &'a Option<DiffDockData>,
     pub(super) cwd: String,
     pub(super) split: bool,
     pub(super) options: DiffOptions,
     pub(super) options_open: bool,
-    pub(super) options_submenu: Option<DiffOptionsSubmenu>,
     pub(super) collapsed: &'a HashSet<String>,
+    pub(super) tree_open: bool,
+    pub(super) width: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

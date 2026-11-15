@@ -1,25 +1,23 @@
 use super::*;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use gpui::{ImageSource, MouseUpEvent, ObjectFit, StyledImage, deferred, img};
+use gpui::{ImageSource, ObjectFit, StyledImage, deferred, img};
 use paneflow_config::schema::{DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceId};
 
 use crate::app::attention::{AttentionLevel, SpaceAttention};
+use crate::app::menu_icons as icon;
 use crate::app::spaces::{SPACE_LIMIT_REASON, space_label, space_order};
 use crate::app::workspace_ops::WorkspaceFocusTarget;
-use crate::settings::components::{floating_menu_panel, menu_row};
+use crate::ui_primitives::action_menu::{ActionMenu, MenuElement, MenuGlyph, MenuItem};
 
-use super::context_menu::context_menu_divider;
-use super::customize_menu::menu_label;
 use super::lane::lane_visual;
 
 const SPACE_CONTROL_RADIUS: f32 = 7.0;
 const SPACE_MARK_SIZE: f32 = 16.0;
-const SPACE_MENU_WIDTH: f32 = 240.0;
-const SPACE_MENU_ICON_SLOT: f32 = SPACE_MARK_SIZE;
-const SPACE_MENU_GLYPH_SIZE: f32 = 13.0;
-const SPACE_MENU_CHECK_SLOT: f32 = 14.0;
+const ATTENTION_MARK_WIDTH: f32 = 28.0;
+const SPACE_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 type SpaceAttentionMap = HashMap<Option<SpaceId>, SpaceAttention>;
 
@@ -197,13 +195,6 @@ fn render_attention_mark(
 }
 
 impl PaneFlowApp {
-    pub(crate) fn close_space_menu(&mut self, cx: &mut Context<Self>) {
-        if self.sidebar_space_menu_open {
-            self.sidebar_space_menu_open = false;
-            cx.notify();
-        }
-    }
-
     fn space_name_and_mark(
         &self,
         space: Option<&SpaceId>,
@@ -409,23 +400,85 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut menu = floating_menu_panel(div().id("sidebar-space-menu"), ui)
-            .font_family("Geist")
-            .w(px(SPACE_MENU_WIDTH))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                    this.close_space_menu(cx);
-                }),
+        let spaces = space_order(&self.cached_config)
+            .into_iter()
+            .zip(
+                SPACE_DIGIT_MNEMONICS
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(space, digit)| {
+                let current = space == self.active_space;
+                let declared = space.as_ref().and_then(|id| self.cached_config.space(id));
+                let name = declared
+                    .map_or(DEFAULT_SPACE_NAME, |space| space.name.as_str())
+                    .to_string();
+                let look = declared.map(|space| (space.color, space.avatar.clone()));
+                let pending = if current {
+                    SpaceAttention::default()
+                } else {
+                    attention.get(&space).copied().unwrap_or_default()
+                };
+                let mark: MenuElement = Rc::new(move || match &look {
+                    Some((color, avatar)) => {
+                        space_mark(*color, avatar.as_deref(), SPACE_MARK_SIZE, ui)
+                    }
+                    None => default_space_mark(SPACE_MARK_SIZE, ui),
+                });
+                let description = space_row_label(&name, current, pending);
+                let item = MenuItem::new(name, SpaceMenuAction::Activate(space))
+                    .describe(description)
+                    .glyph(Some(MenuGlyph::Element(mark)))
+                    .radio(current);
+                let item = match pending.most_urgent() {
+                    Some(_) => item.trailing(
+                        px(ATTENTION_MARK_WIDTH),
+                        Rc::new(move || {
+                            render_attention_mark(pending, ui)
+                                .unwrap_or_else(|| div().into_any_element())
+                        }),
+                    ),
+                    None => item,
+                };
+                match digit {
+                    Some(digit) => item.mnemonic(digit),
+                    None => item,
+                }
+            });
+        let new_space = if self.cached_config.spaces.len() >= MAX_SPACES {
+            MenuItem::disabled(SPACE_LIMIT_REASON).icon(icon::ADD)
+        } else {
+            MenuItem::new("New space…", SpaceMenuAction::New)
+                .icon(icon::ADD)
+                .mnemonic('n')
+        };
+        let menu = ActionMenu::new()
+            .items(spaces)
+            .separator()
+            .item(new_space)
+            .item(
+                MenuItem::new("Manage spaces", SpaceMenuAction::Manage)
+                    .icon(icon::SETTINGS)
+                    .mnemonic('m'),
             );
-        for (position, space) in space_order(&self.cached_config).into_iter().enumerate() {
-            menu = menu.child(self.render_space_menu_row(position, space, attention, ui, cx));
-        }
-        menu = menu
-            .child(context_menu_divider(ui))
-            .child(self.render_new_space_row(ui, cx))
-            .child(render_manage_spaces_row(ui, cx));
+        let handlers = self.menu_handlers(
+            cx,
+            |this, action: &SpaceMenuAction, window, cx| {
+                this.sidebar_space_menu_open = false;
+                match action {
+                    SpaceMenuAction::Activate(space) => {
+                        this.activate_space(space.clone(), Some(window), cx);
+                    }
+                    SpaceMenuAction::New => this.new_space_in_settings(window, cx),
+                    SpaceMenuAction::Manage => {
+                        this.open_settings_at(crate::SettingsSection::Spaces, window, cx);
+                    }
+                }
+            },
+            |this| this.sidebar_space_menu_open = false,
+        );
 
         deferred(crate::ui_primitives::menu_reveal(
             "sidebar-space-menu-reveal",
@@ -434,121 +487,18 @@ impl PaneFlowApp {
                 .top(px(32.))
                 .left(px(0.))
                 .occlude()
-                .child(menu),
+                .child(menu.element("sidebar-space-menu", handlers, ui)),
         ))
         .with_priority(3)
         .into_any_element()
     }
-
-    fn render_space_menu_row(
-        &self,
-        position: usize,
-        space: Option<SpaceId>,
-        attention: &SpaceAttentionMap,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let current = space == self.active_space;
-        let (name, mark) = self.space_name_and_mark(space.as_ref(), ui);
-        let pending = if current {
-            SpaceAttention::default()
-        } else {
-            attention.get(&space).copied().unwrap_or_default()
-        };
-        menu_row(
-            SharedString::from(format!("sidebar-space-menu-{position}")),
-            false,
-            ui,
-        )
-        .role(Role::Button)
-        .aria_label(space_row_label(&name, current, pending))
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.sidebar_space_menu_open = false;
-            this.activate_space(space.clone(), Some(window), cx);
-            cx.notify();
-        }))
-        .child(
-            div()
-                .w(px(SPACE_MENU_ICON_SLOT))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(mark),
-        )
-        .child(menu_label(name, ui))
-        .children(render_attention_mark(pending, ui))
-        .child(
-            div()
-                .w(px(SPACE_MENU_CHECK_SLOT))
-                .flex_none()
-                .when(current, |slot| {
-                    slot.child(
-                        svg()
-                            .size(px(13.))
-                            .path("icons/check.svg")
-                            .text_color(ui.text),
-                    )
-                }),
-        )
-        .into_any_element()
-    }
-
-    fn render_new_space_row(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if self.cached_config.spaces.len() >= MAX_SPACES {
-            return Self::render_disabled_select_menu_item(
-                "sidebar-space-menu-new".into(),
-                SPACE_LIMIT_REASON,
-                ui,
-            )
-            .into_any_element();
-        }
-        menu_row("sidebar-space-menu-new", false, ui)
-            .role(Role::Button)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.sidebar_space_menu_open = false;
-                this.new_space_in_settings(window, cx);
-            }))
-            .child(menu_icon("icons/plus.svg", ui))
-            .child(menu_label("New space…", ui))
-            .into_any_element()
-    }
 }
 
-fn menu_icon(path: &'static str, ui: crate::theme::UiColors) -> AnyElement {
-    div()
-        .w(px(SPACE_MENU_ICON_SLOT))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            svg()
-                .size(px(SPACE_MENU_GLYPH_SIZE))
-                .flex_none()
-                .path(path)
-                .text_color(ui.muted),
-        )
-        .into_any_element()
-}
-
-fn render_manage_spaces_row(
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    menu_row("sidebar-space-menu-manage", false, ui)
-        .role(Role::Button)
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.sidebar_space_menu_open = false;
-            this.open_settings_at(crate::SettingsSection::Spaces, window, cx);
-        }))
-        .child(menu_icon("icons/settings.svg", ui))
-        .child(menu_label("Manage spaces", ui))
-        .into_any_element()
+#[derive(Clone)]
+enum SpaceMenuAction {
+    Activate(Option<SpaceId>),
+    New,
+    Manage,
 }
 
 #[cfg(test)]

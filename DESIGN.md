@@ -74,9 +74,12 @@ history names them:
 | --- | --- | --- |
 | Codex app (OpenAI) | The material language of the shell: one slightly brighter translucent highlight for hover and selection, no drop shadows, inline Settings that replace the main panel, the select, toggle, and card primitives, the sectioned sidebar rail | `refactor(ui): unify chrome on the Codex material language`, `feat(settings): shared Codex-style select, toggle, and card primitives`, `feat(settings): embed Codex-style inline settings`, `feat(theme): restore PaneFlow Light with a Codex-style light shell`, changelog 0.5.4 |
 | Cursor | The diff dock chrome: file tabs as chips, the toolbar rail skin, the changes sidebar hierarchy, the compact graphite sidebar and pale blue accent of the Cursor preset | `feat(diff-dock): Cursor-style chrome and retire the Agents environment card`, `refactor(diff-dock): give the toolbar chips the sidebar rail skin`, `docs/user/themes.md` |
+| T3 Code | The Changes surface of the diff dock: the 540 px dock, the list surface picker, the toolbar, and the geometry, tints and status icons of its diff view, which renders with `@pierre/diffs` | `src-app/src/diff/element.rs`, `src-app/src/app/diff_dock/surface_picker.rs`, `THIRD_PARTY_NOTICES.md` |
 | Native window systems | Mica on Windows 11, the AppKit sidebar material on macOS, client-side decorations with platform caption glyphs | `feat(chrome): native compositor blur backdrop on Linux and macOS`, `feat(window-chrome): native Win11 caption glyphs in light and dark`, `feat(macos): add sidebar material setting` |
 
-Paneflow borrows the reasoning of these products, not their pixels. The
+Paneflow borrows the reasoning of these products, not their pixels, with one
+exception: the Changes surface ports the measurements of T3 Code's diff view
+and keeps Paneflow's theme colors for its hues. The
 bundled Vercel, Claude, and Cursor presets are identity swaps on top of one
 structure; the structure is Paneflow's.
 
@@ -129,15 +132,34 @@ Nerd Font as the default.
 
 ### 3.1 The shell
 
+The Classic interface style, the default, lays the window out edge to edge:
+three full-height columns separated by 1 px lines, with the headers of the top
+panes and the dock tabs in the title band.
+
+```text
+┌──────────────┬─────────────────────┬─────────────────────┬───────────────────────────┐
+│ ▤ Files Help │ pane tabs  +  tools │ pane tabs  +  tools │ dock tabs  +  ▥ [ _ ☐ × ] │
+│ primary      │ terminal            │ terminal            │ diff dock                 │
+│ sidebar      │                     │                     │ 540px default             │
+│ 240 to 480px ├─────────────────────┤                     │ 360px min                 │
+│              │ pane tabs  +  tools │                     │                           │
+│ Settings     │ terminal            │                     │                           │
+└──────────────┴─────────────────────┴─────────────────────┴───────────────────────────┘
+```
+
+The Rounded style floats the same regions as cards under a full-width title
+bar. The region table below gives its geometry; 4.9 lists what Classic
+changes.
+
 ```text
 ┌ title bar: max(1.75rem, 32px), full width, drag region, caption glyphs ─────────────┐
-│ ▤  Files  Help              · workspace name                         [ _  ☐  × ]    │
+│ ▤  Files  Help              · workspace name                      ▥  [ _  ☐  × ]    │
 ├──────────────┬───────────────────────────────────────────────────┬───────────────────┤
 │ primary      │ main panel: inset card, 4px inset, 10px radius,   │ right rail        │
 │ sidebar      │ corner masks painted in the shell color           │ sessions or files │
-│ 300px        │ ┌ pane card, 24px squircle ─┐ ┌ pane card ─────┐  │ 300px             │
+│ 240 to 480px │ ┌ pane card, 24px squircle ─┐ ┌ pane card ─────┐  │ 300px             │
 │              │ │ header 40px: title, tools │ │                │  │ or diff dock      │
-│ Workspaces   │ │ terminal, inset 10 / 6    │ │                │  │ 880px default     │
+│ Workspaces   │ │ terminal, inset 10 / 6    │ │                │  │ 540px default     │
 │ folder rows  │ └───────────────────────────┘ └────────────────┘  │ 360px min         │
 │ tab rows     │              8px gutter, 80px min pane            │                   │
 │ update banner│                                                   │                   │
@@ -148,13 +170,13 @@ Nerd Font as the default.
 | Region | Role | Geometry | Source |
 | --- | --- | --- | --- |
 | Window | Client-side decorations on every platform | Default 1200 by 800, minimum 800 by 500, corner radius 10, border 1, resize border 10, shadow black 0.4 blurred 5 when floating | `src-app/src/window_state.rs`, `src-app/src/app/constants.rs`, `src-app/src/window_chrome/csd.rs` |
-| Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
-| Primary sidebar | Workspaces rail in Agents, navigation in Settings | Width 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/app/render.rs` |
+| Title bar | Drag region, sidebar toggle, Files and Help menus, workspace name, diff dock toggle, caption controls | Height max(1.75 rem, 32 px); control size 20; edge inset 8; control spacing 12; macOS brand padding 80 for the traffic lights | `src-app/src/window_chrome/title_bar.rs` |
+| Primary sidebar | Workspaces rail in Agents, navigation in Settings | The Workspaces rail is 432 wide by default, 90 % of the widest, and resizes from 240 to 480 by its right edge, with a detent on the default, capped so the main panel keeps 200 px beside the right rail; the Settings navigation is a fixed 300; slides in 280 ms | `src-app/src/app/sidebar/mod.rs`, `src-app/src/app/sidebar/resize.rs`, `src-app/src/app/render.rs` |
 | Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/app/render.rs`, `src-app/src/window_chrome/mod.rs` |
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Comfortable density: gutter 8, divider hit area 7, minimum pane 80. Compact density (`comfortable_density: false`): no outer gutter, a 1 px `border` divider whose 7 px hit area straddles both panes, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
-| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 880 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
+| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
 | Footer | The Settings row, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
 ### 3.2 Modes
@@ -175,8 +197,8 @@ hides the workspace name while Settings is open.
 | Overlay | Placement | Shell | Source |
 | --- | --- | --- | --- |
 | Pane palette | Fills an empty tab, titled `New pane` | A centered 260 px column on a 24 px squircle of the terminal background: 13 px Semibold title, an optional branch row 28 tall, preset rows 34 tall with a 14 px agent mark, gap 2, list capped at 420 tall, inline error at 11 px | `src-app/src/app/pane_palette.rs` |
-| Diff dock surface picker | Fills a fresh dock | Three cards 122 by 98, gap 12, radius 10, grid padding 16 | `src-app/src/app/diff_dock/surface_picker.rs` |
-| Menus and selects | Deferred, anchored under the trigger | Radius 14 with circular corners, list padding 6, item height 30: the surface contract of 4.9 | `src-app/src/settings/components.rs` |
+| Diff dock surface picker | Fills a fresh dock | A centered list 320 wide at most, padding 24: a 13 px Semibold title 12 above three 32 px rows, row gap 2, a 16 px muted icon, content gap 10, the keycap of the row's digit at the right | `src-app/src/app/diff_dock/surface_picker.rs` |
+| Menus and selects | Deferred, anchored under the trigger | Radius 8, list padding 4, item height 28: the menu contract of 5.6, the same in every interface style | `src-app/src/ui_primitives/action_menu.rs`, `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
 | Path picker | Anchored to the terminal cursor: under it, or above it with the field last when the space below cannot hold ten rows | The command palette panel of 5.7 at 420 wide, ten rows before the list scrolls | `src-app/src/terminal/path_picker/` |
@@ -221,8 +243,8 @@ inside `theme/builtin.rs`.
 | `text` | Primary text, icons on hover | `#dddddd` | `#262626` |
 | `accent` | Links, selected metadata, the one primary action | `#57d5c4` | `#4c6fff` |
 | `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#29681c`, `#df8e1d`, `#a00b2b`, `#fe640b` |
-| `vc_added_background`, `vc_deleted_background` | Row washes in the diff | added, deleted at 0.12 | `#40a02b`, `#d20f39` at 0.16 |
-| `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | `#40a02b`, `#d20f39` at 0.40 |
+| `vc_added_background`, `vc_deleted_background` | Row washes in the diff for a theme that sets its own washes; every other theme washes rows with `vc_added` or `vc_deleted` at 0.07 over `base` | added, deleted at 0.12 | `#40a02b`, `#d20f39` at 0.16 |
+| `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row for a theme that sets its own washes; every other theme uses `vc_added` or `vc_deleted` at 0.20 in dark and 0.15 in light | `vc_added`, `vc_deleted` at 0.40 | `#40a02b`, `#d20f39` at 0.40 |
 | `agent_error` | Failed agent state | `#ff6f6a` | `#a00b2b` |
 
 The dark work surface is `#181818` and the dark chrome is `#141414`: the
@@ -321,7 +343,9 @@ activity registers use their own ramp, never the level colors: level 0 is
 | System Info and About dialogs, toast | 20 | squircle | 1 px `border` at 0.6 on a dialog, none on a toast |
 | Settings card | 12 | circular, the surface contract of 4.9 | none |
 | Pane palette ground | 24 | squircle | none |
-| Menu, select popup, usage bubble | 14 | circular, the surface contract of 4.9 | 1 px `text` at 0.12 and the surface shadow |
+| Menu, select popup | 8 | circular, the menu contract of 5.6 in every style | 1 px `text` at 0.10 and the menu shadow |
+| Menu row, select option | 4 | circular, concentric in 4 px of padding | none |
+| Usage bubble | 14 | circular, the surface contract of 4.9 | 1 px `text` at 0.12 and the surface shadow |
 | Primary sidebar workspace and tab rows | 9 | continuous corner approximation | no border |
 | Primary sidebar header controls | 7 | continuous corner approximation | no border |
 | Primary sidebar Settings button | 12 | continuous corner approximation | 36 px high, glyph 18 px for optical balance with the 20 px filter glyph |
@@ -330,7 +354,7 @@ activity registers use their own ramp, never the level colors: level 0 is
 | Usage ring | full | stroked circle, round caps | a `text` at 0.13 track; sizes 16 (stroke 2.5), 44 (4.5), and 76 (7); two concentric rings sit 3 px apart |
 | Usage register cell | 2 | round | none; 8 px cells, 2 px gap |
 | Primary sidebar inline hover actions | 6 | continuous corner approximation | no border |
-| Tab icon cards, shared row skin, secondary button, menu item, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
+| Tab icon cards, shared row skin, secondary button, tooltip, terminal search, title bar update pill, sidebar update banner, toast action button | 14 | squircle | tab icon card, tooltip and terminal search, 1 px `border` |
 | Theme tile | 10 | round | 2 px `text` at 0.12, 0.32 on hover, 0.85 when selected |
 | App icon tile | 18 | round, concentric with the 64 px icon plate through a 2 px gap | 2 px `text` at 0 at rest, 0.32 on hover, 0.85 when selected; tiles sit 6 px apart, in a wrapping row 10 px under the setting text; a tile carries no label, its name is the tooltip |
 | Filter field, settings control, select trigger, title bar menu trigger | 8 | round | none |
@@ -338,7 +362,7 @@ activity registers use their own ramp, never the level colors: level 0 is
 | Theme mockup inner frame | 7 | round | none |
 | Dismiss button (`dismiss_button`), sidebar update banner `Retry` | 24 tall, concentric with the host: 7 in the sidebar banner | squircle | none |
 | Toolbar pill, sidebar IPC banner, sidebar branch chip, branch prompt field | 6 | round | IPC banner 1 px `border` |
-| Title bar sidebar toggle, branch prompt primary button | 5 | round | none |
+| Title bar sidebar and diff dock toggles, branch prompt primary button | 5 | round | none |
 | Icon button | 4 | round | none |
 | Scrollbar thumb, header chip, filter clear | 3 | round | none |
 
@@ -347,7 +371,7 @@ Squircle means `squircle_fill` and `squircle_border` from
 `setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
 small circular controls and the explicitly round surfaces in the table.
 
-This table is the Paneflow interface style, and its radii are the design
+This table is the Rounded interface style, and its radii are the design
 radii every call site passes. The surface shape and the Classic style of 4.9
 resolve the same design radii to their own scales inside the squircle
 primitives, so a
@@ -362,7 +386,7 @@ call site never branches on the style to pick a radius.
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
 | Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
-| Diff dock tab bar | 44, the pane header chips (`unified_tab_chip`, `tab_close_button`, the terminal `tab_badge`), sized to the label between 64 and 208 instead of the pane's fixed 208; 32 tall, radius from the dock card frame; the strip scrolls with edge fades and the new tab button sits at the right beside the panel actions |
+| Diff dock tab bar | 44, the pane header chips (`unified_tab_chip`, `tab_close_button`, the terminal `tab_badge`), sized to the label between 64 and 208 instead of the pane's fixed 208; 32 tall, radius from the dock card frame; the strip scrolls with edge fades and the new tab button sits at the right beside the maximize action, with no close button since the title bar toggle closes the dock; a 1 px bottom divider, dropped while Changes is the active tab so its toolbar sits under the strip without a line; in Classic the strip sits in the title band at the title bar height with no divider (4.9) |
 | Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
 | Sidebar action button | 22, gap 1; folder glyph 15 in a 20 px slot |
@@ -370,14 +394,15 @@ call site never branches on the style to pick a radius.
 | Sessions row | minimum height 32, terminal glyph on the tab title column; 5 rows per agent group before Show all |
 | Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
-| Menu | list padding 6, no item gap, item height 30, a 13 px divider slot, width 200 to 280, max height 400 |
+| Menu | list padding 4, no item gap, item height 28, a 9 px divider slot, width fitted to the widest row between 160 and 320 (selects 200 to 280), max height 400 |
 | Toggle | track 36 by 22, knob 18 |
 | Icon buttons | small 20 outer with 12 icon, medium 24 outer with 13 icon |
 | Toolbar pill | height 24, padding 8, gap 5 |
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
 | Toast | inset 18, padding 16 by 12, minimum width 220, action buttons 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
-| Diff | body inset 8 on the sides and bottom, row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
+| Diff | body inset 8 on the sides and bottom, row 20, file header 32 and sticky at the same height, 8 after an expanded file, hunk separator 24 inset 8 with a 32 expand cell, a gap of 2 and radius 6, gutter of 2 characters, the line number (3 digits at least) and 1 character, then a 2 px gap in the background color and 1 character before the code, change bar 4, split divider 2, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
+| Changes toolbar and tree | toolbar row 28 with 8 below, controls 24, layout segments 20 tall, icons 14; tree 40 % of the dock between 160 and 256 wide, header 28, rows 24 inset 6, indentation 12, icons 14, chevrons 12 |
 | Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
 
 ### 4.6 Typography
@@ -393,7 +418,8 @@ call site never branches on the style to pick a radius.
 | Dialog title | Geist | 16 | About, System Info |
 | Splash | Geist | 34 | Startup wordmark |
 | Terminal | User choice among fixed-pitch families; default the bundled JetBrainsMono Nerd Font, with the Mono-suffixed name kept as an alias | 13 pt default, weight, line height, and cell width configurable | Panes |
-| Code and diff | `resolve_font_family(None)`, the terminal default | 12 | Diff dock, editor, theme preview |
+| Code | `resolve_font_family(None)`, the terminal default | 12 | Editor, theme preview |
+| Diff | The code family for lines, line numbers and the header diffstat; Geist for the file path and the hunk separator label | 13 for lines, 12 in the file header, 11 in the hunk separator | Changes tab |
 
 The named constants live in `src-app/src/ui_primitives.rs`: `LABEL_XS` 10,
 `LABEL_SM` 11, `BODY` 12, `BODY_EMPHASIS` 13, `TITLE` 14. Use them instead of
@@ -444,12 +470,10 @@ sidebar footer settings button uses the matching `settings.svg` gear.
 | 11 | Sidebar agent state glyphs (bell, error, pull request) and the thinking matrix |
 | 12 | Small icon button, select chevron, drag ghost |
 | 13 | Medium icon button, filter search, preset logo, menu check mark, path picker recent clock |
-| 14 | Title bar sidebar toggle, editor logos, sidebar footer banners and gear |
+| 14 | Title bar sidebar and diff dock toggles, editor logos, sidebar footer banners and gear |
 | 15 | Toast error icon, sidebar folder, sidebar header glyphs |
-| 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header file-type icon, usage ring in the sidebar capsule |
-| 17 | Diff file header generic glyph |
+| 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header chevron, status icon and rename arrow, hunk separator icon, usage ring in the sidebar capsule |
 | 18 | Empty-state glyph |
-| 20 | Diff file header Rust icon, which needs the larger box |
 
 File type icons come from `src-app/src/file_icons.rs`, which maps extensions
 to `icons/languages/`.
@@ -472,8 +496,11 @@ middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 | Toggle switch | 180 ms, scaled by the distance left to travel | ease-out quint | `animated_toggle`: the knob slides and the track crossfades between off and `switch_blue`; retargets mid-flight, and a switch seen for the first time rests |
 | Pane header buttons | 120 ms | ease-out quint | Tint of the action buttons and the close glyph; the close slot itself toggles with the header hover |
 | Unfocused pane dim | 130 ms, scaled by distance | ease-out quint | Overlay of the terminal background |
-| Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width |
+| Primary sidebar slide | 280 ms | cubic ease-out | Panel inset and gutter follow the width; double-clicking the resize handle glides the width back to the default on the same curve |
+| Resize edge nudge | 220 ms | smoothstep out over the first 32 %, smoothstep home over the rest | `resize_edge`: a drag that reaches the floor or the ceiling of a resizable edge pushes it 5 px past the limit and brings it home, once per visit to the limit however long the pointer is held there; the stored size never leaves its range. Used by the Workspaces sidebar |
+| Resize detent settle | 120 ms | cubic ease-out | `resize_edge`: when a drag catches or leaves a detent, the edge eases over the gap instead of jumping, trailing the pointer by the detent reach at most. Used by the Workspaces sidebar's default width |
 | Workspaces rows | 180 ms | cubic ease-out | `SidebarRowMotion`: folding or unfolding a workspace folder, or filtering the rail, fades each tab row while its measured height grows or shrinks, the group gap below a folder follows the last row, and the folder glyph crossfades between `folder.svg` and `folder-open.svg`; a new toggle retargets from the current state, and a folder seen for the first time rests |
+| Workspaces selection | 150 ms | cubic ease-out | `SidebarSelectionMotion`: selecting or releasing a row fades its `accent` wash and turns a workspace title to `text`; where it touches a selected row, the wash between them fades in and the shared corners square off at the pace of the slower of the two; a new toggle retargets from the current state. Rows closed from a selection fade and fold over 180 ms, through `SidebarRowMotion` in the folder grouping, and are removed 200 ms after the close is confirmed. Reduced motion applies every state at once and removes the rows immediately |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
 | Status spinner | 1 s loop | linear rotate | Empty states |
@@ -486,7 +513,9 @@ middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 `ui_primitives::reduce_motion()` and GPUI's `cx.reduce_motion()`
 (`ui_primitives::set_reduce_motion`), and every animation that reads either
 one rests: among them `animated_hover` settles instantly, the primary sidebar
-toggles without the slide, the Workspaces rows fold and filter without
+toggles without the slide, stops at its resize limits without the nudge and
+snaps onto its default-width detent without the settle,
+the Workspaces rows fold and filter without
 motion, `menu_reveal` mounts menus at rest, toasts and the empty-state and
 comet spinners hold still, and the sidebar thinking matrix holds its first
 frame. The terminal drops its sub-line pixel offset so a trackpad scrolls the
@@ -502,35 +531,36 @@ the flag. Feedback is never removed, only its interpolation.
 ### 4.9 Interface styles
 
 `interface_style` (Settings, Appearance, **Interface style**) selects the
-shape language of the whole app. `ui_primitives/interface_style.rs` holds the
+layout and shape language of the whole app. Classic is the default; a config
+that still says `paneflow`, the former name of Rounded, selects Rounded. `ui_primitives/interface_style.rs` holds the
 active style, set at boot, on every config reload, and when the setting
 changes, which also refreshes every window. Color roles, type, spacing outside
 menus and the path picker, and motion are shared by every style.
 
 | Style | Corners | Floating surfaces |
 | --- | --- | --- |
-| Paneflow (default) | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 and a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10) on menus and select popups; a `border` edge at 0.6 and no shadow elsewhere |
-| Classic | Circular corners on a 6, 8, 12, 14 scale | A `text` edge at 0.07 and a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12) |
+| Classic (default) | Circular corners on a 6, 8, 12, 14 scale, in the edge-to-edge shell described below | A `text` edge at 0.07 and a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12) |
+| Rounded | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 and a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10) on menus and select popups; a `border` edge at 0.6 and no shadow elsewhere |
 
-The Paneflow style draws two shapes. Its chrome (pane cards, tabs, rail rows,
+The Rounded style draws two shapes. Its chrome (pane cards, tabs, rail rows,
 dialogs, toasts, the command palette, the pane palette, buttons) keeps the
 squircles of 4.4. Four surface families draw the surface shape instead: popup
 and context menus, select popups, the sidebar usage bubble, and settings
-cards. `interface_style::Shape` names the three shapes (`Paneflow`, `Surface`,
-`Classic`), and `surface_shape` maps Paneflow to Surface and leaves Classic
+cards. `interface_style::Shape` names the three shapes (`Rounded`, `Surface`,
+`Classic`), and `surface_shape` maps Rounded to Surface and leaves Classic
 unchanged. The builders of those surfaces in `settings/components.rs`
 (`menu_surface_filled`, `floating_menu_panel`, `select_menu`, `select_option`,
 `menu_row`, `menu_divider`, `setting_card`, `list_card`, `card_tint`) and the
 usage bubble run inside `with_surface_shape`, and a squircle primitive keeps
-the shape it was built under until it paints. `pick(paneflow, classic)` chooses
-a value by style; `pick_surface(paneflow, surface, classic)` is for a value
+the shape it was built under until it paints. `pick(rounded, classic)` chooses
+a value by style; `pick_surface(rounded, surface, classic)` is for a value
 that changes on a surface, such as the menu label size. The generic
 `select_item` row keeps its 12 px text outside a menu.
 
-The command palette and the Clone repository dialog keep the Paneflow shape
+The command palette and the Clone repository dialog keep the Rounded shape
 in every style: `render_command_palette` and `render_clone_repo` build inside
-`with_paneflow_shape`, as do the lazily built rows of the palette list, and
-they read the Paneflow constants of `ui_primitives/quick_pick.rs` directly.
+`with_rounded_shape`, as do the lazily built rows of the palette list, and
+they read the Rounded constants of `ui_primitives/quick_pick.rs` directly.
 
 `surface_corner` maps a design radius from 4.4 to the surface scale at paint
 time, reached through `interface_style::corner`:
@@ -538,15 +568,16 @@ time, reached through `interface_style::corner`:
 | Design radius (4.4) | Surface radius | Surfaces |
 | --- | --- | --- |
 | 20 and above | 12 | Settings card |
-| 16 to 19 | 14 | Menu, select popup, usage bubble |
-| 8 to 15 | 6 under 30 px of height, 8 from 30 px | Menu rows, select options, focus rings |
-| Under 8 | The design radius, capped at 6 | Small marks inside a menu |
+| 16 to 19 | 14 | Usage bubble |
+| 8 to 15 | 6 under 30 px of height, 8 from 30 px | Focus rings |
+| Under 8 | The design radius, capped at 6 | Small marks |
 
 The surface contract:
 
 | Surface | Contract | Source |
 | --- | --- | --- |
-| Menus, context menus, select popups, usage bubble | Radius 14, padding 6, rows 30 tall at radius 8 with no gap: 6 plus 8 keeps a row concentric in the surface. A `text` edge at 0.12, and the surface shadow on floating menus and select popups. Labels are 13 px Regular with an 8 px inset; shortcuts are 12 px in `muted`; dividers are `text` at 0.07, inset 8 px from the row edges with 6 px above and below (a 13 px `menu_divider_slot`); the submenu chevron is 16 px and overhangs the inset by 2 px. A select popup adds a 1 px edge highlight under its fill | `settings/components.rs` |
+| Menus, context menus, select popups | The menu contract of 5.6, identical in every interface style | `ui_primitives/action_menu.rs`, `settings/components.rs` |
+| Usage bubble | Radius 14, padding 6, a `text` edge at 0.12 and the surface shadow | `settings/components.rs` |
 | Settings card | Radius 12 and no border: `setting_card`, and the `list_card` of the Keyboard shortcuts groups, paint only their fill, and the card reads through its surface step above the page | `settings/components.rs` |
 
 Classic takes its geometry from the Claude Code side of the Claude desktop
@@ -559,7 +590,7 @@ and the composer at radius 12; a menu at radius 14 with 6 px of padding.
 
 | Design radius (4.4) | Classic radius | Surfaces |
 | --- | --- | --- |
-| 20 and above | 12 | Pane card, right dock, pane palette ground, settings card, dialog, toast |
+| 20 and above | 12 | Settings card, dialog, toast, and a pane card outside the edge-to-edge shell |
 | 16 to 19 | 14 | Menu, select popup, path picker panel |
 | 8 to 15 | 6 under 26 px of height, 8 from 26 px | Buttons, sidebar controls, tooltips, inputs, terminal search, tab icon cards |
 | Under 8 | The design radius, capped at 6 | Header controls, inline actions, badges, chips |
@@ -593,6 +624,18 @@ The Classic toast was not observed in the reference app, so its layout is
 Paneflow's own. Colors stay the theme's in every style: the reference greys
 are not imported.
 
+Classic also changes the shell, after T3 Code: `flush_shell` in
+`app/cli_diff_dock.rs` lays the window out edge to edge.
+
+| Region | Classic layout | Source |
+| --- | --- | --- |
+| Main panel | No inset, no radius and no corner masks. Panes join edge to edge whatever `comfortable_density` says, with square outer corners and no outer border | `rendered_pane_density` in `app/render.rs`; `flush_radius`, `flush_border` in `layout/density.rs` |
+| Dividers | 1 px `border` lines: one down the whole window at the right edge of the primary sidebar, one at the left edge of the dock, one at the left edge of the sessions rail under the title band | `app/render.rs`, `app/cli_diff_dock.rs` |
+| Title band | The title bar paints bare, its background and drag region only, under the panel. The shell overlays the brand (sidebar toggle, Files, Help) at the top left and the trailing controls (update pill, dock toggle, caption controls) at the top right | `render_brand`, `render_trailing` in `window_chrome/title_bar.rs` |
+| Pane headers | Every pane header is as tall as the title bar instead of 44. The pane grid starts at the top of the window, so the headers of the top row sit in the title band. The top-left header insets its tabs 8 px past the brand when the sidebar is hidden, and the top-right header keeps its actions 8 px clear of the trailing controls when no dock is open; both widths are measured by zero-size probes. The empty part of a top-row header drags the window and zooms it on a double-click, while tabs, the new tab button and the header actions keep the press | `window_chrome/title_band.rs`, `pane.rs` |
+| Dock | The dock tab strip sits in the title band above the dock column, on the dock card background, followed by the trailing controls. The dock column has no header row and no card border, and the strip starts past the brand when the dock fills the panel with the sidebar hidden | `render_diff_dock_title_strip` in `app/diff_dock/mod.rs` |
+| Settings, welcome, empty workspace | A plain title band with a 1 px `border` line under it | `app/render.rs` |
+
 Toggles, status dots, avatars, segmented pills, and the usage ring keep their
 full radius in every style. The window and the main panel keep radius 10.
 
@@ -605,11 +648,22 @@ shows the window menu where the platform has one. Left rail: the sidebar
 toggle (20 px, radius 5, resting tint when the sidebar is hidden), then
 `Files` and `Help` triggers (height 20, padding 6, radius 8, 12 px, muted
 until hovered or open). Center: a 3 px muted dot and the workspace name at 12
-px Medium, hidden in Settings. Right: the caption controls. The title bar
+px Medium, hidden in Settings. Right: the diff dock toggle, then the caption
+controls. The toggle mirrors the sidebar toggle (20 px, radius 5, the 14 px
+`icons/layout-sidebar-right.svg` glyph in `muted`) and is the only control
+that opens the dock from the chrome: pane headers carry none. It holds the
+resting tint while the dock is open, the reverse of the sidebar toggle, which
+is tinted while its sidebar is hidden. Its tooltip reads `Show Changes dock`
+or `Hide Changes dock`. It opens the dock on the active tab's checkout and
+always closes an open dock; `toggle_diff_dock` (`Cmd/Ctrl+Alt+B`) and the
+command palette run the same toggle. It is absent in Settings and when no
+workspace is shown. On Windows, when the caption glyphs are visible, a
+centered 1 px by 16 px `border` divider follows it after an 8 px gap; with no
+caption controls it keeps the 8 px edge inset. The title bar
 still carries its own IPC pill code, but the cockpit shell never renders it
 (`tb.cockpit = true` in `app/render.rs`); that code is **Migration**, and the
-sidebar footer owns the IPC banner. Between the center and the caption
-controls sits the update pill, the single control for every update state
+sidebar footer owns the IPC banner. Between the center and the diff dock
+toggle sits the update pill, the single control for every update state
 (`resolve_update_pill` in `app/self_update_flow.rs`): height 24, padding 10,
 gap 5, squircle 14 through `squircle_skin`, no border, 12 px Medium like
 `solid_button`. Any known
@@ -633,7 +687,9 @@ date` in `vc_added` with no glyph, or `Retry update check` with the alert glyph
 in `vc_deleted`, each on its 0.12 wash and gone after 3 s. On Windows the caption glyphs are native Windows 11
 shapes; on macOS the traffic lights get 80 px of brand padding. The title bar
 draws no bottom hairline inside the cockpit shell; the panel inset separates
-it from the content.
+it from the content. In the Classic style the bar paints bare and the shell
+places its brand and trailing controls over the pane headers and the dock
+tabs of the title band (4.9).
 
 ### 5.2 Primary sidebar, Agents mode
 
@@ -653,6 +709,32 @@ filter, and radius 12 for Settings,
 following the supplied larger reference.
 The sidebar uses the same shared renderer as cards, menus, tooltips, Settings,
 pane surfaces, and the diff dock. Each component retains its own radius.
+
+The rail's right edge resizes it. A 7 px handle runs from under the title bar
+to the bottom of the window, 2 px over the rail and 5 px over the main panel,
+absent in Settings, while the rail is hidden, and during its slide. Under the
+pointer, or while dragging, it shows the column resize cursor and a 1 px rule
+in `text` at 0.16 on the rail's last pixel column, fading to nothing toward
+both ends so it never meets the panel's rounded corners; the rule is invisible
+at rest and goes out while the drag is held against a limit. The width follows
+the pointer from where it was pressed, between 240 px and the smaller of
+480 px and the window width minus the right rail and 200 px for the main
+panel; rows, the title bar rail, the footer and the drag previews follow it.
+Reaching either limit plays the resize edge nudge of 4.8. The default width,
+432 px, is a detent with no mark of its own: while the pointer asks for a
+width within 12 px of it the edge holds on 432 px and the rule turns solid
+`accent` over its whole height, so the default is found by feel and widths
+within 12 px of it cannot be chosen; catching and leaving the detent play the
+resize detent settle of 4.8. A window too narrow to show the default has no
+detent. The cursor stays the
+column resize cursor over the whole window until the button is released.
+Double-clicking the handle glides back to the default. A narrower window caps
+the width shown without forgetting the chosen one. The chosen width persists
+in `window-state.json` (`sidebar_width`), written once a gesture ends and
+absent at the default; a missing or unusable value falls back to the default.
+The handle
+is a vertical splitter named `Resize the Workspaces sidebar` and has no
+keyboard path yet.
 
 Header row `Workspaces` at label size with two 22 px icon buttons (the
 Customize sidebar menu behind a filter glyph, and new workspace behind a
@@ -838,6 +920,40 @@ ever stopping on a group header, follows an agent that changes group, wears
 the same cursor ring (`text` at 0.35), and Enter on a row focuses its pane as
 a click does.
 
+Workspace and tab rows can be selected together and closed in one go
+(`src-app/src/app/sidebar/selection.rs`). `Cmd/Ctrl`+click toggles a row in
+the selection without activating it or folding its workspace. `Shift`+click
+replaces the selection with the range from the last toggled row, else from the
+active tab, to the clicked row, and from the focused tree `Shift`+Up and
+`Shift`+Down extend it from the cursor. A selected workspace covers its tabs,
+which show selected with it; toggling one of them trades the workspace for its
+other tabs. A range takes a workspace whole only when its row is an end of the
+range or every tab row it shows is inside, so crossing a folder row never
+selects tabs below the range. A plain click or `Escape` clears the selection,
+and a row that leaves the rail leaves it, as does every workspace pick once
+the rail is grouped by status.
+
+A selected row takes an `accent` wash at 0.16 over its own tint and a
+workspace title turns `text`; the wash is the only mark, the row keeps its
+hover action, and its accessible name ends with `, selected`. Selected rows
+that touch read as one block: the wash also fills the 2 px between them and
+the corners on the shared edge square off, for the row's own tint, hover wash
+and cursor ring too. Rows touch inside a workspace and between folded
+workspaces, never across the 10 px that separates a workspace from the next,
+and with the indent guide on a folder row does not join its narrower tab
+rows. The cursor ring stays hidden after the pointer selects a row and
+returns with the first key pressed in the tree. The selection adds no surface
+of its own: no bar, no counter. A selection click focuses the tree, so
+`Delete` or `Backspace` closes the selection, as does the context menu of a
+selected row, which holds `Close 2 workspaces and 3 tabs` and `Clear
+selection` in place of the row's own menu. A single row closes at once, as its hover action does.
+Two or more ask first, in the card of the worktree removal dialog: the title
+`Close 2 workspaces and 3 tabs?`, the number of sessions that will stop, up to
+eight rows with their kind word, then `Cancel` and a destructive `Close
+selection`; Enter confirms and Escape cancels. Unsaved files are then asked
+about once for the whole selection, the rows leave with the motion of 4.8, and
+one toast names what was closed.
+
 Drop placeholder while dragging: margin 6, radius 8, blue at 0.10 with a 0.22
 border and a 2 px line.
 
@@ -895,11 +1011,13 @@ tab structure changes reset the transition to avoid stale rows.
 A 24 px squircle filled with the terminal background, 1 px `border`. With
 `comfortable_density` off, the card loses its own radius and gutter: it fills
 its cell of the grid, rounds only the corners on the grid's outer edge, and the
-1 px divider between cells stands in for the shared borders. The
+1 px divider between cells stands in for the shared borders. The Classic style
+is always in that compact form, with square outer corners, and its header row
+takes the title bar height; the top row sits in the title band (4.9). The
 header shares the 44 px surface tab row, with no repeated pane name: a 6 px status dot, 9 px
 chips for progress and worktree, and on the right 22 px action buttons that
-appear only on the focused pane (split vertical, split horizontal,
-the diff dock), and a `Z` chip on `accent` when the pane is zoomed.
+appear only on the focused pane (split vertical, split horizontal),
+and a `Z` chip on `accent` when the pane is zoomed.
 There is no separate pane close button; closing the last surface closes the pane. The identity
 pill was removed in 0.9; the sidebar carries identity, the pane carries
 title and state.
@@ -911,7 +1029,8 @@ close slot with a 12 px glyph shown on hover. Only the active tab has a
 resting capsule fill; other tabs gain a background on hover. Pane actions
 sit to the right of New tab, separated by a
 1 px by 16 px divider. Agent sessions lives in the right panel header and
-targets the active pane. Diff attribution lives in the surface tab tooltip.
+targets the active pane. The diff dock is a window-level panel, so its toggle
+lives in the title bar (5.1), not in the pane header. Diff attribution lives in the surface tab tooltip.
 Dragging a surface tab within the layout uses the gray pane drop preview.
 A center drop moves the tab into the target pane; an edge drop splits the
 target with the same surface entity. Moving the last tab removes the source
@@ -973,28 +1092,59 @@ terminal state and reflows docked siblings. A fully detached layout shows contro
 to reveal its windows or return its panes. Closing a detached window returns the
 pane, while explicit Close Pane retains its normal destructive meaning.
 
-The dock attaches to a tab and opens on a surface picker (three cards, 122 by
-98). It starts with no content tabs: Changes is created only when selected in
-the picker or the `+` menu, which also offers File and Terminal. Every content
-tab is closable, including Changes and the first tab. Closing the last tab
-returns to the picker; switching sessions preserves the chosen tabs.
-Tabs are chips with the sidebar rail skin: no separators, active chip on
-the active tint, inactive chips wash in on hover. Change bars are 4 px,
-dashed for deletions; file headers are 32 px rows that collapse to a 24 px
-sticky header while scrolling, with the file-type icon on the left and the
-diffstat right-aligned.
+The dock attaches to a tab, 540 px wide by default, and opens on a surface
+picker: the title `Open a surface` over a list of Changes, Terminal and File,
+each row carrying its icon and the keycap of the digit that opens it. The
+picker takes the focus when the dock opens empty, so `1`, `2`, `3`, the arrow
+keys with Enter, and Escape work at once, and the focus returns to where it
+was when the picker goes away. The dock starts with no content tabs: Changes
+is created only when selected in the picker or the `+` menu, which also offers
+File and Terminal. Every content tab is closable, including Changes and the
+first tab. Closing the last tab returns to the picker; switching sessions
+preserves the chosen tabs. Tabs are chips with the sidebar rail skin: no
+separators, active chip on the active tint, inactive chips wash in on hover.
 
-Changed rows paint in two tones. The line wash is `vc_added_background` or
-`vc_deleted_background`, 0.12 in dark and 0.16 in light, and the words that
-differ inside a modified block sit on `vc_word_added` or `vc_word_deleted` at
-0.40, painted between the line wash and the text at the x positions of the
-shaped line, so tabs and CJK glyphs align with the rectangle. A run that
-scrolls past the cell edge is clipped to the cell. A block whose two sides
-differ only by whitespace is muted: the line wash drops to 0.08, no word
-rectangle is painted, and the 4 px change bar sits at 0.5 alpha. Highlight
-`None` keeps the change bar and gutter tint and drops every wash. Both
-`Highlight` and `Whitespace` live in the Changes options menu
-next to Layout and are session-scoped like Split and Unified. Highlight is
+The Changes tab follows T3 Code. Its toolbar is one 28 px row with no border
+above or below: `Uncommitted` and the branch chip on the left; on the right
+the total diffstat (hidden under 460 px of width), refresh, collapse or expand
+all, the Unified and Split segments, the whitespace toggle, the file tree
+toggle and the `…` options menu. The tree lists the changed files at the right
+of the diff, single-child folders flattened, with the language icon and a
+status letter per file; a click reveals the file in the diff.
+
+A file header is a 32 px row on the code background with no separator band,
+and it stays pinned at that height while its file scrolls. From the left: a
+16 px chevron in `muted` at 0.8, the 16 px status icon (added in `vc_added`,
+deleted in `vc_deleted`, modified and renamed in `vc_modified` at 0.65), then
+the full path in Geist 12 in one color, cut from the start with an ellipsis
+when it does not fit. A renamed file shows its previous path at 0.7 and an
+arrow before the new one. The diffstat is right-aligned in two columns of 4
+characters, additions then deletions. The pointer draws a 3 px edge of `text`
+at 0.24 on the left of the header, never a full band. An expanded file is
+followed by 8 px of background.
+
+Lines are 20 px tall in the code font at 13. The gutter holds the change bar
+and one right-aligned line number, `text` at 0.65 on a context line and the
+change hue on a changed line; a 2 px gap in the background color separates it
+from the code. A changed line washes both its gutter and its code cell with
+the change hue at 0.07 over `base`, the effective tint of the reference, and
+a theme that sets its own washes keeps them. The change bar is 4 px, solid
+for an addition and striped in 1 px dashes for a deletion. Hidden context is a
+24 px hunk separator inset 8 px from both edges: a 32 px expand cell and the
+`N unmodified lines` label in Geist 11, `text` at 0.5 on `text` at 0.03, with
+6 px outer corners; the icon points up before the first hunk of a file, down
+after the last, and both ways between two hunks. In Split, the two sides are
+2 px apart and a side with no line is hatched in `text` at 0.10.
+
+The words that differ inside a modified block sit on the change hue at 0.20
+in dark and 0.15 in light, painted between the line wash and the text at the
+x positions of the shaped line, so tabs and CJK glyphs align with the
+rectangle. A run that scrolls past the cell edge is clipped to the cell. A
+block whose two sides differ only by whitespace is muted: the line wash drops
+to 0.035, no word rectangle is painted, and the 4 px change bar sits at 0.5
+alpha. Highlight `None` keeps the change bar and the colored line number and
+drops every wash. `Highlight` and `Whitespace` live in the Changes options
+menu and are session-scoped like Split and Unified. Highlight is
 applied at paint time to cached word-level rows: switching Words, Lines, or
 None requires no Git work or row rebuild and preserves the scroll position.
 Whitespace changes the comparison and rebuilds rows off the render thread;
@@ -1052,11 +1202,9 @@ Tree visibility remains local to the active agent session.
 
 The file header places Zed's 14 px `filter.svg` icon after `Ln` and `Col`.
 Its Editor Controls menu offers Minimap and Scrollbar toggles, scoped to the
-open file tab. The minimap starts hidden; scrollbars start visible. This menu
-is a contextual exception to the shared menu skin: it follows Zed's 200 px
-minimum width, 6 px corners, 1 px border, 4 px vertical padding, 14 px check
-slot on the left, and small two-layer shadow. Palette roles remain theme-aware.
-Escape, an outside click, or a second click on the trigger dismisses it.
+open file tab. The minimap starts hidden; scrollbars start visible. It is an
+action menu of 5.6 whose two rows are toggles. Escape, an outside click, or a
+second click on the trigger dismisses it.
 
 Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
 minimum, and a 1 px left border on the vertical track and thumb. Both axes
@@ -1207,16 +1355,39 @@ anywhere, the register card is one muted line.
 
 ### 5.6 Menus, selects, tooltips
 
-Popups share `menu_surface`, except the Zed Editor Controls menu in 5.4:
-radius 14 with circular corners, lifted surface, a `text` edge at 0.12 and
-the surface shadow on floating menus (4.9).
-Every menu is built from `menu_panel` and `menu_row` in
-`settings/components.rs`, which own the geometry: 30 px rows at radius 8, no
-gap, and 6 px of surface padding, so a row sits concentrically inside the 14
-surface; a unit test in that module fails if the constants stop agreeing.
-Rows carry `text` washes for hover and selection, 13 px text, 12 px
-shortcuts, a 16 px chevron on submenu rows, and a 13 px check on the
-selected item. Widths run from 200 to 280 and the list scrolls past 400 px.
+Every menu in the app, context menus, title bar menus, sidebar and dock
+menus and their submenus, is an action menu (`ui_primitives/action_menu.rs`),
+and select popups share its skin through `select_menu`, `select_option`,
+`menu_panel`, `floating_menu_panel`, `menu_row` and `menu_divider` in
+`settings/components.rs`. The geometry is the same in every interface style:
+radius 8 with circular corners on the menu surface fill
+(`select_menu_surface`, or a host fill such as the Agents rows menu), a 1 px
+`text` edge at 0.10, one shadow (0 18 44 -18 black at 0.80 in dark, 0 16 40
+-18 at 0.55 in light), 4 px of padding, and 28 px rows at radius 4 with an
+8 px inset and an 8 px gap, so 4 plus 4 keeps a row concentric in the menu; a
+unit test in `settings/components.rs` fails if the constants stop agreeing.
+Menus are monochrome. A row reads glyph, label, then its trailing marks: a
+16 px glyph in `muted` at 0.8 (a Hugeicons stroke glyph from `icons/menu/`,
+or an editor or agent logo drawn as a mask in the same tint, never its brand
+colors; a space keeps its own mark), the label at 14 px Regular in Geist, a muted value
+(`detail`), the mnemonic or a global shortcut at 12 px Medium in `muted`,
+the 16 px submenu chevron, and a 14 px check on a toggled or selected item.
+Hover and the keyboard highlight share one `text` wash at 0.06, and a
+pointer move clears the keyboard highlight so only one row is lit. Dividers
+are `text` at 0.08, inset 8 px, with 4 px above and below; group headings are
+12 px Medium in `muted` on a 28 px row. Disabled rows sit at 0.64 opacity.
+Destructive rows (closing a workspace, a tab or a pane, removing a worktree)
+keep the regular colors and carry no mnemonic, so a stray key cannot run
+them. An action menu fits its width to
+the widest row, measured in Geist, between 160 and 320; select popups run
+from 200 to 280; every list scrolls past 400 px.
+An open action menu takes keyboard focus and gives it back when it closes:
+a row's mnemonic letter runs it, Up, Down, Home and End move the highlight
+across enabled rows and wrap, Enter or Space runs the highlighted row, Right
+or Enter opens a submenu and Left or Escape closes it, and Escape or a press
+outside closes the menu. Toggles keep the menu open. A submenu opens on hover
+or click 4 px beside its parent, on the side that fits in the window, with
+its first row level with the row that opened it.
 Panels that are not menus, the command palette, the pane palette list, the
 theme picker, the clone dialog and the Welcome rows, keep the 28 px
 `select_item` row. Tooltips are squircle 14 on the title
@@ -1459,7 +1630,7 @@ These are the Paneflow-specific bans, in addition to the generic ones a
 design review would raise anywhere.
 
 - Drop shadows on chrome, cards, rows, menus, or toasts outside the contextual
-  Editor Controls menu in 5.4, the menus and select popups of 4.9, and the
+  menus and select popups of 5.6, the usage bubble of 4.9, and the
   floating surfaces of the Classic style in 4.9. The window, the drag ghost, and the dialog card (`modal_card`) retain
   their shadows.
 - Separators between tabs, chips, or toolbar buttons. The floating chip
@@ -1521,6 +1692,6 @@ already need the same behavior.
 - The Linux sidebar cannot reveal a native material. The translucent shell is
   opt-in and requests no compositor blur, so without an external blur it
   shows the raw wallpaper through the veil.
-- `reduce_motion` stops hover interpolation, the toggle slide, the sidebar slide, the Workspaces
-  row motion, menu reveals, and the thinking matrix only; the other animations
+- `reduce_motion` stops hover interpolation, the toggle slide, the sidebar slide, the resize edge
+  nudge, the resize detent settle, the Workspaces row motion, menu reveals, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.

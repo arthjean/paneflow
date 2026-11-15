@@ -1,18 +1,62 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, StatefulInteractiveElement, Styled, Window, deferred, div, px,
+    AnyElement, Context, ElementId, InteractiveElement, IntoElement, Pixels, Point, Styled, Window,
+    deferred, px,
 };
 
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_divider, menu_row, select_menu};
+use crate::app::menu_icons as icon;
+use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 
-const TITLE_BAR_FILES_MENU_WIDTH: Pixels = px(200.);
-const TITLE_BAR_HELP_MENU_WIDTH: Pixels = px(220.);
 pub(crate) const DOCUMENTATION_URL: &str = "https://paneflow.dev/docs";
 pub(crate) const RELEASES_URL: &str = "https://paneflow.dev/releases";
 pub(crate) const AUTOMATIONS_URL: &str = "https://paneflow.dev/docs/scripting";
 pub(crate) const TROUBLESHOOTING_URL: &str = "https://paneflow.dev/docs/troubleshooting";
-type TitleBarMenuClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static>;
+
+#[derive(Clone, Copy)]
+enum FilesMenuAction {
+    NewWorkspace,
+    Settings,
+}
+
+#[derive(Clone, Copy)]
+enum HelpMenuAction {
+    Documentation,
+    WhatsNew,
+    CheckForUpdates,
+    Automations,
+    Troubleshooting,
+    SystemInfo,
+    About,
+}
+
+fn anchored_menu<A: Clone + 'static>(
+    id: &'static str,
+    menu: ActionMenu<A>,
+    anchor: Point<Pixels>,
+    handlers: MenuHandlers<A>,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) -> AnyElement {
+    let ui = crate::theme::ui_colors();
+    let width = menu.size(window).width;
+    let win_size = window.window_bounds().get_bounds().size;
+    let desired_left = anchor.x - px(12.);
+    let max_left = (win_size.width - width - px(4.)).max(px(4.));
+    let left = desired_left.clamp(px(4.), max_left);
+    let top = anchor.y + px(4.);
+    let panel = menu
+        .render(id, handlers, ui, window, cx)
+        .occlude()
+        .absolute()
+        .left(left)
+        .top(top);
+    deferred(crate::ui_primitives::menu_reveal(
+        (ElementId::Name(id.into()), "reveal"),
+        panel,
+    ))
+    .with_priority(4)
+    .into_any_element()
+}
 
 impl PaneFlowApp {
     pub(crate) fn open_documentation(&mut self, cx: &mut Context<Self>) {
@@ -26,183 +70,95 @@ impl PaneFlowApp {
     pub(crate) fn render_title_bar_files_menu(
         &self,
         anchor: Point<Pixels>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ui = crate::theme::ui_colors();
-        let win_size = window.window_bounds().get_bounds().size;
-        let desired_left = anchor.x - px(12.);
-        let max_left = (win_size.width - TITLE_BAR_FILES_MENU_WIDTH - px(4.)).max(px(4.));
-        let left = desired_left.clamp(px(4.), max_left);
-        let top = anchor.y + px(4.);
-
-        let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            menu_row(id, false, ui)
-                .cursor(CursorStyle::Arrow)
-                .on_click(on_click)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(ui.text)
-                        .child(label),
-                )
-        };
-
-        let new_workspace = menu_item(
-            "title-bar-files-new-workspace",
-            "New Workspace",
-            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
+        let menu = ActionMenu::new()
+            .item(
+                MenuItem::new("New Workspace", FilesMenuAction::NewWorkspace)
+                    .icon(icon::NEW_WORKSPACE)
+                    .mnemonic('n'),
+            )
+            .item(
+                MenuItem::new("Settings", FilesMenuAction::Settings)
+                    .icon(icon::SETTINGS)
+                    .mnemonic('s'),
+            );
+        let handlers = self.menu_handlers(
+            cx,
+            |this, action: &FilesMenuAction, window, cx| {
                 this.title_bar_files_menu_open = None;
-                this.create_workspace_with_picker(window, cx);
-                cx.stop_propagation();
-            })),
+                match action {
+                    FilesMenuAction::NewWorkspace => this.create_workspace_with_picker(window, cx),
+                    FilesMenuAction::Settings => this.open_settings_window(window, cx),
+                }
+            },
+            |this| this.title_bar_files_menu_open = None,
         );
-        let settings = menu_item(
-            "title-bar-files-settings",
-            "Settings",
-            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.title_bar_files_menu_open = None;
-                this.open_settings_window(window, cx);
-                cx.stop_propagation();
-            })),
-        );
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "title-bar-files-menu-reveal",
-            select_menu("title-bar-files-menu", ui)
-                .occlude()
-                .absolute()
-                .left(left)
-                .top(top)
-                .w(TITLE_BAR_FILES_MENU_WIDTH)
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.title_bar_files_menu_open = None;
-                    cx.notify();
-                }))
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(new_workspace)
-                .child(settings),
-        ))
-        .with_priority(4)
-        .into_any_element()
+        anchored_menu("title-bar-files-menu", menu, anchor, handlers, window, cx)
     }
 
     pub(crate) fn render_title_bar_help_menu(
         &self,
         anchor: Point<Pixels>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ui = crate::theme::ui_colors();
-        let win_size = window.window_bounds().get_bounds().size;
-        let desired_left = anchor.x - px(12.);
-        let max_left = (win_size.width - TITLE_BAR_HELP_MENU_WIDTH - px(4.)).max(px(4.));
-        let left = desired_left.clamp(px(4.), max_left);
-        let top = anchor.y + px(4.);
-
-        let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            menu_row(id, false, ui)
-                .cursor(CursorStyle::Arrow)
-                .on_click(on_click)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(ui.text)
-                        .child(label),
-                )
-        };
-
-        let documentation = menu_item(
-            "title-bar-help-documentation",
-            "Paneflow Documentation",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
+        let menu = ActionMenu::new()
+            .item(
+                MenuItem::new("Paneflow Documentation", HelpMenuAction::Documentation)
+                    .icon(icon::DOCUMENTATION)
+                    .mnemonic('d'),
+            )
+            .item(
+                MenuItem::new("What's New", HelpMenuAction::WhatsNew)
+                    .icon(icon::WHATS_NEW)
+                    .mnemonic('w'),
+            )
+            .item(
+                MenuItem::new("Check for Updates…", HelpMenuAction::CheckForUpdates)
+                    .icon(icon::UPDATE)
+                    .mnemonic('u'),
+            )
+            .item(
+                MenuItem::new("Automations", HelpMenuAction::Automations)
+                    .icon(icon::AUTOMATIONS)
+                    .mnemonic('a'),
+            )
+            .item(
+                MenuItem::new("Troubleshooting", HelpMenuAction::Troubleshooting)
+                    .icon(icon::TROUBLESHOOTING)
+                    .mnemonic('t'),
+            )
+            .item(
+                MenuItem::new("System Info…", HelpMenuAction::SystemInfo)
+                    .icon(icon::SYSTEM_INFO)
+                    .mnemonic('i'),
+            )
+            .separator()
+            .item(
+                MenuItem::new("About Paneflow", HelpMenuAction::About)
+                    .icon(icon::ABOUT)
+                    .mnemonic('b'),
+            );
+        let handlers = self.menu_handlers(
+            cx,
+            |this, action: &HelpMenuAction, window, cx| {
                 this.title_bar_help_menu_open = None;
-                this.open_help_url(DOCUMENTATION_URL, cx);
-                cx.stop_propagation();
-            })),
+                match action {
+                    HelpMenuAction::Documentation => this.open_help_url(DOCUMENTATION_URL, cx),
+                    HelpMenuAction::WhatsNew => this.open_help_url(RELEASES_URL, cx),
+                    HelpMenuAction::CheckForUpdates => this.request_update_check(cx),
+                    HelpMenuAction::Automations => this.open_help_url(AUTOMATIONS_URL, cx),
+                    HelpMenuAction::Troubleshooting => {
+                        this.open_help_url(TROUBLESHOOTING_URL, cx);
+                    }
+                    HelpMenuAction::SystemInfo => this.open_system_info_dialog(window, cx),
+                    HelpMenuAction::About => this.open_about_dialog(window, cx),
+                }
+            },
+            |this| this.title_bar_help_menu_open = None,
         );
-        let whats_new = menu_item(
-            "title-bar-help-whats-new",
-            "What's New",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_help_url(RELEASES_URL, cx);
-                cx.stop_propagation();
-            })),
-        );
-        let check_for_updates = menu_item(
-            "title-bar-help-check-for-updates",
-            "Check for Updates…",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.title_bar_help_menu_open = None;
-                this.request_update_check(cx);
-                cx.stop_propagation();
-            })),
-        );
-        let automations = menu_item(
-            "title-bar-help-automations",
-            "Automations",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_help_url(AUTOMATIONS_URL, cx);
-                cx.stop_propagation();
-            })),
-        );
-        let troubleshooting = menu_item(
-            "title-bar-help-troubleshooting",
-            "Troubleshooting",
-            Box::new(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_help_url(TROUBLESHOOTING_URL, cx);
-                cx.stop_propagation();
-            })),
-        );
-        let system_info = menu_item(
-            "title-bar-help-system-info",
-            "System Info…",
-            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_system_info_dialog(window, cx);
-                cx.stop_propagation();
-            })),
-        );
-        let about = menu_item(
-            "title-bar-help-about",
-            "About Paneflow",
-            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.title_bar_help_menu_open = None;
-                this.open_about_dialog(window, cx);
-                cx.stop_propagation();
-            })),
-        );
-
-        deferred(crate::ui_primitives::menu_reveal(
-            "title-bar-help-menu-reveal",
-            select_menu("title-bar-help-menu", ui)
-                .occlude()
-                .absolute()
-                .left(left)
-                .top(top)
-                .w(TITLE_BAR_HELP_MENU_WIDTH)
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.title_bar_help_menu_open = None;
-                    cx.notify();
-                }))
-                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(documentation)
-                .child(whats_new)
-                .child(check_for_updates)
-                .child(automations)
-                .child(troubleshooting)
-                .child(system_info)
-                .child(menu_divider(ui))
-                .child(about),
-        ))
-        .with_priority(4)
-        .into_any_element()
+        anchored_menu("title-bar-help-menu", menu, anchor, handlers, window, cx)
     }
 }

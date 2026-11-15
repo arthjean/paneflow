@@ -159,6 +159,25 @@ impl PaneFlowApp {
         self.push_toast(message, actions, CLOSED_SESSION_GRACE_MS, cx);
     }
 
+    pub(crate) fn show_bulk_closed_toast(&mut self, message: String, cx: &mut Context<Self>) {
+        let reopens_one_tab = |toast: &Toast| {
+            toast
+                .actions
+                .iter()
+                .any(|action| matches!(action, ToastAction::ReopenTab(_)))
+        };
+        self.toast_queue.retain(|toast| !reopens_one_tab(toast));
+        if let Some(toast) = self.toast.as_mut()
+            && reopens_one_tab(toast)
+        {
+            toast.message = message;
+            toast.actions.clear();
+            cx.notify();
+            return;
+        }
+        self.push_toast(message, Vec::new(), TOAST_HOLD_MS, cx);
+    }
+
     pub(crate) fn show_update_error_toast(
         &mut self,
         err: &update::UpdateError,

@@ -596,24 +596,25 @@ impl OnQuit {
 #[serde(rename_all = "lowercase")]
 pub enum InterfaceStyle {
     #[default]
-    Paneflow,
     Classic,
+    #[serde(alias = "paneflow")]
+    Rounded,
 }
 
 impl InterfaceStyle {
-    pub const ALL: &'static [Self] = &[Self::Paneflow, Self::Classic];
+    pub const ALL: &'static [Self] = &[Self::Classic, Self::Rounded];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Paneflow => "Paneflow",
             Self::Classic => "Classic",
+            Self::Rounded => "Rounded",
         }
     }
 
     pub fn wire_str(self) -> &'static str {
         match self {
-            Self::Paneflow => "paneflow",
             Self::Classic => "classic",
+            Self::Rounded => "rounded",
         }
     }
 }
@@ -900,22 +901,33 @@ mod tests {
     }
 
     #[test]
-    fn interface_style_defaults_to_paneflow_and_tolerates_garbage() {
+    fn interface_style_defaults_to_classic_and_tolerates_garbage() {
         let config: PaneFlowConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
-        let config: PaneFlowConfig =
-            serde_json::from_str(r#"{"interface_style": "classic"}"#).unwrap();
         assert_eq!(config.resolved_interface_style(), InterfaceStyle::Classic);
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"interface_style": "rounded"}"#).unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Rounded);
         for retired in ["crisp", "cursor", "claude"] {
             let json = serde_json::json!({ "interface_style": retired });
             let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
-            assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+            assert_eq!(config.resolved_interface_style(), InterfaceStyle::Classic);
         }
         let config: PaneFlowConfig =
             serde_json::from_str(r#"{"interface_style": "brutalist"}"#).unwrap();
-        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Classic);
         let config: PaneFlowConfig = serde_json::from_str(r#"{"interface_style": 2}"#).unwrap();
-        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Paneflow);
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Classic);
+    }
+
+    #[test]
+    fn the_former_name_of_the_rounded_style_still_selects_it() {
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"interface_style": "paneflow"}"#).unwrap();
+        assert_eq!(config.resolved_interface_style(), InterfaceStyle::Rounded);
+        assert_eq!(
+            serde_json::to_value(InterfaceStyle::Rounded).unwrap(),
+            serde_json::json!("rounded")
+        );
     }
 
     #[test]
