@@ -13,7 +13,9 @@ use crate::PaneFlowApp;
 use crate::app::clone_repo::{CloneFailure, CloneProgress, run_clone};
 use crate::settings::components::{select_menu_surface, with_alpha};
 use crate::ui_primitives::quick_pick::{PANEL_RADIUS, ROW_RADIUS};
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{
+    squircle_border, squircle_fill, squircle_fill_beneath_border,
+};
 
 const PILL_WIDTH: f32 = 224.;
 const PILL_HEIGHT: f32 = 44.;
@@ -1057,7 +1059,7 @@ impl PaneFlowApp {
                 .rounded(px(radius))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(squircle_fill(px(radius), surface))
+                .child(squircle_fill_beneath_border(px(radius), surface, px(1.)))
                 .child(squircle_border(px(radius), px(1.), border))
         };
 

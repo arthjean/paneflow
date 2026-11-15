@@ -12,8 +12,9 @@ use gpui::{
 
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle::{
-    squircle_border, squircle_corners_border, squircle_corners_fill, squircle_fill, squircle_path,
-    squircle_stroke_path,
+    layer_clearance, squircle_band_path, squircle_border, squircle_corners_border,
+    squircle_corners_fill, squircle_corners_fill_beneath_border, squircle_fill,
+    squircle_fill_beneath_border, squircle_path, squircle_stroke_path,
 };
 use crate::ui_primitives::{AccessibleControlExt, squircle_skin};
 
@@ -147,7 +148,12 @@ impl CardShape {
         match self {
             Self::Squircle(radius) => pane_card_fill(radius, color),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
-            Self::Morph { radii, .. } => squircle_corners_fill(radii, color),
+            Self::Morph { radii, .. } if card_paints_quads(color) => {
+                squircle_corners_fill(radii, color)
+            }
+            Self::Morph { radii, .. } => {
+                squircle_corners_fill_beneath_border(radii, color, CARD_BORDER_WIDTH)
+            }
         }
     }
 
@@ -160,7 +166,9 @@ impl CardShape {
                 .border_1()
                 .border_color(color)
                 .into_any_element(),
-            Self::Squircle(radius) => squircle_border(radius, px(1.), color).into_any_element(),
+            Self::Squircle(radius) => {
+                squircle_border(radius, CARD_BORDER_WIDTH, color).into_any_element()
+            }
             Self::Flush(edges) if outline => {
                 crate::layout::flush_outline(edges, color).into_any_element()
             }
@@ -176,7 +184,7 @@ impl CardShape {
                 .border_color(color)
                 .into_any_element(),
             Self::Morph { radii, .. } => {
-                squircle_corners_border(radii, px(1.), color).into_any_element()
+                squircle_corners_border(radii, CARD_BORDER_WIDTH, color).into_any_element()
             }
         }
     }
@@ -220,7 +228,7 @@ impl CardShape {
         div()
             .absolute()
             .inset_0()
-            .child(squircle_fill(radius, fill))
+            .child(squircle_fill_beneath_border(radius, fill, px(2.)))
             .child(squircle_border(radius, px(2.), stroke))
             .into_any_element()
     }
@@ -241,10 +249,11 @@ fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
             .bg(color)
             .into_any_element()
     } else {
-        squircle_fill(radius, color).into_any_element()
+        squircle_fill_beneath_border(radius, color, CARD_BORDER_WIDTH)
     }
 }
 
+const CARD_BORDER_WIDTH: Pixels = px(1.);
 const HEADER_GAP: f32 = 7.0;
 const VEILED_TERMINAL_SHADE: f32 = 0.35;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
@@ -518,29 +527,58 @@ pub(crate) fn tinted_badge_colors(tint: gpui::Rgba) -> (gpui::Background, Hsla) 
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BadgeGeometry {
+    ring: (gpui::Bounds<Pixels>, Pixels),
+    body: (gpui::Bounds<Pixels>, Pixels),
+    highlight: (gpui::Bounds<Pixels>, gpui::Bounds<Pixels>, Pixels),
+    rim: (gpui::Bounds<Pixels>, Pixels),
+}
+
+fn badge_geometry(bounds: gpui::Bounds<Pixels>, scale_factor: f32) -> BadgeGeometry {
+    let radius = px(TAB_BADGE_RADIUS);
+    let clearance = layer_clearance(scale_factor);
+    let rim = bounds.inset(clearance);
+    let highlight_outer = bounds.inset(clearance * 2.);
+    let highlight_inner = gpui::Bounds {
+        origin: highlight_outer.origin + gpui::point(px(0.), px(1.)),
+        size: gpui::size(
+            highlight_outer.size.width,
+            highlight_outer.size.height - px(1.),
+        ),
+    };
+    BadgeGeometry {
+        ring: (bounds.dilate(px(1.)), radius + px(1.)),
+        body: (bounds, radius),
+        highlight: (highlight_outer, highlight_inner, radius - clearance * 2.),
+        rim: (rim, radius - clearance),
+    }
+}
+
 pub(crate) fn paint_badge_tile(
     bounds: gpui::Bounds<Pixels>,
     background: gpui::Background,
     ring: Hsla,
     window: &mut Window,
 ) {
-    let radius = px(TAB_BADGE_RADIUS);
+    let geometry = badge_geometry(bounds, window.scale_factor());
     let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
     let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
-    let lowered = gpui::Bounds {
-        origin: bounds.origin + gpui::point(px(0.), px(1.)),
-        size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
-    };
-    let body = squircle_path(bounds, radius);
+    let (outer, inner, highlight_radius) = geometry.highlight;
     let layers = [
         (
-            squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
+            squircle_path(geometry.ring.0, geometry.ring.1),
             gpui::Background::from(ring),
         ),
-        (body.clone(), background),
-        (body, highlight.into()),
-        (squircle_path(lowered, radius), background),
-        (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
+        (squircle_path(geometry.body.0, geometry.body.1), background),
+        (
+            squircle_band_path(outer, inner, highlight_radius),
+            highlight.into(),
+        ),
+        (
+            squircle_stroke_path(geometry.rim.0, geometry.rim.1, px(1.)),
+            rim.into(),
+        ),
     ];
     for (path, fill) in layers {
         if let Some(path) = path {
@@ -2293,8 +2331,9 @@ mod tests {
 
     use super::{
         ChipTone, MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
-        card_paints_quads, header_hover_animates, pane_card_background, pane_status_label,
-        progress_chip_label, progress_chip_tone, tab_badge, truncate_surface_title,
+        badge_geometry, card_paints_quads, header_hover_animates, pane_card_background,
+        pane_status_label, progress_chip_label, progress_chip_tone, tab_badge,
+        truncate_surface_title,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
@@ -2325,7 +2364,7 @@ mod tests {
         }
     }
 
-    const BADGE_SHAPES: usize = 4;
+    const BADGE_CONTOURS: usize = 5;
 
     fn draw_badge_frame(cx: &mut gpui::VisualTestContext) -> Vec<gpui::Bounds<gpui::Pixels>> {
         let start = squircle_builds();
@@ -2346,8 +2385,8 @@ mod tests {
         let first = draw_badge_frame(cx);
         assert_eq!(
             first.len(),
-            12 * BADGE_SHAPES,
-            "the ring, the body, the lowered body and the rim, once per badge"
+            12 * BADGE_CONTOURS,
+            "the ring, the body, the two contours of the highlight band and the rim, once per badge"
         );
         view.update(cx, |_, cx| cx.notify());
         let second = draw_badge_frame(cx);
@@ -2372,6 +2411,62 @@ mod tests {
         for (moved, held) in after.iter().zip(&before) {
             assert_eq!(moved.size, held.size);
             assert_eq!(moved.origin, held.origin + gpui::point(shift, gpui::px(0.)));
+        }
+    }
+
+    fn device_gap(
+        outer: gpui::Bounds<gpui::Pixels>,
+        inner: gpui::Bounds<gpui::Pixels>,
+        scale: f32,
+    ) -> f32 {
+        [
+            inner.left() - outer.left(),
+            outer.right() - inner.right(),
+            inner.top() - outer.top(),
+            outer.bottom() - inner.bottom(),
+        ]
+        .into_iter()
+        .map(|gap| f32::from(gap) * scale)
+        .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn every_badge_layer_clears_the_contours_beneath_it_by_half_a_device_pixel() {
+        let bounds = gpui::Bounds::new(
+            gpui::point(gpui::px(40.), gpui::px(7.)),
+            gpui::size(gpui::px(22.), gpui::px(18.)),
+        );
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            let layers = badge_geometry(bounds, scale);
+            let (ring, body, rim) = (layers.ring.0, layers.body.0, layers.rim.0);
+            let (outer, inner, _) = layers.highlight;
+            let clear = |gap: f32| gap >= 0.5 - 1e-4;
+            assert!(
+                clear(device_gap(ring, body, scale)),
+                "body inside the ring at {scale}"
+            );
+            assert!(
+                clear(device_gap(body, rim, scale)),
+                "rim inside the body at {scale}"
+            );
+            assert!(
+                clear(device_gap(rim, outer, scale)),
+                "highlight inside the rim edge at {scale}"
+            );
+            let rim_inner_top = f32::from(rim.top() + gpui::px(1.));
+            let highlight_inner_top = f32::from(inner.top());
+            assert!(
+                clear((highlight_inner_top - rim_inner_top) * scale),
+                "the highlight band ends below the rim's inner edge at {scale}"
+            );
+            let near =
+                |a: gpui::Pixels, b: gpui::Pixels| (f32::from(a) - f32::from(b)).abs() < 1e-4;
+            assert!(
+                near(inner.top() - outer.top(), gpui::px(1.)),
+                "the highlight band stays 1 px thick"
+            );
+            assert!(near(inner.bottom(), outer.bottom()));
+            assert!(near(inner.left(), outer.left()) && near(inner.right(), outer.right()));
         }
     }
 

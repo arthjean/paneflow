@@ -8,7 +8,7 @@ use gpui::{
 use crate::settings::components::{MENU_RADIUS, select_menu_surface, surface_edge, with_alpha};
 use crate::theme::UiColors;
 use crate::ui_primitives::interface_style::{CLASSIC_CONTROL, classic, pick};
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill_beneath_border};
 
 pub(crate) const PANEL_RADIUS: Pixels = px(13.);
 pub(crate) const PANEL_PADDING: f32 = 6.;
@@ -75,7 +75,11 @@ pub(crate) fn shell(
 ) -> Stateful<Div> {
     panel
         .relative()
-        .child(squircle_fill(PANEL_RADIUS, select_menu_surface(ui)))
+        .child(squircle_fill_beneath_border(
+            PANEL_RADIUS,
+            select_menu_surface(ui),
+            px(1.),
+        ))
         .child(squircle_border(PANEL_RADIUS, px(1.), surface_edge(ui)))
         .flex()
         .flex_col()

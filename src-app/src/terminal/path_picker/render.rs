@@ -17,7 +17,7 @@ use crate::ui_primitives::quick_pick::{
     ROW_TEXT_INSET, highlighted_label, panel_radius, row_colors, row_height, row_radius,
     row_spacing,
 };
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill_beneath_border};
 use crate::ui_primitives::{FilterFieldStyle, filter_field, menu_reveal};
 
 const PICKER_WIDTH: f32 = 420.;
@@ -252,7 +252,11 @@ impl Render for PathPicker {
             .id("path-picker")
             .key_context("PathPicker")
             .relative()
-            .child(squircle_fill(panel_radius(), select_menu_surface(ui)))
+            .child(squircle_fill_beneath_border(
+                panel_radius(),
+                select_menu_surface(ui),
+                px(1.),
+            ))
             .child(squircle_border(
                 panel_radius(),
                 px(1.),

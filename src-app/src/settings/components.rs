@@ -342,9 +342,10 @@ pub(crate) fn input_surface<E: ParentElement + Styled>(
 ) -> E {
     element
         .relative()
-        .child(squircle_fill(
+        .child(squircle::squircle_fill_beneath_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
             with_alpha(ui.text, 0.03),
+            px(1.),
         ))
         .child(squircle_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
@@ -378,6 +379,10 @@ pub(crate) fn input_frame<E: ParentElement + Styled>(
                 .size_full(),
             ),
     )
+}
+
+fn focus_ring_stroke_under_border(width: Pixels, scale_factor: f32) -> Pixels {
+    width + squircle::layer_clearance(scale_factor)
 }
 
 fn paint_input_focus(
@@ -444,7 +449,7 @@ fn paint_input_focus(
         && let Some(path) = squircle::squircle_stroke_path(
             bounds.inset(full - width),
             SETTINGS_CONTROL_CORNER_RADIUS + width,
-            width,
+            focus_ring_stroke_under_border(width, window.scale_factor()),
         )
     {
         window.paint_path(path, ring.opacity(progress));
@@ -897,7 +902,11 @@ pub(crate) fn modal_card(
         .shadow_lg()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
-        .child(squircle::squircle_fill(radius, card_color()))
+        .child(squircle::squircle_fill_beneath_border(
+            radius,
+            card_color(),
+            px(1.),
+        ))
         .child(content.relative().flex().flex_col())
         .child(squircle::squircle_border(radius, px(1.), surface_edge(ui)))
 }
@@ -1092,7 +1101,11 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
 ) -> E {
     with_surface_shape(|| {
         el.relative()
-            .child(squircle::squircle_fill(MENU_RADIUS, fill))
+            .child(squircle::squircle_fill_beneath_border(
+                MENU_RADIUS,
+                fill,
+                px(1.),
+            ))
             .child(squircle::squircle_border(
                 MENU_RADIUS,
                 px(1.),

@@ -1221,12 +1221,19 @@ impl TerminalView {
                 .gap(px(8.)),
             "search-overlay",
             ROW_RADIUS,
-            Some(ui.subtle),
+            None,
             None,
         )
         .absolute()
         .top_2()
         .right_2()
+        .child(
+            crate::ui_primitives::squircle::squircle_fill_beneath_border(
+                ROW_RADIUS,
+                ui.subtle,
+                px(1.),
+            ),
+        )
         .child(crate::ui_primitives::squircle::squircle_border(
             ROW_RADIUS,
             px(1.),

@@ -653,9 +653,10 @@ pub(crate) fn tooltip_shell() -> Div {
         .py(px(6.))
         .text_color(ui.text)
         .text_sm()
-        .child(squircle::squircle_fill(
+        .child(squircle::squircle_fill_beneath_border(
             TOOLTIP_RADIUS,
             theme.title_bar_background,
+            px(1.),
         ))
         .child(squircle::squircle_border(TOOLTIP_RADIUS, px(1.), ui.border))
 }
@@ -1365,6 +1366,11 @@ mod tests {
                 .size_full()
                 .relative()
                 .child(squircle::squircle_fill(px(24.), gpui::white()))
+                .child(squircle::squircle_fill_beneath_border(
+                    px(24.),
+                    gpui::white(),
+                    px(1.),
+                ))
                 .child(squircle::squircle_border(px(24.), px(1.), gpui::black()))
                 .child(squircle::squircle_fill_blend(
                     px(14.),

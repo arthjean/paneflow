@@ -698,7 +698,7 @@ fn path_scenarios(metrics: &mut Vec<Metric>) {
     metrics.push(measure_path_paint(
         &mut cx,
         "paths_tab_strip_12_badges",
-        "paint of 12 tab badges at scale 2, each building 4 squircle shapes (48) at its final bounds and binning its 5 paths",
+        "paint of 12 tab badges at scale 2, each building its ring, body, two-contour highlight band and rim (48 shapes) at their final bounds and binning those 4 paths",
         Rc::new(move |window| {
             for &bounds in &badges {
                 crate::pane::paint_badge_tile(bounds, background, ring, window);
