@@ -2414,6 +2414,61 @@ mod tests {
         }
     }
 
+    fn expected_badge_contours(
+        body: gpui::Bounds<gpui::Pixels>,
+        scale: f32,
+    ) -> Vec<gpui::Bounds<gpui::Pixels>> {
+        let layers = badge_geometry(body, scale);
+        vec![
+            layers.ring.0,
+            layers.body.0,
+            layers.highlight.0,
+            layers.highlight.1,
+            layers.rim.0,
+        ]
+    }
+
+    #[gpui::test]
+    fn a_scale_change_rebuilds_every_badge_shape_for_the_new_scale(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 1,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(200.), gpui::px(80.)));
+        for scale in [2., 1., 1.5] {
+            cx.simulate_scale_factor_change(scale);
+            let built = draw_badge_frame(cx);
+            assert_eq!(built.len(), BADGE_CONTOURS);
+            assert_eq!(
+                built,
+                expected_badge_contours(built[1], scale),
+                "every contour follows the scale {scale}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn a_thousand_origins_build_each_badge_where_it_paints_and_retain_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 1,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(1100.), gpui::px(80.)));
+        let origin = draw_badge_frame(cx)[1].origin;
+        for step in 1..=1000 {
+            let inset = gpui::px(step as f32);
+            view.update(cx, |strip, cx| {
+                strip.inset = inset;
+                cx.notify();
+            });
+            let built = draw_badge_frame(cx);
+            assert_eq!(built.len(), BADGE_CONTOURS, "frame {step}");
+            assert_eq!(built[1].origin, origin + gpui::point(inset, gpui::px(0.)));
+        }
+    }
+
     fn device_gap(
         outer: gpui::Bounds<gpui::Pixels>,
         inner: gpui::Bounds<gpui::Pixels>,
