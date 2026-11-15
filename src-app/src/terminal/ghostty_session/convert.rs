@@ -567,7 +567,7 @@ mod tests {
         );
         mirror.recycle(again);
 
-        terminal.scroll(ghostty::Scroll::Delta(6));
+        terminal.scroll(ghostty::Scroll::Delta(6)).expect("scrolls");
         terminal.set_overscan(1, 1).expect("overscan request");
         let content = mirror.publish(terminal.snapshot().expect("snapshot"));
 
@@ -674,11 +674,15 @@ mod tests {
             ("several lines", &|t| {
                 t.feed(b"a\r\nb\r\nc\r\n").expect("parses")
             }),
-            ("scroll back", &|t| t.scroll(ghostty::Scroll::Delta(-3))),
+            ("scroll back", &|t| {
+                t.scroll(ghostty::Scroll::Delta(-3)).expect("scrolls")
+            }),
             ("output while scrolled back", &|t| {
                 t.feed(b"behind\r\n").expect("parses")
             }),
-            ("back to the bottom", &|t| t.scroll(ghostty::Scroll::Bottom)),
+            ("back to the bottom", &|t| {
+                t.scroll(ghostty::Scroll::Bottom).expect("scrolls")
+            }),
             ("alternate screen", &|t| {
                 t.feed(b"\x1b[?1049hfull screen app\r\n").expect("parses")
             }),

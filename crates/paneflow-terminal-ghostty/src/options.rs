@@ -10,15 +10,15 @@ const MAX_TERMINFO_NAME_BYTES: usize = 128;
 
 const MAX_UNKNOWN_SEQUENCE_BYTES: usize = 4096;
 
-fn cursor_style(shape: CursorShape) -> sys::GhosttyTerminalCursorStyle {
+fn cursor_style(shape: CursorShape) -> sys::GhosttyCursorStyle {
     match shape {
-        CursorShape::Bar => sys::GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BAR,
-        CursorShape::Block => sys::GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK,
+        CursorShape::Bar => sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BAR,
+        CursorShape::Block => sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BLOCK,
         CursorShape::Underline => {
-            sys::GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE
+            sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_UNDERLINE
         }
         CursorShape::HollowBlock => {
-            sys::GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK_HOLLOW
+            sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BLOCK_HOLLOW
         }
     }
 }
@@ -75,17 +75,12 @@ impl DisplayTerminal {
 
     pub fn set_scrollback_max_bytes(&mut self, bytes: Option<usize>) -> Result<()> {
         self.invalidate_search_rail();
-        let limit = bytes.unwrap_or_default();
-        let value = if bytes.is_some() {
-            (&raw const limit).cast::<c_void>()
-        } else {
-            std::ptr::null()
-        };
+        let limit = bytes.unwrap_or(usize::MAX);
         let result = unsafe {
             self.set_terminal_option(
                 "terminal_set_scrollback_max_bytes",
                 sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
-                value,
+                (&raw const limit).cast::<c_void>(),
             )
         };
         self.snapshot_cache.invalidate();
@@ -473,9 +468,15 @@ mod tests {
     }
 
     #[test]
-    fn the_glyph_protocol_answers_by_default_and_is_silent_once_disabled() {
+    fn the_glyph_protocol_is_silent_until_enabled_and_again_once_disabled() {
         let support_query = b"\x1b_25a1;s\x1b\\";
         let mut terminal = terminal(20, 4);
+        terminal.feed(support_query).expect("glyph support query");
+        assert!(replies(&mut terminal).is_empty());
+
+        terminal
+            .set_glyph_protocol(true)
+            .expect("glyph protocol must enable");
         terminal.feed(support_query).expect("glyph support query");
         assert!(contains(&replies(&mut terminal), b"\x1b_25a1;s;"));
 

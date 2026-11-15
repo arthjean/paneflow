@@ -27,6 +27,7 @@ macro_rules! native_modules {
 native_modules!(
     abi,
     abi_discriminants,
+    abi_keys,
     abi_layout,
     batch,
     callback_ffi,
@@ -141,7 +142,13 @@ mod identity_tests {
     fn build_identity_is_derived_from_the_pinned_manifest() {
         let identity = super::build_identity();
         assert_eq!(identity.source_sha.len(), 40);
-        assert_eq!(identity.api_version, "0.1.0");
+        let api: Vec<u32> = identity
+            .api_version
+            .split('.')
+            .map(|part| part.parse().expect("API version parts are numbers"))
+            .collect();
+        assert_eq!(api.len(), 3, "{}", identity.api_version);
+        assert!(api[0] >= 1, "the pin must carry the stable 1.x ABI");
         assert_eq!(identity.zig_version, "0.17.0");
         assert_eq!(identity.optimization, "ReleaseFast");
         assert_eq!(identity.simd, "upstream-default");

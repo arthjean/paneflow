@@ -41,7 +41,6 @@ impl DisplayTerminal {
             point.column,
         )?;
         let mut reference: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
-        reference.size = std::mem::size_of::<sys::GhosttyGridRef>();
         let result =
             unsafe { sys::ghostty_terminal_grid_ref(self.terminal.raw(), point, &mut reference) };
         check("terminal_grid_ref", result)?;
@@ -153,7 +152,6 @@ impl DisplayTerminal {
         for column in 0..geometry.cols {
             let point = ghostty_point(sys::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN, y, column)?;
             let mut reference: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
-            reference.size = std::mem::size_of::<sys::GhosttyGridRef>();
             let result = unsafe {
                 sys::ghostty_terminal_grid_ref(self.terminal.raw(), point, &mut reference)
             };

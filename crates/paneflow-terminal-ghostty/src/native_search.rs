@@ -79,9 +79,12 @@ impl NativeSearch {
         Ok(status)
     }
 
-    fn select(&mut self, option: sys::GhosttySearchOption) -> Result<()> {
-        let result =
-            unsafe { sys::ghostty_search_set(self.handle.raw(), option, std::ptr::null()) };
+    fn select(&mut self, direction: SearchDirection) -> Result<()> {
+        let select = match direction {
+            SearchDirection::TowardOlder => sys::ghostty_search_select_next,
+            SearchDirection::TowardNewer => sys::ghostty_search_select_prev,
+        };
+        let result = unsafe { select(self.handle.raw()) };
         if result != sys::GhosttyResult_GHOSTTY_NO_VALUE {
             check("search_select", result)?;
             self.initial_selection_pending = false;
@@ -121,7 +124,7 @@ impl NativeSearch {
             }
         }
         if self.initial_selection_pending {
-            self.select(sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_NEXT)?;
+            self.select(SearchDirection::TowardOlder)?;
             check("search_feed_selected_viewport", unsafe {
                 sys::ghostty_search_feed(self.handle.raw())
             })?;
@@ -265,11 +268,17 @@ fn top_down_index(len: usize, newest_first_index: usize) -> usize {
     len.saturating_sub(1).saturating_sub(newest_first_index)
 }
 
-fn top_down_selection_option(previous: bool) -> sys::GhosttySearchOption {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchDirection {
+    TowardOlder,
+    TowardNewer,
+}
+
+fn top_down_direction(previous: bool) -> SearchDirection {
     if previous {
-        sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_NEXT
+        SearchDirection::TowardOlder
     } else {
-        sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_PREV
+        SearchDirection::TowardNewer
     }
 }
 
@@ -320,7 +329,7 @@ impl DisplayTerminal {
 
     pub fn search_select(&mut self, previous: bool) -> Result<()> {
         if let Some(search) = &mut self.search {
-            search.select(top_down_selection_option(previous))?;
+            search.select(top_down_direction(previous))?;
         }
         Ok(())
     }
@@ -339,14 +348,8 @@ mod tests {
 
     #[test]
     fn previous_walks_toward_older_matches_and_next_toward_newer() {
-        assert_eq!(
-            top_down_selection_option(true),
-            sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_NEXT
-        );
-        assert_eq!(
-            top_down_selection_option(false),
-            sys::GhosttySearchOption_GHOSTTY_SEARCH_OPT_SELECT_PREV
-        );
+        assert_eq!(top_down_direction(true), SearchDirection::TowardOlder);
+        assert_eq!(top_down_direction(false), SearchDirection::TowardNewer);
     }
 
     #[test]

@@ -405,11 +405,12 @@ mod tests {
         unsafe { std::alloc::dealloc(memory.cast(), allocation_layout(len, alignment)) };
     }
 
-    static REFUSABLE_VTABLE: sys::GhosttyAllocatorVtable = sys::GhosttyAllocatorVtable {
+    const REFUSABLE_VTABLE: sys::GhosttyAllocatorVtable = sys::GhosttyAllocatorVtable {
         alloc: Some(refusable_alloc),
         resize: Some(in_place_resize_refused),
         remap: Some(remap_refused),
         free: Some(refusable_free),
+        reserved: [std::ptr::null_mut(); 4],
     };
 
     unsafe extern "C" fn record_pty_write(

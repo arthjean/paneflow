@@ -232,33 +232,33 @@ impl<'terminal> KittyImage<'terminal> {
                 self.raw,
                 sys::ghostty_kitty_graphics_image_get_multi,
                 [
-                    Slot::new(s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_ID, &mut id),
+                    Slot::new(s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_ID, &mut id),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_NUMBER,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_NUMBER,
                         &mut number,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH,
                         &mut width,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT,
                         &mut height,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT,
                         &mut format,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_COMPRESSION,
                         &mut compression,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_EXPECTED_LEN,
                         &mut len,
                     ),
                     Slot::new(
-                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
+                        s::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_GENERATION,
                         &mut generation,
                     ),
                 ],
@@ -277,31 +277,25 @@ impl<'terminal> KittyImage<'terminal> {
     }
 
     pub fn pixels(&self) -> Result<Option<&'terminal [u8]>> {
-        let mut pointer: *const u8 = std::ptr::null();
+        let mut pixels = sys::GhosttyString {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
         let result = unsafe {
             sys::ghostty_kitty_graphics_image_get(
                 self.raw,
-                sys::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
-                (&raw mut pointer).cast::<c_void>(),
+                sys::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS,
+                (&raw mut pixels).cast::<c_void>(),
             )
         };
         if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
             return Ok(None);
         }
-        check("kitty_image_get_data_ptr", result)?;
-        if pointer.is_null() {
+        check("kitty_image_get_pixels", result)?;
+        if pixels.ptr.is_null() {
             return Ok(None);
         }
-        let mut len = 0usize;
-        let result = unsafe {
-            sys::ghostty_kitty_graphics_image_get(
-                self.raw,
-                sys::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
-                (&raw mut len).cast::<c_void>(),
-            )
-        };
-        check("kitty_image_get_data_len", result)?;
-        Ok(Some(unsafe { std::slice::from_raw_parts(pointer, len) }))
+        Ok(Some(unsafe { std::slice::from_raw_parts(pixels.ptr, pixels.len) }))
     }
 }
 

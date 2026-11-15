@@ -108,7 +108,9 @@ pub(super) fn handle_terminal_command(
             }
         }
         RuntimeMessage::Scroll(scroll) => {
-            terminal.scroll(scroll);
+            if let Err(error) = terminal.scroll(scroll) {
+                log::warn!(target: "paneflow::terminal::ghostty", "Ghostty scroll failed: {error}");
+            }
             if let Err(error) = gate.publish_now(inner, terminal) {
                 log::warn!(target: "paneflow::terminal::ghostty", "Ghostty scroll failed: {error}");
             }
@@ -254,7 +256,12 @@ pub(super) fn handle_terminal_command(
             let _ = gate.publish_now(inner, terminal);
         }
         RuntimeMessage::SetOptionAsAlt(enabled) => {
-            terminal.set_option_as_alt(option_as_alt(enabled));
+            if let Err(error) = terminal.set_option_as_alt(option_as_alt(enabled)) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "option as alt could not be applied: {error}"
+                );
+            }
         }
         RuntimeMessage::UpdateAppearance(appearance) => {
             if let Err(error) = terminal.set_palette(&current_ghostty_palette()) {
@@ -453,7 +460,10 @@ pub(super) fn advance_selection_autoscroll(
                 .unwrap_or(i32::MAX),
         ),
     };
-    terminal.scroll(ghostty::Scroll::Delta(delta));
+    if let Err(error) = terminal.scroll(ghostty::Scroll::Delta(delta)) {
+        log::warn!(target: "paneflow::terminal::ghostty", "autoscroll could not move the viewport: {error}");
+        return;
+    }
     let options = ghostty::DragOptions {
         position: Some(target.position),
         rectangle: target.rectangle,

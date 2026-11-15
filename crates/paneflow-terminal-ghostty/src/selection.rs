@@ -68,9 +68,7 @@ impl DisplayTerminal {
 }
 
 pub(crate) fn empty_selection() -> sys::GhosttySelection {
-    let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
-    selection.size = std::mem::size_of::<sys::GhosttySelection>();
-    selection
+    unsafe { std::mem::zeroed() }
 }
 
 #[cfg(test)]

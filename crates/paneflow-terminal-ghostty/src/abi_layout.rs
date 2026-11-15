@@ -26,7 +26,16 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         ptr: *const u8, len: usize
     });
     check!(layouts, sys::GhosttyGridRef, "GhosttyGridRef", {
-        size: usize, node: *mut std::ffi::c_void, x: u16, y: u16
+        node: *mut std::ffi::c_void, x: u16, y: u16
+    });
+    check!(layouts, sys::GhosttySelection, "GhosttySelection", {
+        start: sys::GhosttyGridRef, end: sys::GhosttyGridRef, rectangle: bool
+    });
+    check!(layouts, sys::GhosttySelectionBuffer, "GhosttySelectionBuffer", {
+        ptr: *mut sys::GhosttySelection, cap: usize, len: usize
+    });
+    check!(layouts, sys::GhosttyCodepointBuffer, "GhosttyCodepointBuffer", {
+        ptr: *mut u32, cap: usize, len: usize
     });
     check!(layouts, sys::GhosttyPointCoordinate, "GhosttyPointCoordinate", {
         x: u16, y: u32
@@ -35,23 +44,16 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         tag: sys::GhosttyPointTag, value: sys::GhosttyPointValue
     });
     check!(layouts, sys::GhosttyStyleColor, "GhosttyStyleColor", {
-        tag: sys::GhosttyStyleColorTag, value: sys::GhosttyStyleColorValue
+        tag: u8, value: sys::GhosttyStyleColorValue
     });
     check!(layouts, sys::GhosttyStyle, "GhosttyStyle", {
-        size: usize,
         fg_color: sys::GhosttyStyleColor,
         bg_color: sys::GhosttyStyleColor,
         underline_color: sys::GhosttyStyleColor,
-        bold: bool,
-        italic: bool,
-        faint: bool,
-        blink: bool,
-        inverse: bool,
-        invisible: bool,
-        strikethrough: bool,
-        overline: bool,
-        underline: std::ffi::c_int
+        flags: sys::GhosttyStyleFlags,
+        reserved: u16
     });
+    crate::style::validate_flag_bits(layouts)?;
     check!(layouts, sys::GhosttyRenderStateColors, "GhosttyRenderStateColors", {
         size: usize,
         background: sys::GhosttyColorRgb,
@@ -99,7 +101,6 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         tertiary: sys::GhosttyDeviceAttributesTertiary
     });
     check!(layouts, sys::GhosttyTerminalProgramStatus, "GhosttyTerminalProgramStatus", {
-        size: usize,
         state: sys::GhosttyProgramStatusState,
         kind: sys::GhosttyProgramStatusKind,
         progress: i8,
@@ -109,7 +110,6 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
         message: sys::GhosttyString
     });
     check!(layouts, sys::GhosttyTerminalSemanticPrompt, "GhosttyTerminalSemanticPrompt", {
-        size: usize,
         kind: sys::GhosttySemanticPromptKind,
         prompt_kind: sys::GhosttySemanticPromptPromptKind,
         has_exit_code: bool,
@@ -168,6 +168,50 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
     });
     check!(layouts, sys::GhosttyRenderStateRowId, "GhosttyRenderStateRowId", {
         bits: [u64; 2]
+    });
+    check!(layouts, sys::GhosttyTerminalProgressReport, "GhosttyTerminalProgressReport", {
+        state: sys::GhosttyTerminalProgressState, progress: i8
+    });
+    check!(layouts, sys::GhosttyTerminalDesktopNotification, "GhosttyTerminalDesktopNotification", {
+        title: sys::GhosttyString, body: sys::GhosttyString
+    });
+    check!(layouts, sys::GhosttyClipboardContent, "GhosttyClipboardContent", {
+        mime: sys::GhosttyString, data: sys::GhosttyString
+    });
+    check!(layouts, sys::GhosttyClipboardWrite, "GhosttyClipboardWrite", {
+        location: sys::GhosttyClipboardLocation,
+        contents: *const sys::GhosttyClipboardContent,
+        contents_len: usize,
+        name: sys::GhosttyString,
+        granted: bool,
+        can_remember: bool,
+        ctx: *const std::ffi::c_void,
+        reply: sys::GhosttyClipboardWriteReplyFn
+    });
+    check!(layouts, sys::GhosttyClipboardRead, "GhosttyClipboardRead", {
+        location: sys::GhosttyClipboardLocation,
+        mimes: *const sys::GhosttyString,
+        mimes_len: usize,
+        list: bool,
+        name: sys::GhosttyString,
+        granted: bool,
+        can_remember: bool,
+        ctx: *const std::ffi::c_void,
+        reply: sys::GhosttyClipboardReadReplyFn
+    });
+    check!(layouts, sys::GhosttyKittyGraphicsPlacementRenderInfo, "GhosttyKittyGraphicsPlacementRenderInfo", {
+        size: usize,
+        pixel_width: u32,
+        pixel_height: u32,
+        grid_cols: u32,
+        grid_rows: u32,
+        viewport_col: i32,
+        viewport_row: i32,
+        viewport_visible: bool,
+        source_x: u32,
+        source_y: u32,
+        source_width: u32,
+        source_height: u32
     });
     Ok(())
 }

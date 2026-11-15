@@ -345,11 +345,12 @@ mod tests {
         }
     }
 
-    static TRACKED_ALLOCATOR_VTABLE: sys::GhosttyAllocatorVtable = sys::GhosttyAllocatorVtable {
+    const TRACKED_ALLOCATOR_VTABLE: sys::GhosttyAllocatorVtable = sys::GhosttyAllocatorVtable {
         alloc: Some(tracked_alloc),
         resize: Some(tracked_resize),
         remap: Some(tracked_remap),
         free: Some(tracked_free),
+        reserved: [std::ptr::null_mut(); 4],
     };
 
     #[test]

@@ -1,6 +1,7 @@
 use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
+use crate::formatter::FormatterOptions;
 use crate::handles::check;
 use crate::snapshot_ffi::copy_buffer;
 use crate::{GhosttyError, Hyperlink, Point, Result, SelectionRange};
@@ -8,33 +9,11 @@ use crate::{GhosttyError, Hyperlink, Point, Result, SelectionRange};
 const MAX_HYPERLINK_BYTES: usize = 8192;
 const MAX_SELECTION_BYTES: usize = 400_000;
 
-struct GhosttyAllocation {
-    pointer: *mut u8,
-    len: usize,
-}
-
-impl GhosttyAllocation {
-    fn copy(&self) -> Vec<u8> {
-        if self.len == 0 {
-            Vec::new()
-        } else {
-            unsafe { std::slice::from_raw_parts(self.pointer, self.len) }.to_vec()
-        }
-    }
-}
-
-impl Drop for GhosttyAllocation {
-    fn drop(&mut self) {
-        unsafe { sys::ghostty_free(std::ptr::null(), self.pointer, self.len) };
-    }
-}
-
 impl DisplayTerminal {
     pub fn set_selection(&mut self, range: SelectionRange) -> Result<()> {
         let start = self.grid_ref(range.start)?;
         let end = self.grid_ref(range.end)?;
         let selection = sys::GhosttySelection {
-            size: std::mem::size_of::<sys::GhosttySelection>(),
             start,
             end,
             rectangle: range.rectangle,
@@ -43,41 +22,31 @@ impl DisplayTerminal {
     }
 
     pub fn selection_text(&self) -> Result<Option<String>> {
-        let options = sys::GhosttyTerminalSelectionFormatOptions {
-            size: std::mem::size_of::<sys::GhosttyTerminalSelectionFormatOptions>(),
-            emit: sys::GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_PLAIN,
-            unwrap: true,
-            trim: true,
-            selection: std::ptr::null(),
+        let Some(selection) = self.active_selection()? else {
+            return Ok(None);
         };
-        let mut pointer = std::ptr::null_mut();
-        let mut len = 0usize;
+        let formatter = self.formatter(FormatterOptions::plain_text())?;
+        formatter.select(&selection)?;
+        let bytes = formatter.format_alloc(MAX_SELECTION_BYTES, "selection text")?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| GhosttyError::InvalidUtf8("selection text"))
+    }
+
+    fn active_selection(&self) -> Result<Option<sys::GhosttySelection>> {
+        let mut selection = std::mem::MaybeUninit::<sys::GhosttySelection>::uninit();
         let result = unsafe {
-            sys::ghostty_terminal_selection_format_alloc(
+            sys::ghostty_terminal_get(
                 self.terminal.raw(),
-                std::ptr::null(),
-                options,
-                &mut pointer,
-                &mut len,
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SELECTION,
+                selection.as_mut_ptr().cast(),
             )
         };
         if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
             return Ok(None);
         }
-        check("selection_format_alloc", result)?;
-        if len > MAX_SELECTION_BYTES || (len > 0 && pointer.is_null()) {
-            if !pointer.is_null() {
-                unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
-            }
-            return Err(GhosttyError::LimitExceeded {
-                resource: "selection text",
-                limit: MAX_SELECTION_BYTES,
-            });
-        }
-        let allocation = GhosttyAllocation { pointer, len };
-        let text = String::from_utf8(allocation.copy())
-            .map_err(|_| GhosttyError::InvalidUtf8("selection text"))?;
-        Ok(Some(text))
+        check("terminal_get_selection", result)?;
+        Ok(Some(unsafe { selection.assume_init() }))
     }
 
     pub fn clear_selection(&mut self) -> Result<()> {
