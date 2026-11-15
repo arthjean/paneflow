@@ -292,17 +292,6 @@ pub(crate) fn squircle_corners_fill(radii: Corners<Pixels>, color: Hsla) -> AnyE
             )
             .into_any_element();
     }
-    if translucent_over_transparent_window(color) {
-        return div()
-            .absolute()
-            .inset_0()
-            .rounded_tl(radii.top_left)
-            .rounded_tr(radii.top_right)
-            .rounded_br(radii.bottom_right)
-            .rounded_bl(radii.bottom_left)
-            .bg(color)
-            .into_any_element();
-    }
     div()
         .absolute()
         .inset_0()
@@ -355,8 +344,6 @@ pub(crate) fn squircle_fill_blend(
                                 corners(bounds, Corners::all(radius))
                             })),
                         );
-                    } else if translucent_over_transparent_window(color) {
-                        window.paint_quad(gpui::fill(bounds, color).corner_radii(radius));
                     } else if let Some(path) = squircle_path(bounds, radius) {
                         window.paint_path(path, color);
                     }
@@ -365,18 +352,6 @@ pub(crate) fn squircle_fill_blend(
             .size_full(),
         )
         .into_any_element()
-}
-
-fn translucent_over_transparent_window(color: Hsla) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        color.a < 1.0 && crate::window_chrome::linux_backdrop::translucent_window_active()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = color;
-        false
-    }
 }
 
 const OPAQUE_BORDER_ALPHA: f32 = 1. - 1. / 512.;
@@ -468,9 +443,7 @@ fn paint_fill_beneath_border(
         return;
     }
     let (fill_bounds, fill_radii) = fill_under_border(bounds, radii, border_width, border_color);
-    if translucent_over_transparent_window(color) {
-        window.paint_quad(gpui::fill(fill_bounds, color).corner_radii(fill_radii));
-    } else if let Some(path) = squircle_corners_path(fill_bounds, fill_radii) {
+    if let Some(path) = squircle_corners_path(fill_bounds, fill_radii) {
         window.paint_path(path, color);
     }
 }
