@@ -18,6 +18,7 @@ pub(crate) struct Manifest {
     bindings_path: PathBuf,
     bindings_sha256: String,
     api_version: String,
+    lib_version: String,
     build_mode: String,
     windows_zig_archive_url: Option<String>,
     windows_zig_archive_sha256: Option<String>,
@@ -140,6 +141,7 @@ impl Manifest {
         validate_safe_relative_path(&manifest.bindings_path, "bindings_path")?;
         validate_manifest_digest(&manifest.header_sha256, "header_sha256")?;
         validate_manifest_digest(&manifest.bindings_sha256, "bindings_sha256")?;
+        validate_library_version(&manifest.api_version, &manifest.lib_version)?;
         if manifest.targets.is_empty() {
             return Err(build_error("libghostty manifest declares no targets"));
         }
@@ -151,6 +153,10 @@ impl Manifest {
 
     pub(crate) fn api_version(&self) -> &str {
         &self.api_version
+    }
+
+    pub(crate) fn lib_version(&self) -> &str {
+        &self.lib_version
     }
 
     pub(crate) fn ghostty_app_version(&self) -> &str {
@@ -568,6 +574,29 @@ fn validate_manifest_digest(value: &str, key: &str) -> BuildResult<()> {
         .map_err(|detail| build_error(format!("invalid libghostty manifest `{key}`: {detail}")))
 }
 
+fn validate_library_version(api_version: &str, lib_version: &str) -> BuildResult<()> {
+    let parts: Vec<&str> = api_version.split('.').collect();
+    let numeric = parts
+        .iter()
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    if parts.len() != 3 || !numeric {
+        return Err(build_error(format!(
+            "libghostty manifest `api_version` must be MAJOR.MINOR.PATCH, got `{api_version}`"
+        )));
+    }
+    let suffix = lib_version.strip_prefix(api_version).ok_or_else(|| {
+        build_error(format!(
+            "libghostty manifest `lib_version` `{lib_version}` does not start with `api_version` `{api_version}`"
+        ))
+    })?;
+    if !(suffix.is_empty() || suffix.starts_with('-') || suffix.starts_with('+')) {
+        return Err(build_error(format!(
+            "libghostty manifest `lib_version` `{lib_version}` is not a version of `{api_version}`"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_safe_relative_path(path: &Path, key: &str) -> BuildResult<()> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
@@ -652,6 +681,37 @@ pub(super) mod tests {
                 .to_string()
                 .contains("unsupported libghostty manifest schema")
         );
+    }
+
+    #[test]
+    fn accepts_a_release_and_a_development_library_version() -> BuildResult<()> {
+        for (api, lib) in [("1.0.1", "1.0.1"), ("1.0.2", "1.0.2-dev+35188fe06")] {
+            validate_library_version(api, lib)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_a_library_version_that_disagrees_with_the_api_version() {
+        for (api, lib) in [
+            ("1.0.1", "1.0.2"),
+            ("1.0.1", "1.0.10"),
+            ("1.0", "1.0"),
+            ("1.0.1.4", "1.0.1.4"),
+            ("v1.0.1", "v1.0.1"),
+        ] {
+            assert!(
+                validate_library_version(api, lib).is_err(),
+                "{api} / {lib} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pinned_library_version_belongs_to_the_pinned_api_version() -> BuildResult<()> {
+        let manifest = Manifest::parse(MANIFEST)?;
+        assert!(manifest.lib_version().starts_with(manifest.api_version()));
+        Ok(())
     }
 
     #[test]

@@ -190,8 +190,33 @@ jobs:
           old_short="$(printf '%s' "$old_sha" | cut -c1-8)"
           macos_root="$(scripts/libghostty-manifest.sh macos_canonical_source_path)"
           windows_root="$(scripts/libghostty-manifest.sh windows_canonical_source_path)"
-          api_version="$(scripts/libghostty-manifest.sh api_version)"
           short_app_sha="$(printf '%s' "$SOURCE_SHA" | cut -c1-9)"
+
+          # Upstream derives the library version from git: the `vt-X.Y.Z` tag
+          # when it points at the built commit, otherwise the build.zig
+          # constant plus the short commit id. The recipes build from shallow
+          # checkouts and `git archive` exports that see no tag, so the
+          # version is resolved here once and passed to every target as
+          # -Dlib-version-string.
+          lib_constant="$(
+            sed -nE 's/^const lib_version = "([^"]+)";.*/\1/p' "$SOURCE_DIR/build.zig" | head -1
+          )"
+          api_version="${lib_constant%%[-+]*}"
+          if ! printf '%s' "$api_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::could not read lib_version from the target build.zig (got '$lib_constant')"
+            exit 1
+          fi
+          tagged="$(
+            git ls-remote "https://github.com/${GHOSTTY_REPOSITORY}.git" "refs/tags/vt-${api_version}^{}" | cut -f1
+          )"
+          if [ "$tagged" = "$SOURCE_SHA" ]; then
+            lib_version="$api_version"
+            license_version="$api_version"
+          else
+            lib_version="${lib_constant}+${short_app_sha}"
+            license_version="$lib_constant"
+          fi
+          echo "libghostty-vt $lib_version (C API $api_version)"
 
           scripts/repin-libghostty-manifest.sh \
             --set "source_sha=$SOURCE_SHA" \
@@ -201,7 +226,9 @@ jobs:
             --set "macos_canonical_source_path=${macos_root%$old_short}$SHORT_SHA" \
             --set "windows_canonical_source_path=${windows_root%$old_short}$SHORT_SHA" \
             --set "archive_release_tag=$RELEASE_TAG" \
-            --set-license "libghostty-vt:version=${api_version}-dev@$SOURCE_SHA"
+            --set "api_version=$api_version" \
+            --set "lib_version=$lib_version" \
+            --set-license "libghostty-vt:version=${license_version}@$SOURCE_SHA"
 
           git --no-pager diff -- native/libghostty/manifest.toml
 

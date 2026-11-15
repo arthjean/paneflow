@@ -351,6 +351,7 @@ $HeaderSha = Get-ManifestString "header_sha256"
 $BindingsPath = Get-ManifestString "bindings_path"
 $BindingsSha = Get-ManifestString "bindings_sha256"
 $BuildMode = Get-ManifestString "build_mode"
+$LibVersion = Get-ManifestString "lib_version"
 $BuildSeed = Get-ManifestString "windows_build_seed"
 $BuildJobs = Get-ManifestString "windows_build_jobs"
 $SourceDateEpoch = Get-ManifestString "windows_source_date_epoch"
@@ -613,7 +614,7 @@ function Invoke-NativeBuild {
     $buildTimer = [Diagnostics.Stopwatch]::StartNew()
     Write-Phase "$Label clean build starting"
     try {
-        $zigOutput = @(& $ZigPath build --verbose "--seed=$BuildSeed" "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
+        $zigOutput = @(& $ZigPath build --verbose "--seed=$BuildSeed" "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dlib-version-string=$LibVersion" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
         if ($zigExitCode -ne 0) {
             throw "SIMD libghostty build failed with exit code $zigExitCode; raw reproducer is $buildRoot`n$($zigOutput -join "`n")"

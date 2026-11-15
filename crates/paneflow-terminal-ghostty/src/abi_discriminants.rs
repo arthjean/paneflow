@@ -11,6 +11,7 @@ pub(crate) const READ_DISCRIMINANTS: &[(&str, i64)] = discriminants![
     GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MAJOR,
     GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MINOR,
     GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_PATCH,
+    GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_STRING,
     GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE,
     GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB,
     GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT,

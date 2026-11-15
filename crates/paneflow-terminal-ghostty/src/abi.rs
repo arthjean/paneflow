@@ -35,15 +35,22 @@ const _: unsafe extern "C" fn(*const sys::GhosttyAllocator, *mut u8, usize) = sy
 
 pub(crate) fn validate() -> Result<()> {
     let actual = (
-        build_info_u32(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MAJOR)?,
-        build_info_u32(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MINOR)?,
-        build_info_u32(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_PATCH)?,
+        build_info_usize(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MAJOR)?,
+        build_info_usize(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MINOR)?,
+        build_info_usize(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_PATCH)?,
     );
     let actual = format!("{}.{}.{}", actual.0, actual.1, actual.2);
     if actual != sys::EXPECTED_API_VERSION {
         return Err(GhosttyError::AbiMismatch(format!(
             "expected {}, got {actual}",
             sys::EXPECTED_API_VERSION
+        )));
+    }
+    let version = build_info_string(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_STRING)?;
+    if version != sys::EXPECTED_LIB_VERSION {
+        return Err(GhosttyError::AbiMismatch(format!(
+            "expected library version {}, got {version}",
+            sys::EXPECTED_LIB_VERSION
         )));
     }
     let document = type_json()?;
@@ -211,11 +218,31 @@ fn validate_discriminants(types: &serde_json::Value, discriminants: &[(&str, i64
     Ok(())
 }
 
-fn build_info_u32(kind: sys::GhosttyBuildInfo) -> Result<u32> {
-    let mut value = 0u32;
-    let result = unsafe { sys::ghostty_build_info(kind, (&mut value as *mut u32).cast()) };
+fn build_info_usize(kind: sys::GhosttyBuildInfo) -> Result<usize> {
+    let mut value = 0usize;
+    let result = unsafe { sys::ghostty_build_info(kind, (&raw mut value).cast()) };
     check("build_info", result)?;
     Ok(value)
+}
+
+fn build_info_string(kind: sys::GhosttyBuildInfo) -> Result<String> {
+    let mut value = sys::GhosttyString {
+        ptr: std::ptr::null(),
+        len: 0,
+    };
+    let result = unsafe { sys::ghostty_build_info(kind, (&raw mut value).cast()) };
+    check("build_info", result)?;
+    if value.len == 0 {
+        return Ok(String::new());
+    }
+    if value.ptr.is_null() {
+        return Err(GhosttyError::AbiMismatch(
+            "build info returned a null string with a length".to_owned(),
+        ));
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(value.ptr, value.len) };
+    String::from_utf8(bytes.to_vec())
+        .map_err(|_| GhosttyError::AbiMismatch("build info string is not UTF-8".to_owned()))
 }
 
 #[cfg(test)]
