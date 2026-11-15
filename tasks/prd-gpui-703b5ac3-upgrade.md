@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-15 | Arthur Jean | Initial PRD: move the GPUI pin from `37faef81` to `703b5ac3`, migrate every broken API, and re-align paths, layers, frame pacing, animation, text and platform behavior with the new GPUI as Zed specifies and uses it. 6 epics, 20 stories. |
+| 1.1 | 2026-11-15 | Arthur Jean | CI moves to one final epic. EP-001 to EP-006 are validated locally, by code, on the Windows host and in WSL Linux, and never wait on CI. The new EP-007 owns every CI result and fixes everything until the whole CI is green before merge. US-002 is rescoped to the local proof. 7 epics, 23 stories. |
 
 ## Problem Statement
 
@@ -22,12 +23,13 @@
 
 ## Overview
 
-The work happens on one branch and lands as one pull request series. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
+The work happens on one branch and lands as one pull request series. EP-001 to EP-006 are validated locally, by code: tests, lints and gates run on the Windows host and in WSL Linux after each story, and no story before EP-007 pushes or waits on CI. EP-007, the last epic, owns CI: it pushes the branch, reads every workflow run, and fixes every failure until the whole CI is green on the commit that merges. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
 
 EP-002 to EP-005 then bring behavior in line with the new GPUI, one domain per epic: paths and layers, frame pacing and animation, text, platform integration. Each story names the Zed definition, the Zed test or example that specifies the behavior, and where Zed's own application code uses it, so the implementer ports a pattern instead of inventing one. EP-006 re-baselines the benchmarks, writes the bump summary on the model of `bench/results/gpui-bump-37faef81-2026-10-28.md`, and updates `CHANGELOG.md`, `DESIGN.md` and `ARCHITECTURE.md`.
 
 Key decisions, each with its evidence:
-- **One pin move to `703b5ac3`, not two.** A staged move through `78f5d7446c` (the last commit before the renderer rework) would isolate risk but doubles the benchmark re-baseline and the visual pass, and was never compiled. The branch absorbs the risk instead: nothing merges before EP-001 to EP-003 and EP-006 are certified.
+- **One pin move to `703b5ac3`, not two.** A staged move through `78f5d7446c` (the last commit before the renderer rework) would isolate risk but doubles the benchmark re-baseline and the visual pass, and was never compiled. The branch absorbs the risk instead: nothing merges before EP-001 to EP-003, EP-006 and EP-007 are certified.
+- **Local validation per epic, CI once at the end.** A CI round trip costs 30 to 45 minutes, and waiting on it after each epic stalls the work. Each story is proven locally instead (Windows natively, Linux x86_64 in WSL), and EP-007 drives the CI to green in one long pass at the end. The cost is that macOS-only code is reviewed by inspection until EP-007, so its failures surface late; EP-007 is sized for that.
 - **No translated shape cache.** `Path` cannot be moved or inspected, `PathBuilder::build` no longer tessellates, and binning is not cacheable from outside GPUI. A benchmark budget replaces the build-count tests; a bounded origin-keyed cache is the fallback only if the budget fails.
 - **GPUI's default frame intervals, written explicitly.** Zed sets none of the three options (no match outside `zed/crates/gpui`), so the defaults are the specification: 33.333 ms inactive, 33.333 ms in low power, 16.667 ms under thermal pressure (`platform.rs:2850-2852`). This also keeps the promise already published in `CHANGELOG.md:141`.
 - **Tabs expand to columns before shaping, 4 columns wide.** Zed's editor never hands a tab to the shaper: `TabMap` expands it with `tab_size - ((expanded_chars_old - 1) % tab_size)` (`zed/crates/editor/src/display_map/tab_map.rs:459`), default `"tab_size": 4` (`zed/assets/settings/default.json:1716`). Expanding gives identical columns on the three platforms.
@@ -98,14 +100,14 @@ Key findings that informed this PRD:
 
 ## Quality Gates
 
-These commands must pass for every user story:
+Every story in EP-001 to EP-006 is validated locally, by code, after its last change. Nothing in these epics is pushed for validation and no story waits on a CI result: CI belongs to EP-007. These commands must pass for every user story:
 - `cargo fmt --check` - formatting, the CI gate
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` - lints on the host target
 - `cargo nextest run --workspace --locked --profile ci` - the test suite as CI runs it
 - `bash scripts/check-test-wallclock.sh` - no new wall-clock budget, when a test changes
 - `cargo deny check advisories licenses sources` - when `Cargo.toml`, `Cargo.lock` or `deny.toml` changes
 
-On the Windows host, the Linux leg is proven before a push by running the clippy command in WSL on a clone of the exact commit, with a private `CARGO_TARGET_DIR`.
+On the Windows host, the Linux leg is proven locally by running the clippy command, and the tests the story touches, in WSL on a clone of the exact local state, with a private `CARGO_TARGET_DIR` that is deleted afterwards. macOS code cannot be compiled locally: each story reviews its `cfg(target_os = "macos")` items by inspection and says so, and EP-007 compiles them.
 
 For UI stories, additional gates:
 - The `DESIGN.md` UI delivery gate (section 9, `DESIGN.md:1662-1678`): Dark, Light and one other preset; `reduce_motion` on and off; the 800 by 500 minimum window; every control state.
@@ -115,9 +117,9 @@ For UI stories, additional gates:
 
 ### EP-001: The pin moves and every target builds
 
-Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, and compiles, lints and tests on Linux, macOS and Windows.
+Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, and compiles, lints and tests on the Windows host and in WSL Linux. macOS is reviewed by inspection; EP-007 proves it in CI.
 
-**Definition of Done:** the four `rev` values name `703b5ac3`, `Cargo.lock` is committed, and every required `run_tests` job is green on the pull request commit.
+**Definition of Done:** the four `rev` values name `703b5ac3`, `Cargo.lock` is committed, and the quality gates pass on the Windows host and in WSL Linux x86_64 on the final local state.
 
 **Zed references:**
 - `zed/Cargo.toml:1044-1056`: the `[patch.crates-io]` set GPUI is built against; `async-task` at `:1045-1046`.
@@ -143,20 +145,20 @@ Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, an
 **Paneflow sites:** `src-app/Cargo.toml:46,47,249,407`; `Cargo.toml:97`; `deny.toml:144-153`; `IntoElement` impls at `src-app/src/widgets/text_input.rs:816`, `src-app/src/diff/element.rs:1567`, `src-app/src/ui_primitives.rs:142,477`, `src-app/src/app/sidebar/style.rs:104`, `src-app/src/terminal/element/mod.rs:1856`, `src-app/src/app/diff_dock/code/element.rs:1123`; `Path<Pixels>` at `src-app/src/ui_primitives/squircle.rs:87-186,380`, `src-app/src/ui_primitives/ring.rs:198,204`, `src-app/src/diff/element.rs:173`; `paint_layer` at `src-app/src/ui_primitives/shimmer.rs:178`, `src-app/src/terminal/element/mod.rs:1695,1733`, `src-app/src/diff/element.rs:1550`, `src-app/src/app/diff_dock/code/navigation_paint.rs:25`.
 
 **Acceptance Criteria:**
-- [ ] Given `src-app/Cargo.toml`, when the four `rev` values are read, then each equals `703b5ac3f4ffe1e87a073123ae56e22f72f095c4`, and the committed `Cargo.lock` resolves under `--locked`
-- [ ] Given the root `Cargo.toml`, when the `async-task` patch is read, then its URL and revision equal Zed's at `zed/Cargo.toml:1046`, and the `async-process`, `calloop` and `khronos-egl` revisions still equal Zed's
-- [ ] Given `deny.toml`, when `allow-git` is read, then it lists `https://github.com/smol-rs/async-task`, no longer lists `https://github.com/zed-industries/async-task.git`, and the note above it names this bump
-- [ ] Given a type that implements `Element`, when the source is searched, then no hand-written `impl IntoElement` exists for it, and `SelectMenu` (`src-app/src/settings/components.rs:1323`), which does not implement `Element`, keeps its impl
-- [ ] Given any use of a GPUI path, when the source is searched, then the type is written `Path` with no generic argument and no code reads a field of `Path`
-- [ ] Given the five `paint_layer` calls, when they compile, then each passes only a closure, and the terminal still opens its background layer before its text layer
-- [ ] Given a squircle request, when it is painted, then the shape is built at its final bounds, `translated` and the vertex-offset cache are gone, and the Surface and Classic styles still paint quads without building a path (`src-app/src/ui_primitives.rs:1394`)
-- [ ] Given the tests at `src-app/src/ui_primitives/squircle.rs:394,428,451,484` and `src-app/src/pane.rs:2324,2347`, when the suite runs, then they are replaced by tests on observable behavior (which requests build a path, which paint quads, one build per painted shape) and none reads path geometry
-- [ ] Given zero-sized or negative bounds, when a squircle is requested, then no path is built and nothing panics
-- [ ] Given `PathBuilder::build` returns an error, when a shape is painted, then that shape is skipped and the frame still completes
-- [ ] No lint is silenced with `#[allow]` to make the migration compile, and no comment is added to source code
+- [x] Given `src-app/Cargo.toml`, when the four `rev` values are read, then each equals `703b5ac3f4ffe1e87a073123ae56e22f72f095c4`, and the committed `Cargo.lock` resolves under `--locked`
+- [x] Given the root `Cargo.toml`, when the `async-task` patch is read, then its URL and revision equal Zed's at `zed/Cargo.toml:1046`, and the `async-process`, `calloop` and `khronos-egl` revisions still equal Zed's
+- [x] Given `deny.toml`, when `allow-git` is read, then it lists `https://github.com/smol-rs/async-task`, no longer lists `https://github.com/zed-industries/async-task.git`, and the note above it names this bump
+- [x] Given a type that implements `Element`, when the source is searched, then no hand-written `impl IntoElement` exists for it, and `SelectMenu` (`src-app/src/settings/components.rs:1323`), which does not implement `Element`, keeps its impl
+- [x] Given any use of a GPUI path, when the source is searched, then the type is written `Path` with no generic argument and no code reads a field of `Path`
+- [x] Given the five `paint_layer` calls, when they compile, then each passes only a closure, and the terminal still opens its background layer before its text layer
+- [x] Given a squircle request, when it is painted, then the shape is built at its final bounds, `translated` and the vertex-offset cache are gone, and the Surface and Classic styles still paint quads without building a path (`src-app/src/ui_primitives.rs:1394`)
+- [x] Given the tests at `src-app/src/ui_primitives/squircle.rs:394,428,451,484` and `src-app/src/pane.rs:2324,2347`, when the suite runs, then they are replaced by tests on observable behavior (which requests build a path, which paint quads, one build per painted shape) and none reads path geometry
+- [x] Given zero-sized or negative bounds, when a squircle is requested, then no path is built and nothing panics
+- [x] Given `PathBuilder::build` returns an error, when a shape is painted, then that shape is skipped and the frame still completes (proven by refusing non-finite or empty geometry before `PathBuilder` runs: in debug builds lyon's `debug_assert` panics on a non-finite point before GPUI can return its `Err`, so that `Err` is not reachable from a test)
+- [x] No lint is silenced with `#[allow]` to make the migration compile, and no comment is added to source code
 
-#### US-002: Prove the Linux, macOS and Windows legs
-**Description:** As the maintainer, I want the migrated commit proven on every CI leg so that platform-gated code I cannot compile locally is known to build and pass.
+#### US-002: Prove the Linux and Windows legs locally
+**Description:** As the maintainer, I want the migrated state proven on the two platforms I can compile so that later epics build on a known-good base, and only macOS waits for EP-007.
 
 **Priority:** P0
 **Size:** S (2 pts)
@@ -167,14 +169,14 @@ Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, an
 - `zed/crates/gpui_apple/src/display_link.rs:60-62`: `AnyClass::get(c"CAMetalDisplayLink").is_some()`, a runtime check, so the minimum macOS version does not rise.
 - `zed/crates/gpui_linux/src/linux/wayland/window.rs:21`: `ext_background_effect_surface_v1` comes from the `wayland-protocols` crate, no new system library.
 
-**Paneflow sites:** `.github/workflows/run_tests.yml:181` (Style), `:228` (Tests Linux x86_64), `:298` (Performance gates), `:430` (macOS aarch64 smoke build), `:645` (macOS render smoke), `:853` (Windows x86_64 libghostty check), `:1034` (Windows render smoke), `:1255` (Linux aarch64); `scripts/check-helper-sizes.sh`.
+**Paneflow sites:** `scripts/check-helper-sizes.sh`; `scripts/perf-gates.sh`; `bench/baselines/linux-x86_64/{terminal,editor}-alloc.json`.
 
 **Acceptance Criteria:**
-- [ ] Given the pull request commit, when `run_tests` completes, then Style, Tests (Linux x86_64), Linux aarch64, macOS aarch64 smoke build, macOS render smoke, Windows x86_64 libghostty check, Windows render smoke and cargo-deny are green
-- [ ] Given the Windows host, when the Linux clippy command runs in WSL on a clone of the exact commit, then it passes before the push
-- [ ] Given the Linux x86_64 build, when `scripts/check-helper-sizes.sh` runs, then the three helper binaries stay under their caps
-- [ ] Given a `cfg(target_os = "macos")`, `cfg(unix)` or `cfg(windows)` item fails on its leg, when the failure is read, then it is fixed in this story and the report states, per platform, whether the code was verified by compilation or by inspection
-- [ ] Given the Performance gates job fails on the bump, when the failure is read, then the failing budget and its measured value are recorded for US-003 and US-019, and no budget in `crates/paneflow-host/tests/persistent_baseline/gates.rs` is raised in this story
+- [x] Given the Windows host, when the quality gates run on the final local state, then fmt, clippy, the full nextest suite, the wall-clock check and `cargo deny` pass
+- [x] Given a WSL clone of the exact local state, when the Linux clippy command runs, then it passes, and the tests changed by US-001 pass on Linux
+- [x] Given the Linux x86_64 build, when `scripts/check-helper-sizes.sh` runs, then the three helper binaries stay under their hard caps
+- [x] Given the `cfg(target_os = "macos")`, `cfg(unix)` and `cfg(windows)` items, when the story is reported, then it states per platform whether the code was verified by compilation or by inspection
+- [x] Given an allocation counter moves on the bump, when it is read, then the allocation baselines are refreshed from a clean clone of the committed code, each changed counter is explained, and no budget in `crates/paneflow-host/tests/persistent_baseline/gates.rs` is raised
 
 ---
 
@@ -648,6 +650,62 @@ The bump is measured, re-baselined and written down where the repository keeps s
 - [ ] Given the whole branch, when the checklist is written, then one list groups, per platform, every surface and state the stories flagged for Arthur's visual pass
 - [ ] Given a document claims a behavior no story verified, when it is reviewed, then the claim is removed or marked unverified
 
+---
+
+### EP-007: The whole CI is green before merge
+
+The branch is pushed once the local epics are done, and every failure the CI reports is fixed on the branch until every workflow run is green on the commit that merges. This is the only epic that waits on CI, and it is expected to be long.
+
+**Definition of Done:** on the head commit of the pull request, every required `run_tests` job and every other workflow the branch triggers is green, with no budget raised, no test quarantined for this work, and the records of EP-006 still true for the code that merges.
+
+**Working rule:** push, wait for the whole run, read every failed job, fix all failures from that run in one pass with the local gates green, then push again. A fix is proven locally first wherever the platform allows; a failure is never retried blindly. A failing test is rerun once only to tell a flake from a regression, as `AGENTS.md` requires.
+
+**Zed references:**
+- `zed/crates/gpui_windows/build.rs`, `zed/crates/gpui_apple/src/display_link.rs:60-62`, `zed/crates/gpui_linux/src/linux/wayland/window.rs:21`: the platform facts the three legs must confirm.
+
+#### US-021: Every required run_tests job is green on the branch head
+**Description:** As the maintainer, I want every `run_tests` job green on the commit that merges so that the code gated by `cfg` on each platform, and macOS above all, is proven.
+
+**Priority:** P0
+**Size:** L (5 pts)
+**Dependencies:** Blocked by every story of EP-001 to EP-006
+
+**Paneflow sites:** `.github/workflows/run_tests.yml:181` (Style), `:228` (Tests Linux x86_64), `:298` (Performance gates), `:430` (macOS aarch64 smoke build), `:645` (macOS render smoke), `:853` (Windows x86_64 libghostty check), `:1034` (Windows render smoke), `:1255` (Linux aarch64); `.config/nextest.toml`.
+
+**Acceptance Criteria:**
+- [ ] Given the pull request head commit, when `run_tests` completes, then Style, Tests (Linux x86_64), Performance gates, Linux aarch64, macOS aarch64 smoke build, macOS render smoke, Windows x86_64 libghostty check, Windows render smoke, cargo-deny and `tests_pass` are green
+- [ ] Given a `cfg(target_os = "macos")`, `cfg(unix)` or `cfg(windows)` item fails on its leg, when the failure is read, then it is fixed in this story, and the report states per platform whether each fix was verified by compilation or by inspection
+- [ ] Given a test fails in CI, when it is rerun once, then a pass is reported as a flake with its tracking issue and a second failure is fixed; no test is added to the quarantine in `.config/nextest.toml` for this work
+- [ ] Given the Performance gates job fails, when the failure is read, then a counter below its baseline is refreshed from a clean clone of the committed code, and a budget exceeded is fixed in code or put to Arthur with the measured value; no budget in `crates/paneflow-host/tests/persistent_baseline/gates.rs` is raised without his approval
+- [ ] Given a CI fix changes code that EP-006 measured or documented, when the fix lands, then the affected suites are re-run and the bump summary, `CHANGELOG.md`, `DESIGN.md` or `ARCHITECTURE.md` are updated to match
+
+#### US-022: The other workflows the branch triggers are green
+**Description:** As the maintainer, I want every workflow that runs on the branch to pass so that nothing outside `run_tests` blocks the merge or a later release.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by every story of EP-001 to EP-006
+
+**Paneflow sites:** the `libghostty Linux`, `libghostty macOS` and `libghostty Windows` workflows; `perf-ab`; the Workflow audit job (`zizmor`); `scripts/check-workflows.sh`.
+
+**Acceptance Criteria:**
+- [ ] Given the pull request head commit, when every workflow triggered on the branch completes, then each one is green or skipped by its own path filter
+- [ ] Given a change under `.github/**` in this branch, when it is checked, then `bash scripts/check-workflows.sh` and `uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github` pass locally before the push
+- [ ] Given `perf-ab` reports a regression, when it is read, then its counter and measured value are recorded in the bump summary with the cause, or the regression is fixed
+
+#### US-023: The branch is ready to merge
+**Description:** As the maintainer, I want the pull request to state exactly what was proven where so that I can merge without re-checking the evidence.
+
+**Priority:** P0
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-021, US-022
+
+**Acceptance Criteria:**
+- [ ] Given the head commit, when `cargo fmt --check` runs on it, then it passes, and it is the commit on which US-021 and US-022 are green
+- [ ] Given the pull request body, when it is read, then it lists the validation actually run per platform (local Windows, WSL Linux, each CI leg), the user-visible behavior, the visual-pass checklist of US-020, and links the bump summary
+- [ ] Given the branch, when its history is read, then commits are atomic per story in the `type(scope): US-NNN - description` form, with no AI attribution and no closing keyword
+- [ ] Given the macOS latency of US-010 is still unmeasured or over threshold, when merge readiness is stated, then the pull request says so and leaves the merge decision to Arthur
+
 ## Functional Requirements
 
 - FR-01: The system must resolve `gpui` and `gpui_platform` at `703b5ac3f4ffe1e87a073123ae56e22f72f095c4` from the four declarations in `src-app/Cargo.toml`, with a committed lockfile that builds under `--locked`.
@@ -685,7 +743,7 @@ The bump is measured, re-baselined and written down where the repository keeps s
 | 9 | Rejected GPU adapter | An adapter fails the new surface test at startup | Next adapter is tried, or the existing startup error is shown | The existing startup error |
 | 10 | Menu near an edge | Submenu opened with room on neither side | Stays inside the window, parent row visible | None |
 | 11 | Upstream regression confirmed | macOS latency over threshold in US-010 | macOS release held, decision put to Arthur | None |
-| 12 | Platform leg fails | A `cfg`-gated item breaks on a CI leg not compiled locally | Fixed before merge; the report states what was compiled where | None |
+| 12 | Platform leg fails | A `cfg`-gated item breaks on a CI leg not compiled locally | Fixed in EP-007 before merge; the report states what was compiled where | None |
 
 ## Risks & Mitigations
 
@@ -695,7 +753,8 @@ The bump is measured, re-baselined and written down where the repository keeps s
 | 2 | Per-paint path building costs more than the frame allows | Med | High | US-003 measures first; US-004 carries a bounded origin-keyed cache as the fallback and a benchmark that guards the budget |
 | 3 | Seams between adjacent paths on bordered surfaces | High | Med | US-006 removes coincident edges by construction; US-005 collapses multi-path shapes into one stroke |
 | 4 | The renderer rework is three days old upstream and may receive fixes after `703b5ac3` | High | Med | Work stays on a branch; re-pinning to a later commit before merge is one manifest change plus the gates |
-| 5 | macOS-only code fails to compile, unseen from Windows and Linux | Med | Med | US-002 requires the macOS CI legs green on the pull request commit |
+| 5 | macOS-only code fails to compile, unseen from Windows and Linux | Med | Med | Stories review macOS items by inspection; EP-007 requires the macOS CI legs green before merge and is sized for late failures |
+| 10 | CI failures pile up because no epic before EP-007 runs CI | Med | Med | Every story passes the local gates on Windows and WSL Linux; EP-007 batches each CI run's failures into one fix pass |
 | 6 | Tab expansion breaks caret, selection or search geometry in the editor | Med | Med | US-013 maps offsets both ways with tests for carets, clicks, wide characters and search ranges |
 | 7 | New cached-view subscriptions cause extra full redraws | Low | Med | US-012 asserts render counts with a menu open and an agent thinking |
 | 8 | Benchmarks drift from machine noise and a baseline is set from a bad run | Med | Med | Runs differing by more than 10 % are discarded; baselines are set only from a clean tree |
@@ -749,7 +808,7 @@ Frame as questions for engineering input, not mandates:
 
 ## Open Questions
 
-- **Re-pin before merge?** If upstream fixes zed-industries/zed#66954 or follows up on the path renderer before this branch merges, should the pin move to that commit instead of `703b5ac3`? Arthur, at the start of EP-006; decides whether US-002 and US-019 run once or twice.
+- **Re-pin before merge?** If upstream fixes zed-industries/zed#66954 or follows up on the path renderer before this branch merges, should the pin move to that commit instead of `703b5ac3`? Arthur, at the start of EP-006; decides whether US-002, US-019 and EP-007 run once or twice.
 - **Low-power frame limit.** The PRD keeps GPUI's 30 fps limit in power-saving mode, which also limits keystroke echo there. If US-009 or US-010 shows a perceptible cost, should `low_power_frame_interval` become `None`? Arthur, after US-009; changes one constant and one changelog entry.
 - **Tab width.** Is a fixed 4 columns acceptable until a setting exists, including for Go and Makefiles where 8 is conventional? Arthur, before US-013.
 - **macOS hardware.** Who runs US-010, and on which Mac and display? Arthur, before EP-003 is certified; without it the macOS release of the bump is held.
