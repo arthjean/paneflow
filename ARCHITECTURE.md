@@ -329,6 +329,28 @@ replays the sidebar instead of rebuilding it; the app notifies whenever state
 the sidebar shows changes. The sidebar's spinner and shimmer clock
 (`SpinnerClock`) lives in that view and notifies only it.
 `sidebar_renders` in `system.counters` counts the rebuilds.
+`SidebarView::faded_column` puts the cached view under the column whose
+opacity follows the collapse; GPUI keys the view cache on the inherited
+opacity, so the sidebar repaints in the frame that changes it.
+
+A cached view that reads an entity it does not observe still wakes the window
+when that entity notifies, including after a frame that drew the view from
+its cache, but it keeps its cached output until it is rebuilt: a view observes
+what it shows. `redraw_guard::assert_no_redraw_loop` (test-only) draws 60
+frames and names any watched view that rebuilt on every one of them, so an
+entity notifying each frame under a cached view fails its test instead of
+pinning the UI thread.
+
+A view drawn from the cache does not re-emit its accessibility nodes at GPUI
+`703b5ac3`: the cache replays prepaint and paint ranges (`reuse_prepaint`,
+`reuse_paint`) and the accessibility tree is rebuilt only from elements that
+run, so the roles of a cached `SidebarView` or `TerminalView` leave the tree on
+frames that reuse it and come back when it rebuilds. This is upstream
+zed-industries/zed#66690, open. GPUI's test platform has no accessibility
+adapter, so no unit test can observe it; on Windows the sidebar was seen
+dropping from 60 to 12 accessibility references once it stopped re-rendering.
+No workaround is carried: disabling the cache for those views costs the
+rebuild the cache exists to avoid, and the choice is Arthur's.
 
 The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
 the end of CPU painting. It does not identify the echoed character or observe

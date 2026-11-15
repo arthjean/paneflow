@@ -647,22 +647,13 @@ impl Render for PaneFlowApp {
                                     .into_any_element(),
                             );
                         }
-                        row.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .h_full()
-                                .w(px(primary_sidebar_width))
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .opacity(primary_sidebar_opacity)
-                                .pt(title_bar_h)
-                                .child(
-                                    sidebar_view
-                                        .clone()
-                                        .cached(SidebarView::cached_style(self.sidebar_width())),
-                                ),
-                        )
+                        row.child(SidebarView::faded_column(
+                            sidebar_view.clone().into(),
+                            self.sidebar_width(),
+                            primary_sidebar_width,
+                            primary_sidebar_opacity,
+                            title_bar_h,
+                        ))
                     })
                     .child(
                         div()

@@ -720,4 +720,142 @@ mod tests {
         run_for(cx, Duration::from_secs(1));
         assert_eq!(notifies.get(), after_close, "no periodic wake survives");
     }
+
+    struct SidebarWithOpenMenu {
+        watched: crate::redraw_guard::WatchedView,
+        clock: SpinnerClock,
+    }
+
+    impl gpui::Render for SidebarWithOpenMenu {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            self.watched.rendered();
+            let menu = div()
+                .absolute()
+                .left(px(40.))
+                .top(px(40.))
+                .w(px(120.))
+                .h(px(80.))
+                .child("Rename");
+            let root = div()
+                .size_full()
+                .child(comet_trail_loader(gpui::white(), true))
+                .child(
+                    gpui::deferred(crate::ui_primitives::menu_reveal("sidebar-menu", menu))
+                        .priority(3),
+                );
+            self.clock.sync(cx);
+            root
+        }
+    }
+
+    struct CountedTerminal {
+        watched: crate::redraw_guard::WatchedView,
+    }
+
+    impl gpui::Render for CountedTerminal {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            self.watched.rendered();
+            div().size_full()
+        }
+    }
+
+    struct SidebarMenuRoot {
+        sidebar: gpui::Entity<SidebarWithOpenMenu>,
+        terminals: Vec<gpui::Entity<CountedTerminal>>,
+        renders: usize,
+    }
+
+    impl gpui::Render for SidebarMenuRoot {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            self.renders += 1;
+            div()
+                .size_full()
+                .flex()
+                .child(crate::app::sidebar::view::SidebarView::faded_column(
+                    self.sidebar.clone().into(),
+                    200.,
+                    200.,
+                    1.,
+                    px(0.),
+                ))
+                .children(self.terminals.iter().map(|terminal| {
+                    terminal
+                        .clone()
+                        .cached(gpui::StyleRefinement::default().w(px(200.)).h_full())
+                }))
+        }
+    }
+
+    #[gpui::test]
+    fn an_open_sidebar_menu_and_a_thinking_agent_keep_terminals_idle_over_a_hundred_root_renders(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::redraw_guard::{WatchedView, assert_no_redraw_loop};
+
+        let sidebar_watch = WatchedView::new("SidebarView");
+        let terminal_watches = [
+            WatchedView::new("TerminalView 1"),
+            WatchedView::new("TerminalView 2"),
+        ];
+        let (root, cx) = cx.add_window_view({
+            let sidebar_watch = sidebar_watch.clone();
+            let terminal_watches = terminal_watches.clone();
+            move |_, cx| SidebarMenuRoot {
+                sidebar: cx.new(|_| SidebarWithOpenMenu {
+                    watched: sidebar_watch,
+                    clock: SpinnerClock::default(),
+                }),
+                terminals: terminal_watches
+                    .into_iter()
+                    .map(|watched| cx.new(|_| CountedTerminal { watched }))
+                    .collect(),
+                renders: 0,
+            }
+        });
+        cx.run_until_parked();
+        run_for(cx, Duration::from_millis(300));
+
+        let sidebar_before = sidebar_watch.renders.get();
+        let terminals_before: Vec<usize> = terminal_watches
+            .iter()
+            .map(|watched| watched.renders.get())
+            .collect();
+        let root_before = root.read_with(cx, |root, _| root.renders);
+        for _ in 0..100 {
+            root.update(cx, |_, cx| cx.notify());
+            cx.executor().advance_clock(Duration::from_millis(10));
+            cx.run_until_parked();
+        }
+        let root_renders = root.read_with(cx, |root, _| root.renders) - root_before;
+        let sidebar_renders = sidebar_watch.renders.get() - sidebar_before;
+        assert!(root_renders >= 100, "{root_renders} root renders");
+        assert!(
+            (10..=12).contains(&sidebar_renders),
+            "{sidebar_renders} sidebar renders in one second with a menu open"
+        );
+        for (watched, before) in terminal_watches.iter().zip(terminals_before) {
+            assert_eq!(
+                watched.renders.get(),
+                before,
+                "{} re-rendered while only the root and the sidebar changed",
+                watched.name
+            );
+        }
+
+        let mut watched = vec![sidebar_watch];
+        watched.extend(terminal_watches);
+        assert_no_redraw_loop(cx, &watched);
+    }
 }
