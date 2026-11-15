@@ -256,6 +256,7 @@ pub(crate) fn run() {
     ))
     .init();
     cap_malloc_arenas();
+    crate::terminal::kitty::install_png_decoder();
 
     match agents::parent_guard::install_process_job() {
         Ok(agents::parent_guard::ParentGuardStatus::Installed) => {}
