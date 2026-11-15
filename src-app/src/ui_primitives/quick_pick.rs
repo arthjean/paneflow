@@ -79,6 +79,7 @@ pub(crate) fn shell(
             PANEL_RADIUS,
             select_menu_surface(ui),
             px(1.),
+            surface_edge(ui),
         ))
         .child(squircle_border(PANEL_RADIUS, px(1.), surface_edge(ui)))
         .flex()

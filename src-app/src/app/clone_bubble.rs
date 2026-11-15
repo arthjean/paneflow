@@ -1059,7 +1059,12 @@ impl PaneFlowApp {
                 .rounded(px(radius))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(squircle_fill_beneath_border(px(radius), surface, px(1.)))
+                .child(squircle_fill_beneath_border(
+                    px(radius),
+                    surface,
+                    px(1.),
+                    border,
+                ))
                 .child(squircle_border(px(radius), px(1.), border))
         };
 

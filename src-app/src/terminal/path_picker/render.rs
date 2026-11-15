@@ -256,6 +256,7 @@ impl Render for PathPicker {
                 panel_radius(),
                 select_menu_surface(ui),
                 px(1.),
+                with_alpha(ui.border, 0.6),
             ))
             .child(squircle_border(
                 panel_radius(),

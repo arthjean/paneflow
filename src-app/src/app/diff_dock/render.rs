@@ -29,8 +29,12 @@ pub(super) fn dock_card_background(
     }
 }
 
-pub(super) fn dock_card_fill(frame: CardFrame, background: Hsla) -> AnyElement {
-    CardShape::from(frame).background(background)
+pub(super) fn dock_card_fill(
+    frame: CardFrame,
+    background: Hsla,
+    border: Option<Hsla>,
+) -> AnyElement {
+    CardShape::from(frame).background(background, border)
 }
 
 pub(super) fn dock_card_border(

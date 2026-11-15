@@ -1232,6 +1232,7 @@ impl TerminalView {
                 ROW_RADIUS,
                 ui.subtle,
                 px(1.),
+                ui.border,
             ),
         )
         .child(crate::ui_primitives::squircle::squircle_border(

@@ -167,9 +167,64 @@ pub(crate) fn squircle_band_path(
     #[cfg(test)]
     BUILDS.with(|builds| builds.borrow_mut().extend([outer, inner]));
     let mut builder = PathBuilder::fill();
-    trace(&mut builder, outer, radii);
-    trace(&mut builder, inner, radii);
+    trace_band(&mut builder, outer, inner, radii);
     builder.build().ok()
+}
+
+struct Mirrored<'a, C: Contour> {
+    contour: &'a mut C,
+    axis: Pixels,
+}
+
+impl<C: Contour> Mirrored<'_, C> {
+    fn reflect(&self, at: Point<Pixels>) -> Point<Pixels> {
+        point(self.axis - at.x, at.y)
+    }
+}
+
+impl<C: Contour> Contour for Mirrored<'_, C> {
+    fn move_to(&mut self, to: Point<Pixels>) {
+        let to = self.reflect(to);
+        self.contour.move_to(to);
+    }
+
+    fn line_to(&mut self, to: Point<Pixels>) {
+        let to = self.reflect(to);
+        self.contour.line_to(to);
+    }
+
+    fn cubic_to(&mut self, to: Point<Pixels>, control_a: Point<Pixels>, control_b: Point<Pixels>) {
+        let (to, control_a, control_b) = (
+            self.reflect(to),
+            self.reflect(control_a),
+            self.reflect(control_b),
+        );
+        self.contour.cubic_to(to, control_a, control_b);
+    }
+
+    fn close(&mut self) {
+        self.contour.close();
+    }
+}
+
+fn trace_band(
+    contour: &mut impl Contour,
+    outer: Bounds<Pixels>,
+    inner: Bounds<Pixels>,
+    radii: Corners<Pixels>,
+) {
+    trace(contour, outer, radii);
+    let swapped = Corners {
+        top_left: radii.top_right,
+        top_right: radii.top_left,
+        bottom_right: radii.bottom_left,
+        bottom_left: radii.bottom_right,
+    };
+    let mut reversed = Mirrored {
+        contour,
+        axis: inner.left() + inner.right(),
+    };
+    trace(&mut reversed, inner, swapped);
 }
 
 pub(crate) fn squircle_stroke_path(
@@ -324,18 +379,29 @@ fn translucent_over_transparent_window(color: Hsla) -> bool {
     }
 }
 
+const OPAQUE_BORDER_ALPHA: f32 = 1. - 1. / 512.;
+
+pub(crate) fn fill_depth_under_border(width: Pixels, border: Hsla) -> Pixels {
+    if positive(width) && border.a >= OPAQUE_BORDER_ALPHA {
+        width / 2.
+    } else {
+        px(0.)
+    }
+}
+
 pub(crate) fn fill_under_border(
     bounds: Bounds<Pixels>,
     radii: Corners<Pixels>,
     width: Pixels,
+    border: Hsla,
 ) -> (Bounds<Pixels>, Corners<Pixels>) {
-    if !wider_than(bounds, width) || !traceable(bounds, radii) {
+    let depth = fill_depth_under_border(width, border);
+    if !positive(depth) || !wider_than(bounds, width) || !traceable(bounds, radii) {
         return (bounds, radii);
     }
-    let half = width / 2.;
-    let inset = |radius: Pixels| (limited_radius(bounds, radius) - half).max(px(0.));
+    let inset = |radius: Pixels| (limited_radius(bounds, radius) - depth).max(px(0.));
     (
-        bounds.inset(half),
+        bounds.inset(depth),
         Corners {
             top_left: inset(radii.top_left),
             top_right: inset(radii.top_right),
@@ -349,14 +415,16 @@ pub(crate) fn squircle_fill_beneath_border(
     radius: Pixels,
     color: Hsla,
     border_width: Pixels,
+    border_color: Hsla,
 ) -> AnyElement {
-    squircle_corners_fill_beneath_border(Corners::all(radius), color, border_width)
+    squircle_corners_fill_beneath_border(Corners::all(radius), color, border_width, border_color)
 }
 
 pub(crate) fn squircle_corners_fill_beneath_border(
     radii: Corners<Pixels>,
     color: Hsla,
     border_width: Pixels,
+    border_color: Hsla,
 ) -> AnyElement {
     let shape = circular().then(shape);
     div()
@@ -366,7 +434,8 @@ pub(crate) fn squircle_corners_fill_beneath_border(
             canvas(
                 |_, _, _| {},
                 move |bounds, _, window, _| {
-                    paint_fill_beneath_border(bounds, radii, color, border_width, shape, window)
+                    let border = (border_width, border_color);
+                    paint_fill_beneath_border(bounds, radii, color, border, shape, window)
                 },
             )
             .size_full(),
@@ -378,7 +447,7 @@ fn paint_fill_beneath_border(
     bounds: Bounds<Pixels>,
     radii: Corners<Pixels>,
     color: Hsla,
-    border_width: Pixels,
+    (border_width, border_color): (Pixels, Hsla),
     circular_shape: Option<super::interface_style::Shape>,
     window: &mut Window,
 ) {
@@ -387,7 +456,7 @@ fn paint_fill_beneath_border(
     }
     if let Some(shape) = circular_shape {
         let outer = scoped(shape, || corners(bounds, radii));
-        let (fill_bounds, _) = fill_under_border(bounds, radii, border_width);
+        let (fill_bounds, _) = fill_under_border(bounds, radii, border_width, border_color);
         let half = (bounds.size.width - fill_bounds.size.width) / 2.;
         let shrink = |radius: Pixels| (radius - half).max(px(0.));
         window.paint_quad(gpui::fill(fill_bounds, color).corner_radii(Corners {
@@ -398,7 +467,7 @@ fn paint_fill_beneath_border(
         }));
         return;
     }
-    let (fill_bounds, fill_radii) = fill_under_border(bounds, radii, border_width);
+    let (fill_bounds, fill_radii) = fill_under_border(bounds, radii, border_width, border_color);
     if translucent_over_transparent_window(color) {
         window.paint_quad(gpui::fill(fill_bounds, color).corner_radii(fill_radii));
     } else if let Some(path) = squircle_corners_path(fill_bounds, fill_radii) {
@@ -660,10 +729,11 @@ mod tests {
     }
 
     #[test]
-    fn a_fill_beneath_a_border_ends_halfway_across_the_border() {
+    fn a_fill_beneath_an_opaque_border_ends_halfway_across_the_border() {
         let bounds = Bounds::new(point(px(10.), px(20.)), size(px(200.), px(40.)));
         for width in [px(1.), px(1.5), px(2.)] {
-            let (fill, radii) = fill_under_border(bounds, Corners::all(px(9.)), width);
+            let (fill, radii) =
+                fill_under_border(bounds, Corners::all(px(9.)), width, gpui::black());
             let half = width / 2.;
             assert_eq!(fill, bounds.inset(half));
             assert_eq!(radii, Corners::all(px(9.) - half));
@@ -672,6 +742,21 @@ mod tests {
             assert!(fill.left() - border_outer >= half);
             assert!(border_inner - fill.left() >= half);
         }
+    }
+
+    #[test]
+    fn a_fill_beneath_a_translucent_border_reaches_the_outer_edge() {
+        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(200.), px(40.)));
+        let radii = Corners::all(px(9.));
+        for alpha in [0., 0.06, 0.6, 0.99] {
+            let border = gpui::white().opacity(alpha);
+            assert_eq!(fill_depth_under_border(px(2.), border), px(0.));
+            assert_eq!(
+                fill_under_border(bounds, radii, px(2.), border),
+                (bounds, radii)
+            );
+        }
+        assert_eq!(fill_depth_under_border(px(2.), gpui::white()), px(1.));
     }
 
     #[test]
@@ -686,7 +771,10 @@ mod tests {
             (thin, px(2.)),
             (thin, px(1.5)),
         ] {
-            assert_eq!(fill_under_border(bounds, radii, width), (bounds, radii));
+            assert_eq!(
+                fill_under_border(bounds, radii, width, gpui::black()),
+                (bounds, radii)
+            );
             assert!(squircle_corners_stroke_path(bounds, radii, width).is_none());
         }
     }
@@ -709,6 +797,7 @@ mod tests {
                     px(12.),
                     gpui::white(),
                     self.width,
+                    self.border,
                 ))
                 .child(squircle_border(px(12.), self.width, self.border))
         }
@@ -731,7 +820,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_bordered_card_fills_beneath_its_border_whatever_the_border_alpha(cx: &mut TestAppContext) {
+    fn a_bordered_card_hides_its_fill_edge_under_an_opaque_border_only(cx: &mut TestAppContext) {
         let window = size(px(120.), px(60.));
         let bounds = Bounds::new(point(px(0.), px(0.)), window);
         for width in [px(1.), px(2.)] {
@@ -739,8 +828,9 @@ mod tests {
             assert_eq!(opaque, vec![bounds.inset(width / 2.), bounds]);
             let translucent = bordered_builds(cx, window, width, gpui::black().opacity(0.3));
             assert_eq!(
-                translucent, opaque,
-                "a translucent border hands the builder the same fill as an opaque one"
+                translucent,
+                vec![bounds, bounds],
+                "a translucent border composites over the fill across its whole width"
             );
         }
     }
@@ -769,6 +859,95 @@ mod tests {
         let broken = Bounds::new(point(px(f32::NAN), px(0.)), inner.size);
         assert!(squircle_band_path(outer, broken, px(5.)).is_none());
         assert_eq!(squircle_builds_since(start), vec![outer, inner]);
+    }
+
+    #[derive(Default)]
+    struct SignedArea {
+        contours: Vec<Vec<(f32, f32)>>,
+        pen: (f32, f32),
+    }
+
+    impl SignedArea {
+        fn push(&mut self, at: Point<Pixels>) {
+            self.pen = (f32::from(at.x), f32::from(at.y));
+            if let Some(contour) = self.contours.last_mut() {
+                contour.push(self.pen);
+            }
+        }
+
+        fn areas(&self) -> Vec<f32> {
+            self.contours
+                .iter()
+                .map(|points| {
+                    points
+                        .iter()
+                        .zip(points.iter().cycle().skip(1))
+                        .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
+                        .sum::<f32>()
+                        / 2.
+                })
+                .collect()
+        }
+    }
+
+    impl Contour for SignedArea {
+        fn move_to(&mut self, to: Point<Pixels>) {
+            self.contours.push(Vec::new());
+            self.push(to);
+        }
+
+        fn line_to(&mut self, to: Point<Pixels>) {
+            self.push(to);
+        }
+
+        fn cubic_to(
+            &mut self,
+            to: Point<Pixels>,
+            control_a: Point<Pixels>,
+            control_b: Point<Pixels>,
+        ) {
+            let start = self.pen;
+            let [a, b, end] = [control_a, control_b, to].map(|p| (f32::from(p.x), f32::from(p.y)));
+            for step in 1..=32 {
+                let t = step as f32 / 32.;
+                let u = 1. - t;
+                let blend = |p0: f32, p1: f32, p2: f32, p3: f32| {
+                    u * u * u * p0 + 3. * u * u * t * p1 + 3. * u * t * t * p2 + t * t * t * p3
+                };
+                self.push(point(
+                    px(blend(start.0, a.0, b.0, end.0)),
+                    px(blend(start.1, a.1, b.1, end.1)),
+                ));
+            }
+        }
+
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn a_band_traces_its_inner_contour_against_its_outer_one_so_shared_edges_cancel() {
+        let outer = Bounds::new(point(px(41.), px(8.)), size(px(20.), px(16.)));
+        let inner = Bounds::new(point(px(41.), px(9.)), size(px(20.), px(15.)));
+        let radii = Corners::all(px(4.5));
+        let mut band = SignedArea::default();
+        trace_band(&mut band, outer, inner, radii);
+        let mut alone = SignedArea::default();
+        trace(&mut alone, inner, radii);
+        let [outer_area, inner_area] = band.areas()[..] else {
+            panic!("a band is two contours");
+        };
+        let inner_alone = alone.areas()[0];
+        assert!(
+            outer_area * inner_area < 0.,
+            "the contours wind in opposite directions, so a shared edge sums to zero winding"
+        );
+        assert!((inner_area + inner_alone).abs() < 1e-2);
+        assert!(outer_area.abs() > inner_area.abs());
+        let xs = band.contours[1].iter().map(|p| p.0);
+        let (min, max) = xs.fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| {
+            (lo.min(x), hi.max(x))
+        });
+        assert!((min - 41.).abs() < 1e-4 && (max - 61.).abs() < 1e-4);
     }
 
     #[test]

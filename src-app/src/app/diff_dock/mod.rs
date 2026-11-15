@@ -581,7 +581,11 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(dock_card_fill(frame, card_background))
+            .child(dock_card_fill(
+                frame,
+                card_background,
+                (!in_title_bar).then_some(ui.border),
+            ))
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })
@@ -654,7 +658,14 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .child(dock_card_fill(frame, card_background))
+            .child(dock_card_fill(
+                frame,
+                card_background,
+                self.diff_dock
+                    .title_bar_zone_left
+                    .is_none()
+                    .then_some(ui.border),
+            ))
             .when(!fills_panel, |panel| {
                 panel.child(render_diff_resize_handle(width, max_width, frame, ui, cx))
             })

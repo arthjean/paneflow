@@ -657,6 +657,7 @@ pub(crate) fn tooltip_shell() -> Div {
             TOOLTIP_RADIUS,
             theme.title_bar_background,
             px(1.),
+            ui.border,
         ))
         .child(squircle::squircle_border(TOOLTIP_RADIUS, px(1.), ui.border))
 }
@@ -1370,6 +1371,7 @@ mod tests {
                     px(24.),
                     gpui::white(),
                     px(1.),
+                    gpui::black(),
                 ))
                 .child(squircle::squircle_border(px(24.), px(1.), gpui::black()))
                 .child(squircle::squircle_fill_blend(

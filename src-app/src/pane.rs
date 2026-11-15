@@ -144,15 +144,16 @@ impl CardShape {
         }
     }
 
-    pub(crate) fn background(self, color: Hsla) -> AnyElement {
+    pub(crate) fn background(self, color: Hsla, border: Option<Hsla>) -> AnyElement {
+        let (border_width, border_color) = card_border_edge(border);
         match self {
-            Self::Squircle(radius) => pane_card_fill(radius, color),
+            Self::Squircle(radius) => pane_card_fill(radius, color, border),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
             Self::Morph { radii, .. } if card_paints_quads(color) => {
                 squircle_corners_fill(radii, color)
             }
             Self::Morph { radii, .. } => {
-                squircle_corners_fill_beneath_border(radii, color, CARD_BORDER_WIDTH)
+                squircle_corners_fill_beneath_border(radii, color, border_width, border_color)
             }
         }
     }
@@ -228,7 +229,7 @@ impl CardShape {
         div()
             .absolute()
             .inset_0()
-            .child(squircle_fill_beneath_border(radius, fill, px(2.)))
+            .child(squircle_fill_beneath_border(radius, fill, px(2.), stroke))
             .child(squircle_border(radius, px(2.), stroke))
             .into_any_element()
     }
@@ -240,7 +241,13 @@ fn card_paints_quads(background: Hsla) -> bool {
         && !crate::ui_primitives::interface_style::circular()
 }
 
-fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
+fn card_border_edge(border: Option<Hsla>) -> (Pixels, Hsla) {
+    border.map_or((px(0.), gpui::transparent_black()), |color| {
+        (CARD_BORDER_WIDTH, color)
+    })
+}
+
+fn pane_card_fill(radius: Pixels, color: Hsla, border: Option<Hsla>) -> AnyElement {
     if card_paints_quads(color) {
         div()
             .absolute()
@@ -249,7 +256,8 @@ fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
             .bg(color)
             .into_any_element()
     } else {
-        squircle_fill_beneath_border(radius, color, CARD_BORDER_WIDTH)
+        let (border_width, border_color) = card_border_edge(border);
+        squircle_fill_beneath_border(radius, color, border_width, border_color)
     }
 }
 
@@ -2214,25 +2222,22 @@ impl Render for Pane {
         let has_attention = self.attention;
         let attention_color = pane_colors().vc_conflict;
         self.sync_shimmer_clock(cx);
+        let border_color = if has_attention {
+            attention_color.opacity(0.7)
+        } else if self.split_focus == SplitFocus::Focused && !self.zoomed {
+            pane_colors().text.opacity(FOCUSED_PANE_BORDER_ALPHA)
+        } else {
+            pane_colors().border
+        };
         div()
             .flex()
             .flex_col()
             .size_full()
             .relative()
             .overflow_hidden()
-            .child(card_shape.background(card_background))
+            .child(card_shape.background(card_background, Some(border_color)))
             .child(content)
-            .child(card_shape.border(
-                card_background,
-                if has_attention {
-                    attention_color.opacity(0.7)
-                } else if self.split_focus == SplitFocus::Focused && !self.zoomed {
-                    pane_colors().text.opacity(FOCUSED_PANE_BORDER_ALPHA)
-                } else {
-                    pane_colors().border
-                },
-                has_attention,
-            ))
+            .child(card_shape.border(card_background, border_color, has_attention))
     }
 }
 
@@ -2365,6 +2370,42 @@ mod tests {
     }
 
     const BADGE_CONTOURS: usize = 5;
+
+    struct CardFill {
+        border: Option<gpui::Hsla>,
+    }
+
+    impl gpui::Render for CardFill {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{ParentElement, Styled};
+            gpui::div().size_full().relative().child(
+                super::CardShape::Squircle(gpui::px(12.)).background(gpui::white(), self.border),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_card_fill_stops_under_an_opaque_border_and_stays_whole_otherwise(cx: &mut TestAppContext) {
+        let window = gpui::size(gpui::px(200.), gpui::px(120.));
+        let bounds = gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), window);
+        for (border, depth) in [
+            (Some(gpui::black()), gpui::px(0.5)),
+            (Some(gpui::black().opacity(0.3)), gpui::px(0.)),
+            (None, gpui::px(0.)),
+        ] {
+            let (_view, cx) = cx.add_window_view(|_, _| CardFill { border });
+            cx.simulate_resize(window);
+            assert_eq!(
+                draw_badge_frame(cx),
+                vec![bounds.inset(depth)],
+                "border {border:?}"
+            );
+        }
+    }
 
     fn draw_badge_frame(cx: &mut gpui::VisualTestContext) -> Vec<gpui::Bounds<gpui::Pixels>> {
         let start = squircle_builds();

@@ -340,17 +340,19 @@ pub(crate) fn input_surface<E: ParentElement + Styled>(
     element: E,
     ui: crate::theme::UiColors,
 ) -> E {
+    let edge = with_alpha(ui.text, 0.14);
     element
         .relative()
         .child(squircle::squircle_fill_beneath_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
             with_alpha(ui.text, 0.03),
             px(1.),
+            edge,
         ))
         .child(squircle_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
             px(1.),
-            with_alpha(ui.text, 0.14),
+            edge,
         ))
 }
 
@@ -906,6 +908,7 @@ pub(crate) fn modal_card(
             radius,
             card_color(),
             px(1.),
+            surface_edge(ui),
         ))
         .child(content.relative().flex().flex_col())
         .child(squircle::squircle_border(radius, px(1.), surface_edge(ui)))
@@ -1105,6 +1108,7 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
                 MENU_RADIUS,
                 fill,
                 px(1.),
+                surface_edge(ui),
             ))
             .child(squircle::squircle_border(
                 MENU_RADIUS,
