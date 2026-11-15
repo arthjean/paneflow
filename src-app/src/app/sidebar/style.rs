@@ -7,7 +7,7 @@ pub(super) const SIDEBAR_ROW_GAP: f32 = 3.0;
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 20.0;
 pub(crate) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 pub(super) const SIDEBAR_BRANCH_GAP: f32 = 6.0;
-const SIDEBAR_TITLE_SHRINK_WEIGHT: f32 = 1000.0;
+const TITLE_LINE_SNAP_SLACK: f32 = 1.0;
 pub(super) const SIDEBAR_TRAILING_MAX_SHARE: f32 = 0.5;
 const SIDEBAR_ROW_MIN_HEIGHT: f32 = 32.0;
 pub(crate) const SIDEBAR_FOLDER_SLOT_WIDTH: f32 = 20.0;
@@ -38,32 +38,174 @@ pub(super) fn sidebar_title_with_trailing(
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(gap))
         .flex_initial()
         .min_w_0()
         .overflow_x_hidden()
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_initial()
-                .flex_shrink(SIDEBAR_TITLE_SHRINK_WEIGHT)
-                .min_w_0()
-                .overflow_x_hidden()
-                .child(title),
-        )
-        .children(trailing.map(|trailing| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_initial()
-                .min_w_0()
-                .max_w(gpui::relative(SIDEBAR_TRAILING_MAX_SHARE))
-                .overflow_x_hidden()
-                .child(trailing)
-        }))
+        .child(TitleLine {
+            title: title_line_slot(title),
+            trailing: trailing.map(title_line_slot),
+            gap: px(gap),
+        })
+}
+
+fn title_line_slot(content: impl IntoElement) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .min_w_0()
+        .max_w_full()
+        .overflow_x_hidden()
+        .child(content)
+        .into_any_element()
+}
+
+pub(super) fn title_line_widths(
+    available: gpui::Pixels,
+    title: gpui::Pixels,
+    trailing: Option<gpui::Pixels>,
+    gap: gpui::Pixels,
+) -> (gpui::Pixels, Option<gpui::Pixels>) {
+    let slack = px(TITLE_LINE_SNAP_SLACK);
+    let Some(trailing) = trailing else {
+        let width = if available + slack >= title {
+            title
+        } else {
+            available
+        };
+        return (width, None);
+    };
+    if available + slack >= title + gap + trailing {
+        return (title, Some(trailing));
+    }
+    let left_by_title = available - gap - title;
+    let trailing_width = trailing
+        .min((available * SIDEBAR_TRAILING_MAX_SHARE).max(left_by_title))
+        .max(px(0.));
+    let title_width = title.min(available - gap - trailing_width).max(px(0.));
+    (title_width, Some(trailing_width))
+}
+
+struct TitleLine {
+    title: AnyElement,
+    trailing: Option<AnyElement>,
+    gap: gpui::Pixels,
+}
+
+struct TitleLineNaturalSizes {
+    title: gpui::Size<gpui::Pixels>,
+    trailing: Option<gpui::Size<gpui::Pixels>>,
+}
+
+fn title_line_space(width: gpui::AvailableSpace) -> gpui::Size<gpui::AvailableSpace> {
+    gpui::size(width, gpui::AvailableSpace::MinContent)
+}
+
+impl IntoElement for TitleLine {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for TitleLine {
+    type RequestLayoutState = TitleLineNaturalSizes;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, TitleLineNaturalSizes) {
+        let unbounded = title_line_space(gpui::AvailableSpace::MaxContent);
+        let title = self.title.layout_as_root(unbounded, window, cx);
+        let trailing = self
+            .trailing
+            .as_mut()
+            .map(|trailing| trailing.layout_as_root(unbounded, window, cx));
+        let natural_width = title.width + trailing.map_or(px(0.), |size| self.gap + size.width);
+        let natural_height = trailing.map_or(title.height, |size| size.height.max(title.height));
+        let style = gpui::Style {
+            flex_shrink: 1.,
+            min_size: gpui::size(px(0.).into(), gpui::Length::Auto),
+            ..Default::default()
+        };
+        let layout_id = window.request_measured_layout(style, move |known, _, _, _| {
+            gpui::size(
+                known.width.unwrap_or(natural_width),
+                known.height.unwrap_or(natural_height),
+            )
+        });
+        (layout_id, TitleLineNaturalSizes { title, trailing })
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        natural: &mut TitleLineNaturalSizes,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        let (title_width, trailing_width) = title_line_widths(
+            bounds.size.width,
+            natural.title.width,
+            natural.trailing.map(|size| size.width),
+            self.gap,
+        );
+        let mut place = |slot: &mut AnyElement, natural: gpui::Size<gpui::Pixels>, width, left| {
+            let size = if width < natural.width {
+                slot.layout_as_root(
+                    title_line_space(gpui::AvailableSpace::Definite(width)),
+                    window,
+                    cx,
+                )
+            } else {
+                natural
+            };
+            let top = bounds.origin.y + (bounds.size.height - size.height) / 2.;
+            slot.prepaint_at(gpui::point(left, top), window, cx);
+        };
+        place(&mut self.title, natural.title, title_width, bounds.origin.x);
+        if let (Some(trailing), Some(natural), Some(width)) =
+            (self.trailing.as_mut(), natural.trailing, trailing_width)
+        {
+            place(
+                trailing,
+                natural,
+                width,
+                bounds.origin.x + title_width + self.gap,
+            );
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut TitleLineNaturalSizes,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        self.title.paint(window, cx);
+        if let Some(trailing) = self.trailing.as_mut() {
+            trailing.paint(window, cx);
+        }
+    }
 }
 
 pub(super) fn sidebar_row_shell() -> gpui::Div {

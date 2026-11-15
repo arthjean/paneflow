@@ -3021,10 +3021,9 @@ mod tests {
         );
         assert!(close(title.size.width, natural_title.size.width));
         assert!(suffix.right() <= badge.left() - px(SIDEBAR_TITLE_ROW_GAP));
-        let name_width = badge.left() - px(SIDEBAR_TITLE_ROW_GAP) - title.left();
         assert!(
-            suffix.size.width <= name_width * SIDEBAR_TRAILING_MAX_SHARE + px(0.01),
-            "a long workspace stops at its share of the line: {suffix:?}"
+            close(suffix.right(), badge.left() - px(SIDEBAR_TITLE_ROW_GAP)),
+            "a long workspace takes the room a short title leaves: {suffix:?} {badge:?}"
         );
 
         let row = cx.debug_bounds("agent-row-2").expect("row 2");

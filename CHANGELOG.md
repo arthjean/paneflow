@@ -36,6 +36,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- **A branch is no longer cut while its row has room.** In the Workspaces sidebar, a branch longer than the title in front of it, such as `main` after a three-letter workspace name, ended in an ellipsis although the row was mostly empty, because its width limit was taken from the title and branch together instead of the row. The title and the branch now keep their full width whenever the row holds both. When it does not, the title gives way first, and the branch takes all the room a short title leaves, never less than half of the line. The workspace name after a tab title, on an Agents row or grouped by status, follows the same rule.
 - **A workspace whose folder is gone no longer turns into another project.** When a saved workspace's folder had been deleted or moved, Paneflow rebound the workspace to the folder it was launched from and saved that, so the workspace kept its name but showed the branch, the diffstat and the files of an unrelated folder, and its original path was lost. The workspace now keeps its folder: it shows no branch and no diffstat, its new terminals open in your home folder, and it works again as soon as the folder is back. A notice names it at each start until you close it or restore the folder.
 
 ## [0.19.1] - 2026-11-13

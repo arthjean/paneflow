@@ -758,7 +758,12 @@ space color fills a swatch and never tints text. A workspace is a folder row; it
 inline rename, hover actions, and reorder by drag. A workspace row shows its
 title, the branch of its checkout with its glyph, and the
 diffstat in `vc_added` and `vc_deleted`; a tab row shows its title, and the
-same two only for a worktree of its own. Status sits at the trailing edge of
+same two only for a worktree of its own. A title and the label that follows it
+(branch, or workspace suffix) keep their full width while the line holds both.
+Past that the title gives way first: the label takes all the room a short
+title leaves and never less than half of the line, so neither ends in an
+ellipsis while the other leaves it room (`sidebar_title_with_trailing`).
+Status sits at the trailing edge of
 both row kinds, on one X. An agent that needs you, failed, or finished shows a
 status badge and no glyph: `Need you` in amber, `Error` in `agent_error`, and
 `Done` in light blue with the unread count, each in 12 px Medium on its own
@@ -871,7 +876,7 @@ Claude Code) or `text`, the tab title at 14 px Medium (the runtime's display
 name when the title is empty) followed by ` · ` and the workspace name at
 14 px `muted`, then the status at the trailing edge. Neither a meta line nor a
 gap between ranks exists any more. A title and workspace wider than the row
-end in an ellipsis on one line, the workspace suffix shrinking first, and the
+end in an ellipsis on one line, shared by the tree's title and label rule, and the
 tooltip of a long name gives `title · workspace` in full. The status is the tree's
 `Need you`, `Error` or `Done` badge; for `Working`, the matrix in the
 runtime's tint with the title shimmering as a tab's does, `muted` under a

@@ -681,6 +681,31 @@ mod tests {
         assert_eq!((title, branch), (80., 40.));
     }
 
+    #[gpui::test]
+    fn a_branch_longer_than_its_short_title_stays_whole_when_the_row_has_room(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (title, branch) = title_and_branch_widths(cx, 240., 20., 60.);
+        assert_eq!((title, branch), (20., 60.));
+    }
+
+    #[gpui::test]
+    fn a_long_branch_takes_the_room_a_short_title_leaves(cx: &mut gpui::TestAppContext) {
+        let (title, branch) = title_and_branch_widths(cx, 240., 55., 400.);
+        assert_eq!(title, 55.);
+        assert_eq!(branch, 240. - 55. - SIDEBAR_BRANCH_GAP);
+    }
+
+    #[test]
+    fn a_line_one_snapped_pixel_short_of_its_content_truncates_nothing() {
+        let (title, branch) = title_line_widths(px(85.2), px(20.), Some(px(60.)), px(6.));
+        assert_eq!((title, branch), (px(20.), Some(px(60.))));
+        assert_eq!(
+            title_line_widths(px(79.5), px(80.), None, px(6.)),
+            (px(80.), None)
+        );
+    }
+
     #[test]
     fn tab_display_title_falls_back_to_position() {
         let unnamed = Tab::new(String::new(), None);
