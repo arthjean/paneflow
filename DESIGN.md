@@ -503,11 +503,21 @@ middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 | Workspaces selection | 150 ms | cubic ease-out | `SidebarSelectionMotion`: selecting or releasing a row fades its `accent` wash and turns a workspace title to `text`; where it touches a selected row, the wash between them fades in and the shared corners square off at the pace of the slower of the two; a new toggle retargets from the current state. Rows closed from a selection fade and fold over 180 ms, through `SidebarRowMotion` in the folder grouping, and are removed 200 ms after the close is confirmed. Reduced motion applies every state at once and removes the rows immediately |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
-| Status spinner | 1 s loop | linear rotate | Empty states |
+| Status spinner | 1 s loop | linear rotate | Empty states (`panel_empty_state`). Static under reduced motion |
 | Comet spinner | 700 ms loop | linear rotate | `comet_spinner` on `icons/comet.svg`: a ring stroked at 0.12 of its size whose opacity ramps linearly from 0 to 1 clockwise from the top, with a round head at the top; every busy state of the title bar update pill. Static under reduced motion |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip`. `accessible_control` already calls it with the control's label, and GPUI panics in a debug build on a second tooltip for one element: a control built with `accessible_control` takes no other tooltip, and a test that builds the element catches the mistake (`every_app_icon_tile_builds_with_a_single_tooltip`) |
+
+Both spinners turn through GPUI's `TimedTransformation::rotation`
+(`ui_primitives::spin`): the glyph is painted once and the window turns it in
+the retained scene on each frame, so a spinner never rebuilds its view
+(`spinners_turn_for_sixty_frames_without_rendering_their_view_again`). The
+phase is app-wide, not per element: every rotation is locked to the app's
+shared animation clock, so two spinners of the same period always point the
+same way, and one that appears mid-turn joins the others instead of starting
+from the top. The sidebar thinking matrix keeps its stepped `SpinnerClock`,
+which already shares one clock across the sidebar.
 
 `reduce_motion` (Settings, Appearance) sets both
 `ui_primitives::reduce_motion()` and GPUI's `cx.reduce_motion()`

@@ -507,11 +507,7 @@ impl PaneFlowApp {
         }));
 
         let action: Option<AnyElement> = if running {
-            Some(crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("agent-update-spinner-{tag}")),
-                px(14.),
-                ui.muted,
-            ))
+            Some(crate::ui_primitives::comet_spinner(px(14.), ui.muted))
         } else if newer.is_some() && can_update {
             Some(
                 soft_button(
@@ -697,11 +693,7 @@ impl PaneFlowApp {
         }
 
         let control: Option<AnyElement> = if running {
-            Some(crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("agent-update-row-spinner-{tag}")),
-                px(14.),
-                ui.muted,
-            ))
+            Some(crate::ui_primitives::comet_spinner(px(14.), ui.muted))
         } else if offers_update {
             Some(
                 soft_button(
@@ -916,11 +908,7 @@ impl PaneFlowApp {
             },
         };
         let control = if self.integration_busy.as_deref() == Some(slug) {
-            crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("integration-spinner-{slug}")),
-                px(14.),
-                ui.muted,
-            )
+            crate::ui_primitives::comet_spinner(px(14.), ui.muted)
         } else {
             let owned = slug.to_string();
             toggle_switch(

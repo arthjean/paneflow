@@ -831,11 +831,7 @@ impl PaneFlowApp {
                             .group_hover(group, |style| style.opacity(1.))
                     })
                     .child(if busy {
-                        crate::ui_primitives::comet_spinner(
-                            SharedString::from(format!("space-avatar-spinner-{}", space.id)),
-                            px(AVATAR_ICON_SIZE),
-                            gpui::white(),
-                        )
+                        crate::ui_primitives::comet_spinner(px(AVATAR_ICON_SIZE), gpui::white())
                     } else {
                         svg()
                             .size(px(AVATAR_ICON_SIZE))

@@ -519,25 +519,30 @@ pub(crate) fn animated_squircle_skin(
 }
 
 const COMET_TURN: Duration = Duration::from_millis(700);
+const EMPTY_STATE_TURN: Duration = Duration::from_secs(1);
 
-pub(crate) fn comet_spinner(id: impl Into<ElementId>, size: Pixels, color: Hsla) -> AnyElement {
-    let glyph = svg()
-        .size(size)
-        .flex_none()
-        .path("icons/comet.svg")
-        .text_color(color);
-    if reduce_motion() {
-        return glyph.into_any_element();
+fn spinner_rotation(turn: Duration, reduce_motion: bool) -> Option<gpui::TimedTransformation> {
+    (!reduce_motion)
+        .then(|| gpui::TimedTransformation::rotation(turn, gpui::Transformation::default()))
+}
+
+fn spin(glyph: gpui::Svg, turn: Duration) -> gpui::Svg {
+    match spinner_rotation(turn, reduce_motion()) {
+        Some(rotation) => glyph.with_timed_transformation(rotation),
+        None => glyph,
     }
-    glyph
-        .with_animation(
-            id,
-            gpui::Animation::new(COMET_TURN).repeat(),
-            |glyph, delta| {
-                glyph.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
-            },
-        )
-        .into_any_element()
+}
+
+pub(crate) fn comet_spinner(size: Pixels, color: Hsla) -> AnyElement {
+    spin(
+        svg()
+            .size(size)
+            .flex_none()
+            .path("icons/comet.svg")
+            .text_color(color),
+        COMET_TURN,
+    )
+    .into_any_element()
 }
 
 pub(crate) const DISMISS_BUTTON_SIZE: Pixels = px(24.);
@@ -997,15 +1002,7 @@ pub(crate) fn panel_empty_state(
             .path(path)
             .text_color(with_alpha(ui.muted, 0.8));
         let glyph = if empty_state_spins(animate, reduce_motion()) {
-            glyph
-                .with_animation(
-                    "panel-empty-spin",
-                    gpui::Animation::new(std::time::Duration::from_secs(1)).repeat(),
-                    |s, delta| {
-                        s.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
-                    },
-                )
-                .into_any_element()
+            spin(glyph, EMPTY_STATE_TURN).into_any_element()
         } else {
             glyph.into_any_element()
         };
@@ -1312,6 +1309,70 @@ mod tests {
         assert!(!empty_state_spins(true, true));
         assert!(!empty_state_spins(false, false));
         assert!(!EMPTY_STATE_PROGRESS_LABEL.is_empty());
+    }
+
+    #[test]
+    fn spinners_turn_once_per_period_on_the_shared_clock_and_rest_under_reduce_motion() {
+        let turn =
+            |period| gpui::TimedTransformation::rotation(period, gpui::Transformation::default());
+        assert_eq!(spinner_rotation(COMET_TURN, false), Some(turn(COMET_TURN)));
+        assert_eq!(COMET_TURN, Duration::from_millis(700));
+        assert_eq!(
+            spinner_rotation(EMPTY_STATE_TURN, false),
+            Some(turn(EMPTY_STATE_TURN))
+        );
+        assert_eq!(EMPTY_STATE_TURN, Duration::from_secs(1));
+        assert_eq!(spinner_rotation(COMET_TURN, true), None);
+        assert_eq!(spinner_rotation(EMPTY_STATE_TURN, true), None);
+        assert_eq!(
+            spinner_rotation(COMET_TURN, false),
+            spinner_rotation(COMET_TURN, false),
+            "two comet spinners carry the same rotation, so the shared clock gives them one phase"
+        );
+    }
+
+    struct SpinnersOnly {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SpinnersOnly {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .size_full()
+                .child(comet_spinner(px(14.), gpui::white()))
+                .child(comet_spinner(px(12.), gpui::white()))
+                .child(panel_empty_state(
+                    crate::theme::ui_colors(),
+                    Some("icons/comet.svg"),
+                    None,
+                    "Loading",
+                    true,
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn spinners_turn_for_sixty_frames_without_rendering_their_view_again(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            move |_, _| SpinnersOnly { renders }
+        });
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 1);
+        for _ in 0..60 {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            cx.update(|window, cx| {
+                window.simulate_next_frame(cx);
+            });
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            renders.get(),
+            1,
+            "a spinner must turn in the retained scene, not by rendering its view each frame"
+        );
     }
 
     #[gpui::test]
