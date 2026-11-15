@@ -2079,13 +2079,8 @@ mod tests {
             window.refresh();
             window.draw(cx).clear(cx);
         });
-        let steps = take_paint_steps();
         assert_eq!(
-            steps
-                .iter()
-                .copied()
-                .filter(|step| *step != PaintStep::Cursor)
-                .collect::<Vec<_>>(),
+            take_paint_steps(),
             vec![
                 PaintStep::BackgroundLayer,
                 PaintStep::Backgrounds,
@@ -2096,15 +2091,9 @@ mod tests {
                 PaintStep::LayerEnd,
                 PaintStep::Decorations,
                 PaintStep::KittyAboveText,
+                PaintStep::Cursor,
             ]
         );
-        if let Some(cursor) = steps.iter().position(|step| *step == PaintStep::Cursor) {
-            assert_eq!(
-                cursor,
-                steps.len() - 1,
-                "the cursor paints after every layer"
-            );
-        }
     }
 
     #[gpui::test]
