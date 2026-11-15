@@ -296,15 +296,22 @@ divs: terminal rendering wants per-cell control over background quads, glyph
 runs, cursor shapes, underlines and hyperlink hitboxes. Everything else in the
 app (sidebar, tabs, settings, diff viewer) is regular GPUI flex layout.
 
-`TerminalElement::paint` draws the grid in two `paint_layer` calls, one for
-the base fill, overscan row, cell backgrounds, selection, search highlights
-and block quads, one for sprites, text and symbols, with kitty images below
-the text between them. A primitive inside a layer takes the layer's draw
-order instead of being inserted one by one into GPUI's `BoundsTree`, and
-GPUI draws a layer's quads before its glyphs, so the visible order is kept.
-Decorations, kitty images above the text, the hyperlink underline, the
-cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
+`TerminalElement::paint` draws the grid in two sibling `paint_layer` calls,
+one for the base fill, overscan row, cell backgrounds, selection, search
+highlights and block quads, one for sprites, text and symbols, with kitty
+images of negative z-index between them. GPUI gives a layer a single draw
+order and draws its primitives by kind (shadows, quads, paths, underlines,
+monochrome, subpixel and polychrome sprites, surfaces), then by atlas texture,
+and only then in paint order (`PrimitiveKind` in `gpui/src/scene.rs`). That
+is safe here because the primitives of one layer sit in distinct cells and do
+not overlap. Outside a layer, overlapping primitives keep their paint order,
+and a layer opened inside another one would draw above everything its parent
+paints, even what the parent paints after it; the terminal nests none.
+Decorations, kitty images of non-negative z-index, the hyperlink underline,
+the cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
 painted after the second layer, in that order.
+`a_terminal_frame_paints_backgrounds_then_glyphs_in_two_layers_and_overlays_above_them`
+in `terminal/view.rs` asserts the sequence of the paint phases.
 
 The workspace sidebar is its own cached view, `SidebarView`
 (`src-app/src/app/sidebar/view.rs`). It observes the app entity and calls

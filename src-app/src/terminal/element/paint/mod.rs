@@ -10,6 +10,37 @@ pub(super) mod selection;
 pub(super) mod sprites;
 pub(super) mod text;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PaintStep {
+    BackgroundLayer,
+    Backgrounds,
+    KittyBelowText,
+    TextLayer,
+    Glyphs,
+    LayerEnd,
+    Decorations,
+    KittyAboveText,
+    Cursor,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PAINT_STEPS: std::cell::RefCell<Vec<PaintStep>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(super) fn record_step(step: PaintStep) {
+    #[cfg(test)]
+    PAINT_STEPS.with(|steps| steps.borrow_mut().push(step));
+    #[cfg(not(test))]
+    let _ = step;
+}
+
+#[cfg(test)]
+pub(crate) fn take_paint_steps() -> Vec<PaintStep> {
+    PAINT_STEPS.with(|steps| std::mem::take(&mut *steps.borrow_mut()))
+}
+
 fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
     let mut display_font = font.clone();
     if font.weight == FontWeight::BOLD && base_weight.0 >= FontWeight::BOLD.0 {

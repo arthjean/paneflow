@@ -2066,6 +2066,47 @@ mod tests {
     }
 
     #[gpui::test]
+    fn a_terminal_frame_paints_backgrounds_then_glyphs_in_two_layers_and_overlays_above_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::terminal::element::{PaintStep, take_paint_steps};
+
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        take_paint_steps();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        let steps = take_paint_steps();
+        assert_eq!(
+            steps
+                .iter()
+                .copied()
+                .filter(|step| *step != PaintStep::Cursor)
+                .collect::<Vec<_>>(),
+            vec![
+                PaintStep::BackgroundLayer,
+                PaintStep::Backgrounds,
+                PaintStep::LayerEnd,
+                PaintStep::KittyBelowText,
+                PaintStep::TextLayer,
+                PaintStep::Glyphs,
+                PaintStep::LayerEnd,
+                PaintStep::Decorations,
+                PaintStep::KittyAboveText,
+            ]
+        );
+        if let Some(cursor) = steps.iter().position(|step| *step == PaintStep::Cursor) {
+            assert_eq!(
+                cursor,
+                steps.len() - 1,
+                "the cursor paints after every layer"
+            );
+        }
+    }
+
+    #[gpui::test]
     fn moving_terminal_between_windows_rebinds_focus_and_clears_pointer_state(
         cx: &mut gpui::TestAppContext,
     ) {

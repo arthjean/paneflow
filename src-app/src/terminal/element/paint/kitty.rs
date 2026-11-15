@@ -4,20 +4,33 @@ use crate::terminal::element::geometry::CellGeometry;
 use crate::terminal::kitty::KittyPlacement;
 
 pub fn paint_below_text(placements: &[KittyPlacement], geom: &CellGeometry, window: &mut Window) {
-    paint_layer(placements, geom, window, |z| z < 0);
+    paint_layer(placements, geom, window, true);
 }
 
 pub fn paint_above_text(placements: &[KittyPlacement], geom: &CellGeometry, window: &mut Window) {
-    paint_layer(placements, geom, window, |z| z >= 0);
+    paint_layer(placements, geom, window, false);
+}
+
+fn paints_below_text(z: i32) -> bool {
+    z < 0
+}
+
+fn in_layer(
+    placements: &[KittyPlacement],
+    below_text: bool,
+) -> impl Iterator<Item = &KittyPlacement> {
+    placements
+        .iter()
+        .filter(move |placement| paints_below_text(placement.z) == below_text)
 }
 
 fn paint_layer(
     placements: &[KittyPlacement],
     geom: &CellGeometry,
     window: &mut Window,
-    in_layer: impl Fn(i32) -> bool,
+    below_text: bool,
 ) {
-    for placement in placements.iter().filter(|p| in_layer(p.z)) {
+    for placement in in_layer(placements, below_text) {
         let Some((destination, image_bounds)) = resolve(placement, geom) else {
             continue;
         };
@@ -148,5 +161,23 @@ mod tests {
     fn a_degenerate_placement_is_skipped() {
         assert!(resolve(&placement(0, 10, (0, 0, 20, 10)), &geometry()).is_none());
         assert!(resolve(&placement(20, 10, (0, 0, 0, 10)), &geometry()).is_none());
+    }
+
+    #[test]
+    fn a_negative_z_index_paints_below_the_text_and_any_other_above_it() {
+        let placements: Vec<KittyPlacement> = [-1, 0, i32::MIN, 7]
+            .into_iter()
+            .map(|z| KittyPlacement {
+                z,
+                ..placement(20, 10, (0, 0, 20, 10))
+            })
+            .collect();
+        let zs = |below_text| {
+            in_layer(&placements, below_text)
+                .map(|placement| placement.z)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(zs(true), vec![-1, i32::MIN]);
+        assert_eq!(zs(false), vec![0, 7]);
     }
 }

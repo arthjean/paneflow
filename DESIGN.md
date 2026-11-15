@@ -639,6 +639,32 @@ Classic also changes the shell, after T3 Code: `flush_shell` in
 Toggles, status dots, avatars, segmented pills, and the usage ring keep their
 full radius in every style. The window and the main panel keep radius 10.
 
+#### Shadow inventory
+
+Every shadow Paneflow paints, as offset x y, blur, spread, then black or a
+named color at an alpha. GPUI draws each one with Raph Levien's closed-form
+blurred rounded rectangle and bounds it to three times its blur past the
+shape; upstream states the approximation differs from the previous renderer
+by at most 5/255 per channel (#66812), and no value below compensates for it.
+
+| Surface | Shadow | Source |
+| --- | --- | --- |
+| Client-side window, floating | 0 0, blur 5, black 0.40 | `window_chrome/csd.rs` |
+| Menus and select popups, every style | 0 18, blur 44, spread -18, black 0.80 in dark; 0 16, blur 40, spread -18, black 0.55 in light | `panel_shadow` in `ui_primitives/action_menu.rs` |
+| Toast, Rounded | 0 6, blur 20, black 0.10, then 0 1, blur 3, black 0.10 | `floating_shadow` in `settings/components.rs`, called by `app/notifications.rs` |
+| Toast, Classic | 0 4, blur 16, black 0.16, then 0 1, blur 4, black 0.12 | `floating_shadow` |
+| Dialog card (`modal_card`), drag ghosts, fleet search, custom buttons dialog | GPUI `shadow_lg`: 0 10, blur 15, spread -3, black 0.10, then 0 4, blur 6, spread -4, black 0.10 | `settings/components.rs`, `app/drag.rs`, `pane_drag.rs`, `app/fleet_search.rs`, `app/custom_buttons_modal.rs` |
+| Clone progress bubble | 0 10, blur 28, black 0.28, scaled by the intro and leave motion | `app/clone_bubble.rs` |
+| Active tab capsule of the detached pane window | 0 1, blur 2, black 0.24 in dark; 0 1, blur 3, black 0.10 in light | `unified_tab_chip` in `pane.rs` |
+| Raised button at rest | 0 1, blur 2, its own fill at 0.24, removed while pressed | `raised_skin` in `settings/components.rs` |
+| Select trigger | 0 1, blur 2, black 0.05, plus a 0 1 black 0.04 edge in light or a 0 -1 white 0.06 edge in dark, removed while pressed | `select_trigger` in `settings/components.rs` |
+
+On Linux, the wgpu renderer dithers gradients since GPUI `703b5ac3`
+(`caead827d7`): an ordered 4 by 4 Bayer offset of at most 1/255 on color and
+1.5/255 on alpha. The gradients are the tab badge fills (`tinted_badge_colors`
+and the graphite tile in `pane.rs`) and the sidebar resize edge glow
+(`app/sidebar/resize.rs`).
+
 ## 5. Component Contracts
 
 ### 5.1 Title bar

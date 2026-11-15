@@ -47,6 +47,8 @@ use crate::terminal::scrollbar_reveal::ScrollbarPresence;
 pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
 pub(crate) use paint::scrollbar::ScrollbarMetrics;
+#[cfg(test)]
+pub(crate) use paint::{PaintStep, take_paint_steps};
 
 pub(crate) const SELECTION_MIN_APCA_CONTRAST: f32 = 45.0;
 
@@ -1720,6 +1722,7 @@ impl Element for TerminalElement {
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_layer(|window| {
+                paint::record_step(paint::PaintStep::BackgroundLayer);
                 paint::background::paint_base_fill(&layout, bounds, window);
 
                 if let Some(above) = layout.overscan_above.as_deref()
@@ -1753,18 +1756,26 @@ impl Element for TerminalElement {
                     &cell_y_bounds,
                     window,
                 );
+                paint::record_step(paint::PaintStep::Backgrounds);
+                paint::record_step(paint::PaintStep::LayerEnd);
             });
 
+            paint::record_step(paint::PaintStep::KittyBelowText);
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
 
             window.paint_layer(|window| {
+                paint::record_step(paint::PaintStep::TextLayer);
                 paint::sprites::paint_sprites(&layout, &geom, window);
                 paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
                 paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
+                paint::record_step(paint::PaintStep::Glyphs);
+                paint::record_step(paint::PaintStep::LayerEnd);
             });
 
+            paint::record_step(paint::PaintStep::Decorations);
             paint::decorations::paint_decorations(&layout, &geom, window);
 
+            paint::record_step(paint::PaintStep::KittyAboveText);
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
 
             #[cfg(debug_assertions)]
@@ -1775,6 +1786,7 @@ impl Element for TerminalElement {
             paint::overlay::paint_hyperlink_underline(self, &layout, &geom, window);
 
             if self.cursor_visible {
+                paint::record_step(paint::PaintStep::Cursor);
                 paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
             }
 
