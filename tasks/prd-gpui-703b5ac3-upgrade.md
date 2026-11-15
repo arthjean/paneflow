@@ -7,6 +7,8 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-15 | Arthur Jean | Initial PRD: move the GPUI pin from `37faef81` to `703b5ac3`, migrate every broken API, and re-align paths, layers, frame pacing, animation, text and platform behavior with the new GPUI as Zed specifies and uses it. 6 epics, 20 stories. |
 | 1.1 | 2026-11-15 | Arthur Jean | CI moves to one final epic. EP-001 to EP-006 are validated locally, by code, on the Windows host and in WSL Linux, and never wait on CI. The new EP-007 owns every CI result and fixes everything until the whole CI is green before merge. US-002 is rescoped to the local proof. 7 epics, 23 stories. |
+| 1.2 | 2026-11-15 | Arthur Jean | No macOS hardware is available before 2027, so macOS is validated by CI only and trusted to upstream code. US-010 is cancelled; the macOS latency target, assumption, risk and open question are rewritten; nothing holds the macOS build. |
+| 1.3 | 2026-11-15 | Arthur Jean | Linux gets its own validation epic before CI. Every check that needs a real Linux desktop session, and the Linux visual pass, moves to the new EP-007 on Arthur's Fedora machine, so EP-001 to EP-006 iterate on the Windows host with WSL clippy and tests only. The CI epic becomes EP-008. US-024 to US-026 are added; the Linux latency of US-009 moves to US-024, and the real-session checks of US-016 and US-017 move to US-025. 8 epics, 26 stories. |
 
 ## Problem Statement
 
@@ -23,17 +25,17 @@
 
 ## Overview
 
-The work happens on one branch and lands as one pull request series. EP-001 to EP-006 are validated locally, by code: tests, lints and gates run on the Windows host and in WSL Linux after each story, and no story before EP-007 pushes or waits on CI. EP-007, the last epic, owns CI: it pushes the branch, reads every workflow run, and fixes every failure until the whole CI is green on the commit that merges. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
+The work happens on one branch and lands as one pull request series. EP-001 to EP-006 are validated locally, by code: tests, lints and gates run on the Windows host and in WSL Linux after each story, and no story before EP-008 pushes or waits on CI. EP-007 then runs, on Arthur's Fedora machine, every Linux check that needs a real desktop session, and the Linux visual pass. EP-008, the last epic, owns CI: it pushes the branch, reads every workflow run, and fixes every failure until the whole CI is green on the commit that merges. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
 
 EP-002 to EP-005 then bring behavior in line with the new GPUI, one domain per epic: paths and layers, frame pacing and animation, text, platform integration. Each story names the Zed definition, the Zed test or example that specifies the behavior, and where Zed's own application code uses it, so the implementer ports a pattern instead of inventing one. EP-006 re-baselines the benchmarks, writes the bump summary on the model of `bench/results/gpui-bump-37faef81-2026-10-28.md`, and updates `CHANGELOG.md`, `DESIGN.md` and `ARCHITECTURE.md`.
 
 Key decisions, each with its evidence:
-- **One pin move to `703b5ac3`, not two.** A staged move through `78f5d7446c` (the last commit before the renderer rework) would isolate risk but doubles the benchmark re-baseline and the visual pass, and was never compiled. The branch absorbs the risk instead: nothing merges before EP-001 to EP-003, EP-006 and EP-007 are certified.
-- **Local validation per epic, CI once at the end.** A CI round trip costs 30 to 45 minutes, and waiting on it after each epic stalls the work. Each story is proven locally instead (Windows natively, Linux x86_64 in WSL), and EP-007 drives the CI to green in one long pass at the end. The cost is that macOS-only code is reviewed by inspection until EP-007, so its failures surface late; EP-007 is sized for that.
+- **One pin move to `703b5ac3`, not two.** A staged move through `78f5d7446c` (the last commit before the renderer rework) would isolate risk but doubles the benchmark re-baseline and the visual pass, and was never compiled. The branch absorbs the risk instead: nothing merges before EP-001 to EP-003 and EP-006 to EP-008 are certified.
+- **Local validation per epic, CI once at the end.** A CI round trip costs 30 to 45 minutes, and waiting on it after each epic stalls the work. Each story is proven locally instead (Windows natively, Linux x86_64 by clippy and tests in WSL), EP-007 validates Linux on a real Fedora session in one pass, and EP-008 drives the CI to green in one long pass at the end. The cost is that macOS-only code is reviewed by inspection until EP-008, so its failures surface late; EP-008 is sized for that.
 - **No translated shape cache.** `Path` cannot be moved or inspected, `PathBuilder::build` no longer tessellates, and binning is not cacheable from outside GPUI. A benchmark budget replaces the build-count tests; a bounded origin-keyed cache is the fallback only if the budget fails.
 - **GPUI's default frame intervals, written explicitly.** Zed sets none of the three options (no match outside `zed/crates/gpui`), so the defaults are the specification: 33.333 ms inactive, 33.333 ms in low power, 16.667 ms under thermal pressure (`platform.rs:2850-2852`). This also keeps the promise already published in `CHANGELOG.md:141`.
 - **Tabs expand to columns before shaping, 4 columns wide.** Zed's editor never hands a tab to the shaper: `TabMap` expands it with `tab_size - ((expanded_chars_old - 1) % tab_size)` (`zed/crates/editor/src/display_map/tab_map.rs:459`), default `"tab_size": 4` (`zed/assets/settings/default.json:1716`). Expanding gives identical columns on the three platforms.
-- **macOS input latency is validated on hardware before release.** Upstream issue zed-industries/zed#66954 (open, untriaged) reports about 18 ms more key-to-screen latency on 120 Hz displays after `0373366f43`, and the new display link is unconditional on macOS 14 and later (`zed/crates/gpui_macos/src/window.rs:1160`).
+- **macOS is validated by CI only.** No Mac is available before 2027, so the macOS build is trusted to the upstream code: EP-008 compiles, lints and tests it on the `macos-15` runners, and no hardware measurement gates it. Upstream issue zed-industries/zed#66954 (open, untriaged) reports about 18 ms more key-to-screen latency on 120 Hz displays after `0373366f43`, and the new display link is unconditional on macOS 14 and later (`zed/crates/gpui_macos/src/window.rs:1160`); it is accepted as a known risk, tracked upstream, and fixed by a later GPUI bump if confirmed. The hardware measurement is redone once Arthur has a Mac.
 
 ## Goals
 
@@ -42,7 +44,7 @@ Key decisions, each with its evidence:
 | Paneflow builds on current GPUI | Pin at `703b5ac3`; `run_tests` green on the Linux x86_64, Linux aarch64, macOS aarch64 and Windows x86_64 legs | Each later GPUI bump lands within 14 days of the upstream commit it targets |
 | No performance regression ships unexplained | Every metric of the terminal, editor and startup suites within 10 % of its committed baseline, or its delta explained in the bump summary | Allocation baselines within 1 % for 3 consecutive bumps |
 | Path cost stays inside the frame | Squircle building for a 12-badge tab strip at or below 0.4 ms per frame (5 % of an 8.33 ms frame) | Same at 24 badges |
-| Input latency holds | Keystroke-to-present latency on macOS at 120 Hz within 4.2 ms of the old pin; Windows and Linux within 2 ms | Same after the next bump |
+| Input latency holds | Keystroke latency on Windows and Linux within 2 ms of the old pin; macOS not measured until a Mac is available | Same after the next bump; macOS at 120 Hz within 4.2 ms once measured |
 | Text is identical across platforms where Paneflow owns layout | A tab occupies the same number of columns in the code editor and diff view on Linux, macOS and Windows (4-column stops) | Tab size configurable per user |
 | Hand-rolled animation is gone | 0 spinner call sites that re-render a view per frame (from 2) | 0 view re-renders per frame for any rotating glyph |
 
@@ -85,7 +87,7 @@ Key findings that informed this PRD:
 ### Assumptions (to validate)
 - Building each squircle at its final position on every paint fits the 0.4 ms budget, because fills are reported "about as fast as before or slightly faster" (#66809). Validated by US-003.
 - Curly underlines and box-drawing arcs stay inside the terminal suite's baseline despite slower strokes. Validated by US-003.
-- macOS key-to-present latency does not regress beyond 4.2 ms at 120 Hz. Contradicted by an open upstream report; validated by US-010 on real hardware.
+- macOS key-to-present latency does not regress beyond 4.2 ms at 120 Hz. Contradicted by an open upstream report; not validated: no Mac is available before 2027, so it is accepted on trust in the upstream code (US-010 cancelled).
 - No `cfg(target_os = "macos")` code in Paneflow uses a broken API. Based on greps, never compiled; validated by US-002 through CI.
 - The Linux rounded-quad fallback for translucent squircles existed because paths went through an intermediate MSAA texture. Inferred, no document states the reason; validated by US-008 on 2026-11-15 (correct blending on GNOME and KDE, Wayland and X11, NVIDIA and Mesa AMD), and the fallback is removed.
 
@@ -100,14 +102,14 @@ Key findings that informed this PRD:
 
 ## Quality Gates
 
-Every story in EP-001 to EP-006 is validated locally, by code, after its last change. Nothing in these epics is pushed for validation and no story waits on a CI result: CI belongs to EP-007. These commands must pass for every user story:
+Every story in EP-001 to EP-006 is validated locally, by code, after its last change. Nothing in these epics is pushed for validation and no story waits on a CI result: CI belongs to EP-008, and every check that needs a real Linux desktop session belongs to EP-007. These commands must pass for every user story:
 - `cargo fmt --check` - formatting, the CI gate
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` - lints on the host target
 - `cargo nextest run --workspace --locked --profile ci` - the test suite as CI runs it
 - `bash scripts/check-test-wallclock.sh` - no new wall-clock budget, when a test changes
 - `cargo deny check advisories licenses sources` - when `Cargo.toml`, `Cargo.lock` or `deny.toml` changes
 
-On the Windows host, the Linux leg is proven locally by running the clippy command, and the tests the story touches, in WSL on a clone of the exact local state, with a private `CARGO_TARGET_DIR` that is deleted afterwards. macOS code cannot be compiled locally: each story reviews its `cfg(target_os = "macos")` items by inspection and says so, and EP-007 compiles them.
+On the Windows host, the Linux leg is proven locally by running the clippy command, and the tests the story touches, in WSL on a clone of the exact local state, with a private `CARGO_TARGET_DIR` that is deleted afterwards. macOS code cannot be compiled locally: each story reviews its `cfg(target_os = "macos")` items by inspection and says so, and EP-008 compiles them. A criterion that needs a real Linux desktop session is not run under WSLg: it lives in EP-007.
 
 For UI stories, additional gates:
 - The `DESIGN.md` UI delivery gate (section 9, `DESIGN.md:1662-1678`): Dark, Light and one other preset; `reduce_motion` on and off; the 800 by 500 minimum window; every control state.
@@ -117,7 +119,7 @@ For UI stories, additional gates:
 
 ### EP-001: The pin moves and every target builds
 
-Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, and compiles, lints and tests on the Windows host and in WSL Linux. macOS is reviewed by inspection; EP-007 proves it in CI.
+Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, and compiles, lints and tests on the Windows host and in WSL Linux. macOS is reviewed by inspection; EP-008 proves it in CI.
 
 **Definition of Done:** the four `rev` values name `703b5ac3`, `Cargo.lock` is committed, and the quality gates pass on the Windows host and in WSL Linux x86_64 on the final local state.
 
@@ -158,7 +160,7 @@ Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, an
 - [x] No lint is silenced with `#[allow]` to make the migration compile, and no comment is added to source code
 
 #### US-002: Prove the Linux and Windows legs locally
-**Description:** As the maintainer, I want the migrated state proven on the two platforms I can compile so that later epics build on a known-good base, and only macOS waits for EP-007.
+**Description:** As the maintainer, I want the migrated state proven on the two platforms I can compile so that later epics build on a known-good base, and only macOS waits for EP-008.
 
 **Priority:** P0
 **Size:** S (2 pts)
@@ -349,7 +351,7 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 
 Paneflow states its frame policy, keeps its input latency, and animates rotating glyphs in GPUI's retained scene.
 
-**Definition of Done:** both windows set the three frame intervals explicitly, macOS latency is measured on hardware, and no spinner rebuilds a view per frame.
+**Definition of Done:** both windows set the three frame intervals explicitly, Windows and Linux latency is measured, and no spinner rebuilds a view per frame. macOS latency is not measured (US-010 cancelled in PRD 1.2).
 
 **Zed references:**
 - `zed/crates/gpui/src/platform.rs:2681-2697,2850-2852`: the three `Option<Duration>` fields and their defaults (33,333, 33,333 and 16,667 microseconds).
@@ -376,11 +378,15 @@ Paneflow states its frame policy, keeps its input latency, and animates rotating
 **Paneflow sites:** `src-app/src/launch.rs:417-429`; `src-app/src/app/detached_panes/window.rs:71-97`; `bench/results/gpui-bump-37faef81-2026-10-28.md:60-87,271-278` (the earlier 30 fps finding); `CHANGELOG.md:141`.
 
 **Acceptance Criteria:**
-- [ ] Given the main window and a detached pane window, when their `WindowOptions` are built, then both set `inactive_frame_interval`, `low_power_frame_interval` and `thermal_frame_interval` from one shared definition, with the values 33.333 ms, 33.333 ms and 16.667 ms
-- [ ] Given the shared definition, when a test reads it, then it asserts the three values, so a change of policy is a deliberate edit
-- [ ] Given a debug build with `PANEFLOW_LATENCY_PROBE=1` on Windows and on Linux, when keystroke latency is measured on the old pin and on the new pin with the window focused, then the two results are recorded and differ by at most 2 ms
-- [ ] Given an unfocused window streaming terminal output, when it redraws, then it presents at most 30 frames per second, and the behavior is recorded in the bump summary as a user-visible change
-- [ ] Given the latency difference exceeds 2 ms, when the result is read, then the story is not marked done and the cause is investigated before any interval is changed
+- [x] Given the main window and a detached pane window, when their `WindowOptions` are built, then both set `inactive_frame_interval`, `low_power_frame_interval` and `thermal_frame_interval` from one shared definition, with the values 33.333 ms, 33.333 ms and 16.667 ms
+- [x] Given the shared definition, when a test reads it, then it asserts the three values, so a change of policy is a deliberate edit
+- [x] Given a debug build with `PANEFLOW_LATENCY_PROBE=1` on Windows, when keystroke latency is measured on the old pin and on the new pin with the window focused, then the two results are recorded and differ by at most 2 ms (Linux moved to US-024 in PRD 1.3)
+- [x] Given an unfocused window streaming terminal output, when it redraws, then it presents at most 30 frames per second, and the behavior is recorded in the bump summary as a user-visible change
+- [x] Given the latency difference exceeds 2 ms, when the result is read, then the story is not marked done and the cause is investigated before any interval is changed (not applicable: the Windows difference is 0.58 ms at the median)
+
+**Implementation evidence (2026-11-15):** `src-app/src/frame_policy.rs` defines `FRAME_POLICY` (33.333, 33.333 and 16.667 ms) and `paced_window_options`, which `src-app/src/launch.rs` (main window) and `src-app/src/app/detached_panes/window.rs` (detached pane window) use as the base of their `WindowOptions`. Three tests pin it: `the_policy_caps_unfocused_and_low_power_windows_at_thirty_fps_and_thermal_pressure_at_sixty`, `paced_window_options_carry_the_policy_and_leave_every_other_option_at_its_default`, and `every_paneflow_window_is_opened_with_the_paced_options`, which fails when an `open_window` call skips the policy. Windows was measured on real hardware (Ryzen 7 7800X3D, 240 Hz, debug builds of both pins, 200 keystrokes per run, `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md`): focused `key-handler→paint-cpu` median 4.99 ms on `37faef81` against 5.57 ms on `703b5ac3` (p95 7.10 against 7.67 ms); an unfocused streaming window presents 68 to 70 frames per second on the old pin and 28.3 (never more than 30 in a second) on the new one, recorded in that file and in `CHANGELOG.md` as a user-visible change. The Linux measurement moved to US-024 (PRD 1.3); its procedure is in the same file.
+
+**Review evidence (2026-11-15):** both `cx.open_window` calls (`launch.rs:416`, `detached_panes/window.rs:70`) take `..crate::frame_policy::paced_window_options()`, and they are the only two in `src-app/src`. The review widened `every_paneflow_window_is_opened_with_the_paced_options` from those two files to every `.rs` file under `src-app/src`, so the guard `ARCHITECTURE.md` describes now holds for a window opened anywhere in the app. The "recorded in the bump summary" part of the fourth criterion lands with the summary itself: US-019's first criterion requires it, and the numbers are in `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md` and `CHANGELOG.md` now. The `CHANGELOG.md` entry now states what the probe measures (keystroke to end of paint, not to the screen).
 
 #### US-010: Validate assumption: macOS key-to-present latency does not regress
 **Description:** As a macOS user on a 120 Hz display, I want keystroke latency unchanged by the bump so that the terminal keeps feeling immediate.
@@ -401,8 +407,10 @@ Paneflow states its frame policy, keeps its input latency, and animates rotating
 - [ ] Given a Mac on macOS 14 or later with a 120 Hz display, when keystroke-to-present latency is measured on the old pin and on the new pin with the same method, then both numbers, the method and the machine are recorded in the bump summary
 - [ ] Given the new pin is within 4.2 ms of the old one, when the result is read, then the assumption is recorded as validated
 - [ ] Given the new pin is more than 4.2 ms slower, when the result is read, then the macOS release of the bump is held, the finding is recorded with a link to zed-industries/zed#66954, and the options (wait for an upstream fix and re-pin, or carry a vendored patch) are put to Arthur
-- [ ] Given no such hardware is available to the implementing agent, when the story is reported, then it is left for manual verification with the exact procedure written down, and it is not marked done
+- [x] Given no such hardware is available to the implementing agent, when the story is reported, then it is left for manual verification with the exact procedure written down, and it is not marked done
 - [ ] Given the measurement, when startup is also traced, then time to first frame on macOS is recorded on both pins
+
+**Status: CANCELLED (PRD 1.2, 2026-11-15).** No Mac is available before 2027. macOS is validated by CI only (EP-008) and the latency risk of zed-industries/zed#66954 is accepted on trust in the upstream code. The procedure for a later hardware run stays in `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md`.
 
 #### US-011: Spinners rotate through TimedTransformation
 **Description:** As a user watching an agent think, I want rotating loaders animated in the retained scene so that a spinner no longer rebuilds its view on every frame.
@@ -421,12 +429,16 @@ Paneflow states its frame policy, keeps its input latency, and animates rotating
 **Paneflow sites:** `src-app/src/ui_primitives.rs:536-555` (`comet_spinner`, `COMET_TURN` 700 ms); `src-app/src/ui_primitives.rs:1012-1020` (empty-state spinner, 1 s); `src-app/src/ui_primitives.rs:92` (`set_reduce_motion`, which also sets GPUI's flag); `DESIGN.md:493-510`.
 
 **Acceptance Criteria:**
-- [ ] Given `comet_spinner`, when it renders, then it uses `with_timed_transformation` with a 700 ms rotation and no `with_animation` closure
-- [ ] Given the empty-state spinner, when it animates, then it uses `with_timed_transformation` with a 1 s rotation
-- [ ] Given a view that shows a spinner and nothing else changing, when 60 frames pass, then the view's render count stays at 1, asserted by a test
-- [ ] Given `reduce_motion` is on, when a spinner renders, then it is static, as `DESIGN.md:507` requires
-- [ ] Given two spinners on screen, when they animate, then they share one phase, and `DESIGN.md` records that the phase is app-wide instead of per element
-- [ ] The grid loader at `src-app/src/app/sidebar/lane.rs:329-344` is unchanged
+- [x] Given `comet_spinner`, when it renders, then it uses `with_timed_transformation` with a 700 ms rotation and no `with_animation` closure
+- [x] Given the empty-state spinner, when it animates, then it uses `with_timed_transformation` with a 1 s rotation
+- [x] Given a view that shows a spinner and nothing else changing, when 60 frames pass, then the view's render count stays at 1, asserted by a test
+- [x] Given `reduce_motion` is on, when a spinner renders, then it is static, as `DESIGN.md:507` requires
+- [x] Given two spinners on screen, when they animate, then they share one phase, and `DESIGN.md` records that the phase is app-wide instead of per element
+- [x] The grid loader at `src-app/src/app/sidebar/lane.rs:329-344` is unchanged
+
+**Implementation evidence (2026-11-15):** `ui_primitives::spin` applies `TimedTransformation::rotation(turn, Transformation::default())` through `with_timed_transformation`, `comet_spinner` with `COMET_TURN` (700 ms) and `panel_empty_state` with `EMPTY_STATE_TURN` (1 s); no `with_animation` closure remains, and `comet_spinner` no longer takes an element id, so its five callers in `settings/tabs/agents.rs`, `settings/tabs/spaces.rs` and `window_chrome/title_bar.rs` drop it. `spinners_turn_for_sixty_frames_without_rendering_their_view_again` renders two comet spinners and an animated empty state and asserts one render over 60 simulated frames; against the previous `with_animation` body it fails with 61 renders. `spinners_turn_once_per_period_on_the_shared_clock_and_rest_under_reduce_motion` asserts the periods, no rotation under `reduce_motion`, and identical rotations for two comet spinners, which GPUI phase-locks to the app's shared animation clock; `DESIGN.md` section 4.8 records the app-wide phase. `lane.rs` only gains a test after its existing ones.
+
+**Review evidence (2026-11-15):** every caller of the two spinners (`settings/tabs/agents.rs` three times, `settings/tabs/spaces.rs`, `window_chrome/title_bar.rs`, and `panel_empty_state`) goes through `ui_primitives::spin`; no rotating `with_animation` remains in `src-app/src`. The phase and the per-frame motion come from GPUI `703b5ac3`, checked in its source: `Svg::paint` turns a `TimedTransformation` into a `SpriteAnimation` unless `cx.reduce_motion()` (`zed/crates/gpui/src/elements/svg.rs:160-163`), and `Window::advance_scene_animations` poses every animated sprite from the one `cx.synced_animation_epoch` (`zed/crates/gpui/src/window.rs:3057-3060`), so the equality the phase test asserts is the whole contract. `App::set_reduce_motion` refreshes every window when the flag changes (`zed/crates/gpui/src/app.rs:1418-1423`), so a spinner stops at once when reduced motion is turned on.
 
 #### US-012: Cached views repaint on inherited opacity and keep subscriptions without redraw loops
 **Description:** As the maintainer, I want the two upstream cached-view fixes confirmed against Paneflow's cached views so that sidebars fade correctly and no new subscription turns into a redraw loop.
@@ -444,11 +456,15 @@ Paneflow states its frame policy, keeps its input latency, and animates rotating
 **Paneflow sites:** `src-app/src/app/render.rs:658-663` (sidebar under an opacity wrapper); `src-app/src/app/diff_dock/mod.rs:566` and `src-app/src/app/files_sidebar/integration.rs:79`; `src-app/src/pane.rs:1997` (terminal); deferred menus at `src-app/src/app/sidebar/context_menu.rs:127`, `agents_section.rs:1560`, `customize_menu.rs:303`, `space_switcher.rs:483`, `status_groups.rs:300`; counters and tests at `src-app/src/app/sidebar/lane.rs:676`, `src-app/src/app/files_sidebar/tests.rs:59-110`, `src-app/src/terminal/view.rs:1955-2036`.
 
 **Acceptance Criteria:**
-- [ ] Given the primary sidebar collapsing, when its wrapper opacity changes, then the cached `SidebarView` repaints with the new opacity on that frame, asserted by a test
-- [ ] Given a sidebar menu open and one agent in the Thinking state, when 100 root renders pass with no other input, then the sidebar render count stays in the range `lane.rs:676` already asserts (10 to 12 per second) and terminal views are not re-rendered
-- [ ] Given an entity read only inside a deferred menu under a cached view, when it notifies, then the menu updates on the next frame
-- [ ] Given an entity that notifies on every frame, when it is read under a cached view, then the test fails with the offending view named, so a redraw loop cannot land unnoticed
-- [ ] Given a cached sidebar or terminal view reused from the previous frame, when the accessibility tree is read, then the roles Paneflow declares are still present; if they are not, the finding is recorded with a link to zed-industries/zed#66690 and no workaround is added without Arthur's decision
+- [x] Given the primary sidebar collapsing, when its wrapper opacity changes, then the cached `SidebarView` repaints with the new opacity on that frame, asserted by a test
+- [x] Given a sidebar menu open and one agent in the Thinking state, when 100 root renders pass with no other input, then the sidebar render count stays in the range `lane.rs:676` already asserts (10 to 12 per second) and terminal views are not re-rendered
+- [x] Given an entity read only inside a deferred menu under a cached view, when it notifies, then the menu updates on the next frame
+- [x] Given an entity that notifies on every frame, when it is read under a cached view, then the test fails with the offending view named, so a redraw loop cannot land unnoticed
+- [x] Given a cached sidebar or terminal view reused from the previous frame, when the accessibility tree is read, then the roles Paneflow declares are still present; if they are not, the finding is recorded with a link to zed-industries/zed#66690 and no workaround is added without Arthur's decision (the roles are not present on a reuse frame: finding recorded in `ARCHITECTURE.md` with the link, no workaround)
+
+**Implementation evidence (2026-11-15):** `SidebarView::faded_column` (`app/sidebar/view.rs`) is the column `app/render.rs` draws the primary sidebar in; `a_collapsing_sidebar_repaints_its_cached_view_at_the_new_opacity_on_that_frame` asserts that an unchanged opacity reuses the cache and each new opacity repaints the view in that frame with no follow-up frame. `an_open_sidebar_menu_and_a_thinking_agent_keep_terminals_idle_over_a_hundred_root_renders` (`lane.rs`) keeps a deferred `menu_reveal` menu open beside a thinking loader and asserts 10 to 12 sidebar renders over 100 root renders, two cached terminal views never re-rendered, and no redraw loop. `an_entity_read_only_inside_a_deferred_menu_reaches_it_after_the_sidebar_is_reused` asserts that after two cache-reuse frames the deferred menu shows a new label on the next frame and that an entity read only while painting it still wakes the window. `redraw_guard::assert_no_redraw_loop` (test-only) draws 60 frames and panics with the name of any watched view that rebuilt on all of them; `an_entity_notifying_every_frame_under_a_cached_view_names_the_looping_view` expects that panic naming `LoopingReader`. Accessibility: GPUI's test platform has no accessibility adapter, so the tree cannot be read in a test; by inspection of GPUI `703b5ac3`, `reuse_prepaint` and `reuse_paint` replay no accessibility node, so a cached view's roles are absent on reuse frames, which matches the earlier Windows observation (60 references while the sidebar re-renders, 12 once static). Recorded in `ARCHITECTURE.md` with zed-industries/zed#66690; no workaround without Arthur's decision.
+
+**Review evidence (2026-11-15):** `app/render.rs` draws the primary sidebar through `SidebarView::faded_column`, the same function the opacity, deferred-menu and redraw-loop tests enter through, so the tests exercise the production column rather than a copy. The 100-root-render test builds its sidebar from the production `comet_trail_loader`, `SpinnerClock` and `menu_reveal`, not from `SidebarView` itself, which needs a full `PaneFlowApp`. `redraw_guard` is test-only by design (the fourth criterion is about a test), and `lane.rs` uses it on real sidebar and terminal stand-ins. Leaving a pending accessibility workaround to Arthur is the outcome the fifth criterion prescribes. Gates on the final state: `cargo fmt --check`, Windows clippy and WSL Linux clippy (`--workspace --all-targets --locked -D warnings`) pass; `cargo nextest run --workspace --locked --profile ci` on Windows passes 4591 of 4593, the two others being `paneflow-host` tests (`an_output_flood_reaches_every_follower_and_a_paused_follower_never_stalls_control`, `ownership_probes::the_fixture_modes_are_driven_through_the_real_host_ipc`) that fail under load and pass on retry and in isolation; `paneflow-host` does not depend on `src-app` and runs only its own binaries, so EP-003 leaves those test binaries unchanged. The 94 targeted EP-003 tests pass in WSL Linux; `scripts/check-test-wallclock.sh` passes. macOS: EP-003 adds no `cfg(target_os = "macos")` item.
 
 ---
 
@@ -566,9 +582,8 @@ Window observers, surface setup, blur and menu placement use what the new GPUI p
 **Acceptance Criteria:**
 - [ ] Given a window toggled to fullscreen and back on Linux, when the bounds observers fire, then the saved windowed size is unchanged, asserted by a test on the save path
 - [ ] Given the bounds observer fires while fullscreen, when it runs, then it performs no file write and no layout rebuild beyond what a resize already does
-- [ ] Given a release build on Linux x86_64, when time to first frame is measured with `scripts/bench-startup.sh` on both pins, then the two numbers are recorded and the new one is within 10 % of the baseline
 - [ ] Given an adapter that is rejected by the new surface test, when the app starts, then it falls back to the next adapter or exits with the existing error path, and the log names the rejected adapter
-- [ ] The story states which of Wayland, X11, NVIDIA and Mesa were exercised and which were reviewed by inspection only
+- [ ] The checks that need a real Linux desktop session (time to first frame on both pins, the sessions and drivers exercised) are run by US-025
 
 #### US-017: Blurred backdrop on Linux through ext-background-effect
 **Description:** As a Linux user on a compositor with background effects, I want the blurred backdrop setting honored so that Linux matches macOS and Windows where it can.
@@ -590,6 +605,7 @@ Window observers, surface setup, blur and menu placement use what the new GPUI p
 - [ ] Given a compositor without the protocol and without KDE blur, when the setting is "blurred", then the window uses the translucent appearance it uses today and logs the fallback once
 - [ ] Given X11, when the setting is "blurred", then behavior is unchanged from today
 - [ ] Given macOS or Windows, when the setting is read, then the mapping at `src-app/src/app/constants.rs` is unchanged
+- [ ] Given the criteria above, when they are proven here, then they are proven by tests on the mapping and the window calls; the result on real compositors is checked by US-025
 
 #### US-018: Submenus and popovers attach on the side that has room
 **Description:** As a user opening a submenu near a window edge, I want it placed from its real size so that it never overflows the window or covers its parent row.
@@ -645,7 +661,7 @@ The bump is measured, re-baselined and written down where the repository keeps s
 - [ ] Given each metric, when it is compared, then any metric more than 10 % above its baseline is listed with its cause and the story that addressed it or accepted it
 - [ ] Given the allocation baselines, when they are compared, then each is within 1 % or its change is explained, and the refreshed baselines are committed on top of the code commit, never from a dirty tree
 - [ ] Given `scripts/perf-gates.sh`, when it runs on the final commit, then it passes without any budget raised, or each raised budget is listed in the summary with the measured value and Arthur's approval
-- [ ] Given the summary, when it is read, then it records the frame-interval behavior, the latency measurements of US-009 and US-010, and the path costs of US-003
+- [ ] Given the summary, when it is read, then it records the frame-interval behavior, the latency measurements of US-009, that macOS latency is not measured (US-010 cancelled), and the path costs of US-003
 - [ ] Given a benchmark run on a loaded machine, when two runs differ by more than 10 %, then the run is repeated and no baseline is set from it
 
 #### US-020: Changelog, design and architecture documents, visual-pass checklist
@@ -672,7 +688,62 @@ The bump is measured, re-baselined and written down where the repository keeps s
 
 ---
 
-### EP-007: The whole CI is green before merge
+### EP-007: Linux is validated on a real desktop session
+
+Every Linux check that needs a real desktop session runs here, on Arthur's Fedora 44 machine (the hardware of the `linux-x86_64` baseline), once EP-001 to EP-006 are implemented on the Windows host and before any CI run. The earlier epics prove Linux by clippy and the touched tests in WSL only, which keeps the inner loop on one machine.
+
+**Definition of Done:** every Linux runtime criterion of the PRD is recorded with its session, compositor and driver named, the Linux visual pass is done, and every defect it found is fixed on the branch and checked again.
+
+**Sessions:** GNOME (Mutter) and KDE Plasma (KWin), each on Wayland and on X11, with the proprietary NVIDIA driver and with Mesa where the machine offers both, as US-008 did on 2026-11-15. A combination not exercised is named as such.
+
+#### US-024: Keystroke latency and unfocused frame rate hold on Fedora
+**Description:** As a Linux user, I want the frame policy of US-009 measured on a real desktop so that the bump keeps keystroke echo as fast as before and caps unfocused windows as it does on Windows.
+
+**Priority:** P0
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-009, US-019
+
+**Paneflow sites:** `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md` (the Windows figures and the Linux procedure); `src-app/src/frame_policy.rs`; `src-app/src/terminal/element/mod.rs` (the probe thresholds, lowered in the measurement copies only).
+
+**Acceptance Criteria:**
+- [ ] Given a debug build of each pin on Fedora with `PANEFLOW_LATENCY_PROBE=1`, when keystroke latency is measured with the window focused by the procedure of the results file, then both results, the session and the driver are recorded and the medians differ by at most 2 ms
+- [ ] Given an unfocused window streaming terminal output on the new pin, when it redraws, then it presents at most 30 frames per second, recorded next to the Windows figures
+- [ ] Given the latency difference exceeds 2 ms, when the result is read, then the story is not marked done and the cause is investigated before any interval is changed
+- [ ] Given the bump summary of US-019, when it is read, then it carries the Linux figures
+
+#### US-025: Linux window, startup and backdrop behave on real sessions
+**Description:** As a Linux user, I want window size, startup and the blurred backdrop checked on the desktops I use so that what US-016 and US-017 prove in code holds on screen.
+
+**Priority:** P1
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-016, US-017
+
+**Paneflow sites:** `scripts/bench-startup.sh`; `bench/baselines/linux-x86_64/startup.json`; `src-app/src/window_state.rs`; `src-app/src/app/constants.rs`; `src-app/src/window_chrome/linux_backdrop.rs`.
+
+**Acceptance Criteria:**
+- [ ] Given a release build on Linux x86_64, when time to first frame is measured with `scripts/bench-startup.sh` on both pins, then the two numbers are recorded and the new one is within 10 % of the baseline
+- [ ] Given a window toggled to fullscreen and back, when it returns to windowed on each session exercised, then it keeps its size and the restored size after a restart is the windowed one
+- [ ] Given the backdrop setting on "blurred", when the window opens on a compositor with `ext-background-effect`, on one with KDE blur only if available, on GNOME without either, and on X11, then the result on each matches US-017's criteria, with the compositor and driver named
+- [ ] The story states which of Wayland, X11, NVIDIA and Mesa were exercised and which were reviewed by inspection only
+
+#### US-026: The Linux visual pass is clean
+**Description:** As the maintainer, I want every surface the stories changed looked at on Linux so that the renderer rework ships without a visible defect on the desktops Paneflow supports.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-020, US-024, US-025
+
+**Paneflow sites:** the per-platform checklist written by US-020; `DESIGN.md` section 9 (the UI delivery gate).
+
+**Acceptance Criteria:**
+- [ ] Given the checklist of US-020, when Arthur runs its Linux part on the sessions of this epic, then each surface and state is marked pass or defect, with the session and driver named
+- [ ] Given the `DESIGN.md` UI delivery gate, when the pass runs, then Dark, Light and one other preset, `reduce_motion` on and off, the 800 by 500 minimum window and every control state are covered
+- [ ] Given a defect, when it is found, then it is fixed on the branch with the local gates green and the surface is checked again before the story is done
+- [ ] Given the pass is done, when EP-008 starts, then no Linux defect found in this epic is open
+
+---
+
+### EP-008: The whole CI is green before merge
 
 The branch is pushed once the local epics are done, and every failure the CI reports is fixed on the branch until every workflow run is green on the commit that merges. This is the only epic that waits on CI, and it is expected to be long.
 
@@ -688,7 +759,7 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 
 **Priority:** P0
 **Size:** L (5 pts)
-**Dependencies:** Blocked by every story of EP-001 to EP-006
+**Dependencies:** Blocked by every story of EP-001 to EP-007
 
 **Paneflow sites:** `.github/workflows/run_tests.yml:181` (Style), `:228` (Tests Linux x86_64), `:298` (Performance gates), `:430` (macOS aarch64 smoke build), `:645` (macOS render smoke), `:853` (Windows x86_64 libghostty check), `:1034` (Windows render smoke), `:1255` (Linux aarch64); `.config/nextest.toml`.
 
@@ -704,7 +775,7 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 
 **Priority:** P0
 **Size:** M (3 pts)
-**Dependencies:** Blocked by every story of EP-001 to EP-006
+**Dependencies:** Blocked by every story of EP-001 to EP-007
 
 **Paneflow sites:** the `libghostty Linux`, `libghostty macOS` and `libghostty Windows` workflows; `perf-ab`; the Workflow audit job (`zizmor`); `scripts/check-workflows.sh`.
 
@@ -724,7 +795,7 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 - [ ] Given the head commit, when `cargo fmt --check` runs on it, then it passes, and it is the commit on which US-021 and US-022 are green
 - [ ] Given the pull request body, when it is read, then it lists the validation actually run per platform (local Windows, WSL Linux, each CI leg), the user-visible behavior, the visual-pass checklist of US-020, and links the bump summary
 - [ ] Given the branch, when its history is read, then commits are atomic per story in the `type(scope): US-NNN - description` form, with no AI attribution and no closing keyword
-- [ ] Given the macOS latency of US-010 is still unmeasured or over threshold, when merge readiness is stated, then the pull request says so and leaves the merge decision to Arthur
+- [ ] Given macOS latency is not measured (US-010 cancelled), when merge readiness is stated, then the pull request names it as a known limitation with a link to zed-industries/zed#66954; it does not block the merge
 
 ## Functional Requirements
 
@@ -742,7 +813,7 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 ## Non-Functional Requirements
 
 - **Performance:** squircle building for a 12-badge tab strip at or below 0.4 ms per frame; every terminal, editor and startup metric within 10 % of its committed baseline or explained; allocation baselines within 1 %.
-- **Latency:** keystroke-to-present within 2 ms of the old pin on Windows and Linux, within 4.2 ms on macOS at 120 Hz; an unfocused window presents at most 30 frames per second.
+- **Latency:** keystroke latency within 2 ms of the old pin on Windows and Linux; an unfocused window presents at most 30 frames per second. macOS is not measured until a Mac is available.
 - **Reliability:** 0 panics on zero-sized bounds, on a failed path build, or on a rejected GPU adapter; the full test suite passes on the four CI legs with 0 tests quarantined for this work.
 - **Accessibility:** `reduce_motion` stops 100 % of rotating glyphs; the accessibility roles declared on cached views remain present in the tree.
 - **Compatibility:** Rust 1.98.0; Linux (Wayland and X11, x86_64 and aarch64), macOS on Apple Silicon, Windows 10 and 11 x64; 0 new system packages and 0 new licenses in `deny.toml`.
@@ -762,19 +833,19 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 | 8 | Unsupported compositor | Linux "blurred" backdrop without the protocol | Falls back to today's translucent appearance, one log line | None |
 | 9 | Rejected GPU adapter | An adapter fails the new surface test at startup | Next adapter is tried, or the existing startup error is shown | The existing startup error |
 | 10 | Menu near an edge | Submenu opened with room on neither side | Stays inside the window, parent row visible | None |
-| 11 | Upstream regression confirmed | macOS latency over threshold in US-010 | macOS release held, decision put to Arthur | None |
-| 12 | Platform leg fails | A `cfg`-gated item breaks on a CI leg not compiled locally | Fixed in EP-007 before merge; the report states what was compiled where | None |
+| 11 | Upstream regression confirmed | zed-industries/zed#66954 confirmed or fixed upstream, or a macOS user reports added latency | A later GPUI bump takes the fix | None |
+| 12 | Platform leg fails | A `cfg`-gated item breaks on a CI leg not compiled locally | Fixed in EP-008 before merge; the report states what was compiled where | None |
 
 ## Risks & Mitigations
 
 | # | Risk | Probability | Impact | Mitigation |
 |---|------|------------|--------|------------|
-| 1 | macOS input latency regresses on 120 Hz displays (zed-industries/zed#66954, open) | Med | High | US-010 measures on hardware before release; the macOS release is held if the threshold is exceeded |
+| 1 | macOS input latency regresses on 120 Hz displays (zed-industries/zed#66954, open) | Med | High | Accepted: no Mac before 2027. CI compiles and tests macOS (EP-008), the upstream issue is tracked, a later GPUI bump takes its fix, and the hardware measurement is redone once a Mac is available |
 | 2 | Per-paint path building costs more than the frame allows | Med | High | US-003 measures first; US-004 carries a bounded origin-keyed cache as the fallback and a benchmark that guards the budget |
 | 3 | Seams between adjacent paths on bordered surfaces | High | Med | US-006 removes coincident edges by construction; US-005 collapses multi-path shapes into one stroke |
 | 4 | The renderer rework is three days old upstream and may receive fixes after `703b5ac3` | High | Med | Work stays on a branch; re-pinning to a later commit before merge is one manifest change plus the gates |
-| 5 | macOS-only code fails to compile, unseen from Windows and Linux | Med | Med | Stories review macOS items by inspection; EP-007 requires the macOS CI legs green before merge and is sized for late failures |
-| 10 | CI failures pile up because no epic before EP-007 runs CI | Med | Med | Every story passes the local gates on Windows and WSL Linux; EP-007 batches each CI run's failures into one fix pass |
+| 5 | macOS-only code fails to compile, unseen from Windows and Linux | Med | Med | Stories review macOS items by inspection; EP-008 requires the macOS CI legs green before merge and is sized for late failures |
+| 10 | CI failures pile up because no epic before EP-008 runs CI | Med | Med | Every story passes the local gates on Windows and WSL Linux; EP-008 batches each CI run's failures into one fix pass |
 | 6 | Tab expansion breaks caret, selection or search geometry in the editor | Med | Med | US-013 maps offsets both ways with tests for carets, clicks, wide characters and search ranges |
 | 7 | New cached-view subscriptions cause extra full redraws | Low | Med | US-012 asserts render counts with a menu open and an agent thinking |
 | 8 | Benchmarks drift from machine noise and a baseline is set from a bad run | Med | Med | Runs differing by more than 10 % are discarded; baselines are set only from a clean tree |
@@ -811,7 +882,7 @@ Frame as questions for engineering input, not mandates:
 - **Data Model:** the code editor needs a mapping between buffer offsets and display columns for tab expansion. A per-line expansion table (as `TabMap` computes per row) versus a prefix-sum cached with the shaped line in `ShapeCache`. Trade-off: the cached table costs memory per visible row and saves a scan on every caret query.
 - **API Design:** where should the frame-interval definition live so both windows share it? Recommended: next to the other window constants in `src-app/src/app/constants.rs`. No new IPC or config surface.
 - **Dependencies:** the lockfile gains `icu_segmenter`, `icu_segmenter_data`, `icu_locale_fallback` and, through an optional GPUI dependency, `bench_metrics` with `criterion`; it loses `lyon`, `lyon_algorithms`, `lyon_tessellation` and `float_next_after`. `cargo deny` reported licenses and advisories clean in the research probe. Should the optional benchmark chain be excluded from the lockfile review, or reviewed like any other source?
-- **Migration:** rollback is one revert of the branch; no user data or configuration format changes. If macOS latency fails US-010, is a vendored `gpui_macos` patch acceptable given that the fork was dropped on 2026-08-26 (`e333c2397`), or does macOS stay on the previous release until upstream fixes it?
+- **Migration:** rollback is one revert of the branch; no user data or configuration format changes. A macOS latency regression, if confirmed later, is fixed by a later GPUI bump; no vendored `gpui_macos` patch is planned (the fork was dropped on 2026-08-26, `e333c2397`).
 
 ## Success Metrics
 
@@ -823,15 +894,15 @@ Frame as questions for engineering input, not mandates:
 | Squircle build cost, 12-badge strip | N/A (translated cache) | at or below 0.4 ms per frame | Month-1 | The benchmark case added by US-004 |
 | Spinner call sites that re-render a view per frame | 2 | 0 | Month-1 | Render-count test of US-011 |
 | Tab width in the editor on Windows | 0 columns | 4-column stops, same on three platforms | Month-1 | Expansion test of US-013 |
-| macOS keystroke-to-present at 120 Hz | Measured on the old pin by US-010 | within 4.2 ms of baseline | Month-1 | Hardware measurement recorded in the bump summary |
+| macOS keystroke-to-present at 120 Hz | Not measured: no Mac before 2027 | within 4.2 ms of the old pin | Once a Mac is available | Hardware measurement recorded in a later bump summary |
 | Days from upstream commit to pinned | 19 (2026-10-27 to 2026-11-15) | 14 or fewer for the next bump | Month-6 | Dates in `bench/results/` summaries |
 
 ## Open Questions
 
-- **Re-pin before merge?** If upstream fixes zed-industries/zed#66954 or follows up on the path renderer before this branch merges, should the pin move to that commit instead of `703b5ac3`? Arthur, at the start of EP-006; decides whether US-002, US-019 and EP-007 run once or twice.
-- **Low-power frame limit.** The PRD keeps GPUI's 30 fps limit in power-saving mode, which also limits keystroke echo there. If US-009 or US-010 shows a perceptible cost, should `low_power_frame_interval` become `None`? Arthur, after US-009; changes one constant and one changelog entry.
+- **Re-pin before merge?** If upstream fixes zed-industries/zed#66954 or follows up on the path renderer before this branch merges, should the pin move to that commit instead of `703b5ac3`? Arthur, at the start of EP-006; decides whether US-002, US-019 and EP-008 run once or twice.
+- **Low-power frame limit.** The PRD keeps GPUI's 30 fps limit in power-saving mode, which also limits keystroke echo there. If US-009 shows a perceptible cost, should `low_power_frame_interval` become `None`? Arthur, after US-009; changes one constant and one changelog entry.
 - **Tab width.** Is a fixed 4 columns acceptable until a setting exists, including for Go and Makefiles where 8 is conventional? Arthur, before US-013.
-- **macOS hardware.** Who runs US-010, and on which Mac and display? Arthur, before EP-003 is certified; without it the macOS release of the bump is held.
+- **macOS hardware.** Resolved 2026-11-15 (PRD 1.2): no Mac is available before 2027. US-010 is cancelled, macOS is validated by CI only, and the measurement is redone once Arthur has a Mac.
 - **Phase of spinners.** All spinners now share one app-wide phase. Is that acceptable against `DESIGN.md:493-510`, or must each loader start at its own zero? Arthur, at US-011.
 - **Accessibility of cached views.** If zed-industries/zed#66690 reproduces in Paneflow, is it accepted as an upstream defect or worked around by disabling the cache on affected views? Arthur, at US-012.
 [/PRD]
