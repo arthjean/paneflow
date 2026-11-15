@@ -172,6 +172,141 @@ fn load_base_text(worktree_dir: &Path, merge_base: &str, rel_path: &str) -> (Str
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BaseBlob {
+    Loaded { text: String, binary: bool },
+    TooLarge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BaseEntry {
+    Missing,
+    NotABlob,
+    Blob { oid: String, size: u64 },
+}
+
+const BASE_BATCH_HEADER_SLACK: u64 = 256;
+
+fn feed_git(dir: &Path, args: &[&str], stdin: Vec<u8>, stdout_cap: u64) -> Option<Vec<u8>> {
+    let mut cmd = crate::git_command::git(crate::git_command::GitProfile::Probe, args);
+    cmd.current_dir(dir);
+    let (output, truncated) = crate::git_command::run_feeding_stdin_keeping_stdout_head(
+        cmd,
+        stdin,
+        GIT_DEADLINE,
+        stdout_cap,
+    )
+    .ok()?;
+    (output.status.success() && !truncated).then_some(output.stdout)
+}
+
+fn parse_base_entries(stdout: &[u8], expected: usize) -> Option<Vec<BaseEntry>> {
+    let entries: Vec<BaseEntry> = stdout
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let line = String::from_utf8_lossy(line);
+            let mut fields = line.rsplitn(3, ' ');
+            let size = fields.next().and_then(|size| size.parse::<u64>().ok());
+            let kind = fields.next();
+            let oid = fields.next();
+            match (oid, kind, size) {
+                (Some(oid), Some("blob"), Some(size)) => BaseEntry::Blob {
+                    oid: oid.to_string(),
+                    size,
+                },
+                (Some(_), Some(_), Some(_)) => BaseEntry::NotABlob,
+                _ => BaseEntry::Missing,
+            }
+        })
+        .collect();
+    (entries.len() == expected).then_some(entries)
+}
+
+fn parse_base_contents(mut rest: &[u8], expected: &[u64]) -> Option<Vec<Vec<u8>>> {
+    let mut contents = Vec::with_capacity(expected.len());
+    for &size in expected {
+        let eol = rest.iter().position(|&byte| byte == b'\n')?;
+        let header = std::str::from_utf8(&rest[..eol]).ok()?;
+        let announced = header.rsplit(' ').next()?.parse::<u64>().ok()?;
+        if announced != size {
+            return None;
+        }
+        let size = usize::try_from(size).ok()?;
+        rest = &rest[eol + 1..];
+        if rest.len() <= size {
+            return None;
+        }
+        contents.push(rest[..size].to_vec());
+        rest = &rest[size + 1..];
+    }
+    Some(contents)
+}
+
+fn load_base_blobs(worktree_dir: &Path, base: &str, paths: &[&str]) -> Vec<Option<BaseBlob>> {
+    let unresolved = || paths.iter().map(|_| None).collect::<Vec<_>>();
+    if paths.is_empty() || paths.iter().any(|path| path.contains('\n')) {
+        return unresolved();
+    }
+    let specs: Vec<u8> = paths
+        .iter()
+        .flat_map(|path| format!("{base}:{path}\n").into_bytes())
+        .collect();
+    let listing_cap = specs.len() as u64 + paths.len() as u64 * BASE_BATCH_HEADER_SLACK;
+    let Some(entries) = feed_git(
+        worktree_dir,
+        &["cat-file", "--batch-check"],
+        specs,
+        listing_cap,
+    )
+    .and_then(|stdout| parse_base_entries(&stdout, paths.len())) else {
+        return unresolved();
+    };
+
+    let wanted: Vec<(&str, u64)> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            BaseEntry::Blob { oid, size } if *size <= MAX_FILE_BYTES => Some((oid.as_str(), *size)),
+            _ => None,
+        })
+        .collect();
+    let sizes: Vec<u64> = wanted.iter().map(|(_, size)| *size).collect();
+    let contents = if wanted.is_empty() {
+        Some(Vec::new())
+    } else {
+        let oids: Vec<u8> = wanted
+            .iter()
+            .flat_map(|(oid, _)| format!("{oid}\n").into_bytes())
+            .collect();
+        let contents_cap = sizes.iter().sum::<u64>() + sizes.len() as u64 * BASE_BATCH_HEADER_SLACK;
+        feed_git(worktree_dir, &["cat-file", "--batch"], oids, contents_cap)
+            .and_then(|stdout| parse_base_contents(&stdout, &sizes))
+    };
+    let Some(contents) = contents else {
+        return unresolved();
+    };
+
+    let mut contents = contents.into_iter();
+    entries
+        .into_iter()
+        .map(|entry| match entry {
+            BaseEntry::Missing => Some(BaseBlob::Loaded {
+                text: String::new(),
+                binary: false,
+            }),
+            BaseEntry::NotABlob => Some(BaseBlob::Loaded {
+                text: String::new(),
+                binary: true,
+            }),
+            BaseEntry::Blob { size, .. } if size > MAX_FILE_BYTES => Some(BaseBlob::TooLarge),
+            BaseEntry::Blob { .. } => contents.next().map(|bytes| {
+                let (text, binary) = classify(bytes);
+                BaseBlob::Loaded { text, binary }
+            }),
+        })
+        .collect()
+}
+
 struct WorkingText {
     text: String,
     binary: bool,
@@ -363,6 +498,17 @@ pub fn compute_head_diff(worktree_dir: &Path, options: DiffOptions) -> WorktreeD
     diff
 }
 
+fn base_lookup_path<'a>(
+    change: FileChange,
+    path: &'a str,
+    old_path: &'a Option<String>,
+) -> &'a str {
+    match (change, old_path) {
+        (FileChange::Renamed, Some(source)) => source,
+        _ => path,
+    }
+}
+
 fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -> WorktreeDiff {
     let name_status = match run_git(
         worktree_dir,
@@ -393,26 +539,46 @@ fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -
         }
     }
     log::debug!("git: {} changed files", changes.len());
+    if changes.len() > MAX_FILE_COUNT {
+        truncated = true;
+        changes.truncate(MAX_FILE_COUNT);
+    }
+    let skipped: Vec<bool> = changes
+        .iter()
+        .map(|(_, path, _)| is_skipped_name(path) || is_too_large(worktree_dir, path))
+        .collect();
+    let base_paths: Vec<&str> = changes
+        .iter()
+        .zip(&skipped)
+        .filter(|((change, _, _), skipped)| !**skipped && *change != FileChange::Added)
+        .map(|((change, path, old_path), _)| base_lookup_path(*change, path, old_path))
+        .collect();
+    let mut base_blobs = load_base_blobs(worktree_dir, base, &base_paths).into_iter();
+
     let mut files = Vec::new();
     let mut working_metadata = HashMap::new();
-    for (change, path, old_path) in changes {
-        if files.len() >= MAX_FILE_COUNT {
-            truncated = true;
-            break;
-        }
-        if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
+    for ((change, path, old_path), skipped) in changes.into_iter().zip(skipped) {
+        if skipped {
             log::debug!("diff: {path}: skipped (lockfile or too large), no inline change runs");
             files.push(stub_file(path, change));
             continue;
         }
         log::debug!("git: load {path}");
-        let base_lookup = match (change, &old_path) {
-            (FileChange::Renamed, Some(src)) => src.as_str(),
-            _ => path.as_str(),
-        };
         let (base_text, base_bin) = match change {
             FileChange::Added => (String::new(), false),
-            _ => load_base_text(worktree_dir, base, base_lookup),
+            _ => match base_blobs.next().flatten() {
+                Some(BaseBlob::Loaded { text, binary }) => (text, binary),
+                Some(BaseBlob::TooLarge) => {
+                    log::debug!("git: skip (oversized base) {path}");
+                    files.push(stub_file(path, change));
+                    continue;
+                }
+                None => load_base_text(
+                    worktree_dir,
+                    base,
+                    base_lookup_path(change, &path, &old_path),
+                ),
+            },
         };
         let working = match change {
             FileChange::Deleted => WorkingText::plain(String::new(), false),
@@ -595,6 +761,122 @@ mod tests {
         let (paths, truncated) = list_untracked_limited(root, 2);
         assert_eq!(paths.len(), 2);
         assert!(truncated);
+    }
+
+    fn spawned(subcommand: &str) -> u64 {
+        crate::work_counters::counted_on_this_thread(crate::work_counters::git_subcommand_counter(
+            Some(subcommand),
+        ))
+    }
+
+    #[test]
+    fn every_base_text_comes_from_two_cat_file_processes_whatever_the_file_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let names: Vec<String> = (0..12).map(|index| format!("file{index}.txt")).collect();
+        let committed: Vec<(&str, &str)> = names
+            .iter()
+            .map(|name| (name.as_str(), "before\n"))
+            .collect();
+        fixture::committed_repo(root, &committed);
+        for name in &names {
+            std::fs::write(root.join(name), "after\n").unwrap();
+        }
+
+        let (shows, cat_files) = (spawned("show"), spawned("cat-file"));
+        let diff = compute_head_diff(root, DiffOptions::default());
+
+        assert_eq!(diff.error, None);
+        assert_eq!(diff.files.len(), names.len());
+        for file in &diff.files {
+            assert_eq!(file.base_text, "before\n", "{}", file.path);
+            assert_eq!(file.new_text, "after\n", "{}", file.path);
+            assert!(!file.hunks.is_empty(), "{}", file.path);
+        }
+        assert_eq!(spawned("show") - shows, 0);
+        assert_eq!(spawned("cat-file") - cat_files, 2);
+    }
+
+    #[test]
+    fn the_batch_resolves_deleted_renamed_binary_and_oversized_bases() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let oversized = "a\n".repeat(MAX_FILE_BYTES as usize / 2 + 1);
+        fixture::committed_repo(
+            root,
+            &[
+                ("plain name.txt", "one\n"),
+                ("gone.txt", "soon deleted\n"),
+                ("bin.dat", "\0\u{1}binary"),
+                ("big.txt", &oversized),
+                (
+                    "old.txt",
+                    "moved line one\nmoved line two\nmoved line three\n",
+                ),
+            ],
+        );
+        std::fs::write(root.join("plain name.txt"), "two\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::write(root.join("bin.dat"), "now text\n").unwrap();
+        std::fs::write(root.join("big.txt"), "small\n").unwrap();
+        fixture::run(root, &["mv", "old.txt", "new.txt"]);
+
+        let shows = spawned("show");
+        let diff = compute_head_diff(root, DiffOptions::default());
+        assert_eq!(diff.error, None);
+        assert_eq!(spawned("show") - shows, 0);
+        let file = |path: &str| {
+            diff.files
+                .iter()
+                .find(|file| file.path == path)
+                .unwrap_or_else(|| panic!("{path} is missing from the diff"))
+        };
+
+        assert_eq!(file("plain name.txt").base_text, "one\n");
+        assert_eq!(file("plain name.txt").new_text, "two\n");
+        assert_eq!(file("gone.txt").change, FileChange::Deleted);
+        assert_eq!(file("gone.txt").base_text, "soon deleted\n");
+        assert!(file("bin.dat").is_binary);
+        assert!(file("bin.dat").hunks.is_empty());
+        assert!(file("big.txt").is_binary);
+        assert!(file("big.txt").base_text.is_empty());
+        assert_eq!(file("new.txt").change, FileChange::Renamed);
+        assert_eq!(file("new.txt").old_path.as_deref(), Some("old.txt"));
+        assert_eq!(
+            file("new.txt").base_text,
+            "moved line one\nmoved line two\nmoved line three\n"
+        );
+    }
+
+    #[test]
+    fn a_batch_listing_tells_blobs_from_missing_paths_and_other_objects() {
+        let listing =
+            b"1111 blob 12\nHEAD:gone file.txt missing\n2222 tree 40\nHEAD:x blob 9 missing\n";
+        assert_eq!(
+            parse_base_entries(listing, 4),
+            Some(vec![
+                BaseEntry::Blob {
+                    oid: "1111".to_string(),
+                    size: 12
+                },
+                BaseEntry::Missing,
+                BaseEntry::NotABlob,
+                BaseEntry::Missing,
+            ])
+        );
+        assert_eq!(parse_base_entries(listing, 5), None);
+    }
+
+    #[test]
+    fn batch_contents_are_refused_when_a_size_or_the_tail_does_not_match() {
+        let stdout = b"1111 blob 4\nab\nc\n2222 blob 0\n\n";
+        assert_eq!(
+            parse_base_contents(stdout, &[4, 0]),
+            Some(vec![b"ab\nc".to_vec(), Vec::new()])
+        );
+        assert_eq!(parse_base_contents(stdout, &[5, 0]), None);
+        assert_eq!(parse_base_contents(b"1111 blob 4\nab", &[4]), None);
+        assert_eq!(parse_base_contents(stdout, &[4, 0, 1]), None);
     }
 
     #[test]
