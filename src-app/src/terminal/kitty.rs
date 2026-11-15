@@ -59,7 +59,7 @@ impl PartialEq for KittyPlacement {
 
 impl Eq for KittyPlacement {}
 
-pub(super) fn install_png_decoder() {
+pub(crate) fn install_png_decoder() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         if let Err(error) = ghostty::set_png_decoder(Some(decode_png)) {
