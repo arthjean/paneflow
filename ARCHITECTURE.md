@@ -200,7 +200,16 @@ KeyDownEvent
 ```
 
 The leading Ghostty wakeup notifies GPUI immediately. Presentation follows the
-platform frame scheduler.
+platform frame scheduler, under the frame policy that `frame_policy.rs` states
+for every Paneflow window (`paced_window_options`): an unfocused window
+presents at most 30 frames per second (33.333 ms), a window under the
+platform's low-power mode at most 30 (33.333 ms), and one under serious or
+critical thermal pressure at most 60 (16.667 ms). GPUI applies the longest
+interval that holds and lifts the unfocused cap during sustained high-rate
+input; a mandatory platform presentation bypasses all three. The values equal
+GPUI's defaults at `703b5ac3` and are written out so that a later GPUI default
+cannot change them silently: `every_paneflow_window_is_opened_with_the_paced_options`
+fails when a new `open_window` call skips them.
 
 Two gates decide how much of that pipeline actually runs, and both exist
 because the natural rate of each stage is far above the rate a display can

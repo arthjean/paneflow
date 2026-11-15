@@ -94,7 +94,7 @@ impl PaneFlowApp {
                 ),
                 focus: restored_bounds.is_none(),
                 icon: crate::app_icon::window_icon(config.resolved_app_icon()),
-                ..Default::default()
+                ..crate::frame_policy::paced_window_options()
             },
             move |window, cx| {
                 crate::app_icon::apply_to_window(window, config.resolved_app_icon());

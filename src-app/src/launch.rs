@@ -424,7 +424,7 @@ pub(crate) fn run() {
                     ),
                     app_id: Some("paneflow".into()),
                     icon: crate::app_icon::window_icon(config.resolved_app_icon()),
-                    ..Default::default()
+                    ..crate::frame_policy::paced_window_options()
                 },
                 |window, cx| {
                     crate::app_icon::apply_to_window(window, config.resolved_app_icon());

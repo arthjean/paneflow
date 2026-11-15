@@ -33,6 +33,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod frame_policy;
 mod fs_probe;
 mod git_command;
 #[cfg(test)]
