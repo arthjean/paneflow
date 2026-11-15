@@ -452,7 +452,6 @@ impl DisplayTerminal {
         }
 
         let mut anchor: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
-        anchor.size = std::mem::size_of::<sys::GhosttyGridRef>();
         let result = unsafe {
             sys::ghostty_selection_gesture_get(
                 gesture,
@@ -738,7 +737,9 @@ mod tests {
             "a\nb\nc"
         );
 
-        terminal.scroll(crate::Scroll::Delta(-1));
+        terminal
+            .scroll(crate::Scroll::Delta(-1))
+            .expect("scroll must apply");
         terminal
             .gesture_autoscroll_tick(Point::new(2, 1), geometry, &held_below)
             .expect("autoscroll tick")

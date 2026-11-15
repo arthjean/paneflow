@@ -99,10 +99,8 @@ fn key_text_pointer_is_cleared_after_encoding() {
         })
         .unwrap();
 
-    let mut len = usize::MAX;
-    let pointer = unsafe { sys::ghostty_key_event_get_utf8(terminal.key_event.raw(), &mut len) };
-    assert!(pointer.is_null());
-    assert_eq!(len, 0);
+    let text = unsafe { sys::ghostty_key_event_get_utf8(terminal.key_event.raw()) };
+    assert_eq!(text.len, 0);
 }
 
 #[test]

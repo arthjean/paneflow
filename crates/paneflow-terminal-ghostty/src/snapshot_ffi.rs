@@ -102,7 +102,7 @@ render_fields! {
     RenderCursorVisible: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
     RenderCursorBlinking: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
     RenderCursorViewportHasValue: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
-    RenderCursorVisualStyle: sys::GhosttyRenderStateCursorVisualStyle = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
+    RenderCursorVisualStyle: sys::GhosttyCursorStyle = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
     RenderCursorViewportX: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
     RenderCursorViewportY: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
     RenderCursorViewportWideTail: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
@@ -181,37 +181,50 @@ pub(crate) fn copy_buffer(
     Ok(Some(output))
 }
 
-pub(crate) fn cell_grapheme(
+fn read_graphemes(
     cells: sys::GhosttyRenderStateRowCells,
-    len: u32,
-) -> Result<(char, Option<Box<[char]>>)> {
-    let len = usize::try_from(len)
-        .map_err(|_| GhosttyError::AbiMismatch("grapheme length overflow".into()))?;
-    if len > MAX_GRAPHEME_CODEPOINTS {
-        return Err(GhosttyError::LimitExceeded {
-            resource: "cell grapheme",
-            limit: MAX_GRAPHEME_CODEPOINTS,
-        });
-    }
-    if len == 0 {
-        return Ok((' ', None));
-    }
-    let mut inline = [0u32; INLINE_GRAPHEME_CODEPOINTS];
-    let mut heap = Vec::new();
-    let codepoints = if len <= inline.len() {
-        &mut inline[..len]
-    } else {
-        heap.resize(len, 0);
-        heap.as_mut_slice()
+    codepoints: &mut [u32],
+) -> (sys::GhosttyResult, usize) {
+    let mut buffer = sys::GhosttyCodepointBuffer {
+        ptr: codepoints.as_mut_ptr(),
+        cap: codepoints.len(),
+        len: 0,
     };
     let result = unsafe {
         sys::ghostty_render_state_row_cells_get(
             cells,
             sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
-            codepoints.as_mut_ptr().cast(),
+            (&raw mut buffer).cast(),
         )
     };
-    check("render_state_row_cells_get_graphemes", result)?;
+    (result, buffer.len)
+}
+
+pub(crate) fn cell_grapheme(
+    cells: sys::GhosttyRenderStateRowCells,
+) -> Result<(char, Option<Box<[char]>>)> {
+    let mut inline = [0u32; INLINE_GRAPHEME_CODEPOINTS];
+    let mut heap = Vec::new();
+    let (result, len) = read_graphemes(cells, &mut inline);
+    let codepoints = if result == sys::GhosttyResult_GHOSTTY_OUT_OF_SPACE {
+        if len > MAX_GRAPHEME_CODEPOINTS {
+            return Err(GhosttyError::LimitExceeded {
+                resource: "cell grapheme",
+                limit: MAX_GRAPHEME_CODEPOINTS,
+            });
+        }
+        heap.resize(len, 0);
+        let (result, written) = read_graphemes(cells, &mut heap);
+        check("render_state_row_cells_get_graphemes", result)?;
+        &heap[..written.min(heap.len())]
+    } else {
+        check("render_state_row_cells_get_graphemes", result)?;
+        &inline[..len.min(inline.len())]
+    };
+    if codepoints.is_empty() {
+        return Ok((' ', None));
+    }
+    let len = codepoints.len();
     let mut characters = codepoints
         .iter()
         .copied()
@@ -247,7 +260,6 @@ pub(crate) fn terminal_scrollbar(
 
 pub(crate) fn terminal_selection_rectangle(terminal: sys::GhosttyTerminal) -> Result<Option<bool>> {
     let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
-    selection.size = std::mem::size_of::<sys::GhosttySelection>();
     let result = unsafe {
         sys::ghostty_terminal_get(
             terminal,
@@ -285,19 +297,6 @@ pub(crate) fn render_row_iterator(
     };
     check("render_state_get_row_iterator", result)?;
     Ok(iterator)
-}
-
-pub(crate) fn cell_grapheme_len(cells: sys::GhosttyRenderStateRowCells) -> Result<u32> {
-    let mut len = 0u32;
-    let result = unsafe {
-        sys::ghostty_render_state_row_cells_get(
-            cells,
-            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
-            (&mut len as *mut u32).cast(),
-        )
-    };
-    check("render_state_row_cells_get_grapheme_len", result)?;
-    Ok(len)
 }
 
 pub(crate) fn render_row_data(
@@ -451,7 +450,7 @@ pub(crate) fn set_render_overscan(
     let result = unsafe {
         sys::ghostty_render_state_set(
             render_state,
-            sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_OVERSCAN,
+            sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPT_OVERSCAN,
             (&raw const request).cast(),
         )
     };
@@ -460,7 +459,6 @@ pub(crate) fn set_render_overscan(
 
 pub(crate) fn render_cell_data(cells: sys::GhosttyRenderStateRowCells) -> Result<RenderCellData> {
     let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
-    style.size = std::mem::size_of::<sys::GhosttyStyle>();
     let mut raw: sys::GhosttyCell = 0;
     unsafe {
         get_multi(
@@ -576,14 +574,14 @@ pub(crate) fn wide_cell(value: sys::GhosttyCellWide) -> Result<WideCell> {
     }
 }
 
-pub(crate) fn underline(value: i32) -> Result<UnderlineStyle> {
+pub(crate) fn underline(value: sys::GhosttySgrUnderline) -> Result<UnderlineStyle> {
     match value {
-        0 => Ok(UnderlineStyle::None),
-        1 => Ok(UnderlineStyle::Single),
-        2 => Ok(UnderlineStyle::Double),
-        3 => Ok(UnderlineStyle::Curly),
-        4 => Ok(UnderlineStyle::Dotted),
-        5 => Ok(UnderlineStyle::Dashed),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_NONE => Ok(UnderlineStyle::None),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_SINGLE => Ok(UnderlineStyle::Single),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOUBLE => Ok(UnderlineStyle::Double),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_CURLY => Ok(UnderlineStyle::Curly),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOTTED => Ok(UnderlineStyle::Dotted),
+        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DASHED => Ok(UnderlineStyle::Dashed),
         _ => Err(GhosttyError::AbiMismatch(format!(
             "unknown Ghostty underline discriminant {value}"
         ))),
@@ -591,19 +589,19 @@ pub(crate) fn underline(value: i32) -> Result<UnderlineStyle> {
 }
 
 pub(crate) fn cursor_shape(
-    value: sys::GhosttyRenderStateCursorVisualStyle,
+    value: sys::GhosttyCursorStyle,
 ) -> Result<crate::CursorShape> {
     match value {
-        sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR => {
+        sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BAR => {
             Ok(crate::CursorShape::Bar)
         }
-        sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK => {
+        sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BLOCK => {
             Ok(crate::CursorShape::Block)
         }
-        sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE => {
+        sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_UNDERLINE => {
             Ok(crate::CursorShape::Underline)
         }
-        sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW => {
+        sys::GhosttyCursorStyle_GHOSTTY_CURSOR_STYLE_BLOCK_HOLLOW => {
             Ok(crate::CursorShape::HollowBlock)
         }
         _ => Err(GhosttyError::AbiMismatch(format!(

@@ -832,7 +832,7 @@ mod tests {
         );
         assert_eq!(published_row(&session, 2), "three");
 
-        terminal.scroll(ghostty::Scroll::Delta(1));
+        terminal.scroll(ghostty::Scroll::Delta(1)).expect("scrolls");
         gate.publish_now(&session.inner, &mut terminal)
             .expect("scroll publication");
         assert_eq!(published_row(&session, 2), "four");

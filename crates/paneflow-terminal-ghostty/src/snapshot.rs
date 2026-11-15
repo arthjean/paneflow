@@ -206,7 +206,7 @@ impl DisplayTerminal {
             .map_err(|_| GhosttyError::AbiMismatch("display offset target overflow".into()))?;
         let delta = target - current;
         if delta != 0 {
-            self.scroll(Scroll::Delta(delta));
+            self.scroll(Scroll::Delta(delta))?;
         }
         Ok(())
     }
@@ -556,7 +556,7 @@ impl DisplayTerminal {
         let result = unsafe {
             sys::ghostty_render_state_row_set(
                 iterator,
-                sys::GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
+                sys::GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPT_DIRTY,
                 (&raw const clean).cast(),
             )
         };
@@ -568,7 +568,7 @@ impl DisplayTerminal {
         let result = unsafe {
             sys::ghostty_render_state_set(
                 render_state,
-                sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_DIRTY,
+                sys::GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPT_DIRTY,
                 (&clean as *const sys::GhosttyRenderStateDirty).cast(),
             )
         };
@@ -685,7 +685,7 @@ mod tests {
     fn apply(terminal: &mut DisplayTerminal, step: &Step) {
         match step {
             Step::Feed(bytes) => terminal.feed(bytes).expect("output must parse"),
-            Step::Scroll(scroll) => terminal.scroll(*scroll),
+            Step::Scroll(scroll) => terminal.scroll(*scroll).expect("scroll must apply"),
             Step::Resize(cols, rows) => terminal
                 .resize(WindowSize::new(*cols, *rows, 8, 16).expect("valid terminal size"))
                 .expect("resize must apply"),

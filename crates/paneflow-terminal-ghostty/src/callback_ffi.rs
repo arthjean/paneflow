@@ -134,9 +134,6 @@ pub(crate) unsafe extern "C" fn clipboard_write(
             let Some(request) = write.as_ref() else {
                 return;
             };
-            if request.size < size_of::<sys::GhosttyClipboardWrite>() {
-                return;
-            }
             let result = store_clipboard_write(state, request);
             let reply = sys::GhosttyClipboardWriteReply {
                 size: size_of::<sys::GhosttyClipboardWriteReply>(),
@@ -203,9 +200,6 @@ pub(crate) unsafe extern "C" fn desktop_notification(
             let Some(request) = notification.as_ref() else {
                 return;
             };
-            if request.size < size_of::<sys::GhosttyTerminalDesktopNotification>() {
-                return;
-            }
             let (Some(title), Some(body)) = (
                 borrowed_text(request.title, MAX_METADATA_BYTES),
                 borrowed_text(request.body, MAX_METADATA_BYTES),
@@ -270,9 +264,6 @@ pub(crate) unsafe extern "C" fn clipboard_read(
             let Some(request) = read.as_ref() else {
                 return;
             };
-            if request.size < size_of::<sys::GhosttyClipboardRead>() {
-                return;
-            }
             let Some(answer) = request.reply else {
                 return;
             };
@@ -427,9 +418,6 @@ pub(crate) unsafe extern "C" fn progress_report(
             let Some(report) = report.as_ref() else {
                 return;
             };
-            if report.size < size_of::<sys::GhosttyTerminalProgressReport>() {
-                return;
-            }
             let Some(state_kind) = progress_state(report.state) else {
                 return;
             };
@@ -479,11 +467,7 @@ pub(crate) unsafe extern "C" fn program_status(
 unsafe fn program_status_report(
     report: *const sys::GhosttyTerminalProgramStatus,
 ) -> Option<ProgramStatusReport> {
-    let size = unsafe { report.cast::<usize>().as_ref() }.copied()?;
-    if size < size_of::<sys::GhosttyTerminalProgramStatus>() {
-        return None;
-    }
-    let report = unsafe { &*report };
+    let report = unsafe { report.as_ref() }?;
     let state = program_status_state(report.state)?;
     Some(ProgramStatusReport {
         state,
@@ -552,11 +536,7 @@ pub(crate) unsafe extern "C" fn semantic_prompt(
 unsafe fn semantic_prompt_event(
     event: *const sys::GhosttyTerminalSemanticPrompt,
 ) -> Option<BackendEvent> {
-    let size = unsafe { event.cast::<usize>().as_ref() }.copied()?;
-    if size < size_of::<sys::GhosttyTerminalSemanticPrompt>() {
-        return None;
-    }
-    let event = unsafe { &*event };
+    let event = unsafe { event.as_ref() }?;
     let kind = match event.kind {
         sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_START => {
             SemanticPromptKind::PromptStart
@@ -651,7 +631,6 @@ mod tests {
             len: 0,
         };
         sys::GhosttyTerminalProgramStatus {
-            size: size_of::<sys::GhosttyTerminalProgramStatus>(),
             state,
             kind: sys::GhosttyProgramStatusKind_GHOSTTY_PROGRAM_STATUS_KIND_NONE,
             progress: -1,
@@ -663,14 +642,10 @@ mod tests {
     }
 
     #[test]
-    fn program_status_ignores_unknown_states_and_short_structs() {
+    fn program_status_ignores_unknown_states_and_null_reports() {
         let idle = sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_IDLE;
         let unknown = sys::GhosttyProgramStatusState_GHOSTTY_PROGRAM_STATUS_STATE_CLEAR + 1;
         assert!(unsafe { program_status_report(&status_report(unknown)) }.is_none());
-
-        let mut short = status_report(idle);
-        short.size -= 1;
-        assert!(unsafe { program_status_report(&short) }.is_none());
 
         assert!(unsafe { program_status_report(std::ptr::null()) }.is_none());
 
@@ -710,13 +685,12 @@ mod tests {
     }
 
     #[test]
-    fn semantic_prompt_ignores_unknown_kinds_and_short_structs() {
+    fn semantic_prompt_ignores_unknown_kinds_and_null_events() {
         let empty = sys::GhosttyString {
             ptr: std::ptr::null(),
             len: 0,
         };
         let mut event = sys::GhosttyTerminalSemanticPrompt {
-            size: size_of::<sys::GhosttyTerminalSemanticPrompt>(),
             kind: sys::GhosttySemanticPromptKind_GHOSTTY_SEMANTIC_PROMPT_INVALID,
             prompt_kind: sys::GhosttySemanticPromptPromptKind_GHOSTTY_SEMANTIC_PROMPT_PROMPT_PRIMARY,
             has_exit_code: false,
@@ -738,8 +712,7 @@ mod tests {
             })
         );
 
-        event.size -= 1;
-        assert!(unsafe { semantic_prompt_event(&event) }.is_none());
+        assert!(unsafe { semantic_prompt_event(std::ptr::null()) }.is_none());
     }
 
     #[test]

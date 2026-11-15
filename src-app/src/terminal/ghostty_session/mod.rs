@@ -1308,7 +1308,10 @@ fn configure_embedder_options(
     );
     apply("terminfo name", terminal.set_terminfo_name(TERMINFO_NAME));
     apply("glyph protocol", terminal.set_glyph_protocol(false));
-    terminal.set_option_as_alt(option_as_alt(option_as_meta));
+    apply(
+        "option as alt",
+        terminal.set_option_as_alt(option_as_alt(option_as_meta)),
+    );
     apply(
         "scrollback byte budget",
         terminal.set_scrollback_max_bytes(Some(

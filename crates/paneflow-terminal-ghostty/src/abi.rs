@@ -20,7 +20,7 @@ type RenderUpdateFn =
 type KeyEncodeFn = unsafe extern "C" fn(
     sys::GhosttyKeyEncoder,
     sys::GhosttyKeyEvent,
-    *mut std::ffi::c_char,
+    *mut u8,
     usize,
     *mut usize,
 ) -> sys::GhosttyResult;
@@ -53,9 +53,11 @@ pub(crate) fn validate() -> Result<()> {
             sys::EXPECTED_LIB_VERSION
         )));
     }
+    validate_features()?;
     let document = type_json()?;
     let types = layout_types(&document)?;
     validate_discriminants(types, crate::abi_discriminants::READ_DISCRIMINANTS)?;
+    crate::abi_keys::validate(types)?;
     crate::abi_layout::validate(types)
 }
 
@@ -218,6 +220,41 @@ fn validate_discriminants(types: &serde_json::Value, discriminants: &[(&str, i64
     Ok(())
 }
 
+const REQUIRED_FEATURES: [(&str, sys::GhosttyBuildInfo); 9] = [
+    ("kitty graphics", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_KITTY_GRAPHICS),
+    ("snapshot", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_SNAPSHOT),
+    ("formatter", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_FORMATTER),
+    ("selection", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_SELECTION),
+    ("search", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_SEARCH),
+    ("render state", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_RENDER_STATE),
+    ("input encode", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_INPUT_ENCODE),
+    ("color", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_COLOR),
+    ("grid introspection", sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_FEATURE_GRID_INTROSPECTION),
+];
+
+fn validate_features() -> Result<()> {
+    let missing: Vec<&str> = REQUIRED_FEATURES
+        .into_iter()
+        .filter(|&(_, key)| !matches!(build_info_bool(key), Ok(true)))
+        .map(|(name, _)| name)
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(GhosttyError::AbiMismatch(format!(
+            "the pinned archive was built without: {}",
+            missing.join(", ")
+        )))
+    }
+}
+
+fn build_info_bool(kind: sys::GhosttyBuildInfo) -> Result<bool> {
+    let mut value = false;
+    let result = unsafe { sys::ghostty_build_info(kind, (&raw mut value).cast()) };
+    check("build_info", result)?;
+    Ok(value)
+}
+
 fn build_info_usize(kind: sys::GhosttyBuildInfo) -> Result<usize> {
     let mut value = 0usize;
     let result = unsafe { sys::ghostty_build_info(kind, (&raw mut value).cast()) };
@@ -337,7 +374,9 @@ mod tests {
                     continue;
                 }
                 if path.extension().is_none_or(|extension| extension != "rs")
-                    || path.file_name().is_some_and(|name| name == "abi_discriminants.rs")
+                    || path
+                        .file_name()
+                        .is_some_and(|name| name == "abi_discriminants.rs" || name == "abi_keys.rs")
                 {
                     continue;
                 }

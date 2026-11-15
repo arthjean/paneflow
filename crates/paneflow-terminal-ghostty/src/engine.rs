@@ -172,14 +172,14 @@ impl DisplayTerminal {
         })
     }
 
-    pub fn scroll(&mut self, scroll: Scroll) {
+    pub fn scroll(&mut self, scroll: Scroll) -> Result<()> {
         let (tag, delta) = match scroll {
             Scroll::Bottom => (
-                sys::GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
+                sys::GhosttyTerminalScrollViewportTag_GHOSTTY_TERMINAL_SCROLL_VIEWPORT_BOTTOM,
                 0,
             ),
             Scroll::Delta(delta) => (
-                sys::GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_DELTA,
+                sys::GhosttyTerminalScrollViewportTag_GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA,
                 delta.saturating_neg() as isize,
             ),
         };
@@ -187,8 +187,10 @@ impl DisplayTerminal {
             tag,
             value: sys::GhosttyTerminalScrollViewportValue { delta },
         };
-        unsafe { sys::ghostty_terminal_scroll_viewport(self.terminal.raw(), behavior) };
+        let result =
+            unsafe { sys::ghostty_terminal_scroll_viewport(self.terminal.raw(), behavior) };
         self.snapshot_cache.invalidate();
+        check("terminal_scroll_viewport", result)
     }
 
     pub fn synchronized_output(&self) -> Result<bool> {

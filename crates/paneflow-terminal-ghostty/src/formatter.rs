@@ -64,25 +64,32 @@ impl TerminalExtra {
         }
     }
 
-    fn raw(self) -> sys::GhosttyFormatterTerminalExtra {
-        sys::GhosttyFormatterTerminalExtra {
-            size: std::mem::size_of::<sys::GhosttyFormatterTerminalExtra>(),
-            palette: self.palette,
-            modes: self.modes,
-            scrolling_region: self.scrolling_region,
-            tabstops: self.tabstops,
-            pwd: self.pwd,
-            keyboard: self.keyboard,
-            screen: sys::GhosttyFormatterScreenExtra {
-                size: std::mem::size_of::<sys::GhosttyFormatterScreenExtra>(),
-                cursor: self.screen.cursor,
-                style: self.screen.style,
-                hyperlink: self.screen.hyperlink,
-                protection: self.screen.protection,
-                kitty_keyboard: self.screen.kitty_keyboard,
-                charsets: self.screen.charsets,
-            },
-        }
+    fn bits(self) -> sys::GhosttyFormatterExtras {
+        [
+            (self.palette, sys::GHOSTTY_FORMATTER_EXTRA_PALETTE),
+            (self.modes, sys::GHOSTTY_FORMATTER_EXTRA_MODES),
+            (
+                self.scrolling_region,
+                sys::GHOSTTY_FORMATTER_EXTRA_SCROLLING_REGION,
+            ),
+            (self.tabstops, sys::GHOSTTY_FORMATTER_EXTRA_TABSTOPS),
+            (self.pwd, sys::GHOSTTY_FORMATTER_EXTRA_PWD),
+            (self.keyboard, sys::GHOSTTY_FORMATTER_EXTRA_KEYBOARD),
+            (self.screen.cursor, sys::GHOSTTY_FORMATTER_EXTRA_CURSOR),
+            (self.screen.style, sys::GHOSTTY_FORMATTER_EXTRA_STYLE),
+            (self.screen.hyperlink, sys::GHOSTTY_FORMATTER_EXTRA_HYPERLINK),
+            (self.screen.protection, sys::GHOSTTY_FORMATTER_EXTRA_PROTECTION),
+            (
+                self.screen.kitty_keyboard,
+                sys::GHOSTTY_FORMATTER_EXTRA_KITTY_KEYBOARD,
+            ),
+            (self.screen.charsets, sys::GHOSTTY_FORMATTER_EXTRA_CHARSETS),
+        ]
+        .into_iter()
+        .filter(|&(enabled, _)| enabled)
+        .fold(sys::GHOSTTY_FORMATTER_EXTRAS_NONE, |bits, (_, bit)| {
+            bits | bit
+        })
     }
 }
 
@@ -106,7 +113,7 @@ impl FormatterOptions {
     }
 }
 
-struct Formatter<'terminal> {
+pub(crate) struct Formatter<'terminal> {
     raw: sys::GhosttyFormatter,
     _terminal: std::marker::PhantomData<&'terminal DisplayTerminal>,
 }
@@ -117,24 +124,42 @@ impl Drop for Formatter<'_> {
     }
 }
 
-impl DisplayTerminal {
-    fn formatter(&self, options: FormatterOptions) -> Result<Formatter<'_>> {
-        let options = sys::GhosttyFormatterTerminalOptions {
-            size: std::mem::size_of::<sys::GhosttyFormatterTerminalOptions>(),
-            emit: options.emit.raw(),
-            unwrap: options.unwrap,
-            trim: options.trim,
-            extra: options.extra.raw(),
-            selection: std::ptr::null(),
+impl Formatter<'_> {
+    fn set<T>(&self, operation: &'static str, option: sys::GhosttyFormatterOption, value: &T) -> Result<()> {
+        check(operation, unsafe {
+            sys::ghostty_formatter_set(self.raw, option, (value as *const T).cast())
+        })
+    }
+
+    pub(crate) fn select(&self, selection: &sys::GhosttySelection) -> Result<()> {
+        self.set(
+            "formatter_set_selection",
+            sys::GhosttyFormatterOption_GHOSTTY_FORMATTER_OPT_SELECTION,
+            selection,
+        )
+    }
+
+    pub(crate) fn format_alloc(&self, limit: usize, resource: &'static str) -> Result<Vec<u8>> {
+        let mut pointer: *mut u8 = std::ptr::null_mut();
+        let mut len = 0usize;
+        let result = unsafe {
+            sys::ghostty_formatter_format_alloc(self.raw, std::ptr::null(), &mut pointer, &mut len)
         };
+        check("formatter_format_alloc", result)?;
+        if pointer.is_null() {
+            return Ok(Vec::new());
+        }
+        let copied = (len <= limit).then(|| unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec());
+        unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
+        copied.ok_or(GhosttyError::LimitExceeded { resource, limit })
+    }
+}
+
+impl DisplayTerminal {
+    pub(crate) fn formatter(&self, options: FormatterOptions) -> Result<Formatter<'_>> {
         let mut raw: sys::GhosttyFormatter = std::ptr::null_mut();
         let result = unsafe {
-            sys::ghostty_formatter_terminal_new(
-                std::ptr::null(),
-                &mut raw,
-                self.terminal.raw(),
-                options,
-            )
+            sys::ghostty_formatter_terminal_new(std::ptr::null(), &mut raw, self.terminal.raw())
         };
         check("formatter_terminal_new", result)?;
         if raw.is_null() {
@@ -142,10 +167,31 @@ impl DisplayTerminal {
                 "formatter_terminal_new returned a null handle".into(),
             ));
         }
-        Ok(Formatter {
+        let formatter = Formatter {
             raw,
             _terminal: std::marker::PhantomData,
-        })
+        };
+        formatter.set(
+            "formatter_set_emit",
+            sys::GhosttyFormatterOption_GHOSTTY_FORMATTER_OPT_EMIT,
+            &options.emit.raw(),
+        )?;
+        formatter.set(
+            "formatter_set_unwrap",
+            sys::GhosttyFormatterOption_GHOSTTY_FORMATTER_OPT_UNWRAP,
+            &options.unwrap,
+        )?;
+        formatter.set(
+            "formatter_set_trim",
+            sys::GhosttyFormatterOption_GHOSTTY_FORMATTER_OPT_TRIM,
+            &options.trim,
+        )?;
+        formatter.set(
+            "formatter_set_extras",
+            sys::GhosttyFormatterOption_GHOSTTY_FORMATTER_OPT_EXTRAS,
+            &options.extra.bits(),
+        )?;
+        Ok(formatter)
     }
 
     pub fn format(&self, options: FormatterOptions) -> Result<String> {
@@ -154,30 +200,8 @@ impl DisplayTerminal {
     }
 
     pub fn format_bytes(&self, options: FormatterOptions) -> Result<Vec<u8>> {
-        let formatter = self.formatter(options)?;
-        let mut pointer: *mut u8 = std::ptr::null_mut();
-        let mut len = 0usize;
-        let result = unsafe {
-            sys::ghostty_formatter_format_alloc(
-                formatter.raw,
-                std::ptr::null(),
-                &mut pointer,
-                &mut len,
-            )
-        };
-        check("formatter_format_alloc", result)?;
-        if pointer.is_null() {
-            return Ok(Vec::new());
-        }
-        let copied = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
-        unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
-        if copied.len() > MAX_FORMAT_BYTES {
-            return Err(GhosttyError::LimitExceeded {
-                resource: "formatted screen",
-                limit: MAX_FORMAT_BYTES,
-            });
-        }
-        Ok(copied)
+        self.formatter(options)?
+            .format_alloc(MAX_FORMAT_BYTES, "formatted screen")
     }
 }
 

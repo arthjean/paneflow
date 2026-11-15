@@ -2,7 +2,9 @@ use std::ffi::c_void;
 
 use paneflow_libghostty_sys as sys;
 
+use crate::Result;
 use crate::engine::DisplayTerminal;
+use crate::handles::check;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OptionAsAlt {
@@ -31,20 +33,20 @@ pub(crate) struct KeyEncoderOverrides {
 }
 
 impl DisplayTerminal {
-    pub(crate) fn apply_key_encoder_overrides(&self) {
+    pub(crate) fn apply_key_encoder_overrides(&self) -> Result<()> {
         let option_as_alt = self.key_encoder_overrides.option_as_alt.raw();
-        unsafe {
-            sys::ghostty_key_encoder_setopt(
+        check("key_encoder_set_option_as_alt", unsafe {
+            sys::ghostty_key_encoder_set(
                 self.key_encoder.raw(),
                 sys::GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT,
                 (&raw const option_as_alt).cast::<c_void>(),
-            );
-        }
+            )
+        })
     }
 
-    pub fn set_option_as_alt(&mut self, option_as_alt: OptionAsAlt) {
+    pub fn set_option_as_alt(&mut self, option_as_alt: OptionAsAlt) -> Result<()> {
         self.key_encoder_overrides.option_as_alt = option_as_alt;
-        self.apply_key_encoder_overrides();
+        self.apply_key_encoder_overrides()
     }
 }
 
@@ -89,7 +91,9 @@ mod tests {
             (OptionAsAlt::Never, layout_text),
             (OptionAsAlt::Left, alt_escape),
         ] {
-            terminal.set_option_as_alt(option_as_alt);
+            terminal
+                .set_option_as_alt(option_as_alt)
+                .expect("option as alt must apply");
             assert_eq!(
                 terminal
                     .encode_key(&key("a", Modifiers::ALT))

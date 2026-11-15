@@ -204,7 +204,7 @@ fn native_search_total_stays_constant_across_viewport_scroll() {
         paneflow_terminal_ghostty::Scroll::Bottom,
         paneflow_terminal_ghostty::Scroll::Delta(150),
     ] {
-        terminal.scroll(scroll);
+        terminal.scroll(scroll).unwrap();
         assert_eq!(complete(&mut terminal).total_matches, 3);
     }
     terminal.scroll_to_viewport_row(0).unwrap();

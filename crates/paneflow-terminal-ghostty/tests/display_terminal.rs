@@ -211,7 +211,7 @@ fn a_live_scroll_during_a_hold_keeps_the_captured_scrollbar() {
     assert_eq!(before.display_offset, 0);
 
     terminal.feed(b"\x1b[?2026h\x1b[Hhalf").unwrap();
-    terminal.scroll(Scroll::Delta(10));
+    terminal.scroll(Scroll::Delta(10)).unwrap();
     let live = terminal.snapshot_live().unwrap();
     assert_eq!(live.display_offset, 10);
 
@@ -251,7 +251,7 @@ fn overscan_text(row: &OverscanRow) -> String {
 #[test]
 fn overscan_captures_one_row_on_each_side_of_a_scrolled_viewport() {
     let mut terminal = numbered_lines(10, 5, 50);
-    terminal.scroll(Scroll::Delta(10));
+    terminal.scroll(Scroll::Delta(10)).unwrap();
     terminal.set_overscan(1, 1).unwrap();
     assert_eq!(
         terminal.overscan_request().unwrap(),
@@ -279,7 +279,7 @@ fn overscan_captures_one_row_on_each_side_of_a_scrolled_viewport() {
     assert_eq!(overscan_text(below), format!("line {:02}", top_line + 5));
     assert!(above.cells.iter().all(|cell| cell.point.line == -1));
 
-    terminal.scroll(Scroll::Delta(1));
+    terminal.scroll(Scroll::Delta(1)).unwrap();
     let after = terminal.snapshot().unwrap();
     let captured = |content: &paneflow_terminal_ghostty::Content| {
         content
@@ -705,7 +705,7 @@ fn positive_scroll_delta_moves_into_history() {
             .any(|cell| cell.character == 'h')
     );
 
-    terminal.scroll(Scroll::Delta(3));
+    terminal.scroll(Scroll::Delta(3)).unwrap();
     assert!(
         terminal
             .snapshot()
@@ -715,7 +715,7 @@ fn positive_scroll_delta_moves_into_history() {
             .any(|cell| cell.character == 'h')
     );
 
-    terminal.scroll(Scroll::Delta(-3));
+    terminal.scroll(Scroll::Delta(-3)).unwrap();
     assert!(
         !terminal
             .snapshot()
@@ -1021,7 +1021,7 @@ fn compressed_history_reads_back_identical_when_scrolled_and_searched() {
     let mut compressed = restore_history(&snapshot, true);
 
     for terminal in [&mut plain, &mut compressed] {
-        terminal.scroll(Scroll::Delta(i32::MAX));
+        terminal.scroll(Scroll::Delta(i32::MAX)).unwrap();
     }
     let plain_top = plain.snapshot().unwrap();
     let compressed_top = compressed.snapshot().unwrap();

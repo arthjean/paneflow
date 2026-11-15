@@ -2,10 +2,10 @@ use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::snapshot_ffi::{
-    cell_grapheme, cell_grapheme_len, raw_cell_data, raw_cell_palette, raw_cell_rgb,
+    cell_grapheme, raw_cell_data, raw_cell_palette, raw_cell_rgb,
     render_cell_data, underline, wide_cell,
 };
-use crate::style::style_color;
+use crate::style::{StyleFlags, style_color};
 use crate::{Cell, CellFlags, Color, GhosttyError, Point, Result};
 
 impl DisplayTerminal {
@@ -26,7 +26,7 @@ impl DisplayTerminal {
                 (decode_codepoint(raw.codepoint), None)
             }
             sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME => {
-                cell_grapheme(row_cells, cell_grapheme_len(row_cells)?)?
+                cell_grapheme(row_cells)?
             }
             sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE
             | sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => (' ', None),
@@ -39,6 +39,7 @@ impl DisplayTerminal {
         let background = cell_background(rendered.raw, raw.content_tag, style.bg_color)?;
         let row = i32::try_from(row)
             .map_err(|_| GhosttyError::AbiMismatch("snapshot row overflow".into()))?;
+        let attributes = StyleFlags::decode(style.flags);
         Ok(Cell {
             point: Point::new(row, column),
             character,
@@ -46,14 +47,14 @@ impl DisplayTerminal {
             foreground,
             background,
             flags: CellFlags {
-                bold: style.bold,
-                dim: style.faint,
-                italic: style.italic,
-                inverse: style.inverse,
-                invisible: style.invisible,
-                strikethrough: style.strikethrough,
-                overline: style.overline,
-                underline: underline(style.underline)?,
+                bold: attributes.bold,
+                dim: attributes.faint,
+                italic: attributes.italic,
+                inverse: attributes.inverse,
+                invisible: attributes.invisible,
+                strikethrough: attributes.strikethrough,
+                overline: attributes.overline,
+                underline: underline(attributes.underline)?,
             },
             wide: wide_cell(raw.wide)?,
             selected,
