@@ -491,42 +491,21 @@ impl PaneFlowApp {
     }
 
     fn drop_missing_restored_paths(&mut self, missing: &[PathBuf], cx: &mut Context<Self>) {
-        let fallback = launch_cwd::implicit_launch_cwd();
         let plan = restored_path_fallbacks(&self.workspaces, missing);
         for &(ws_idx, tab_idx) in &plan.unbound_tabs {
             log::warn!("session restore: a tab worktree is gone; unbinding the tab");
             self.set_tab_worktree(ws_idx, tab_idx, None, cx);
         }
-        let mut moved: Vec<(u64, String)> = Vec::new();
-        for &ws_idx in &plan.moved_workspaces {
-            let ws = &mut self.workspaces[ws_idx];
+        for &ws_idx in &plan.orphaned_workspaces {
             log::warn!(
-                "session restore: workspace cwd {} is not a directory; falling back to {}",
-                ws.cwd,
-                fallback.display()
+                "session restore: workspace folder {} is not a directory; the workspace keeps it",
+                self.workspaces[ws_idx].cwd
             );
-            ws.cwd = fallback.display().to_string();
-            moved.push((ws.id, ws.title.clone()));
         }
-        if moved.is_empty() {
+        let Some(notice) = orphaned_workspaces_notice(&self.workspaces, &plan) else {
             return;
-        }
-        for (ws_id, _) in &moved {
-            Self::spawn_initial_git_stats(*ws_id, fallback.display().to_string(), cx);
-        }
-        let message = match moved.as_slice() {
-            [(_, title)] => format!(
-                "The folder of {title} is gone; it opened in {}",
-                fallback.display()
-            ),
-            many => format!(
-                "{} projects lost their folder and opened in {}",
-                many.len(),
-                fallback.display()
-            ),
         };
-        self.show_toast(message, cx);
-        self.save_session(cx);
+        self.show_toast(notice, cx);
         cx.notify();
     }
 
@@ -847,7 +826,7 @@ fn session_corruption_info(
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct RestoredPathFallbacks {
-    moved_workspaces: Vec<usize>,
+    orphaned_workspaces: Vec<usize>,
     unbound_tabs: Vec<(usize, usize)>,
 }
 
@@ -860,10 +839,27 @@ fn restored_path_fallbacks(workspaces: &[Workspace], missing: &[PathBuf]) -> Res
             }
         }
         if missing.iter().any(|path| Path::new(&ws.cwd) == path) {
-            plan.moved_workspaces.push(ws_idx);
+            plan.orphaned_workspaces.push(ws_idx);
         }
     }
     plan
+}
+
+fn orphaned_workspaces_notice(
+    workspaces: &[Workspace],
+    plan: &RestoredPathFallbacks,
+) -> Option<String> {
+    match plan.orphaned_workspaces.as_slice() {
+        [] => None,
+        [ws_idx] => Some(format!(
+            "The folder of {} is gone; new terminals open in your home folder",
+            workspaces[*ws_idx].title
+        )),
+        many => Some(format!(
+            "{} projects lost their folder; new terminals open in your home folder",
+            many.len()
+        )),
+    }
 }
 
 fn restored_space_view(
@@ -2027,7 +2023,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_keeps_saved_folders_and_the_probe_moves_the_missing_ones() {
+    fn restore_keeps_saved_folders_and_the_probe_flags_the_missing_ones() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let valid = tmp.path().to_path_buf();
         let missing = tmp.path().join("missing");
@@ -2076,9 +2072,41 @@ mod tests {
         assert_eq!(
             restored_path_fallbacks(&workspaces, &missing_paths),
             RestoredPathFallbacks {
-                moved_workspaces: vec![1],
+                orphaned_workspaces: vec![1],
                 unbound_tabs: vec![(1, 0)],
             }
+        );
+    }
+
+    #[test]
+    fn a_workspace_whose_folder_is_gone_keeps_it_and_shows_no_git_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let gone = tmp.path().join("cmux");
+
+        let workspaces = vec![Workspace::restored_with_id(
+            1,
+            "cmux",
+            gone.clone(),
+            vec![],
+            0,
+        )];
+        let plan = restored_path_fallbacks(&workspaces, std::slice::from_ref(&gone));
+        assert_eq!(
+            orphaned_workspaces_notice(&workspaces, &plan).as_deref(),
+            Some("The folder of cmux is gone; new terminals open in your home folder")
+        );
+        assert_eq!(
+            orphaned_workspaces_notice(&workspaces, &RestoredPathFallbacks::default()),
+            None
+        );
+
+        let shown_cwd = workspaces[0].cwd.clone();
+        let (_, is_repo) = crate::workspace::detect_branch(&shown_cwd);
+        let stats = crate::workspace::GitDiffStats::from_cwd(&shown_cwd);
+        assert_eq!(
+            (PathBuf::from(&shown_cwd), is_repo, stats.insertions),
+            (gone, false, 0),
+            "a workspace whose folder is gone keeps its saved folder and shows no git state"
         );
     }
 

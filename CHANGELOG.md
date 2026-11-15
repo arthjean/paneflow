@@ -24,6 +24,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - **Workspace rows are gray.** In the Workspaces sidebar, a workspace's name now rests in the muted gray of its folder icon and turns to the text color under the pointer, so the tabs under it read first.
 - **Menus, selects and settings cards draw circular corners.** Context menus and the other popup menus, select popups, the usage panel of the sidebar and the cards of the Settings pages no longer use the continuous corners: menus are 14 px with 30 px rows, 13 px labels and a soft shadow, and settings cards are 12 px with no border. Pane cards, tabs, sidebar rows, dialogs, toasts and the command palette keep the continuous corners.
 
+### Fixed
+
+- **A workspace whose folder is gone no longer turns into another project.** When a saved workspace's folder had been deleted or moved, Paneflow rebound the workspace to the folder it was launched from and saved that, so the workspace kept its name but showed the branch, the diffstat and the files of an unrelated folder, and its original path was lost. The workspace now keeps its folder: it shows no branch and no diffstat, its new terminals open in your home folder, and it works again as soon as the folder is back. A notice names it at each start until you close it or restore the folder.
+
 ## [0.19.1] - 2026-11-13
 
 ### Upgrade notes
