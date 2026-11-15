@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, Bounds, BoxShadow, ClickEvent, Context, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathBuilder, Pixels, SharedString, Stateful, Styled, Window,
-    canvas, deferred, div, point, prelude::*, px, size, svg,
+    MouseButton, ParentElement, Pixels, SharedString, Stateful, Styled, Window, canvas, deferred,
+    div, point, prelude::*, px, size, svg,
 };
 
 use crate::PaneFlowApp;
@@ -245,6 +245,21 @@ pub(crate) fn check_stroke_points(draw: f32) -> Vec<(f32, f32)> {
     }
 }
 
+fn check_stroke_options() -> gpui::StrokeOptions {
+    crate::ui_primitives::stroke::round_stroke_options(px(CHECK_STROKE))
+}
+
+fn check_path(origin: gpui::Point<Pixels>, points: &[(f32, f32)]) -> Option<gpui::Path> {
+    let (first, rest) = points.split_first()?;
+    let at = |(x, y): (f32, f32)| point(origin.x + px(x), origin.y + px(y));
+    let mut builder = crate::ui_primitives::stroke::stroke_with(check_stroke_options());
+    builder.move_to(at(*first));
+    for vertex in rest {
+        builder.line_to(at(*vertex));
+    }
+    builder.build().ok()
+}
+
 fn drawn_check(draw: f32) -> AnyElement {
     let points = check_stroke_points(draw);
     canvas(
@@ -253,31 +268,8 @@ fn drawn_check(draw: f32) -> AnyElement {
             if draw <= 0. {
                 return;
             }
-            let at = |(x, y): (f32, f32)| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
-            let mut builder = PathBuilder::stroke(px(CHECK_STROKE));
-            for (idx, vertex) in points.iter().enumerate() {
-                if idx == 0 {
-                    builder.move_to(at(*vertex));
-                } else {
-                    builder.line_to(at(*vertex));
-                }
-            }
-            if let Ok(path) = builder.build() {
+            if let Some(path) = check_path(bounds.origin, &points) {
                 window.paint_path(path, gpui::white());
-            }
-            let cap = CHECK_STROKE / 2.;
-            for vertex in &points {
-                let center = at(*vertex);
-                window.paint_quad(
-                    gpui::fill(
-                        Bounds::new(
-                            point(center.x - px(cap), center.y - px(cap)),
-                            size(px(CHECK_STROKE), px(CHECK_STROKE)),
-                        ),
-                        gpui::white(),
-                    )
-                    .corner_radii(px(cap)),
-                );
             }
         },
     )
@@ -1233,6 +1225,43 @@ mod tests {
         let partial = check_stroke_points(0.2);
         assert_eq!(partial.len(), 2);
         assert!(partial[1].0 < CHECK_POINTS[1].0);
+    }
+
+    #[test]
+    fn the_check_is_one_stroke_with_round_caps_and_round_joins() {
+        let options = check_stroke_options();
+        assert_eq!(options.line_cap, gpui::LineCap::Round);
+        assert_eq!(options.line_join, gpui::LineJoin::Round);
+        assert_eq!(options.line_width, CHECK_STROKE);
+        let origin = point(px(0.), px(0.));
+        for draw in [0., 0.2, 0.5, 1.] {
+            assert!(check_path(origin, &check_stroke_points(draw)).is_some());
+        }
+        assert!(check_path(origin, &[]).is_none());
+    }
+
+    struct CheckHarness {
+        draw: f32,
+    }
+
+    impl gpui::Render for CheckHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(BADGE_SIZE))
+                .relative()
+                .child(drawn_check(self.draw))
+        }
+    }
+
+    #[gpui::test]
+    fn the_drawn_check_paints_at_every_stage_of_its_animation(cx: &mut gpui::TestAppContext) {
+        for draw in [0., 0.01, 0.2, 0.6, 1.] {
+            let (_view, cx) = cx.add_window_view(|_, _| CheckHarness { draw });
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
     }
 
     #[test]

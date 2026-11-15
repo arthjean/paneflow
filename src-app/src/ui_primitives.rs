@@ -6,6 +6,7 @@ pub(crate) mod resize_edge;
 pub(crate) mod ring;
 pub(crate) mod shimmer;
 pub(crate) mod squircle;
+pub(crate) mod stroke;
 
 use gpui::{
     AnimationExt, AnyElement, AnyView, App, Bounds, ClickEvent, CursorStyle, Div, Element,
