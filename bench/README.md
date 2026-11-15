@@ -85,8 +85,15 @@ allocation columns, and every timing moves within run-to-run noise except
 reason, and `prepaint_60_rows_warm`, about 3.5 us slower: the code editor's own shape
 cache now copies, hashes and compares each visible line where GPUI's
 `shape_line_by_hash` trusted a caller hash
-([summary](results/gpui-bump-37faef81-2026-10-28.md)). The allocation
-baselines stay on `880d1d18`, which the bump matches within 1 %.
+([summary](results/gpui-bump-37faef81-2026-10-28.md)).
+
+The allocation baselines follow the GPUI upgrade to `zed@703b5ac3`:
+`editor-alloc.json` points at `988bd78f`, and `terminal-alloc.json` at
+`bb8621dc`, which adds the three `paths_*` cases measuring per-paint path
+building (badges within the 0.4 ms budget, terminal strokes 11 to 17 % slower
+than on `37faef81`; [summary](results/gpui-703b5ac3-paths-2026-11-15.md)).
+The path cases have no row in `terminal.json` yet: US-019 records the timing
+baseline on Fedora.
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
