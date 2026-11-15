@@ -62,6 +62,7 @@ for component in \
   'Artifact member inventory' \
   'Ghostty / libghostty-vt' \
   'Zig compiler runtime' \
+  translate_c \
   uucode \
   'Unicode Character Database' \
   'Bjoern Hoehrmann UTF-8 DFA' \
@@ -69,6 +70,7 @@ for component in \
   'foot kitty keymap' \
   simdutf \
   Highway \
+  wuffs \
   'LLVM libc++ headers'; do
   grep -Fq "$component" "$NOTICE" || {
     echo "native notice is missing $component" >&2

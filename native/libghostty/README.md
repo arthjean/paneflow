@@ -28,7 +28,7 @@ gh attestation verify prebuilt/<rust-target>/lib/<archive> --repo arthjean/panef
 ```
 
 The pinned source is Ghostty
-`83fb95624b0439ee660c2679b43b38c8b63769cd` (the `v1.4.0` tag) built with Zig 0.17.0 in
+`108cacb17ed8990840cd14abfce43d8ed8503ca1` (the `vt-1.0.1` libghostty-vt release tag) built with Zig 0.17.0 in
 `ReleaseFast`. `bindings.rs` is pregenerated from the pinned C header. Its
 normalized UTF-8 checksum is verified both in the workspace and in every
 prepared artifact. Regenerate bindings only from that exact header, then
@@ -191,7 +191,7 @@ ordinally sorted members with deterministic `llvm-ar rcD` mode. It deliberately
 does not replay the emitted `build-lib` command.
 Header and symbol inventories use the same ordinal, case-sensitive ordering,
 so hashes do not depend on the Windows locale. The build starts from empty
-caches at the fixed `C:\Users\Public\paneflow-libghostty-83fb9562` source
+caches at the fixed `C:\Users\Public\paneflow-libghostty-108cacb1` source
 path, which `build-info.txt` records; the build aborts if that path is
 unavailable or already occupied.
 

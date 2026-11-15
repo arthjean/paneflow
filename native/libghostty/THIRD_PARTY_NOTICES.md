@@ -7,14 +7,14 @@ dataset, and generated template distributed through that archive. It is
 included in the tar, AppImage, deb, rpm, and MSI packages.
 
 Pinned Ghostty source:
-`83fb95624b0439ee660c2679b43b38c8b63769cd`.
+`108cacb17ed8990840cd14abfce43d8ed8503ca1`.
 
 Reviewed archive fingerprints:
 
-- `x86_64-unknown-linux-gnu`: `0ddbfbe65e50f78b607c8579eec1f8460cc0325f8f96f97122624f1af93ff352`
-- `aarch64-unknown-linux-gnu`: `e0785699148612d9443c5584f9b5f390450dcd56420dde74c8c3ad2ba4897d91`
-- `aarch64-apple-darwin`: `816da087126fd024107e9a7b4202ff9b68b768f7e416926119ba6ee4649d2ce3`
-- `x86_64-pc-windows-msvc`: `c949db7da4f272f5fc2990a205b35a118f111732cd99e9b2ba6f9713c3fbcc9b`
+- `x86_64-unknown-linux-gnu`: `e6aa34f46ef9cb36eea25e30c641c8da6723a824be8eef7cc142cb0ec3943850`
+- `aarch64-unknown-linux-gnu`: `47f54606d63ec56dc128b869dc9e594d7bf3fe13dd476941178c1043f47ac202`
+- `aarch64-apple-darwin`: `b4cbdc9dffb1c2b02a02ac49dc62a4d88caa1f12864d10042333316c59545f26`
+- `x86_64-pc-windows-msvc`: `2eaa9c8736a5bf93f53d52700cf7020c4f1d1f0c5dbf5320e164e5455cf90e9a`
 
 ## Artifact member inventory
 
@@ -31,7 +31,7 @@ license in addition to the upstream components identified below.
 | `codepoint_width.o` / `codepoint_width.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `index_of.o` / `index_of.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `vt.o` / `vt.obj` | Ghostty, Highway, simdutf, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `ghostty-vt-static_zcu.o` / `ghostty-vt-static_zcu.obj` | Ghostty, Zig, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
+| `ghostty-vt-static_zcu.o` / `ghostty-vt-static_zcu.obj` | Ghostty, Zig, translate_c, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
 | `compiler_rt.o` / `compiler_rt.obj` | Zig compiler runtime | MIT |
 | `simdutf.o` / `simdutf.obj` | simdutf, LLVM libc++ headers | (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
 | `abort.o` / `abort.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
@@ -44,16 +44,17 @@ license in addition to the upstream components identified below.
 
 | Component | Pinned version or provenance | Upstream license expression |
 |---|---|---|
-| Ghostty / libghostty-vt | `83fb95624b0439ee660c2679b43b38c8b63769cd` | MIT |
+| Ghostty / libghostty-vt | `1.0.1@108cacb17ed8990840cd14abfce43d8ed8503ca1` (the `vt-1.0.1` tag) | MIT |
 | Zig compiler runtime and generated Zig code | `0.17.0` | MIT |
-| uucode | `0.2.0@ea62149739404a73c202b48a33bf6dd2af4bd9b0` | MIT |
+| translate_c | `2.0.0@02ff0c523fb92a38939b04d0145c4a9602a74d56` | MIT |
+| uucode | `0.2.0@1fb73433bba5d93366c57f23ff2e9d7939746500` | MIT |
 | Unicode Character Database | `18.0.0`, bundled through uucode | Unicode-3.0 |
 | Bjoern Hoehrmann UTF-8 DFA | bundled through uucode `0.2.0` | MIT |
 | X.Org rgb data | `rgb-1.1.1@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e` | MIT |
 | foot kitty keymap | `c13495e26ef7c239b330dccf1afef44430b15543` | MIT |
 | simdutf | compiled amalgamation reports `9.0.0` | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | Highway | `1.2.0@66486a10623fa0d72fe91260f96c892e41aceb06` | Apache-2.0 OR BSD-3-Clause |
-| wuffs | `0.4.0-alpha.9+3837.20240914@7411f488fe2e2c205c3d3b3d28638b7356522930` | Apache-2.0 OR MIT |
+| wuffs | `0.4.0-alpha.10+3966.20260623@7411f488fe2e2c205c3d3b3d28638b7356522930` | Apache-2.0 OR MIT |
 | LLVM libc++ headers bundled with Zig | Zig `0.17.0` toolchain snapshot | Apache-2.0 WITH LLVM-exception |
 
 For wuffs, this distribution exercises the MIT option; the Apache License
@@ -66,7 +67,7 @@ ISA detection code. Both upstream Highway alternatives are reproduced.
 
 ### Ghostty / libghostty-vt
 
-Source: <https://github.com/ghostty-org/ghostty/tree/83fb95624b0439ee660c2679b43b38c8b63769cd>
+Source: <https://github.com/ghostty-org/ghostty/tree/108cacb17ed8990840cd14abfce43d8ed8503ca1>
 
 ```text
 MIT License
@@ -123,9 +124,40 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+### translate_c
+
+Source: <https://codeberg.org/ziglang/translate-c/src/commit/02ff0c523fb92a38939b04d0145c4a9602a74d56>, the Zig
+package Ghostty uses to translate C headers. Its runtime helpers are reachable
+from every translated header, so the upstream third-party manifest
+(`deps/libghostty-vt-third-party.json`) lists it as linked into libghostty-vt.
+
+```text
+The MIT License (Expat)
+
+Copyright (c) Zig contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ### uucode
 
-Source: <https://github.com/jacobsandlund/uucode/tree/ea62149739404a73c202b48a33bf6dd2af4bd9b0>
+Source: <https://github.com/jacobsandlund/uucode/tree/1fb73433bba5d93366c57f23ff2e9d7939746500>
 
 ```text
 # uucode license
@@ -162,7 +194,7 @@ See [./licenses](./licenses) for licenses of code being used in the repo:
 
 ### Unicode Character Database
 
-Source: Unicode Character Database 18.0.0, bundled through uucode 0.2.0 at `ea621497`.
+Source: Unicode Character Database 18.0.0, bundled through uucode 0.2.0 at `1fb73433`.
 
 ```text
 https://www.unicode.org/license.txt
@@ -210,7 +242,7 @@ authorization of the copyright holder.
 
 ### Bjoern Hoehrmann UTF-8 DFA
 
-Source: <https://github.com/jacobsandlund/uucode/blob/ea62149739404a73c202b48a33bf6dd2af4bd9b0/licenses/LICENSE_Bjoern_Hoehrmann>
+Source: <https://github.com/jacobsandlund/uucode/blob/1fb73433bba5d93366c57f23ff2e9d7939746500/licenses/LICENSE_Bjoern_Hoehrmann>
 
 ```text
 From https://bjoern.hoehrmann.de/utf-8/decoder/dfa/
@@ -634,7 +666,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Source: <https://github.com/google/wuffs/tree/7411f488fe2e2c205c3d3b3d28638b7356522930>,
 release amalgamation `wuffs-v0.4.c` reporting
-`0.4.0-alpha.9+3837.20240914`. Ghostty compiles it for Kitty graphics pixel
+`0.4.0-alpha.10+3966.20260623`. Ghostty compiles it for Kitty graphics pixel
 format conversion.
 
 MIT license option:
