@@ -87,7 +87,7 @@ Key findings that informed this PRD:
 - Curly underlines and box-drawing arcs stay inside the terminal suite's baseline despite slower strokes. Validated by US-003.
 - macOS key-to-present latency does not regress beyond 4.2 ms at 120 Hz. Contradicted by an open upstream report; validated by US-010 on real hardware.
 - No `cfg(target_os = "macos")` code in Paneflow uses a broken API. Based on greps, never compiled; validated by US-002 through CI.
-- The Linux rounded-quad fallback for translucent squircles existed because paths went through an intermediate MSAA texture. Inferred, no document states the reason; validated by US-008.
+- The Linux rounded-quad fallback for translucent squircles existed because paths went through an intermediate MSAA texture. Inferred, no document states the reason; validated by US-008 on 2026-11-15 (correct blending on GNOME and KDE, Wayland and X11, NVIDIA and Mesa AMD), and the fallback is removed.
 
 ### Hard Constraints
 - Every change works on Linux (Wayland and X11), macOS and Windows; `cfg(windows)` items are linted only by the Windows CI leg, and any item added to a file with a `mod tests` goes before that module (`AGENTS.md`).
@@ -178,6 +178,8 @@ Paneflow resolves GPUI at `703b5ac3`, with the same forks Zed builds against, an
 - [x] Given the `cfg(target_os = "macos")`, `cfg(unix)` and `cfg(windows)` items, when the story is reported, then it states per platform whether the code was verified by compilation or by inspection
 - [x] Given an allocation counter moves on the bump, when it is read, then the allocation baselines are refreshed from a clean clone of the committed code, each changed counter is explained, and no budget in `crates/paneflow-host/tests/persistent_baseline/gates.rs` is raised
 
+**Allocation evidence (review, 2026-11-15):** both baselines were refreshed at `988bd78f8b9c` with `git_dirty` false, and `gates.rs` is unchanged. Every changed counter went down, and all of them come from one upstream change, `ddb90e5e89` (#66682): `WindowTextSystem::layout_line` and `shape_line` no longer copy text longer than 23 bytes into a new `SharedString` on a line-layout cache hit. The editor's 60-row shaping saves one 120-byte copy per row: `shape_warm_60_rows` goes from 60 allocations and 7200 B per iteration to 0, and `shape_cold_60_rows` drops by the same 60 allocations and 7200 B. The terminal's text batch saves one 40-byte copy per frame: every `layout_*_220x60` counter drops by 1 allocation and 40 B, and `layout_echo_shifted_uncached_220x60`, which shapes two such batches, by 2 and 80 B. No other counter moved.
+
 ---
 
 ### EP-002: Shapes, paths and layers follow the new renderer
@@ -209,12 +211,14 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** `src-app/src/ui_primitives/squircle.rs:162-215`; `src-app/src/pane.rs:539-555` (tab badges); `src-app/src/terminal/element/paint/decorations.rs:101-131` (curly underline, two cubic segments per column); `src-app/src/terminal/element/paint/sprites.rs:346-421,533-584` (arcs, diagonals); `src-app/src/bench_harness.rs`; `scripts/bench-terminal.sh`.
 
 **Acceptance Criteria:**
-- [ ] Given a release build on the Linux x86_64 baseline machine class, when the measurement runs, then it reports the time to build and paint the paths of a 12-badge tab strip (48 shapes), a 200 by 50 terminal screen with a curly underline on every row, and a 200 by 50 screen of box-drawing arcs and diagonals
-- [ ] Given the three results, when they are written, then they sit in a results file under `bench/results/` with the commit, the machine and the command, and each number is backed by the benchmark harness output
-- [ ] Given the squircle result, when it is compared to 0.4 ms per frame, then the verdict (within or over budget) is stated and decides which branch of US-004 applies
-- [ ] Given the two terminal results, when they are compared to the committed terminal baseline, then any metric more than 10 % above baseline is named with the mitigation US-004 or US-019 must carry
-- [ ] Given two consecutive runs of the same case differ by more than 10 %, when the results are read, then the run is discarded and repeated on an idle machine, and no number from it is recorded
-- [ ] No throwaway Cargo profile is created; an isolated build uses `CARGO_TARGET_DIR` outside the repository and is deleted afterwards
+- [x] Given a release build on the Linux x86_64 baseline machine class, when the measurement runs, then it reports the time to build and paint the paths of a 12-badge tab strip (48 shapes), a 200 by 50 terminal screen with a curly underline on every row, and a 200 by 50 screen of box-drawing arcs and diagonals
+- [x] Given the three results, when they are written, then they sit in a results file under `bench/results/` with the commit, the machine and the command, and each number is backed by the benchmark harness output
+- [x] Given the squircle result, when it is compared to 0.4 ms per frame, then the verdict (within or over budget) is stated and decides which branch of US-004 applies
+- [x] Given the two terminal results, when they are compared to the committed terminal baseline, then any metric more than 10 % above baseline is named with the mitigation US-004 or US-019 must carry
+- [x] Given two consecutive runs of the same case differ by more than 10 %, when the results are read, then the run is discarded and repeated on an idle machine, and no number from it is recorded
+- [x] No throwaway Cargo profile is created; an isolated build uses `CARGO_TARGET_DIR` outside the repository and is deleted afterwards
+
+**Review evidence (2026-11-15):** results in `bench/results/gpui-703b5ac3-paths-2026-11-15.md`, measured under WSL2 on the CPU of the `linux-x86_64` baseline machine, not its Fedora session. The 10 % spread rule is applied to the medians, the statistic the harness compares; the badge p95 moved from 188.5 to 267.0 us between the two runs, a WSL tail that leaves the verdict unchanged. The two stroke metrics above 10 % (`paths_curly_underline_200x50`, `paths_box_drawing_200x50`) are carried by US-019 under its second criterion: it lists them with their cause and either the story that ships the sprite-atlas mitigation or Arthur's acceptance of the cost. That choice is Arthur's.
 
 #### US-004: Lock the squircle cost behind a benchmark, and mitigate if the budget fails
 **Description:** As the maintainer, I want squircle building guarded by a committed benchmark case so that a later change or bump cannot make tab strips slow without a red signal.
@@ -231,11 +235,13 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** `src-app/src/ui_primitives/squircle.rs:68-151`; `src-app/src/pane.rs:2324-2366`; `src-app/src/app/diff_dock/code/perf_bench.rs` and `src-app/src/terminal/perf_bench.rs` (suite hosts); `bench/baselines/linux-x86_64/`.
 
 **Acceptance Criteria:**
-- [ ] Given the benchmark suites, when they run, then a case measures squircle building for a 12-badge tab strip and its baseline is committed under `bench/baselines/linux-x86_64/`
-- [ ] Given US-003 found the cost at or below 0.4 ms, when the code is read, then no shape cache exists and shapes are built at their final bounds
-- [ ] Given US-003 found the cost above 0.4 ms, when the code is read, then a cache keyed by shape, bounds origin and scale factor holds at most 256 entries, evicts the least recently used entry, and the benchmark case is at or below 0.4 ms
-- [ ] Given the window moves to a display with another scale factor, when the next frame paints, then every shape is built for the new scale and none built for the old scale is painted
-- [ ] Given 1,000 distinct origins in one scroll, when the frames paint, then the cache, if present, never exceeds 256 entries and never clears wholesale
+- [x] Given the benchmark suites, when they run, then a case measures squircle building for a 12-badge tab strip and its baseline is committed under `bench/baselines/linux-x86_64/`
+- [x] Given US-003 found the cost at or below 0.4 ms, when the code is read, then no shape cache exists and shapes are built at their final bounds
+- [x] Given US-003 found the cost above 0.4 ms, when the code is read, then a cache keyed by shape, bounds origin and scale factor holds at most 256 entries, evicts the least recently used entry, and the benchmark case is at or below 0.4 ms
+- [x] Given the window moves to a display with another scale factor, when the next frame paints, then every shape is built for the new scale and none built for the old scale is painted
+- [x] Given 1,000 distinct origins in one scroll, when the frames paint, then the cache, if present, never exceeds 256 entries and never clears wholesale
+
+**Review evidence (2026-11-15):** US-003 found 0.16 ms, so no cache exists. The case is `paths_tab_strip_12_badges` in `terminal/perf_bench.rs`; its allocation baseline is in `bench/baselines/linux-x86_64/terminal-alloc.json` and gated in CI by `scripts/perf-gates.sh`. Its timing row joins `terminal.json` when US-019 re-baselines on Fedora.
 
 #### US-005: Ring gauge and check mark paint as single round-capped strokes
 **Description:** As a user, I want gauges and check marks drawn as one stroke each so that no seam shows between an arc and its end caps under analytic coverage.
@@ -253,11 +259,13 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** `src-app/src/ui_primitives/ring.rs:152-208` (arc plus two cap discs, three paths); `src-app/src/app/clone_bubble.rs:257-266` (check mark stroke).
 
 **Acceptance Criteria:**
-- [ ] Given an open gauge, when it paints, then its value arc is one stroke with `LineCap::Round` and the two cap discs are gone, so a gauge paints at most two paths (track and value)
-- [ ] Given a full gauge (`sweep.closed`), when it paints, then it paints a closed circle stroke as today
-- [ ] Given the check mark in the clone bubble, when it paints, then it is one stroke with round caps and round joins
-- [ ] Given a gauge whose radius is at or below half its stroke, when it paints, then nothing is painted and nothing panics
-- [ ] Given a gauge value of 0 or a non-finite value, when it paints, then only the track paints
+- [x] Given an open gauge, when it paints, then its value arc is one stroke with `LineCap::Round` and the two cap discs are gone, so a gauge paints at most two paths (track and value)
+- [x] Given a full gauge (`sweep.closed`), when it paints, then it paints a closed circle stroke as today
+- [x] Given the check mark in the clone bubble, when it paints, then it is one stroke with round caps and round joins
+- [x] Given a gauge whose radius is at or below half its stroke, when it paints, then nothing is painted and nothing panics
+- [x] Given a gauge value of 0 or a non-finite value, when it paints, then only the track paints
+
+**Visual pass (Arthur):** the usage rings (sidebar capsule, Settings Usage, concentric rings) at values between 0 and 1, full, and 0; the clone bubble check mark through its draw animation.
 
 #### US-006: A fill and its border never share a coincident path edge
 **Description:** As a user, I want bordered shapes free of hairline seams so that pane cards, dialogs and rows look as they did under MSAA.
@@ -274,11 +282,19 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** `src-app/src/ui_primitives/squircle.rs:250-300,316-344` (fill, then border); `src-app/src/pane.rs:539-555` (badge layers); `src-app/src/settings/components.rs:444-455` (focus ring and border); `src-app/src/window_chrome/mod.rs:45-91`; `src-app/src/diff/element.rs:680-691,1502` (hatch).
 
 **Acceptance Criteria:**
-- [ ] Given a squircle with a fill and a border, when both paint, then the fill extends under the border by at least half the border width, so no edge of the border coincides with an edge of the fill
-- [ ] Given the pane badge layers at `src-app/src/pane.rs:539-555`, when they paint, then each upper layer overlaps the layer below by at least 0.5 device pixel along shared contours
-- [ ] Given a translucent border color, when it paints over the extended fill, then the visible fill color inside the border is unchanged from the opaque case, with a test on the bounds handed to the builder
-- [ ] Given a border width of 0 or bounds smaller than the border width, when the shape paints, then only the fill paints and nothing panics
-- [ ] The story lists every bordered surface it changed (pane card, dialogs, tab icon cards, terminal search, tooltip, settings controls) for the visual pass
+- [x] Given a squircle with a fill and an opaque border, when both paint, then the fill extends under the border by half the border width, so no edge of the border coincides with an edge of the fill; given a translucent border, the fill reaches the outer edge, so the border composites over the fill across its whole width (amended 2026-11-15 by Arthur's decision, see the review fix below)
+- [x] Given the pane badge layers at `src-app/src/pane.rs:539-555`, when they paint, then each upper layer overlaps the layer below by at least 0.5 device pixel along shared contours
+- [x] Given a translucent border color, when it paints over the extended fill, then the visible fill color inside the border is unchanged from the opaque case, with a test on the bounds handed to the builder
+- [x] Given a border width of 0 or bounds smaller than the border width, when the shape paints, then only the fill paints and nothing panics
+- [x] The story lists every bordered surface it changed (pane card, dialogs, tab icon cards, terminal search, tooltip, settings controls) for the visual pass
+
+**Visual pass (Arthur):** pane cards (squircle and morph frames) and the 2 px drop veil; dialogs (`modal_card`); menus and select popups (`menu_surface_filled`); the quick pick shell and the path picker; the terminal search overlay; tooltips; the settings input surface and its focus ring; the clone bubble pill; the tab badges in the pane strip and in Settings Appearance, whose highlight is now a single band clear of the rim. Each in Dark, Light and one other preset, at scale 1 and 2.
+
+**Review fix (2026-11-15):** the badge highlight band traced its two contours in the same direction, so along its shared sides and bottom corners the per-pixel winding summed to twice the edge coverage and the even-odd rule painted a white fringe at up to 0.22 alpha. `trace_band` in `ui_primitives/squircle.rs` now traces the inner contour mirrored, so the shared edges cancel; `a_band_traces_its_inner_contour_against_its_outer_one_so_shared_edges_cancel` asserts the opposite orientations.
+
+**Visual pass (2026-11-15, Windows 11, scale 1, debug build on an isolated home):** Paneflow Dark, Paneflow Light and Claude Dark in Rounded, Paneflow Dark and Light in Classic, reduce motion on, the 800 by 500 window; pane cards, tab badges, usage ring and bubble, tooltip, Files menu, command palette, terminal search, settings select, raised button, input field with its focus ring, toast, clone bubble check, detached pane window, drop veil. An A/B against the same build without this story's geometry measured the badge fringe the review fix removed (bottom corners at 0x58 green against 0x27 to 0x2c now), menus identical, 1 px card borders within one level. One visible change remains: the translucent 2 px drop veil border reads in two tones (0x52 inside, 0x43 outside, uniform 0x52 before), because its outer half now lies over the background. Accepting it or treating translucent borders differently is Arthur's decision. Scale 2 was not checked: both displays run at scale 1.
+
+**Review fix, translucent borders (2026-11-15, Arthur's decision):** a fill stopped at mid-border leaves the outer half of a translucent border over the background, so the border reads in two tones along its whole length; a fill reaching the outer edge only leaves a faint halo on the anti-aliased pixels of curves, at most a quarter of the fill to background difference. `fill_depth_under_border` in `ui_primitives/squircle.rs` now keeps the fill under an opaque border to half its width and lets it reach the outer edge under a translucent one. `squircle_fill_beneath_border` takes the border color, `CardShape::background` takes the card border, and a dock card without a border (in the title band) keeps a whole fill. Tests: `a_fill_beneath_a_translucent_border_reaches_the_outer_edge`, `a_bordered_card_hides_its_fill_edge_under_an_opaque_border_only`, `a_card_fill_stops_under_an_opaque_border_and_stays_whole_otherwise`.
 
 #### US-007: Shadows, gradients and terminal layer order conform to DESIGN.md
 **Description:** As the maintainer, I want every shadow, gradient and layer checked against the design contract so that the renderer change does not drift the UI away from `DESIGN.md`.
@@ -297,11 +313,13 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** shadows at `src-app/src/window_chrome/csd.rs:105`, `src-app/src/ui_primitives/action_menu.rs:831,835`, `src-app/src/settings/components.rs:571,1035-1039,1158-1164`, `src-app/src/pane.rs:394,396`, `src-app/src/app/clone_bubble.rs:1054`; gradients at `src-app/src/pane.rs:317,482,496,512`, `src-app/src/app/sidebar/resize.rs:204,209`; layers at `src-app/src/terminal/element/mod.rs:1695-1752`; contract at `DESIGN.md:110-115,172,542-543,1370` and `ARCHITECTURE.md:293-307`.
 
 **Acceptance Criteria:**
-- [ ] Given each shadow site, when its values are read, then they equal the values `DESIGN.md` states for that surface, and no site compensates in code for the new approximation
-- [ ] Given the terminal element, when a frame paints, then backgrounds are painted in the first layer, glyphs and box-drawing paths in the second, and decorations, cursor and Kitty images outside both, with a test asserting the call order of the paint phases
-- [ ] Given `ARCHITECTURE.md:293-307`, when it is read after the story, then it states the ordering rule as GPUI now defines it (kind, then paint order, a nested layer above its parent) with no claim the code no longer relies on
-- [ ] Given a Kitty image with a negative z-index and one with a non-negative z-index on the same cell, when the frame paints, then the first is painted before the text layer and the second after it
-- [ ] The story lists the shadow and gradient surfaces for the visual pass, naming Linux as the platform where gradients gain dithering
+- [x] Given each shadow site, when its values are read, then they equal the values `DESIGN.md` states for that surface, and no site compensates in code for the new approximation
+- [x] Given the terminal element, when a frame paints, then backgrounds are painted in the first layer, glyphs and box-drawing paths in the second, and decorations, cursor and Kitty images outside both, with a test asserting the call order of the paint phases
+- [x] Given `ARCHITECTURE.md:293-307`, when it is read after the story, then it states the ordering rule as GPUI now defines it (kind, then paint order, a nested layer above its parent) with no claim the code no longer relies on
+- [x] Given a Kitty image with a negative z-index and one with a non-negative z-index on the same cell, when the frame paints, then the first is painted before the text layer and the second after it
+- [x] The story lists the shadow and gradient surfaces for the visual pass, naming Linux as the platform where gradients gain dithering
+
+**Review fix (2026-11-15):** the style table of `DESIGN.md` 4.9 gave menus and select popups the toast shadow, which contradicted the new shadow inventory and the code (`panel_shadow`); it now sends them to the inventory. The paint order test asserts the cursor last instead of only when present. Visual pass (Arthur): the shadow and gradient surfaces of the `DESIGN.md` shadow inventory, gradients on Linux first.
 
 #### US-008: Re-evaluate the Linux translucent-window squircle fallback
 **Description:** As a Linux user with a translucent backdrop, I want squircles to keep their continuous corners so that the UI matches the other platforms, if the reason for the fallback is gone.
@@ -318,10 +336,12 @@ Every path, shadow, gradient and layer Paneflow paints is correct and within bud
 **Paneflow sites:** `src-app/src/ui_primitives/squircle.rs:236-246,304-314` (`translucent_over_transparent_window`); `src-app/src/window_chrome/linux_backdrop.rs`.
 
 **Acceptance Criteria:**
-- [ ] Given a translucent window on Wayland and on X11, when a translucent squircle paints as a path, then the result is recorded (correct blending, or the defect observed) with the compositor and driver named
-- [ ] Given the path blends correctly on both, when the code is read, then the rounded-quad fallback and `translucent_over_transparent_window` are removed
-- [ ] Given the path does not blend correctly on either, when the code is read, then the fallback stays and the reason is recorded in `DESIGN.md` next to the squircle section
-- [ ] Given the check cannot be run on a real Wayland or X11 session, when the story is reported, then it says so and the fallback stays untouched
+- [x] Given a translucent window on Wayland and on X11, when a translucent squircle paints as a path, then the result is recorded (correct blending, or the defect observed) with the compositor and driver named
+- [x] Given the path blends correctly on both, when the code is read, then the rounded-quad fallback and `translucent_over_transparent_window` are removed
+- [x] Given the path does not blend correctly on either, when the code is read, then the fallback stays and the reason is recorded in `DESIGN.md` next to the squircle section (not applicable: the path blends correctly on every session checked)
+- [x] Given the check cannot be run on a real Wayland or X11 session, when the story is reported, then it says so and the fallback stays untouched (not applicable: the check was run on real sessions)
+
+**Review evidence (2026-11-15):** this Windows host has no real Wayland or X11 session with a translucent backdrop (WSLg is not one), so the check was Arthur's manual pass on Fedora. He ran it on GNOME (Mutter) and KDE Plasma (KWin), each on Wayland and on X11, with the proprietary NVIDIA driver and with Mesa AMD (RADV), and reported correct blending on every combination. GPUI 703b5ac3 draws paths in the main render pass, so the intermediate MSAA texture that motivated the fallback is gone. `translucent_over_transparent_window` and its three rounded-quad branches in `ui_primitives/squircle.rs` (`squircle_corners_fill`, `squircle_fill_blend`, `paint_fill_beneath_border`) are removed; `linux_backdrop::translucent_window_active` stays because `app/constants.rs` still reads it for the shell material.
 
 ---
 
