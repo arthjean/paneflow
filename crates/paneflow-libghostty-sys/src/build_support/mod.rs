@@ -46,6 +46,10 @@ pub fn run() -> BuildResult<()> {
         manifest.api_version()
     );
     println!(
+        "cargo:rustc-env=PANEFLOW_GHOSTTY_LIB_VERSION={}",
+        manifest.lib_version()
+    );
+    println!(
         "cargo:rustc-env=PANEFLOW_GHOSTTY_APP_VERSION={}",
         manifest.ghostty_app_version()
     );

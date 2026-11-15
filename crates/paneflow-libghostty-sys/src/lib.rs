@@ -8,6 +8,7 @@ mod bindings {
 pub use bindings::*;
 
 pub const EXPECTED_API_VERSION: &str = env!("PANEFLOW_GHOSTTY_API_VERSION");
+pub const EXPECTED_LIB_VERSION: &str = env!("PANEFLOW_GHOSTTY_LIB_VERSION");
 pub const GHOSTTY_APP_VERSION: &str = env!("PANEFLOW_GHOSTTY_APP_VERSION");
 pub const GHOSTTY_XTVERSION: &str = concat!("ghostty ", env!("PANEFLOW_GHOSTTY_APP_VERSION"));
 

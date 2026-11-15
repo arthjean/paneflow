@@ -241,6 +241,15 @@ four archives with `actions/attest-build-provenance`, publishes them as the
 manifest, bindings, headers, and metadata. Nothing merges on its own. A bump
 that is closed unmerged leaves its pre-release behind; delete it by hand.
 
+Upstream derives the library version from git since `vt-1.0.0`: a build of a
+commit that carries its `vt-X.Y.Z` tag reports `X.Y.Z`, any other build reports
+the `lib_version` constant of `build.zig` plus the short commit id. The recipes
+build from shallow checkouts and `git archive` exports that see no tag, so the
+bump resolves the version once, writes it to `lib_version` (and its
+`MAJOR.MINOR.PATCH` to `api_version`), and every recipe passes it to Zig as
+`-Dlib-version-string`. `paneflow-terminal-ghostty` refuses to start a terminal
+unless the linked library reports exactly these two values.
+
 The Linux and macOS rebuilds exist once, in
 `.github/workflows/libghostty-recipe.yml`, a reusable workflow with three
 callers. `libghostty-linux.yml` calls it for the two Linux targets when the

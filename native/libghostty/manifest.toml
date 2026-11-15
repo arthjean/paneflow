@@ -22,6 +22,7 @@ notice_sha256 = "c0f7ffd1cf83f44bd94a0fed28dfd315447f5d1aedcbcc5b50fa2f30d17c025
 sbom_path = "native/libghostty/sbom.cdx.json"
 sbom_sha256 = "7d4f80166de38bf24321f9b366fd97416be94b05f18d306105e328e0f7120973"
 api_version = "0.1.0"
+lib_version = "0.1.0-dev"
 build_mode = "ReleaseFast"
 simd_profile = "upstream-default"
 emit_mode = "lib-vt"

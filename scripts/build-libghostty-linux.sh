@@ -80,6 +80,7 @@ HEADER_SHA256="$(manifest_string header_sha256)"
 BINDINGS_PATH="$(manifest_string bindings_path)"
 BINDINGS_SHA256="$(manifest_string bindings_sha256)"
 BUILD_MODE="$(manifest_string build_mode)"
+LIB_VERSION="$(manifest_string lib_version)"
 BUILD_SEED="$(manifest_string linux_build_seed)"
 BUILD_JOBS="$(manifest_string linux_build_jobs)"
 
@@ -201,6 +202,7 @@ build_one() {
       -Demit-lib-vt=true \
       -Dtarget="$target" \
       -Doptimize="$BUILD_MODE" \
+      -Dlib-version-string="$LIB_VERSION" \
       --prefix "$output"
   )
   local archive="$output/$archive_path"
