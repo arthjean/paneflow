@@ -553,6 +553,34 @@ pub(crate) fn cell_metrics_from_face(
     }
 }
 
+fn face_from_tables(tables: &face_tables::FaceTables, size_device: f32) -> FaceMetrics {
+    let scale = size_device / tables.units_per_em.max(1.0);
+    FaceMetrics {
+        ascent: tables.ascent * scale,
+        descent: tables.descent * scale,
+        line_gap: tables.line_gap * scale,
+        advance: tables.advance * scale,
+        underline_position: tables.underline_position * scale,
+        underline_thickness: tables.underline_thickness * scale,
+        strikethrough_position: tables.strikethrough_position * scale,
+        strikethrough_thickness: tables.strikethrough_thickness * scale,
+        x_height: tables.x_height * scale,
+        cap_height: tables.cap_height * scale,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn embedded_mono_cell_metrics(font_size: Pixels, scale_factor: f32) -> CellMetrics {
+    let tables = face_tables::embedded_face_tables(EMBEDDED_MONO_FAMILY)
+        .expect("the embedded mono font ships its face tables");
+    cell_metrics_from_face(
+        face_from_tables(&tables, font_size.as_f32() * scale_factor),
+        scale_factor,
+        DEFAULT_LINE_HEIGHT,
+        DEFAULT_CELL_WIDTH,
+    )
+}
+
 fn measure_face(window: &Window, font_id: FontId, size_device: f32) -> FaceMetrics {
     let text_system = window.text_system();
     let family = text_system.get_font_for_id(font_id).map(|font| font.family);
@@ -560,19 +588,7 @@ fn measure_face(window: &Window, font_id: FontId, size_device: f32) -> FaceMetri
         .as_deref()
         .and_then(face_tables::embedded_face_tables)
     {
-        let scale = size_device / tables.units_per_em.max(1.0);
-        return FaceMetrics {
-            ascent: tables.ascent * scale,
-            descent: tables.descent * scale,
-            line_gap: tables.line_gap * scale,
-            advance: tables.advance * scale,
-            underline_position: tables.underline_position * scale,
-            underline_thickness: tables.underline_thickness * scale,
-            strikethrough_position: tables.strikethrough_position * scale,
-            strikethrough_thickness: tables.strikethrough_thickness * scale,
-            x_height: tables.x_height * scale,
-            cap_height: tables.cap_height * scale,
-        };
+        return face_from_tables(&tables, size_device);
     }
 
     let size = px(size_device);

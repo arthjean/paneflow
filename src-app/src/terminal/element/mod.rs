@@ -25,8 +25,6 @@ mod sprites;
 
 use crate::theme::ThemePalette;
 use color::{HarmonyTargets, convert_color, is_same_visible_color, rgb_to_hsla};
-#[cfg(test)]
-pub(crate) use font::base_font;
 pub use font::{
     CellMetrics, MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, resolve_font_family,
     resolve_frame_metrics, sanitize_font_override,
@@ -35,6 +33,8 @@ pub(crate) use font::{
     DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, apply_font_config,
     normalize_font_weight_key,
 };
+#[cfg(test)]
+pub(crate) use font::{base_font, embedded_mono_cell_metrics};
 use geometry::CellGeometry;
 pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
@@ -887,6 +887,33 @@ pub(crate) fn overscan_row_layout(
 #[cfg(test)]
 pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     layout_from_snapshot_cached(inputs, &[], 0, &mut RowLayoutCache::default())
+}
+
+#[cfg(test)]
+pub(crate) fn decoration_and_sprite_counts(layout: &LayoutState) -> (usize, usize) {
+    (layout.decorations().count(), layout.sprites().count())
+}
+
+#[cfg(test)]
+pub(crate) fn paint_sprite_paths(layout: &LayoutState, metrics: CellMetrics, window: &mut Window) {
+    paint::sprites::paint_sprites(
+        layout,
+        &CellGeometry::new(Point::default(), metrics),
+        window,
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn paint_decoration_paths(
+    layout: &LayoutState,
+    metrics: CellMetrics,
+    window: &mut Window,
+) {
+    paint::decorations::paint_decorations(
+        layout,
+        &CellGeometry::new(Point::default(), metrics),
+        window,
+    );
 }
 
 pub(crate) fn layout_from_snapshot_cached(

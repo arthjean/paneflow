@@ -278,8 +278,8 @@ const NEW_TAB_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
 pub(crate) const TAB_FADE_WIDTH: f32 = 28.0;
-const TAB_BADGE_WIDTH: f32 = 22.0;
-const TAB_BADGE_HEIGHT: f32 = 18.0;
+pub(crate) const TAB_BADGE_WIDTH: f32 = 22.0;
+pub(crate) const TAB_BADGE_HEIGHT: f32 = 18.0;
 const TAB_BADGE_RADIUS: f32 = 5.5;
 const TAB_BADGE_LOGO_SIZE: f32 = 10.0;
 const TAB_BADGE_GRAPHITE_TOP: u32 = 0x3a3c3e;
@@ -518,38 +518,45 @@ pub(crate) fn tinted_badge_colors(tint: gpui::Rgba) -> (gpui::Background, Hsla) 
     )
 }
 
+pub(crate) fn paint_badge_tile(
+    bounds: gpui::Bounds<Pixels>,
+    background: gpui::Background,
+    ring: Hsla,
+    window: &mut Window,
+) {
+    let radius = px(TAB_BADGE_RADIUS);
+    let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
+    let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
+    let lowered = gpui::Bounds {
+        origin: bounds.origin + gpui::point(px(0.), px(1.)),
+        size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
+    };
+    let body = squircle_path(bounds, radius);
+    let layers = [
+        (
+            squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
+            gpui::Background::from(ring),
+        ),
+        (body.clone(), background),
+        (body, highlight.into()),
+        (squircle_path(lowered, radius), background),
+        (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
+    ];
+    for (path, fill) in layers {
+        if let Some(path) = path {
+            window.paint_path(path, fill);
+        }
+    }
+}
+
 pub(crate) fn badge_tile(
     background: gpui::Background,
     ring: Hsla,
     glyph: AnyElement,
 ) -> AnyElement {
-    let radius = px(TAB_BADGE_RADIUS);
-    let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
-    let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
     let tile = gpui::canvas(
         |_, _, _| {},
-        move |bounds, _, window, _| {
-            let lowered = gpui::Bounds {
-                origin: bounds.origin + gpui::point(px(0.), px(1.)),
-                size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
-            };
-            let body = squircle_path(bounds, radius);
-            let layers = [
-                (
-                    squircle_path(bounds.dilate(px(1.)), radius + px(1.)),
-                    gpui::Background::from(ring),
-                ),
-                (body.clone(), background),
-                (body, highlight.into()),
-                (squircle_path(lowered, radius), background),
-                (squircle_stroke_path(bounds, radius, px(1.)), rim.into()),
-            ];
-            for (path, fill) in layers {
-                if let Some(path) = path {
-                    window.paint_path(path, fill);
-                }
-            }
-        },
+        move |bounds, _, window, _| paint_badge_tile(bounds, background, ring, window),
     )
     .size_full();
     div()
