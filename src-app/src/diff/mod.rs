@@ -7,6 +7,7 @@ mod hit_test;
 mod hscroll;
 #[cfg(test)]
 pub(crate) mod parity_tests;
+mod row_syntax;
 mod rows;
 mod syntax;
 
@@ -36,10 +37,13 @@ pub(crate) use hscroll::{
     H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, file_at_row, h_offset_index, h_offset_len,
     h_scrollbar_click_offset, h_scrollbar_segments, set_file_side_offset, split_right_side_at_x,
 };
+pub(crate) use row_syntax::{cached_file_row_caches, highlighted_file_row_caches};
+#[cfg(test)]
+pub(crate) use rows::build_file_row_caches;
 pub(crate) use rows::{
     DisplayRow, FileRowCache, FileSpan, ROW_HEIGHT, RowKind, RowPalette, SplitRow,
     apply_collapse_split, apply_collapse_unified, apply_expanded_split_with_sources,
-    apply_expanded_unified_with_sources, build_display_rows_with_caches, build_file_row_caches,
+    apply_expanded_unified_with_sources, build_display_rows_with_caches,
     build_split_rows_with_caches, discard_expanded_folds_for_path, file_ext, hunk_for_base_line,
     hunk_for_new_line, palette, split_file_spans, split_max_line_no, split_offsets,
     unified_file_spans, unified_max_line_no, unified_offsets,

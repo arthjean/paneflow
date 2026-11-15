@@ -15,6 +15,10 @@ impl DiffSyntax {
         Self { palette: t.syntax }
     }
 
+    pub(crate) fn palette(&self) -> SyntaxPalette {
+        self.palette
+    }
+
     pub fn color_for_capture(&self, name: &str) -> Option<Hsla> {
         let p = &self.palette;
         let c = if cap_has(name, "comment.doc") {

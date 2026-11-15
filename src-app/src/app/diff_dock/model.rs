@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::Pixels;
 
 use super::code::save::FileStamp;
-use super::git::DiffDockBuilt;
+use super::git::{DiffDockBuilt, DiffDockColored};
 use crate::diff::{
     DiffOptions, DisplayRow, FileDiff, FileRowCache, FileSpan, SplitRow, apply_collapse_split,
     apply_collapse_unified, apply_expanded_split_with_sources, apply_expanded_unified_with_sources,
@@ -68,7 +69,7 @@ pub(crate) struct DiffDockData {
     pub(super) split: Rc<Vec<SplitRow>>,
     pub(super) anchors_unified: Rc<Vec<(String, usize)>>,
     pub(super) anchors_split: Rc<Vec<(String, usize)>>,
-    pub(super) files_full: Rc<Vec<FileDiff>>,
+    pub(super) files_full: Arc<Vec<FileDiff>>,
     pub(super) row_caches: Rc<Vec<FileRowCache>>,
     pub(super) disp_unified: Rc<Vec<DisplayRow>>,
     pub(super) disp_split: Rc<Vec<SplitRow>>,
@@ -104,7 +105,7 @@ impl DiffDockData {
             split: Rc::new(Vec::new()),
             anchors_unified: Rc::new(Vec::new()),
             anchors_split: Rc::new(Vec::new()),
-            files_full: Rc::new(Vec::new()),
+            files_full: Arc::new(Vec::new()),
             row_caches: Rc::new(Vec::new()),
             disp_unified: Rc::new(Vec::new()),
             disp_split: Rc::new(Vec::new()),
@@ -179,7 +180,7 @@ impl DiffDockData {
         self.toplevel = built.toplevel;
         self.head_sha = built.head_sha;
         self.stamps = Rc::new(built.stamps);
-        self.files_full = Rc::new(built.files_full);
+        self.files_full = built.files_full;
         self.row_caches = Rc::new(built.row_caches);
 
         self.unified = Rc::new(built.unified);
@@ -188,6 +189,19 @@ impl DiffDockData {
         self.anchors_split = Rc::new(built.anchors_split);
         self.unified_loaded = true;
         self.split_loaded = true;
+        self.recompute_unified(collapsed, expanded);
+        self.recompute_split(collapsed, expanded);
+    }
+
+    pub(super) fn apply_colored(
+        &mut self,
+        colored: DiffDockColored,
+        collapsed: &HashSet<String>,
+        expanded: &HashSet<String>,
+    ) {
+        self.row_caches = Rc::new(colored.row_caches);
+        self.unified = Rc::new(colored.unified);
+        self.split = Rc::new(colored.split);
         self.recompute_unified(collapsed, expanded);
         self.recompute_split(collapsed, expanded);
     }

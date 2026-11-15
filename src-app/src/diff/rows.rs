@@ -5,6 +5,8 @@ use gpui::{Hsla, SharedString};
 
 use super::engine::{ChangeTone, DiffHunk};
 use super::git::{FileChange, FileDiff};
+use super::row_syntax::SideRuns;
+#[cfg(test)]
 use super::syntax::DiffSyntax;
 
 const MAX_FULL_SPLIT_ALIGN_LINES: usize = 20_000;
@@ -137,8 +139,19 @@ pub const CONTEXT_LINES: u32 = 3;
 
 #[derive(Clone, Default)]
 pub struct FileRowCache {
-    syn_old: Vec<Vec<(Range<usize>, Hsla)>>,
-    syn_new: Vec<Vec<(Range<usize>, Hsla)>>,
+    syn_old: SideRuns,
+    syn_new: SideRuns,
+}
+
+impl FileRowCache {
+    pub(super) fn from_sides(syn_old: SideRuns, syn_new: SideRuns) -> Self {
+        Self { syn_old, syn_new }
+    }
+
+    #[cfg(test)]
+    pub(super) fn sides(&self) -> (&SideRuns, &SideRuns) {
+        (&self.syn_old, &self.syn_new)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -407,6 +420,7 @@ pub(crate) fn file_ext(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
+#[cfg(test)]
 fn side_syntax(
     syntax: Option<&DiffSyntax>,
     file: &FileDiff,
@@ -424,16 +438,18 @@ fn line_syntax(side: &[Vec<(Range<usize>, Hsla)>], idx: u32) -> Vec<(Range<usize
     side.get(idx as usize).cloned().unwrap_or_default()
 }
 
+#[cfg(test)]
 fn build_file_row_cache(file: &FileDiff, syntax: Option<&DiffSyntax>) -> FileRowCache {
     if file.is_binary {
         return FileRowCache::default();
     }
     FileRowCache {
-        syn_old: side_syntax(syntax, file, &file.base_text),
-        syn_new: side_syntax(syntax, file, &file.new_text),
+        syn_old: SideRuns::new(side_syntax(syntax, file, &file.base_text)),
+        syn_new: SideRuns::new(side_syntax(syntax, file, &file.new_text)),
     }
 }
 
+#[cfg(test)]
 pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) -> Vec<FileRowCache> {
     files
         .iter()

@@ -26,7 +26,7 @@ use gpui::{
 };
 
 use self::branch::render_diff_branch_chip;
-use self::git::build_diff_dock;
+use self::git::{build_diff_dock, colorize_diff_dock};
 use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DiffChrome};
 use self::render::{
     diff_file_header_path, diff_panel_centered, dock_card_background, dock_card_border,
@@ -248,21 +248,19 @@ impl PaneFlowApp {
                     move || build_diff_dock(&cwd, theme, theme_generation, options)
                 })
                 .await;
-                let _ = cx.update(|cx| {
+                let pending = cx.update(|cx| {
                     this.update(cx, |app, cx| {
-                        let still_current = app
-                            .diff_dock
-                            .data
-                            .as_ref()
-                            .is_some_and(|data| data.cwd == cwd)
-                            && app.diff_dock.generation == generation;
-                        if !still_current {
-                            return;
+                        if !app.diff_dock_build_is_current(&cwd, generation) {
+                            return None;
                         }
                         let collapsed = app.diff_dock.collapsed.clone();
                         let expanded = app.diff_dock.expanded_folds.clone();
+                        let mut pending = None;
                         match result {
                             Ok(built) => {
+                                pending = built
+                                    .syntax_pending
+                                    .then(|| (built.files_full.clone(), built.shown_files));
                                 let stats = crate::workspace::GitDiffStats {
                                     files_changed: built.file_count,
                                     insertions: built.added as usize,
@@ -320,11 +318,39 @@ impl PaneFlowApp {
                             }
                         }
                         cx.notify();
+                        pending
+                    })
+                });
+                let Ok(Some((files, shown_files))) = pending else {
+                    return;
+                };
+                let colored =
+                    smol::unblock(move || colorize_diff_dock(&files, shown_files, &theme)).await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |app, cx| {
+                        if !app.diff_dock_build_is_current(&cwd, generation) {
+                            return;
+                        }
+                        let collapsed = app.diff_dock.collapsed.clone();
+                        let expanded = app.diff_dock.expanded_folds.clone();
+                        if let Some(data) = app.diff_dock.data.as_mut() {
+                            data.apply_colored(colored, &collapsed, &expanded);
+                        }
+                        cx.notify();
                     })
                 });
             },
         )
         .detach();
+    }
+
+    fn diff_dock_build_is_current(&self, cwd: &str, generation: u64) -> bool {
+        self.diff_dock.generation == generation
+            && self
+                .diff_dock
+                .data
+                .as_ref()
+                .is_some_and(|data| data.cwd == cwd)
     }
 
     fn recompute_diff_dock_display(&mut self) {

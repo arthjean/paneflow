@@ -114,6 +114,19 @@ input at 4,096 captures. Theme changes rebuild color tables without querying
 or reparsing the retained trees. Variables and namespaces use the editor's
 text color; constructors share the function role.
 
+The Changes dock builds in two passes on a background thread
+(`app/diff_dock/git.rs`). The first pass reads every base text through two
+`git cat-file` processes (`--batch-check` for the sizes, `--batch` for the
+blobs of 512 KiB or less) instead of one `git show` per file, builds the rows,
+and takes syntax runs only from the store in `diff/row_syntax.rs`. When more
+than 256 KiB of shown text is missing from the store, it delivers the rows
+uncolored. The second pass highlights, in parallel, the files that fit under
+the 10,000-row cap and swaps the runs in on the same rows. The store is keyed
+by extension and text digest, holds 16 MiB of source text, evicts the least
+recently used side, and empties when the syntax palette changes, so a refresh
+highlights only the sides whose text changed. A path that contains a newline,
+or a batch git refuses, falls back to `git show`.
+
 `diff/queries/MANIFEST.toml` records the upstream commit, source paths, SHA-256
 hashes, license evidence and the JavaScript grammar deviation. `NOTICE`
 attributes Zed Industries. Git preserves LF bytes for these imports.
