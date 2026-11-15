@@ -539,8 +539,8 @@ menus and the path picker, and motion are shared by every style.
 
 | Style | Corners | Floating surfaces |
 | --- | --- | --- |
-| Classic (default) | Circular corners on a 6, 8, 12, 14 scale, in the edge-to-edge shell described below | A `text` edge at 0.07 and a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12) |
-| Rounded | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 and a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10) on menus and select popups; a `border` edge at 0.6 and no shadow elsewhere |
+| Classic (default) | Circular corners on a 6, 8, 12, 14 scale, in the edge-to-edge shell described below | A `text` edge at 0.07; toasts carry a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12), and menus and select popups the panel shadow of the shadow inventory below |
+| Rounded | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 on menus and select popups, which carry the panel shadow of the shadow inventory below; toasts carry a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10); a `border` edge at 0.6 and no shadow elsewhere |
 
 The Rounded style draws two shapes. Its chrome (pane cards, tabs, rail rows,
 dialogs, toasts, the command palette, the pane palette, buttons) keeps the
