@@ -596,8 +596,42 @@ impl<E: StatefulInteractiveElement> TooltipDelayExt for E {
         self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
-        self.tooltip(build_tooltip)
-            .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
+        self.capture_any_mouse_down(|event, _window, _cx| {
+            LAST_PRESS.set(Some(event.position));
+        })
+        .tooltip(move |window, cx| {
+            if pointer_still_since_press(LAST_PRESS.get(), window.mouse_position()) {
+                cx.new(|_| SuppressedTooltip).into()
+            } else {
+                build_tooltip(window, cx)
+            }
+        })
+        .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
+    }
+}
+
+thread_local! {
+    static LAST_PRESS: std::cell::Cell<Option<gpui::Point<Pixels>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+const PRESS_STILLNESS: Pixels = px(3.);
+
+fn pointer_still_since_press(
+    press: Option<gpui::Point<Pixels>>,
+    pointer: gpui::Point<Pixels>,
+) -> bool {
+    press.is_some_and(|press| {
+        (press.x - pointer.x).abs() <= PRESS_STILLNESS
+            && (press.y - pointer.y).abs() <= PRESS_STILLNESS
+    })
+}
+
+struct SuppressedTooltip;
+
+impl Render for SuppressedTooltip {
+    fn render(&mut self, _w: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::Empty
     }
 }
 
@@ -648,12 +682,14 @@ pub(crate) trait AccessibleControlExt: StatefulInteractiveElement + Sized {
 impl<E: StatefulInteractiveElement> AccessibleControlExt for E {}
 
 pub(crate) const TOOLTIP_RADIUS: Pixels = px(14.);
+pub(crate) const TOOLTIP_MAX_WIDTH: Pixels = px(400.);
 
 pub(crate) fn tooltip_shell() -> Div {
     let theme = crate::theme::active_theme();
     let ui = crate::theme::ui_colors();
     div()
         .relative()
+        .max_w(TOOLTIP_MAX_WIDTH)
         .px(px(8.))
         .py(px(6.))
         .text_color(ui.text)
@@ -1533,6 +1569,117 @@ mod tests {
         assert!(
             progress.get() > 0.0,
             "hover progress stayed at zero after pointer entry"
+        );
+    }
+
+    #[test]
+    fn a_pointer_that_has_not_moved_since_a_press_holds_the_tooltip_back() {
+        let press = Some(point(px(40.), px(20.)));
+        assert!(pointer_still_since_press(press, point(px(40.), px(20.))));
+        assert!(pointer_still_since_press(press, point(px(42.), px(18.))));
+        assert!(!pointer_still_since_press(press, point(px(48.), px(20.))));
+        assert!(!pointer_still_since_press(None, point(px(40.), px(20.))));
+    }
+
+    struct TooltipHarness {
+        built: Rc<Cell<usize>>,
+    }
+
+    impl Render for TooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let built = self.built.clone();
+            div().size_full().child(
+                div()
+                    .id("tooltip-trigger")
+                    .w(px(100.))
+                    .h(px(30.))
+                    .on_click(|_, _, _| {})
+                    .delayed_tooltip(move |_window, cx| {
+                        built.set(built.get() + 1);
+                        cx.new(|_| PaneflowTooltip {
+                            label: "Customize sidebar".into(),
+                        })
+                        .into()
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_click_holds_its_trigger_tooltip_back_until_the_pointer_comes_back(
+        cx: &mut TestAppContext,
+    ) {
+        let built = Rc::new(Cell::new(0));
+        let built_for_view = built.clone();
+        let (_view, cx) = cx.add_window_view(move |_, _| TooltipHarness {
+            built: built_for_view,
+        });
+        cx.simulate_resize(size(px(300.), px(200.)));
+        let wait_for_tooltip = |cx: &mut gpui::VisualTestContext| {
+            cx.executor().advance_clock(TOOLTIP_SHOW_DELAY * 2);
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        cx.simulate_mouse_move(point(px(50.), px(15.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(built.get(), 1, "a hovered trigger shows its tooltip");
+
+        cx.simulate_mouse_move(point(px(250.), px(150.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        cx.simulate_mouse_move(point(px(60.), px(15.)), None, Modifiers::default());
+        cx.simulate_click(point(px(60.), px(15.)), Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(
+            built.get(),
+            1,
+            "a tooltip that comes due after a click on its trigger, with the pointer still, would cover the menu the click opened"
+        );
+
+        cx.simulate_mouse_move(point(px(250.), px(150.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        cx.simulate_mouse_move(point(px(40.), px(15.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(built.get(), 2, "the tooltip comes back on the next hover");
+    }
+
+    struct LongTooltipHarness;
+
+    impl Render for LongTooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full().child(
+                tooltip_shell()
+                    .debug_selector(|| "tooltip".into())
+                    .child("arthur@dune:/tmp/claude-1000/-home-arthur-dev-paneflow/defde28f-5ff0-423e-a803-98654a37048c/scratchpad/ep7/work/repo"),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_path_tooltip_wraps_within_its_maximum_width(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| LongTooltipHarness);
+        cx.simulate_resize(size(px(1200.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = cx.debug_bounds("tooltip").expect("tooltip painted");
+        assert!(
+            bounds.size.width <= TOOLTIP_MAX_WIDTH,
+            "the tooltip is {:?} wide, past its {:?} maximum",
+            bounds.size.width,
+            TOOLTIP_MAX_WIDTH
+        );
+        assert!(
+            bounds.size.height > px(40.),
+            "a path longer than the maximum width wraps onto a second line, got {:?}",
+            bounds.size.height
         );
     }
 }
