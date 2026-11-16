@@ -352,7 +352,7 @@ pub(crate) struct CodeHitMap {
     pub(crate) markers: Vec<MarkerHit>,
     pub(crate) materialized_lines: usize,
     pub(crate) materialized_numbers: usize,
-    pub(crate) lines: Vec<Option<TabExpandedLine>>,
+    pub(crate) lines: Vec<Option<Rc<TabExpandedLine>>>,
     pub(crate) shapes: CodeShapes,
 }
 
@@ -360,7 +360,7 @@ struct CachedShape {
     font_size: Pixels,
     runs: Vec<TextRun>,
     source: SharedString,
-    line: TabExpandedLine,
+    line: Rc<TabExpandedLine>,
     seen: bool,
 }
 
@@ -377,7 +377,7 @@ impl ShapeCache {
         font_size: Pixels,
         runs: &[TextRun],
         text_system: &WindowTextSystem,
-    ) -> (TabExpandedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         let Self { entries, text } = self;
         text.clear();
         for chunk in line.chunks() {
@@ -403,7 +403,7 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (TabExpandedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         Self::shape_in(
             &mut self.entries,
             key,
@@ -423,7 +423,7 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (TabExpandedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         let bucket = entries.entry(key).or_default();
         if let Some(cached) = bucket.iter_mut().find(|cached| {
             cached.font_size == font_size && cached.runs == runs && holds(&cached.source)
@@ -432,7 +432,12 @@ impl ShapeCache {
             return (cached.line.clone(), false);
         }
         let source = materialize();
-        let line = TabExpandedLine::shape(&source, font_size, runs, text_system);
+        let line = Rc::new(TabExpandedLine::shape(
+            &source,
+            font_size,
+            runs,
+            text_system,
+        ));
         bucket.push(CachedShape {
             font_size,
             runs: runs.to_vec(),
@@ -915,7 +920,7 @@ impl Element for CodeElement {
             let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
             glyphs.push(CodeGlyph {
                 origin: point(num_x, y),
-                line: num_line.into_shaped(),
+                line: num_line.shaped().clone(),
                 clip: None,
             });
 
@@ -1140,6 +1145,34 @@ mod tests {
             viewport_h,
             line_count,
         )
+    }
+
+    #[gpui::test]
+    fn a_warm_shape_hit_shares_the_cached_line_instead_of_copying_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.add_empty_window();
+        window.update(|window, _| {
+            let rope = ropey::Rope::from_str("\tlet answer = 42;");
+            let runs = [TextRun {
+                len: rope.line(0).len_bytes(),
+                font: gpui::font("Zed Plex Mono"),
+                color: gpui::hsla(0.0, 0.0, 0.9, 1.0),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            let mut shapes = ShapeCache::default();
+            let (cold, cold_materialized) =
+                shapes.shape_rope_line(rope.line(0), px(13.), &runs, window.text_system());
+            shapes.end_frame();
+            let (warm, warm_materialized) =
+                shapes.shape_rope_line(rope.line(0), px(13.), &runs, window.text_system());
+            assert!(cold_materialized);
+            assert!(!warm_materialized);
+            assert!(Rc::ptr_eq(&cold, &warm));
+            assert_eq!(warm.shaped().text.as_ref(), "    let answer = 42;");
+        });
     }
 
     #[test]
