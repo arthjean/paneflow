@@ -68,6 +68,8 @@ mod system_info;
 mod tab_stops;
 mod telemetry;
 mod terminal;
+#[cfg(test)]
+mod text_wrap_probe;
 pub mod theme;
 mod tmux_compat;
 mod ui_primitives;

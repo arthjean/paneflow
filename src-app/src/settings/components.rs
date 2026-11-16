@@ -328,12 +328,17 @@ pub fn setting_text(
                 .text_color(ui.text)
                 .child(highlight_matches(title.to_string(), &query)),
         )
-        .child(
-            div()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(ui.muted)
-                .child(highlight_matches(description.to_string(), &query)),
-        )
+        .child(setting_description(
+            ui,
+            highlight_matches(description.to_string(), &query),
+        ))
+}
+
+pub(crate) fn setting_description(ui: crate::theme::UiColors, text: gpui::StyledText) -> gpui::Div {
+    div()
+        .text_size(crate::ui_primitives::LABEL_SM)
+        .text_color(ui.muted)
+        .child(text)
 }
 
 pub(crate) fn input_surface<E: ParentElement + Styled>(

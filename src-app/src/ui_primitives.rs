@@ -930,6 +930,15 @@ pub(crate) fn filter_field(
         })
 }
 
+pub(crate) fn single_line_label() -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .overflow_x_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+}
+
 pub(crate) fn highlight_matches(text: String, query: &str) -> gpui::StyledText {
     let mut ranges = Vec::new();
     if !query.is_empty() {

@@ -31,6 +31,8 @@ const COPY_MAX_BYTES: usize = 64 * 1024;
 const RENDER_PATH_ROOT: u64 = 14_695_981_039_346_656_037;
 const MAX_RENDERED_TABLE_COLUMNS: u16 = 64;
 
+const BODY_TEXT_SIZE: gpui::Pixels = px(14.);
+
 static MARKDOWN_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct MarkdownView {
@@ -500,7 +502,7 @@ impl Render for MarkdownView {
             .size_full()
             .bg(palette.background)
             .text_color(palette.body)
-            .text_size(px(14.))
+            .text_size(BODY_TEXT_SIZE)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .child(body);
@@ -945,8 +947,12 @@ fn render_heading(level: HeadingLevel, spans: &[Span], palette: MarkdownPalette)
     row.into_any_element()
 }
 
+fn paragraph_row() -> gpui::Div {
+    div().w_full()
+}
+
 fn render_paragraph(spans: &[Span], palette: MarkdownPalette) -> impl IntoElement {
-    let mut row = div().w_full();
+    let mut row = paragraph_row();
     if let Some(styled) = build_styled_text(spans, palette, palette.body, FontWeight::NORMAL) {
         row = row.child(styled);
     }
@@ -1400,5 +1406,33 @@ mod tests {
             s.push('a');
         }
         let _ = truncate_for_clipboard(&s);
+    }
+
+    #[gpui::test]
+    fn a_markdown_paragraph_breaks_paths_branches_and_urls_after_their_separators(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let palette = MarkdownPalette::from_active();
+        crate::text_wrap_probe::assert_wrap_cases(
+            cx,
+            BODY_TEXT_SIZE,
+            px(0.),
+            |text| {
+                let spans = [Span {
+                    text: text.to_string(),
+                    style: Default::default(),
+                    link_url: None,
+                }];
+                build_styled_text(&spans, palette, palette.body, FontWeight::NORMAL)
+                    .expect("a non-empty paragraph")
+            },
+            |text| {
+                div()
+                    .text_size(BODY_TEXT_SIZE)
+                    .child(paragraph_row().child(text))
+                    .into_any_element()
+            },
+        );
     }
 }
