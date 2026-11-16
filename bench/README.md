@@ -77,9 +77,9 @@ passed both thresholds. No `windows-x86_64` or `macos-aarch64` baseline exists
 yet; the Windows ones are recorded on the dual boot machine with the `.ps1`
 scripts.
 
-Since 2026-10-28, `terminal`, `editor` and `startup` point at `92a5c29d`, the
-GPUI bump to `zed@37faef81`, on the same machine (CPU share 0.99 and 1.00).
-The same suites on `3eaaafb6`, the commit before the bump, give identical
+From 2026-10-28 to 2026-11-16, `terminal`, `editor` and `startup` pointed at
+`92a5c29d`, the GPUI bump to `zed@37faef81`, on the same machine (CPU share
+0.99 and 1.00). The same suites on `3eaaafb6`, the commit before it, gave identical
 allocation columns, and every timing moves within run-to-run noise except
 `textdiff_5k_lines_one_word_each`, about 15 % faster for an unidentified
 reason, and `prepaint_60_rows_warm`, about 3.5 us slower: the code editor's own shape
@@ -87,16 +87,20 @@ cache now copies, hashes and compares each visible line where GPUI's
 `shape_line_by_hash` trusted a caller hash
 ([summary](results/gpui-bump-37faef81-2026-10-28.md)).
 
-The allocation baselines follow the GPUI upgrade to `zed@703b5ac3`:
-`editor-alloc.json` points at `988bd78f`, and `terminal-alloc.json` at
-`bb8621dc`, which adds the three `paths_*` cases measuring per-paint path
-building (badges within the 0.4 ms budget, terminal strokes 11 to 17 % slower
-than on `37faef81`; [summary](results/gpui-703b5ac3-paths-2026-11-15.md)).
-The path cases have no row in `terminal.json` yet. The timing baselines
-(`terminal`, `editor`, `startup`) still point at `92a5c29d`: US-027 of
-`tasks/prd-gpui-703b5ac3-upgrade.md` re-baselines them on Fedora, never from WSL2, and the bump
-[summary](results/gpui-bump-703b5ac3-2026-11-16.md) records what the bump
-measured so far.
+Since 2026-11-16, every `linux-x86_64` baseline except `persistent.json`
+points at `d78d92927`, the GPUI upgrade to `zed@703b5ac3`: `terminal`,
+`editor` and `startup` from runs on the same Fedora machine (CPU share 1.00),
+`terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
+--refresh-alloc-baselines` on the same commit (US-027 of
+`tasks/prd-gpui-703b5ac3-upgrade.md`). `terminal.json` now carries the three
+`paths_*` cases that measure per-paint path building (badges within the 0.4 ms
+budget, terminal strokes 14 to 17 % slower than on `37faef81` on Fedora). The
+same suites on `9f606d3aa`, the commit before the upgrade, put every timing
+within 10 % except two bimodal 10 ns medians, with `prepaint_60_rows_warm` the
+slowest at +8 % (accepted), once `d78d92927` removed a regression US-013 had
+brought into the code editor's open path; one allocation column moved,
+`keystroke_3_7mb_plain` (4.0 to 4.05)
+([summary](results/gpui-bump-703b5ac3-2026-11-16.md)).
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the

@@ -2,8 +2,8 @@
 
 US-009 and US-010 of `tasks/prd-gpui-703b5ac3-upgrade.md` check that the new
 frame scheduler keeps keystroke latency and caps an unfocused window at 30
-frames per second. Windows was measured on this date; Linux is still to be
-measured, and macOS is deferred until a Mac is available.
+frames per second. Windows was measured on this date, Linux on 2026-11-16
+(US-024), and macOS is deferred until a Mac is available.
 
 ## Windows
 
@@ -70,25 +70,72 @@ a detached pane on a second display, updates streaming output at most 30
 times per second. GPUI lifts that cap during sustained high-rate input to the
 window, such as a scroll. `CHANGELOG.md` records it.
 
-## Linux: to be measured
+## Linux (US-024, 2026-11-16)
 
-Not measured: this host has no Linux desktop session (WSLg is an RDP-backed
-compositor, not one). On Fedora 44 (GNOME, Wayland), same hardware:
+Machine: the same hardware booted into Fedora 45, GNOME 51.1 on Wayland, the
+NVIDIA 620.70.06 driver (open kernel modules), two 2560 by 1440 displays at
+scale 1; GPUI selected the RTX 4070 Ti SUPER through Vulkan. Two debug builds
+from their own worktrees with their own target directories, the probe
+thresholds lowered to 0 in those copies only:
 
-1. Build both copies as above (`git archive 9f606d3aa` and the branch commit),
-   lower the two probe thresholds in each, `cargo build -p paneflow-app -p
-   paneflow-host --locked` with a private `CARGO_TARGET_DIR`.
-2. Seed a `PANEFLOW_HOME` per pin with `session.json` (one workspace, one
-   terminal pane), `paneflow.json` (`{"default_shell": "/bin/bash"}`),
-   `window-state.json` and `telemetry_id`.
-3. Launch with `PANEFLOW_LATENCY_PROBE=1 PANEFLOW_IPC_SCRIPTING=1
-   RUST_LOG=warn`, stderr to a file, keep the window focused and type 200
-   characters at about 7 per second (by hand or with `ydotool type --delay 150`).
-4. Start `yes stream` through `paneflow send <pane> 'yes stream' --submit`,
-   count `[latency] paint:` lines for 10 s focused, then 10 s with another
-   window focused.
-5. Pass: medians within 2 ms of each other, unfocused paints at most 30 in any
-   whole second on the new pin.
+- old pin: `9f606d3aa` (GPUI `37faef81`);
+- new pin: `2f8a3d376` (GPUI `703b5ac3`). `d78d92927` changes only the code
+  editor's longest-line measure, which neither figure touches.
+
+Each run starts the debug build on its own `PANEFLOW_HOME` seeded with one
+workspace holding one `/bin/bash` pane, `PANEFLOW_LATENCY_PROBE=1`,
+`PANEFLOW_IPC_SCRIPTING=1` and `RUST_LOG=warn`, and runs `cat >/dev/null` in
+the pane through `paneflow send ... --submit`. The keys are typed with
+`agent-desktop press`, which goes through Mutter's RemoteDesktop interface and
+so reaches the window that holds the focus: 200 letters 130 ms apart, Enter
+every 40 and at the end. GPUI windows expose no accessibility tree, so the
+driver cannot check the focus before a key the way the Windows driver did;
+instead it checks after every key that the test window's log gained a
+`key-handler→paint-cpu` line, and aborts the run otherwise, so at most one key
+could reach another window. No run aborted. It then ends `cat`, starts
+`yes stream` the same way and counts terminal paints for 10 s focused, then
+launches GNOME Calculator, which takes the focus, and counts 10 s more. The
+calculator's AT-SPI `is_focused` state is read before and after that window,
+and a run counts toward the unfocused rate only if it reads true both times.
+
+### Focused keystroke latency
+
+| Pin | Run | Keystrokes | Median | p95 | Max |
+|---|---|---|---|---|---|
+| old `37faef81` | 1 | 205 | 3.10 ms | 3.58 ms | 4.29 ms |
+| old `37faef81` | 2 | 205 | 3.04 ms | 3.58 ms | 5.67 ms |
+| old `37faef81` | 3 | 205 | 3.05 ms | 3.56 ms | 4.69 ms |
+| old `37faef81` | 4 | 205 | 3.04 ms | 3.74 ms | 4.32 ms |
+| old `37faef81` | 5 | 205 | 3.02 ms | 3.70 ms | 4.75 ms |
+| new `703b5ac3` | 1 | 205 | 3.10 ms | 3.65 ms | 4.67 ms |
+| new `703b5ac3` | 2 | 205 | 3.11 ms | 3.70 ms | 4.19 ms |
+| new `703b5ac3` | 3 | 205 | 3.13 ms | 3.66 ms | 3.98 ms |
+| new `703b5ac3` | 4 | 205 | 3.15 ms | 3.73 ms | 4.36 ms |
+| new `703b5ac3` | 5 | 205 | 3.13 ms | 3.74 ms | 4.24 ms |
+| new `703b5ac3` | 6 | 205 | 3.10 ms | 3.72 ms | 4.23 ms |
+
+The new pin is 0.07 ms slower at the median (3.12 against 3.05 ms, means of
+the run medians) and at the p95 (3.70 against 3.63 ms). **Within the 2 ms
+budget.** Every keystroke reached the test window.
+
+### Unfocused frame rate
+
+| Pin | Run | Focused, paints/s | Unfocused, paints/s | Unfocused, busiest second |
+|---|---|---|---|---|
+| old `37faef81` | 1 | 100.5 | 92.3 | 100 |
+| old `37faef81` | 3 | 98.6 | 91.5 | 99 |
+| old `37faef81` | 5 | 99.3 | 90.8 | 95 |
+| new `703b5ac3` | 5 | 99.8 | 25.4 | 26 |
+| new `703b5ac3` | 6 | 99.8 | 25.7 | 27 |
+
+**An unfocused window presents at most 30 frames per second on Linux too**
+(25.4 and 25.7 on average, never more than 27 in a whole second), where the
+old pin presented 91 to 92. The other runs carry latency only: the calculator
+stayed open from an earlier run, so the new launch did not take the focus and
+those runs read `is_focused` false.
+
+Not measured on Linux: KDE Plasma, X11 and Mesa. Only GNOME on Wayland with the
+NVIDIA driver was run.
 
 ## macOS: deferred until a Mac is available
 
