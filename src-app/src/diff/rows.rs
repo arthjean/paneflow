@@ -102,7 +102,9 @@ pub fn unified_file_spans(rows: &[DisplayRow]) -> Vec<FileSpan> {
             }),
             RowKind::Context | RowKind::Added | RowKind::Removed => {
                 if let Some(span) = spans.last_mut() {
-                    span.max_chars = span.max_chars.max(r.text.chars().count());
+                    span.max_chars = span
+                        .max_chars
+                        .max(crate::tab_stops::display_columns(&r.text));
                 }
             }
             RowKind::Fold | RowKind::Binary | RowKind::Truncated => {}
@@ -122,9 +124,11 @@ pub fn split_file_spans(rows: &[SplitRow]) -> Vec<FileSpan> {
             }),
             SplitRow::Pair { left, right } => {
                 if let Some(span) = spans.last_mut() {
-                    span.max_chars = span.max_chars.max(left.text.chars().count());
+                    span.max_chars = span
+                        .max_chars
+                        .max(crate::tab_stops::display_columns(&left.text));
                     let right_max = span.right_max_chars.get_or_insert(0);
-                    *right_max = (*right_max).max(right.text.chars().count());
+                    *right_max = (*right_max).max(crate::tab_stops::display_columns(&right.text));
                 }
             }
             SplitRow::Note(_) | SplitRow::Fold(_) => {}

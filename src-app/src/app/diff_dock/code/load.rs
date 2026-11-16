@@ -134,6 +134,13 @@ pub(crate) fn read_only_reason_for(
     }
 }
 
+pub(crate) fn longest_line_chars(text: &str) -> usize {
+    text.lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
 fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), CodeLoadError> {
     let disk = read_disk_text(path)?;
     let document = build_document(path.to_path_buf(), &disk.text, disk.read_only);
@@ -142,7 +149,7 @@ fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), Cod
 
 pub(crate) fn build_document(path: PathBuf, text: &str, read_only_on_disk: bool) -> CodeDocument {
     let mut doc = CodeDocument::new(path, text);
-    let reason = read_only_reason_for(doc.longest_line_chars(), read_only_on_disk);
+    let reason = read_only_reason_for(longest_line_chars(text), read_only_on_disk);
     doc.set_read_only(reason);
     doc
 }

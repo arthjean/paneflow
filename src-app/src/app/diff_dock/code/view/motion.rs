@@ -54,7 +54,7 @@ impl CodeView {
         };
         let offset = self.selection.cursor();
         let row = doc.byte_to_line(offset);
-        let column = cursor::goal_column(doc, offset);
+        let column = cursor::display_column(doc, offset);
         self.scroll.set_line_count(doc.line_count());
 
         let target = reveal_rows(row, viewport_h, self.scroll.max_rows(), self.scroll.rows());

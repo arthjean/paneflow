@@ -204,6 +204,11 @@ interprocess.workspace = true
 # deduplicates - the direct declaration is only needed to `use` the trait.
 unicode-segmentation = "1"
 
+# Display columns of wide characters, so a tab in the code editor and the
+# diff view reaches the same 4-column stop on every platform (tab_stops.rs).
+# Already a transitive dep, so Cargo deduplicates.
+unicode-width = "0.2"
+
 # `ignore` is the gitignore-respecting walker used by ripgrep. Powers the
 # path picker index and the file tree's gitignore filtering.
 ignore = "0.4"

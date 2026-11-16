@@ -542,4 +542,70 @@ mod tests {
         assert_eq!(view.read_with(cx, |view, _| view.stale_visible_rows()), 0);
         assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
     }
+
+    #[gpui::test]
+    fn a_tab_indented_row_is_as_wide_as_its_four_column_expansion(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(
+            cx,
+            "/nonexistent/tabs.txt",
+            "\tx\n    x\na\tb\na   b\nabcd\te\nabcd    e\n",
+        );
+        let widths = view.read_with(cx, |view, _| {
+            (0..6).map(|row| view.row_width(row)).collect::<Vec<_>>()
+        });
+        assert!(widths.iter().all(Option::is_some), "{widths:?}");
+        assert_eq!(widths[0], widths[1], "a leading tab spans four columns");
+        assert_eq!(
+            widths[2], widths[3],
+            "a tab after one column reaches column four"
+        );
+        assert_eq!(
+            widths[4], widths[5],
+            "a tab on a stop advances a whole stop"
+        );
+    }
+
+    #[gpui::test]
+    fn a_painted_tab_keeps_one_buffer_character_and_maps_clicks_and_carets(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{point, px};
+        let (view, cx) = scrolled(cx, "/nonexistent/tab-caret.txt", "a\tbcd\n");
+        view.read_with(cx, |view, _| {
+            let doc = view.document().expect("document");
+            assert_eq!(doc.line_string(0).as_deref(), Some("a\tbcd"));
+            assert_eq!(doc.slice_string(0..3), "a\tb");
+            assert_eq!(doc.to_disk_string(), "a\tbcd\n");
+
+            let hits = view.hits.borrow();
+            let line = hits.lines[0].as_ref().expect("a shaped row");
+            assert_eq!(line.shaped().text.as_ref(), "a   bcd");
+            assert_eq!(line.x_for_index(1), line.shaped().x_for_index(1));
+            assert_eq!(line.x_for_index(2), line.shaped().x_for_index(4));
+            assert_eq!(line.x_for_index(3), line.shaped().x_for_index(5));
+
+            let y = px(hits.row_top(0) + CODE_ROW_HEIGHT / 2.);
+            let at_column = |column: usize| {
+                let x = px(hits.text_x) + line.shaped().x_for_index(column);
+                hits.offset_at(doc, point(x, y))
+            };
+            assert_eq!(at_column(1), 1, "the left edge of the tab is before it");
+            assert_eq!(at_column(2), 1, "the left half of the tab lands before it");
+            assert_eq!(at_column(3), 2, "the right half of the tab lands after it");
+            assert_eq!(at_column(4), 2, "the right edge of the tab is after it");
+        });
+    }
+
+    #[gpui::test]
+    fn the_caret_after_a_tab_is_revealed_at_its_expanded_column(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/tab-reveal.txt", "\t\tx\n");
+        view.read_with(cx, |view, _| {
+            let doc = view.document().expect("document");
+            assert_eq!(
+                crate::app::diff_dock::code::cursor::display_column(doc, 2),
+                8
+            );
+            assert_eq!(crate::app::diff_dock::code::cursor::goal_column(doc, 2), 2);
+        });
+    }
 }

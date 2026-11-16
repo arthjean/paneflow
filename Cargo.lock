@@ -4460,6 +4460,7 @@ dependencies = [
  "tree-sitter-yaml",
  "ttf-parser",
  "unicode-segmentation",
+ "unicode-width",
  "ureq",
  "uuid",
  "wayland-client",

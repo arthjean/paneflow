@@ -29,12 +29,7 @@ pub(super) struct DiskRead {
 
 pub(super) fn read_for_reload(path: &Path) -> Result<DiskRead, CodeLoadError> {
     let disk = super::super::load::read_disk_text(path)?;
-    let longest = disk
-        .text
-        .lines()
-        .map(|line| line.chars().count())
-        .max()
-        .unwrap_or(0);
+    let longest = super::super::load::longest_line_chars(&disk.text);
     Ok(DiskRead {
         facts: DiskFacts {
             read_only: super::super::load::read_only_reason_for(longest, disk.read_only),
@@ -1311,7 +1306,7 @@ mod tests {
         cx.run_until_parked();
         view.update(cx, |view, _cx| {
             assert_eq!(
-                view.document().expect("document").longest_line_chars(),
+                view.document().expect("document").longest_line_columns(),
                 "a much longer replacement line".len()
             );
         });

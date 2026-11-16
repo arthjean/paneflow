@@ -103,7 +103,7 @@ impl EntityInputHandler for CodeView {
         let doc = self.state.document()?;
         let start = doc.utf16_to_byte(range_utf16.start);
         let row = doc.byte_to_line(start);
-        let column = cursor::goal_column(doc, start);
+        let column = cursor::display_column(doc, start);
         let hits = self.hits.borrow();
         let (x, y) = if hits.lines.is_empty() {
             (

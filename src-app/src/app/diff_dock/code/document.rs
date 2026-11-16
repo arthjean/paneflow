@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use ropey::{Rope, RopeSlice};
 
+use crate::tab_stops;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LineEnding {
     Lf,
@@ -61,7 +63,7 @@ pub(crate) struct CodeDocument {
     text: Rope,
     line_ending: LineEnding,
     read_only: Option<ReadOnlyReason>,
-    longest_line_chars: usize,
+    longest_line_columns: usize,
     revision: u64,
     longest_line_stale: bool,
 }
@@ -83,14 +85,14 @@ impl CodeDocument {
         let line_ending = LineEnding::detect(raw);
         let ext = crate::diff::file_ext(&path.to_string_lossy());
         let normalized = normalize_newlines(raw);
-        let longest_line_chars = measure_text_lines(&normalized);
+        let longest_line_columns = measure_text_lines(&normalized);
         Self {
             path,
             ext,
             text: Rope::from_str(&normalized),
             line_ending,
             read_only: None,
-            longest_line_chars,
+            longest_line_columns,
             revision: 0,
             longest_line_stale: false,
         }
@@ -141,8 +143,8 @@ impl CodeDocument {
         self.read_only = reason;
     }
 
-    pub(crate) fn longest_line_chars(&self) -> usize {
-        self.longest_line_chars
+    pub(crate) fn longest_line_columns(&self) -> usize {
+        self.longest_line_columns
     }
 
     pub(crate) fn longest_line_snapshot(&self) -> Option<(Rope, u64)> {
@@ -158,7 +160,7 @@ impl CodeDocument {
         if revision != self.revision || !self.longest_line_stale {
             return false;
         }
-        self.longest_line_chars = longest;
+        self.longest_line_columns = longest;
         self.longest_line_stale = false;
         true
     }
@@ -218,7 +220,7 @@ impl CodeDocument {
         let start_byte = self.snap_to_boundary(byte_offset);
         let start_point = self.point_at(start_byte);
         let may_shrink_longest = normalized.contains('\n')
-            && self.line_chars(start_point.row) == self.longest_line_chars;
+            && self.line_columns(start_point.row) == self.longest_line_columns;
         let char_idx = self.text.byte_to_char(start_byte);
         self.text.insert(char_idx, &normalized);
         self.revision = self.revision.wrapping_add(1);
@@ -249,7 +251,7 @@ impl CodeDocument {
         let start_point = self.point_at(start_byte);
         let old_end_point = self.point_at(old_end_byte);
         let may_shrink_longest = start_point.row != old_end_point.row
-            || self.line_chars(start_point.row) == self.longest_line_chars;
+            || self.line_columns(start_point.row) == self.longest_line_columns;
         let start_char = self.text.byte_to_char(start_byte);
         let end_char = self.text.byte_to_char(old_end_byte);
         self.text.remove(start_char..end_char);
@@ -311,34 +313,35 @@ impl CodeDocument {
         Some(start..end)
     }
 
-    fn line_chars(&self, row: usize) -> usize {
-        self.line(row).map_or(0, |l| l.len_chars())
+    fn line_columns(&self, row: usize) -> usize {
+        self.line(row)
+            .map_or(0, |line| line.chars().fold(0, tab_stops::advance))
     }
 
     fn remeasure_rows(&mut self, first_row: usize, last_row: usize) {
         let last = last_row.min(self.text.len_lines().saturating_sub(1));
         for row in first_row..=last {
-            let chars = self.line_chars(row);
-            if chars > self.longest_line_chars {
-                self.longest_line_chars = chars;
+            let columns = self.line_columns(row);
+            if columns > self.longest_line_columns {
+                self.longest_line_columns = columns;
             }
         }
     }
 }
 
 fn measure_text_lines(text: &str) -> usize {
-    if text.is_ascii() {
-        return text
-            .as_bytes()
-            .split(|byte| *byte == b'\n')
-            .map(<[u8]>::len)
-            .max()
-            .unwrap_or(0);
+    text.split('\n').map(line_columns).max().unwrap_or(0)
+}
+
+fn line_columns(line: &str) -> usize {
+    if !line.is_ascii() {
+        return tab_stops::display_columns(line);
     }
-    text.split('\n')
-        .map(|line| line.chars().count())
-        .max()
-        .unwrap_or(0)
+    line.bytes().fold(0, |column, byte| match byte {
+        b'\t' => column + tab_stops::tab_len(column),
+        0x20..=0x7e => column + 1,
+        _ => column,
+    })
 }
 
 fn measure_rope_lines(text: &Rope) -> usize {
@@ -349,7 +352,7 @@ fn measure_rope_lines(text: &Rope) -> usize {
             longest = longest.max(current);
             current = 0;
         } else {
-            current += 1;
+            current = tab_stops::advance(current, ch);
         }
     }
     longest.max(current)
@@ -389,7 +392,7 @@ mod tests {
         let d = doc("");
         assert_eq!(d.line_count(), 1);
         assert_eq!(d.line_string(0).as_deref(), Some(""));
-        assert_eq!(d.longest_line_chars(), 0);
+        assert_eq!(d.longest_line_columns(), 0);
     }
 
     #[test]
@@ -523,21 +526,34 @@ mod tests {
     #[test]
     fn longest_line_is_maintained_without_a_full_rescan() {
         let mut d = doc("ab\nabcd\nabc\n");
-        assert_eq!(d.longest_line_chars(), 4);
+        assert_eq!(d.longest_line_columns(), 4);
         d.insert(0, "ZZZZZZZZ").expect("insert");
-        assert_eq!(d.longest_line_chars(), 10);
+        assert_eq!(d.longest_line_columns(), 10);
         d.remove(0..8).expect("remove");
-        assert_eq!(d.longest_line_chars(), 10);
+        assert_eq!(d.longest_line_columns(), 10);
         let (snapshot, revision) = d.longest_line_snapshot().expect("stale maximum");
         let longest = CodeDocument::measure_longest_line(&snapshot);
         assert!(d.apply_longest_line_measurement(revision, longest));
-        assert_eq!(d.longest_line_chars(), 4);
+        assert_eq!(d.longest_line_columns(), 4);
     }
 
     #[test]
     fn longest_line_counts_characters_not_bytes() {
         let d = doc("ééé\nab\n");
-        assert_eq!(d.longest_line_chars(), 3);
+        assert_eq!(d.longest_line_columns(), 3);
+    }
+
+    #[test]
+    fn longest_line_counts_expanded_tab_columns() {
+        let mut d = doc("ab\n\t\tx\nabcdefg\n");
+        assert_eq!(d.longest_line_columns(), 9);
+        let rope = Rope::from_str("ab\n\t\tx\nabcdefg\n");
+        assert_eq!(CodeDocument::measure_longest_line(&rope), 9);
+        let end = d.line_byte_range(0).expect("first row").end;
+        d.insert(end, "\t\t\t");
+        assert_eq!(d.longest_line_columns(), 12);
+        let d = doc("中\tx\n");
+        assert_eq!(d.longest_line_columns(), 5);
     }
 
     #[test]
@@ -554,7 +570,7 @@ mod tests {
         let (snapshot, revision) = d.longest_line_snapshot().expect("stale maximum");
         let longest = CodeDocument::measure_longest_line(&snapshot);
         assert!(d.apply_longest_line_measurement(revision, longest));
-        assert_eq!(d.longest_line_chars(), 12);
+        assert_eq!(d.longest_line_columns(), 12);
     }
 
     #[test]
@@ -566,7 +582,7 @@ mod tests {
         d.insert(d.len_bytes(), "much longer now")
             .expect("new edit");
         assert!(!d.apply_longest_line_measurement(revision, longest));
-        assert_eq!(d.longest_line_chars(), 15);
+        assert_eq!(d.longest_line_columns(), 15);
     }
 
     #[test]

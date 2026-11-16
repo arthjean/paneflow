@@ -65,6 +65,7 @@ mod space_env;
 mod startup_bench;
 mod startup_trace;
 mod system_info;
+mod tab_stops;
 mod telemetry;
 mod terminal;
 pub mod theme;

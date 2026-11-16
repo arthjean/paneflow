@@ -28,6 +28,7 @@ use super::navigation::{
 };
 use super::view::CodeView;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
+use crate::tab_stops::TabExpandedLine;
 use crate::widgets::scrollbar::ScrollableHandle;
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = 18.0;
@@ -102,8 +103,8 @@ pub(crate) fn text_viewport_width(element_w: f32, gutter_w: f32) -> f32 {
     (element_w - gutter_w - CODE_PAD_L - CODE_PAD_R).max(0.0)
 }
 
-pub(crate) fn max_h_offset(longest_line_chars: usize, char_w: f32, text_viewport_w: f32) -> f32 {
-    let content_w = longest_line_chars as f32 * char_w + H_SCROLL_MARGIN;
+pub(crate) fn max_h_offset(longest_line_columns: usize, char_w: f32, text_viewport_w: f32) -> f32 {
+    let content_w = longest_line_columns as f32 * char_w + H_SCROLL_MARGIN;
     (content_w - text_viewport_w).max(0.0)
 }
 
@@ -351,14 +352,15 @@ pub(crate) struct CodeHitMap {
     pub(crate) markers: Vec<MarkerHit>,
     pub(crate) materialized_lines: usize,
     pub(crate) materialized_numbers: usize,
-    pub(crate) lines: Vec<Option<ShapedLine>>,
+    pub(crate) lines: Vec<Option<TabExpandedLine>>,
     pub(crate) shapes: CodeShapes,
 }
 
 struct CachedShape {
     font_size: Pixels,
     runs: Vec<TextRun>,
-    line: ShapedLine,
+    source: SharedString,
+    line: TabExpandedLine,
     seen: bool,
 }
 
@@ -375,7 +377,7 @@ impl ShapeCache {
         font_size: Pixels,
         runs: &[TextRun],
         text_system: &WindowTextSystem,
-    ) -> (ShapedLine, bool) {
+    ) -> (TabExpandedLine, bool) {
         let Self { entries, text } = self;
         text.clear();
         for chunk in line.chunks() {
@@ -401,7 +403,7 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (ShapedLine, bool) {
+    ) -> (TabExpandedLine, bool) {
         Self::shape_in(
             &mut self.entries,
             key,
@@ -421,18 +423,20 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (ShapedLine, bool) {
+    ) -> (TabExpandedLine, bool) {
         let bucket = entries.entry(key).or_default();
         if let Some(cached) = bucket.iter_mut().find(|cached| {
-            cached.font_size == font_size && cached.runs == runs && holds(&cached.line.text)
+            cached.font_size == font_size && cached.runs == runs && holds(&cached.source)
         }) {
             cached.seen = true;
             return (cached.line.clone(), false);
         }
-        let line = text_system.shape_line(materialize(), font_size, runs, None);
+        let source = materialize();
+        let line = TabExpandedLine::shape(&source, font_size, runs, text_system);
         bucket.push(CachedShape {
             font_size,
             runs: runs.to_vec(),
+            source,
             line: line.clone(),
             seen: true,
         });
@@ -680,7 +684,7 @@ impl Element for CodeElement {
         );
         let element_w = (f32::from(bounds.size.width) - scrollbar_w - minimap_w).max(0.0);
         let text_viewport_w = text_viewport_width(element_w, gutter_w);
-        let h_max = max_h_offset(doc.longest_line_chars(), memo.digit_w, text_viewport_w);
+        let h_max = max_h_offset(doc.longest_line_columns(), memo.digit_w, text_viewport_w);
         let h_offset = self.h_offset.clamp(0.0, h_max);
         let scrollbar_h = if display.scrollbar && h_max > SCROLL_EPSILON {
             SCROLLBAR_SIZE
@@ -911,7 +915,7 @@ impl Element for CodeElement {
             let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
             glyphs.push(CodeGlyph {
                 origin: point(num_x, y),
-                line: num_line,
+                line: num_line.into_shaped(),
                 clip: None,
             });
 
@@ -1008,7 +1012,7 @@ impl Element for CodeElement {
             if let Some(line) = line {
                 glyphs.push(CodeGlyph {
                     origin,
-                    line: line.clone(),
+                    line: line.shaped().clone(),
                     clip: Some(text_clip),
                 });
                 hits.lines.push(Some(line));

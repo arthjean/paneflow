@@ -455,12 +455,15 @@ mod tests {
                 EditGroup::Atomic,
                 cx,
             ));
-            assert_eq!(view.document().expect("document").longest_line_chars(), 16);
+            assert_eq!(
+                view.document().expect("document").longest_line_columns(),
+                16
+            );
         });
         for _ in 0..100 {
             cx.run_until_parked();
             if view.update(cx, |view, _cx| {
-                view.document().expect("document").longest_line_chars() == 5
+                view.document().expect("document").longest_line_columns() == 5
             }) {
                 break;
             }
@@ -468,7 +471,7 @@ mod tests {
         }
 
         view.update(cx, |view, _cx| {
-            assert_eq!(view.document().expect("document").longest_line_chars(), 5);
+            assert_eq!(view.document().expect("document").longest_line_columns(), 5);
         });
     }
 
