@@ -4,6 +4,7 @@ pub(super) mod background;
 pub(super) mod cursor;
 pub(super) mod decorations;
 pub(super) mod kitty;
+pub(super) mod masks;
 pub(super) mod overlay;
 pub(super) mod scrollbar;
 pub(super) mod selection;

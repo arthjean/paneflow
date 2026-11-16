@@ -25,7 +25,7 @@ pub(super) struct Lines {
     pub left: Arm,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Corner {
     TopLeft,
     TopRight,
@@ -57,7 +57,7 @@ impl Shade {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Powerline {
     RightTriangle,
     RightChevron,

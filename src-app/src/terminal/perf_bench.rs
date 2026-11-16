@@ -582,7 +582,7 @@ const TAB_STRIP_BADGES: usize = 12;
 const TAB_STRIP_PITCH: f32 = 140.0;
 const BOX_DRAWING_ROW: &str = "╭╮╰╯╱╲╳";
 
-type PathPaint = Rc<dyn Fn(&mut gpui::Window)>;
+type PathPaint = Rc<dyn Fn(&mut gpui::Window, &mut gpui::App)>;
 
 struct PathPaintBench {
     paint: PathPaint,
@@ -599,7 +599,7 @@ impl gpui::Render for PathPaintBench {
         let timer = self.timer.clone();
         gpui::canvas(
             |_, _, _| {},
-            move |_, _, window, _| timer.borrow_mut().time(|| paint(window)),
+            move |_, _, window, cx| timer.borrow_mut().time(|| paint(window, cx)),
         )
         .size_full()
     }
@@ -699,7 +699,7 @@ fn path_scenarios(metrics: &mut Vec<Metric>) {
         &mut cx,
         "paths_tab_strip_12_badges",
         "paint of 12 tab badges at scale 2, each building its ring, body, two-contour highlight band and rim (48 shapes) at their final bounds and binning those 4 paths",
-        Rc::new(move |window| {
+        Rc::new(move |window, _| {
             for &bounds in &badges {
                 crate::pane::paint_badge_tile(bounds, background, ring, window);
             }
@@ -715,8 +715,8 @@ fn path_scenarios(metrics: &mut Vec<Metric>) {
     metrics.push(measure_path_paint(
         &mut cx,
         "paths_curly_underline_200x50",
-        "terminal decoration paint of a 200x50 screen with a curly underline on every row: one stroke of 400 cubic segments per row, built and binned at scale 2",
-        Rc::new(move |window| paint_decoration_paths(&curly, cell_metrics, window)),
+        "terminal decoration paint of a 200x50 screen with a curly underline on every row: one cached undercurl mask per cell, painted as a sprite at scale 2",
+        Rc::new(move |window, cx| paint_decoration_paths(&curly, cell_metrics, window, cx)),
     ));
 
     let box_drawing = Rc::new(path_layout(&box_drawing_screen()));
@@ -728,8 +728,8 @@ fn path_scenarios(metrics: &mut Vec<Metric>) {
     metrics.push(measure_path_paint(
         &mut cx,
         "paths_box_drawing_200x50",
-        "terminal sprite paint of a 200x50 screen of rounded corners and diagonals: one stroke per arc or diagonal, two per cross, built and binned at scale 2",
-        Rc::new(move |window| paint_sprite_paths(&box_drawing, cell_metrics, window)),
+        "terminal sprite paint of a 200x50 screen of rounded corners and diagonals: one cached mask per arc, diagonal or cross, painted as a sprite at scale 2",
+        Rc::new(move |window, cx| paint_sprite_paths(&box_drawing, cell_metrics, window, cx)),
     ));
 }
 

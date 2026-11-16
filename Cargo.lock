@@ -4429,6 +4429,7 @@ dependencies = [
  "pulldown-cmark",
  "raw-window-handle",
  "regex",
+ "resvg",
  "ropey",
  "rust-embed",
  "semver",

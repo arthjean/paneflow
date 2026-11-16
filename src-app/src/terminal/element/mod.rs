@@ -897,11 +897,17 @@ pub(crate) fn decoration_and_sprite_counts(layout: &LayoutState) -> (usize, usiz
 }
 
 #[cfg(test)]
-pub(crate) fn paint_sprite_paths(layout: &LayoutState, metrics: CellMetrics, window: &mut Window) {
+pub(crate) fn paint_sprite_paths(
+    layout: &LayoutState,
+    metrics: CellMetrics,
+    window: &mut Window,
+    cx: &App,
+) {
     paint::sprites::paint_sprites(
         layout,
         &CellGeometry::new(Point::default(), metrics),
         window,
+        cx,
     );
 }
 
@@ -910,11 +916,13 @@ pub(crate) fn paint_decoration_paths(
     layout: &LayoutState,
     metrics: CellMetrics,
     window: &mut Window,
+    cx: &App,
 ) {
     paint::decorations::paint_decorations(
         layout,
         &CellGeometry::new(Point::default(), metrics),
         window,
+        cx,
     );
 }
 
@@ -1765,7 +1773,7 @@ impl Element for TerminalElement {
 
             window.paint_layer(|window| {
                 paint::record_step(paint::PaintStep::TextLayer);
-                paint::sprites::paint_sprites(&layout, &geom, window);
+                paint::sprites::paint_sprites(&layout, &geom, window, cx);
                 paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
                 paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
                 paint::record_step(paint::PaintStep::Glyphs);
@@ -1773,7 +1781,7 @@ impl Element for TerminalElement {
             });
 
             paint::record_step(paint::PaintStep::Decorations);
-            paint::decorations::paint_decorations(&layout, &geom, window);
+            paint::decorations::paint_decorations(&layout, &geom, window, cx);
 
             paint::record_step(paint::PaintStep::KittyAboveText);
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
@@ -1886,8 +1894,8 @@ fn paint_overscan_row(
     let cell_y_bounds = geom.y_boundaries(layout.desired_rows);
     paint::background::paint_cell_backgrounds(layout, None, &cell_x_bounds, &cell_y_bounds, window);
     paint::background::paint_block_quads(layout, &cell_x_bounds, &cell_y_bounds, window);
-    paint::sprites::paint_sprites(layout, geom, window);
-    paint::decorations::paint_decorations(layout, geom, window);
+    paint::sprites::paint_sprites(layout, geom, window, cx);
+    paint::decorations::paint_decorations(layout, geom, window, cx);
     paint::text::paint_text_runs(layout, geom, base_font, font_size, window, cx);
     paint::text::paint_symbols(layout, geom, font_size, window, cx);
 }

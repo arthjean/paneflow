@@ -1,10 +1,11 @@
-use gpui::{Hsla, PathBuilder, Pixels, Point, Window, fill, point, px};
+use gpui::{App, Hsla, Window, fill};
 
 use super::super::LayoutState;
 use super::super::geometry::CellGeometry;
 use super::super::sprites::{Arm, Corner, DashGap, Lines, Powerline, Sprite};
+use super::masks::{MaskKey, MaskShape, Outline, paint_mask};
 
-pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
+pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Window, cx: &App) {
     if layout.sprites().next().is_none() || layout.desired_cols == 0 || layout.desired_rows == 0 {
         return;
     }
@@ -22,6 +23,7 @@ pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Win
         let mut canvas = Canvas {
             geom,
             window,
+            cx,
             x0,
             y0,
             width: geom.x_device(col_end) - x0,
@@ -38,20 +40,17 @@ pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Win
                 canvas.dash_horizontal(count, heavy, gap)
             }
             Sprite::DashVertical { count, heavy, gap } => canvas.dash_vertical(count, heavy, gap),
-            Sprite::Arc(corner) => canvas.arc(corner),
-            Sprite::DiagonalUpperRightToLowerLeft => canvas.diagonal_upper_right_to_lower_left(),
-            Sprite::DiagonalUpperLeftToLowerRight => canvas.diagonal_upper_left_to_lower_right(),
-            Sprite::DiagonalCross => {
-                canvas.diagonal_upper_right_to_lower_left();
-                canvas.diagonal_upper_left_to_lower_right();
-            }
+            Sprite::Arc(corner) => canvas.mask(MaskShape::Arc(corner)),
+            Sprite::DiagonalUpperRightToLowerLeft => canvas.mask(MaskShape::DiagonalRising),
+            Sprite::DiagonalUpperLeftToLowerRight => canvas.mask(MaskShape::DiagonalFalling),
+            Sprite::DiagonalCross => canvas.mask(MaskShape::DiagonalCross),
             Sprite::Shade(shade) => {
                 let (w, h) = (canvas.width, canvas.height);
                 let color = canvas.color.opacity(shade.alpha());
                 canvas.rect_colored(0, 0, w, h, color);
             }
             Sprite::Braille(pattern) => canvas.braille(pattern),
-            Sprite::Powerline(symbol) => canvas.powerline(symbol),
+            Sprite::Powerline(symbol) => canvas.mask(MaskShape::Powerline(symbol)),
         }
     }
 }
@@ -59,6 +58,7 @@ pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Win
 struct Canvas<'a> {
     geom: &'a CellGeometry,
     window: &'a mut Window,
+    cx: &'a App,
     x0: i32,
     y0: i32,
     width: i32,
@@ -95,21 +95,22 @@ impl Canvas<'_> {
         self.rect(x1, y1, x2 - x1, y2 - y1);
     }
 
-    fn pt(&self, x: f32, y: f32) -> Point<Pixels> {
-        point(
-            px((self.x0 as f32 + x) / self.geom.scale_factor),
-            px((self.y0 as f32 + y) / self.geom.scale_factor),
-        )
-    }
-
-    fn stroke_width(&self, device: i32) -> Pixels {
-        px(device.max(1) as f32 / self.geom.scale_factor)
-    }
-
-    fn paint_path(&mut self, builder: PathBuilder) {
-        if let Ok(path) = builder.build() {
-            self.window.paint_path(path, self.color);
-        }
+    fn mask(&mut self, shape: MaskShape) {
+        let key = MaskKey {
+            shape,
+            width: self.width,
+            height: self.height,
+            thickness: self.thickness,
+            offset: 0,
+        };
+        paint_mask(
+            self.window,
+            self.cx,
+            self.geom,
+            (self.x0, self.y0),
+            key,
+            self.color,
+        );
     }
 
     fn lines(&mut self, lines: Lines) {
@@ -343,84 +344,6 @@ impl Canvas<'_> {
         }
     }
 
-    fn arc(&mut self, corner: Corner) {
-        let thick = self.light();
-        let (w, h) = (self.width as f32, self.height as f32);
-        let t = thick as f32;
-        let cx = ((self.width - thick).max(0) / 2) as f32 + t / 2.0;
-        let cy = ((self.height - thick).max(0) / 2) as f32 + t / 2.0;
-        let r = w.min(h) / 2.0;
-        let s = 0.25;
-
-        let mut path = PathBuilder::stroke(self.stroke_width(thick));
-        match corner {
-            Corner::TopLeft => {
-                path.move_to(self.pt(cx, 0.0));
-                path.line_to(self.pt(cx, cy - r));
-                path.cubic_bezier_to(
-                    self.pt(cx - r, cy),
-                    self.pt(cx, cy - s * r),
-                    self.pt(cx - s * r, cy),
-                );
-                path.line_to(self.pt(0.0, cy));
-            }
-            Corner::TopRight => {
-                path.move_to(self.pt(cx, 0.0));
-                path.line_to(self.pt(cx, cy - r));
-                path.cubic_bezier_to(
-                    self.pt(cx + r, cy),
-                    self.pt(cx, cy - s * r),
-                    self.pt(cx + s * r, cy),
-                );
-                path.line_to(self.pt(w, cy));
-            }
-            Corner::BottomLeft => {
-                path.move_to(self.pt(cx, h));
-                path.line_to(self.pt(cx, cy + r));
-                path.cubic_bezier_to(
-                    self.pt(cx - r, cy),
-                    self.pt(cx, cy + s * r),
-                    self.pt(cx - s * r, cy),
-                );
-                path.line_to(self.pt(0.0, cy));
-            }
-            Corner::BottomRight => {
-                path.move_to(self.pt(cx, h));
-                path.line_to(self.pt(cx, cy + r));
-                path.cubic_bezier_to(
-                    self.pt(cx + r, cy),
-                    self.pt(cx, cy + s * r),
-                    self.pt(cx + s * r, cy),
-                );
-                path.line_to(self.pt(w, cy));
-            }
-        }
-        self.paint_path(path);
-    }
-
-    fn diagonal_slopes(&self) -> (f32, f32) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        ((w / h).min(1.0), (h / w).min(1.0))
-    }
-
-    fn diagonal_upper_right_to_lower_left(&mut self) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let (sx, sy) = self.diagonal_slopes();
-        let mut path = PathBuilder::stroke(self.stroke_width(self.light()));
-        path.move_to(self.pt(w + 0.5 * sx, -0.5 * sy));
-        path.line_to(self.pt(-0.5 * sx, h + 0.5 * sy));
-        self.paint_path(path);
-    }
-
-    fn diagonal_upper_left_to_lower_right(&mut self) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let (sx, sy) = self.diagonal_slopes();
-        let mut path = PathBuilder::stroke(self.stroke_width(self.light()));
-        path.move_to(self.pt(-0.5 * sx, -0.5 * sy));
-        path.line_to(self.pt(w + 0.5 * sx, h + 0.5 * sy));
-        self.paint_path(path);
-    }
-
     fn braille(&mut self, pattern: u8) {
         let (width, height) = (self.width, self.height);
         let mut w = (width / 4).min(height / 8);
@@ -490,117 +413,160 @@ impl Canvas<'_> {
             }
         }
     }
+}
 
-    fn fill_polygon(&mut self, points: &[(f32, f32)]) {
-        let mut path = PathBuilder::fill();
-        let mut iter = points.iter();
-        if let Some(&(x, y)) = iter.next() {
-            path.move_to(self.pt(x, y));
-        }
-        for &(x, y) in iter {
-            path.line_to(self.pt(x, y));
-        }
-        path.close();
-        self.paint_path(path);
+const ARC_C: f32 = (std::f32::consts::SQRT_2 - 1.0) * 4.0 / 3.0;
+
+fn stroke_width(thickness: i32) -> f32 {
+    thickness.max(1) as f32
+}
+
+pub(super) fn arc_outline(corner: Corner, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let t = key.thickness as f32;
+    let cx = ((key.width - key.thickness).max(0) / 2) as f32 + t / 2.0;
+    let cy = ((key.height - key.thickness).max(0) / 2) as f32 + t / 2.0;
+    let r = w.min(h) / 2.0;
+    let s = 0.25;
+    let (edge_y, dy) = match corner {
+        Corner::TopLeft | Corner::TopRight => (0.0, -1.0),
+        Corner::BottomLeft | Corner::BottomRight => (h, 1.0),
+    };
+    let (edge_x, dx) = match corner {
+        Corner::TopLeft | Corner::BottomLeft => (0.0, -1.0),
+        Corner::TopRight | Corner::BottomRight => (w, 1.0),
+    };
+    let mut outline = Outline::stroke(stroke_width(key.thickness));
+    outline.move_to(cx, edge_y);
+    outline.line_to(cx, cy + dy * r);
+    outline.cubic_to(
+        (cx + dx * r, cy),
+        (cx, cy + dy * s * r),
+        (cx + dx * s * r, cy),
+    );
+    outline.line_to(edge_x, cy);
+    outline
+}
+
+pub(super) fn diagonal_outline(rising: bool, falling: bool, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let (sx, sy) = ((w / h).min(1.0), (h / w).min(1.0));
+    let mut outline = Outline::stroke(stroke_width(key.thickness));
+    if rising {
+        outline.move_to(w + 0.5 * sx, -0.5 * sy);
+        outline.line_to(-0.5 * sx, h + 0.5 * sy);
     }
-
-    fn powerline(&mut self, symbol: Powerline) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        match symbol {
-            Powerline::RightTriangle => self.fill_polygon(&[(0.0, 0.0), (w, h / 2.0), (0.0, h)]),
-            Powerline::LeftTriangle => self.fill_polygon(&[(w, 0.0), (0.0, h / 2.0), (w, h)]),
-            Powerline::LowerLeftTriangle => self.fill_polygon(&[(0.0, 0.0), (w, h), (0.0, h)]),
-            Powerline::LowerRightTriangle => self.fill_polygon(&[(w, 0.0), (w, h), (0.0, h)]),
-            Powerline::UpperLeftTriangle => self.fill_polygon(&[(0.0, 0.0), (w, 0.0), (0.0, h)]),
-            Powerline::UpperRightTriangle => self.fill_polygon(&[(0.0, 0.0), (w, 0.0), (w, h)]),
-            Powerline::RightChevron => self.chevron(false),
-            Powerline::LeftChevron => self.chevron(true),
-            Powerline::RightHalfCircle => self.half_circle(false),
-            Powerline::LeftHalfCircle => self.half_circle(true),
-            Powerline::RightHalfCircleOutline => self.half_circle_outline(false),
-            Powerline::LeftHalfCircleOutline => self.half_circle_outline(true),
-            Powerline::LeftTrapezoid => self.trapezoids(false),
-            Powerline::RightTrapezoid => self.trapezoids(true),
-        }
+    if falling {
+        outline.move_to(-0.5 * sx, -0.5 * sy);
+        outline.line_to(w + 0.5 * sx, h + 0.5 * sy);
     }
+    outline
+}
 
-    fn mirror_x(&self, mirrored: bool, x: f32) -> f32 {
-        if mirrored { self.width as f32 - x } else { x }
+fn polygon(outline: &mut Outline, points: &[(f32, f32)]) {
+    let mut points = points.iter();
+    if let Some(&(x, y)) = points.next() {
+        outline.move_to(x, y);
     }
-
-    fn chevron(&mut self, mirrored: bool) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let mut path = PathBuilder::stroke(self.stroke_width(self.light()));
-        path.move_to(self.pt(self.mirror_x(mirrored, 0.0), 0.0));
-        path.line_to(self.pt(self.mirror_x(mirrored, w), h / 2.0));
-        path.line_to(self.pt(self.mirror_x(mirrored, 0.0), h));
-        self.paint_path(path);
+    for &(x, y) in points {
+        outline.line_to(x, y);
     }
+    outline.close();
+}
 
-    const ARC_C: f32 = (std::f32::consts::SQRT_2 - 1.0) * 4.0 / 3.0;
-
-    fn half_circle(&mut self, mirrored: bool) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let r = w.min(h / 2.0);
-        let c = Self::ARC_C;
-        let m = |this: &Self, x: f32| this.mirror_x(mirrored, x);
-        let mut path = PathBuilder::fill();
-        path.move_to(self.pt(m(self, 0.0), 0.0));
-        path.cubic_bezier_to(
-            self.pt(m(self, r), r),
-            self.pt(m(self, r * c), 0.0),
-            self.pt(m(self, r), r - r * c),
-        );
-        path.line_to(self.pt(m(self, r), h - r));
-        path.cubic_bezier_to(
-            self.pt(m(self, 0.0), h),
-            self.pt(m(self, r), h - r + r * c),
-            self.pt(m(self, r * c), h),
-        );
-        path.close();
-        self.paint_path(path);
+pub(super) fn powerline_outline(symbol: Powerline, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let t = key.thickness as f32;
+    let filled = |points: &[(f32, f32)]| {
+        let mut outline = Outline::fill();
+        polygon(&mut outline, points);
+        outline
+    };
+    match symbol {
+        Powerline::RightTriangle => filled(&[(0.0, 0.0), (w, h / 2.0), (0.0, h)]),
+        Powerline::LeftTriangle => filled(&[(w, 0.0), (0.0, h / 2.0), (w, h)]),
+        Powerline::LowerLeftTriangle => filled(&[(0.0, 0.0), (w, h), (0.0, h)]),
+        Powerline::LowerRightTriangle => filled(&[(w, 0.0), (w, h), (0.0, h)]),
+        Powerline::UpperLeftTriangle => filled(&[(0.0, 0.0), (w, 0.0), (0.0, h)]),
+        Powerline::UpperRightTriangle => filled(&[(0.0, 0.0), (w, 0.0), (w, h)]),
+        Powerline::RightChevron => chevron(false, key),
+        Powerline::LeftChevron => chevron(true, key),
+        Powerline::RightHalfCircle => half_circle(false, key),
+        Powerline::LeftHalfCircle => half_circle(true, key),
+        Powerline::RightHalfCircleOutline => half_circle_outline(false, key),
+        Powerline::LeftHalfCircleOutline => half_circle_outline(true, key),
+        Powerline::LeftTrapezoid => trapezoids(false, w, h, t),
+        Powerline::RightTrapezoid => trapezoids(true, w, h, t),
     }
+}
 
-    fn half_circle_outline(&mut self, mirrored: bool) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let t = self.light() as f32;
-        let r = (w.min(h / 2.0) - t / 2.0).max(t);
-        let c = Self::ARC_C;
-        let oy = t / 2.0;
-        let m = |this: &Self, x: f32| this.mirror_x(mirrored, x);
-        let mut path = PathBuilder::stroke(self.stroke_width(self.light()));
-        path.move_to(self.pt(m(self, 0.0), oy));
-        path.cubic_bezier_to(
-            self.pt(m(self, r), oy + r),
-            self.pt(m(self, r * c), oy),
-            self.pt(m(self, r), oy + r - r * c),
-        );
-        path.line_to(self.pt(m(self, r), h - oy - r));
-        path.cubic_bezier_to(
-            self.pt(m(self, 0.0), h - oy),
-            self.pt(m(self, r), h - oy - r + r * c),
-            self.pt(m(self, r * c), h - oy),
-        );
-        self.paint_path(path);
-    }
+fn mirror(mirrored: bool, width: f32, x: f32) -> f32 {
+    if mirrored { width - x } else { x }
+}
 
-    fn trapezoids(&mut self, mirrored: bool) {
-        let (w, h) = (self.width as f32, self.height as f32);
-        let t = self.light() as f32;
-        let m = |this: &Self, x: f32| this.mirror_x(mirrored, x);
-        let top = [
-            (m(self, 0.0), 0.0),
-            (m(self, w), 0.0),
-            (m(self, w / 2.0), h / 2.0 - t / 2.0),
-            (m(self, 0.0), h / 2.0 - t / 2.0),
-        ];
-        let bottom = [
-            (m(self, 0.0), h),
-            (m(self, w), h),
-            (m(self, w / 2.0), h / 2.0 + t / 2.0),
-            (m(self, 0.0), h / 2.0 + t / 2.0),
-        ];
-        self.fill_polygon(&top);
-        self.fill_polygon(&bottom);
-    }
+fn chevron(mirrored: bool, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let m = |x: f32| mirror(mirrored, w, x);
+    let mut outline = Outline::stroke(stroke_width(key.thickness));
+    outline.move_to(m(0.0), 0.0);
+    outline.line_to(m(w), h / 2.0);
+    outline.line_to(m(0.0), h);
+    outline
+}
+
+fn half_circle(mirrored: bool, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let r = w.min(h / 2.0);
+    let c = ARC_C;
+    let m = |x: f32| mirror(mirrored, w, x);
+    let mut outline = Outline::fill();
+    outline.move_to(m(0.0), 0.0);
+    outline.cubic_to((m(r), r), (m(r * c), 0.0), (m(r), r - r * c));
+    outline.line_to(m(r), h - r);
+    outline.cubic_to((m(0.0), h), (m(r), h - r + r * c), (m(r * c), h));
+    outline.close();
+    outline
+}
+
+fn half_circle_outline(mirrored: bool, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let t = key.thickness as f32;
+    let r = (w.min(h / 2.0) - t / 2.0).max(t);
+    let c = ARC_C;
+    let oy = t / 2.0;
+    let m = |x: f32| mirror(mirrored, w, x);
+    let mut outline = Outline::stroke(stroke_width(key.thickness));
+    outline.move_to(m(0.0), oy);
+    outline.cubic_to((m(r), oy + r), (m(r * c), oy), (m(r), oy + r - r * c));
+    outline.line_to(m(r), h - oy - r);
+    outline.cubic_to(
+        (m(0.0), h - oy),
+        (m(r), h - oy - r + r * c),
+        (m(r * c), h - oy),
+    );
+    outline
+}
+
+fn trapezoids(mirrored: bool, w: f32, h: f32, t: f32) -> Outline {
+    let m = |x: f32| mirror(mirrored, w, x);
+    let mut outline = Outline::fill();
+    polygon(
+        &mut outline,
+        &[
+            (m(0.0), 0.0),
+            (m(w), 0.0),
+            (m(w / 2.0), h / 2.0 - t / 2.0),
+            (m(0.0), h / 2.0 - t / 2.0),
+        ],
+    );
+    polygon(
+        &mut outline,
+        &[
+            (m(0.0), h),
+            (m(w), h),
+            (m(w / 2.0), h / 2.0 + t / 2.0),
+            (m(0.0), h / 2.0 + t / 2.0),
+        ],
+    );
+    outline
 }
