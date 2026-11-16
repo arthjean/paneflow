@@ -23,7 +23,7 @@ pub(crate) fn candidate_names(tool: &str) -> Vec<String> {
     vec![format!("{tool}.exe"), format!("{tool}.cmd")]
 }
 
-pub(crate) fn find_real_binary(tool: &str) -> Option<PathBuf> {
+pub(crate) fn find_real_binary(tool: &str, excluded: &[PathBuf]) -> Option<PathBuf> {
     let path_var = env::var_os("PATH")?;
     let self_exe = env::current_exe().ok();
     let self_dir = self_exe
@@ -35,6 +35,7 @@ pub(crate) fn find_real_binary(tool: &str) -> Option<PathBuf> {
         env::split_paths(&path_var),
         self_dir.as_deref(),
         self_exe.as_deref(),
+        excluded,
     )
 }
 
@@ -43,6 +44,7 @@ pub(crate) fn find_real_binary_in<I>(
     path_entries: I,
     self_dir: Option<&Path>,
     self_exe: Option<&Path>,
+    excluded: &[PathBuf],
 ) -> Option<PathBuf>
 where
     I: IntoIterator<Item = PathBuf>,
@@ -77,10 +79,23 @@ where
                 );
                 continue;
             }
+            if is_excluded(excluded, &candidate) {
+                continue;
+            }
             return Some(candidate);
         }
     }
     None
+}
+
+fn is_excluded(excluded: &[PathBuf], candidate: &Path) -> bool {
+    if excluded.is_empty() {
+        return false;
+    }
+    let identity = file_identity(candidate);
+    excluded
+        .iter()
+        .any(|known| known == candidate || is_same_file_as_shim(&identity, known))
 }
 
 pub(crate) const HOOK_BINARY_NAME: &str = if cfg!(windows) {

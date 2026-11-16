@@ -363,7 +363,21 @@ agent CLI (claude, codex, opencode, …)
   safe), then execs the real binary. Sixteen agent CLIs are recognized by
   name; unknown tools are reported as themselves. It emits `session_start`,
   `exit` and `session_end` on its own, so presence and exit never depend on
-  the agent cooperating.
+  the agent cooperating. Each shim hands its child `PANEFLOW_SHIM_CHAIN` (depth,
+  agent launches, launch time, argument fingerprint, pane session, tool) and
+  `PANEFLOW_SHIM_CHAIN_TARGETS` (the binaries already resolved for that tool);
+  a chain from another pane session is ignored. A shim started again for the
+  same tool with the same arguments within ten seconds was sent back by a
+  third-party launcher that looked the tool up on `PATH`: it skips those
+  targets, runs the next real binary, or exits 127 naming the launcher. A tool
+  that runs itself with other arguments is ordinary nesting, and eight nested
+  shims is the hard cap whatever the arguments. Only the outermost shim of a
+  pane reports the lifecycle: a shim that inherits a chain stays silent, so an
+  agent that runs another agent CLI keeps the pane's identity. A shim that
+  refuses to launch declares `state=error` under the OSC 7501 record
+  `paneflow-shim` when its stderr is the pane's terminal and no agent runs
+  above it, so a launch that failed in a pane nobody watches still raises
+  attention.
 - **Hooks**: Claude Code and Codex, once their integration is installed,
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
   `exit`, and `session_end` as `agent.event` frames on the host endpoint; the
