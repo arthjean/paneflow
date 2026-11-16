@@ -315,7 +315,7 @@ impl CodeDocument {
 
     fn line_columns(&self, row: usize) -> usize {
         self.line(row)
-            .map_or(0, |line| line.chars().fold(0, tab_stops::advance))
+            .map_or(0, |line| line.chunks().fold(0, tab_stops::advance_str))
     }
 
     fn remeasure_rows(&mut self, first_row: usize, last_row: usize) {
@@ -330,29 +330,40 @@ impl CodeDocument {
 }
 
 fn measure_text_lines(text: &str) -> usize {
-    text.split('\n').map(line_columns).max().unwrap_or(0)
+    if every_byte_is_one_column_or_a_newline(text) {
+        return text
+            .as_bytes()
+            .split(|byte| *byte == b'\n')
+            .map(<[u8]>::len)
+            .max()
+            .unwrap_or(0);
+    }
+    text.split('\n')
+        .map(tab_stops::display_columns)
+        .max()
+        .unwrap_or(0)
 }
 
-fn line_columns(line: &str) -> usize {
-    if !line.is_ascii() {
-        return tab_stops::display_columns(line);
-    }
-    line.bytes().fold(0, |column, byte| match byte {
-        b'\t' => column + tab_stops::tab_len(column),
-        0x20..=0x7e => column + 1,
-        _ => column,
+fn every_byte_is_one_column_or_a_newline(text: &str) -> bool {
+    text.as_bytes().chunks(4096).fold(true, |every, chunk| {
+        every
+            & chunk.iter().fold(true, |every, byte| {
+                every & ((*byte == b'\n') | tab_stops::is_one_column_ascii(*byte))
+            })
     })
 }
 
 fn measure_rope_lines(text: &Rope) -> usize {
     let mut longest = 0usize;
     let mut current = 0usize;
-    for ch in text.chars() {
-        if ch == '\n' {
+    for chunk in text.chunks() {
+        let mut lines = chunk.split('\n');
+        current = lines
+            .next()
+            .map_or(current, |line| tab_stops::advance_str(current, line));
+        for line in lines {
             longest = longest.max(current);
-            current = 0;
-        } else {
-            current = tab_stops::advance(current, ch);
+            current = tab_stops::display_columns(line);
         }
     }
     longest.max(current)
@@ -630,5 +641,73 @@ mod tests {
         assert_eq!(d.ext(), "rs");
         let none = CodeDocument::new(PathBuf::from("/tmp/Makefile"), "");
         assert_eq!(none.ext(), "");
+    }
+
+    const MEASURE_CORPUS_LINES: [&str; 7] = [
+        "\tfn main() {",
+        "\t\tlet x = 1;\t// tail",
+        "  mixed\t é\tñ \t日本\tend",
+        "\x1b[0m\tcontrol\x7f\tbytes",
+        "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp",
+        "",
+        "plain ascii without any tab stop at all",
+    ];
+
+    #[test]
+    fn every_longest_line_measure_matches_a_per_character_fold_across_rope_chunks() {
+        assert_every_measure_matches_the_fold(&MEASURE_CORPUS_LINES, 97);
+    }
+
+    #[test]
+    fn an_ascii_document_measures_like_the_per_character_fold() {
+        let ascii: Vec<&str> = MEASURE_CORPUS_LINES
+            .into_iter()
+            .filter(|line| line.is_ascii())
+            .collect();
+        assert_every_measure_matches_the_fold(&ascii, 97);
+        assert_every_measure_matches_the_fold(&["\t\x01", "tail without newline"], 3);
+        assert_every_measure_matches_the_fold(&["plain", "", "a longer plain line"], 5);
+    }
+
+    #[test]
+    fn only_printable_ascii_and_newlines_take_the_byte_length_shortcut() {
+        assert!(every_byte_is_one_column_or_a_newline(""));
+        assert!(every_byte_is_one_column_or_a_newline("a b~\n\nz"));
+        let tab_past_the_first_chunk = format!("{}\t", "x".repeat(9_000));
+        for text in [
+            "a\tb",
+            "é",
+            "\x7f",
+            "\x1b[0m",
+            "a\r\n",
+            tab_past_the_first_chunk.as_str(),
+        ] {
+            assert!(!every_byte_is_one_column_or_a_newline(text), "{text:?}");
+        }
+    }
+
+    fn assert_every_measure_matches_the_fold(lines: &[&str], padding_cycle: usize) {
+        let mut text = String::new();
+        for index in 0..4_000 {
+            text.push_str(lines[index % lines.len()]);
+            text.push_str(&"x".repeat(index % padding_cycle));
+            text.push('\n');
+        }
+        text.push_str(lines[0]);
+        let reference = text
+            .split('\n')
+            .map(|line| line.chars().fold(0, tab_stops::advance))
+            .max()
+            .unwrap_or(0);
+        let d = doc(&text);
+        assert!(d.text.chunks().count() > 1, "the corpus spans rope chunks");
+        assert_eq!(d.longest_line_columns(), reference);
+        assert_eq!(CodeDocument::measure_longest_line(&d.text), reference);
+        for row in 0..d.line_count() {
+            let expected = d
+                .line_string(row)
+                .map_or(0, |line| line.chars().fold(0, tab_stops::advance));
+            assert_eq!(d.line_columns(row), expected, "row {row}");
+        }
     }
 }

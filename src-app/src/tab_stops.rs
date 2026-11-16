@@ -22,7 +22,22 @@ pub(crate) fn advance(column: usize, ch: char) -> usize {
 }
 
 pub(crate) fn display_columns(text: &str) -> usize {
-    text.chars().fold(0, advance)
+    advance_str(0, text)
+}
+
+pub(crate) fn advance_str(column: usize, text: &str) -> usize {
+    if !text.is_ascii() {
+        return text.chars().fold(column, advance);
+    }
+    text.bytes().fold(column, |column, byte| match byte {
+        b'\t' => column + tab_len(column),
+        byte if is_one_column_ascii(byte) => column + 1,
+        _ => column,
+    })
+}
+
+pub(crate) fn is_one_column_ascii(byte: u8) -> bool {
+    (0x20..=0x7e).contains(&byte)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,5 +334,32 @@ mod tests {
             let near_right = line.shaped().x_for_index(4);
             assert_eq!(line.closest_index_for_x(near_right), 2);
         });
+    }
+
+    #[test]
+    fn advancing_by_a_whole_string_matches_advancing_one_character_at_a_time() {
+        let every_ascii_byte: String = (0u8..=0x7f).map(char::from).collect();
+        let texts = [
+            "",
+            "abc",
+            "\t",
+            "\tx",
+            "a\tb\t\tc",
+            "\t\t\t",
+            "\x1b[31m\tred\x7f\t",
+            "é\tñ",
+            "日本\ta",
+            "x\n\ty",
+            every_ascii_byte.as_str(),
+        ];
+        for text in texts {
+            for start in 0..2 * TAB_SIZE {
+                assert_eq!(
+                    advance_str(start, text),
+                    text.chars().fold(start, advance),
+                    "{text:?} from column {start}"
+                );
+            }
+        }
     }
 }
