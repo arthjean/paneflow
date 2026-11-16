@@ -166,6 +166,19 @@ fn cap_malloc_arenas() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 fn cap_malloc_arenas() {}
 
+const MAIN_WINDOW_TITLE: &str = "Paneflow";
+
+#[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
+fn main_window_titlebar() -> gpui::TitlebarOptions {
+    gpui::TitlebarOptions {
+        title: Some(MAIN_WINDOW_TITLE.into()),
+        appears_transparent: true,
+        #[cfg(target_os = "macos")]
+        traffic_light_position: Some(point(px(12.0), px(14.0))),
+        ..Default::default()
+    }
+}
+
 pub(crate) fn run() {
     if crate::tmux_compat::is_shim_invocation(std::env::args_os().next().as_deref()) {
         let argv: Vec<String> = std::env::args_os()
@@ -403,14 +416,7 @@ pub(crate) fn run() {
                 }
             };
 
-            #[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
-            let titlebar_options = gpui::TitlebarOptions {
-                title: None,
-                appears_transparent: true,
-                #[cfg(target_os = "macos")]
-                traffic_light_position: Some(point(px(12.0), px(14.0))),
-                ..Default::default()
-            };
+            let titlebar_options = main_window_titlebar();
 
             startup_trace::mark("window_requested");
             let window_result = cx.open_window(
@@ -519,9 +525,17 @@ mod windows_startup_console_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_LOG_FILTER, should_extract_mcp_bridge_for_cli,
-        should_load_login_shell_env_for_startup,
+        DEFAULT_LOG_FILTER, MAIN_WINDOW_TITLE, main_window_titlebar,
+        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
     };
+
+    #[test]
+    fn the_main_window_is_named_paneflow_for_window_managers_and_switchers() {
+        let titlebar = main_window_titlebar();
+        assert_eq!(titlebar.title.as_deref(), Some(MAIN_WINDOW_TITLE));
+        assert_eq!(MAIN_WINDOW_TITLE, "Paneflow");
+        assert!(titlebar.appears_transparent);
+    }
 
     fn logs_by_default(target: &str, level: log::Level) -> bool {
         let logger = env_logger::Builder::new()
