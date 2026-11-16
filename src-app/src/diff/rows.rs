@@ -67,6 +67,13 @@ pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
     )
 }
 
+pub fn content_height(offsets: &[f32]) -> f32 {
+    match offsets.last() {
+        Some(&bottom) if offsets.len() > 1 => bottom + FILE_BODY_GAP,
+        _ => 0.0,
+    }
+}
+
 pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
     rows.iter()
         .map(|r| r.new_no.unwrap_or(0).max(r.old_no.unwrap_or(0)))

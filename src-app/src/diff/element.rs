@@ -1212,7 +1212,7 @@ impl Element for DiffElement {
     ) -> (LayoutId, ()) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        let h = px(self.body.offsets_rc().last().copied().unwrap_or(0.0));
+        let h = px(super::rows::content_height(&self.body.offsets_rc()));
         style.size.height = Length::Definite(h.into());
         (window.request_layout(style, [], cx), ())
     }
