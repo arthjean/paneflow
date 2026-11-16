@@ -205,8 +205,7 @@ impl PaneFlowApp {
                     cx.observe_window_bounds(window, |this, window, cx| {
                         this.reveal_tabs = true;
                         cx.notify();
-                        if !window.is_maximized() && !window.is_fullscreen() {
-                            let bounds = window.window_bounds().get_bounds();
+                        if let Some(bounds) = crate::window_state::windowed_bounds(window) {
                             this.pane.update(cx, |pane, _| {
                                 if let Some(placement) = &mut pane.detached {
                                     placement.bounds = bounds;

@@ -149,6 +149,8 @@ fn detach_lonely_windows_console_for_gui_launch(is_scriptable_invocation: bool) 
     }
 }
 
+const DEFAULT_LOG_FILTER: &str = "warn,gpui_wgpu::wgpu_context=info,wgpu_hal=off,naga=warn,gpui_apple::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn";
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const DESKTOP_MALLOC_ARENAS: i32 = 2;
 
@@ -251,10 +253,8 @@ pub(crate) fn run() {
 
     unsafe { agents::parent_guard::scrub_claudecode_env_before_threads() };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "warn,wgpu_hal=off,naga=warn,gpui_apple::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn",
-    ))
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER))
+        .init();
     cap_malloc_arenas();
     crate::terminal::kitty::install_png_decoder();
 
@@ -516,7 +516,35 @@ mod windows_startup_console_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup};
+    use super::{
+        DEFAULT_LOG_FILTER, should_extract_mcp_bridge_for_cli,
+        should_load_login_shell_env_for_startup,
+    };
+
+    fn logs_by_default(target: &str, level: log::Level) -> bool {
+        let logger = env_logger::Builder::new()
+            .parse_filters(DEFAULT_LOG_FILTER)
+            .build();
+        log::Log::enabled(
+            &logger,
+            &log::Metadata::builder().target(target).level(level).build(),
+        )
+    }
+
+    #[test]
+    fn the_default_log_names_a_gpu_adapter_the_surface_test_rejects() {
+        assert!(logs_by_default("gpui_wgpu::wgpu_context", log::Level::Info));
+        assert!(!logs_by_default(
+            "gpui_wgpu::wgpu_context",
+            log::Level::Debug
+        ));
+        assert!(!logs_by_default(
+            "gpui_wgpu::wgpu_renderer",
+            log::Level::Info
+        ));
+        assert!(!logs_by_default("paneflow_app", log::Level::Info));
+        assert!(!logs_by_default("wgpu_hal::vulkan", log::Level::Error));
+    }
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_string()).collect()
