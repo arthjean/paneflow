@@ -125,6 +125,11 @@ pub(crate) fn window_backdrop_uses_mica(config_value: Option<&str>) -> bool {
     )
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn window_backdrop_requests_blur(config_value: Option<&str>) -> bool {
+    window_backdrop_preference(config_value) == WindowBackdropPreference::Blurred
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn macos_sidebar_material_enabled(config_value: Option<&str>) -> bool {
     !matches!(

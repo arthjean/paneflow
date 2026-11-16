@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
+    AnyElement, App, Bounds, ClickEvent, Corners, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
     SharedString, Size, Styled, Tiling, Window, WindowButton, WindowControlArea, WindowControls,
     canvas, div, point, prelude::*, px, size, svg,
@@ -48,6 +48,32 @@ impl ClientDecorationGeometry {
             draw_shadow: !tiling.is_tiled(),
         }
     }
+
+    fn corner_radii(self) -> Corners<Pixels> {
+        let radius = |rounded: bool| {
+            if rounded {
+                crate::app::constants::WINDOW_CORNER_RADIUS
+            } else {
+                px(0.0)
+            }
+        };
+        Corners {
+            top_left: radius(self.round_top_left),
+            top_right: radius(self.round_top_right),
+            bottom_left: radius(self.round_bottom_left),
+            bottom_right: radius(self.round_bottom_right),
+        }
+    }
+}
+
+fn client_frame(decorations: Decorations) -> (Pixels, Corners<Pixels>) {
+    match decorations {
+        Decorations::Client { tiling } => (
+            crate::RESIZE_BORDER,
+            ClientDecorationGeometry::from_tiling(tiling).corner_radii(),
+        ),
+        Decorations::Server => (px(0.0), Corners::default()),
+    }
 }
 
 pub(crate) fn client_side_window_shell(
@@ -57,10 +83,9 @@ pub(crate) fn client_side_window_shell(
     border_color: Hsla,
 ) -> impl IntoElement {
     let decorations = window.window_decorations();
-    match decorations {
-        Decorations::Client { .. } => window.set_client_inset(crate::RESIZE_BORDER),
-        Decorations::Server => window.set_client_inset(px(0.0)),
-    }
+    let (inset, corner_radii) = client_frame(decorations);
+    window.set_client_inset(inset);
+    window.set_client_corner_radii(corner_radii);
 
     let mut outer = div().id("window-backdrop").relative().size_full();
     let mut surface = div()
@@ -455,8 +480,8 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 
 #[cfg(test)]
 mod tests {
-    use super::ClientDecorationGeometry;
-    use gpui::Tiling;
+    use super::{ClientDecorationGeometry, client_frame};
+    use gpui::{Corners, Decorations, Tiling, px};
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -497,5 +522,47 @@ mod tests {
         assert!(geometry.round_bottom_left);
         assert!(geometry.round_bottom_right);
         assert!(!geometry.draw_shadow);
+    }
+
+    #[test]
+    fn client_decorations_report_the_drawn_corner_radius_next_to_the_inset() {
+        let radius = crate::app::constants::WINDOW_CORNER_RADIUS;
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            (crate::RESIZE_BORDER, Corners::all(radius))
+        );
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling {
+                    left: true,
+                    ..Tiling::default()
+                }
+            }),
+            (
+                crate::RESIZE_BORDER,
+                Corners {
+                    top_left: px(0.0),
+                    top_right: radius,
+                    bottom_left: px(0.0),
+                    bottom_right: radius,
+                }
+            )
+        );
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling::tiled()
+            }),
+            (crate::RESIZE_BORDER, Corners::default())
+        );
+    }
+
+    #[test]
+    fn server_decorations_report_no_inset_and_square_corners() {
+        assert_eq!(
+            client_frame(Decorations::Server),
+            (px(0.0), Corners::default())
+        );
     }
 }

@@ -124,6 +124,10 @@ impl PaneFlowApp {
                 crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
                     window,
                     config.native_material_requested(),
+                    crate::app::constants::window_backdrop_requests_blur(
+                        config.window_backdrop.as_deref(),
+                    ),
+                    cx,
                 );
                 let window_id = window.window_handle().window_id();
                 crate::agents::notifications::set_window_active(

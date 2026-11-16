@@ -452,6 +452,8 @@ pub(crate) fn run() {
                     crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
                         window,
                         config.native_material_requested(),
+                        crate::app::constants::window_backdrop_requests_blur(config.window_backdrop.as_deref()),
+                        cx,
                     );
 
                     startup_trace::mark("window_created");
