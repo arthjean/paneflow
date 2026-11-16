@@ -443,6 +443,49 @@ mod tests {
     }
 
     #[test]
+    fn a_combining_mark_after_a_drifted_base_keeps_only_its_cluster_offset() {
+        let cells = [
+            RunCell { byte: 0, col: 0 },
+            RunCell { byte: 1, col: 1 },
+            RunCell { byte: 2, col: 2 },
+            RunCell { byte: 3, col: 3 },
+            RunCell { byte: 6, col: 4 },
+        ];
+        let glyphs = [
+            (0, 0.0),
+            (1, 7.75),
+            (2, 15.5),
+            (3, 23.25),
+            (4, 25.75),
+            (6, 31.0),
+        ];
+        assert_eq!(
+            aligned("abce\u{301}x", &cells, &glyphs),
+            [0.0, 8.0, 16.0, 24.0, 26.5, 32.0]
+        );
+    }
+
+    #[test]
+    fn a_color_emoji_wider_than_its_cells_starts_at_its_cell_and_leaves_the_next_one_alone() {
+        let cells = [
+            RunCell { byte: 0, col: 0 },
+            RunCell { byte: 1, col: 1 },
+            RunCell { byte: 5, col: 3 },
+        ];
+        let glyphs = [(0, 0.0), (1, 7.6), (5, 27.9)];
+        assert_eq!(aligned("a\u{1f44d}b", &cells, &glyphs), [0.0, 8.0, 24.0]);
+        let skin_tone = [RunCell { byte: 0, col: 0 }, RunCell { byte: 8, col: 2 }];
+        assert_eq!(
+            aligned(
+                "\u{1f44d}\u{1f3fd}b",
+                &skin_tone,
+                &[(0, 0.4), (4, 0.4), (8, 20.2)]
+            ),
+            [0.0, 0.0, 16.0]
+        );
+    }
+
+    #[test]
     fn the_glyphs_of_one_cluster_move_together() {
         assert_eq!(
             aligned("ab", &[], &[(0, 0.5), (0, 3.5), (1, 9.0)]),
