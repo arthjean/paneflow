@@ -124,12 +124,12 @@ pub fn apply_event(
     summary.transcript_path =
         optional_payload_text(event, "transcript_path").or(summary.transcript_path);
     summary.updated_at_ms = now_ms;
+    summary.errored = false;
 
     match event.kind {
         AgentEventKind::PromptSubmit => {
             summary.active_tool_name = None;
             summary.message = None;
-            summary.errored = false;
         }
         AgentEventKind::ToolUse => {
             summary.active_tool_name = event.tool_name.clone();
@@ -326,6 +326,29 @@ mod tests {
             !updated(apply_event(Some(&running), &interrupted, 1_400)).errored,
             "a human interrupt is not a crash"
         );
+    }
+
+    #[test]
+    fn an_event_from_a_live_process_ends_the_crashed_state() {
+        let mut crashed = event(AgentEventKind::Exit, None, Some(42));
+        crashed.exit_code = Some(1);
+        let errored = updated(apply_event(None, &crashed, 1_000));
+        assert!(errored.errored);
+
+        for kind in [
+            AgentEventKind::SessionStart,
+            AgentEventKind::PromptSubmit,
+            AgentEventKind::ToolUse,
+            AgentEventKind::Notification,
+            AgentEventKind::Stop,
+        ] {
+            let relaunched = updated(apply_event(
+                Some(&errored),
+                &event(kind, None, Some(42)),
+                2_000,
+            ));
+            assert!(!relaunched.errored, "{kind:?}");
+        }
     }
 
     #[test]

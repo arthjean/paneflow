@@ -184,6 +184,23 @@ impl SessionEntry {
         (status, ActivitySource::Declared)
     }
 
+    fn release_crashed_run(&mut self) -> bool {
+        let crashed = self
+            .activity
+            .as_ref()
+            .is_some_and(|summary| summary.errored);
+        let error_held = self
+            .declared_status
+            .as_ref()
+            .is_some_and(|declared| declared.state == DECLARED_ERROR);
+        if !crashed || error_held {
+            return false;
+        }
+        self.activity = None;
+        self.declared_activity = false;
+        true
+    }
+
     fn reconcile_declared_activity(&mut self, source: ActivitySource, now_ms: u64) -> bool {
         if source == ActivitySource::Declared {
             if self.activity.is_some() {
@@ -667,6 +684,7 @@ impl WorkerState {
 
     fn derive(&mut self, session: &SessionId, now_ms: u64) -> Option<Projection> {
         let entry = self.sessions.get_mut(session)?;
+        let crashed_run_released = entry.release_crashed_run();
         let (status, source) = entry.declared_verdict();
         let declared = entry.agent_declaration();
         let notice = notice_between(entry.status, status, declared);
@@ -678,6 +696,7 @@ impl WorkerState {
         let declared_row_changed = entry.reconcile_declared_activity(source, now_ms);
         let state = status.agent_state();
         let settled = !declared_row_changed
+            && !crashed_run_released
             && entry.status == status
             && entry.activity_source == source
             && entry.outcome == outcome
@@ -1332,6 +1351,101 @@ mod tests {
 
         state.apply_core_snapshot(&[exited(with_declared(agent_row(&session), "working", ""))]);
         assert_eq!(state.get(&session).unwrap().status(), "idle");
+    }
+
+    fn crash(state: &mut WorkerState, session: &SessionId) {
+        for (kind, name, payload) in [
+            ("ai.exit", "Exit", json!({"exit_code": 127})),
+            ("ai.session_end", "SessionEnd", json!({})),
+        ] {
+            state.apply_core_event(&frame(session, kind, name, payload));
+        }
+    }
+
+    #[test]
+    fn a_crashed_agent_that_declared_no_error_leaves_no_agent_row() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state
+            .apply_core_event(&frame(
+                &session,
+                "ai.session_start",
+                "SessionStart",
+                json!({}),
+            ))
+            .expect("the launch projects");
+        assert_eq!(
+            state.get(&session).unwrap().to_value()["runtime_id"],
+            CLAUDE
+        );
+
+        crash(&mut state, &session);
+
+        let entry = state.get(&session).unwrap();
+        assert!(entry.runtime().is_none());
+        assert_eq!(entry.to_value()["activity"], Value::Null);
+        assert_eq!(entry.status(), "idle");
+    }
+
+    #[test]
+    fn a_crashed_agent_keeps_its_row_only_while_its_declared_error_is_held() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.session_start",
+            "SessionStart",
+            json!({}),
+        ));
+        state.apply_core_session(&with_declared(core_row(&session), "error", "launcher loop"));
+
+        crash(&mut state, &session);
+
+        let entry = state.get(&session).unwrap();
+        assert_eq!(entry.status(), "errored");
+        assert_eq!(entry.to_value()["runtime_id"], CLAUDE);
+        assert_eq!(entry.outcome.as_deref(), Some("failed:launcher loop"));
+
+        let projections = state.apply_core_session(&core_row(&session));
+
+        let entry = state.get(&session).unwrap();
+        assert!(entry.runtime().is_none());
+        assert_eq!(entry.to_value()["activity"], Value::Null);
+        assert_eq!(entry.status(), "idle");
+        assert_eq!(entry.outcome.as_deref(), Some("failed:launcher loop"));
+        assert_eq!(projections.len(), 1, "the desktop learns the row is gone");
+    }
+
+    #[test]
+    fn an_agent_launched_after_a_crash_keeps_its_row_once_the_error_record_goes() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = running_state(home.path(), &session);
+        state.apply_core_event(&frame(
+            &session,
+            "ai.session_start",
+            "SessionStart",
+            json!({}),
+        ));
+        state.apply_core_session(&with_declared(core_row(&session), "error", "launcher loop"));
+        crash(&mut state, &session);
+
+        state
+            .apply_core_event(&frame_from_pid(
+                &session,
+                "ai.session_start",
+                "SessionStart",
+                43,
+            ))
+            .expect("the relaunch projects");
+        state.apply_core_session(&core_row(&session));
+
+        assert_eq!(
+            state.get(&session).unwrap().to_value()["runtime_id"],
+            CLAUDE
+        );
     }
 
     #[test]
