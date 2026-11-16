@@ -1201,9 +1201,10 @@ tab badge regression is confirmed in v0.17.5 and fixed on `main` (desktop CPU
 25.0 % to 2.8 % of a core while an agent thinks, GPU p50 39 % to 12 %), and the
 run found two new causes the gates miss. Seed the isolated home before the
 first launch (`session.json` with no workspace, `paneflow.json` as `{}`,
-`window-state.json`, `telemetry_id`), as the startup suite does: a home that
-lacks them inherits the developer's legacy session through
-`migrate_legacy_home`.
+`window-state.json`, `telemetry_id`), as the startup suite does, so its first
+launch is the one the scenario describes. `migrate_legacy_home` only fills the
+default home, so an isolated home never inherits the developer's legacy
+files.
 
 ```bash
 scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
@@ -1639,11 +1640,11 @@ seeded `PANEFLOW_HOME` under the system temp directory:
 | Stale socket (Linux, macOS) | `stale_socket_` | The welcome home, with a desktop IPC socket left behind by an unclean exit bound before every launch: the file exists and refuses connections. `stale_socket_step_ipc_server_started` is the US-010 startup budget the performance gates enforce. |
 
 The seed writes `session.json`, `paneflow.json` (`{}`), `window-state.json`
-(a fixed 1400x900 window) and `telemetry_id` before the first launch. Every
-one of those files must exist: `migrate_legacy_home` copies the developer's
-own files from the legacy `dirs::config_dir()` locations into any home that
-lacks them, which would silently turn the fixture into the developer's real
-session. One untimed warm-up launch per scenario absorbs whatever else the app
+(a fixed 1400x900 window) and `telemetry_id` before the first launch, so every
+launch starts from the same state. `migrate_legacy_home` copies the files of
+the legacy `dirs::config_dir()` locations only into the default home, never
+into a home set through `PANEFLOW_HOME`, so the fixture cannot turn into the
+developer's real session. One untimed warm-up launch per scenario absorbs whatever else the app
 creates on first run; the timed launches that follow
 (`PANEFLOW_BENCH_STARTUP_RUNS`, default 10) therefore measure a second launch.
 The suite refuses a debug binary unless `PANEFLOW_BENCH_ALLOW_DEBUG` is set.
