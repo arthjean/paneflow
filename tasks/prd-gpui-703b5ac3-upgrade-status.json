@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Text follows the new text system",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-005",
@@ -220,37 +220,37 @@
       "id": "US-013",
       "title": "Tabs expand to columns in the code editor and the diff view",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": ["US-001"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
     },
     {
       "id": "US-014",
       "title": "Wrapping surfaces hold under UAX #14",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-001"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
     },
     {
       "id": "US-015",
       "title": "Glyph placement holds for emoji, combining marks and scale factors",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-001"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
     },
     {
       "id": "US-016",
