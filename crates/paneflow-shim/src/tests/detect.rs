@@ -58,7 +58,7 @@ fn find_real_binary_in_locates_tempdir_binary() {
     std::fs::File::create(&fake).unwrap();
     make_executable(&fake);
 
-    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None);
+    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None, &[]);
     assert_eq!(found.as_deref(), Some(fake.as_path()));
 }
 
@@ -77,6 +77,7 @@ fn find_real_binary_in_skips_non_executable_homonym() {
         vec![early.path().to_owned(), late.path().to_owned()],
         None,
         None,
+        &[],
     );
     assert_eq!(
         found.as_deref(),
@@ -92,12 +93,12 @@ fn find_real_binary_in_locates_cmd_then_exe_on_windows() {
     let cmd_path = dir.path().join("claude.cmd");
     std::fs::File::create(&cmd_path).unwrap();
 
-    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None);
+    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None, &[]);
     assert_eq!(found.as_deref(), Some(cmd_path.as_path()));
 
     let exe_path = dir.path().join("claude.exe");
     std::fs::File::create(&exe_path).unwrap();
-    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None);
+    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None, &[]);
     assert_eq!(
         found.as_deref(),
         Some(exe_path.as_path()),
@@ -121,6 +122,7 @@ fn shim_refuses_hardlink_loop() {
         vec![attacker_dir.path().to_owned()],
         Some(shim_dir.path()),
         Some(real_shim.as_path()),
+        &[],
     );
     assert!(
         found.is_none(),
@@ -132,6 +134,7 @@ fn shim_refuses_hardlink_loop() {
         vec![attacker_dir.path().to_owned()],
         Some(shim_dir.path()),
         None,
+        &[],
     );
     assert!(found.is_some(), "no-identity fallback finds candidate");
 }
@@ -148,6 +151,7 @@ fn find_real_binary_in_excludes_self_dir() {
         vec![dir.path().to_owned()],
         Some(dir.path()),
         None,
+        &[],
     );
     assert!(found.is_none(), "self_dir must be excluded from PATH walk");
 }
@@ -168,6 +172,7 @@ fn find_real_binary_in_walks_past_self_dir_to_find_real_binary() {
         vec![shim_dir.path().to_owned(), real_dir.path().to_owned()],
         Some(shim_dir.path()),
         None,
+        &[],
     );
     assert_eq!(found.as_deref(), Some(real_fake.as_path()));
 }
@@ -175,7 +180,7 @@ fn find_real_binary_in_walks_past_self_dir_to_find_real_binary() {
 #[test]
 fn find_real_binary_in_returns_none_when_absent() {
     let dir = tempfile::TempDir::new().unwrap();
-    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None);
+    let found = find_real_binary_in("claude", vec![dir.path().to_owned()], None, None, &[]);
     assert!(found.is_none());
 }
 
@@ -185,7 +190,7 @@ fn find_real_binary_in_tolerates_nonexistent_path_entries() {
         PathBuf::from("/definitely/does/not/exist/foo"),
         PathBuf::from("/also/not/real/bar"),
     ];
-    let found = find_real_binary_in("claude", dirs, None, None);
+    let found = find_real_binary_in("claude", dirs, None, None, &[]);
     assert!(found.is_none());
 }
 
@@ -197,7 +202,7 @@ fn find_real_binary_in_completes_under_15ms_budget() {
         .collect();
 
     let start = std::time::Instant::now();
-    let _ = find_real_binary_in("claude", dirs, None, None);
+    let _ = find_real_binary_in("claude", dirs, None, None, &[]);
     let elapsed = start.elapsed();
 
     assert!(
@@ -245,6 +250,7 @@ fn find_real_binary_in_skips_every_paneflow_helper_dir() {
         vec![versioned, packaged, real.path().to_path_buf()],
         None,
         None,
+        &[],
     );
 
     assert_eq!(found, Some(expected));
@@ -255,7 +261,7 @@ fn find_real_binary_in_finds_nothing_when_only_helper_dirs_hold_the_tool() {
     let root = tempfile::TempDir::new().unwrap();
     let [versioned, packaged] = helper_layouts(root.path());
 
-    let found = find_real_binary_in("claude", vec![versioned, packaged], None, None);
+    let found = find_real_binary_in("claude", vec![versioned, packaged], None, None, &[]);
 
     assert_eq!(found, None);
 }
@@ -266,7 +272,13 @@ fn a_stray_hook_beside_the_real_tool_does_not_hide_it() {
     write_tool(local_bin.path(), crate::detect::HOOK_BINARY_NAME);
     let expected = write_tool(local_bin.path(), &candidate_names("claude")[0]);
 
-    let found = find_real_binary_in("claude", vec![local_bin.path().to_path_buf()], None, None);
+    let found = find_real_binary_in(
+        "claude",
+        vec![local_bin.path().to_path_buf()],
+        None,
+        None,
+        &[],
+    );
 
     assert_eq!(found, Some(expected));
 }

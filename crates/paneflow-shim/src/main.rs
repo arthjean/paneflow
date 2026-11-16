@@ -17,13 +17,17 @@ const PANEFLOW_AI_EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
 const PANEFLOW_AI_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
 const PANEFLOW_SHIM_TARGET_ENV: &str = "PANEFLOW_SHIM_TARGET";
 
+mod chain;
 mod claude;
 mod codex;
 mod detect;
 mod exec;
+mod refusal;
 
+use chain::{Chain, Launch, CHAIN_ENV, CHAIN_TARGETS_ENV, MAX_DEPTH};
 use detect::{detect_tool, find_real_binary, launched_as_another_shims_target, HOOK_BINARY_NAME};
 use exec::run_real;
+use refusal::Refusal;
 
 fn main() -> ExitCode {
     let Some(tool) = detect_tool() else {
@@ -36,24 +40,71 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
+    let now_ms = chain::now_ms();
+    let session = pane_session();
+    let inherited = Chain::from_env(
+        env::var_os(CHAIN_ENV).as_deref(),
+        env::var_os(CHAIN_TARGETS_ENV).as_deref(),
+        env::var_os(PANEFLOW_SHIM_TARGET_ENV).as_deref(),
+        &session,
+    );
+    let refusal = |reentered: bool| Refusal {
+        tool,
+        in_pane: !session.is_empty(),
+        agents_above: chain::agents_above(inherited.as_ref(), reentered),
+    };
+
     if launched_as_another_shims_target(
         env::var_os(PANEFLOW_SHIM_TARGET_ENV).as_deref(),
         env::current_exe().ok().as_deref(),
     ) {
-        eprintln!(
-            "paneflow-shim: refusing to run '{tool}': another Paneflow shim resolved this shim \
-             as the real '{tool}'; put the real '{tool}' ahead of every Paneflow helper \
-             directory on PATH"
+        return refusal(true).exit(
+            &format!("'{tool}' resolves to a Paneflow shim"),
+            &format!(
+                "refusing to run '{tool}': another Paneflow shim resolved this shim as the real \
+                 '{tool}'; put the real '{tool}' ahead of every Paneflow helper directory on PATH"
+            ),
         );
-        return ExitCode::from(127);
     }
 
-    let Some(real) = find_real_binary(tool) else {
-        eprintln!("paneflow-shim: could not find real '{tool}' on PATH after self-exclusion");
-        return ExitCode::from(127);
+    if inherited.as_ref().is_some_and(Chain::is_too_deep) {
+        return refusal(false).exit(
+            "launcher loop: too many nested Paneflow shims",
+            &format!(
+                "refusing to run '{tool}': {MAX_DEPTH} Paneflow shims are already nested above \
+                 this one, which is what a launcher that keeps looking '{tool}' up on PATH \
+                 produces; put the real '{tool}' ahead of every launcher on PATH"
+            ),
+        );
+    }
+
+    let sent_back = inherited
+        .as_ref()
+        .filter(|chain| chain.was_sent_back(tool, &args, now_ms));
+    let real = match sent_back {
+        Some(chain) if chain.targets.is_empty() => None,
+        Some(chain) => find_real_binary(tool, &chain.targets),
+        None => find_real_binary(tool, &[]),
+    };
+    let Some(real) = real else {
+        return match sent_back.and_then(Chain::launcher) {
+            Some(launcher) => refusal(true).exit(
+                &format!("launcher loop: {}", refusal::launcher_label(launcher)),
+                &format!(
+                    "refusing to run '{tool}': {} looked '{tool}' up on PATH and found this \
+                     Paneflow shim again, and no other '{tool}' is on PATH; install the real \
+                     '{tool}' or put it ahead of that launcher on PATH",
+                    launcher.display()
+                ),
+            ),
+            None => refusal(sent_back.is_some()).exit(
+                &format!("no real '{tool}' on PATH"),
+                &format!("could not find real '{tool}' on PATH after self-exclusion"),
+            ),
+        };
     };
 
-    let args: Vec<OsString> = env::args_os().skip(1).collect();
     let (args, preassigned) = match tool {
         "codex" => (codex::pane_session_args(args, in_pane_session()), None),
         "claude" if claude_preassign_enabled() && claude::starts_fresh_session(&args) => {
@@ -63,18 +114,39 @@ fn main() -> ExitCode {
         _ => (args, None),
     };
 
-    notify_session_start(tool, preassigned);
-
-    let (code, agent_exit) = run_real(tool, &real, &args);
-
-    let interrupted_exit = agent_exit.is_some_and(is_interrupt_exit_code);
-    if let Some(exit_code) = agent_exit {
-        notify_exit(tool, exit_code, interrupted_exit);
+    let reports = inherited.is_none();
+    if reports {
+        notify_session_start(tool, preassigned);
     }
 
-    notify_session_end(tool, interrupted_exit);
+    let chain = Chain::extended(
+        inherited.as_ref(),
+        &Launch {
+            tool,
+            session: &session,
+            target: &real,
+            arguments: &args,
+            now_ms,
+            sent_back: sent_back.is_some(),
+        },
+    );
+    let (code, agent_exit) = run_real(tool, &real, &args, &chain, reports);
+
+    if reports {
+        let interrupted_exit = agent_exit.is_some_and(is_interrupt_exit_code);
+        if let Some(exit_code) = agent_exit {
+            notify_exit(tool, exit_code, interrupted_exit);
+        }
+        notify_session_end(tool, interrupted_exit);
+    }
 
     code
+}
+
+fn pane_session() -> String {
+    env::var_os("PANEFLOW_SESSION_ID")
+        .map(|session| session.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn claude_preassign_enabled() -> bool {
@@ -179,6 +251,14 @@ pub(crate) fn locate_sibling_hook_binary() -> Option<PathBuf> {
 #[cfg(test)]
 #[path = "tests/detect.rs"]
 mod detect_tests;
+
+#[cfg(test)]
+#[path = "tests/chain.rs"]
+mod chain_tests;
+
+#[cfg(test)]
+#[path = "tests/refusal.rs"]
+mod refusal_tests;
 
 #[cfg(test)]
 mod session_start_tests {

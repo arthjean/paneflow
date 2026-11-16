@@ -1,3 +1,4 @@
+use crate::chain::{Chain, CHAIN_ENV, CHAIN_TARGETS_ENV};
 #[cfg(any(unix, windows))]
 use crate::{
     locate_sibling_hook_binary, PANEFLOW_AI_EVENT_SOURCE_ENV, PANEFLOW_AI_EVENT_SOURCE_INTERRUPT,
@@ -9,13 +10,24 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
-pub(crate) fn run_real(tool: &str, path: &Path, args: &[OsString]) -> (ExitCode, Option<i32>) {
+pub(crate) fn run_real(
+    tool: &str,
+    path: &Path,
+    args: &[OsString],
+    chain: &Chain,
+    reports: bool,
+) -> (ExitCode, Option<i32>) {
     let mut cmd = std::process::Command::new(path);
     cmd.args(args)
         .envs(env::vars_os())
         .env("PANEFLOW_AI_TOOL", tool)
         .env("PANEFLOW_AI_PID", std::process::id().to_string())
-        .env(crate::PANEFLOW_SHIM_TARGET_ENV, path);
+        .env(crate::PANEFLOW_SHIM_TARGET_ENV, path)
+        .env(CHAIN_ENV, chain.env_value());
+    match chain.targets_env_value() {
+        Some(targets) => cmd.env(CHAIN_TARGETS_ENV, targets),
+        None => cmd.env_remove(CHAIN_TARGETS_ENV),
+    };
 
     #[cfg(unix)]
     unsafe {
@@ -53,9 +65,9 @@ pub(crate) fn run_real(tool: &str, path: &Path, args: &[OsString]) -> (ExitCode,
     #[cfg(unix)]
     ignore_terminal_signals();
     #[cfg(unix)]
-    install_sigint_watcher(tool);
+    install_sigint_watcher(tool, reports);
     #[cfg(windows)]
-    install_ctrl_c_handler(tool);
+    install_ctrl_c_handler(tool, reports);
 
     #[cfg(target_os = "macos")]
     let parent_pid = unsafe { libc::getppid() } as u32;
@@ -126,7 +138,7 @@ pub(crate) fn ignore_terminal_signals() {
 }
 
 #[cfg(unix)]
-pub(crate) fn install_sigint_watcher(tool: &str) {
+pub(crate) fn install_sigint_watcher(tool: &str, reports: bool) {
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
@@ -135,7 +147,7 @@ pub(crate) fn install_sigint_watcher(tool: &str) {
     }
 
     let tool = tool.to_owned();
-    let hook_path = locate_sibling_hook_binary();
+    let hook_path = reports.then(locate_sibling_hook_binary).flatten();
     std::thread::spawn(move || {
         let Some(hook_path) = hook_path else {
             return;
@@ -199,13 +211,15 @@ pub(crate) fn send_interrupt_stop(hook_path: &Path, tool: &str) {
 }
 
 #[cfg(windows)]
-pub(crate) fn install_ctrl_c_handler(tool: &str) {
+pub(crate) fn install_ctrl_c_handler(tool: &str, reports: bool) {
     let tool = tool.to_owned();
     let Some(hook_path) = locate_sibling_hook_binary() else {
         return;
     };
     let _ = ctrlc::set_handler(move || {
-        send_interrupt_stop(&hook_path, &tool);
+        if reports {
+            send_interrupt_stop(&hook_path, &tool);
+        }
     });
 }
 
