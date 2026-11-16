@@ -10,6 +10,7 @@
 | 1.2 | 2026-11-15 | Arthur Jean | No macOS hardware is available before 2027, so macOS is validated by CI only and trusted to upstream code. US-010 is cancelled; the macOS latency target, assumption, risk and open question are rewritten; nothing holds the macOS build. |
 | 1.3 | 2026-11-15 | Arthur Jean | Linux gets its own validation epic before CI. Every check that needs a real Linux desktop session, and the Linux visual pass, moves to the new EP-007 on Arthur's Fedora machine, so EP-001 to EP-006 iterate on the Windows host with WSL clippy and tests only. The CI epic becomes EP-008. US-024 to US-026 are added; the Linux latency of US-009 moves to US-024, and the real-session checks of US-016 and US-017 move to US-025. 8 epics, 26 stories. |
 | 1.4 | 2026-11-16 | Arthur Jean | US-014 follows UAX #14 for Windows paths: GPUI never breaks between `\` and a letter (LB24), so a path breaks after `C:` or a `-`, and Paneflow inserts no break points of its own. |
+| 1.5 | 2026-11-16 | Arthur Jean | The Linux benchmark runs move to EP-007, where they run on Fedora on the dual boot machine instead of under WSL2. US-019 keeps the bump summary; the new US-027 runs the terminal, editor and startup suites on both pins, re-baselines them, runs `scripts/perf-gates.sh` and fills the summary's Linux tables. 8 epics, 27 stories. |
 
 ## Problem Statement
 
@@ -26,9 +27,9 @@
 
 ## Overview
 
-The work happens on one branch and lands as one pull request series. EP-001 to EP-006 are validated locally, by code: tests, lints and gates run on the Windows host and in WSL Linux after each story, and no story before EP-008 pushes or waits on CI. EP-007 then runs, on Arthur's Fedora machine, every Linux check that needs a real desktop session, and the Linux visual pass. EP-008, the last epic, owns CI: it pushes the branch, reads every workflow run, and fixes every failure until the whole CI is green on the commit that merges. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
+The work happens on one branch and lands as one pull request series. EP-001 to EP-006 are validated locally, by code: tests, lints and gates run on the Windows host and in WSL Linux after each story, and no story before EP-008 pushes or waits on CI. EP-007 then runs, on Arthur's Fedora machine, every Linux check that needs a real desktop session, the Linux benchmark runs and re-baseline, and the Linux visual pass. EP-008, the last epic, owns CI: it pushes the branch, reads every workflow run, and fixes every failure until the whole CI is green on the commit that merges. EP-001 moves the pin to `703b5ac3`, mirrors Zed's `[patch.crates-io]` change for `async-task`, and migrates every broken call site so that the workspace builds, lints and tests on Linux, macOS and Windows. The squircle primitives stop translating cached shapes and build each shape at its final position, which is what Zed's own callers do (`zed/crates/ui/src/components/progress/circular_progress.rs:98`, `zed/crates/ui/src/components/divider.rs:105`).
 
-EP-002 to EP-005 then bring behavior in line with the new GPUI, one domain per epic: paths and layers, frame pacing and animation, text, platform integration. Each story names the Zed definition, the Zed test or example that specifies the behavior, and where Zed's own application code uses it, so the implementer ports a pattern instead of inventing one. EP-006 re-baselines the benchmarks, writes the bump summary on the model of `bench/results/gpui-bump-37faef81-2026-10-28.md`, and updates `CHANGELOG.md`, `DESIGN.md` and `ARCHITECTURE.md`.
+EP-002 to EP-005 then bring behavior in line with the new GPUI, one domain per epic: paths and layers, frame pacing and animation, text, platform integration. Each story names the Zed definition, the Zed test or example that specifies the behavior, and where Zed's own application code uses it, so the implementer ports a pattern instead of inventing one. EP-006 writes the bump summary on the model of `bench/results/gpui-bump-37faef81-2026-10-28.md` and updates `CHANGELOG.md`, `DESIGN.md` and `ARCHITECTURE.md`; EP-007 runs and re-baselines the Linux benchmarks on Fedora and completes the summary.
 
 Key decisions, each with its evidence:
 - **One pin move to `703b5ac3`, not two.** A staged move through `78f5d7446c` (the last commit before the renderer rework) would isolate risk but doubles the benchmark re-baseline and the visual pass, and was never compiled. The branch absorbs the risk instead: nothing merges before EP-001 to EP-003 and EP-006 to EP-008 are certified.
@@ -649,15 +650,15 @@ Window observers, surface setup, blur and menu placement use what the new GPUI p
 
 The bump is measured, re-baselined and written down where the repository keeps such records.
 
-**Definition of Done:** baselines are committed for the new pin, the bump summary exists, and the changelog and design documents describe the UI as it now behaves.
+**Definition of Done:** the bump summary exists with every figure measured so far and a Linux section that US-027 fills, and the changelog and design documents describe the UI as it now behaves. The Linux re-baseline belongs to US-027 (PRD 1.5).
 
 **Zed references:**
 - `zed/crates/gpui_platform/benches/primitives.rs` and the two-revision comparison script added by `26abd1c959` (#66316).
 - `zed/crates/gpui/src/profiler/journal.rs:171`: `FrameSkipReason::AnimationFrameRateLimit`, the reason a throttled frame is skipped.
 - `zed/crates/gpui/src/app.rs:1741`: `pub fn debug_state(&self) -> serde_json::Value`.
 
-#### US-019: Re-baseline the benchmarks and write the bump summary
-**Description:** As the maintainer, I want the terminal, editor and startup suites re-run and re-baselined on the new pin so that the next regression is measured against GPUI as it now is.
+#### US-019: Write the bump summary
+**Description:** As the maintainer, I want one summary of what the bump measured and changed so that the next regression is read against GPUI as it now is. The benchmark runs and the re-baseline moved to US-027 (PRD 1.5).
 
 **Priority:** P0
 **Size:** M (3 pts)
@@ -671,12 +672,14 @@ The bump is measured, re-baselined and written down where the repository keeps s
 **Paneflow sites:** `bench/README.md:12-17,33-53,76-89`; `bench/baselines/linux-x86_64/{terminal,editor,startup,persistent,terminal-alloc,editor-alloc}.json`; `bench/results/gpui-bump-37faef81-2026-10-28.md` (the model); `scripts/bench-terminal.sh`, `scripts/bench-editor.sh`, `scripts/bench-startup.sh`, `scripts/perf-gates.sh`.
 
 **Acceptance Criteria:**
-- [ ] Given the three suites on Linux x86_64, when they run on the old pin and on the final branch commit, then a results file under `bench/results/` holds the before and after tables in the layout of the 37faef81 summary
-- [ ] Given each metric, when it is compared, then any metric more than 10 % above its baseline is listed with its cause and the story that addressed it or accepted it
-- [ ] Given the allocation baselines, when they are compared, then each is within 1 % or its change is explained, and the refreshed baselines are committed on top of the code commit, never from a dirty tree
-- [ ] Given `scripts/perf-gates.sh`, when it runs on the final commit, then it passes without any budget raised, or each raised budget is listed in the summary with the measured value and Arthur's approval
-- [ ] Given the summary, when it is read, then it records the frame-interval behavior, the latency measurements of US-009, that macOS latency is not measured (US-010 cancelled), and the path costs of US-003
-- [ ] Given a benchmark run on a loaded machine, when two runs differ by more than 10 %, then the run is repeated and no baseline is set from it
+- [x] Given a results file under `bench/results/`, when it is read, then it follows the layout of the 37faef81 summary and holds a Linux section with the before and after tables of the three suites, left for US-027 to fill
+- [x] Given the summary, when it is read, then it records the frame-interval behavior, the latency measurements of US-009, that macOS latency is not measured (US-010 cancelled), and the path costs of US-003
+- [x] Given the two stroke metrics US-003 found more than 10 % above the previous renderer, when the summary is read, then each is listed with its cause and the decision it waits for (the sprite-atlas mitigation or Arthur's acceptance)
+- [x] Moved to US-027 (PRD 1.5): the suite runs on both pins, the 10 % comparison, the allocation check and re-baseline, `scripts/perf-gates.sh`, and the rule on runs from a loaded machine
+
+**Implementation evidence (2026-11-16):** `bench/results/gpui-bump-703b5ac3-2026-11-16.md` follows the layout of the 37faef81 summary. Its first section, "Linux suites: to be filled by US-027", holds the before and after table of the three suites with every cell `not run`, the Fedora procedure, and the comparisons US-027 owes (the 1.10x p95 ratio `layout_echo_shifted_uncached_220x60`, the two 10 ns medians that moved under WSL2, startup against the baseline). It records the frame-interval behavior (every redraw limited since #66237, the three intervals and the Windows unfocused rate, 68 to 70 against 28.3 fps), the Windows latency of US-009 (median 4.99 against 5.57 ms, within the 2 ms budget), that macOS latency is not measured (US-010 cancelled, zed-industries/zed#66954 accepted on trust), the path costs of US-003 with the squircle verdict, and the allocation columns against `9f606d3aa`, all decreases, read from the committed baselines. The two stroke metrics above 10 % (`paths_curly_underline_200x50` +17 %, `paths_box_drawing_200x50` +11 %) are listed with their cause (each stroke outlined through `tiny_skia_path` and binned on every paint, #66809) and the open decision: accept the cost or ship the sprite-atlas mitigation. Arthur moved the Linux benchmark runs to EP-007 on 2026-11-16 (PRD 1.5, US-027); a WSL2 A/B run started before that decision was stopped before any suite ran, its clones deleted, and nothing from it is recorded.
+
+**Review evidence (2026-11-16):** every figure of the summary was traced to its source. The allocation table matches `bench/baselines/linux-x86_64/{terminal,editor}-alloc.json` against the same files at `9f606d3aa`, row by row, and no other allocation column moved apart from the three new `paths_*` rows; the path table, the squircle verdict (0.16 ms median, 0.27 ms worst p95), the +17 % and +11 % run-mean deltas and the 1.22x, 1.111 and 0.905 ratios match `bench/results/gpui-703b5ac3-paths-2026-11-15.md`; the latency (4.99 against 5.57 ms median, 7.10 against 7.67 ms p95) and the unfocused rate (68 to 70 against 28.3 fps) match `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md`; `terminal`, `editor` and `startup` baselines do point at `92a5c29d`. The frame-limit claim was read in GPUI's source: at `703b5ac3`, `has_demand_besides_animation` counts a dirty invalidator, so a notify or an echo is deferred by `frame_pacer.should_defer` like a forced render (`zed/crates/gpui/src/window.rs:1966-1990`). The three upstream fixes the summary names match their commit messages (`78f5d7446c`, `4d847859f5`, `0373366f43`). The Linux section is empty by design: the fourth criterion moved to US-027. No defect found.
 
 #### US-020: Changelog, design and architecture documents, visual-pass checklist
 **Description:** As the maintainer, I want the bump recorded in the changelog and the design documents so that users know what changed and the documents describe the code as it is.
@@ -692,23 +695,78 @@ The bump is measured, re-baselined and written down where the repository keeps s
 **Paneflow sites:** `CHANGELOG.md` (`[Unreleased]`, the format of `:141-148`); `DESIGN.md:493-529,598-600,698-705,1662-1688`; `ARCHITECTURE.md:202-203,271-315`; `bench/README.md:80-89`; `.github/workflows/run_tests.yml:420` (stale revision `0b984b5` in a comment); `deny.toml:144-148`.
 
 **Acceptance Criteria:**
-- [ ] Given `CHANGELOG.md`, when `[Unreleased]` is read, then it holds user-facing entries for tab width in the editor and diff view, wrapping, the frame limit on unfocused windows, spinner behavior, and each inherited fix, in the bold-lead format already used
-- [ ] Given `DESIGN.md:598-600`, when it is read, then it no longer describes a shape cache that translates paths, and it states how squircles are built and budgeted
-- [ ] Given `DESIGN.md:493-510`, when it is read, then spinner timing names the shared app-wide phase and the reduced-motion rule
-- [ ] Given `ARCHITECTURE.md`, when the render sections are read, then the frame policy (three intervals, every redraw limited) and the layer ordering rule are stated as the code implements them
-- [ ] Given `bench/README.md` and `.github/workflows/run_tests.yml:420`, when they are read, then the bump is recorded and no comment names a GPUI revision that is not the pinned one
-- [ ] Given the whole branch, when the checklist is written, then one list groups, per platform, every surface and state the stories flagged for Arthur's visual pass
-- [ ] Given a document claims a behavior no story verified, when it is reviewed, then the claim is removed or marked unverified
+- [x] Given `CHANGELOG.md`, when `[Unreleased]` is read, then it holds user-facing entries for tab width in the editor and diff view, wrapping, the frame limit on unfocused windows, spinner behavior, and each inherited fix, in the bold-lead format already used
+- [x] Given `DESIGN.md:598-600`, when it is read, then it no longer describes a shape cache that translates paths, and it states how squircles are built and budgeted
+- [x] Given `DESIGN.md:493-510`, when it is read, then spinner timing names the shared app-wide phase and the reduced-motion rule
+- [x] Given `ARCHITECTURE.md`, when the render sections are read, then the frame policy (three intervals, every redraw limited) and the layer ordering rule are stated as the code implements them
+- [x] Given `bench/README.md` and `.github/workflows/run_tests.yml:420`, when they are read, then the bump is recorded and no comment names a GPUI revision that is not the pinned one
+- [x] Given the whole branch, when the checklist is written, then one list groups, per platform, every surface and state the stories flagged for Arthur's visual pass
+- [x] Given a document claims a behavior no story verified, when it is reviewed, then the claim is removed or marked unverified
+
+**Visual-pass checklist (US-020, 2026-11-16).** Every surface and state a story of this PRD flagged for Arthur's visual pass, grouped by platform. Each item runs under the `DESIGN.md` delivery gate (section 9): Paneflow Dark, Paneflow Light and one other preset, `reduce_motion` on and off, the 800 by 500 minimum window, and every control state the surface has. Mark each item pass or defect with the session or display it ran on.
+
+*Every platform (Linux in US-026; Windows on this host; macOS has no hardware before 2027 and is covered by CI only):*
+- [ ] US-005: the usage rings (sidebar capsule, Settings Usage, the concentric rings) at 0, at a value between 0 and 1, and full; the clone bubble check mark through its draw animation
+- [ ] US-006: pane cards (squircle and morph frames) and the 2 px drop veil; dialogs (`modal_card`); menus and select popups; the quick pick shell and the path picker; the terminal search overlay; tooltips; the settings input surface and its focus ring; the clone bubble pill; the tab badges in the pane strip and in Settings Appearance (one highlight band clear of the rim, no white fringe at the bottom corners); a translucent border reads in one tone; at scale 1 and 2
+- [ ] US-007: every surface of the `DESIGN.md` shadow inventory (client-side window, menus and select popups, toasts in both interface styles, dialog cards, drag ghosts, fleet search, custom buttons dialog, clone bubble, detached window tab capsule, raised button, select trigger); the gradients (tab badge fills, the graphite tile, the sidebar resize edge glow)
+- [ ] US-011: the comet spinner (title bar update pill, Settings Agents and Spaces) and the empty-state spinner turn smoothly, two spinners on screen point the same way, and both hold still with `reduce_motion` on
+- [ ] US-013: a tab-indented file in the code editor: the caret after a tab, a selection across a tab, a click in each half of a tab, IME candidate placement after a tab, horizontal scroll to the end of the longest tab-indented line; its minimap; a diff of tab-indented code in unified and split modes with a word-diff range over a tab
+- [ ] US-014: the wrapping bodies of the worktree removal confirmation, About, unsaved changes, quit, System Info and the sidebar selection dialog; settings descriptions, tooltips and markdown paragraphs holding a branch name, a URL, a POSIX path and a Windows path; a sidebar or menu row that truncates on one line
+- [ ] US-015: a sidebar title near its truncation width does not flip between whole and truncated
+- [ ] US-018: a tab or workspace context menu with a submenu opened near the right edge, near the bottom edge, and in an 800 by 500 window
+
+*Windows (this host):*
+- [x] US-006 at scale 1: Paneflow Dark, Paneflow Light and Claude Dark in Rounded, Paneflow Dark and Light in Classic, reduce motion on, 800 by 500 (2026-11-15; translucent border decision applied afterward)
+- [ ] US-006 at scale 2 (not checked: both displays of this host run at scale 1)
+- [ ] US-015: color emoji in a terminal at 100 %, 125 % and 150 % scale (`👍🏽`, `🇯🇵`, `👩‍💻` next to ASCII)
+- [ ] US-013: tabs had no width on Windows before the bump, so the code editor and diff items above are the largest visible change here
+
+*Linux (US-025 and US-026, on the sessions of EP-007):*
+- [x] US-008: translucent squircles over a translucent window keep their continuous corners and blend correctly (GNOME and KDE Plasma, Wayland and X11, NVIDIA and Mesa AMD, Arthur, 2026-11-15)
+- [ ] US-007: gradients gain an ordered dither on Linux only; check the badge fills and the resize edge glow for banding or visible noise
+- [ ] US-015: combining marks in a terminal (`e\u{301}`, `n\u{303}`, Devanagari matras) stay in their cell
+- [ ] US-016 (US-025): a window toggled to fullscreen and back keeps its windowed size, also after a restart
+- [ ] US-017 (US-025): `window_backdrop: blurred` with `linux_chrome_material` on, on KDE Plasma 6 and on a compositor with ext-background-effect-v1, floating, tiled and maximized (rounded and square blur corners); GNOME without either protocol (one warning, the translucent window as before); X11 (unchanged)
+- [ ] US-018: with client-side decorations, a submenu opened near the window edge where the transparent inset lies stays inside the visible window
+
+*macOS (no hardware before 2027):*
+- Not run. Every item of the first group is unverified on macOS until a Mac is available; EP-008 compiles and tests the macOS build in CI, including `a_title_measured_by_the_platform_text_system_never_flips_at_its_fitting_edge` on CoreText.
+
+**Implementation evidence (2026-11-16):** `CHANGELOG.md` `[Unreleased]` gains, in the bold-lead format: under Added, the Linux blurred backdrop; under Changed, tab stops in the code editor and the Changes tab, UAX #14 wrapping, spinners turned by the renderer, submenus placed from their measured size, continuous corners on translucent Linux windows, and the rejected GPU adapter in the Linux log, next to the unfocused-window frame limit EP-003 already added; under Fixed, the three inherited GPUI fixes in one entry that says they were not reproduced in Paneflow. `DESIGN.md` 4.4 now states that a squircle is built at its final bounds in paint on every frame with nothing kept or moved, the fill depth under opaque and translucent borders, the 0.5 device pixel layer clearance and the 0.4 ms budget with the measured 0.16 ms; 4.9 no longer names `cached_squircle_path` or a shape cache. 4.8 already named the app-wide spinner phase and the reduced-motion rule (US-011) and is unchanged. Known Gaps no longer says the Linux shell never requests blur, and lists the two spinners among the animations `reduce_motion` stops. `ARCHITECTURE.md` already stated the three intervals and the layer rule (US-009, US-007) and now adds that every redraw is limited since #66237, checked at `zed/crates/gpui/src/window.rs:1977`. `bench/README.md` records the bump, links the summary and names US-027 for the timing re-baseline. `.github/workflows/run_tests.yml` no longer names `0b984b5`; no workflow comment names a GPUI revision any more, and `deny.toml` keeps its dated bump history. Unverified claims: the inherited fixes are marked as not reproduced, the Linux blur entry describes only the request and the corner radii the tests prove (the on-screen result is US-025), the squircle figure names WSL2. The checklist above groups every surface a story flagged by platform. Left open: `docs/user/configuration/schema.md` mirrors paneflow-web and still documents only the Windows meaning of `blurred`; the fix belongs in paneflow-web (six locales) and was not made here. Checks: `scripts/check-workflows.sh` and `zizmor` (high) pass on `.github`; the status file parses; `git diff --check` is clean; no Rust, test or dependency changed, so fmt, clippy, nextest and `cargo deny` have nothing new to run.
+
+**Review evidence (2026-11-16):** each `CHANGELOG.md` entry was checked against the code that ships it: the 4-column stop and the 2-column wide character (`unicode_width` in the code editor's tab module, `TAB_SIZE = 4`); a hyphen that used to be a word character in GPUI's old `is_word_char` (`37faef81`, `line_wrapper.rs:547-548`), so breaking after it is new; the blur shown only with a material on (`refresh_blur_region` receives `native_material_requested`, chrome or terminal material); the fallback warning once per process on X11 and Wayland without blur; the rejected adapter logged at info by `gpui_wgpu::wgpu_context` under `DEFAULT_LOG_FILTER`; spinners that already held still under reduced motion at `9f606d3aa` (`comet_spinner` and `empty_state_spins` both read `reduce_motion`), so "as before" holds and the old `DESIGN.md` Known Gaps line was stale; submenu placement by `anchored` with the four placement tests. Every symbol `DESIGN.md` and `ARCHITECTURE.md` name exists (`fill_depth_under_border`, `LAYER_CLEARANCE_DEVICE_PX` = 0.5, `squircle_band_path`, `squircle_stroke_path`, `paced_window_options`, `every_paneflow_window_is_opened_with_the_paced_options`) and `cached_squircle_path` is gone from the code and the documents. 4.9 still says fills and borders paint as quads: that paragraph describes the Classic style, where `squircle_corners_fill` and `squircle_corners_border` do paint quads, so it does not contradict 4.4. The only commit hash left in a `.github` comment, `c3e2331`, is a Paneflow commit, not a GPUI revision. One fix from the review: the checklist listed the US-015 sidebar title truncation under Windows only, while US-015 flags it on every platform (its CoreText run is the macOS item); it now sits in the first group. Left open, outside this repository: `docs/user/configuration/schema.md` mirrors paneflow-web and still documents only the Windows meaning of `blurred`; US-017 assigned it to EP-006, but no EP-006 criterion covers it, and the edit belongs in paneflow-web in six locales, which needs Arthur's go-ahead. Gates on the final state: `scripts/check-workflows.sh` and `zizmor` (high) on `.github`, the status file parses, `git diff --check` is clean; no Rust, test or dependency changed, so fmt, clippy, nextest and `cargo deny` have nothing new to run.
 
 ---
 
 ### EP-007: Linux is validated on a real desktop session
 
-Every Linux check that needs a real desktop session runs here, on Arthur's Fedora 44 machine (the hardware of the `linux-x86_64` baseline), once EP-001 to EP-006 are implemented on the Windows host and before any CI run. The earlier epics prove Linux by clippy and the touched tests in WSL only, which keeps the inner loop on one machine.
+Every Linux check that needs a real desktop session runs here, on Arthur's Fedora 44 machine (the hardware of the `linux-x86_64` baseline), once EP-001 to EP-006 are implemented on the Windows host and before any CI run. So do the Linux benchmark runs and the re-baseline (US-027, PRD 1.5): the baselines come from Fedora, never from WSL2. The earlier epics prove Linux by clippy and the touched tests in WSL only, which keeps the inner loop on one machine.
 
 **Definition of Done:** every Linux runtime criterion of the PRD is recorded with its session, compositor and driver named, the Linux visual pass is done, and every defect it found is fixed on the branch and checked again.
 
 **Sessions:** GNOME (Mutter) and KDE Plasma (KWin), each on Wayland and on X11, with the proprietary NVIDIA driver and with Mesa where the machine offers both, as US-008 did on 2026-11-15. A combination not exercised is named as such.
+
+#### US-027: Re-baseline the Linux benchmarks on Fedora
+**Description:** As the maintainer, I want the terminal, editor and startup suites re-run and re-baselined on the new pin on Fedora so that the next regression is measured against GPUI as it now is, on the machine the baselines come from.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-019
+
+**Zed references:**
+- #66809, #66810, #66811 PR texts: the GPU and CPU cost changes expected from the renderer.
+- `zed/crates/gpui/src/window.rs:1999-2019`: a throttled frame is deferred and recorded as skipped, which changes frame-timing traces.
+- `zed/crates/gpui_platform/benches/primitives.rs:245`: upstream's primitive benchmark, usable to compare the two GPUI revisions directly.
+
+**Paneflow sites:** `bench/README.md`; `bench/baselines/linux-x86_64/{terminal,editor,startup,terminal-alloc,editor-alloc}.json`; `bench/results/gpui-bump-703b5ac3-2026-11-16.md` (the summary US-019 wrote); `scripts/bench-terminal.sh`, `scripts/bench-editor.sh`, `scripts/bench-startup.sh`, `scripts/perf-gates.sh`.
+
+**Acceptance Criteria:**
+- [ ] Given the three suites on Fedora, when they run on the old pin (`9f606d3aa`) and on the final branch commit, then the Linux section of the bump summary holds the before and after tables in the layout of the 37faef81 summary, with the machine, the session and the CPU share
+- [ ] Given each metric, when it is compared, then any metric more than 10 % above its baseline is listed with its cause and the story that addressed it or accepted it, the two stroke metrics of US-003 included
+- [ ] Given the allocation baselines, when they are compared, then each is within 1 % or its change is explained, and the refreshed timing and allocation baselines are committed on top of the code commit, never from a dirty tree
+- [ ] Given `scripts/perf-gates.sh`, when it runs on the final commit, then it passes without any budget raised, or each raised budget is listed in the summary with the measured value and Arthur's approval
+- [ ] Given a benchmark run on a loaded machine, when two runs differ by more than 10 %, then the run is repeated and no baseline is set from it
+- [ ] Given `bench/README.md`, when it is read, then it names the commit the `linux-x86_64` timing baselines point at
 
 #### US-024: Keystroke latency and unfocused frame rate hold on Fedora
 **Description:** As a Linux user, I want the frame policy of US-009 measured on a real desktop so that the bump keeps keystroke echo as fast as before and caps unfocused windows as it does on Windows.
@@ -782,7 +840,7 @@ The branch is pushed once the local epics are done, and every failure the CI rep
 - [ ] Given a `cfg(target_os = "macos")`, `cfg(unix)` or `cfg(windows)` item fails on its leg, when the failure is read, then it is fixed in this story, and the report states per platform whether each fix was verified by compilation or by inspection
 - [ ] Given a test fails in CI, when it is rerun once, then a pass is reported as a flake with its tracking issue and a second failure is fixed; no test is added to the quarantine in `.config/nextest.toml` for this work
 - [ ] Given the Performance gates job fails, when the failure is read, then a counter below its baseline is refreshed from a clean clone of the committed code, and a budget exceeded is fixed in code or put to Arthur with the measured value; no budget in `crates/paneflow-host/tests/persistent_baseline/gates.rs` is raised without his approval
-- [ ] Given a CI fix changes code that EP-006 measured or documented, when the fix lands, then the affected suites are re-run and the bump summary, `CHANGELOG.md`, `DESIGN.md` or `ARCHITECTURE.md` are updated to match
+- [ ] Given a CI fix changes code that EP-006 or EP-007 measured or documented, when the fix lands, then the affected suites are re-run and the bump summary, `CHANGELOG.md`, `DESIGN.md` or `ARCHITECTURE.md` are updated to match
 
 #### US-022: The other workflows the branch triggers are green
 **Description:** As the maintainer, I want every workflow that runs on the branch to pass so that nothing outside `run_tests` blocks the merge or a later release.

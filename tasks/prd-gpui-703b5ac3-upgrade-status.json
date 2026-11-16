@@ -49,17 +49,17 @@
     {
       "id": "EP-006",
       "title": "Evidence and records",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-007",
       "title": "Linux is validated on a real desktop session",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 3,
+      "stories_total": 4,
       "stories_done": 0
     },
     {
@@ -290,23 +290,35 @@
     },
     {
       "id": "US-019",
-      "title": "Re-baseline the benchmarks and write the bump summary",
+      "title": "Write the bump summary",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-004", "US-009", "US-011", "US-013"],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
     },
     {
       "id": "US-020",
       "title": "Changelog, design and architecture documents, visual-pass checklist",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
+      "blocked_by": ["US-019"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-027",
+      "title": "Re-baseline the Linux benchmarks on Fedora",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "size": "M",
       "blocked_by": ["US-019"],
       "started_at": null,
       "completed_at": null,
@@ -355,7 +367,7 @@
       "status": "TODO",
       "priority": "P0",
       "size": "L",
-      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026"],
+      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
@@ -367,7 +379,7 @@
       "status": "TODO",
       "priority": "P0",
       "size": "M",
-      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026"],
+      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
