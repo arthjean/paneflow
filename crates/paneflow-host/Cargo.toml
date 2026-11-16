@@ -61,6 +61,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 
 [dev-dependencies]
+paneflow-agent-config = { workspace = true, features = ["config-io"] }
 minisign = "0.9.1"
 tempfile.workspace = true
 
