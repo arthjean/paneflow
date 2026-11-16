@@ -5,6 +5,26 @@ pub(crate) struct TitleBand {
     pub(crate) height: f32,
     pub(crate) leading_inset: f32,
     pub(crate) trailing_inset: f32,
+    pub(crate) window_corners: gpui::Corners<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OpenWindowEdges {
+    pub(crate) top: bool,
+    pub(crate) left: bool,
+    pub(crate) right: bool,
+}
+
+pub(crate) fn window_corners_under_the_panel(
+    rounded: gpui::Corners<bool>,
+    open: OpenWindowEdges,
+) -> gpui::Corners<bool> {
+    gpui::Corners {
+        top_left: rounded.top_left && open.top && open.left,
+        top_right: rounded.top_right && open.top && open.right,
+        bottom_right: rounded.bottom_right && open.right,
+        bottom_left: rounded.bottom_left && open.left,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -84,6 +104,7 @@ mod tests {
             height: 40.,
             leading_inset: 128.,
             trailing_inset: 157.,
+            window_corners: gpui::Corners::default(),
         };
         let top_left = band.header_slot(gpui::Edges {
             top: true,
@@ -121,5 +142,59 @@ mod tests {
     fn unmeasured_controls_reserve_nothing() {
         assert_eq!(leading_inset(0., 0.), 0.);
         assert_eq!(trailing_inset(0., 1849.), 0.);
+    }
+
+    const ROUNDED: gpui::Corners<bool> = gpui::Corners {
+        top_left: true,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: true,
+    };
+
+    #[test]
+    fn the_panel_reaches_the_right_window_corners_beside_a_primary_sidebar() {
+        let corners = window_corners_under_the_panel(
+            ROUNDED,
+            OpenWindowEdges {
+                top: true,
+                left: false,
+                right: true,
+            },
+        );
+        assert!(corners.top_right && corners.bottom_right);
+        assert!(!corners.top_left && !corners.bottom_left);
+    }
+
+    #[test]
+    fn a_side_rail_or_a_title_bar_row_keeps_the_panel_off_those_window_corners() {
+        let corners = window_corners_under_the_panel(
+            ROUNDED,
+            OpenWindowEdges {
+                top: false,
+                left: true,
+                right: false,
+            },
+        );
+        assert!(!corners.top_left && !corners.top_right && !corners.bottom_right);
+        assert!(corners.bottom_left);
+    }
+
+    #[test]
+    fn a_square_window_corner_is_never_reached() {
+        let tiled_right = gpui::Corners {
+            top_right: false,
+            bottom_right: false,
+            ..ROUNDED
+        };
+        let corners = window_corners_under_the_panel(
+            tiled_right,
+            OpenWindowEdges {
+                top: true,
+                left: true,
+                right: true,
+            },
+        );
+        assert!(corners.top_left && corners.bottom_left);
+        assert!(!corners.top_right && !corners.bottom_right);
     }
 }

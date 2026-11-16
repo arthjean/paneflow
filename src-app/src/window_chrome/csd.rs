@@ -76,6 +76,21 @@ fn client_frame(decorations: Decorations) -> (Pixels, Corners<Pixels>) {
     }
 }
 
+pub(crate) fn rounded_window_corners(decorations: Decorations) -> Corners<bool> {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            Corners {
+                top_left: geometry.round_top_left,
+                top_right: geometry.round_top_right,
+                bottom_right: geometry.round_bottom_right,
+                bottom_left: geometry.round_bottom_left,
+            }
+        }
+        Decorations::Server => Corners::default(),
+    }
+}
+
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -480,7 +495,7 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientDecorationGeometry, client_frame};
+    use super::{ClientDecorationGeometry, client_frame, rounded_window_corners};
     use gpui::{Corners, Decorations, Tiling, px};
 
     #[cfg(target_os = "windows")]
@@ -556,6 +571,32 @@ mod tests {
             }),
             (crate::RESIZE_BORDER, Corners::default())
         );
+    }
+
+    #[test]
+    fn the_rounded_window_corners_follow_the_drawn_radius() {
+        for decorations in [
+            Decorations::Server,
+            Decorations::Client {
+                tiling: Tiling::default(),
+            },
+            Decorations::Client {
+                tiling: Tiling {
+                    right: true,
+                    ..Tiling::default()
+                },
+            },
+            Decorations::Client {
+                tiling: Tiling::tiled(),
+            },
+        ] {
+            let radii = client_frame(decorations).1;
+            let rounded = rounded_window_corners(decorations);
+            assert_eq!(rounded.top_left, radii.top_left > px(0.0));
+            assert_eq!(rounded.top_right, radii.top_right > px(0.0));
+            assert_eq!(rounded.bottom_right, radii.bottom_right > px(0.0));
+            assert_eq!(rounded.bottom_left, radii.bottom_left > px(0.0));
+        }
     }
 
     #[test]

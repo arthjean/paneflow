@@ -288,6 +288,22 @@ impl Render for PaneFlowApp {
         let welcome_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
         let grid_edges = crate::layout::grid_edges(!self.diff_dock_beside_grid());
         let panes_in_title_band = flush_shell && !settings_open && terminal_surface_mounted;
+        let flush_window_corners = crate::window_chrome::title_band::window_corners_under_the_panel(
+            crate::window_chrome::csd::rounded_window_corners(window.window_decorations()),
+            crate::window_chrome::title_band::OpenWindowEdges {
+                top: panes_in_title_band,
+                left: primary_sidebar_width <= 0.,
+                right: right_rail_width <= 0.,
+            },
+        );
+        let flush_panel_radius = |at_window_corner: bool| {
+            if flush_shell && at_window_corner {
+                crate::app::constants::WINDOW_CORNER_RADIUS
+                    - crate::app::constants::WINDOW_BORDER_SIZE
+            } else {
+                panel_radius
+            }
+        };
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
         let main_panel_width = f32::from(window.viewport_size().width)
             - primary_sidebar_width
@@ -449,6 +465,7 @@ impl Render for PaneFlowApp {
                     viewport_width - right_rail_width,
                 )
             },
+            window_corners: flush_window_corners,
         });
         if crate::window_chrome::title_band::set(title_band) {
             cx.refresh_windows();
@@ -678,7 +695,14 @@ impl Render for PaneFlowApp {
                                     .ml(px(main_panel_left_inset))
                                     .mr(px(panel_inset))
                                     .mb(px(panel_inset))
-                                    .rounded(panel_radius)
+                                    .rounded_tl(flush_panel_radius(flush_window_corners.top_left))
+                                    .rounded_tr(flush_panel_radius(flush_window_corners.top_right))
+                                    .rounded_br(flush_panel_radius(
+                                        flush_window_corners.bottom_right,
+                                    ))
+                                    .rounded_bl(flush_panel_radius(
+                                        flush_window_corners.bottom_left,
+                                    ))
                                     .capture_any_mouse_down(cx.listener(
                                         |this, event: &gpui::MouseDownEvent, _window, cx| {
                                             if event.button == gpui::MouseButton::Left
