@@ -417,7 +417,7 @@ jobs:
         run: zizmor --config .github/zizmor.yml --format github --min-severity high .github
 
   # US-001 (prd-macos-port.md): smoke build on Apple Silicon so the PaneFlow
-  # dependency closure at the pinned GPUI rev (0b984b5) is proven to compile
+  # dependency closure at the pinned GPUI rev is proven to compile
   # on aarch64-apple-darwin before any of EP-002..EP-005 lands. The job runs
   # on every PR so a regression in platform-gated code is caught at the PR
   # gate rather than at release cut.

@@ -204,9 +204,11 @@ platform frame scheduler, under the frame policy that `frame_policy.rs` states
 for every Paneflow window (`paced_window_options`): an unfocused window
 presents at most 30 frames per second (33.333 ms), a window under the
 platform's low-power mode at most 30 (33.333 ms), and one under serious or
-critical thermal pressure at most 60 (16.667 ms). GPUI applies the longest
-interval that holds and lifts the unfocused cap during sustained high-rate
-input; a mandatory platform presentation bypasses all three. The values equal
+critical thermal pressure at most 60 (16.667 ms). Since `703b5ac3` the
+limit holds for every redraw, a notify or a keystroke echo included, where
+GPUI used to limit only forced renders and next-frame callbacks (#66237).
+GPUI applies the longest interval that holds and lifts the unfocused cap
+during sustained high-rate input; a mandatory platform presentation bypasses all three. The values equal
 GPUI's defaults at `703b5ac3` and are written out so that a later GPUI default
 cannot change them silently: `every_paneflow_window_is_opened_with_the_paced_options`
 fails when a new `open_window` call skips them.

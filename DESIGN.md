@@ -371,6 +371,21 @@ Squircle means `squircle_fill` and `squircle_border` from
 `setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
 small circular controls and the explicitly round surfaces in the table.
 
+A squircle is built where it paints. Each fill, border, band and stroke is
+traced at its final bounds inside its element's paint and handed to
+`paint_path` on every frame; nothing keeps or moves a built shape, because
+GPUI `703b5ac3` makes `Path` opaque and bins it into tiles on every paint
+(`gpui/src/path_builder.rs`). Under an opaque border the fill stops half a
+border width inside the outer edge, so no fill edge coincides with a border
+edge; under a translucent border it reaches the outer edge, so the border
+composites over the fill across its whole width (`fill_depth_under_border`).
+Stacked badge layers overlap the layer below by 0.5 device pixel
+(`LAYER_CLEARANCE_DEVICE_PX`). The budget is 0.4 ms per frame for a strip of
+12 tab badges, 48 shapes: `paths_tab_strip_12_badges` in the terminal suite
+measures it (0.16 ms at the median on GPUI `703b5ac3`, WSL2 on the baseline
+CPU), and the performance gates hold its allocations
+(`bench/baselines/linux-x86_64/terminal-alloc.json`).
+
 This table is the Rounded interface style, and its radii are the design
 radii every call site passes. The surface shape and the Classic style of 4.9
 resolve the same design radii to their own scales inside the squircle
@@ -606,8 +621,8 @@ and the composer at radius 12; a menu at radius 14 with 6 px of padding.
 | Under 8 | The design radius, capped at 6 | Header controls, inline actions, badges, chips |
 
 A corner never exceeds half the short side of its surface. Fills and borders
-paint as quads; the path API (`squircle_path`, `cached_squircle_path`) traces
-the same circular corners, and the shape cache keys on the shape. A radius
+paint as quads; the path API (`squircle_path` and its band and stroke
+variants) traces the same circular corners. A radius
 passed to a squircle primitive is always a design radius: resolving it twice
 gives a wrong corner, so a surface that needs an exact value passes one that
 its scale maps to itself (under 8, or 8 on a control at least 26 px tall in
@@ -1731,8 +1746,9 @@ already need the same behavior.
   not a persistent follow-the-OS mode.
 - `window_decorations` and `window_backdrop` are read once at startup.
 - The Linux sidebar cannot reveal a native material. The translucent shell is
-  opt-in and requests no compositor blur, so without an external blur it
-  shows the raw wallpaper through the veil.
+  opt-in, and it is blurred only with `window_backdrop: blurred` on a Wayland
+  compositor that offers ext-background-effect-v1 or KDE blur; elsewhere,
+  without an external blur, it shows the raw wallpaper through the veil.
 - `reduce_motion` stops hover interpolation, the toggle slide, the sidebar slide, the resize edge
-  nudge, the resize detent settle, the Workspaces row motion, menu reveals, and the thinking matrix only; the other animations
+  nudge, the resize detent settle, the Workspaces row motion, menu reveals, the empty-state and comet spinners, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.

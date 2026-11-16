@@ -92,8 +92,11 @@ The allocation baselines follow the GPUI upgrade to `zed@703b5ac3`:
 `bb8621dc`, which adds the three `paths_*` cases measuring per-paint path
 building (badges within the 0.4 ms budget, terminal strokes 11 to 17 % slower
 than on `37faef81`; [summary](results/gpui-703b5ac3-paths-2026-11-15.md)).
-The path cases have no row in `terminal.json` yet: US-019 records the timing
-baseline on Fedora.
+The path cases have no row in `terminal.json` yet. The timing baselines
+(`terminal`, `editor`, `startup`) still point at `92a5c29d`: US-027 of
+`tasks/prd-gpui-703b5ac3-upgrade.md` re-baselines them on Fedora, never from WSL2, and the bump
+[summary](results/gpui-bump-703b5ac3-2026-11-16.md) records what the bump
+measured so far.
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
