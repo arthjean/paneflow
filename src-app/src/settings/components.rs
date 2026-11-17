@@ -1076,7 +1076,7 @@ pub fn select_trigger(
         .min_w(px(190.))
         .max_w(px(260.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .border_1()
+        .border(SELECT_TRIGGER_BORDER)
         .border_color(ui.border)
         .bg(fill)
         .shadow(if expanded {
@@ -1590,19 +1590,108 @@ pub fn select_item_shaped(
     )
 }
 
+pub(crate) const SELECT_TRIGGER_BORDER: Pixels = px(1.);
+pub(crate) const SELECT_MENU_GAP: Pixels = px(4.);
+
 pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
     let reveal_id = menu.reveal_id.clone();
-    deferred(crate::ui_primitives::menu_reveal(
-        reveal_id,
-        div()
-            .absolute()
-            .top(px(36.))
-            .right(px(0.))
-            .occlude()
-            .child(menu),
-    ))
-    .with_priority(1)
-    .into_any_element()
+    let trigger: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>> = std::rc::Rc::default();
+    let probe = trigger.clone();
+    div()
+        .absolute()
+        .top(-SELECT_TRIGGER_BORDER)
+        .left(-SELECT_TRIGGER_BORDER)
+        .right(-SELECT_TRIGGER_BORDER)
+        .bottom(-SELECT_TRIGGER_BORDER)
+        .child(
+            canvas(move |bounds, _, _| probe.set(Some(bounds)), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            deferred(AttachedBelowTrigger {
+                trigger,
+                popup: Some(crate::ui_primitives::menu_reveal(
+                    reveal_id,
+                    div().occlude().child(menu),
+                )),
+                placed: None,
+            })
+            .with_priority(1),
+        )
+        .into_any_element()
+}
+
+struct AttachedBelowTrigger {
+    trigger: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    popup: Option<AnyElement>,
+    placed: Option<AnyElement>,
+}
+
+impl gpui::Element for AttachedBelowTrigger {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        let style = gpui::Style {
+            position: gpui::Position::Absolute,
+            ..gpui::Style::default()
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let (Some(trigger), Some(popup)) = (self.trigger.get(), self.popup.take()) else {
+            return;
+        };
+        let mut placed = gpui::anchored()
+            .position_mode(gpui::AnchoredPositionMode::Window)
+            .attach(trigger, gpui::Anchor::BottomRight)
+            .anchor(gpui::Anchor::TopRight)
+            .offset(gpui::point(px(0.), SELECT_MENU_GAP))
+            .child(popup)
+            .into_any_element();
+        placed.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+        placed.prepaint_at(bounds.origin, window, cx);
+        self.placed = Some(placed);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        _prepaint: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        if let Some(placed) = self.placed.as_mut() {
+            placed.paint(window, cx);
+        }
+    }
 }
 
 pub(crate) fn settings_label(
@@ -1799,6 +1888,35 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         (cx, picks)
+    }
+
+    #[gpui::test]
+    fn a_select_popup_opens_under_its_trigger_when_there_is_room(cx: &mut gpui::TestAppContext) {
+        let (cx, _) = open_select(cx, 20.);
+        let trigger = cx.debug_bounds("select-trigger").expect("trigger painted");
+        let menu = cx.debug_bounds("select-menu").expect("menu painted");
+        assert!(
+            menu.top() >= trigger.bottom(),
+            "the menu at {menu:?} starts under the trigger at {trigger:?}"
+        );
+        assert!((menu.right() - trigger.right()).abs() <= px(0.5));
+    }
+
+    #[gpui::test]
+    fn a_select_popup_near_the_window_bottom_opens_above_its_trigger(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (cx, _) = open_select(cx, 352.);
+        let trigger = cx.debug_bounds("select-trigger").expect("trigger painted");
+        let menu = cx.debug_bounds("select-menu").expect("menu painted");
+        assert!(
+            menu.bottom() <= px(400.),
+            "the menu at {menu:?} runs past the 400 px window"
+        );
+        assert!(
+            menu.bottom() <= trigger.top(),
+            "the menu at {menu:?} covers the trigger at {trigger:?}"
+        );
     }
 
     #[gpui::test]
