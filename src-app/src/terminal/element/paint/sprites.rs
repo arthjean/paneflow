@@ -51,6 +51,7 @@ pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Win
             }
             Sprite::Braille(pattern) => canvas.braille(pattern),
             Sprite::Powerline(symbol) => canvas.mask(MaskShape::Powerline(symbol)),
+            Sprite::CornerTriangleOutline(corner) => canvas.corner_triangle_outline(corner),
         }
     }
 }
@@ -111,6 +112,18 @@ impl Canvas<'_> {
             key,
             self.color,
         );
+    }
+
+    fn corner_triangle_outline(&mut self, corner: Corner) {
+        let (w, h) = (self.width, self.height);
+        let t = self.light().min(w).min(h);
+        let top = matches!(corner, Corner::TopLeft | Corner::TopRight);
+        let left = matches!(corner, Corner::TopLeft | Corner::BottomLeft);
+        let leg_y = if top { 0 } else { h - t };
+        let leg_x = if left { 0 } else { w - t };
+        self.rect(0, leg_y, w, t);
+        self.rect(leg_x, if top { t } else { 0 }, t, h - t);
+        self.mask(MaskShape::TriangleHypotenuse(corner));
     }
 
     fn lines(&mut self, lines: Lines) {
@@ -472,6 +485,41 @@ fn polygon(outline: &mut Outline, points: &[(f32, f32)]) {
         outline.line_to(x, y);
     }
     outline.close();
+}
+
+pub(super) fn triangle_hypotenuse_outline(corner: Corner, key: MaskKey) -> Outline {
+    let (w, h) = (key.width as f32, key.height as f32);
+    let t = (key.thickness.max(1) as f32).min(w).min(h);
+    let inset = 1.0 - t * (1.0 / (w * w) + 1.0 / (h * h)).sqrt();
+    let outer_at_leg_x = (t, h * (1.0 - t / w));
+    let outer_at_leg_y = (w * (1.0 - t / h), t);
+    let inner_at_leg_y = (w * (inset - t / h), t);
+    let inner_at_leg_x = (t, h * (inset - t / w));
+    let corner_point = |(x, y): (f32, f32)| {
+        let x = match corner {
+            Corner::TopLeft | Corner::BottomLeft => x,
+            Corner::TopRight | Corner::BottomRight => w - x,
+        };
+        let y = match corner {
+            Corner::TopLeft | Corner::TopRight => y,
+            Corner::BottomLeft | Corner::BottomRight => h - y,
+        };
+        (x, y)
+    };
+    let points: Vec<(f32, f32)> = if inner_at_leg_y.0 > t {
+        vec![
+            outer_at_leg_x,
+            outer_at_leg_y,
+            inner_at_leg_y,
+            inner_at_leg_x,
+        ]
+    } else {
+        vec![outer_at_leg_x, outer_at_leg_y, (t, t)]
+    };
+    let points: Vec<(f32, f32)> = points.into_iter().map(corner_point).collect();
+    let mut outline = Outline::fill();
+    polygon(&mut outline, &points);
+    outline
 }
 
 pub(super) fn powerline_outline(symbol: Powerline, key: MaskKey) -> Outline {

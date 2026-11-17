@@ -17,6 +17,7 @@ pub(super) enum MaskShape {
     DiagonalFalling,
     DiagonalCross,
     Powerline(Powerline),
+    TriangleHypotenuse(Corner),
     Undercurl,
 }
 
@@ -107,6 +108,9 @@ pub(super) fn outline(key: MaskKey) -> Outline {
         MaskShape::DiagonalFalling => super::sprites::diagonal_outline(false, true, key),
         MaskShape::DiagonalCross => super::sprites::diagonal_outline(true, true, key),
         MaskShape::Powerline(symbol) => super::sprites::powerline_outline(symbol, key),
+        MaskShape::TriangleHypotenuse(corner) => {
+            super::sprites::triangle_hypotenuse_outline(corner, key)
+        }
         MaskShape::Undercurl => super::decorations::undercurl_outline(key),
     }
 }
@@ -223,6 +227,7 @@ mod tests {
             MaskShape::Undercurl,
         ]);
         shapes.extend(POWERLINE.into_iter().map(MaskShape::Powerline));
+        shapes.extend(CORNERS.into_iter().map(MaskShape::TriangleHypotenuse));
         shapes
     }
 
@@ -327,6 +332,65 @@ mod tests {
                 0.0,
                 "{corner:?} fills its own corner"
             );
+        }
+    }
+
+    #[test]
+    fn a_triangle_hypotenuse_stays_off_its_legs_and_leaves_the_inside_empty() {
+        for (w, h, t) in [(18, 36, 2), (9, 18, 1), (4, 7, 1)] {
+            for corner in CORNERS {
+                let coverage = Coverage::of(key(MaskShape::TriangleHypotenuse(corner), w, h, t));
+                let left = matches!(corner, Corner::TopLeft | Corner::BottomLeft);
+                let top = matches!(corner, Corner::TopLeft | Corner::TopRight);
+                let leg_x = if left { 0 } else { w - 1 };
+                let leg_y = if top { 0 } else { h - 1 };
+                let far_x = w - 1 - leg_x;
+                let far_y = h - 1 - leg_y;
+                for y in 0..h {
+                    for x in 0..t {
+                        let x = if left { x } else { w - 1 - x };
+                        assert_eq!(
+                            coverage.at(x, y),
+                            0.0,
+                            "{corner:?} {w}x{h} paints its vertical leg at {x},{y}"
+                        );
+                    }
+                }
+                for x in 0..w {
+                    for y in 0..t {
+                        let y = if top { y } else { h - 1 - y };
+                        assert_eq!(
+                            coverage.at(x, y),
+                            0.0,
+                            "{corner:?} {w}x{h} paints its horizontal leg at {x},{y}"
+                        );
+                    }
+                }
+                assert_eq!(
+                    coverage.at(far_x, far_y),
+                    0.0,
+                    "{corner:?} {w}x{h} reaches the far corner"
+                );
+                let towards = |from: i32, to: i32| from + (to - from) / 4;
+                assert!(
+                    coverage.at(
+                        towards(leg_x, far_x).max(t).min(w - 1 - t),
+                        (h / 2).min(h - 1)
+                    ) < 0.5
+                        || w < 8,
+                    "{corner:?} {w}x{h} fills the inside"
+                );
+                let ink: f32 = (0..h)
+                    .flat_map(|y| (0..w).map(move |x| (x, y)))
+                    .map(|(x, y)| coverage.at(x, y))
+                    .sum();
+                let hypotenuse = ((w * w + h * h) as f32).sqrt()
+                    * (1.0 - t as f32 / w as f32 - t as f32 / h as f32);
+                assert!(
+                    ink > 0.5 * t as f32 * hypotenuse && ink < 1.5 * t as f32 * hypotenuse,
+                    "{corner:?} {w}x{h} inks {ink} pixels for a stroke {hypotenuse} long between the legs and {t} wide"
+                );
+            }
         }
     }
 
