@@ -28,8 +28,10 @@
 #   keyboard and text input on every capability change, dropping the IME
 #   state.
 # - src/linux/wayland/presentation.rs (new) gives every Wayland window the
-#   sacrificial-surface presentation probe of vendor/gpui_wgpu, through
-#   `WgpuRenderer::new_with_presentation_probe` in src/linux/wayland/window.rs.
+#   sacrificial-surface presentation probe of vendor/gpui_wgpu and a
+#   `ShmPresenter` (up to three wl_shm buffers, ARGB8888 premultiplied or
+#   XRGB8888, reused only once the compositor released them), through
+#   `WgpuRenderer::new_with_presentation` in src/linux/wayland/window.rs.
 # Drop this copy once the pinned Zed revision carries these changes.
 
 [package]

@@ -21,6 +21,13 @@ pub struct WgpuContext {
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
     errors: Arc<DeviceErrorState>,
+    presentation: WgpuPresentation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WgpuPresentation {
+    Surface,
+    SharedMemory,
 }
 
 /// Errors reported by wgpu's device-wide callbacks.
@@ -245,7 +252,7 @@ impl WgpuContext {
 
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
-        let (adapter, device, queue, dual_source_blending, color_texture_format) =
+        let (adapter, device, queue, dual_source_blending, color_texture_format, presentation) =
             gpui::block_on(Self::select_adapter_and_device(
                 &instance,
                 device_id_filter,
@@ -256,14 +263,16 @@ impl WgpuContext {
                 probe,
             ))?;
 
-        Ok(Self::from_native_adapter_and_device(
+        let mut context = Self::from_native_adapter_and_device(
             instance,
             adapter,
             device,
             queue,
             dual_source_blending,
             color_texture_format,
-        ))
+        );
+        context.presentation = presentation;
+        Ok(context)
     }
 
     #[cfg(all(
@@ -404,6 +413,7 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             errors,
+            presentation: WgpuPresentation::Surface,
         }
     }
 
@@ -515,6 +525,7 @@ impl WgpuContext {
             dual_source_blending,
             color_texture_format,
             errors,
+            presentation: WgpuPresentation::Surface,
         };
         Ok(PreparedWebGraphics { context, surface })
     }
@@ -619,6 +630,7 @@ impl WgpuContext {
         wgpu::Queue,
         bool,
         TextureFormat,
+        WgpuPresentation,
     )> {
         let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
@@ -646,6 +658,7 @@ impl WgpuContext {
             );
         }
 
+        let mut rejected_by_compositor = None;
         // Test each adapter by creating a device and configuring the surface
         for adapter in adapters {
             let info = adapter.get_info();
@@ -684,6 +697,7 @@ impl WgpuContext {
                             info.name,
                             info.backend
                         );
+                        rejected_by_compositor.get_or_insert(adapter);
                         continue;
                     }
                     Err(error) => {
@@ -711,6 +725,7 @@ impl WgpuContext {
                         queue,
                         dual_source_blending,
                         color_atlas_texture_format,
+                        WgpuPresentation::Surface,
                     ));
                 }
                 Err(e) => {
@@ -722,6 +737,26 @@ impl WgpuContext {
                     );
                 }
             }
+        }
+
+        if let Some(adapter) = rejected_by_compositor {
+            let info = adapter.get_info();
+            let (device, queue, dual_source_blending, color_atlas_texture_format) =
+                Self::create_device(&adapter).await?;
+            log::info!(
+                "Selected GPU for shared-memory presentation: {} ({:?}): no adapter can present \
+                 to this compositor directly, and it rejects this GPU's buffers",
+                info.name,
+                info.backend
+            );
+            return Ok((
+                adapter,
+                device,
+                queue,
+                dual_source_blending,
+                color_atlas_texture_format,
+                WgpuPresentation::SharedMemory,
+            ));
         }
 
         anyhow::bail!("No GPU adapter found that can configure the display surface")
@@ -987,6 +1022,10 @@ impl WgpuContext {
 
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
+    }
+
+    pub fn presentation(&self) -> WgpuPresentation {
+        self.presentation
     }
 
     pub fn color_texture_format(&self) -> wgpu::TextureFormat {

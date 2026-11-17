@@ -45,7 +45,9 @@ use gpui::{
     popup::PopupOptions,
     px, size,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use gpui_wgpu::{
+    CompositorGpuHint, WgpuPresentationOptions, WgpuRenderer, WgpuSurfaceConfig, wgpu,
+};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -587,12 +589,19 @@ impl WaylandWindowState {
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
-            WgpuRenderer::new_with_presentation_probe(
+            WgpuRenderer::new_with_presentation(
                 gpu_context,
                 &raw_window,
                 config,
                 compositor_gpu,
-                Some(super::presentation::sacrificial_surface_probe()),
+                Some(WgpuPresentationOptions {
+                    probe: super::presentation::sacrificial_surface_probe(),
+                    software_presenter: Box::new(super::presentation::ShmPresenter::new(
+                        globals.shm.clone(),
+                        surface.clone(),
+                        globals.qh.clone(),
+                    )),
+                }),
             )?
         };
 

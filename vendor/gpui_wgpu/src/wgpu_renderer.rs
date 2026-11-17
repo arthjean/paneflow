@@ -1,6 +1,6 @@
 #[cfg(not(target_family = "wasm"))]
 use crate::PresentationProbe;
-use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext, WgpuPresentation};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
@@ -119,6 +119,150 @@ pub struct WgpuSurfaceConfig {
     /// Mobile platforms may prefer `Mailbox` (triple-buffering) to avoid
     /// blocking in `get_current_texture()` during lifecycle transitions.
     pub preferred_present_mode: Option<wgpu::PresentMode>,
+}
+
+pub struct SoftwareFrame<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride: usize,
+    pub pixels: &'a [u8],
+    pub bgra: bool,
+    pub opaque: bool,
+}
+
+pub trait SoftwarePresenter {
+    fn present(&mut self, frame: SoftwareFrame<'_>) -> bool;
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub struct WgpuPresentationOptions {
+    pub probe: PresentationProbe,
+    pub software_presenter: Box<dyn SoftwarePresenter>,
+}
+
+struct OffscreenTarget {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    readback: wgpu::Buffer,
+    padded_bytes_per_row: u32,
+}
+
+impl OffscreenTarget {
+    fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> anyhow::Result<Self> {
+        let padded_bytes_per_row = width
+            .checked_mul(4)
+            .and_then(|row| row.checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT))
+            .ok_or_else(|| anyhow::anyhow!("Offscreen row size overflowed"))?;
+        let readback_size = u64::from(padded_bytes_per_row) * u64::from(height);
+        anyhow::ensure!(
+            readback_size <= device.limits().max_buffer_size,
+            "Offscreen readback size {readback_size} exceeds the maximum buffer size {}",
+            device.limits().max_buffer_size
+        );
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen_render_target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("offscreen_readback_buffer"),
+            size: readback_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Ok(Self {
+            texture,
+            view,
+            readback,
+            padded_bytes_per_row,
+        })
+    }
+
+    fn present(
+        &self,
+        core: &WgpuRendererCore,
+        presenter: &mut dyn SoftwarePresenter,
+        bgra: bool,
+        opaque: bool,
+    ) -> anyhow::Result<bool> {
+        let width = self.texture.width();
+        let height = self.texture.height();
+        let mut encoder =
+            core.resources
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("offscreen_readback_encoder"),
+                });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(self.padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = core
+            .resources
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).ok();
+            });
+        core.resources
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(5)),
+            })
+            .map_err(|error| anyhow::anyhow!("Failed to wait for the offscreen frame: {error}"))?;
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| anyhow::anyhow!("Offscreen readback was not mapped: {error}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to map the offscreen readback: {error}"))?;
+        let mapped = self.readback.slice(..).get_mapped_range()?;
+        let presented = presenter.present(SoftwareFrame {
+            width,
+            height,
+            stride: self.padded_bytes_per_row as usize,
+            pixels: &mapped,
+            bgra,
+            opaque,
+        });
+        drop(mapped);
+        self.readback.unmap();
+        Ok(presented)
+    }
 }
 
 struct WgpuPipelines {
@@ -247,6 +391,10 @@ enum RendererState {
     Unconfigured { core: WgpuRendererCore },
     /// Released by `destroy`, or dropped for a device recovery that has not succeeded yet.
     Released,
+    Offscreen {
+        core: WgpuRendererCore,
+        target: Option<OffscreenTarget>,
+    },
 }
 
 pub struct WgpuRenderer {
@@ -258,6 +406,7 @@ pub struct WgpuRenderer {
     compositor_gpu: Option<CompositorGpuHint>,
     #[cfg(not(target_family = "wasm"))]
     presentation_probe: Option<PresentationProbe>,
+    software_presenter: Option<Box<dyn SoftwarePresenter>>,
     state: RendererState,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
@@ -275,14 +424,18 @@ pub struct WgpuRenderer {
 impl WgpuRenderer {
     fn core(&self) -> Option<&WgpuRendererCore> {
         match &self.state {
-            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Ready { core, .. }
+            | RendererState::Unconfigured { core }
+            | RendererState::Offscreen { core, .. } => Some(core),
             RendererState::Released => None,
         }
     }
 
     fn core_mut(&mut self) -> Option<&mut WgpuRendererCore> {
         match &mut self.state {
-            RendererState::Ready { core, .. } | RendererState::Unconfigured { core } => Some(core),
+            RendererState::Ready { core, .. }
+            | RendererState::Unconfigured { core }
+            | RendererState::Offscreen { core, .. } => Some(core),
             RendererState::Released => None,
         }
     }
@@ -306,20 +459,24 @@ impl WgpuRenderer {
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
-        Self::new_with_presentation_probe(gpu_context, window, config, compositor_gpu, None)
+        Self::new_with_presentation(gpu_context, window, config, compositor_gpu, None)
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn new_with_presentation_probe<W>(
+    pub fn new_with_presentation<W>(
         gpu_context: GpuContext,
         window: &W,
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
-        presentation_probe: Option<PresentationProbe>,
+        presentation: Option<WgpuPresentationOptions>,
     ) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
+        let (presentation_probe, software_presenter) = match presentation {
+            Some(options) => (Some(options.probe), Some(options.software_presenter)),
+            None => (None, None),
+        };
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
@@ -352,7 +509,9 @@ impl WgpuRenderer {
         let surface_configured = ctx_ref.is_none();
         let context = match ctx_ref.as_mut() {
             Some(context) => {
-                context.check_compatible_with_surface(&surface)?;
+                if context.presentation() == WgpuPresentation::Surface {
+                    context.check_compatible_with_surface(&surface)?;
+                }
                 context
             }
             None => ctx_ref.insert(match &presentation_probe {
@@ -378,8 +537,10 @@ impl WgpuRenderer {
             surface_configured,
             compositor_gpu,
             atlas,
+            software_presenter.is_some(),
         )?;
         renderer.presentation_probe = presentation_probe;
+        renderer.software_presenter = software_presenter;
         Ok(renderer)
     }
 
@@ -404,7 +565,7 @@ impl WgpuRenderer {
         config: WgpuSurfaceConfig,
     ) -> anyhow::Result<Self> {
         let atlas = Arc::new(WgpuAtlas::from_context(context));
-        Self::new_internal(None, context, surface, config, false, None, atlas)
+        Self::new_internal(None, context, surface, config, false, None, atlas, false)
     }
 
     /// Returns the surface configuration for `config`, along with the transparent and
@@ -515,7 +676,16 @@ impl WgpuRenderer {
         surface_configured: bool,
         compositor_gpu: Option<CompositorGpuHint>,
         atlas: Arc<WgpuAtlas>,
+        software_presentation: bool,
     ) -> anyhow::Result<Self> {
+        if context.presentation() == WgpuPresentation::SharedMemory {
+            anyhow::ensure!(
+                software_presentation,
+                "Adapter {:?} can only present through shared memory, which this window does not support",
+                context.adapter.get_info().name
+            );
+            return Self::new_offscreen(gpu_context, context, config, compositor_gpu, atlas);
+        }
         let (surface_config, transparent_alpha_mode, opaque_alpha_mode) =
             Self::surface_configuration(&surface, &context.adapter, &context.device, &config)?;
         // Adapter selection configures the surface with this same configuration when it
@@ -528,12 +698,17 @@ impl WgpuRenderer {
         let alpha_mode = surface_config.alpha_mode;
         let max_texture_size = context.device.limits().max_texture_dimension_2d;
         let core = WgpuRendererCore::new(context, atlas.clone(), surface_format, alpha_mode);
+        log::info!(
+            "Window presentation: GPU swapchain of {:?}",
+            context.adapter.get_info().name
+        );
 
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
             #[cfg(not(target_family = "wasm"))]
             presentation_probe: None,
+            software_presenter: None,
             state: RendererState::Ready { surface, core },
             surface_config,
             atlas,
@@ -547,6 +722,136 @@ impl WgpuRenderer {
             last_surface_error: None,
             needs_redraw: false,
         })
+    }
+}
+
+impl WgpuRenderer {
+    fn new_offscreen(
+        gpu_context: Option<GpuContext>,
+        context: &WgpuContext,
+        config: WgpuSurfaceConfig,
+        compositor_gpu: Option<CompositorGpuHint>,
+        atlas: Arc<WgpuAtlas>,
+    ) -> anyhow::Result<Self> {
+        let adapter_name = context.adapter.get_info().name;
+        let required_usages =
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        let format = [
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ]
+        .into_iter()
+        .find(|format| {
+            context
+                .adapter
+                .get_texture_format_features(*format)
+                .allowed_usages
+                .contains(required_usages)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("Adapter {adapter_name:?} has no offscreen render target format")
+        })?;
+        let max_texture_size = context.device.limits().max_texture_dimension_2d;
+        let transparent_alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
+        let opaque_alpha_mode = wgpu::CompositeAlphaMode::Opaque;
+        let alpha_mode = if config.transparent {
+            transparent_alpha_mode
+        } else {
+            opaque_alpha_mode
+        };
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: (config.size.width.0 as u32).min(max_texture_size).max(1),
+            height: (config.size.height.0 as u32).min(max_texture_size).max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode,
+            view_formats: vec![],
+        };
+        let core = WgpuRendererCore::new(context, atlas.clone(), format, alpha_mode);
+        log::info!(
+            "Window presentation: frames rendered on {adapter_name:?} are copied into \
+             shared-memory buffers, because the compositor rejects this GPU's buffers"
+        );
+
+        Ok(Self {
+            context: gpu_context,
+            compositor_gpu,
+            #[cfg(not(target_family = "wasm"))]
+            presentation_probe: None,
+            software_presenter: None,
+            state: RendererState::Offscreen { core, target: None },
+            surface_config,
+            atlas,
+            transparent_alpha_mode,
+            opaque_alpha_mode,
+            max_texture_size,
+            is_bgr: false,
+            failed_frame_count: 0,
+            device_errors: Arc::clone(context.errors()),
+            observed_error_generation: 0,
+            last_surface_error: None,
+            needs_redraw: false,
+        })
+    }
+
+    fn draw_offscreen(&mut self, scene: &Scene) -> bool {
+        if let Some(error) = self
+            .device_errors
+            .observe_error(&mut self.observed_error_generation)
+        {
+            log::error!("GPU error during an offscreen frame: {error}");
+            return false;
+        }
+        let width = self.surface_config.width;
+        let height = self.surface_config.height;
+        let format = self.surface_config.format;
+        let opaque = self.surface_config.alpha_mode == wgpu::CompositeAlphaMode::Opaque;
+        let RendererState::Offscreen { core, target } = &mut self.state else {
+            return false;
+        };
+        let Some(presenter) = self.software_presenter.as_mut() else {
+            return false;
+        };
+        if target
+            .as_ref()
+            .is_none_or(|target| target.texture.width() != width || target.texture.height() != height)
+        {
+            *target = None;
+            match OffscreenTarget::new(&core.resources.device, format, width, height) {
+                Ok(created) => *target = Some(created),
+                Err(error) => {
+                    log::error!("{error:#}");
+                    return false;
+                }
+            }
+        }
+        let Some(target) = target.as_ref() else {
+            return false;
+        };
+        let size = Size {
+            width: DevicePixels(width as i32),
+            height: DevicePixels(height as i32),
+        };
+        if let Err(error) = core.render_frame(scene, &target.view, size, wgpu::Color::TRANSPARENT)
+        {
+            log::error!("{error:#}");
+            return false;
+        }
+        match target.present(
+            core,
+            presenter.as_mut(),
+            format == wgpu::TextureFormat::Bgra8Unorm,
+            opaque,
+        ) {
+            Ok(presented) => presented,
+            Err(error) => {
+                log::error!("{error:#}");
+                false
+            }
+        }
     }
 }
 
@@ -1121,6 +1426,10 @@ impl WgpuRenderer {
                 self.unconfigure_surface();
             }
             return false;
+        }
+
+        if matches!(self.state, RendererState::Offscreen { .. }) {
+            return self.draw_offscreen(scene);
         }
 
         // Bail out early if the surface has been unconfigured (e.g. during
@@ -2105,7 +2414,9 @@ impl WgpuRenderer {
                 drop(surface);
                 RendererState::Unconfigured { core }
             }
-            state @ (RendererState::Unconfigured { .. } | RendererState::Released) => state,
+            state @ (RendererState::Unconfigured { .. }
+            | RendererState::Released
+            | RendererState::Offscreen { .. }) => state,
         };
     }
 
@@ -2124,6 +2435,10 @@ impl WgpuRenderer {
         config: WgpuSurfaceConfig,
         instance: &wgpu::Instance,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !matches!(self.state, RendererState::Offscreen { .. }),
+            "A window presenting through shared memory has no surface to replace"
+        );
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
@@ -2156,7 +2471,7 @@ impl WgpuRenderer {
                 core
             }
             RendererState::Unconfigured { core } => core,
-            RendererState::Released => {
+            RendererState::Released | RendererState::Offscreen { .. } => {
                 anyhow::bail!("Cannot replace the surface: GPU resources have been released")
             }
         };
@@ -2267,7 +2582,8 @@ impl WgpuRenderer {
 
         let is_bgr = self.is_bgr;
         let presentation_probe = self.presentation_probe.clone();
-        *self = Self::new_internal(
+        let software_presenter = self.software_presenter.take();
+        match Self::new_internal(
             Some(gpu_context.clone()),
             context,
             surface,
@@ -2275,8 +2591,16 @@ impl WgpuRenderer {
             needs_new_context,
             self.compositor_gpu,
             self.atlas.clone(),
-        )?;
+            software_presenter.is_some(),
+        ) {
+            Ok(renderer) => *self = renderer,
+            Err(error) => {
+                self.software_presenter = software_presenter;
+                return Err(error);
+            }
+        }
         self.presentation_probe = presentation_probe;
+        self.software_presenter = software_presenter;
         self.set_subpixel_layout(is_bgr);
 
         log::info!("GPU recovery complete");

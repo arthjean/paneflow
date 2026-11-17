@@ -25,6 +25,12 @@
 #   while it composites on NVIDIA) with a fatal protocol error, which used to
 #   kill the window's own connection. The verdict is cached per adapter and
 #   compositor GPU for the process.
+# - Shared-memory presentation: when every adapter fails and one was skipped
+#   only because the compositor rejects its buffers, the context keeps that
+#   adapter with `WgpuPresentation::SharedMemory`, and the renderer
+#   (`RendererState::Offscreen`, `draw_offscreen` in src/wgpu_renderer.rs)
+#   renders each frame into an offscreen texture, reads it back and hands it
+#   to the window's `SoftwarePresenter` instead of using a swapchain.
 # Bump this copy together with the Zed revision in src-app/Cargo.toml, and
 # drop it once upstream GPUI carries these changes.
 

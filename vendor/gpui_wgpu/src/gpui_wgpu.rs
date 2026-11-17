@@ -12,4 +12,8 @@ pub use wgpu_context::*;
     any(test, feature = "bench-support", feature = "test-support")
 ))]
 pub use wgpu_renderer::WgpuHeadlessRenderer;
-pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+#[cfg(not(target_family = "wasm"))]
+pub use wgpu_renderer::WgpuPresentationOptions;
+pub use wgpu_renderer::{
+    GpuContext, SoftwareFrame, SoftwarePresenter, WgpuRenderer, WgpuSurfaceConfig,
+};
