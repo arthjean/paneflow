@@ -51,7 +51,11 @@ fn surface_appearance(
     blur_requested: bool,
     blur: CompositorBlur,
 ) -> WindowBackgroundAppearance {
-    if blur_requested && surface == SurfaceKind::Wayland && blur == CompositorBlur::Offered {
+    if translucent
+        && blur_requested
+        && surface == SurfaceKind::Wayland
+        && blur == CompositorBlur::Offered
+    {
         return WindowBackgroundAppearance::Blurred;
     }
     unblurred_surface_appearance(translucent, client_decorated, surface == SurfaceKind::X11)
@@ -223,19 +227,33 @@ mod tests {
 
     #[test]
     fn a_blurred_setting_requests_blur_where_the_compositor_offers_it() {
-        for translucent in [false, true] {
-            for client_decorated in [false, true] {
-                assert_eq!(
-                    surface_appearance(
-                        translucent,
-                        client_decorated,
-                        SurfaceKind::Wayland,
-                        true,
-                        CompositorBlur::Offered
-                    ),
-                    WindowBackgroundAppearance::Blurred
-                );
-            }
+        for client_decorated in [false, true] {
+            assert_eq!(
+                surface_appearance(
+                    true,
+                    client_decorated,
+                    SurfaceKind::Wayland,
+                    true,
+                    CompositorBlur::Offered
+                ),
+                WindowBackgroundAppearance::Blurred
+            );
+        }
+    }
+
+    #[test]
+    fn an_opaque_window_asks_for_no_blur_behind_it() {
+        for client_decorated in [false, true] {
+            assert_eq!(
+                surface_appearance(
+                    false,
+                    client_decorated,
+                    SurfaceKind::Wayland,
+                    true,
+                    CompositorBlur::Offered
+                ),
+                unblurred_surface_appearance(false, client_decorated, false)
+            );
         }
     }
 
