@@ -166,10 +166,11 @@ the two you did.
 - **GPUI is pinned to an exact upstream Zed revision** across four `rev` values
   in `src-app/Cargo.toml`, and `gpui_platform` must keep
   `features = ["font-kit"]` or macOS renders empty glyph bitmaps. Linux's
-  `gpui_wgpu` is a vendored copy of that revision under `vendor/gpui_wgpu`,
-  patched in from the root `Cargo.toml`, whose manifest repeats the revision:
-  a GPUI bump re-vendors it from the new revision and re-applies the change
-  its manifest header names.
+  `gpui_wgpu` and `gpui_linux` are vendored copies of that revision under
+  `vendor/gpui_wgpu` and `vendor/gpui_linux`,
+  patched in from the root `Cargo.toml`, whose manifests repeat the revision:
+  a GPUI bump re-vendors both from the new revision and re-applies the changes
+  each manifest header names.
 - The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
   `LICENSE` and `Cargo.toml`.
 
