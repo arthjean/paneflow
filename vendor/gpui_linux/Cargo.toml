@@ -6,8 +6,16 @@
 # not exist here, except Zed's `unexpected_cfgs = allow`: the sources test a
 # `nightly_coverage` feature that is declared nowhere, and the CI's
 # `RUSTFLAGS=-D warnings` is not capped for a path dependency. The
-# dev-dependencies are left out. The sources are upstream, unchanged. Bump
-# this copy together with the Zed revision in src-app/Cargo.toml.
+# dev-dependencies are left out. Bump this copy together with the Zed revision
+# in src-app/Cargo.toml.
+#
+# The only change to the upstream sources is in src/linux/wayland/client.rs:
+# the wl_keyboard Modifiers and Key handlers ignore the event while no XKB
+# keymap has been received, instead of unwrapping the missing keymap state.
+# A seat may have a keyboard without a keymap (sway sends Enter and Modifiers
+# with no Keymap event once its last keyboard is gone), which made the app
+# panic as its window opened. Drop this copy once the pinned Zed revision
+# guards those handlers.
 
 [package]
 name = "gpui_linux"
