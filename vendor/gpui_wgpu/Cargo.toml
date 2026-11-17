@@ -4,8 +4,13 @@
 # inheritance is written out with the values that revision's workspace
 # manifest gives, its `[lints]` table is dropped because the Zed lint set does
 # not exist here, and the benches and dev-dependencies are left out. The
-# sources are upstream, unchanged. Bump this copy together with the Zed
-# revision in src-app/Cargo.toml.
+# sources are otherwise upstream. The only Paneflow change is
+# `render_colr_v1_image` in src/cosmic_text_system.rs: an emoji glyph that the
+# font describes with a COLRv1 paint graph is painted by
+# crates/paneflow-colrv1, because swash reads only COLRv0 and CBDT and leaves
+# such a glyph an empty cell (Fedora ships its emoji font only as
+# Noto-COLRv1.ttf). Bump this copy together with the Zed revision in
+# src-app/Cargo.toml, and drop it once upstream GPUI paints COLRv1 glyphs.
 
 [package]
 name = "gpui_wgpu"
@@ -60,6 +65,7 @@ unicode-bidi = { version = "0.3.18", default-features = false, features = [
 ] }
 unicode-segmentation = "1.10"
 gpui_util = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4" }
+paneflow-colrv1 = { path = "../../crates/paneflow-colrv1" }
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io

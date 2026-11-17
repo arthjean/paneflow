@@ -522,6 +522,13 @@ impl CosmicTextSystemState {
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
 
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
+        if params.is_emoji
+            && let Some(image) = self.render_colr_v1_image(params, glyph_id, subpixel_offset)
+        {
+            return Ok(image);
+        }
+
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
@@ -549,10 +556,37 @@ impl CosmicTextSystemState {
             renderer.format(Format::Alpha).offset(subpixel_offset);
         }
 
-        let glyph_id: u16 = params.glyph_id.0.try_into()?;
         renderer
             .render(&mut scaler, glyph_id)
             .with_context(|| format!("unable to render glyph via swash for {params:?}"))
+    }
+
+    fn render_colr_v1_image(
+        &self,
+        params: &RenderGlyphParams,
+        glyph_id: u16,
+        subpixel_offset: Vector,
+    ) -> Option<swash::scale::image::Image> {
+        let loaded_font = self.loaded_fonts.get(params.font_id.0)?;
+        let face_index = self.font_system.db().face(loaded_font.font.id())?.index;
+        let image = paneflow_colrv1::render_colr_v1_glyph(
+            loaded_font.font.data(),
+            face_index,
+            glyph_id.into(),
+            f32::from(params.font_size) * params.scale_factor,
+            (subpixel_offset.x, subpixel_offset.y),
+        )?;
+        Some(swash::scale::image::Image {
+            source: Source::ColorOutline(0),
+            content: swash::scale::image::Content::Color,
+            placement: swash::zeno::Placement {
+                left: image.placement.left,
+                top: image.placement.top,
+                width: image.placement.width,
+                height: image.placement.height,
+            },
+            data: image.rgba,
+        })
     }
 
     /// This is used when cosmic_text has chosen a fallback font instead of using the requested

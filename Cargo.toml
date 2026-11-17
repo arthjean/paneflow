@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
+    "crates/paneflow-colrv1",
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
@@ -101,8 +102,8 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 # vendor/portable-pty/Cargo.toml.
 portable-pty = { path = "vendor/portable-pty" }
 
-# gpui_wgpu at the pinned Zed revision, vendored so that Linux can paint
-# COLRv1 color emoji, see vendor/gpui_wgpu/Cargo.toml.
+# gpui_wgpu at the pinned Zed revision, vendored so that Linux paints COLRv1
+# color emoji, see vendor/gpui_wgpu/Cargo.toml.
 [patch."https://github.com/zed-industries/zed"]
 gpui_wgpu = { path = "vendor/gpui_wgpu" }
 

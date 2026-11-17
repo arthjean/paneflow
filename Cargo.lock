@@ -2586,6 +2586,7 @@ dependencies = [
  "itertools 0.14.0",
  "js-sys",
  "log",
+ "paneflow-colrv1",
  "parking_lot",
  "profiling",
  "raw-window-handle",
@@ -4472,6 +4473,14 @@ dependencies = [
  "windows-registry 0.5.3",
  "windows-sys 0.59.0",
  "winresource",
+]
+
+[[package]]
+name = "paneflow-colrv1"
+version = "0.19.1"
+dependencies = [
+ "skrifa 0.44.0",
+ "tiny-skia",
 ]
 
 [[package]]

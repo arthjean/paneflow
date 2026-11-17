@@ -24,6 +24,9 @@ mod bench_harness;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod color_emoji_raster;
 mod command_sessions;
 mod config_snapshot;
 mod config_writer;
