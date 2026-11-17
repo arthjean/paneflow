@@ -172,7 +172,8 @@ pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
     div().h(px(1.)).w_full().bg(with_alpha(ui.border, 0.5))
 }
 
-pub const CARD_PADDING_X: f32 = 16.;
+pub const CARD_PADDING_X: f32 = 12.;
+pub const SETTINGS_ROW_PADDING_Y: f32 = 10.;
 pub const CARD_PADDING_Y: f32 = 6.;
 pub const ROW_HAIRLINE_INSET: f32 = CARD_PADDING_X + 18. + 12.;
 
@@ -272,7 +273,7 @@ pub fn toggle_row_with(
         .items_center()
         .gap(px(16.))
         .px(px(CARD_PADDING_X))
-        .py(px(12.))
+        .py(px(SETTINGS_ROW_PADDING_Y))
         .when_some(icon, |d, icon| d.child(icon))
         .child(setting_text(ui, title, description))
         .child(control)
@@ -1982,6 +1983,42 @@ mod tests {
         assert!(
             peaks[first..=last].iter().any(|alpha| *alpha < 24),
             "the two chevrons are kept apart by a clear row, row peaks {peaks:?}"
+        );
+    }
+
+    struct ToggleRowHarness;
+
+    impl gpui::Render for ToggleRowHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            div().w(px(600.)).child(toggle_row_with(
+                "Native OS notifications",
+                "Alert you when an agent needs attention.",
+                None,
+                ui,
+                div()
+                    .debug_selector(|| "row-control".into())
+                    .flex_none()
+                    .w(px(36.))
+                    .h(px(22.)),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn a_toggle_row_insets_its_control_like_every_settings_row(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| ToggleRowHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(200.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let control = cx.debug_bounds("row-control").expect("control painted");
+        assert_eq!(
+            control.right(),
+            px(600. - 12.),
+            "a settings row is padded 12 by 10 (DESIGN.md 4.5)"
         );
     }
 
