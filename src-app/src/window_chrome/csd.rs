@@ -103,6 +103,28 @@ pub(crate) fn rounded_window_corners(decorations: Decorations) -> Corners<bool> 
     }
 }
 
+pub(crate) fn client_content_frame(decorations: Decorations) -> gpui::Edges<Pixels> {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            let side = |free: bool| {
+                if free {
+                    crate::RESIZE_BORDER + crate::app::constants::WINDOW_BORDER_SIZE
+                } else {
+                    px(0.0)
+                }
+            };
+            gpui::Edges {
+                top: side(geometry.free_top),
+                right: side(geometry.free_right),
+                bottom: side(geometry.free_bottom),
+                left: side(geometry.free_left),
+            }
+        }
+        Decorations::Server => gpui::Edges::default(),
+    }
+}
+
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -508,7 +530,8 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientDecorationGeometry, client_frame, declared_client_inset, rounded_window_corners,
+        ClientDecorationGeometry, client_content_frame, client_frame, declared_client_inset,
+        rounded_window_corners,
     };
     use gpui::{Corners, Decorations, Tiling, px};
 
@@ -638,6 +661,41 @@ mod tests {
             assert_eq!(rounded.bottom_right, radii.bottom_right > px(0.0));
             assert_eq!(rounded.bottom_left, radii.bottom_left > px(0.0));
         }
+    }
+
+    #[test]
+    fn the_content_sits_inside_the_inset_and_border_of_each_free_side() {
+        let frame = crate::RESIZE_BORDER + crate::app::constants::WINDOW_BORDER_SIZE;
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            gpui::Edges::all(frame)
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling {
+                    right: true,
+                    ..Tiling::default()
+                }
+            }),
+            gpui::Edges {
+                top: frame,
+                right: px(0.0),
+                bottom: frame,
+                left: frame,
+            }
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling::tiled()
+            }),
+            gpui::Edges::default()
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Server),
+            gpui::Edges::default()
+        );
     }
 
     #[test]
