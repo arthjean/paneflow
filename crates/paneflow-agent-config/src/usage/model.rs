@@ -84,6 +84,7 @@ pub enum WindowState {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Projection {
+    Reached,
     ReachesLimit { at: u64, before_reset_secs: u64 },
     OnTrack { percent_at_reset: f64 },
 }
@@ -150,6 +151,9 @@ impl LimitWindow {
         let elapsed_secs = now.checked_sub(start)?;
         let elapsed = elapsed_secs as f64 / self.window_secs as f64;
         let used = self.fraction();
+        if used >= 1.0 {
+            return Some(Projection::Reached);
+        }
         if elapsed < MIN_ELAPSED_FRACTION || used <= 0.0 {
             return None;
         }
@@ -431,6 +435,21 @@ mod tests {
         assert_eq!(weekday_clock_text(reached, 0), "Mon 12:00");
         assert_eq!(before_reset_secs, 2 * 86_400 + 21 * 3600);
         assert_eq!(duration_text(before_reset_secs), "2 d 21 h");
+    }
+
+    #[test]
+    fn a_full_week_reads_as_reached_instead_of_a_future_overrun() {
+        let resets_at = at(2026, 11, 20, 9, 8);
+        for now in [at(2026, 11, 17, 9, 8), resets_at - WEEK_WINDOW_SECS + 600] {
+            let reading = LimitWindow::new(100.0, WEEK_WINDOW_SECS, resets_at).read(now);
+            assert_eq!(reading.projection, Some(Projection::Reached));
+        }
+        let almost =
+            LimitWindow::new(99.0, WEEK_WINDOW_SECS, resets_at).read(at(2026, 11, 17, 9, 8));
+        assert!(matches!(
+            almost.projection,
+            Some(Projection::ReachesLimit { .. })
+        ));
     }
 
     #[test]

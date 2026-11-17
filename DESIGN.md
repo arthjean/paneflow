@@ -1466,8 +1466,9 @@ a 4 px capsule bar on a `text` at 0.13 track in the level color of 4.3, and the
 percentage right-aligned on 34 px, with the reset time in the meter's tooltip.
 A week window with a projection adds one line: the warning glyph and `At this
 pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets.`
-when it overshoots, otherwise `On track: about {66%} of the week used when it
-resets.` in muted. An account without limits shows one muted sentence that
+when it overshoots, `Weekly limit reached. It resets {Thu 09:00}.` with the
+glyph in the `Critical` color once the week is used up, otherwise `On track:
+about {66%} of the week used when it resets.` in muted. An account without limits shows one muted sentence that
 says why and names the fix (no snapshot yet, API key billing, no limits
 reported, reset since the snapshot). The list scrolls past 420 px with the
 header and the last row fixed; the last row, a `menu_row`, opens Settings ›
