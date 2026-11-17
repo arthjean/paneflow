@@ -107,8 +107,28 @@ pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
         .unwrap_or_else(|| Bounds::centered(None, restored_size, cx))
 }
 
-pub(crate) fn minimum_size() -> Size<Pixels> {
-    size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))
+pub(crate) fn minimum_size(compositor: &str, decorations: gpui::WindowDecorations) -> Size<Pixels> {
+    size_hint_for_visible(
+        size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT)),
+        compositor,
+        decorations,
+    )
+}
+
+pub(crate) fn size_hint_for_visible(
+    visible: Size<Pixels>,
+    compositor: &str,
+    decorations: gpui::WindowDecorations,
+) -> Size<Pixels> {
+    let size_hint_counts_the_client_inset = cfg!(any(target_os = "linux", target_os = "freebsd"))
+        && compositor == "X11"
+        && matches!(decorations, gpui::WindowDecorations::Client);
+    if size_hint_counts_the_client_inset {
+        let frame = crate::RESIZE_BORDER * 2.;
+        size(visible.width + frame, visible.height + frame)
+    } else {
+        visible
+    }
 }
 
 pub(crate) fn windowed_bounds(window: &Window) -> Option<Bounds<Pixels>> {
@@ -519,5 +539,32 @@ mod tests {
         save_to(&path);
         let saved = load_from(&path).expect("saved");
         assert_eq!((saved.size.width, saved.size.height), (1000., 700.));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn an_x11_client_decorated_window_asks_for_its_inset_on_top_of_the_minimum() {
+        let frame = crate::RESIZE_BORDER * 2.;
+        assert_eq!(
+            minimum_size("X11", gpui::WindowDecorations::Client),
+            gpui::size(px(MIN_WINDOW_WIDTH) + frame, px(MIN_WINDOW_HEIGHT) + frame)
+        );
+        assert_eq!(
+            minimum_size("X11", gpui::WindowDecorations::Server),
+            gpui::size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))
+        );
+    }
+
+    #[test]
+    fn a_compositor_that_sizes_the_visible_window_gets_the_bare_minimum() {
+        for decorations in [
+            gpui::WindowDecorations::Client,
+            gpui::WindowDecorations::Server,
+        ] {
+            assert_eq!(
+                minimum_size("Wayland", decorations),
+                gpui::size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))
+            );
+        }
     }
 }
