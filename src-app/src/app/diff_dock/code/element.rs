@@ -29,6 +29,7 @@ use super::navigation::{
 use super::view::CodeView;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
 use crate::tab_stops::TabExpandedLine;
+use crate::widgets::ime_caret::follow_ime_caret;
 use crate::widgets::scrollbar::ScrollableHandle;
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = 18.0;
@@ -1089,6 +1090,14 @@ impl Element for CodeElement {
         window.handle_input(
             &focus,
             ElementInputHandler::new(bounds, self.view.clone()),
+            cx,
+        );
+        follow_ime_caret(
+            &self.view,
+            |view| &view.ime_caret,
+            &focus,
+            bounds,
+            window,
             cx,
         );
         let lh = self.line_height;
