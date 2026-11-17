@@ -291,7 +291,26 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    min_size: Option<Size<Pixels>>,
+    max_size_hint: i32,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
+}
+
+fn normal_size_hints(
+    min_size: Option<Size<Pixels>>,
+    scale_factor: f32,
+    [left, right, top, bottom]: [u32; 4],
+    max_size: i32,
+) -> WmSizeHints {
+    let mut size_hints = WmSizeHints::new();
+    size_hints.min_size = min_size.map(|size| {
+        (
+            (f32::from(size.width) * scale_factor).ceil() as i32 + (left + right) as i32,
+            (f32::from(size.height) * scale_factor).ceil() as i32 + (top + bottom) as i32,
+        )
+    });
+    size_hints.max_size = Some((max_size, max_size));
+    size_hints
 }
 
 impl X11WindowState {
@@ -789,12 +808,12 @@ impl X11WindowState {
             // Set max window size hints based on the GPU's maximum texture dimension.
             // This prevents the window from being resized larger than what the GPU can render.
             let max_texture_size = renderer.max_texture_size();
-            let mut size_hints = WmSizeHints::new();
-            if let Some(size) = params.window_min_size {
-                size_hints.min_size =
-                    Some((f32::from(size.width) as i32, f32::from(size.height) as i32));
-            }
-            size_hints.max_size = Some((max_texture_size as i32, max_texture_size as i32));
+            let size_hints = normal_size_hints(
+                params.window_min_size,
+                scale_factor,
+                [0, 0, 0, 0],
+                max_texture_size as i32,
+            );
             check_reply(
                 || {
                     format!(
@@ -859,6 +878,8 @@ impl X11WindowState {
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
+                min_size: params.window_min_size,
+                max_size_hint: max_texture_size as i32,
                 edge_constraints: None,
                 accesskit_adapter: None,
                 counter_id: sync_request_counter,
@@ -1942,6 +1963,18 @@ impl PlatformWindow for X11Window {
                     4,
                     bytemuck::cast_slice::<u32, u8>(&insets),
                 ),
+            )
+            .log_err();
+
+            let size_hints = normal_size_hints(
+                state.min_size,
+                state.scale_factor,
+                insets,
+                state.max_size_hint,
+            );
+            check_reply(
+                || "X11 change of WM_SIZE_HINTS for the client inset failed.",
+                size_hints.set_normal_hints(&self.0.xcb, self.0.x_window),
             )
             .log_err();
         }

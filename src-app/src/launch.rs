@@ -422,10 +422,7 @@ pub(crate) fn run() {
             let window_result = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(crate::window_state::minimum_size(
-                        cx.compositor_name(),
-                        decorations,
-                    )),
+                    window_min_size: Some(crate::window_state::minimum_size()),
                     window_decorations: Some(decorations),
                     titlebar: Some(titlebar_options),
                     window_background: crate::app::constants::window_background_appearance(

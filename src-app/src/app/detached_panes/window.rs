@@ -67,22 +67,18 @@ impl PaneFlowApp {
         let owner = cx.weak_entity();
         let content = pane.clone();
         let config = self.cached_config.clone();
-        let decorations = if config.window_decorations.as_deref() == Some("server") {
-            WindowDecorations::Server
-        } else {
-            WindowDecorations::Client
-        };
-        let min_size = crate::window_state::size_hint_for_visible(
-            size(px(MIN_WIDTH), px(MIN_HEIGHT)),
-            cx.compositor_name(),
-            decorations,
-        );
         let handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(min_size),
+                window_min_size: Some(size(px(MIN_WIDTH), px(MIN_HEIGHT))),
                 display_id: display.map(|display| display.id()),
-                window_decorations: Some(decorations),
+                window_decorations: Some(
+                    if config.window_decorations.as_deref() == Some("server") {
+                        WindowDecorations::Server
+                    } else {
+                        WindowDecorations::Client
+                    },
+                ),
                 #[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
                 titlebar: Some(gpui::TitlebarOptions {
                     title: None,
