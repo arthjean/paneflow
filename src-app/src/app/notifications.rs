@@ -111,6 +111,18 @@ const FRAMED_TOAST_INSET_X: f32 = 14.;
 const FRAMED_TOAST_INSET_Y: f32 = 10.;
 const FRAMED_TOAST_ICON_SIZE: f32 = 16.;
 
+fn toast_message(message: SharedString, framed: bool, ui: UiColors) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .text_size(px(12.5))
+        .when(framed, |message| {
+            message.font_weight(gpui::FontWeight::MEDIUM)
+        })
+        .text_color(ui.text)
+        .child(message)
+}
+
 impl PaneFlowApp {
     pub(crate) fn open_external_url(&mut self, url: String, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
@@ -339,20 +351,11 @@ impl PaneFlowApp {
                         .text_color(ui.agent_error),
                 )
             })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_size(px(12.5))
-                    .when(framed, |message| {
-                        message.font_weight(gpui::FontWeight::MEDIUM)
-                    })
-                    .text_color(ui.text)
-                    .child(toast.message.clone()),
-            );
+            .child(toast_message(
+                SharedString::from(toast.message.clone()),
+                framed,
+                ui,
+            ));
 
         let buttons: Vec<AnyElement> = toast
             .actions
@@ -611,6 +614,40 @@ mod tests {
         assert_eq!(
             crate::agents::notifications::agent_exit_notification_body("ws", -1073741510, None),
             "ws: exited with code -1073741510"
+        );
+    }
+
+    struct ToastMessageHarness;
+
+    impl gpui::Render for ToastMessageHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{InteractiveElement as _, ParentElement as _, Styled as _};
+            gpui::div().w(gpui::px(308.)).flex().flex_row().items_center().child(
+                super::toast_message(
+                    "The folder of Terminal is gone; new terminals open in your home folder until it comes back.".into(),
+                    false,
+                    crate::theme::ui_colors(),
+                )
+                .debug_selector(|| "toast-message".into()),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_toast_message_wraps_instead_of_ending_in_an_ellipsis(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| ToastMessageHarness);
+        cx.simulate_resize(gpui::size(gpui::px(800.), gpui::px(300.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let message = cx.debug_bounds("toast-message").expect("message painted");
+        assert!(message.size.width <= gpui::px(308.));
+        assert!(
+            message.size.height > gpui::px(30.),
+            "a message wider than the toast takes a second line, got {:?}",
+            message.size.height
         );
     }
 }
