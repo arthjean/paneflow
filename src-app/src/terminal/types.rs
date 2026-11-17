@@ -328,8 +328,9 @@ pub struct Cell {
     pub fg: Color,
     pub bg: Color,
     pub flags: CellFlags,
-    pub zerowidth: Option<Vec<char>>,
+    pub zerowidth: Option<Box<[char]>>,
     pub hyperlink: bool,
+    pub underline_color: Option<Color>,
 }
 
 #[derive(Clone, Copy, Debug)]

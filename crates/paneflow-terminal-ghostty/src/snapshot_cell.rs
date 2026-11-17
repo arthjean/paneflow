@@ -59,6 +59,7 @@ impl DisplayTerminal {
             wide: wide_cell(raw.wide)?,
             selected,
             hyperlink: raw.has_hyperlink,
+            underline_color: style_color(style.underline_color)?,
         })
     }
 }

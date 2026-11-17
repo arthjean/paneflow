@@ -179,6 +179,7 @@ pub struct Cell {
     pub wide: WideCell,
     pub selected: bool,
     pub hyperlink: bool,
+    pub underline_color: Color,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

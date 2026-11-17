@@ -152,8 +152,12 @@ fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
         fg: color_from_ghostty(cell.foreground, NamedColor::Foreground),
         bg: color_from_ghostty(cell.background, NamedColor::Background),
         flags: ghostty_cell_flags(cell),
-        zerowidth: cell.zerowidth.as_deref().map(<[_]>::to_vec),
+        zerowidth: cell.zerowidth.clone(),
         hyperlink: cell.hyperlink,
+        underline_color: match cell.underline_color {
+            ghostty::Color::Default => None,
+            color => Some(color_from_ghostty(color, NamedColor::Foreground)),
+        },
     }
 }
 
@@ -448,6 +452,7 @@ pub(in crate::terminal) fn blank_content(cols: usize, rows: usize) -> Content {
                 flags: CellFlags::empty(),
                 zerowidth: None,
                 hyperlink: false,
+                underline_color: None,
             })
         })
         .collect::<Vec<_>>()

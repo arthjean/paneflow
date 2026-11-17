@@ -35,7 +35,8 @@ fn fold(digest: &mut u64, content: &Content, with_dirty_rows: bool) {
         content.rows,
         content.display_offset,
         content.history_size,
-    );
+    )
+    .replace(", underline_color: Default", "");
     fnv1a(digest, published.as_bytes());
 }
 

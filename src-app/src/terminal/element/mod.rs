@@ -1065,6 +1065,7 @@ pub(crate) fn layout_from_snapshot_cached(
                 flags,
                 zerowidth: zw,
                 hyperlink,
+                underline_color,
             } = cell;
             let point = *point;
             let flags = *flags;
@@ -1179,10 +1180,20 @@ pub(crate) fn layout_from_snapshot_cached(
             } else {
                 UnderlineKind::None
             };
+            let underline_fg = match underline_color {
+                Some(color) if underline != UnderlineKind::None => {
+                    let mut color = convert_color(*color, theme, palette);
+                    if flags.contains(CellFlags::DIM) {
+                        color.a *= 0.5;
+                    }
+                    color
+                }
+                _ => fg,
+            };
             decorations.add(
                 point.column.0,
                 cell_cols,
-                underline,
+                (underline, underline_fg),
                 flags.contains(CellFlags::STRIKEOUT),
                 fg,
             );
@@ -1477,7 +1488,7 @@ impl DecorationRuns {
         &mut self,
         col: usize,
         cell_cols: usize,
-        underline: UnderlineKind,
+        (underline, underline_color): (UnderlineKind, Hsla),
         strikethrough: bool,
         color: Hsla,
     ) {
@@ -1489,7 +1500,7 @@ impl DecorationRuns {
             underline,
             col,
             cell_cols,
-            color,
+            underline_color,
         );
         let strikethrough = strikethrough.then_some(DecorationKind::Strikethrough);
         Self::extend(
@@ -2377,6 +2388,7 @@ mod golden_frame_tests {
             flags,
             zerowidth: None,
             hyperlink: false,
+            underline_color: None,
         }
     }
 
@@ -4341,6 +4353,51 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast,
         })
+    }
+
+    #[test]
+    fn an_sgr_58_underline_color_paints_the_underline_and_resets_to_the_foreground() {
+        let size = ghostty::WindowSize::new(CORPUS_COLS, CORPUS_ROWS, 8, 16)
+            .expect("the corpus grid is valid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 256, ghostty::TerminalAppearance::default())
+                .expect("libghostty must initialize");
+        terminal
+            .feed(b"\x1b[4:3;58:2::255:0:0mred curl\x1b[59m plain\x1b[0m \x1b[4;58;5;4mblue\x1b[0m")
+            .expect("the underline color fixture must parse");
+        let content = crate::terminal::ghostty_session::CellMirror::default()
+            .publish(terminal.snapshot().expect("the snapshot must succeed"));
+        let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
+        let state = corpus_layout(&content, &theme, &palette, 0.0);
+        let foreground = state
+            .batched_runs()
+            .next()
+            .expect("the fixture prints text")
+            .color;
+        let red = convert_color(Color::Spec(Rgb { r: 255, g: 0, b: 0 }), &theme, &palette);
+        let spans: Vec<(DecorationKind, usize, usize, Hsla)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols, d.color))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                (DecorationKind::Underline(UnderlineKind::Curly), 0, 8, red),
+                (
+                    DecorationKind::Underline(UnderlineKind::Curly),
+                    8,
+                    6,
+                    foreground
+                ),
+                (
+                    DecorationKind::Underline(UnderlineKind::Single),
+                    15,
+                    4,
+                    theme.blue
+                ),
+            ]
+        );
     }
 
     fn composite_over(top: Hsla, under: Hsla) -> Hsla {
