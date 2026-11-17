@@ -449,6 +449,7 @@ pub(crate) fn render_tile(index: usize, block: &AccountBlock, ui: UiColors) -> A
     };
     setting_card(ui)
         .id(("usage-tile", index))
+        .debug_selector(move || format!("usage-tile-{index}"))
         .flex_1()
         .min_w_0()
         .flex_row()
@@ -475,10 +476,11 @@ fn tile_grid(view: &UsageView, columns: usize, ui: UiColors) -> AnyElement {
     while tiles.peek().is_some() {
         let mut line = div().flex().flex_row().gap(px(TILE_GAP));
         for _ in 0..columns {
-            line = match tiles.next() {
-                Some(tile) => line.child(tile),
-                None => line.child(div().flex_1().min_w_0()),
-            };
+            let cell = div().flex().flex_1().min_w_0();
+            line = line.child(match tiles.next() {
+                Some(tile) => cell.child(tile),
+                None => cell,
+            });
         }
         grid = grid.child(line);
     }
@@ -1217,6 +1219,45 @@ mod tests {
         assert_eq!(tile_columns(559.), 1);
         assert_eq!(tile_columns(page_width(1920.)), 2);
         assert_eq!(tile_columns(page_width(800.)), 1);
+    }
+
+    struct TileGridHarness;
+
+    impl gpui::Render for TileGridHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let block = |agent, label: &str| AccountBlock {
+                agent,
+                label: label.to_string(),
+                body: BlockBody::Message("No snapshot yet.".to_string()),
+            };
+            let view = UsageView {
+                capsule: super::super::model::CapsuleView::NoData,
+                blocks: vec![
+                    block(UsageAgent::ClaudeCode, "Work"),
+                    block(UsageAgent::ClaudeCode, "Default"),
+                    block(UsageAgent::Codex, "Default"),
+                ],
+                updated: None,
+            };
+            div()
+                .w(px(644.))
+                .child(tile_grid(&view, 2, crate::theme::ui_colors()))
+        }
+    }
+
+    #[gpui::test]
+    fn a_lone_tile_on_the_last_row_keeps_the_column_width(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| TileGridHarness);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let [first, second, lone] = ["usage-tile-0", "usage-tile-1", "usage-tile-2"]
+            .map(|selector| cx.debug_bounds(selector).expect("tile painted"));
+        assert_eq!(first.size.width, second.size.width);
+        assert_eq!(
+            lone.size.width, first.size.width,
+            "the third tile sits in the first column, as wide as the tile above it"
+        );
+        assert_eq!(lone.left(), first.left());
     }
 
     fn year_of_activity(agents: &[(&str, &str)], today: NaiveDate) -> LedgerDays {
