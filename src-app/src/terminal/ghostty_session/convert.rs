@@ -145,6 +145,7 @@ fn cells_from_ghostty(cells: &[ghostty::Cell]) -> Arc<[Cell]> {
     cells.iter().map(cell_from_ghostty).collect()
 }
 
+#[inline(always)]
 fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
     Cell {
         point: point_from_ghostty(cell.point),
