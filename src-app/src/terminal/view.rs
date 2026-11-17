@@ -357,6 +357,7 @@ pub struct TerminalView {
     pub(super) mouse_down_link: Option<HyperlinkZone>,
     pub(super) mouse_down_cell: Option<Point>,
     ime_marked_text: String,
+    pub(crate) ime_caret: crate::widgets::ime_caret::ImeCaretReport,
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     launch: HostedLaunch,
@@ -766,6 +767,7 @@ impl TerminalView {
             mouse_down_link: None,
             mouse_down_cell: None,
             ime_marked_text: String::new(),
+            ime_caret: Default::default(),
             needs_initial_clear: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             terminal_window_size: Arc::new(Mutex::new(None)),
             launch,
@@ -2083,6 +2085,44 @@ mod tests {
             hits,
             _subscription: subscription,
         }
+    }
+
+    #[gpui::test]
+    fn the_ime_follows_the_terminal_caret_when_the_terminal_takes_the_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let redraw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        };
+        let reported = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| view.ime_caret.reported())
+        };
+        redraw(cx);
+        assert_eq!(reported(cx), None, "an unfocused terminal reports no caret");
+
+        focus_terminal(&terminal, cx);
+        redraw(cx);
+        let focused_caret = reported(cx);
+        assert!(
+            focused_caret.is_some(),
+            "a focused terminal reports its caret to the input method"
+        );
+
+        cx.update(|window, cx| window.blur(cx));
+        redraw(cx);
+        assert_eq!(reported(cx), None, "losing the focus forgets the caret");
+
+        focus_terminal(&terminal, cx);
+        redraw(cx);
+        assert_eq!(
+            reported(cx),
+            focused_caret,
+            "taking the focus back reports the caret again"
+        );
     }
 
     fn focus_terminal(view: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext) {
