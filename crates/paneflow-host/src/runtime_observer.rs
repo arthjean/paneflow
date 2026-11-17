@@ -1245,9 +1245,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_leader_runs_alone_until_it_spawns_a_child() {
+        use std::os::unix::process::CommandExt;
         let mut child = std::process::Command::new("sh")
             .args(["-c", "read line; sleep 5; true"])
             .stdin(std::process::Stdio::piped())
+            .process_group(0)
             .spawn()
             .unwrap();
         assert!(platform::leader_runs_alone(child.id()));
@@ -1262,7 +1264,10 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(!platform::leader_runs_alone(child.id()));
-        child.kill().unwrap();
+        assert_eq!(
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) },
+            0
+        );
         child.wait().unwrap();
         assert!(!platform::leader_runs_alone(child.id()));
     }
