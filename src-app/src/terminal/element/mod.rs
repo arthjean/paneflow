@@ -518,8 +518,6 @@ struct CellStyle {
     italic: bool,
     fg: Hsla,
     bg: Hsla,
-    underline: UnderlineKind,
-    strikethrough: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1047,6 +1045,7 @@ pub(crate) fn layout_from_snapshot_cached(
 
     let build_row = |cells: &[Cell]| {
         let mut batch = BatchAccumulator::new(base_font.clone());
+        let mut decorations = DecorationRuns::default();
         let mut rects: Vec<LayoutRect> = Vec::new();
         let mut block_quads: Vec<BlockQuad> = Vec::new();
         let mut sprites: Vec<SpriteGlyph> = Vec::new();
@@ -1080,6 +1079,7 @@ pub(crate) fn layout_from_snapshot_cached(
 
             if point.line.0 != last_line {
                 batch.flush();
+                decorations.close();
                 if let Some(rect) = current_rect.take() {
                     rects.push(rect);
                 }
@@ -1166,6 +1166,27 @@ pub(crate) fn layout_from_snapshot_cached(
                 }
             }
 
+            let underline = if flags.contains(CellFlags::UNDERCURL) {
+                UnderlineKind::Curly
+            } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+                UnderlineKind::Double
+            } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+                UnderlineKind::Dotted
+            } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+                UnderlineKind::Dashed
+            } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
+                UnderlineKind::Single
+            } else {
+                UnderlineKind::None
+            };
+            decorations.add(
+                point.column.0,
+                cell_cols,
+                underline,
+                flags.contains(CellFlags::STRIKEOUT),
+                fg,
+            );
+
             let c = *c;
             if c == ' ' && previous_cell_had_extras {
                 previous_cell_had_extras = false;
@@ -1233,26 +1254,11 @@ pub(crate) fn layout_from_snapshot_cached(
                 continue;
             }
 
-            let underline = if flags.contains(CellFlags::UNDERCURL) {
-                UnderlineKind::Curly
-            } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
-                UnderlineKind::Double
-            } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
-                UnderlineKind::Dotted
-            } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
-                UnderlineKind::Dashed
-            } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
-                UnderlineKind::Single
-            } else {
-                UnderlineKind::None
-            };
             let style = CellStyle {
                 bold: flags.contains(CellFlags::BOLD) || flags.contains(CellFlags::BOLD_ITALIC),
                 italic: flags.contains(CellFlags::ITALIC) || flags.contains(CellFlags::BOLD_ITALIC),
                 fg,
                 bg,
-                underline,
-                strikethrough: flags.contains(CellFlags::STRIKEOUT),
             };
 
             if batch.can_append(style, point.column.0) {
@@ -1274,7 +1280,7 @@ pub(crate) fn layout_from_snapshot_cached(
         }
         RowLayout {
             batched_runs: batch.runs,
-            decorations: batch.decorations,
+            decorations: decorations.finish(),
             symbols,
             rects,
             block_quads,
@@ -1459,9 +1465,81 @@ pub(crate) fn layout_from_snapshot_cached(
     }
 }
 
+#[derive(Default)]
+struct DecorationRuns {
+    finished: Vec<Decoration>,
+    underline: Option<Decoration>,
+    strikethrough: Option<Decoration>,
+}
+
+impl DecorationRuns {
+    fn add(
+        &mut self,
+        col: usize,
+        cell_cols: usize,
+        underline: UnderlineKind,
+        strikethrough: bool,
+        color: Hsla,
+    ) {
+        let underline =
+            (underline != UnderlineKind::None).then_some(DecorationKind::Underline(underline));
+        Self::extend(
+            &mut self.finished,
+            &mut self.underline,
+            underline,
+            col,
+            cell_cols,
+            color,
+        );
+        let strikethrough = strikethrough.then_some(DecorationKind::Strikethrough);
+        Self::extend(
+            &mut self.finished,
+            &mut self.strikethrough,
+            strikethrough,
+            col,
+            cell_cols,
+            color,
+        );
+    }
+
+    fn extend(
+        finished: &mut Vec<Decoration>,
+        open: &mut Option<Decoration>,
+        kind: Option<DecorationKind>,
+        col: usize,
+        cell_cols: usize,
+        color: Hsla,
+    ) {
+        if let (Some(run), Some(kind)) = (open.as_mut(), kind)
+            && run.kind == kind
+            && run.color == color
+            && run.col_start + run.num_cols == col
+        {
+            run.num_cols += cell_cols;
+            return;
+        }
+        finished.extend(open.take());
+        *open = kind.map(|kind| Decoration {
+            col_start: col,
+            num_cols: cell_cols,
+            kind,
+            color,
+        });
+    }
+
+    fn close(&mut self) {
+        self.finished.extend(self.underline.take());
+        self.finished.extend(self.strikethrough.take());
+    }
+
+    fn finish(mut self) -> Vec<Decoration> {
+        self.close();
+        self.finished
+    }
+}
+
 struct BatchAccumulator {
     runs: Vec<BatchedTextRun>,
-    decorations: Vec<Decoration>,
     text: String,
     cells: Vec<RunCell>,
     uniform: bool,
@@ -1469,8 +1547,6 @@ struct BatchAccumulator {
     base_font: Font,
     font: Font,
     fg: Hsla,
-    underline: UnderlineKind,
-    strikethrough: bool,
     col_start: usize,
     col_end: usize,
 }
@@ -1479,7 +1555,6 @@ impl BatchAccumulator {
     fn new(base_font: Font) -> Self {
         Self {
             runs: Vec::new(),
-            decorations: Vec::new(),
             text: String::new(),
             cells: Vec::new(),
             uniform: true,
@@ -1487,8 +1562,6 @@ impl BatchAccumulator {
             font: base_font.clone(),
             base_font,
             fg: Hsla::default(),
-            underline: UnderlineKind::None,
-            strikethrough: false,
             col_start: 0,
             col_end: 0,
         }
@@ -1555,8 +1628,6 @@ impl BatchAccumulator {
         }
         self.font = font;
         self.fg = style.fg;
-        self.underline = style.underline;
-        self.strikethrough = style.strikethrough;
         self.style = Some(style);
         self.col_start = col_start;
         self.col_end = col_start + cell_cols;
@@ -1577,23 +1648,6 @@ impl BatchAccumulator {
                 Box::from(self.cells.as_slice())
             },
         });
-        let num_cols = self.col_end.saturating_sub(self.col_start);
-        if self.underline != UnderlineKind::None {
-            self.decorations.push(Decoration {
-                col_start: self.col_start,
-                num_cols,
-                kind: DecorationKind::Underline(self.underline),
-                color: self.fg,
-            });
-        }
-        if self.strikethrough {
-            self.decorations.push(Decoration {
-                col_start: self.col_start,
-                num_cols,
-                kind: DecorationKind::Strikethrough,
-                color: self.fg,
-            });
-        }
         self.style = None;
     }
 }
@@ -3144,7 +3198,29 @@ mod golden_frame_tests {
         for (i, d) in state.decorations().enumerate() {
             assert_eq!((d.line, d.col_start, d.num_cols), (0, i, 1));
         }
-        assert_eq!(state.batched_runs().count(), 6);
+        assert_eq!(state.batched_runs().count(), 1);
+    }
+
+    #[test]
+    fn an_underline_runs_unbroken_across_the_spaces_between_words() {
+        let words = text_row(0, "ab  cd", default_fg(), CellFlags::UNDERCURL);
+        let state = run(words, None, None);
+        let spans: Vec<(DecorationKind, usize, usize)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(DecorationKind::Underline(UnderlineKind::Curly), 0, 6)]
+        );
+
+        let struck = text_row(0, "a b", default_fg(), CellFlags::STRIKEOUT);
+        let state = run(struck, None, None);
+        let spans: Vec<(DecorationKind, usize, usize)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols))
+            .collect();
+        assert_eq!(spans, vec![(DecorationKind::Strikethrough, 0, 3)]);
     }
 
     #[test]
