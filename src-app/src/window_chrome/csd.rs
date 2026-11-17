@@ -66,6 +66,18 @@ impl ClientDecorationGeometry {
     }
 }
 
+fn declared_client_inset(decorations: Decorations, fullscreen: bool) -> Pixels {
+    if fullscreen {
+        crate::RESIZE_BORDER
+    } else {
+        client_frame(decorations).0
+    }
+}
+
+pub(crate) fn client_frame_inset(decorations: Decorations) -> Pixels {
+    client_frame(decorations).0
+}
+
 fn client_frame(decorations: Decorations) -> (Pixels, Corners<Pixels>) {
     match decorations {
         Decorations::Client { tiling } => (
@@ -98,8 +110,8 @@ pub(crate) fn client_side_window_shell(
     border_color: Hsla,
 ) -> impl IntoElement {
     let decorations = window.window_decorations();
-    let (inset, corner_radii) = client_frame(decorations);
-    window.set_client_inset(inset);
+    let (_, corner_radii) = client_frame(decorations);
+    window.set_client_inset(declared_client_inset(decorations, window.is_fullscreen()));
     window.set_client_corner_radii(corner_radii);
 
     let mut outer = div().id("window-backdrop").relative().size_full();
@@ -495,8 +507,37 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientDecorationGeometry, client_frame, rounded_window_corners};
+    use super::{
+        ClientDecorationGeometry, client_frame, declared_client_inset, rounded_window_corners,
+    };
     use gpui::{Corners, Decorations, Tiling, px};
+
+    #[test]
+    fn a_fullscreen_window_keeps_declaring_the_inset_it_returns_to() {
+        assert_eq!(
+            declared_client_inset(Decorations::Server, true),
+            crate::RESIZE_BORDER
+        );
+        assert_eq!(
+            declared_client_inset(
+                Decorations::Client {
+                    tiling: Tiling::tiled()
+                },
+                true
+            ),
+            crate::RESIZE_BORDER
+        );
+        assert_eq!(declared_client_inset(Decorations::Server, false), px(0.0));
+        assert_eq!(
+            declared_client_inset(
+                Decorations::Client {
+                    tiling: Tiling::default()
+                },
+                false
+            ),
+            crate::RESIZE_BORDER
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]

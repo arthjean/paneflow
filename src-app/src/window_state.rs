@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use gpui::{App, Bounds, Pixels, Size, Window, px, size};
+use gpui::{App, Bounds, Decorations, Pixels, Size, Window, px, size};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_WINDOW_WIDTH: f32 = 1200.;
@@ -115,7 +115,22 @@ pub(crate) fn windowed_bounds(window: &Window) -> Option<Bounds<Pixels>> {
     if window.is_maximized() || window.is_fullscreen() {
         return None;
     }
-    Some(window.window_bounds().get_bounds())
+    let inner = window.inner_window_bounds().get_bounds().size;
+    let size = restorable_size(inner, window.window_decorations())?;
+    Some(Bounds::new(
+        window.window_bounds().get_bounds().origin,
+        size,
+    ))
+}
+
+fn restorable_size(inner: Size<Pixels>, decorations: Decorations) -> Option<Size<Pixels>> {
+    if let Decorations::Client { tiling } = decorations
+        && tiling.is_tiled()
+    {
+        return None;
+    }
+    let frame = crate::window_chrome::csd::client_frame_inset(decorations) * 2.0;
+    Some(size(inner.width + frame, inner.height + frame))
 }
 
 pub(crate) fn record_windowed_size(window: &Window) {
@@ -246,6 +261,40 @@ mod tests {
             .status()
             .is_ok_and(|status| status.success());
         assert!(made, "mkfifo {}", path.display());
+    }
+
+    #[test]
+    fn the_restorable_size_adds_the_client_frame_whatever_inset_the_window_reports() {
+        let floating = Decorations::Client {
+            tiling: gpui::Tiling::default(),
+        };
+        let inset = f32::from(crate::window_chrome::csd::client_frame_inset(floating));
+        assert!(inset > 0.0);
+        let frame = gpui::size(px(1180.0), px(780.0));
+        assert_eq!(
+            restorable_size(frame, floating),
+            Some(gpui::size(
+                px(1180.0 + 2.0 * inset),
+                px(780.0 + 2.0 * inset)
+            ))
+        );
+        assert_eq!(restorable_size(frame, Decorations::Server), Some(frame));
+    }
+
+    #[test]
+    fn a_tiled_window_records_no_restorable_size() {
+        let tiled = Decorations::Client {
+            tiling: gpui::Tiling {
+                left: true,
+                top: true,
+                bottom: true,
+                right: false,
+            },
+        };
+        assert_eq!(
+            restorable_size(gpui::size(px(720.0), px(900.0)), tiled),
+            None
+        );
     }
 
     #[cfg(unix)]
