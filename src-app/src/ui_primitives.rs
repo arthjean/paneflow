@@ -67,6 +67,10 @@ impl HoverAnimationState {
         true
     }
 
+    fn aims_at(&self, hovered: bool) -> bool {
+        self.target == if hovered { 1.0 } else { 0.0 }
+    }
+
     fn is_animating(&self, now: Instant) -> bool {
         !self.duration.is_zero() && now.duration_since(self.started_at) < self.duration
     }
@@ -455,6 +459,26 @@ impl Element for AnimatedHover {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.driven_by.is_none()
+            && let Some(global_id) = global_id
+        {
+            let has_drag = cx.has_active_drag();
+            let stale = window.with_element_state(
+                global_id,
+                |state: Option<HoverAnimationState>, window| {
+                    let state = state.unwrap_or_else(|| HoverAnimationState::resting_at(false));
+                    let hovered = !has_drag
+                        && state
+                            .hitbox
+                            .as_ref()
+                            .is_some_and(|hitbox| hitbox.is_hovered(window));
+                    (!state.aims_at(hovered), state)
+                },
+            );
+            if stale {
+                window.request_animation_frame();
+            }
+        }
         self.element.paint(
             global_id,
             inspector_id,
@@ -1770,6 +1794,72 @@ mod tests {
         assert!(
             tooltip.right() <= pointer.x - TOOLTIP_POINTER_CLEARANCE_X,
             "the flipped tooltip at {tooltip:?} covers the pointer {pointer:?}"
+        );
+    }
+
+    struct ScrimHarness {
+        progress: Rc<Cell<f32>>,
+        covered: bool,
+    }
+
+    impl Render for ScrimHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let progress = self.progress.clone();
+            div()
+                .size_full()
+                .relative()
+                .child(
+                    div()
+                        .id("row-under-a-modal")
+                        .w(px(100.))
+                        .h(px(30.))
+                        .animated_hover(move |_, delta| progress.set(delta)),
+                )
+                .when(self.covered, |root| {
+                    root.child(div().id("modal-scrim").absolute().inset_0().occlude())
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn a_row_covered_by_a_modal_schedules_the_frame_that_drops_its_hover(cx: &mut TestAppContext) {
+        let progress = Rc::new(Cell::new(0.0));
+        let held = progress.clone();
+        let (view, cx) = cx.add_window_view(move |_, _| ScrimHarness {
+            progress: held,
+            covered: false,
+        });
+        cx.simulate_resize(size(px(200.), px(100.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(20.), px(15.)), None, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        thread::sleep(HOVER_ANIMATION_DURATION * 2);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            progress.get() > 0.99,
+            "the row is hovered: {}",
+            progress.get()
+        );
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+
+        view.update(cx, |harness, cx| {
+            harness.covered = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        for _ in 0..4 {
+            thread::sleep(HOVER_ANIMATION_DURATION);
+            cx.update(|window, cx| window.simulate_next_frame(cx));
+            cx.run_until_parked();
+        }
+        assert!(
+            progress.get() < 0.01,
+            "a modal that now covers the hovered row drops its hover without a pointer move: {}",
+            progress.get()
         );
     }
 }
