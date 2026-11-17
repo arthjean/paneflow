@@ -12,10 +12,21 @@ use crate::app::diff_dock::{DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab
 const PANE_GRID_RESERVED_WIDTH: f32 =
     crate::layout::MIN_PANE_SIZE + 2. * crate::layout::PANE_GUTTER_PX;
 
+const DIFF_DOCK_PANEL_FLOOR: f32 =
+    DIFF_DOCK_PANEL_MIN_WIDTH + PANE_GRID_RESERVED_WIDTH + crate::app::constants::PANE_OUTER_GUTTER;
+
 fn diff_dock_fit(preferred: f32, available: f32) -> (f32, f32) {
-    let max = (available - PANE_GRID_RESERVED_WIDTH - crate::app::constants::PANE_OUTER_GUTTER)
-        .max(DIFF_DOCK_PANEL_MIN_WIDTH);
+    let max =
+        (available - PANE_GRID_RESERVED_WIDTH - crate::app::constants::PANE_OUTER_GUTTER).max(0.);
     (preferred.min(max), max)
+}
+
+fn main_panel_floor(dock_beside_grid: bool, panel_inset: f32) -> f32 {
+    if dock_beside_grid {
+        DIFF_DOCK_PANEL_FLOOR + panel_inset
+    } else {
+        0.
+    }
 }
 
 fn diff_dock_maximized_width(available: f32, left_gutter: f32, right_gutter: f32) -> f32 {
@@ -391,6 +402,15 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn main_panel_floor(&self) -> f32 {
+        let panel_inset = if self.flush_shell() {
+            0.
+        } else {
+            crate::app::constants::PANEL_INSET
+        };
+        main_panel_floor(self.diff_dock_beside_grid(), panel_inset)
+    }
+
     pub(crate) fn diff_dock_visible(&self) -> bool {
         self.diff_dock.open && self.settings_section.is_none()
     }
@@ -693,6 +713,29 @@ mod tests {
     }
 
     #[test]
+    fn a_panel_too_narrow_for_the_dock_floor_keeps_the_pane_grid_reserve() {
+        let available = 400.;
+        let (width, max) = diff_dock_fit(540., available);
+        assert_eq!(width, max);
+        assert!(width < DIFF_DOCK_PANEL_MIN_WIDTH);
+        assert_eq!(
+            available - width - crate::app::constants::PANE_OUTER_GUTTER,
+            PANE_GRID_RESERVED_WIDTH,
+            "the pane grid keeps its reserve: {width}"
+        );
+        assert_eq!(diff_dock_fit(540., 0.).0, 0.);
+    }
+
+    #[test]
+    fn a_main_panel_at_the_floor_holds_the_dock_floor_and_the_pane_grid_reserve() {
+        let panel_inset = crate::app::constants::PANEL_INSET;
+        let floor = main_panel_floor(true, panel_inset);
+        let (width, _) = diff_dock_fit(540., floor - panel_inset);
+        assert_eq!(width, DIFF_DOCK_PANEL_MIN_WIDTH);
+        assert_eq!(main_panel_floor(false, panel_inset), 0.);
+    }
+
+    #[test]
     fn a_maximized_dock_spans_the_panel_minus_the_gutters() {
         let available = 1920.;
         let left_gutter = crate::app::constants::PANE_OUTER_GUTTER;
@@ -734,14 +777,6 @@ mod tests {
         assert_eq!(
             diff_dock_maximized_width(200., 0., 0.),
             DIFF_DOCK_PANEL_MIN_WIDTH
-        );
-    }
-
-    #[test]
-    fn a_panel_too_narrow_for_the_floor_stops_at_the_floor() {
-        assert_eq!(
-            diff_dock_fit(880., 200.),
-            (DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MIN_WIDTH)
         );
     }
 

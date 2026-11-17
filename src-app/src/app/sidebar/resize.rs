@@ -72,8 +72,12 @@ impl SidebarResize {
         (self.chosen != SIDEBAR_WIDTH).then_some(self.chosen)
     }
 
-    pub(crate) fn ceiling_for(viewport_width: f32, right_rail_width: f32) -> f32 {
-        (viewport_width - right_rail_width - SIDEBAR_MAIN_PANEL_FLOOR)
+    pub(crate) fn ceiling_for(
+        content_width: f32,
+        right_rail_width: f32,
+        main_panel_floor: f32,
+    ) -> f32 {
+        (content_width - right_rail_width - main_panel_floor.max(SIDEBAR_MAIN_PANEL_FLOOR))
             .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
     }
 
@@ -610,20 +614,33 @@ mod tests {
     fn a_narrow_window_caps_the_shown_width_and_keeps_the_chosen_one() {
         let now = Instant::now();
         let mut sidebar = at_rest(Some(460.), now);
-        let ceiling = SidebarResize::ceiling_for(800., 300.);
+        let ceiling = SidebarResize::ceiling_for(800., 300., 0.);
         assert_eq!(ceiling, 300.);
         sidebar.begin_frame(now, ceiling, true);
         assert_eq!(sidebar.width(), 300.);
         assert_eq!(sidebar.persisted(), Some(460.));
 
-        sidebar.begin_frame(now, SidebarResize::ceiling_for(1600., 0.), true);
+        sidebar.begin_frame(now, SidebarResize::ceiling_for(1600., 0., 0.), true);
         assert_eq!(sidebar.width(), 460.);
     }
 
     #[test]
+    fn a_main_panel_that_needs_more_room_lowers_the_ceiling() {
+        assert_eq!(SidebarResize::ceiling_for(778., 0., 464.), 314.);
+        assert_eq!(SidebarResize::ceiling_for(778., 0., 100.), 480.);
+        assert_eq!(
+            SidebarResize::ceiling_for(778., 300., 464.),
+            SIDEBAR_MIN_WIDTH
+        );
+    }
+
+    #[test]
     fn the_ceiling_stays_within_the_resize_range() {
-        assert_eq!(SidebarResize::ceiling_for(300., 300.), SIDEBAR_MIN_WIDTH);
-        assert_eq!(SidebarResize::ceiling_for(4000., 0.), SIDEBAR_MAX_WIDTH);
+        assert_eq!(
+            SidebarResize::ceiling_for(300., 300., 0.),
+            SIDEBAR_MIN_WIDTH
+        );
+        assert_eq!(SidebarResize::ceiling_for(4000., 0., 0.), SIDEBAR_MAX_WIDTH);
     }
 
     #[test]

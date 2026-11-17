@@ -207,8 +207,11 @@ impl Render for PaneFlowApp {
         } else {
             0.
         };
-        let sidebar_ceiling =
-            crate::app::sidebar::SidebarResize::ceiling_for(content_width, right_rail_width);
+        let sidebar_ceiling = crate::app::sidebar::SidebarResize::ceiling_for(
+            content_width,
+            right_rail_width,
+            self.main_panel_floor(),
+        );
         if self.sidebar_resize.begin_frame(
             std::time::Instant::now(),
             sidebar_ceiling,

@@ -176,7 +176,7 @@ changes.
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Comfortable density: gutter 8, divider hit area 7, minimum pane 80. Compact density (`comfortable_density: false`): no outer gutter, a 1 px `border` divider whose 7 px hit area straddles both panes, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
-| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
+| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has once the pane grid keeps a minimum pane (80) and its gutters, so it drops below 360 only when the panel cannot hold both with the sidebar at its minimum; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
 | Footer | The Settings row, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
 ### 3.2 Modes
@@ -770,8 +770,10 @@ in `text` at 0.16 on the rail's last pixel column, fading to nothing toward
 both ends so it never meets the panel's rounded corners; the rule is invisible
 at rest and goes out while the drag is held against a limit. The width follows
 the pointer from where it was pressed, between 240 px and the smaller of
-480 px and the window width minus the right rail and 200 px for the main
-panel; rows, the title bar rail, the footer and the drag previews follow it.
+480 px and the window width minus the right rail and the room the main
+panel needs: 200 px, or while the diff dock is open the dock's 360 px minimum
+plus a minimum pane and its gutters, so in a narrow window the sidebar
+narrows before the dock or the pane grid gives way; rows, the title bar rail, the footer and the drag previews follow it.
 Reaching either limit plays the resize edge nudge of 4.8. The default width,
 432 px, is a detent with no mark of its own: while the pointer asks for a
 width within 12 px of it the edge holds on 432 px and the rule turns solid
