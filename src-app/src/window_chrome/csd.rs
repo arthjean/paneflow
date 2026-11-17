@@ -125,6 +125,50 @@ pub(crate) fn client_content_frame(decorations: Decorations) -> gpui::Edges<Pixe
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WindowOutline {
+    pub(crate) border: gpui::Edges<Pixels>,
+    pub(crate) radii: Corners<Pixels>,
+}
+
+pub(crate) fn window_outline(decorations: Decorations) -> WindowOutline {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            let side = |free: bool| {
+                if free {
+                    crate::app::constants::WINDOW_BORDER_SIZE
+                } else {
+                    px(0.0)
+                }
+            };
+            WindowOutline {
+                border: gpui::Edges {
+                    top: side(geometry.free_top),
+                    right: side(geometry.free_right),
+                    bottom: side(geometry.free_bottom),
+                    left: side(geometry.free_left),
+                },
+                radii: geometry.corner_radii(),
+            }
+        }
+        Decorations::Server => WindowOutline::default(),
+    }
+}
+
+thread_local! {
+    static ACTIVE_WINDOW_OUTLINE: std::cell::Cell<WindowOutline> =
+        std::cell::Cell::new(WindowOutline::default());
+}
+
+pub(crate) fn set_window_outline(outline: WindowOutline) {
+    ACTIVE_WINDOW_OUTLINE.set(outline);
+}
+
+pub(crate) fn active_window_outline() -> WindowOutline {
+    ACTIVE_WINDOW_OUTLINE.get()
+}
+
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -530,8 +574,8 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientDecorationGeometry, client_content_frame, client_frame, declared_client_inset,
-        rounded_window_corners,
+        ClientDecorationGeometry, WindowOutline, client_content_frame, client_frame,
+        declared_client_inset, rounded_window_corners, window_outline,
     };
     use gpui::{Corners, Decorations, Tiling, px};
 
@@ -695,6 +739,47 @@ mod tests {
         assert_eq!(
             client_content_frame(Decorations::Server),
             gpui::Edges::default()
+        );
+    }
+
+    #[test]
+    fn the_window_outline_is_the_drawn_border_and_corners() {
+        let border = crate::app::constants::WINDOW_BORDER_SIZE;
+        let radius = crate::app::constants::WINDOW_CORNER_RADIUS;
+        assert_eq!(
+            window_outline(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            WindowOutline {
+                border: gpui::Edges::all(border),
+                radii: Corners::all(radius),
+            }
+        );
+        assert_eq!(
+            window_outline(Decorations::Client {
+                tiling: Tiling {
+                    left: true,
+                    ..Tiling::default()
+                }
+            }),
+            WindowOutline {
+                border: gpui::Edges {
+                    top: border,
+                    right: border,
+                    bottom: border,
+                    left: px(0.0),
+                },
+                radii: Corners {
+                    top_left: px(0.0),
+                    top_right: radius,
+                    bottom_right: radius,
+                    bottom_left: px(0.0),
+                },
+            }
+        );
+        assert_eq!(
+            window_outline(Decorations::Server),
+            WindowOutline::default()
         );
     }
 

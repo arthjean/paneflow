@@ -188,6 +188,9 @@ impl Render for PaneFlowApp {
             (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
         let content_frame =
             crate::window_chrome::csd::client_content_frame(window.window_decorations());
+        crate::window_chrome::csd::set_window_outline(crate::window_chrome::csd::window_outline(
+            window.window_decorations(),
+        ));
         let content_left = f32::from(content_frame.left);
         let content_width =
             f32::from(window.viewport_size().width - content_frame.left - content_frame.right);

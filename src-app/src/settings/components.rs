@@ -873,13 +873,19 @@ pub(crate) fn modal_backdrop(
     child: impl IntoElement,
     on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
+    let outline = crate::window_chrome::csd::active_window_outline();
     deferred(
         div()
             .id(id)
             .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
+            .top(-outline.border.top)
+            .right(-outline.border.right)
+            .bottom(-outline.border.bottom)
+            .left(-outline.border.left)
+            .rounded_tl(outline.radii.top_left)
+            .rounded_tr(outline.radii.top_right)
+            .rounded_br(outline.radii.bottom_right)
+            .rounded_bl(outline.radii.bottom_left)
             .flex()
             .items_center()
             .justify_center()
