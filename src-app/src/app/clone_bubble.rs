@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Bounds, BoxShadow, ClickEvent, Context, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, SharedString, Stateful, Styled, Window, canvas, deferred,
-    div, point, prelude::*, px, size, svg,
+    AnyElement, Bounds, BoxShadow, ClickEvent, Context, Decorations, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, Size, Stateful, Styled, Window,
+    canvas, deferred, div, point, prelude::*, px, size, svg,
 };
 
 use crate::PaneFlowApp;
@@ -135,6 +135,47 @@ fn window_fraction(start: f32, end: f32, t: f32) -> f32 {
 
 fn lerp(from: f32, to: f32, t: f32) -> f32 {
     from + (to - from) * t
+}
+
+fn bubble_content_size(viewport: Size<Pixels>, decorations: Decorations) -> Size<Pixels> {
+    let frame = crate::window_chrome::csd::client_content_frame(decorations);
+    size(
+        (viewport.width - frame.left - frame.right).max(px(0.)),
+        (viewport.height - frame.top - frame.bottom).max(px(0.)),
+    )
+}
+
+fn intro_source(content: Size<Pixels>) -> Bounds<Pixels> {
+    let left = (f32::from(content.width) - SOURCE_WIDTH) / 2.;
+    Bounds::new(
+        point(px(left), px(SOURCE_TOP)),
+        size(px(SOURCE_WIDTH), px(SOURCE_HEIGHT)),
+    )
+}
+
+fn pill_rest(content: Size<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        point(
+            px(f32::from(content.width) - EDGE_INSET - PILL_WIDTH),
+            px(f32::from(content.height) - EDGE_INSET - PILL_HEIGHT),
+        ),
+        size(px(PILL_WIDTH), px(PILL_HEIGHT)),
+    )
+}
+
+fn intro_frame(from: Bounds<Pixels>, content: Size<Pixels>, eased: f32) -> Bounds<Pixels> {
+    let to = pill_rest(content);
+    let along = |from: Pixels, to: Pixels| px(lerp(f32::from(from), f32::from(to), eased));
+    Bounds::new(
+        point(
+            along(from.origin.x, to.origin.x),
+            along(from.origin.y, to.origin.y),
+        ),
+        size(
+            along(from.size.width, to.size.width),
+            along(from.size.height, to.size.height),
+        ),
+    )
 }
 
 fn motion_progress(since: Instant, millis: u64) -> f32 {
@@ -389,13 +430,11 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let view = if self.clone_repo.is_some() {
-            let viewport = window.viewport_size();
-            let left = (f32::from(viewport.width) - SOURCE_WIDTH) / 2.;
             BubbleView::Intro {
-                from: Bounds::new(
-                    point(px(left), px(SOURCE_TOP)),
-                    size(px(SOURCE_WIDTH), px(SOURCE_HEIGHT)),
-                ),
+                from: intro_source(bubble_content_size(
+                    window.viewport_size(),
+                    window.window_decorations(),
+                )),
             }
         } else {
             BubbleView::Collapsed { animate: false }
@@ -1073,19 +1112,17 @@ impl PaneFlowApp {
                 window.request_animation_frame();
                 let progress = motion_progress(job.view_since, INTRO_MS);
                 let eased = spring(progress);
-                let viewport = window.viewport_size();
-                let to_left = f32::from(viewport.width) - EDGE_INSET - PILL_WIDTH;
-                let to_top = f32::from(viewport.height) - EDGE_INSET - PILL_HEIGHT;
-                let left = lerp(f32::from(from.origin.x), to_left, eased);
-                let top = lerp(f32::from(from.origin.y), to_top, eased);
-                let width = lerp(f32::from(from.size.width), PILL_WIDTH, eased);
-                let height = lerp(f32::from(from.size.height), PILL_HEIGHT, eased);
+                let frame = intro_frame(
+                    from,
+                    bubble_content_size(window.viewport_size(), window.window_decorations()),
+                    eased,
+                );
                 let radius = lerp(f32::from(PANEL_RADIUS), PILL_HEIGHT / 2., eased);
                 shell("clone-bubble-intro", radius)
-                    .left(px(left))
-                    .top(px(top))
-                    .w(px(width))
-                    .h(px(height))
+                    .left(frame.origin.x)
+                    .top(frame.origin.y)
+                    .w(frame.size.width)
+                    .h(frame.size.height)
                     .shadow(shadow(eased))
                     .child(self.render_bubble_ghost(
                         job,
@@ -1188,6 +1225,38 @@ fn remove_partial_clone(destination: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_intro_flies_inside_the_content_and_lands_on_the_resting_pill() {
+        let viewport = size(px(1200.), px(800.));
+        let floating = Decorations::Client {
+            tiling: gpui::Tiling::default(),
+        };
+        let content = bubble_content_size(viewport, floating);
+        let frame = crate::window_chrome::csd::client_content_frame(floating);
+        assert_eq!(
+            content,
+            size(
+                viewport.width - frame.left - frame.right,
+                viewport.height - frame.top - frame.bottom
+            )
+        );
+        let from = intro_source(content);
+        for step in 0..=100 {
+            let bounds = intro_frame(from, content, spring(step as f32 / 100.));
+            assert!(
+                bounds.left() >= px(0.) && bounds.top() >= px(0.),
+                "{bounds:?}"
+            );
+            assert!(
+                bounds.right() <= content.width - px(EDGE_INSET)
+                    && bounds.bottom() <= content.height - px(EDGE_INSET),
+                "frame {step} leaves the content area {content:?}: {bounds:?}"
+            );
+        }
+        assert_eq!(intro_frame(from, content, 1.), pill_rest(content));
+        assert_eq!(bubble_content_size(viewport, Decorations::Server), viewport);
+    }
 
     #[test]
     fn the_spring_starts_at_rest_settles_exactly_and_never_overshoots() {
