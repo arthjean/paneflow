@@ -324,6 +324,16 @@ painted after the second layer, in that order.
 `a_terminal_frame_paints_backgrounds_then_glyphs_in_two_layers_and_overlays_above_them`
 in `terminal/view.rs` asserts the sequence of the paint phases.
 
+Rounded corners, diagonals, Powerline separators and curly underlines are
+curves, which GPUI `703b5ac3` would stroke and bin into tiles on every paint.
+The terminal draws them as Ghostty draws its sprite font instead: each shape is
+an SVG outline built once per cell size (`MaskKey` in
+`terminal/element/paint/masks.rs`), rasterized once into GPUI's monochrome
+sprite atlas through `Window::paint_svg`, and painted as a sprite in the color
+of its cell. A curly underline's mask covers only the band of its wave, so it
+never overlaps the row below. Straight box-drawing lines and blocks stay
+quads.
+
 The workspace sidebar is its own cached view, `SidebarView`
 (`src-app/src/app/sidebar/view.rs`). It observes the app entity and calls
 `PaneFlowApp::render_sidebar`, so a frame caused by a `TerminalView` alone
