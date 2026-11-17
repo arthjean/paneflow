@@ -240,6 +240,8 @@ jobs:
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: mesa-vulkan-drivers
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
@@ -1279,6 +1281,8 @@ jobs:
       - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: mesa-vulkan-drivers
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:

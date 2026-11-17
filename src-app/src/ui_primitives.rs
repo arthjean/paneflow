@@ -1862,4 +1862,134 @@ mod tests {
             progress.get()
         );
     }
+
+    #[cfg(target_os = "linux")]
+    struct InkedAtlasAssets;
+
+    #[cfg(target_os = "linux")]
+    const INKED_TILE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" fill="currentColor"/></svg>"#;
+
+    #[cfg(target_os = "linux")]
+    impl gpui::AssetSource for InkedAtlasAssets {
+        fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+            if path.starts_with("inked/") {
+                return Ok(Some(std::borrow::Cow::Borrowed(INKED_TILE_SVG.as_bytes())));
+            }
+            gpui::AssetSource::load(&crate::assets::Assets, path)
+        }
+
+        fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+            gpui::AssetSource::list(&crate::assets::Assets, path)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_ORIGIN: f32 = 100.;
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_SIZE: f32 = 6.;
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_BACKGROUND: u32 = 0x202020;
+
+    #[cfg(target_os = "linux")]
+    struct TurningCometBetweenInkedTiles {
+        angle: f32,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Render for TurningCometBetweenInkedTiles {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let inked = |index: usize| {
+                svg()
+                    .path(SharedString::from(format!("inked/{index}.svg")))
+                    .size(px(TURNING_COMET_SIZE))
+                    .flex_none()
+                    .text_color(gpui::white())
+            };
+            div()
+                .size_full()
+                .bg(gpui::rgb(TURNING_COMET_BACKGROUND))
+                .child(div().flex().gap_2().children((0..4).map(inked)))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(TURNING_COMET_ORIGIN))
+                        .top(px(TURNING_COMET_ORIGIN))
+                        .child(
+                            svg()
+                                .path("icons/comet.svg")
+                                .size(px(TURNING_COMET_SIZE))
+                                .flex_none()
+                                .text_color(gpui::white())
+                                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                    self.angle,
+                                ))),
+                        ),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .bottom_0()
+                        .flex()
+                        .gap_2()
+                        .children((4..8).map(inked)),
+                )
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_turning_comet_samples_only_its_own_atlas_tile() {
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new("Lilex")),
+            std::sync::Arc::new(InkedAtlasAssets),
+            || {
+                let renderer = gpui_wgpu::WgpuHeadlessRenderer::new()?;
+                Ok(Some(
+                    Box::new(renderer) as Box<dyn gpui::PlatformHeadlessRenderer>
+                ))
+            },
+        );
+        let window =
+            gpui::HeadlessAppContext::open_window(&mut cx, size(px(200.), px(200.)), |_, cx| {
+                cx.new(|_| TurningCometBetweenInkedTiles { angle: 0. })
+            })
+            .expect("a headless window");
+        let background = (TURNING_COMET_BACKGROUND >> 16) as i32;
+        let mut strays = Vec::new();
+        for degrees in (0..360).step_by(5) {
+            cx.update_window(window.into(), |root, _, cx| {
+                let root = root
+                    .downcast::<TurningCometBetweenInkedTiles>()
+                    .expect("the comet root");
+                root.update(cx, |root, cx| {
+                    root.angle = (degrees as f32).to_radians();
+                    cx.notify();
+                });
+            })
+            .expect("an open window");
+            cx.run_until_parked();
+            let image = cx
+                .capture_screenshot(window.into())
+                .expect("a headless frame");
+            let scale = image.width() as f32 / 200.;
+            let centre = (TURNING_COMET_ORIGIN + TURNING_COMET_SIZE / 2.) * scale;
+            let ring = TURNING_COMET_SIZE / 2. * scale + 1.;
+            let reach = (TURNING_COMET_SIZE * scale) as u32;
+            let first = centre as u32 - reach;
+            for y in first..first + 2 * reach {
+                for x in first..first + 2 * reach {
+                    let distance = (x as f32 + 0.5 - centre).hypot(y as f32 + 0.5 - centre);
+                    let ink = image.get_pixel(x, y)[0] as i32 - background;
+                    if distance > ring && ink.abs() > 6 {
+                        strays.push((degrees, x, y, ink));
+                    }
+                }
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "a rotated comet painted outside its ring (degrees, x, y, ink): {strays:?}"
+        );
+    }
 }

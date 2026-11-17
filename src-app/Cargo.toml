@@ -393,6 +393,11 @@ windows = { version = "0.62", features = [
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.31"
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# `test-support` exposes `WgpuHeadlessRenderer`: the sprite tests render a
+# frame through the real wgpu shaders and read its pixels back.
+gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", features = ["test-support"] }
+
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.59", features = [
     # Job accounting in the `external_open` workspace-launch test.

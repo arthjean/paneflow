@@ -35,6 +35,12 @@
 #   runs, so that Paneflow's logger (src-app/src/probe_log.rs) reports the
 #   protocol error the compositor sends on the throwaway connection as
 #   expected, at the info level, instead of as an error.
+# - `fs_mono_sprite` in src/shaders.wgsl clamps its atlas coordinate to the
+#   centers of the sprite's own edge texels (`to_tile_texel_centers`). Atlas
+#   tiles are packed without a gutter, so a rotated sprite, such as the comet
+#   spinner, sampled the neighboring tile through the linear filter at its
+#   edges and painted stray pixels outside its shape. An axis-aligned sprite
+#   only samples texel centers inside its tile, so its pixels do not change.
 # Bump this copy together with the Zed revision in src-app/Cargo.toml, and
 # drop it once upstream GPUI carries these changes.
 
