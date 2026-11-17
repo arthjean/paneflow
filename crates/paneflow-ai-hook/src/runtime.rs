@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsStr;
+use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -39,14 +40,14 @@ pub(crate) fn dispatch() {
         return;
     };
     let Some(event_name) = env::args_os().nth(1) else {
-        diagnose("missing argv[1] hook event name");
+        diagnose(format_args!("missing argv[1] hook event name"));
         return;
     };
     let event = event_name
         .to_str()
         .and_then(|name| name.parse::<HookEvent>().ok());
     if event.is_none() && event_name != crate::status_line::STATUS_LINE_ARG {
-        diagnose(&format!(
+        diagnose(format_args!(
             "{}: unhandled hook event",
             event_name.to_string_lossy()
         ));
@@ -55,7 +56,7 @@ pub(crate) fn dispatch() {
     let Some((endpoint, session)) =
         resolve_target(env::var_os(HOST_ENDPOINT_ENV).as_deref(), Some(&session))
     else {
-        diagnose(&format!(
+        diagnose(format_args!(
             "{}: no local host endpoint",
             event_name.to_string_lossy()
         ));
@@ -73,7 +74,7 @@ pub(crate) fn dispatch() {
     let tool = match detect_tool_from(env::var(TOOL_ENV).ok().as_deref(), &hook_payload) {
         Ok(tool) => tool,
         Err(error) => {
-            diagnose(&format!("{TOOL_ENV}: {error}"));
+            diagnose(format_args!("{TOOL_ENV}: {error}"));
             return;
         }
     };
@@ -90,7 +91,7 @@ pub(crate) fn dispatch() {
         context.runtime_generation,
         &hook_payload,
     ) {
-        diagnose(&format!("{}: {error}", event.name()));
+        diagnose(format_args!("{}: {error}", event.name()));
     }
 
     match build_frame(event, context, hook_payload) {
@@ -100,11 +101,11 @@ pub(crate) fn dispatch() {
                 if error.kind() != std::io::ErrorKind::InvalidData {
                     write_last_hook_event(session_dir.as_deref().map(Path::new), &frame);
                 }
-                diagnose(&format!("{}: delivery failed: {error}", event.name()));
+                diagnose(format_args!("{}: delivery failed: {error}", event.name()));
             }
         }
-        Ok(BuildOutcome::Drop(reason)) => diagnose(&format!("{}: {reason}", event.name())),
-        Err(error) => diagnose(&format!("{}: {error}", event.name())),
+        Ok(BuildOutcome::Drop(reason)) => diagnose(format_args!("{}: {reason}", event.name())),
+        Err(error) => diagnose(format_args!("{}: {error}", event.name())),
     }
 }
 
@@ -113,7 +114,7 @@ fn read_payload(event: HookEvent) -> Option<Value> {
         InputSource::ExitCodeEnvironment => {
             let Some(exit_code) = read_exit_code_from(env::var(EXIT_CODE_ENV).ok().as_deref())
             else {
-                diagnose(&format!(
+                diagnose(format_args!(
                     "{}: missing or invalid {EXIT_CODE_ENV}",
                     event.name()
                 ));
@@ -191,11 +192,11 @@ fn read_past_limit(mut reader: impl Read, limit: usize) -> Option<Vec<u8>> {
 
 fn read_stdin_json(event: HookEvent) -> Option<Value> {
     let Some(bytes) = read_stdin_bytes() else {
-        diagnose(&format!("{}: stdin read error", event.name()));
+        diagnose(format_args!("{}: stdin read error", event.name()));
         return None;
     };
     if bytes.len() > MAX_STDIN_BYTES {
-        diagnose(&format!(
+        diagnose(format_args!(
             "{}: stdin exceeds {MAX_STDIN_BYTES} bytes",
             event.name()
         ));
@@ -205,7 +206,7 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
         return Some(serde_json::json!({}));
     }
     if bytes.iter().all(u8::is_ascii_whitespace) {
-        diagnose(&format!("{}: empty stdin", event.name()));
+        diagnose(format_args!("{}: empty stdin", event.name()));
         return None;
     }
     match std::str::from_utf8(&bytes)
@@ -214,7 +215,7 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
     {
         Some(value) => Some(value),
         None => {
-            diagnose(&format!("{}: invalid stdin JSON", event.name()));
+            diagnose(format_args!("{}: invalid stdin JSON", event.name()));
             None
         }
     }
@@ -270,7 +271,7 @@ fn write_last_hook_event(
     }
 }
 
-fn diagnose(message: &str) {
+fn diagnose(message: fmt::Arguments<'_>) {
     diagnose_to(
         message,
         env::var_os(paneflow_ipc_client::hook_log::HOOK_LOG_ENV)
@@ -279,7 +280,7 @@ fn diagnose(message: &str) {
     );
 }
 
-fn diagnose_to(message: &str, log_path: Option<&Path>) {
+fn diagnose_to(message: fmt::Arguments<'_>, log_path: Option<&Path>) {
     let Some(log_path) = log_path else {
         return;
     };
@@ -420,7 +421,7 @@ mod tests {
     #[test]
     fn diagnose_never_creates_a_log_from_a_relative_path() {
         let relative = Path::new("paneflow-ai-hook-relative-test.log");
-        diagnose_to("first", Some(relative));
+        diagnose_to(format_args!("first"), Some(relative));
         assert!(!relative.exists());
     }
 
@@ -428,8 +429,8 @@ mod tests {
     fn diagnose_appends_complete_lines() {
         let directory = tempfile::TempDir::new().expect("temp directory");
         let path = directory.path().join("hook.log");
-        diagnose_to("first", Some(&path));
-        diagnose_to("second", Some(&path));
+        diagnose_to(format_args!("first"), Some(&path));
+        diagnose_to(format_args!("second"), Some(&path));
         let contents = std::fs::read_to_string(path).expect("read hook log");
         assert_eq!(
             contents,
