@@ -10,6 +10,11 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $root = (Get-Location).Path
 $rounds = 10
 $cargo = if ($env:CARGO) { $env:CARGO } else { "cargo" }
+$abProfile = if ($null -eq $env:PERF_AB_PROFILE) { "gates" } else { $env:PERF_AB_PROFILE }
+if ($abProfile -notin @("gates", "release")) {
+    [Console]::Error.WriteLine("PERF_AB_PROFILE is ${abProfile}: set it to gates, the profile of the CI job, or release, the profile Paneflow ships")
+    exit 2
+}
 $timedEditor = if ($null -eq $env:PERF_AB_TIMED_EDITOR) { "1" } else { $env:PERF_AB_TIMED_EDITOR }
 if ($timedEditor -notin @("0", "1")) {
     [Console]::Error.WriteLine("PERF_AB_TIMED_EDITOR is ${timedEditor}: set it to 1 to time the editor suite in every slot, or 0 to leave it to the instruction counts")
@@ -139,11 +144,11 @@ function Build-Side([string]$Side, [string]$Sha) {
     Write-Host "== building $Side $($Sha.Substring(0, 12))"
     $steps = @(
         @{ FilePath = $pwsh; Arguments = @("-NoLogo", "-NoProfile", "-File", "scripts/fetch-libghostty.ps1", "-Target", $hostTriple) },
-        @{ FilePath = $cargo; Arguments = @("build", "--profile", "gates", "--locked", "-p", "paneflow-host") },
-        @{ FilePath = $cargo; Arguments = @("test", "--profile", "gates", "--locked", "-p", "paneflow-app", "--bin", "paneflow", "--no-run", "--message-format=json-render-diagnostics"); Stdout = (Join-Path $bin "terminal.jsonl") }
+        @{ FilePath = $cargo; Arguments = @("build", "--profile", $abProfile, "--locked", "-p", "paneflow-host") },
+        @{ FilePath = $cargo; Arguments = @("test", "--profile", $abProfile, "--locked", "-p", "paneflow-app", "--bin", "paneflow", "--no-run", "--message-format=json-render-diagnostics"); Stdout = (Join-Path $bin "terminal.jsonl") }
     )
     if ($Side -eq "head") {
-        $steps += @{ FilePath = $cargo; Arguments = @("test", "--profile", "gates", "--locked", "-p", "paneflow-host", "--test", "persistent_baseline", "--no-run", "--message-format=json-render-diagnostics"); Stdout = (Join-Path $bin "harness.jsonl") }
+        $steps += @{ FilePath = $cargo; Arguments = @("test", "--profile", $abProfile, "--locked", "-p", "paneflow-host", "--test", "persistent_baseline", "--no-run", "--message-format=json-render-diagnostics"); Stdout = (Join-Path $bin "harness.jsonl") }
     }
     foreach ($step in $steps) {
         $status = Invoke-Logged -Directory $worktree -Log $log -FilePath $step.FilePath -Arguments $step.Arguments -Stdout $step.Stdout
@@ -156,9 +161,9 @@ function Build-Side([string]$Side, [string]$Sha) {
         Stop-Unavailable $Side "the terminal suite executable was not built" $log
     }
     Copy-Item -LiteralPath $terminal -Destination (Join-Path $bin "terminal-suite.exe")
-    Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "gates/paneflow-host.exe") -Destination $bin
+    Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$abProfile/paneflow-host.exe") -Destination $bin
     if ($Side -eq "head") {
-        Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "gates/paneflow-session-fixture.exe") -Destination $bin
+        Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$abProfile/paneflow-session-fixture.exe") -Destination $bin
         $harness = Get-TestExecutable (Join-Path $bin "harness.jsonl") "persistent_baseline"
         if (-not $harness -or -not (Test-Path -LiteralPath $harness)) {
             Stop-Unavailable "head" "the persistent_baseline harness was not built" $log

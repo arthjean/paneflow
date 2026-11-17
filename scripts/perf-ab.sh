@@ -13,6 +13,15 @@ head_ref=$2
 rounds=10
 cargo=${CARGO:-cargo}
 timed_editor=${PERF_AB_TIMED_EDITOR:-1}
+ab_profile=${PERF_AB_PROFILE:-gates}
+case "$ab_profile" in
+  gates) strip_variable=CARGO_PROFILE_GATES_STRIP ;;
+  release) strip_variable=CARGO_PROFILE_RELEASE_STRIP ;;
+  *)
+    echo "PERF_AB_PROFILE is $ab_profile: set it to gates, the profile of the CI job, or release, the profile Paneflow ships" >&2
+    exit 2
+    ;;
+esac
 case "$timed_editor" in
   0 | 1) ;;
   *)
@@ -116,18 +125,18 @@ build() {
   local side=$1
   local worktree="$scratch/$side" bin="$scratch/bin-$side" log="$out/build-$side.log"
   mkdir -p "$bin"
-  echo "== building $side $(git rev-parse --short=12 "$2")"
+  echo "== building $side $(git rev-parse --short=12 "$2") in the $ab_profile profile"
   set +e
   (
     set -e
     cd "$worktree"
-    export CARGO_PROFILE_GATES_STRIP=false
+    export "$strip_variable=false"
     bash scripts/fetch-libghostty.sh --target "$host_triple"
-    "$cargo" build --profile gates --locked -p paneflow-host
-    "$cargo" test --profile gates --locked -p paneflow-app --bin paneflow --no-run \
+    "$cargo" build --profile "$ab_profile" --locked -p paneflow-host
+    "$cargo" test --profile "$ab_profile" --locked -p paneflow-app --bin paneflow --no-run \
       --message-format=json-render-diagnostics >"$bin/terminal.jsonl"
     if [ "$side" = head ]; then
-      "$cargo" test --profile gates --locked -p paneflow-host --test persistent_baseline --no-run \
+      "$cargo" test --profile "$ab_profile" --locked -p paneflow-host --test persistent_baseline --no-run \
         --message-format=json-render-diagnostics >"$bin/harness.jsonl"
     fi
   ) >"$log" 2>&1
@@ -142,9 +151,9 @@ build() {
     unavailable "$side" "the terminal suite executable was not built" "$log"
   fi
   cp "$terminal" "$bin/terminal-suite"
-  cp "$CARGO_TARGET_DIR/gates/paneflow-host" "$bin/paneflow-host"
+  cp "$CARGO_TARGET_DIR/$ab_profile/paneflow-host" "$bin/paneflow-host"
   if [ "$side" = head ]; then
-    cp "$CARGO_TARGET_DIR/gates/paneflow-session-fixture" "$bin/paneflow-session-fixture"
+    cp "$CARGO_TARGET_DIR/$ab_profile/paneflow-session-fixture" "$bin/paneflow-session-fixture"
     local harness
     harness=$(executable "$bin/harness.jsonl" persistent_baseline)
     if [ ! -x "$harness" ]; then

@@ -417,12 +417,16 @@ so its cases read `not_compared`. The `gates` builds of the A/B keep their
 symbols (`CARGO_PROFILE_GATES_STRIP=false`), which changes no generated code.
 
 Instruction counts do not see a regression that comes from code placement
-alone. `afcd1219` moved the 22-byte loop of the longest-line measure from the start
+alone, and neither does a timed A/B of another profile. `afcd1219` moved the 22-byte loop of the longest-line measure from the start
 of a 64-byte line to 48 bytes into one, so that it straddles the next line, and
 made opening a file 25 to 31 % slower on a Ryzen 7
 7800X3D, with exactly the same instructions (Callgrind: 995 653 997 against
-995 652 036 in `CodeDocument::new` over the whole editor suite). Only the timed
-editor A/B sees that, on the CPU it runs on.
+995 652 036 in `CodeDocument::new` over the whole editor suite). The `gates`
+builds of both commits placed the loop the slow way: a timed A/B of
+`f501e320` against `afcd1219` in that profile read `open_300kb_highlighted` at
+209.6 against 208.9 us. `PERF_AB_PROFILE=release` builds both sides in the
+profile Paneflow ships instead, the one whose placement users get; the CI job
+keeps `gates`, whose builds fit its 60 minutes.
 
 The counts need Valgrind and a `gungraun-runner` of the same version as the
 `gungraun` library in `Cargo.lock` (`cargo install gungraun-runner --version
