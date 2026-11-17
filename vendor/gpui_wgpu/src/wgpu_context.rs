@@ -679,13 +679,33 @@ impl WgpuContext {
         // configure the surface a second time.
         let (surface_config, _, _) =
             WgpuRenderer::surface_configuration(surface, adapter, &device, config)?;
-        let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let lost_while_configuring = Arc::new(Mutex::new(None));
+        device.set_device_lost_callback({
+            let lost_while_configuring = Arc::clone(&lost_while_configuring);
+            move |_, message| {
+                *lost_while_configuring.lock() = Some(message);
+            }
+        });
+        let error_scopes = [
+            wgpu::ErrorFilter::Validation,
+            wgpu::ErrorFilter::OutOfMemory,
+            wgpu::ErrorFilter::Internal,
+        ]
+        .map(|filter| device.push_error_scope(filter));
 
         surface.configure(&device, &surface_config);
 
-        let error = error_scope.pop().await;
-        if let Some(e) = error {
+        let mut first_error = None;
+        for error_scope in error_scopes.into_iter().rev() {
+            if let Some(error) = error_scope.pop().await {
+                first_error.get_or_insert(error);
+            }
+        }
+        if let Some(e) = first_error {
             anyhow::bail!("surface configuration failed: {e}");
+        }
+        if let Some(message) = lost_while_configuring.lock().take() {
+            anyhow::bail!("surface configuration lost the device: {message}");
         }
 
         Ok((

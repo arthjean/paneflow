@@ -4,13 +4,19 @@
 # inheritance is written out with the values that revision's workspace
 # manifest gives, its `[lints]` table is dropped because the Zed lint set does
 # not exist here, and the benches and dev-dependencies are left out. The
-# sources are otherwise upstream. The only Paneflow change is
-# `render_colr_v1_image` in src/cosmic_text_system.rs: an emoji glyph that the
-# font describes with a COLRv1 paint graph is painted by
-# crates/paneflow-colrv1, because swash reads only COLRv0 and CBDT and leaves
-# such a glyph an empty cell (Fedora ships its emoji font only as
-# Noto-COLRv1.ttf). Bump this copy together with the Zed revision in
-# src-app/Cargo.toml, and drop it once upstream GPUI paints COLRv1 glyphs.
+# sources are otherwise upstream. The Paneflow changes are:
+# - `render_colr_v1_image` in src/cosmic_text_system.rs: an emoji glyph that
+#   the font describes with a COLRv1 paint graph is painted by
+#   crates/paneflow-colrv1, because swash reads only COLRv0 and CBDT and leaves
+#   such a glyph an empty cell (Fedora ships its emoji font only as
+#   Noto-COLRv1.ttf).
+# - `try_adapter_with_surface` in src/wgpu_context.rs rejects an adapter whose
+#   surface configuration raised an out-of-memory or internal error, or lost
+#   the device, instead of only a validation error: wgpu-core reports a
+#   swapchain the driver refuses with an unexpected error as a lost device, so
+#   the adapter used to pass and the first frame panicked.
+# Bump this copy together with the Zed revision in src-app/Cargo.toml, and
+# drop it once upstream GPUI carries both changes.
 
 [package]
 name = "gpui_wgpu"
