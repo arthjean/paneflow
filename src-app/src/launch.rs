@@ -471,22 +471,12 @@ pub(crate) fn run() {
             match window_result {
                 Ok(_) => cx.activate(true),
                 Err(e) => {
-                    log::error!("Failed to open PaneFlow window: {e}");
+                    log::error!("Failed to open the Paneflow window: {e}");
                     #[cfg(target_os = "linux")]
-                    eprintln!(
-                        "Error: PaneFlow requires a GPU with Vulkan support.\n\n\
-                         Install mesa-vulkan-drivers (AMD/Intel) or your GPU's proprietary driver.\n\n\
-                         Install commands:\n\
-                         \x20 Debian/Ubuntu:  sudo apt install mesa-vulkan-drivers\n\
-                         \x20 Fedora/RHEL:    sudo dnf install mesa-vulkan-drivers\n\
-                         \x20 Arch:           sudo pacman -S vulkan-radeon vulkan-intel or nvidia-utils\n\n\
-                         Run `vulkaninfo` to verify Vulkan support.\n\
-                         If drivers are already installed, run with RUST_LOG=error for details.\n\n\
-                         Underlying error: {e}"
-                    );
+                    eprintln!("{}", linux_window_failure_message(&e.to_string()));
                     #[cfg(target_os = "windows")]
                     eprintln!(
-                        "Error: PaneFlow could not create its GPU-backed window on Windows.\n\n\
+                        "Error: Paneflow could not create its GPU-backed window on Windows.\n\n\
                          Update your GPU driver from NVIDIA, AMD, Intel, or your PC vendor, then restart Paneflow.\n\
                          If this started after enabling a native backdrop, launch once with:\n\
                          \x20 PANEFLOW_WINDOW_BACKDROP=off\n\n\
@@ -494,7 +484,7 @@ pub(crate) fn run() {
                     );
                     #[cfg(target_os = "macos")]
                     eprintln!(
-                        "Error: PaneFlow could not create its GPU-backed window on macOS.\n\n\
+                        "Error: Paneflow could not create its GPU-backed window on macOS.\n\n\
                          Update macOS and restart Paneflow. If this started after enabling a native backdrop, launch once with:\n\
                          \x20 PANEFLOW_WINDOW_BACKDROP=off\n\n\
                          Underlying error: {e}"
@@ -503,6 +493,36 @@ pub(crate) fn run() {
                 }
             }
         });
+}
+
+#[cfg(target_os = "linux")]
+fn linux_window_failure_message(underlying: &str) -> String {
+    format!(
+        "Error: Paneflow found no GPU that can draw into this window.\n\n\
+         Each GPU was tried in turn, and the reason each one was rejected is logged at the info level:\n\
+         \x20 RUST_LOG=info paneflow\n\n\
+         Common causes:\n\
+         \x20 - No Vulkan driver is installed. Install mesa-vulkan-drivers (AMD, Intel) or your GPU's \
+         proprietary driver, then check with `vulkaninfo`.\n\
+         \x20 - A variable such as VK_ICD_FILENAMES, VK_DRIVER_FILES or DRI_PRIME restricts Paneflow \
+         to a GPU other than the one your desktop draws on. Unset it and try again.\n\n\
+         Underlying error: {underlying}"
+    )
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_window_failure_tests {
+    use super::linux_window_failure_message;
+
+    #[test]
+    fn the_linux_window_failure_points_at_the_adapter_log_and_a_forced_gpu() {
+        let message = linux_window_failure_message("No GPU adapter found");
+        assert!(message.starts_with("Error: Paneflow "));
+        assert!(message.contains("RUST_LOG=info"));
+        assert!(message.contains("VK_ICD_FILENAMES"));
+        assert!(message.ends_with("Underlying error: No GPU adapter found"));
+        assert!(!message.contains("PaneFlow"));
+    }
 }
 
 #[cfg(all(test, windows))]
