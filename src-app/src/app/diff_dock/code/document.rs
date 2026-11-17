@@ -64,6 +64,7 @@ pub(crate) struct CodeDocument {
     line_ending: LineEnding,
     read_only: Option<ReadOnlyReason>,
     longest_line_columns: usize,
+    one_column_text: bool,
     revision: u64,
     longest_line_stale: bool,
 }
@@ -85,7 +86,8 @@ impl CodeDocument {
         let line_ending = LineEnding::detect(raw);
         let ext = crate::diff::file_ext(&path.to_string_lossy());
         let normalized = normalize_newlines(raw);
-        let longest_line_columns = measure_text_lines(&normalized);
+        let one_column_text = every_byte_is_one_column_or_a_newline(&normalized);
+        let longest_line_columns = measure_text_lines(&normalized, one_column_text);
         Self {
             path,
             ext,
@@ -93,6 +95,7 @@ impl CodeDocument {
             line_ending,
             read_only: None,
             longest_line_columns,
+            one_column_text,
             revision: 0,
             longest_line_stale: false,
         }
@@ -223,6 +226,7 @@ impl CodeDocument {
             && self.line_columns(start_point.row) == self.longest_line_columns;
         let char_idx = self.text.byte_to_char(start_byte);
         self.text.insert(char_idx, &normalized);
+        self.one_column_text &= every_byte_is_one_column_or_a_newline(&normalized);
         self.revision = self.revision.wrapping_add(1);
         self.longest_line_stale |= may_shrink_longest;
 
@@ -314,6 +318,9 @@ impl CodeDocument {
     }
 
     fn line_columns(&self, row: usize) -> usize {
+        if self.one_column_text {
+            return self.line_byte_range(row).map_or(0, |range| range.len());
+        }
         self.line(row)
             .map_or(0, |line| line.chunks().fold(0, tab_stops::advance_str))
     }
@@ -329,8 +336,8 @@ impl CodeDocument {
     }
 }
 
-fn measure_text_lines(text: &str) -> usize {
-    if every_byte_is_one_column_or_a_newline(text) {
+fn measure_text_lines(text: &str, one_column_text: bool) -> usize {
+    if one_column_text {
         return longest_byte_line(text.as_bytes());
     }
     text.split('\n')
@@ -672,6 +679,23 @@ mod tests {
         assert_every_measure_matches_the_fold(&ascii, 97);
         assert_every_measure_matches_the_fold(&["\t\x01", "tail without newline"], 3);
         assert_every_measure_matches_the_fold(&["plain", "", "a longer plain line"], 5);
+    }
+
+    #[test]
+    fn an_edit_that_brings_a_wide_character_or_a_tab_into_a_plain_document_measures_its_columns() {
+        let mut d = doc("abc\nde\n");
+        assert_eq!(d.longest_line_columns(), 3);
+        let end = d.line_byte_range(1).expect("second row").end;
+        d.insert(end, "\t\t");
+        assert_eq!(d.longest_line_columns(), 8);
+        let mut d = doc("abc\nde\n");
+        d.insert(0, "中中");
+        assert_eq!(d.longest_line_columns(), 7);
+        let end = d.line_byte_range(1).expect("second row").end;
+        d.insert(end, "xyzw");
+        assert_eq!(d.longest_line_columns(), 7);
+        d.insert(end, "\t");
+        assert_eq!(d.longest_line_columns(), 8);
     }
 
     #[test]
