@@ -418,6 +418,45 @@ mod tests {
     }
 
     #[test]
+    fn a_spacing_vowel_sign_stays_with_its_consonant_at_a_wrap_and_after_a_reflow() {
+        let consonant_row = |terminal: &mut DisplayTerminal| {
+            let content = terminal.snapshot().expect("snapshot must succeed");
+            content
+                .cells
+                .iter()
+                .filter(|cell| cell.character == '\u{915}' || cell.character == '\u{93f}')
+                .map(|cell| {
+                    (
+                        cell.point.line,
+                        cell.character,
+                        cell.zerowidth.as_deref().map(<[char]>::to_vec),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut terminal =
+            DisplayTerminal::new(WindowSize::new(10, 4, 8, 16).unwrap(), 100, TerminalAppearance::default())
+                .expect("terminal must initialize");
+        terminal
+            .feed("123456789\u{915}\u{93f}x".as_bytes())
+            .expect("Devanagari output must parse");
+        assert_eq!(
+            consonant_row(&mut terminal),
+            vec![(1, '\u{915}', Some(vec!['\u{93f}']))],
+            "at the wrap the cluster moves to the next row whole"
+        );
+        terminal
+            .resize(WindowSize::new(7, 4, 8, 16).unwrap())
+            .expect("a narrower grid must reflow");
+        terminal
+            .resize(WindowSize::new(13, 4, 8, 16).unwrap())
+            .expect("a wider grid must reflow");
+        let after = consonant_row(&mut terminal);
+        assert_eq!(after.len(), 1, "after a reflow: {after:?}");
+        assert_eq!(after[0].2, Some(vec!['\u{93f}']), "after a reflow");
+    }
+
+    #[test]
     fn configured_default_colors_answer_osc_queries() {
         let appearance = TerminalAppearance::new(
             crate::Rgb {
