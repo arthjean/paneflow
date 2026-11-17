@@ -378,22 +378,22 @@ fn mouse_shape_from_ghostty(shape: ghostty::MouseShape) -> MouseShape {
 
 fn ghostty_cell_flags(cell: &ghostty::Cell) -> CellFlags {
     let mut flags = CellFlags::empty();
-    if cell.flags.inverse {
+    if cell.flags.inverse() {
         flags |= CellFlags::INVERSE;
     }
-    if cell.flags.bold {
+    if cell.flags.bold() {
         flags |= CellFlags::BOLD;
     }
-    if cell.flags.italic {
+    if cell.flags.italic() {
         flags |= CellFlags::ITALIC;
     }
-    if cell.flags.dim {
+    if cell.flags.dim() {
         flags |= CellFlags::DIM;
     }
-    if cell.flags.strikethrough {
+    if cell.flags.strikethrough() {
         flags |= CellFlags::STRIKEOUT;
     }
-    match cell.flags.underline {
+    match cell.flags.underline() {
         ghostty::UnderlineStyle::None => {}
         ghostty::UnderlineStyle::Single => flags |= CellFlags::UNDERLINE,
         ghostty::UnderlineStyle::Double => flags |= CellFlags::DOUBLE_UNDERLINE,

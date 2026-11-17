@@ -1,6 +1,6 @@
 use paneflow_libghostty_sys as sys;
 
-use crate::{Color, GhosttyError, Result};
+use crate::{CellAttribute, Color, GhosttyError, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FlagField {
@@ -22,8 +22,8 @@ impl FlagField {
         (((1u32 << self.width) - 1) << self.lsb) as sys::GhosttyStyleFlags
     }
 
-    fn read(self, flags: sys::GhosttyStyleFlags) -> u32 {
-        u32::from(flags & self.mask()) >> self.lsb
+    const fn read(self, flags: sys::GhosttyStyleFlags) -> u32 {
+        (flags & self.mask()) as u32 >> self.lsb
     }
 }
 
@@ -53,34 +53,36 @@ const FLAG_FIELDS: [FlagField; 9] = [
     UNDERLINE,
 ];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct StyleFlags {
-    pub(crate) bold: bool,
-    pub(crate) italic: bool,
-    pub(crate) faint: bool,
-    pub(crate) blink: bool,
-    pub(crate) inverse: bool,
-    pub(crate) invisible: bool,
-    pub(crate) strikethrough: bool,
-    pub(crate) overline: bool,
-    pub(crate) underline: sys::GhosttySgrUnderline,
+const ATTRIBUTE_FIELDS: [(FlagField, CellAttribute); 7] = [
+    (BOLD, CellAttribute::Bold),
+    (ITALIC, CellAttribute::Italic),
+    (FAINT, CellAttribute::Dim),
+    (INVERSE, CellAttribute::Inverse),
+    (INVISIBLE, CellAttribute::Invisible),
+    (STRIKETHROUGH, CellAttribute::Strikethrough),
+    (OVERLINE, CellAttribute::Overline),
+];
+
+const ATTRIBUTE_MASK: sys::GhosttyStyleFlags = {
+    let mut mask = 0;
+    let mut index = 0;
+    while index < ATTRIBUTE_FIELDS.len() {
+        let (field, attribute) = ATTRIBUTE_FIELDS[index];
+        assert!(field.width == 1 && field.lsb == attribute as u32);
+        mask |= field.mask();
+        index += 1;
+    }
+    mask
+};
+
+#[inline]
+pub(crate) const fn attribute_bits(flags: sys::GhosttyStyleFlags) -> u8 {
+    (flags & ATTRIBUTE_MASK) as u8
 }
 
-impl StyleFlags {
-    pub(crate) fn decode(flags: sys::GhosttyStyleFlags) -> Self {
-        let on = |field: FlagField| field.read(flags) != 0;
-        Self {
-            bold: on(BOLD),
-            italic: on(ITALIC),
-            faint: on(FAINT),
-            blink: on(BLINK),
-            inverse: on(INVERSE),
-            invisible: on(INVISIBLE),
-            strikethrough: on(STRIKETHROUGH),
-            overline: on(OVERLINE),
-            underline: UNDERLINE.read(flags) as sys::GhosttySgrUnderline,
-        }
-    }
+#[inline]
+pub(crate) const fn underline_bits(flags: sys::GhosttyStyleFlags) -> sys::GhosttySgrUnderline {
+    UNDERLINE.read(flags) as sys::GhosttySgrUnderline
 }
 
 pub(crate) fn validate_flag_bits(layouts: &serde_json::Value) -> Result<()> {
@@ -136,29 +138,39 @@ pub(crate) fn style_color(color: sys::GhosttyStyleColor) -> Result<Color> {
 mod tests {
     use super::*;
 
+    const ATTRIBUTES: [CellAttribute; 7] = [
+        CellAttribute::Bold,
+        CellAttribute::Italic,
+        CellAttribute::Dim,
+        CellAttribute::Inverse,
+        CellAttribute::Invisible,
+        CellAttribute::Strikethrough,
+        CellAttribute::Overline,
+    ];
+
+    fn attributes_of(flags: sys::GhosttyStyleFlags) -> Vec<CellAttribute> {
+        let cell = crate::CellFlags::from_attribute_bits(
+            attribute_bits(flags),
+            crate::UnderlineStyle::None,
+        );
+        ATTRIBUTES
+            .into_iter()
+            .filter(|&attribute| cell.has(attribute))
+            .collect()
+    }
+
     #[test]
     fn every_attribute_reads_its_own_bit() {
-        for (index, field) in FLAG_FIELDS.iter().take(8).enumerate() {
-            let decoded = StyleFlags::decode(1 << index);
-            let set = [
-                decoded.bold,
-                decoded.italic,
-                decoded.faint,
-                decoded.blink,
-                decoded.inverse,
-                decoded.invisible,
-                decoded.strikethrough,
-                decoded.overline,
-            ];
+        for (field, attribute) in ATTRIBUTE_FIELDS {
             assert_eq!(
-                set.iter().filter(|&&on| on).count(),
-                1,
+                attributes_of(field.mask()),
+                [attribute],
                 "{} must set exactly one attribute",
                 field.name
             );
-            assert!(set[index], "{} must read bit {index}", field.name);
-            assert_eq!(decoded.underline, 0);
+            assert_eq!(underline_bits(field.mask()), 0);
         }
+        assert!(attributes_of(BLINK.mask()).is_empty(), "blink is not drawn");
     }
 
     #[test]
@@ -167,9 +179,8 @@ mod tests {
         let flags = ((curly as sys::GhosttyStyleFlags) << sys::GHOSTTY_STYLE_UNDERLINE_SHIFT)
             | 0xff
             | 0xf800;
-        let decoded = StyleFlags::decode(flags);
-        assert_eq!(decoded.underline, curly);
-        assert!(decoded.bold && decoded.overline);
+        assert_eq!(underline_bits(flags), curly);
+        assert_eq!(attributes_of(flags), ATTRIBUTES);
     }
 
     #[test]
