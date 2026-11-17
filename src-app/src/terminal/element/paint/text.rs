@@ -392,6 +392,72 @@ mod tests {
         assert!((ink_bottom - expected).abs() < 1e-3);
     }
 
+    fn shaped_cluster(
+        text_system: &dyn gpui::PlatformTextSystem,
+        font_id: gpui::FontId,
+        text: &str,
+        cluster_start: usize,
+    ) -> Vec<(usize, u32, i32)> {
+        let layout = text_system.layout_line(
+            text,
+            px(16.0),
+            &[gpui::FontRun {
+                len: text.len(),
+                font_id,
+            }],
+        );
+        let glyphs: Vec<(usize, u32, f32)> = layout
+            .runs
+            .iter()
+            .flat_map(|run| {
+                run.glyphs
+                    .iter()
+                    .filter(|glyph| glyph.index >= cluster_start)
+                    .map(move |glyph| (run.font_id.0, glyph.id.0, f32::from(glyph.position.x)))
+            })
+            .collect();
+        let origin = glyphs.first().map_or(0.0, |&(_, _, x)| x);
+        glyphs
+            .into_iter()
+            .map(|(font, glyph, x)| (font, glyph, ((x - origin) * 100.0).round() as i32))
+            .collect()
+    }
+
+    #[test]
+    fn a_pre_base_vowel_sign_after_latin_letters_is_shaped_as_it_is_alone() {
+        let Ok(text_system) =
+            std::panic::catch_unwind(|| gpui_platform::current_platform(true).text_system())
+        else {
+            eprintln!("no platform text system on this host, the shaping check is skipped");
+            return;
+        };
+        text_system
+            .add_fonts(
+                crate::assets::Assets
+                    .embedded_fonts()
+                    .expect("the embedded fonts load from the binary"),
+            )
+            .expect("the platform text system registers the embedded fonts");
+        let font_id = text_system
+            .font_id(&gpui::font(
+                crate::terminal::element::font::EMBEDDED_MONO_FAMILY,
+            ))
+            .expect("the terminal font is embedded");
+        let alone = shaped_cluster(&*text_system, font_id, "\u{915}\u{93f}", 0);
+        if alone.is_empty() || alone.iter().any(|&(_, glyph, _)| glyph == 0) {
+            eprintln!("no font on this host draws Devanagari, the shaping check is skipped");
+            return;
+        }
+        for prefix in ["xxxx", "x\u{e9}", "\u{4e2d}"] {
+            let text = format!("{prefix}\u{915}\u{93f}");
+            assert_eq!(
+                shaped_cluster(&*text_system, font_id, &text, prefix.len()),
+                alone,
+                "{text:?}: the vowel sign is shaped as it is when the cluster stands alone"
+            );
+        }
+    }
+
     fn aligned(text: &str, cells: &[RunCell], glyphs: &[(usize, f32)]) -> Vec<f32> {
         let mut aligner = CellAligner::new(text, cells, px(8.0));
         glyphs
