@@ -308,7 +308,9 @@ commits, never a dirty tree.
 Each attempt runs 10 rounds ordered base, head, head, base. A slot runs the
 artifact's own terminal suite (`terminal_pipeline_benchmark`, idle scenarios
 skipped), which writes every per-iteration sample to
-`PANEFLOW_BENCH_SAMPLES_OUT`, then the active scenario of US-002 against the
+`PANEFLOW_BENCH_SAMPLES_OUT`, then the artifact's own editor suite
+(`editor_pipeline_benchmark`) the same way, unless `PERF_AB_TIMED_EDITOR=0`,
+then the active scenario of US-002 against the
 artifact's own `paneflow-host`, host only: 8 `stream 16384 60` sessions plus one
 `flood 8388608`, 4 s of settling, a 15 s window cut into 5 slices of 3 s, then
 200 echo round trips (`ab::perf_ab_active_samples`). The measuring harness and
@@ -318,6 +320,7 @@ and the same measurement code. The metrics are:
 | Metric | Unit | Samples per artifact and attempt |
 |---|---|---|
 | `terminal.<metric>`, every timed terminal metric | ns per iteration, as the mean of 10 consecutive iterations | 30 per slot, 600 |
+| `editor.<metric>`, every timed editor metric | ns per iteration, one sample per iteration | 5 to 200 per slot, 100 to 4 000 |
 | `active.cpu.<role>`, host CPU per named thread role, and `active.cpu.total` | CPU ms per wall second | 5 per slot, 100 |
 | `active.echo_round_trip` | ms | 200 per slot, 4 000 |
 
@@ -325,7 +328,9 @@ The terminal suite exports each iteration in measurement order, and the
 comparator averages 10 consecutive iterations into one sample, as Criterion
 does: on a first A/A run on a loaded desktop, the p50 of single iterations moved
 by at most 0.6 % between the two base passes but their p95 by up to 57 %, one
-preempted iteration being enough to set a pooled tail. The comparator
+preempted iteration being enough to set a pooled tail. An editor iteration is a whole operation of 1 us to 40 ms, so the
+comparator takes each one as a sample: `open_3_7mb`, with 5 iterations per
+slot, gives exactly the 50 samples a cohort needs. The comparator
 (`ab::perf_ab_compare`) pools each cohort and applies the rule
 of pf (`pf/scripts/pgso/qualify.py:42,365-392`), nearest-rank percentiles: a
 metric regresses when the head's p50 exceeds the base's by more than 10 %, or
@@ -391,6 +396,34 @@ unavailable slot never hides an instruction regression. The layout pass is not c
 in the `paneflow-app` binary crate, which has no library target a benchmark
 could call, and the PRD keeps it out of scope until that crate gains one.
 
+The code editor lives in that binary crate too, so its instructions are
+counted without Gungraun: each commit's `editor_instruction_benchmark` (in
+`src-app/src/app/diff_dock/code/perf_bench.rs`) runs under Callgrind with
+collection off, and each case runs once to warm up, then once through the
+exported function `paneflow_bench_counted_instructions`
+(`src-app/src/bench_harness.rs`), which Callgrind collects
+(`--toggle-collect`) and dumps (`--dump-after`) on its own; the suite prints
+`PANEFLOW_BENCH_INSTRUCTION_CASE <name>` before each case, so the n-th dump is
+the n-th case. The cases are the editor's timed scenarios with every budget the
+benchmark passes raised to an hour and only the 300 KB file parsed, because
+Callgrind runs about 50 times slower and a path cut short by a clock would
+count a different amount of work on each run; the 2 MB parse would also pass
+the 5 s initial parse timeout. Each case appears as `editor::<case>` in
+`instructions.json`, against the same +2 % limit and with the same verdict as
+the terminal benchmark. Two executions of the same binary on Fedora 45,
+Valgrind 3.28.0, counted 18 of the 19 cases identically and
+`shape_cold_60_rows` 0.02 % apart. A base without the benchmark counts no case,
+so its cases read `not_compared`. The `gates` builds of the A/B keep their
+symbols (`CARGO_PROFILE_GATES_STRIP=false`), which changes no generated code.
+
+Instruction counts do not see a regression that comes from code placement
+alone. `afcd1219` moved the 22-byte loop of the longest-line measure from the start
+of a 64-byte line to 48 bytes into one, so that it straddles the next line, and
+made opening a file 25 to 31 % slower on a Ryzen 7
+7800X3D, with exactly the same instructions (Callgrind: 995 653 997 against
+995 652 036 in `CodeDocument::new` over the whole editor suite). Only the timed
+editor A/B sees that, on the CPU it runs on.
+
 The counts need Valgrind and a `gungraun-runner` of the same version as the
 `gungraun` library in `Cargo.lock` (`cargo install gungraun-runner --version
 0.20.0 --locked`). Without them, or when the base predates the benchmarks, the
@@ -454,6 +487,10 @@ failure (exit 2 or 4) turns it red otherwise:
 - `PERF_AB_BLOCKING: "false"`: the real-time verdict stays in shadow mode, green
   whatever it says. An unavailable base or a twice uncalibrated run adds a
   warning. It stays consultative: see the decision below.
+- `PERF_AB_TIMED_EDITOR: "0"`: the slots skip the timed editor suite, which
+  would add 40 runs of 5 to 8 s per attempt to a job that took 46 of its 60
+  minutes on 2026-11-17 (two attempts). The editor's instruction counts still
+  run and block. A local `scripts/perf-ab.sh` times the editor by default.
 
 A `workflow_dispatch` run has its own concurrency group, so manual runs with
 different commits proceed in parallel instead of replacing each other; pull

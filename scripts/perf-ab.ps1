@@ -10,6 +10,11 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $root = (Get-Location).Path
 $rounds = 10
 $cargo = if ($env:CARGO) { $env:CARGO } else { "cargo" }
+$timedEditor = if ($null -eq $env:PERF_AB_TIMED_EDITOR) { "1" } else { $env:PERF_AB_TIMED_EDITOR }
+if ($timedEditor -notin @("0", "1")) {
+    [Console]::Error.WriteLine("PERF_AB_TIMED_EDITOR is ${timedEditor}: set it to 1 to time the editor suite in every slot, or 0 to leave it to the instruction counts")
+    exit 2
+}
 $pwsh = (Get-Process -Id $PID).Path
 
 Get-ChildItem Env: | Where-Object { $_.Name -like "PANEFLOW_*" -and $_.Name -ne "PANEFLOW_PERF_AB_DIR" } |
@@ -175,6 +180,17 @@ function Invoke-Slot([string]$Directory, [int]$Round, [int]$Slot, [string]$Side)
     if ($status -ne 0 -or -not (Test-Path -LiteralPath $samples)) {
         Stop-Unavailable $Side "the terminal suite exited $status without samples in round $Round; a commit older than the A/B sample export writes none" $log
     }
+    if ($timedEditor -eq "1") {
+        $samples = Join-Path $Directory "$tag-editor.json"
+        $log = Join-Path $Directory "$tag-editor.log"
+        $status = Invoke-Logged -Directory (Join-Path $scratch "$Side/src-app") -Log $log `
+            -FilePath (Join-Path $bin "terminal-suite.exe") `
+            -Arguments @("app::diff_dock::code::perf_bench::editor_pipeline_benchmark", "--ignored", "--exact", "--nocapture", "--test-threads=1") `
+            -Environment @{ PANEFLOW_BENCH_SAMPLES_OUT = $samples }
+        if ($status -ne 0 -or -not (Test-Path -LiteralPath $samples)) {
+            Stop-Unavailable $Side "the editor suite exited $status without samples in round $Round" $log
+        }
+    }
     $samples = Join-Path $Directory "$tag-active.json"
     $log = Join-Path $Directory "$tag-active.log"
     $status = Invoke-Logged -Directory (Join-Path $scratch "head/crates/paneflow-host") -Log $log `
@@ -240,7 +256,7 @@ try {
         "",
         "Verdict: **not_measured**",
         "",
-        "Not measured: the Callgrind instruction counts need Valgrind, which runs on Linux only; scripts/perf-ab.sh measures them."
+        "Not measured: the Callgrind instruction counts of the terminal and editor suites need Valgrind, which runs on Linux only; scripts/perf-ab.sh measures them."
     )
     $verdict = (Get-Content -LiteralPath (Join-Path $out "verdict") -Raw).Trim()
     Write-Host "A/B finished in $([int]((Get-Date) - $started).TotalSeconds) s: $verdict; report $out/result.json, summary $out/summary.md"

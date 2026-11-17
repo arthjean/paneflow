@@ -11,8 +11,8 @@ use gpui::{
 
 use crate::bench_harness::{
     Metric, SegmentTimer, count_tree_sitter_allocations_in_a_process_that_has_not_parsed_yet,
-    live_bytes, measure, measure_segments, process_cpu_time, publish, refuse_debug_profile,
-    tree_sitter_live_bytes,
+    instruction_case, live_bytes, measure, measure_segments, process_cpu_time, publish,
+    refuse_debug_profile, tree_sitter_live_bytes,
 };
 use crate::diff::{
     DiffSyntax, MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, grammar_for_ext, is_markdown,
@@ -1118,6 +1118,220 @@ fn editor_pipeline_benchmark() {
         &metrics,
         Some(cpu_share),
     );
+}
+
+const UNBOUNDED_BUDGET: Duration = Duration::from_secs(3_600);
+const INSTRUCTION_KEYSTROKES: usize = 20;
+const INSTRUCTION_VIEWPORTS: usize = 20;
+const INSTRUCTION_UTF16_LOOKUPS: usize = 1_000;
+
+fn apply_unbounded_edit(
+    doc: &mut CodeDocument,
+    highlighter: &mut CodeHighlighter,
+    range: Range<usize>,
+    text: &str,
+) {
+    let Some(applied) = splice(doc, range, text) else {
+        return;
+    };
+    if let HighlightOutcome::Deferred(parse) =
+        highlighter.edit_with_budget(doc, &applied.edit, UNBOUNDED_BUDGET)
+    {
+        let parsed = parse.run();
+        highlighter.apply_parsed(doc, parsed);
+    }
+}
+
+fn open_with_first_viewport(name: &str, text: &str) {
+    let doc = document(name, text);
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    highlighter.fill_stale_rows(
+        &doc,
+        0..VIEWPORT_ROWS.min(doc.line_count()),
+        UNBOUNDED_BUDGET,
+    );
+    std::hint::black_box((doc, highlighter));
+}
+
+fn open_instruction_cases(corpora: &Corpora) {
+    instruction_case("open_300kb_highlighted", || {
+        open_with_first_viewport("bench-300kb.rs", &corpora.highlighted_rust);
+    });
+    instruction_case("open_2mb_to_text", || {
+        open_with_first_viewport("bench-2mb.rs", &corpora.reload_rust);
+    });
+    instruction_case("open_3_7mb", || {
+        let doc = document("bench-3-7mb.rs", &corpora.large_rust);
+        let highlighter = CodeHighlighter::new(&doc, dark());
+        std::hint::black_box((doc, highlighter));
+    });
+    instruction_case("open_markdown_injected", || {
+        let doc = document("bench-inline.md", &corpora.markdown);
+        let highlighter = CodeHighlighter::new(&doc, dark());
+        std::hint::black_box((doc, highlighter));
+    });
+    instruction_case("open_to_first_tree_300kb", || {
+        let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        if let Some(parse) = highlighter.initial_parse(&doc) {
+            highlighter.apply_parsed(&doc, parse.run());
+        }
+        highlighter.fill_stale_rows(
+            &doc,
+            0..VIEWPORT_ROWS.min(doc.line_count()),
+            UNBOUNDED_BUDGET,
+        );
+        std::hint::black_box((doc, highlighter));
+    });
+}
+
+fn edit_instruction_cases(corpora: &Corpora) {
+    let mut doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    let mut highlighter = parsed(&doc, dark());
+    let mut index = 0usize;
+    instruction_case("keystroke_to_runs", || {
+        for _ in 0..INSTRUCTION_KEYSTROKES {
+            index += 1;
+            let row = stride(index, doc.line_count());
+            let offset = doc.line_to_byte(row);
+            apply_unbounded_edit(&mut doc, &mut highlighter, offset..offset, "x");
+            let end = (row + VIEWPORT_ROWS).min(doc.line_count());
+            highlighter.fill_stale_rows(&doc, row..end, UNBOUNDED_BUDGET);
+        }
+    });
+    let span = doc.line_count().saturating_sub(VIEWPORT_ROWS).max(1);
+    instruction_case("viewport_query_60_rows", || {
+        for _ in 0..INSTRUCTION_VIEWPORTS {
+            index += 1;
+            let first = stride(index, span);
+            highlighter.requery_rows(&doc, first..first + VIEWPORT_ROWS);
+        }
+    });
+    instruction_case("theme_switch", || {
+        index += 1;
+        let syntax = if index.is_multiple_of(2) {
+            dark()
+        } else {
+            light()
+        };
+        highlighter.set_syntax(syntax);
+    });
+    std::hint::black_box((doc, highlighter));
+
+    let mut plain = document("bench-3-7mb.rs", &corpora.large_rust);
+    let mut plain_highlighter = CodeHighlighter::new(&plain, dark());
+    instruction_case("keystroke_3_7mb_plain", || {
+        for _ in 0..INSTRUCTION_KEYSTROKES {
+            index += 1;
+            let row = stride(index, plain.line_count());
+            let offset = plain.line_to_byte(row);
+            apply_unbounded_edit(&mut plain, &mut plain_highlighter, offset..offset, "x");
+        }
+    });
+    let end = plain.len_bytes();
+    instruction_case("byte_to_utf16_eof", || {
+        for _ in 0..INSTRUCTION_UTF16_LOOKUPS {
+            std::hint::black_box(plain.byte_to_utf16(end));
+        }
+    });
+    instruction_case("to_disk_string_3_7mb", || {
+        std::hint::black_box(plain.to_disk_string());
+    });
+    std::hint::black_box((plain, plain_highlighter));
+}
+
+fn text_instruction_cases(corpora: &Corpora) {
+    let palette = [
+        hsla(0.08, 0.6, 0.6, 1.0),
+        hsla(0.33, 0.5, 0.6, 1.0),
+        hsla(0.58, 0.7, 0.7, 1.0),
+        hsla(0.85, 0.4, 0.65, 1.0),
+    ];
+    let runs: Vec<(Range<usize>, Hsla)> =
+        json_token_ranges(&corpora.minified_json, RESOLVE_RUNS_CAPTURES)
+            .into_iter()
+            .enumerate()
+            .map(|(index, range)| (range, palette[index % palette.len()]))
+            .collect();
+    instruction_case("resolve_runs_3750", || {
+        let mut input = runs.clone();
+        resolve_runs(&mut input);
+        std::hint::black_box(input);
+    });
+    let rewritten = rewrite_hunks(&corpora.large_rust);
+    let original = document("bench-3-7mb.rs", &corpora.large_rust);
+    instruction_case("disk_splices_100k_lines", || {
+        std::hint::black_box(disk_splices(original.text(), &rewritten));
+    });
+    let textdiff = &corpora.textdiff;
+    let pairs = [
+        (
+            "textdiff_300kb_50_blocks",
+            &textdiff.rust,
+            &textdiff.rust_edited,
+        ),
+        (
+            "textdiff_5k_lines_one_word_each",
+            &textdiff.word_lines,
+            &textdiff.word_lines_edited,
+        ),
+        (
+            "textdiff_5k_lines_all_different",
+            &textdiff.dense_before,
+            &textdiff.dense_after,
+        ),
+    ];
+    for (name, before, after) in pairs {
+        instruction_case(name, || {
+            std::hint::black_box(compare_lines_inner(
+                before,
+                after,
+                ComparisonPolicy::Default,
+                HighlightPolicy::Words,
+            ));
+        });
+    }
+}
+
+fn shape_instruction_cases() {
+    let Some((platform, text_system)) = platform_text_system() else {
+        println!("PANEFLOW_BENCH_SKIP shape instruction cases: no platform text system");
+        return;
+    };
+    let font = editor_font();
+    let warm = ascii_rows(0);
+    let mut salt = 0usize;
+    instruction_case("shape_cold_60_rows", || {
+        salt += 1;
+        std::hint::black_box(shape_rows(&text_system, &font, &ascii_rows(salt)));
+    });
+    instruction_case("shape_warm_60_rows", || {
+        std::hint::black_box(shape_rows(&text_system, &font, &warm));
+    });
+    let warm_doc = ascii_document(0);
+    let mut runs = Vec::with_capacity(64);
+    let mut shapes = ShapeCache::default();
+    instruction_case("prepaint_60_rows_warm", || {
+        std::hint::black_box(prepaint_rows(
+            &text_system,
+            &font,
+            &warm_doc,
+            &mut runs,
+            &mut shapes,
+        ));
+    });
+    drop(platform);
+}
+
+#[test]
+#[ignore = "editor instruction counts: run under Callgrind through scripts/perf-ab"]
+fn editor_instruction_benchmark() {
+    refuse_debug_profile();
+    let corpora = Corpora::build();
+    open_instruction_cases(&corpora);
+    edit_instruction_cases(&corpora);
+    text_instruction_cases(&corpora);
+    shape_instruction_cases();
 }
 
 #[cfg(test)]

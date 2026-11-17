@@ -25,7 +25,7 @@ const HOST_ROLES: [&str; 10] = [
     "other",
 ];
 const RESOLUTIONS: [(&str, f64); 3] = [("ns", 100.0), ("ms/s", 1.0), ("ms", 0.01)];
-const BATCHES: [(&str, usize); 2] = [("terminal", 10), ("active", 1)];
+const BATCHES: [(&str, usize); 3] = [("terminal", 10), ("active", 1), ("editor", 1)];
 
 fn batch_size(suite: &str) -> usize {
     BATCHES
@@ -1205,6 +1205,24 @@ mod tests {
         );
         let attempt = load_attempt(dir.path()).unwrap();
         assert_eq!(attempt.metrics["terminal.publish"].first, [200.0, 100.0]);
+    }
+
+    #[test]
+    fn editor_iterations_compare_one_by_one_beside_the_required_suites() {
+        assert_eq!(batch_size("editor"), 1);
+        let dir = tempfile::tempdir().unwrap();
+        sample_file(
+            dir.path(),
+            "r01-1-base-editor.json",
+            "open_3_7mb",
+            &[2_000_000.0, 2_600_000.0],
+        );
+        let attempt = load_attempt(dir.path()).unwrap();
+        assert_eq!(
+            attempt.metrics["editor.open_3_7mb"].first,
+            [2_000_000.0, 2_600_000.0]
+        );
+        assert!(!SUITES.contains(&"editor"));
     }
 
     #[test]
