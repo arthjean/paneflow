@@ -27,6 +27,14 @@ pub(crate) fn window_corners_under_the_panel(
     }
 }
 
+pub(crate) fn trailing_strip_top_right_radius(rounded: gpui::Corners<bool>) -> gpui::Pixels {
+    if rounded.top_right {
+        crate::app::constants::WINDOW_CORNER_RADIUS - crate::app::constants::WINDOW_BORDER_SIZE
+    } else {
+        gpui::px(0.)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct HeaderSlot {
     pub(crate) height: f32,
@@ -196,5 +204,23 @@ mod tests {
         );
         assert!(corners.top_left && corners.bottom_left);
         assert!(!corners.top_right && !corners.bottom_right);
+    }
+
+    #[test]
+    fn a_strip_at_the_end_of_the_title_band_follows_the_top_right_window_corner() {
+        assert_eq!(
+            trailing_strip_top_right_radius(ROUNDED),
+            crate::app::constants::WINDOW_CORNER_RADIUS - crate::app::constants::WINDOW_BORDER_SIZE
+        );
+        let tiled_right = gpui::Corners {
+            top_right: false,
+            bottom_right: false,
+            ..ROUNDED
+        };
+        assert_eq!(trailing_strip_top_right_radius(tiled_right), gpui::px(0.));
+        assert_eq!(
+            trailing_strip_top_right_radius(gpui::Corners::default()),
+            gpui::px(0.)
+        );
     }
 }
