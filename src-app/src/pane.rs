@@ -1500,7 +1500,7 @@ impl Pane {
                         .bg(ui.subtle)
                         .text_size(px(9.))
                         .text_color(ui.accent)
-                        .child(format!("{count} hits"))
+                        .child(search_hits_label(count))
                         .into_any_element()
                 })
         };
@@ -2406,6 +2406,10 @@ fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Opt
     }
 }
 
+fn search_hits_label(count: usize) -> String {
+    crate::app::plural(count, "hit", "hits")
+}
+
 fn new_tab_menu_item(
     pane_id: u64,
     index: usize,
@@ -2480,7 +2484,7 @@ mod tests {
     use super::{
         ChipTone, MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
         badge_geometry, card_paints_quads, header_hover_animates, pane_card_background,
-        pane_status_label, progress_chip_label, progress_chip_tone, tab_badge,
+        pane_status_label, progress_chip_label, progress_chip_tone, search_hits_label, tab_badge,
         truncate_surface_title,
     };
     use crate::agent_launcher::TerminalAgent;
@@ -2886,6 +2890,13 @@ mod tests {
         cx.update(|_, cx| {
             assert_eq!(target.read(cx).active_terminal_opt(), Some(&terminal));
         });
+    }
+
+    #[test]
+    fn search_hits_label_names_a_single_hit_in_the_singular() {
+        assert_eq!(search_hits_label(1), "1 hit");
+        assert_eq!(search_hits_label(2), "2 hits");
+        assert_eq!(search_hits_label(12), "12 hits");
     }
 
     #[test]
