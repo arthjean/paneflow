@@ -16,6 +16,23 @@ use crate::ui_primitives::AccessibleControlExt;
 
 type SelectOption = (String, Option<Logo>, Value, bool);
 
+const OPTION_LOGO_SIZE: f32 = 14.;
+
+#[derive(Debug, PartialEq, Eq)]
+enum OptionLead {
+    Logo(Logo),
+    Blank,
+    None,
+}
+
+fn option_lead(icon: Option<Logo>, any_logo: bool) -> OptionLead {
+    match icon {
+        Some(icon) => OptionLead::Logo(icon),
+        None if any_logo => OptionLead::Blank,
+        None => OptionLead::None,
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn render_general_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
@@ -265,12 +282,20 @@ impl PaneFlowApp {
                     cx.notify();
                 }
             }));
+            let any_logo = options.iter().any(|option| option.1.is_some());
             for (i, (label, icon, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
                 let mut item =
                     select_option((config_key, i), selected, ui).cursor(CursorStyle::Arrow);
-                if let Some(icon) = icon {
-                    item = item.child(render_logo(icon.0, icon.1, px(14.), ui.text));
+                match option_lead(icon, any_logo) {
+                    OptionLead::Logo(icon) => {
+                        item =
+                            item.child(render_logo(icon.0, icon.1, px(OPTION_LOGO_SIZE), ui.text));
+                    }
+                    OptionLead::Blank => {
+                        item = item.child(div().flex_none().size(px(OPTION_LOGO_SIZE)));
+                    }
+                    OptionLead::None => {}
                 }
                 item = item.child(
                     div()
@@ -354,6 +379,16 @@ fn shell_preset_eq(stored: &str, chip: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{OptionLead, option_lead};
+
+    #[test]
+    fn an_option_without_a_logo_keeps_the_logo_column_when_its_siblings_have_one() {
+        let zed = ("icons/editor-zed.svg", false);
+        assert_eq!(option_lead(Some(zed), true), OptionLead::Logo(zed));
+        assert_eq!(option_lead(None, true), OptionLead::Blank);
+        assert_eq!(option_lead(None, false), OptionLead::None);
+    }
+
     #[test]
     fn shell_preset_matches_bare_names_by_basename() {
         assert!(super::shell_preset_eq(
