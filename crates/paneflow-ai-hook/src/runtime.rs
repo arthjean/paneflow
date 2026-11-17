@@ -96,10 +96,14 @@ pub(crate) fn dispatch() {
 
     match build_frame(event, context, hook_payload) {
         Ok(BuildOutcome::Send(frame)) => {
-            let delivered = send_agent_event(&endpoint, &session, &frame);
+            let seed = session_dir
+                .as_ref()
+                .and_then(|_| last_hook_event_seed(&frame));
+            let delivered = send_agent_event(&endpoint, &session, frame);
             if let Err(error) = delivered {
-                if error.kind() != std::io::ErrorKind::InvalidData {
-                    write_last_hook_event(session_dir.as_deref().map(Path::new), &frame);
+                if let Some(seed) = seed.filter(|_| error.kind() != std::io::ErrorKind::InvalidData)
+                {
+                    write_last_hook_event(session_dir.as_deref().map(Path::new), &seed);
                 }
                 diagnose(format_args!("{}: delivery failed: {error}", event.name()));
             }
@@ -221,21 +225,12 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
     }
 }
 
-fn write_last_hook_event(
-    session_dir: Option<&Path>,
-    frame: &paneflow_ipc_client::ai_hook::AiHookFrame,
-) {
-    let Some(session_dir) = session_dir.filter(|path| path.is_dir()) else {
-        return;
-    };
-    let Some(event) = frame
+fn last_hook_event_seed(frame: &paneflow_ipc_client::ai_hook::AiHookFrame) -> Option<Value> {
+    let event = frame
         .params
         .hook_payload
         .get("hook_event_name")
-        .and_then(Value::as_str)
-    else {
-        return;
-    };
+        .and_then(Value::as_str)?;
     let mut seed = serde_json::Map::new();
     seed.insert("hook_event_name".into(), Value::String(event.to_string()));
     if let Some(tool_name) = frame.params.tool_name.as_deref().or_else(|| {
@@ -261,7 +256,14 @@ fn write_last_hook_event(
     if let Some(generation) = frame.params.runtime_generation {
         seed.insert("runtime_generation".into(), Value::from(generation));
     }
-    let Ok(bytes) = serde_json::to_vec(&Value::Object(seed)) else {
+    Some(Value::Object(seed))
+}
+
+fn write_last_hook_event(session_dir: Option<&Path>, seed: &Value) {
+    let Some(session_dir) = session_dir.filter(|path| path.is_dir()) else {
+        return;
+    };
+    let Ok(bytes) = serde_json::to_vec(seed) else {
         return;
     };
     let target = session_dir.join("last-hook-event.json");
@@ -436,5 +438,78 @@ mod tests {
             contents,
             "paneflow-ai-hook: first\npaneflow-ai-hook: second\n"
         );
+    }
+
+    fn frame_with(
+        tool_name: Option<&str>,
+        hook_payload: Value,
+    ) -> paneflow_ipc_client::ai_hook::AiHookFrame {
+        let mut params = paneflow_ipc_client::ai_hook::AiHookParams::new(None, hook_payload);
+        params.tool_name = tool_name.map(str::to_owned);
+        params.runtime_generation = Some(5);
+        paneflow_ipc_client::ai_hook::AiHookFrame::new(
+            paneflow_ipc_client::ai_hook::AiHookMethod::ToolUse,
+            params,
+        )
+    }
+
+    #[test]
+    fn the_last_hook_event_seed_prefers_the_frame_tool_name_and_needs_an_event_name() {
+        let frame = frame_with(
+            Some("Edit"),
+            serde_json::json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "notification_type": "permission_prompt",
+                "prompt": "never copied",
+            }),
+        );
+        assert_eq!(
+            last_hook_event_seed(&frame),
+            Some(serde_json::json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Edit",
+                "notification_type": "permission_prompt",
+                "runtime_generation": 5,
+            }))
+        );
+        let payload_tool = frame_with(
+            None,
+            serde_json::json!({"hook_event_name": "PermissionRequest", "tool_name": "Bash"}),
+        );
+        assert_eq!(
+            last_hook_event_seed(&payload_tool),
+            Some(serde_json::json!({
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "Bash",
+                "runtime_generation": 5,
+            }))
+        );
+        assert_eq!(
+            last_hook_event_seed(&frame_with(Some("Edit"), serde_json::json!({}))),
+            None
+        );
+    }
+
+    #[test]
+    fn the_last_hook_event_seed_is_written_only_into_an_existing_session_dir() {
+        let directory = tempfile::TempDir::new().expect("temp directory");
+        let seed = serde_json::json!({"hook_event_name": "Stop", "runtime_generation": 5});
+        let missing = directory.path().join("missing");
+        write_last_hook_event(Some(&missing), &seed);
+        assert!(!missing.exists());
+        write_last_hook_event(Some(directory.path()), &seed);
+        let written =
+            std::fs::read(directory.path().join("last-hook-event.json")).expect("last hook event");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&written).expect("seed JSON"),
+            seed
+        );
+        let leftovers = std::fs::read_dir(directory.path())
+            .expect("session dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != "last-hook-event.json")
+            .count();
+        assert_eq!(leftovers, 0);
     }
 }

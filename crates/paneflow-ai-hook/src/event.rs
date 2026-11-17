@@ -365,7 +365,7 @@ mod tests {
 
     fn sent_frame(outcome: BuildOutcome) -> Value {
         match outcome {
-            BuildOutcome::Send(frame) => frame.to_agent_event_params("test"),
+            BuildOutcome::Send(frame) => frame.into_agent_event_params("test"),
             BuildOutcome::Drop(reason) => panic!("unexpected drop: {reason}"),
         }
     }

@@ -315,7 +315,7 @@ impl HostControl {
                     return Err(format!("paneflow host request {method} failed: {error}"));
                 }
             };
-            let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
+            let mut value: Value = serde_json::from_str(line.trim()).map_err(|error| {
                 format!("invalid JSON-RPC response from the local Paneflow host: {error}")
             })?;
             if value.get("id").and_then(Value::as_u64) != Some(id) {
@@ -324,7 +324,7 @@ impl HostControl {
             if let Some(message) = jsonrpc_error_message_from_value(&value) {
                 return Err(message);
             }
-            return value.get("result").cloned().ok_or_else(|| {
+            return value.get_mut("result").map(Value::take).ok_or_else(|| {
                 "the local Paneflow host answered without a result or an error".to_string()
             });
         }
@@ -507,6 +507,50 @@ mod tests {
             Err(ControlProbeError::Unanswered(_))
         ));
         closer.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_request_returns_the_result_of_its_own_id_whatever_its_shape() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("host.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&endpoint).unwrap();
+        let host = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut writer = stream.try_clone().unwrap();
+            let mut reader = BufReader::new(stream);
+            let answers = [
+                vec![json!({"result": {"host": "test"}})],
+                vec![json!({"result": "stale"}), json!({"result": null})],
+                vec![json!({"result": {"accepted": true, "nested": [1, {"x": 2.5}]}})],
+            ];
+            for answers in answers {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let id = request["id"].as_u64().unwrap();
+                for mut answer in answers {
+                    let stale = answer["result"] == "stale";
+                    answer["jsonrpc"] = json!("2.0");
+                    answer["id"] = json!(if stale { id + 100 } else { id });
+                    writer.write_all(format!("{answer}\n").as_bytes()).unwrap();
+                }
+            }
+        });
+
+        let mut control = HostControl::connect(&endpoint, "request-test").unwrap();
+        assert_eq!(control.identity(), &json!({"host": "test"}));
+        assert_eq!(
+            control.request("agent.event", json!({})).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            control.request("agent.event", json!({})).unwrap(),
+            json!({"accepted": true, "nested": [1, {"x": 2.5}]})
+        );
+        host.join().unwrap();
     }
 
     #[test]
