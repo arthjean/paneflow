@@ -21,8 +21,8 @@ const SIZE: PtySize = PtySize {
 
 fn spawn_started_child() -> Child {
     let mut child = Command::new("sh")
-        .args(["-c", "echo ready; exec sleep 600"])
-        .stdin(Stdio::null())
+        .args(["-c", "echo ready; read -r _"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
