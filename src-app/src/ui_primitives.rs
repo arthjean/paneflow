@@ -703,13 +703,27 @@ pub(crate) fn tooltip_shell() -> Div {
         .child(squircle::squircle_border(TOOLTIP_RADIUS, px(1.), ui.border))
 }
 
+pub(crate) const TOOLTIP_POINTER_CLEARANCE_X: Pixels = px(8.);
+pub(crate) const TOOLTIP_POINTER_CLEARANCE_Y: Pixels = px(12.);
+
+fn clear_of_the_pointer(shell: Div) -> Div {
+    div()
+        .px(TOOLTIP_POINTER_CLEARANCE_X)
+        .py(TOOLTIP_POINTER_CLEARANCE_Y)
+        .child(shell)
+}
+
 pub(crate) struct PaneflowTooltip {
     pub(crate) label: SharedString,
 }
 
 impl Render for PaneflowTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        tooltip_shell().child(self.label.clone())
+        clear_of_the_pointer(
+            tooltip_shell()
+                .debug_selector(|| "paneflow-tooltip".into())
+                .child(self.label.clone()),
+        )
     }
 }
 
@@ -1680,6 +1694,82 @@ mod tests {
             bounds.size.height > px(40.),
             "a path longer than the maximum width wraps onto a second line, got {:?}",
             bounds.size.height
+        );
+    }
+
+    struct PointerTooltipHarness {
+        trigger: Bounds<Pixels>,
+    }
+
+    impl Render for PointerTooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full().relative().child(
+                div()
+                    .id("pointer-tooltip-trigger")
+                    .absolute()
+                    .left(self.trigger.origin.x)
+                    .top(self.trigger.origin.y)
+                    .w(self.trigger.size.width)
+                    .h(self.trigger.size.height)
+                    .on_click(|_, _, _| {})
+                    .delayed_tooltip(text_tooltip("Split right")),
+            )
+        }
+    }
+
+    fn tooltip_shown_at(
+        cx: &mut TestAppContext,
+        trigger: Bounds<Pixels>,
+        pointer: gpui::Point<Pixels>,
+    ) -> Bounds<Pixels> {
+        let (_view, cx) = cx.add_window_view(move |_, _| PointerTooltipHarness { trigger });
+        cx.simulate_resize(size(px(400.), px(300.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(pointer, None, Modifiers::default());
+        cx.executor().advance_clock(TOOLTIP_SHOW_DELAY * 2);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("paneflow-tooltip")
+            .expect("tooltip painted")
+    }
+
+    #[gpui::test]
+    fn a_tooltip_opens_below_and_beside_the_pointer_without_touching_it(cx: &mut TestAppContext) {
+        let pointer = point(px(60.), px(52.));
+        let tooltip = tooltip_shown_at(
+            cx,
+            Bounds::new(point(px(40.), px(40.)), size(px(24.), px(24.))),
+            pointer,
+        );
+        assert!(
+            tooltip.top() >= pointer.y + TOOLTIP_POINTER_CLEARANCE_Y,
+            "the tooltip at {tooltip:?} starts too close under the pointer {pointer:?}"
+        );
+        assert!(
+            tooltip.left() >= pointer.x + TOOLTIP_POINTER_CLEARANCE_X,
+            "the tooltip at {tooltip:?} starts too close beside the pointer {pointer:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn a_tooltip_that_flips_above_the_pointer_keeps_the_same_clearance(cx: &mut TestAppContext) {
+        let pointer = point(px(380.), px(288.));
+        let tooltip = tooltip_shown_at(
+            cx,
+            Bounds::new(point(px(360.), px(276.)), size(px(24.), px(24.))),
+            pointer,
+        );
+        assert!(
+            tooltip.bottom() <= pointer.y - TOOLTIP_POINTER_CLEARANCE_Y,
+            "the flipped tooltip at {tooltip:?} covers the pointer row {pointer:?}"
+        );
+        assert!(
+            tooltip.right() <= pointer.x - TOOLTIP_POINTER_CLEARANCE_X,
+            "the flipped tooltip at {tooltip:?} covers the pointer {pointer:?}"
         );
     }
 }
