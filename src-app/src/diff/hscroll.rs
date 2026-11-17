@@ -210,13 +210,12 @@ pub(crate) fn h_scrollbar_segments(
             .map(|next| next.header_row)
             .unwrap_or_else(|| row_offsets.len().saturating_sub(1))
             .min(row_offsets.len().saturating_sub(1));
+        if end_row <= start_row + 1 {
+            continue;
+        }
         let file_top = row_offsets.get(start_row).copied().unwrap_or(0.0);
-        let trailing_gap = if next_file.is_some() {
-            0.0
-        } else {
-            super::rows::FILE_BODY_GAP
-        };
-        let file_bottom = row_offsets.get(end_row).copied().unwrap_or(file_top) + trailing_gap;
+        let file_bottom =
+            row_offsets.get(end_row).copied().unwrap_or(file_top) + super::rows::FILE_BODY_GAP;
         let visible_file_top = file_top.max(visible_top);
         let visible_file_bottom = file_bottom.min(visible_bottom);
         if visible_file_bottom - visible_file_top <= track_y_inset {
@@ -409,22 +408,17 @@ mod tests {
     }
 
     fn offsets_for(kinds: &[bool]) -> Vec<f32> {
-        let mut acc = 0.0;
-        let mut out = vec![0.0];
-        let mut after_body = false;
-        for &is_header in kinds {
-            if is_header && after_body {
-                acc += crate::diff::rows::FILE_BODY_GAP;
-            }
-            acc += if is_header {
-                crate::diff::rows::FILE_HEADER_HEIGHT
-            } else {
-                crate::diff::rows::ROW_HEIGHT
-            };
-            out.push(acc);
-            after_body = !is_header;
-        }
-        out
+        crate::diff::rows::offsets_with_body_gaps(
+            kinds.iter().map(|&is_header| {
+                let height = if is_header {
+                    crate::diff::rows::FILE_HEADER_HEIGHT
+                } else {
+                    crate::diff::rows::ROW_HEIGHT
+                };
+                (height, is_header)
+            }),
+            kinds.len(),
+        )
     }
 
     #[test]
@@ -443,8 +437,13 @@ mod tests {
             content,
         );
         assert_eq!(segments.len(), 2);
-        let first_file_last_row_bottom = row_offsets[4] - crate::diff::rows::FILE_BODY_GAP;
+        let first_file_last_row_bottom = row_offsets[4];
         let second_file_last_row_bottom = row_offsets[7];
+        assert_eq!(
+            row_offsets[4] - row_offsets[3],
+            crate::diff::rows::ROW_HEIGHT,
+            "row 3 is the last body row of the first file and ends at row_offsets[4]"
+        );
         for (segment, last_row_bottom) in segments
             .iter()
             .zip([first_file_last_row_bottom, second_file_last_row_bottom])
@@ -460,5 +459,25 @@ mod tests {
             );
         }
         assert!(content >= second_file_last_row_bottom + crate::diff::rows::FILE_BODY_GAP);
+    }
+
+    #[test]
+    fn a_collapsed_file_draws_no_scrollbar_over_its_header() {
+        let kinds = [true, true, false, false];
+        let row_offsets = offsets_for(&kinds);
+        let spans = [span(0, 400), span(1, 400)];
+        let content = crate::diff::rows::content_height(&row_offsets);
+        let segments = h_scrollbar_segments(
+            &spans,
+            &row_offsets,
+            &[0.0, 0.0],
+            false,
+            300.0,
+            0.0,
+            content,
+        );
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].offset_idx, 1);
+        assert!(segments[0].y >= row_offsets[4]);
     }
 }

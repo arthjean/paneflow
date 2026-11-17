@@ -35,7 +35,10 @@ pub fn split_row_height(row: &SplitRow) -> f32 {
     }
 }
 
-fn offsets_with_body_gaps(heights: impl Iterator<Item = (f32, bool)>, len: usize) -> Vec<f32> {
+pub(crate) fn offsets_with_body_gaps(
+    heights: impl Iterator<Item = (f32, bool)>,
+    len: usize,
+) -> Vec<f32> {
     let mut acc = 0.0;
     let mut out = Vec::with_capacity(len + 1);
     out.push(0.0);
