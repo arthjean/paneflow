@@ -1245,7 +1245,9 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
     let list_id: ElementId = (id.clone(), "list").into();
     let reveal_id: ElementId = (id.clone(), "reveal").into();
     SelectMenu {
+        state_id: (id.clone(), "keyboard").into(),
         reveal_id,
+        highlight: with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA),
         shell: div()
             .id(id)
             .relative()
@@ -1268,6 +1270,7 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
             .p(action_menu::PANEL_PADDING)
             .min_h_0()
             .overflow_y_scroll(),
+        entries: Vec::new(),
     }
 }
 
@@ -1322,10 +1325,33 @@ fn styled_select_option(
     })
 }
 
+type SelectHandler = std::rc::Rc<dyn Fn(&(), &mut gpui::Window, &mut gpui::App)>;
+
+enum SelectEntry {
+    Element(AnyElement),
+    Option(Stateful<Div>, SelectHandler),
+}
+
+#[derive(IntoElement)]
 pub struct SelectMenu {
+    state_id: ElementId,
     reveal_id: ElementId,
+    highlight: Hsla,
     shell: Stateful<Div>,
     list: Stateful<Div>,
+    entries: Vec<SelectEntry>,
+}
+
+impl SelectMenu {
+    pub fn option(
+        mut self,
+        row: Stateful<Div>,
+        on_select: impl Fn(&(), &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Self {
+        self.entries
+            .push(SelectEntry::Option(row, std::rc::Rc::new(on_select)));
+        self
+    }
 }
 
 impl Styled for SelectMenu {
@@ -1344,15 +1370,166 @@ impl StatefulInteractiveElement for SelectMenu {}
 
 impl ParentElement for SelectMenu {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.list.extend(elements);
+        self.entries
+            .extend(elements.into_iter().map(SelectEntry::Element));
     }
 }
 
-impl IntoElement for SelectMenu {
-    type Element = Stateful<Div>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectKey {
+    Highlight(usize),
+    Choose(usize),
+    Ignored,
+}
 
-    fn into_element(self) -> Self::Element {
-        self.shell.child(self.list)
+pub(crate) fn select_key(key: &str, highlighted: Option<usize>, options: usize) -> SelectKey {
+    if options == 0 {
+        return SelectKey::Ignored;
+    }
+    let last = options - 1;
+    let current = highlighted.filter(|index| *index <= last);
+    match key {
+        "down" => SelectKey::Highlight(current.map_or(0, |index| (index + 1) % options)),
+        "up" => SelectKey::Highlight(current.map_or(last, |index| (index + last) % options)),
+        "home" => SelectKey::Highlight(0),
+        "end" => SelectKey::Highlight(last),
+        "enter" | "space" => current.map_or(SelectKey::Ignored, SelectKey::Choose),
+        _ => SelectKey::Ignored,
+    }
+}
+
+struct SelectKeyboard {
+    focus: gpui::FocusHandle,
+    restore: Option<gpui::FocusHandle>,
+    highlighted: Option<usize>,
+    scroll: gpui::ScrollHandle,
+}
+
+impl SelectKeyboard {
+    fn open(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        let restore = window.focused(cx);
+        let target = focus.clone();
+        window.defer(cx, move |window, cx| window.focus(&target, cx));
+        Self {
+            focus,
+            restore,
+            highlighted: None,
+            scroll: gpui::ScrollHandle::new(),
+        }
+    }
+}
+
+fn restore_select_focus(
+    state: &gpui::Entity<SelectKeyboard>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    if let Some(handle) = state.read(cx).restore.clone() {
+        window.focus(&handle, cx);
+    }
+}
+
+impl RenderOnce for SelectMenu {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let SelectMenu {
+            state_id,
+            highlight,
+            shell,
+            list,
+            entries,
+            ..
+        } = self;
+        if !entries
+            .iter()
+            .any(|entry| matches!(entry, SelectEntry::Option(..)))
+        {
+            return shell
+                .child(
+                    list.children(entries.into_iter().filter_map(|entry| match entry {
+                        SelectEntry::Element(element) => Some(element),
+                        SelectEntry::Option(..) => None,
+                    })),
+                )
+                .into_any_element();
+        }
+
+        let state = window.use_keyed_state(state_id, cx, SelectKeyboard::open);
+        let (focus, highlighted, scroll) = {
+            let state = state.read(cx);
+            (state.focus.clone(), state.highlighted, state.scroll.clone())
+        };
+        let mut handlers: Vec<SelectHandler> = Vec::new();
+        let mut option_children: Vec<usize> = Vec::new();
+        let mut children: Vec<AnyElement> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match entry {
+                SelectEntry::Element(element) => children.push(element),
+                SelectEntry::Option(row, handler) => {
+                    let index = handlers.len();
+                    let click_state = state.clone();
+                    let click_handler = handler.clone();
+                    option_children.push(children.len());
+                    handlers.push(handler);
+                    children.push(
+                        row.when(highlighted == Some(index), |row| {
+                            row.bg(highlight).rounded(action_menu::ROW_RADIUS)
+                        })
+                        .on_click(move |_, window, cx| {
+                            restore_select_focus(&click_state, window, cx);
+                            click_handler(&(), window, cx);
+                        })
+                        .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        let key_state = state.clone();
+        let move_state = state.clone();
+        let out_state = state;
+        shell
+            .track_focus(&focus)
+            .on_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                let key = event.keystroke.key.as_str();
+                let current = key_state.read(cx).highlighted;
+                match select_key(key, current, handlers.len()) {
+                    SelectKey::Highlight(index) => {
+                        let child = option_children[index];
+                        key_state.update(cx, |state, cx| {
+                            state.highlighted = Some(index);
+                            state.scroll.scroll_to_item(child);
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    }
+                    SelectKey::Choose(index) => {
+                        restore_select_focus(&key_state, window, cx);
+                        handlers[index](&(), window, cx);
+                        cx.stop_propagation();
+                    }
+                    SelectKey::Ignored => {
+                        if key == "escape" {
+                            restore_select_focus(&key_state, window, cx);
+                        }
+                    }
+                }
+            })
+            .on_mouse_move(move |_, _, cx| {
+                if move_state.read(cx).highlighted.is_some() {
+                    move_state.update(cx, |state, cx| {
+                        state.highlighted = None;
+                        cx.notify();
+                    });
+                }
+            })
+            .on_mouse_down_out(move |_, window, cx| restore_select_focus(&out_state, window, cx))
+            .child(list.track_scroll(&scroll).children(children))
+            .into_any_element()
     }
 }
 
@@ -1549,5 +1726,87 @@ mod tests {
             assert_eq!(menu_text_size(), px(13.));
             assert_eq!(menu_text_weight(), FontWeight::MEDIUM);
         });
+    }
+
+    #[test]
+    fn select_keys_walk_the_options_and_wrap() {
+        assert_eq!(select_key("down", None, 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("down", Some(0), 3), SelectKey::Highlight(1));
+        assert_eq!(select_key("down", Some(2), 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("up", None, 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("up", Some(0), 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("home", Some(2), 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("end", None, 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("enter", Some(1), 3), SelectKey::Choose(1));
+        assert_eq!(select_key("space", Some(2), 3), SelectKey::Choose(2));
+        assert_eq!(select_key("enter", None, 3), SelectKey::Ignored);
+        assert_eq!(select_key("escape", Some(1), 3), SelectKey::Ignored);
+        assert_eq!(select_key("down", None, 0), SelectKey::Ignored);
+    }
+
+    struct SelectHarness {
+        trigger_top: f32,
+        picks: std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
+    }
+
+    impl gpui::Render for SelectHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            let mut menu =
+                select_menu("harness-select", ui).debug_selector(|| "select-menu".into());
+            for index in 0..3usize {
+                let picks = self.picks.clone();
+                menu = menu.option(
+                    select_option(("harness-option", index), index == 0, ui)
+                        .child(format!("Option {index}")),
+                    move |_, _, _| picks.borrow_mut().push(index),
+                );
+            }
+            div().size_full().relative().child(
+                div()
+                    .absolute()
+                    .top(px(self.trigger_top))
+                    .right(px(20.))
+                    .child(
+                        select_trigger("harness-trigger", "Harness", true, ui)
+                            .debug_selector(|| "select-trigger".into())
+                            .child("Option 0")
+                            .child(deferred_select_menu(menu)),
+                    ),
+            )
+        }
+    }
+
+    fn open_select(
+        cx: &mut gpui::TestAppContext,
+        trigger_top: f32,
+    ) -> (
+        &mut gpui::VisualTestContext,
+        std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
+    ) {
+        let picks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let held = picks.clone();
+        let (_view, cx) = cx.add_window_view(move |_, _| SelectHarness {
+            trigger_top,
+            picks: held,
+        });
+        cx.simulate_resize(gpui::size(px(600.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        (cx, picks)
+    }
+
+    #[gpui::test]
+    fn a_select_popup_answers_the_arrow_keys_and_enter(cx: &mut gpui::TestAppContext) {
+        let (cx, picks) = open_select(cx, 20.);
+        cx.simulate_keystrokes("down down enter");
+        assert_eq!(*picks.borrow(), vec![1]);
+        cx.simulate_keystrokes("up enter");
+        assert_eq!(*picks.borrow(), vec![1, 0]);
     }
 }

@@ -148,14 +148,10 @@ impl PaneFlowApp {
             for (i, (value, label)) in LAYOUT_PRESETS.iter().enumerate() {
                 let selected = preset == *value;
                 let next = (*value).to_string();
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("workspace-layout", i), selected, ui)
                         .cursor(CursorStyle::Arrow)
                         .h(px(44.))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                            this.workspace_template_dropdown = None;
-                            this.set_workspace_template_layout(next.clone(), cx);
-                        }))
                         .child(layout_preview(value, pane_count, ui))
                         .child(
                             div()
@@ -165,6 +161,10 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(*label),
                         ),
+                    cx.listener(move |this, _: &(), _w, cx| {
+                        this.workspace_template_dropdown = None;
+                        this.set_workspace_template_layout(next.clone(), cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));

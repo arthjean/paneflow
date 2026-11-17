@@ -459,13 +459,9 @@ impl PaneFlowApp {
             ));
             for (idx, preset) in crate::theme::PRESETS.iter().enumerate() {
                 let is_current = preset.name == current_name;
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("theme-preset", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.theme_dropdown_open = false;
-                            this.apply_theme_preset(&crate::theme::PRESETS[idx], window, cx);
-                        }))
                         .child(theme_swatch(preset.variant(is_light)))
                         .child(
                             div()
@@ -475,6 +471,10 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(preset.name),
                         ),
+                    cx.listener(move |this, _: &(), window, cx| {
+                        this.theme_dropdown_open = false;
+                        this.apply_theme_preset(&crate::theme::PRESETS[idx], window, cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
@@ -542,13 +542,9 @@ impl PaneFlowApp {
                 },
             ));
             for (idx, &style) in InterfaceStyle::ALL.iter().enumerate() {
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("interface-style", idx), current == style, ui)
                         .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.general_dropdown = None;
-                            this.apply_interface_style(style, cx);
-                        }))
                         .child(
                             div()
                                 .flex_1()
@@ -557,6 +553,10 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(style.label()),
                         ),
+                    cx.listener(move |this, _: &(), _window, cx| {
+                        this.general_dropdown = None;
+                        this.apply_interface_style(style, cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
@@ -645,13 +645,9 @@ impl PaneFlowApp {
                 },
             ));
             for (idx, &icon) in WorkspaceIcon::ALL.iter().enumerate() {
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("workspace-icon", idx), current == icon, ui)
                         .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.general_dropdown = None;
-                            this.apply_workspace_icon(icon, cx);
-                        }))
                         .child(preview(icon))
                         .child(
                             div()
@@ -661,6 +657,10 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(icon.label()),
                         ),
+                    cx.listener(move |this, _: &(), _window, cx| {
+                        this.general_dropdown = None;
+                        this.apply_workspace_icon(icon, cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
@@ -781,13 +781,9 @@ impl PaneFlowApp {
             ));
             for (idx, &style) in BackgroundStyle::ALL.iter().enumerate() {
                 let is_current = current == Some(style);
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("background-style", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.general_dropdown = None;
-                            this.apply_background_style(style, cx);
-                        }))
                         .child(
                             div()
                                 .flex_1()
@@ -796,6 +792,10 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(style.label()),
                         ),
+                    cx.listener(move |this, _: &(), _window, cx| {
+                        this.general_dropdown = None;
+                        this.apply_background_style(style, cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
