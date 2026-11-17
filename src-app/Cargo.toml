@@ -248,6 +248,7 @@ paneflow-minisign.workspace = true
 # in the editor but not in the diff - the one divergence US-004 forbids. `simd`
 # is re-enabled explicitly because it is a default we do want.
 ropey = { version = "1.6", default-features = false, features = ["simd"] }
+memchr = "2.8"
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]

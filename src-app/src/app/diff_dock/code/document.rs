@@ -331,17 +331,22 @@ impl CodeDocument {
 
 fn measure_text_lines(text: &str) -> usize {
     if every_byte_is_one_column_or_a_newline(text) {
-        return text
-            .as_bytes()
-            .split(|byte| *byte == b'\n')
-            .map(<[u8]>::len)
-            .max()
-            .unwrap_or(0);
+        return longest_byte_line(text.as_bytes());
     }
     text.split('\n')
         .map(tab_stops::display_columns)
         .max()
         .unwrap_or(0)
+}
+
+fn longest_byte_line(bytes: &[u8]) -> usize {
+    let mut longest = 0;
+    let mut start = 0;
+    for newline in memchr::memchr_iter(b'\n', bytes) {
+        longest = longest.max(newline - start);
+        start = newline + 1;
+    }
+    longest.max(bytes.len() - start)
 }
 
 fn every_byte_is_one_column_or_a_newline(text: &str) -> bool {
@@ -667,6 +672,26 @@ mod tests {
         assert_every_measure_matches_the_fold(&ascii, 97);
         assert_every_measure_matches_the_fold(&["\t\x01", "tail without newline"], 3);
         assert_every_measure_matches_the_fold(&["plain", "", "a longer plain line"], 5);
+    }
+
+    #[test]
+    fn the_longest_byte_line_matches_the_longest_piece_between_newlines() {
+        let long_tail = format!("{}\n{}", "a".repeat(70), "b".repeat(300));
+        let wide_middle = format!("x\n{}\ny", "m".repeat(129));
+        for text in [
+            "",
+            "\n",
+            "\n\n\n",
+            "abc",
+            "abc\n",
+            "\nabc",
+            "ab\ncdef\ng",
+            long_tail.as_str(),
+            wide_middle.as_str(),
+        ] {
+            let reference = text.split('\n').map(str::len).max().unwrap_or(0);
+            assert_eq!(longest_byte_line(text.as_bytes()), reference, "{text:?}");
+        }
     }
 
     #[test]

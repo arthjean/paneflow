@@ -4421,6 +4421,7 @@ dependencies = [
  "libc",
  "libproc",
  "log",
+ "memchr",
  "minisign",
  "minisign-verify",
  "notify",
