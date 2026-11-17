@@ -206,14 +206,7 @@ impl PaneFlowApp {
                 this.close_workspace_tab(at_ws, at_tab, window, cx);
             }
         });
-        let title_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(content_width))
-            .max_w(px(content_width))
-            .min_w_0()
+        let title_main = div()
             .when(!indent_guide && !grouped_by_status, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
@@ -248,8 +241,7 @@ impl PaneFlowApp {
                     }),
                 )
             })
-            .child(div().flex_1())
-            .children(diffstat.map(|chip| div().flex_none().child(chip)));
+            .children(diffstat.map(|chip| div().flex_none().ml_auto().child(chip)));
 
         let title_tooltip = (!is_renaming
             && row_name.chars().count() > SIDEBAR_TITLE_TOOLTIP_MIN_CHARS)
@@ -369,13 +361,10 @@ impl PaneFlowApp {
                     ui,
                 )
                 .on_click(close_tab);
-                let title_row = title_row.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .child(close_button)
-                        .children(lane_slot),
+                let title_row = sidebar_title_row(
+                    content_width,
+                    title_main,
+                    sidebar_row_trailing(close_button, lane_slot, reveal),
                 );
                 row.extend([title_row.into_any_element()]);
             })

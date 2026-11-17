@@ -29,6 +29,45 @@ pub(super) fn sidebar_workspace_row_content_width(sidebar_width: f32) -> f32 {
     sidebar_width - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0
 }
 
+pub(super) fn sidebar_title_row(
+    content_width: f32,
+    main: gpui::Div,
+    trailing: gpui::Div,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .w(px(content_width))
+        .max_w(px(content_width))
+        .min_w_0()
+        .overflow_x_hidden()
+        .child(
+            main.flex_1()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(SIDEBAR_TITLE_ROW_GAP)),
+        )
+        .child(trailing)
+}
+
+pub(super) fn sidebar_row_trailing(
+    revealed: impl IntoElement,
+    lane_slot: Option<AnyElement>,
+    reveal: f32,
+) -> gpui::Div {
+    let lead = if lane_slot.is_some() { 1. } else { reveal };
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .pl(px(SIDEBAR_TITLE_ROW_GAP * lead))
+        .child(revealed)
+        .children(lane_slot)
+}
+
 pub(super) fn sidebar_title_with_trailing(
     title: impl IntoElement,
     trailing: Option<impl IntoElement>,
@@ -584,5 +623,60 @@ mod tests {
                 "reveal {reveal}"
             );
         }
+    }
+
+    struct TitleRowHarness {
+        reveal: f32,
+    }
+
+    impl gpui::Render for TitleRowHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let title = div()
+                .debug_selector(|| "row-title".into())
+                .flex_initial()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .child("Sidebar title written to sit right at the truncation edge of its row");
+            let close = div()
+                .flex_none()
+                .w(px(SIDEBAR_LANE_GLYPH_SIZE * self.reveal))
+                .h(px(SIDEBAR_ROW_LINE_HEIGHT));
+            div().child(sidebar_title_row(
+                300.,
+                div().child(title),
+                sidebar_row_trailing(close, None, self.reveal),
+            ))
+        }
+    }
+
+    fn title_right_at(cx: &mut TestAppContext, reveal: f32) -> gpui::Pixels {
+        let (_view, cx) = cx.add_window_view(move |_, _| TitleRowHarness { reveal });
+        cx.simulate_resize(size(px(500.), px(100.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("row-title").expect("title painted").right()
+    }
+
+    #[gpui::test]
+    fn a_resting_row_gives_its_title_the_whole_line(cx: &mut TestAppContext) {
+        let right = title_right_at(cx, 0.);
+        assert!(
+            right >= px(300.) - px(0.5),
+            "a hidden close button keeps no gap at rest, the title ends at {right:?} of 300"
+        );
+    }
+
+    #[gpui::test]
+    fn a_hovered_row_yields_exactly_the_close_button_and_its_gap(cx: &mut TestAppContext) {
+        let right = title_right_at(cx, 1.);
+        let expected = px(300. - SIDEBAR_TITLE_ROW_GAP - SIDEBAR_LANE_GLYPH_SIZE);
+        assert!(
+            (right - expected).abs() <= px(0.5),
+            "the title ends at {right:?}, expected {expected:?}"
+        );
     }
 }

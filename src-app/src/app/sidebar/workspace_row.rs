@@ -142,25 +142,16 @@ impl PaneFlowApp {
             });
 
         let row_content_width = sidebar_workspace_row_content_width(self.sidebar_width());
-        let title_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(row_content_width))
-            .max_w(px(row_content_width))
-            .min_w_0()
-            .overflow_x_hidden()
+        let title_main = div()
             .child(disclosure)
             .child(sidebar_title_with_trailing(
                 title_el,
                 self.render_workspace_branch_label(ws, cx),
                 SIDEBAR_BRANCH_GAP,
             ))
-            .child(div().flex_1())
             .children(
                 self.render_workspace_diffstat(ws)
-                    .map(|counts| div().flex_none().child(counts)),
+                    .map(|counts| div().flex_none().ml_auto().child(counts)),
             );
         let lane_slot = lane.is_some().then(|| {
             render_lane_slot(
@@ -191,16 +182,12 @@ impl PaneFlowApp {
                     ui,
                 )
                 .on_click(open_new_tab);
-                row.extend([title_row
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_row()
-                            .child(new_tab_button)
-                            .children(lane_slot),
-                    )
-                    .into_any_element()]);
+                row.extend([sidebar_title_row(
+                    row_content_width,
+                    title_main,
+                    sidebar_row_trailing(new_tab_button, lane_slot, reveal),
+                )
+                .into_any_element()]);
             })
             .when(picked > 0., |row| {
                 row.child(sidebar_selection_fill(ui, shape))
