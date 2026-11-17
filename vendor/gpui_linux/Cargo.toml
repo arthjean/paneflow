@@ -21,7 +21,13 @@
 #   minimum was written in logical pixels and without the transparent inset,
 #   so a client-decorated window could shrink below its minimum visible size,
 #   by the inset at scale 1 and by half its size at scale 2.
-# Drop this copy once the pinned Zed revision carries both changes.
+# - src/linux/wayland/client.rs: the wl_seat Capabilities handler releases
+#   the wl_keyboard or wl_pointer whose capability went away, leaving its
+#   window the way a Leave would, and creates one only when the seat gains it.
+#   Upstream kept a removed device (stale hover and focus) and re-created the
+#   keyboard and text input on every capability change, dropping the IME
+#   state.
+# Drop this copy once the pinned Zed revision carries these changes.
 
 [package]
 name = "gpui_linux"

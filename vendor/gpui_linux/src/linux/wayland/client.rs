@@ -1960,7 +1960,52 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
         {
             let client = state.get_client();
             let mut state = client.borrow_mut();
-            if capabilities.contains(wl_seat::Capability::Keyboard) {
+            let mut keyboard_left = None;
+            let mut pointer_left = None;
+            if !capabilities.contains(wl_seat::Capability::Keyboard)
+                && let Some(wl_keyboard) = state.wl_keyboard.take()
+            {
+                wl_keyboard.release();
+                if let Some(text_input) = state.text_input.take() {
+                    text_input.destroy();
+                    state.ime_pre_edit = None;
+                    state.composing = false;
+                }
+                state.enter_token.take();
+                state.repeat.current_id += 1;
+                state.repeat.current_keycode = None;
+                if let Some(ref mut compose) = state.compose_state {
+                    compose.reset();
+                }
+                state.pre_edit_text.take();
+                keyboard_left = state.keyboard_focused_window.take();
+            }
+            if !capabilities.contains(wl_seat::Capability::Pointer)
+                && let Some(wl_pointer) = state.wl_pointer.take()
+            {
+                if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                    cursor_shape_device.destroy();
+                }
+                if let Some(pinch_gesture) = state.pinch_gesture.take() {
+                    pinch_gesture.destroy();
+                }
+                wl_pointer.release();
+                if let Some(window) = state.mouse_focused_window.take() {
+                    pointer_left = Some((
+                        window,
+                        PlatformInput::MouseExited(MouseExitEvent {
+                            position: state.mouse_location.unwrap_or_default(),
+                            pressed_button: state.button_pressed,
+                            modifiers: state.modifiers,
+                        }),
+                    ));
+                }
+                state.mouse_location = None;
+                state.button_pressed = None;
+                state.cursor_hidden_window = None;
+            }
+            if capabilities.contains(wl_seat::Capability::Keyboard) && state.wl_keyboard.is_none()
+            {
                 let keyboard = seat.get_keyboard(qh, ());
 
                 if let Some(text_input) = state.text_input.take() {
@@ -1975,13 +2020,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     .as_ref()
                     .map(|text_input_manager| text_input_manager.get_text_input(seat, qh, ()));
 
-                if let Some(wl_keyboard) = &state.wl_keyboard {
-                    wl_keyboard.release();
-                }
-
                 state.wl_keyboard = Some(keyboard);
             }
-            if capabilities.contains(wl_seat::Capability::Pointer) {
+            if capabilities.contains(wl_seat::Capability::Pointer) && state.wl_pointer.is_none() {
                 let pointer = seat.get_pointer(qh, ());
 
                 if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
@@ -2000,11 +2041,16 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     },
                 );
 
-                if let Some(wl_pointer) = &state.wl_pointer {
-                    wl_pointer.release();
-                }
-
                 state.wl_pointer = Some(pointer);
+            }
+            drop(state);
+            if let Some(window) = keyboard_left {
+                window.handle_ime(ImeInput::DeleteText);
+                window.set_focused(false);
+            }
+            if let Some((window, input)) = pointer_left {
+                window.handle_input(input);
+                window.set_hovered(false);
             }
         }
     }
