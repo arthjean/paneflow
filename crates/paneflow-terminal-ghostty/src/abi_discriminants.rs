@@ -317,6 +317,7 @@ pub(crate) const READ_DISCRIMINANTS: &[(&str, i64)] = discriminants![
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE,
+    GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
