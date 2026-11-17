@@ -59,6 +59,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - **Usage tiles line up in Settings.** In Settings › Usage, a tile alone on the last row of the grid, such as a third account, was 16 px wider than the tiles above it, so its right edge stuck out. Every tile now takes exactly one column.
 - **Removing an unused worktree no longer shows an empty list.** When nothing used the worktree, its removal dialog drew an empty band where the list goes and said that removing closes everything listed above. The band is gone and the dialog says that removing deletes the worktree folder, keeps a snapshot of uncommitted changes and keeps the branch.
 - **The clone bubble stays inside the window.** When a clone started from the Clone repository dialog, the bubble flew toward a spot measured from the outer edge of the window instead of its content, so on Linux with client-side decorations its last frames crossed the window border before it jumped back into place. It now flies to where it rests, inside the window's content.
+- **A detached pane window on Linux no longer has a black frame.** On Wayland compositors such as sway, a pane opened in its own window showed a 10 px black frame with square corners around its rounded edges, whatever the window backdrop. The window now shows its rounded corners and shadow like the main window.
 
 ## [0.19.1] - 2026-11-13
 

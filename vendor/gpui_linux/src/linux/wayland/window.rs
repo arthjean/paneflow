@@ -143,6 +143,7 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    geometry_inset: Option<Pixels>,
     client_corner_radii: Corners<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
@@ -658,6 +659,7 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
+            geometry_inset: None,
             client_corner_radii: Corners::default(),
             accesskit_adapter: None,
         })
@@ -960,7 +962,42 @@ impl WaylandWindowStatePtr {
         state.children.values().any(|&blocking| blocking)
     }
 
+    fn reflow_client_inset(&self) {
+        let mut state = self.state.borrow_mut();
+        let inset = state.inset();
+        let Some(applied) = state.geometry_inset else {
+            return;
+        };
+        if applied == inset {
+            return;
+        }
+        let outer = if state.fullscreen || state.maximized {
+            None
+        } else {
+            let geometry = inset_by_tiling(
+                state.bounds.map_origin(|_| px(0.0)),
+                applied,
+                state.tiling,
+            );
+            compute_outer_size(inset, Some(geometry.size), state.tiling)
+        };
+        if let Some(size) = outer {
+            state.window_bounds = Bounds {
+                origin: Point::default(),
+                size,
+            };
+        }
+        drop(state);
+        if let Some(size) = outer {
+            self.resize(size);
+        }
+        let mut state = self.state.borrow_mut();
+        set_window_geometry(&mut state);
+        update_window(state);
+    }
+
     pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
+        self.reflow_client_inset();
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
@@ -1182,23 +1219,9 @@ impl WaylandWindowStatePtr {
                     }
                 }
             }
-            let state = self.state.borrow_mut();
+            let mut state = self.state.borrow_mut();
             state.surface_state.ack_configure(serial);
-
-            let window_geometry = inset_by_tiling(
-                state.bounds.map_origin(|_| px(0.0)),
-                state.inset(),
-                state.tiling,
-            )
-            .map(|v| f32::from(v) as i32)
-            .map_size(|v| if v <= 0 { 1 } else { v });
-
-            state.surface_state.set_geometry(
-                window_geometry.origin.x,
-                window_geometry.origin.y,
-                window_geometry.size.width,
-                window_geometry.size.height,
-            );
+            set_window_geometry(&mut state);
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
             update_window(state);
@@ -2475,6 +2498,21 @@ mod rounded_rect_tests {
             assert!(rectangles(area, Corners::all(px(4.0))).is_empty());
         }
     }
+}
+
+fn set_window_geometry(state: &mut WaylandWindowState) {
+    let inset = state.inset();
+    let window_geometry = inset_by_tiling(state.bounds.map_origin(|_| px(0.0)), inset, state.tiling)
+        .map(|v| f32::from(v) as i32)
+        .map_size(|v| if v <= 0 { 1 } else { v });
+
+    state.surface_state.set_geometry(
+        window_geometry.origin.x,
+        window_geometry.origin.y,
+        window_geometry.size.width,
+        window_geometry.size.height,
+    );
+    state.geometry_inset = Some(inset);
 }
 
 fn update_window(mut state: RefMut<WaylandWindowState>) {

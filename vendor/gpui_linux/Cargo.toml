@@ -32,6 +32,14 @@
 #   `ShmPresenter` (up to three wl_shm buffers, ARGB8888 premultiplied or
 #   XRGB8888, reused only once the compositor released them), through
 #   `WgpuRenderer::new_with_presentation` in src/linux/wayland/window.rs.
+# - src/linux/wayland/window.rs: a client inset that changes after the last
+#   configure (the app sets it while drawing, and the decoration mode can
+#   flip from server-side to client-side between two configures) is applied
+#   at the next frame: the surface grows or shrinks by the inset difference
+#   and `set_window_geometry` moves with it, through `reflow_client_inset`.
+#   Upstream only updated the geometry on a configure, so a window that got
+#   no later configure (a second window on sway) kept a geometry covering the
+#   whole surface and showed its transparent inset as an opaque black frame.
 # Drop this copy once the pinned Zed revision carries these changes.
 
 [package]
