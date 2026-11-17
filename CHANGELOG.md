@@ -57,6 +57,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - **Fixes from the GPUI update.** Paneflow now builds on GPUI `703b5ac3`, which brings three upstream fixes: on Windows, moving the window to another display or changing display settings no longer risks a crash in the display-change handler; on Wayland, concurrent activation requests no longer leave GNOME's launch indicator spinning until it times out; on base M-series Macs under macOS 26 and later, animations no longer stall at 30 frames per second. These come from upstream and were not reproduced or checked in Paneflow.
 - **A plan at its weekly limit says so.** In Settings › Usage and the usage panel of the sidebar, an account that had used all of its week still read "At this pace you reach the weekly limit" with a time in the future. It now reads "Weekly limit reached. It resets" followed by the reset time, with the warning glyph in the critical color.
 - **Usage tiles line up in Settings.** In Settings › Usage, a tile alone on the last row of the grid, such as a third account, was 16 px wider than the tiles above it, so its right edge stuck out. Every tile now takes exactly one column.
+- **Removing an unused worktree no longer shows an empty list.** When nothing used the worktree, its removal dialog drew an empty band where the list goes and said that removing closes everything listed above. The band is gone and the dialog says that removing deletes the worktree folder, keeps a snapshot of uncommitted changes and keeps the branch.
 
 ## [0.19.1] - 2026-11-13
 

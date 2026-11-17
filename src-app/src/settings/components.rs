@@ -990,6 +990,10 @@ pub(crate) fn confirmation_list(
     rows: impl IntoIterator<Item = (SharedString, SharedString)>,
     max_listed: usize,
 ) -> Div {
+    let mut rows = rows.into_iter().peekable();
+    if rows.peek().is_none() {
+        return div();
+    }
     let mut list = div()
         .flex()
         .flex_col()
@@ -1000,7 +1004,7 @@ pub(crate) fn confirmation_list(
         .rounded(px(8.))
         .bg(with_alpha(ui.subtle, 0.5));
     let mut hidden = 0usize;
-    for (index, (title, detail)) in rows.into_iter().enumerate() {
+    for (index, (title, detail)) in rows.enumerate() {
         if index >= max_listed {
             hidden += 1;
             continue;
@@ -2042,6 +2046,37 @@ mod tests {
                 8,
             ))
         }
+    }
+
+    struct EmptyConfirmationHarness;
+
+    impl gpui::Render for EmptyConfirmationHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let rows: [(SharedString, SharedString); 0] = [];
+            div().flex().flex_col().child(
+                div()
+                    .w(px(460.))
+                    .debug_selector(|| "card".into())
+                    .child(confirmation_list(crate::theme::ui_colors(), rows, 8)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn an_empty_confirmation_list_draws_no_band(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| EmptyConfirmationHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let card = cx.debug_bounds("card").expect("card painted");
+        assert_eq!(
+            card.size.height,
+            px(0.),
+            "a list with nothing to list takes no room and paints no band"
+        );
     }
 
     #[gpui::test]

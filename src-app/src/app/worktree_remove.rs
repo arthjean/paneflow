@@ -243,6 +243,17 @@ fn blocker_summary(blockers: &[WorktreeBlocker]) -> String {
     }
 }
 
+fn removal_explanation(blockers: &[WorktreeBlocker]) -> &'static str {
+    if blockers.is_empty() {
+        "Removing deletes the worktree folder. Uncommitted changes in it are saved as a \
+         snapshot you can restore, and the branch itself is kept."
+    } else {
+        "Removing closes everything listed above and stops those sessions. Uncommitted \
+         changes in the worktree are saved as a snapshot you can restore, and the branch \
+         itself is kept."
+    }
+}
+
 impl PaneFlowApp {
     fn worktree_blockers(&self, path: &Path, sessions: &[LiveSession]) -> Vec<WorktreeBlocker> {
         let workspaces: Vec<(u64, String, PathBuf)> = self
@@ -566,12 +577,7 @@ impl PaneFlowApp {
             MAX_LISTED_BLOCKERS,
         );
 
-        let explanation = confirmation_warning(
-            ui,
-            "Removing closes everything listed above and stops those sessions. Uncommitted \
-             changes in the worktree are saved as a snapshot you can restore, and the branch \
-             itself is kept.",
-        );
+        let explanation = confirmation_warning(ui, removal_explanation(&dialog.blockers));
 
         let footer = modal_footer()
             .child(secondary_button(
@@ -626,6 +632,19 @@ mod tests {
             title: title.to_string(),
             cwd: PathBuf::from(cwd),
         }
+    }
+
+    #[test]
+    fn the_explanation_mentions_a_list_only_when_there_is_one() {
+        let free = removal_explanation(&[]);
+        assert!(!free.contains("listed above"), "{free}");
+        assert!(free.contains("snapshot"), "{free}");
+        let blocked = removal_explanation(&[WorktreeBlocker::Tab {
+            ws_id: 2,
+            tab_id: 20,
+            title: "Agent".to_string(),
+        }]);
+        assert!(blocked.contains("everything listed above"), "{blocked}");
     }
 
     #[test]
