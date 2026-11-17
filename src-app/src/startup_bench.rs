@@ -209,6 +209,42 @@ fn launch_to_first_frame(exe: &Path, home: &Path, trace_path: &Path) -> Trace {
     parse_trace(&text)
 }
 
+struct DetachedServices {
+    exe: PathBuf,
+    homes: Vec<PathBuf>,
+}
+
+impl DetachedServices {
+    fn new(exe: &Path) -> Self {
+        Self {
+            exe: exe.to_path_buf(),
+            homes: Vec::new(),
+        }
+    }
+
+    fn track(&mut self, home: &Path) {
+        if !self.homes.iter().any(|tracked| tracked == home) {
+            self.homes.push(home.to_path_buf());
+        }
+    }
+}
+
+impl Drop for DetachedServices {
+    fn drop(&mut self) {
+        for home in &self.homes {
+            for service in ["serve", "host"] {
+                let _ = Command::new(&self.exe)
+                    .args([service, "stop"])
+                    .env(paneflow_home::HOME_ENV, home)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
 fn percentile(sorted: &[u64], percentile: usize) -> u64 {
     let index = (sorted.len().saturating_sub(1) * percentile) / 100;
     sorted[index.min(sorted.len().saturating_sub(1))]
@@ -298,9 +334,11 @@ fn startup_first_frame_benchmark() {
     println!("PANEFLOW_BENCH_NOTE fixture: {}", fixture.display());
 
     let mut metrics = Vec::new();
+    let mut services = DetachedServices::new(&exe);
     for scenario in Scenario::ALL {
         let home = fixture.join(format!("home-{}", scenario.prefix()));
         seed_home(&home, scenario, &cwd);
+        services.track(&home);
         scenario.before_launch(&home);
         let warmup = launch_to_first_frame(&exe, &home, &fixture.join("warmup.json"));
         assert!(
@@ -316,6 +354,7 @@ fn startup_first_frame_benchmark() {
             .collect();
         metrics.extend(metrics_from_traces(scenario.prefix(), &traces));
     }
+    drop(services);
     let _ = std::fs::remove_dir_all(&fixture);
 
     println!(
@@ -327,6 +366,40 @@ fn startup_first_frame_benchmark() {
 #[cfg(test)]
 mod tests {
     use super::{Scenario, Trace, metrics_from_traces, parse_trace};
+
+    #[cfg(unix)]
+    #[test]
+    fn every_launched_home_has_its_worker_and_host_stopped_once_the_suite_ends() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("calls.log");
+        let exe = dir.path().join("paneflow");
+        std::fs::write(
+            &exe,
+            format!(
+                "#!/bin/sh\necho \"$PANEFLOW_HOME $*\" >> {}\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let first = dir.path().join("home-welcome");
+        let second = dir.path().join("home-restore3");
+        {
+            let mut services = super::DetachedServices::new(&exe);
+            services.track(&first);
+            services.track(&second);
+            services.track(&first);
+        }
+        let calls = std::fs::read_to_string(&log).unwrap();
+        let expected = [
+            format!("{} serve stop", first.display()),
+            format!("{} host stop", first.display()),
+            format!("{} serve stop", second.display()),
+            format!("{} host stop", second.display()),
+        ];
+        assert_eq!(calls.lines().collect::<Vec<_>>(), expected);
+    }
 
     fn trace(at_us: &[(&str, u64)]) -> Trace {
         Trace {
