@@ -4,6 +4,8 @@ use crate::{WgpuRenderer, WgpuSurfaceConfig};
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
 use gpui_util::ResultExt;
+#[cfg(not(target_family = "wasm"))]
+use raw_window_handle::{HasDisplayHandle as _, HasWindowHandle as _};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,6 +130,50 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+#[cfg(not(target_family = "wasm"))]
+pub trait PresentationProbeWindow:
+    raw_window_handle::HasWindowHandle + raw_window_handle::HasDisplayHandle
+{
+    fn connection_survived(&mut self) -> bool;
+}
+
+#[cfg(not(target_family = "wasm"))]
+pub type PresentationProbe =
+    std::rc::Rc<dyn Fn() -> anyhow::Result<Box<dyn PresentationProbeWindow>>>;
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, PartialEq, Eq)]
+struct PresentationVerdictKey {
+    vendor: u32,
+    device: u32,
+    backend: wgpu::Backend,
+    name: String,
+    driver: String,
+    compositor: Option<(u32, u32)>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[derive(Debug)]
+struct ProbeDisplay(raw_window_handle::RawDisplayHandle);
+
+#[cfg(not(target_family = "wasm"))]
+unsafe impl Send for ProbeDisplay {}
+
+#[cfg(not(target_family = "wasm"))]
+unsafe impl Sync for ProbeDisplay {}
+
+#[cfg(not(target_family = "wasm"))]
+impl raw_window_handle::HasDisplayHandle for ProbeDisplay {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(self.0) })
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+static PRESENTATION_VERDICTS: Mutex<Vec<(PresentationVerdictKey, bool)>> = Mutex::new(Vec::new());
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
@@ -150,12 +196,50 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
+    pub fn new_with_presentation_probe(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        config: &WgpuSurfaceConfig,
+        compositor_gpu: Option<CompositorGpuHint>,
+        probe: &PresentationProbe,
+        reject_software: bool,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_options_and_probe(
+            instance,
+            surface,
+            config,
+            compositor_gpu,
+            reject_software,
+            Some(probe),
+        )
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     fn new_with_options(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
         config: &WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
         reject_software: bool,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_options_and_probe(
+            instance,
+            surface,
+            config,
+            compositor_gpu,
+            reject_software,
+            None,
+        )
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn new_with_options_and_probe(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+        config: &WgpuSurfaceConfig,
+        compositor_gpu: Option<CompositorGpuHint>,
+        reject_software: bool,
+        probe: Option<&PresentationProbe>,
     ) -> anyhow::Result<Self> {
         let device_id_filter = Self::device_id_filter();
 
@@ -169,6 +253,7 @@ impl WgpuContext {
                 config,
                 compositor_gpu.as_ref(),
                 reject_software,
+                probe,
             ))?;
 
         Ok(Self::from_native_adapter_and_device(
@@ -527,6 +612,7 @@ impl WgpuContext {
         config: &WgpuSurfaceConfig,
         compositor_gpu: Option<&CompositorGpuHint>,
         reject_software: bool,
+        probe: Option<&PresentationProbe>,
     ) -> anyhow::Result<(
         wgpu::Adapter,
         wgpu::Device,
@@ -571,6 +657,43 @@ impl WgpuContext {
                     info.backend
                 );
                 continue;
+            }
+
+            if let Some(probe) = probe
+                && Self::needs_presentation_probe(&info, compositor_gpu)
+            {
+                match Self::compositor_accepts_buffers(
+                    &adapter,
+                    config,
+                    compositor_gpu,
+                    probe,
+                )
+                .await
+                {
+                    Ok(true) => {
+                        log::info!(
+                            "Presentation probe: the compositor accepts buffers from {} ({:?})",
+                            info.name,
+                            info.backend
+                        );
+                    }
+                    Ok(false) => {
+                        log::info!(
+                            "Presentation probe: the compositor rejects buffers from {} ({:?}), \
+                             so its swapchain would close the Wayland connection; trying next...",
+                            info.name,
+                            info.backend
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        log::info!(
+                            "Presentation probe could not run for {} ({:?}): {error:#}",
+                            info.name,
+                            info.backend
+                        );
+                    }
+                }
             }
 
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
@@ -655,6 +778,106 @@ impl WgpuContext {
                 backend_priority,
             )
         });
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn needs_presentation_probe(
+        info: &wgpu::AdapterInfo,
+        compositor_gpu: Option<&CompositorGpuHint>,
+    ) -> bool {
+        info.backend == wgpu::Backend::Vulkan
+            && !compositor_gpu
+                .is_some_and(|hint| info.vendor == hint.vendor_id && info.device == hint.device_id)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    async fn compositor_accepts_buffers(
+        adapter: &wgpu::Adapter,
+        config: &WgpuSurfaceConfig,
+        compositor_gpu: Option<&CompositorGpuHint>,
+        probe: &PresentationProbe,
+    ) -> anyhow::Result<bool> {
+        let info = adapter.get_info();
+        let key = PresentationVerdictKey {
+            vendor: info.vendor,
+            device: info.device,
+            backend: info.backend,
+            name: info.name.clone(),
+            driver: info.driver.clone(),
+            compositor: compositor_gpu.map(|hint| (hint.vendor_id, hint.device_id)),
+        };
+        if let Some((_, accepted)) = PRESENTATION_VERDICTS
+            .lock()
+            .iter()
+            .find(|(cached, _)| *cached == key)
+        {
+            return Ok(*accepted);
+        }
+
+        let mut window = probe()?;
+        let raw_display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("probe display handle: {e}"))?
+            .as_raw();
+        let raw_window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("probe window handle: {e}"))?
+            .as_raw();
+        let probe_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: Some(Box::new(ProbeDisplay(raw_display_handle))),
+        });
+        let probe_adapter = probe_instance
+            .enumerate_adapters(wgpu::Backends::VULKAN)
+            .await
+            .into_iter()
+            .find(|candidate| {
+                let candidate = candidate.get_info();
+                candidate.vendor == info.vendor
+                    && candidate.device == info.device
+                    && candidate.name == info.name
+                    && candidate.driver == info.driver
+            })
+            .ok_or_else(|| anyhow::anyhow!("the probe connection does not list this adapter"))?;
+        let surface = unsafe {
+            probe_instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: None,
+                    raw_window_handle,
+                })
+                .map_err(|e| anyhow::anyhow!("probe surface: {e}"))?
+        };
+        let (device, queue, _, _) = Self::create_device(&probe_adapter).await?;
+        let (surface_config, _, _) =
+            WgpuRenderer::surface_configuration(&surface, &probe_adapter, &device, config)?;
+        let error_scopes = [
+            wgpu::ErrorFilter::Validation,
+            wgpu::ErrorFilter::OutOfMemory,
+            wgpu::ErrorFilter::Internal,
+        ]
+        .map(|filter| device.push_error_scope(filter));
+        surface.configure(&device, &surface_config);
+        for error_scope in error_scopes.into_iter().rev() {
+            if let Some(error) = error_scope.pop().await {
+                log::info!(
+                    "Presentation probe: configuring a surface on {} raised: {error}",
+                    info.name
+                );
+            }
+        }
+        let accepted = window.connection_survived();
+        drop(surface);
+        drop(queue);
+        drop(device);
+        drop(probe_adapter);
+        drop(probe_instance);
+        drop(window);
+
+        PRESENTATION_VERDICTS.lock().push((key, accepted));
+        Ok(accepted)
     }
 
     /// Try to use an adapter with a surface by creating a device and testing configuration.

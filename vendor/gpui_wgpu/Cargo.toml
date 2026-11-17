@@ -15,8 +15,18 @@
 #   the device, instead of only a validation error: wgpu-core reports a
 #   swapchain the driver refuses with an unexpected error as a lost device, so
 #   the adapter used to pass and the first frame panicked.
+# - `select_adapter_and_device` in src/wgpu_context.rs, when given a
+#   `PresentationProbe` (the Wayland windows of vendor/gpui_linux), first
+#   configures a swapchain for every Vulkan adapter that is not the
+#   compositor's GPU on a surface of a second, sacrificial Wayland
+#   connection, through a Vulkan instance bound to that connection, and
+#   skips the adapter when the compositor closed that connection. Mutter
+#   rejects the linear cross-GPU buffers of Mesa's PRIME blit path (RADV
+#   while it composites on NVIDIA) with a fatal protocol error, which used to
+#   kill the window's own connection. The verdict is cached per adapter and
+#   compositor GPU for the process.
 # Bump this copy together with the Zed revision in src-app/Cargo.toml, and
-# drop it once upstream GPUI carries both changes.
+# drop it once upstream GPUI carries these changes.
 
 [package]
 name = "gpui_wgpu"

@@ -27,6 +27,9 @@
 #   Upstream kept a removed device (stale hover and focus) and re-created the
 #   keyboard and text input on every capability change, dropping the IME
 #   state.
+# - src/linux/wayland/presentation.rs (new) gives every Wayland window the
+#   sacrificial-surface presentation probe of vendor/gpui_wgpu, through
+#   `WgpuRenderer::new_with_presentation_probe` in src/linux/wayland/window.rs.
 # Drop this copy once the pinned Zed revision carries these changes.
 
 [package]

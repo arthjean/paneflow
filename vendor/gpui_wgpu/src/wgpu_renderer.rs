@@ -1,3 +1,5 @@
+#[cfg(not(target_family = "wasm"))]
+use crate::PresentationProbe;
 use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
@@ -254,6 +256,8 @@ pub struct WgpuRenderer {
     /// Compositor GPU hint for adapter selection (unused on WASM).
     #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
+    #[cfg(not(target_family = "wasm"))]
+    presentation_probe: Option<PresentationProbe>,
     state: RendererState,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
@@ -302,6 +306,20 @@ impl WgpuRenderer {
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
+        Self::new_with_presentation_probe(gpu_context, window, config, compositor_gpu, None)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new_with_presentation_probe<W>(
+        gpu_context: GpuContext,
+        window: &W,
+        config: WgpuSurfaceConfig,
+        compositor_gpu: Option<CompositorGpuHint>,
+        presentation_probe: Option<PresentationProbe>,
+    ) -> anyhow::Result<Self>
+    where
+        W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
+    {
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
@@ -337,17 +355,22 @@ impl WgpuRenderer {
                 context.check_compatible_with_surface(&surface)?;
                 context
             }
-            None => ctx_ref.insert(WgpuContext::new(
-                instance,
-                &surface,
-                &config,
-                compositor_gpu,
-            )?),
+            None => ctx_ref.insert(match &presentation_probe {
+                Some(probe) => WgpuContext::new_with_presentation_probe(
+                    instance,
+                    &surface,
+                    &config,
+                    compositor_gpu,
+                    probe,
+                    false,
+                )?,
+                None => WgpuContext::new(instance, &surface, &config, compositor_gpu)?,
+            }),
         };
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
 
-        Self::new_internal(
+        let mut renderer = Self::new_internal(
             Some(Rc::clone(&gpu_context)),
             context,
             surface,
@@ -355,7 +378,9 @@ impl WgpuRenderer {
             surface_configured,
             compositor_gpu,
             atlas,
-        )
+        )?;
+        renderer.presentation_probe = presentation_probe;
+        Ok(renderer)
     }
 
     #[cfg(target_family = "wasm")]
@@ -507,6 +532,8 @@ impl WgpuRenderer {
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
+            #[cfg(not(target_family = "wasm"))]
+            presentation_probe: None,
             state: RendererState::Ready { surface, core },
             surface_config,
             atlas,
@@ -2207,12 +2234,22 @@ impl WgpuRenderer {
 
             let instance = WgpuContext::instance(Some(Box::new(window.clone())));
             let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context = WgpuContext::new_rejecting_software(
-                instance,
-                &surface,
-                &config,
-                self.compositor_gpu,
-            )?;
+            let new_context = match &self.presentation_probe {
+                Some(probe) => WgpuContext::new_with_presentation_probe(
+                    instance,
+                    &surface,
+                    &config,
+                    self.compositor_gpu,
+                    probe,
+                    true,
+                )?,
+                None => WgpuContext::new_rejecting_software(
+                    instance,
+                    &surface,
+                    &config,
+                    self.compositor_gpu,
+                )?,
+            };
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
@@ -2229,6 +2266,7 @@ impl WgpuRenderer {
         self.atlas.handle_device_lost(context);
 
         let is_bgr = self.is_bgr;
+        let presentation_probe = self.presentation_probe.clone();
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
@@ -2238,6 +2276,7 @@ impl WgpuRenderer {
             self.compositor_gpu,
             self.atlas.clone(),
         )?;
+        self.presentation_probe = presentation_probe;
         self.set_subpixel_layout(is_bgr);
 
         log::info!("GPU recovery complete");
