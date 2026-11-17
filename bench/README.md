@@ -337,11 +337,16 @@ metric regresses when the head's p50 exceeds the base's by more than 10 %, or
 its p95 does where that p95 is judged. The A/A cohort is the first base pass of
 every round against its last base pass, measured interleaved with the head, so
 it sees the same neighbors and the same thermal drift; a separate A/A pass
-would not fit the 60 minute budget. The run is rejected as uncalibrated when
-any metric's A/A p50 moves by more than 5 %. A metric's p95 is judged only when
-its own A/A p95 moves by at most 5 %; otherwise the row reads `p95 not judged`
-and only its p50 decides, because one preempted batch on a shared runner sets a
-pooled tail (see the evidence below). Every cohort needs at least 50 samples, and a run at
+would not fit the 60 minute budget. A metric whose own A/A p50 moves by more
+than 5 % is not judged: its row reads `uncalibrated`, and an execution where no
+judged metric regresses but one is uncalibrated is `uncalibrated`. A metric's
+p95 is judged only when its own A/A p95 moves by at most 5 %; otherwise the row
+reads `p95 not judged` and only its p50 decides, because one preempted batch on
+a shared runner sets a pooled tail (see the evidence below). Until 2026-11-17
+one drifting metric rejected the whole execution: on a release-profile A/B of
+`f501e320` against `afcd1219` that day, `active.echo_round_trip` drifted 5.1 %
+and voided four `open_*` regressions of +32 to +36 % whose own A/A moved
+0.8 % at most. Every cohort needs at least 50 samples, and a run at
 least 10 rounds; below that, or when a suite compares no metric, the verdict
 is `insufficient`, never a pass. A value under the measurement resolution of
 its unit is compared at that resolution, so an idle thread that wakes once is
@@ -351,13 +356,18 @@ for the thread roles, 0.01 ms for the echo. A metric measured by one side only
 (added or removed by the change) is listed as not compared.
 
 A first attempt that ends in a regression or uncalibrated is measured once
-more with the same builds before any verdict, and only two calibrated
-regressions in a row make a regression:
+more with the same builds before any verdict, and a regression verdict needs
+the same calibrated metric to regress in both. Until 2026-11-17 any two
+regressions did: a `gates` A/B of the same pair that day flagged the p95 of
+`editor.theme_switch` and `terminal.line_text_at_220x60` first and of
+`terminal.layout_echo_uncached_220x60` second, three 1 us to 140 us metrics,
+and read `regression`; it now reads `unconfirmed_regression`.
 
 | Attempts | Verdict | Exit | `promotion.effect` |
 |---|---|---|---|
 | pass | `pass` | 0 | `calibrated` |
-| regression, regression | `regression` | 1 | `calibrated` |
+| regression, regression, one metric in both | `regression` | 1 | `calibrated` |
+| regression, regression, no metric in both | `unconfirmed_regression` | 0 | `resets` |
 | regression, pass | `unconfirmed_regression` | 0 | `resets` |
 | uncalibrated, pass | `pass` | 0 | `uncalibrated` |
 | uncalibrated, regression | `unconfirmed_regression` | 0 | `uncalibrated` |

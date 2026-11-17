@@ -419,12 +419,9 @@ fn attempt_verdict(rounds: usize, metrics: &[Value]) -> (&'static str, Vec<Strin
             )
         })
         .collect();
-    if !uncalibrated.is_empty() {
-        return ("uncalibrated", uncalibrated);
-    }
     let regressions: Vec<String> = metrics
         .iter()
-        .filter(|row| row["verdict"] == "regression")
+        .filter(|row| judged_regression(row))
         .map(|row| {
             format!(
                 "{} p50 {} p95 {}",
@@ -434,10 +431,33 @@ fn attempt_verdict(rounds: usize, metrics: &[Value]) -> (&'static str, Vec<Strin
             )
         })
         .collect();
-    if regressions.is_empty() {
-        ("pass", Vec::new())
-    } else {
-        ("regression", regressions)
+    if !regressions.is_empty() {
+        return ("regression", regressions);
+    }
+    if !uncalibrated.is_empty() {
+        return ("uncalibrated", uncalibrated);
+    }
+    ("pass", Vec::new())
+}
+
+fn judged_regression(row: &Value) -> bool {
+    row["verdict"] == "regression" && row["calibrated"] == true
+}
+
+fn regressed_metrics(attempt: &Value) -> BTreeSet<String> {
+    attempt["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| judged_regression(row))
+        .filter_map(|row| row["metric"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn same_metric_regressed_twice(attempts: &[Value]) -> bool {
+    match attempts {
+        [first, second] => !regressed_metrics(first).is_disjoint(&regressed_metrics(second)),
+        _ => false,
     }
 }
 
@@ -463,7 +483,10 @@ fn compare_attempt(number: usize, dir: &Path) -> Value {
     })
 }
 
-fn outcome(attempts: &[&str]) -> (&'static str, &'static str, &'static str) {
+fn outcome(
+    attempts: &[&str],
+    same_metric_twice: bool,
+) -> (&'static str, &'static str, &'static str) {
     if attempts.contains(&"insufficient") {
         return (
             "insufficient",
@@ -472,6 +495,11 @@ fn outcome(attempts: &[&str]) -> (&'static str, &'static str, &'static str) {
         );
     }
     match attempts {
+        ["regression", "regression"] if !same_metric_twice => (
+            "unconfirmed_regression",
+            "resets",
+            "the two executions flagged different metrics: a parasitic verdict",
+        ),
         ["pass"] | ["regression", "regression"] => (
             if attempts.len() == 1 {
                 "pass"
@@ -520,7 +548,7 @@ fn result_document(attempts: Vec<Value>) -> Value {
         .iter()
         .map(|attempt| attempt["verdict"].as_str().unwrap_or("insufficient"))
         .collect();
-    let (verdict, effect, reason) = outcome(&verdicts);
+    let (verdict, effect, reason) = outcome(&verdicts, same_metric_regressed_twice(&attempts));
     json!({
         "suite": "paneflow-perf-ab",
         "schema_version": AB_SCHEMA_VERSION,
@@ -536,10 +564,10 @@ fn result_document(attempts: Vec<Value>) -> Value {
             "maximum_regression": MAXIMUM_REGRESSION,
             "maximum_aa_drift": MAXIMUM_AA_DRIFT,
             "aa_cohort": "the first base pass of every round against its last base pass",
-            "calibration": "the run is uncalibrated when any metric's A/A p50 drifts more than maximum_aa_drift; a metric's p95 is judged only when its own A/A p95 drift is within maximum_aa_drift",
+            "calibration": "a metric is judged only when its own A/A p50 drift is within maximum_aa_drift, and its p95 only when its own A/A p95 drift is; an execution is uncalibrated when no judged metric regresses and some metric drifts",
             "batch_size_by_suite": BATCHES.iter().map(|(suite, size)| (suite.to_string(), json!(size))).collect::<serde_json::Map<_, _>>(),
             "resolution_by_unit": RESOLUTIONS.iter().map(|(unit, floor)| (unit.to_string(), json!(floor))).collect::<serde_json::Map<_, _>>(),
-            "rerun": "a regression or an uncalibrated first execution is measured once more; only two calibrated regressions make a regression verdict",
+            "rerun": "a regression or an uncalibrated first execution is measured once more; a regression verdict needs the same calibrated metric to regress in both executions",
         },
         "verdict": verdict,
         "promotion": {"effect": effect, "reason": reason},
@@ -1043,7 +1071,7 @@ mod tests {
         let (verdict, reasons) = attempt_verdict(10, &metrics);
         assert_eq!(
             verdict, "uncalibrated",
-            "uncalibration outranks a regression"
+            "a drifting metric is not judged, even when it reads slower"
         );
         assert!(
             reasons[0].contains("A/A terminal.publish p50 +6"),
@@ -1147,7 +1175,7 @@ mod tests {
     #[test]
     fn only_two_calibrated_regressions_make_a_regression_verdict() {
         let effect = |attempts: &[&str]| {
-            let (verdict, effect, _) = outcome(attempts);
+            let (verdict, effect, _) = outcome(attempts, true);
             (verdict, effect)
         };
         assert_eq!(effect(&["pass"]), ("pass", "calibrated"));
@@ -1177,6 +1205,52 @@ mod tests {
             ("insufficient", "excluded")
         );
         assert_eq!(effect(&["regression"]), ("insufficient", "excluded"));
+        assert_eq!(
+            outcome(&["regression", "regression"], false).0,
+            "unconfirmed_regression"
+        );
+    }
+
+    #[test]
+    fn a_regression_is_confirmed_only_by_the_same_calibrated_metric_twice() {
+        let attempt = |cases: &[(&str, Cohorts)]| {
+            let metrics = rows(cases);
+            json!({"verdict": attempt_verdict(10, &metrics).0, "metrics": metrics})
+        };
+        let slower = || cohorts("ns", 1000.0, 1000.0, 1500.0, 60);
+        let steady = || cohorts("ns", 1000.0, 1000.0, 1000.0, 60);
+        let active = || cohorts("ms/s", 50.0, 50.0, 50.0, 60);
+        let open_slower = attempt(&[
+            ("editor.open", slower()),
+            ("terminal.publish", steady()),
+            ("active.cpu.total", active()),
+        ]);
+        let publish_slower = attempt(&[
+            ("editor.open", steady()),
+            ("terminal.publish", slower()),
+            ("active.cpu.total", active()),
+        ]);
+        let different = result_document(vec![open_slower.clone(), publish_slower]);
+        assert_eq!(different["verdict"], "unconfirmed_regression");
+        let same = result_document(vec![open_slower.clone(), open_slower]);
+        assert_eq!(same["verdict"], "regression");
+    }
+
+    #[test]
+    fn a_drifting_metric_is_not_judged_and_leaves_a_calibrated_regression_standing() {
+        let metrics = rows(&[
+            ("editor.open", cohorts("ns", 1000.0, 1000.0, 1350.0, 60)),
+            ("active.echo_round_trip", cohorts("ms", 1.0, 1.06, 1.0, 60)),
+            (
+                "terminal.publish",
+                cohorts("ns", 1000.0, 1000.0, 1000.0, 60),
+            ),
+        ]);
+        assert_eq!(metrics[1]["calibrated"], false);
+        let (verdict, reasons) = attempt_verdict(10, &metrics);
+        assert_eq!(verdict, "regression");
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].starts_with("editor.open p50 +35"), "{reasons:?}");
     }
 
     fn sample_file(dir: &Path, name: &str, metric: &str, samples: &[f64]) {
