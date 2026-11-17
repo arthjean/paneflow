@@ -31,6 +31,10 @@
 #   (`RendererState::Offscreen`, `draw_offscreen` in src/wgpu_renderer.rs)
 #   renders each frame into an offscreen texture, reads it back and hands it
 #   to the window's `SoftwarePresenter` instead of using a swapchain.
+# - `PresentationProbeScope` in src/wgpu_context.rs is entered while a probe
+#   runs, so that Paneflow's logger (src-app/src/probe_log.rs) reports the
+#   protocol error the compositor sends on the throwaway connection as
+#   expected, at the info level, instead of as an error.
 # Bump this copy together with the Zed revision in src-app/Cargo.toml, and
 # drop it once upstream GPUI carries these changes.
 

@@ -4397,6 +4397,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "gpui_wgpu",
  "ignore",
  "image",
  "imara-diff",

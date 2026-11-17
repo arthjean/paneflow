@@ -36,6 +36,28 @@ pub enum WgpuPresentation {
 /// state is installed once per device and shared by every renderer using it. Renderers
 /// keep their own handle so they can keep observing a loss after the context that
 /// produced it has been dropped for recovery.
+static PRESENTATION_PROBES_RUNNING: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+pub struct PresentationProbeScope(());
+
+impl PresentationProbeScope {
+    pub fn enter() -> Self {
+        PRESENTATION_PROBES_RUNNING.fetch_add(1, Ordering::SeqCst);
+        Self(())
+    }
+
+    pub fn running() -> bool {
+        PRESENTATION_PROBES_RUNNING.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl Drop for PresentationProbeScope {
+    fn drop(&mut self) {
+        PRESENTATION_PROBES_RUNNING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 #[derive(Default)]
 pub struct DeviceErrorState {
     lost: AtomicBool,
@@ -849,6 +871,7 @@ impl WgpuContext {
             return Ok(*accepted);
         }
 
+        let _scope = PresentationProbeScope::enter();
         let mut window = probe()?;
         let raw_display_handle = window
             .display_handle()

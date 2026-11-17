@@ -252,6 +252,7 @@ ropey = { version = "1.6", default-features = false, features = ["simd"] }
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", features = ["wayland", "x11"] }
+gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4" }
 # raw-window-handle tells X11 surfaces apart so the opaque Linux window
 # appearance can request explicit alpha under client-side decorations.
 raw-window-handle = "0.6"

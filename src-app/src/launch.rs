@@ -266,8 +266,19 @@ pub(crate) fn run() {
 
     unsafe { agents::parent_guard::scrub_claudecode_env_before_threads() };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER))
-        .init();
+    let logger = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER),
+    )
+    .build();
+    let max_level = logger.filter();
+    if log::set_boxed_logger(Box::new(crate::probe_log::ProbeAwareLogger::new(
+        logger,
+        crate::probe_log::presentation_probe_running,
+    )))
+    .is_ok()
+    {
+        log::set_max_level(max_level);
+    }
     cap_malloc_arenas();
     crate::terminal::kitty::install_png_decoder();
 

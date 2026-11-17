@@ -56,6 +56,7 @@ mod opencode_sessions;
 mod pane;
 mod pane_drag;
 mod pi_sessions;
+mod probe_log;
 #[cfg(test)]
 mod redraw_guard;
 mod runtime_paths;
