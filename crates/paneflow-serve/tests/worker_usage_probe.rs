@@ -17,9 +17,9 @@ fn now_secs() -> u64 {
 }
 
 fn iso(at: u64) -> String {
-    chrono::DateTime::from_timestamp(i64::try_from(at).unwrap(), 0)
+    jiff::Timestamp::from_second(i64::try_from(at).unwrap())
         .unwrap()
-        .to_rfc3339()
+        .to_string()
 }
 
 fn fixture(name: &str) -> PathBuf {

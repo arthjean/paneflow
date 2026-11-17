@@ -1,18 +1,18 @@
 use std::rc::Rc;
 
-use chrono::{Days, NaiveDate};
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, FocusHandle, FontWeight, Hsla, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Role, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, accesskit::Toggled, div, prelude::FluentBuilder,
     px, relative, rgb, svg,
 };
+use jiff::civil::Date;
 use paneflow_agent_config::usage::accounts::UsageAgent;
 use paneflow_agent_config::usage::model::UsageLevel;
 
 use super::activity::{
     ActivityInputs, ActivityView, LEVEL_MIX, Metric, NO_ACTIVITY, NO_TOKEN_DATA, Register, WEEKS,
-    activity_view, step_day,
+    activity_view, shift_days, step_day,
 };
 use super::model::{
     AccountBlock, BlockBody, UsageInputs, UsageView, WindowRow, agent_shown, usage_view,
@@ -101,7 +101,7 @@ pub(super) fn scroll_to_today(scroll: &ScrollHandle) {
     scroll.set_offset(gpui::point(px(FAR_RIGHT), px(0.)));
 }
 
-fn reveal_day(scroll: &ScrollHandle, view: &ActivityView, day: NaiveDate) {
+fn reveal_day(scroll: &ScrollHandle, view: &ActivityView, day: Date) {
     let Some(index) = view.day_index(day) else {
         return;
     };
@@ -139,7 +139,7 @@ pub(crate) fn import_limit_label(days: u64) -> String {
 }
 
 pub(crate) struct CellHover {
-    pub(crate) day: NaiveDate,
+    pub(crate) day: Date,
     pub(crate) hovered: bool,
 }
 
@@ -180,7 +180,7 @@ pub(crate) fn register_grid(
     index: usize,
     view: &ActivityView,
     register: &Register,
-    cursor: Option<NaiveDate>,
+    cursor: Option<Date>,
     colors: GridColors,
     on_hover: &HoverListener,
 ) -> Stateful<Div> {
@@ -226,10 +226,7 @@ pub(crate) fn register_grid(
                     .child(*label),
             );
         for column in 0..WEEKS {
-            let Some(day) = view
-                .first_day
-                .checked_add_days(Days::new((column * 7 + row) as u64))
-            else {
+            let Some(day) = shift_days(view.first_day, (column * 7 + row) as i64) else {
                 continue;
             };
             let Some(offset) = view.day_index(day) else {
@@ -1260,12 +1257,12 @@ mod tests {
         assert_eq!(lone.left(), first.left());
     }
 
-    fn year_of_activity(agents: &[(&str, &str)], today: NaiveDate) -> LedgerDays {
+    fn year_of_activity(agents: &[(&str, &str)], today: Date) -> LedgerDays {
         let mut ledger = LedgerDays::new();
         for (index, (agent, dir)) in agents.iter().enumerate() {
             let mut days = BTreeMap::new();
             for offset in 0..380_u64 {
-                let Some(day) = today.checked_sub_days(Days::new(offset)) else {
+                let Some(day) = shift_days(today, -(offset as i64)) else {
                     continue;
                 };
                 let turns = (offset * 7 + index as u64 * 3) % 23;
@@ -1293,7 +1290,7 @@ mod tests {
     #[gpui::test]
     fn four_registers_render_within_a_frame(cx: &mut gpui::TestAppContext) {
         let cx = cx.add_empty_window();
-        let today = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        let today = jiff::civil::date(2026, 8, 18);
         let ledger = year_of_activity(
             &[
                 ("claude-code", "/home/a/.claude"),

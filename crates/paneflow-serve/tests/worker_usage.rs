@@ -531,7 +531,7 @@ fn import_past_activity_books_the_past_days_of_each_account_once() {
     let home = tempfile::tempdir().unwrap();
     let claude = home.path().join("claude-import");
     let codex = home.path().join("codex-import");
-    let stamp = (chrono::Utc::now() - chrono::Duration::days(3)).to_rfc3339();
+    let stamp = (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(72)).to_string();
     let transcript = claude.join("projects").join("C--work");
     std::fs::create_dir_all(&transcript).unwrap();
     let claude_lines = [

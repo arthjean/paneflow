@@ -2,53 +2,70 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use chrono::{NaiveDate, TimeZone};
-use serde::{Deserialize, Serialize};
+use jiff::civil::{Date, Time};
+use jiff::tz::{AmbiguousOffset, TimeZone};
+use jiff::{Timestamp, ToSpan};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::tokens::{MAX_CURSORS, TokenCursor, TokenPass};
 
 pub const LEDGER_WRITE_INTERVAL: Duration = Duration::from_secs(60);
 pub const TURN_IDLE_LIMIT_MS: u64 = 4 * 3600 * 1000;
 pub const MAX_TURN_ACTIVE_MS: u64 = 4 * 3600 * 1000;
-pub const RETAINED_DAYS: u64 = 400;
+pub const RETAINED_DAYS: i64 = 400;
 const MAX_LEDGER_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TURN_INTERVALS: usize = 256;
 const MAX_WATERMARKS: usize = 512;
 const LEDGER_VERSION: u32 = 1;
 
 pub trait Calendar {
-    fn day(&self, at_ms: u64) -> NaiveDate;
+    fn day(&self, at_ms: u64) -> Date;
     fn next_midnight_ms(&self, at_ms: u64) -> u64;
 }
 
-pub struct ZoneCalendar<Tz: TimeZone>(pub Tz);
+pub struct ZoneCalendar(pub TimeZone);
 
-pub fn local_calendar() -> ZoneCalendar<chrono::Local> {
-    ZoneCalendar(chrono::Local)
+pub fn local_calendar() -> ZoneCalendar {
+    ZoneCalendar(TimeZone::system())
 }
 
-impl<Tz: TimeZone> Calendar for ZoneCalendar<Tz> {
-    fn day(&self, at_ms: u64) -> NaiveDate {
+impl Calendar for ZoneCalendar {
+    fn day(&self, at_ms: u64) -> Date {
         let millis = i64::try_from(at_ms).unwrap_or(i64::MAX);
-        self.0
-            .timestamp_millis_opt(millis)
-            .earliest()
-            .map_or(NaiveDate::MIN, |at| at.date_naive())
+        Timestamp::from_millisecond(millis).map_or(Date::MIN, |at| self.0.to_datetime(at).date())
     }
 
     fn next_midnight_ms(&self, at_ms: u64) -> u64 {
-        let Some(next) = self.day(at_ms).succ_opt() else {
+        let Ok(next) = self.day(at_ms).tomorrow() else {
             return u64::MAX;
         };
-        (0..3)
-            .find_map(|hour| {
-                let local = next.and_hms_opt(hour, 0, 0)?;
-                self.0.from_local_datetime(&local).earliest()
-            })
-            .and_then(|at| u64::try_from(at.timestamp_millis()).ok())
+        let midnight = next.to_datetime(Time::midnight());
+        let start = match self.0.to_ambiguous_timestamp(midnight).offset() {
+            AmbiguousOffset::Unambiguous { offset }
+            | AmbiguousOffset::Fold { before: offset, .. } => offset.to_timestamp(midnight).ok(),
+            AmbiguousOffset::Gap { after, .. } => after
+                .to_timestamp(midnight)
+                .ok()
+                .and_then(|inside| self.0.following(inside).next())
+                .map(|transition| transition.timestamp()),
+        };
+        start
+            .and_then(|at| u64::try_from(at.as_millisecond()).ok())
             .filter(|midnight| *midnight > at_ms)
             .unwrap_or(u64::MAX)
     }
+}
+
+fn readable_days<'de, D, V>(deserializer: D) -> Result<BTreeMap<Date, V>, D::Error>
+where
+    D: Deserializer<'de>,
+    V: Deserialize<'de>,
+{
+    let keyed = BTreeMap::<String, V>::deserialize(deserializer)?;
+    Ok(keyed
+        .into_iter()
+        .filter_map(|(day, value)| Some((day.parse().ok()?, value)))
+        .collect())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -82,7 +99,7 @@ pub struct ImportRecord {
     pub limited_days: Option<u64>,
 }
 
-pub type ImportedDays = BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>>;
+pub type ImportedDays = BTreeMap<Date, BTreeMap<LedgerAccount, DayTally>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TurnInput {
@@ -163,16 +180,20 @@ struct LedgerFile {
     version: u32,
     #[serde(default)]
     accounts: Vec<LedgerAccount>,
-    #[serde(default)]
-    days: BTreeMap<NaiveDate, Vec<DayEntry>>,
+    #[serde(default, deserialize_with = "readable_days")]
+    days: BTreeMap<Date, Vec<DayEntry>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     open_turns: BTreeMap<String, OpenTurn>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     watermarks: BTreeMap<String, (u64, u64)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     cursors: BTreeMap<String, TokenCursor>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    imported: BTreeMap<NaiveDate, Vec<usize>>,
+    #[serde(
+        default,
+        deserialize_with = "readable_days",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    imported: BTreeMap<Date, Vec<usize>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     import: Option<ImportRecord>,
 }
@@ -186,11 +207,11 @@ struct DayEntry {
 
 #[derive(Debug, Default)]
 pub struct TurnBook {
-    days: BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>>,
+    days: BTreeMap<Date, BTreeMap<LedgerAccount, DayTally>>,
     open: BTreeMap<String, OpenTurn>,
     watermarks: BTreeMap<String, (u64, u64)>,
     cursors: BTreeMap<String, TokenCursor>,
-    imported: BTreeMap<NaiveDate, BTreeSet<LedgerAccount>>,
+    imported: BTreeMap<Date, BTreeSet<LedgerAccount>>,
     import: Option<ImportRecord>,
     revision: u64,
 }
@@ -200,7 +221,7 @@ impl TurnBook {
         self.revision
     }
 
-    pub fn tally(&self, day: NaiveDate, account: &LedgerAccount) -> DayTally {
+    pub fn tally(&self, day: Date, account: &LedgerAccount) -> DayTally {
         self.days
             .get(&day)
             .and_then(|accounts| accounts.get(account))
@@ -208,7 +229,7 @@ impl TurnBook {
             .unwrap_or_default()
     }
 
-    pub fn days(&self) -> &BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>> {
+    pub fn days(&self) -> &BTreeMap<Date, BTreeMap<LedgerAccount, DayTally>> {
         &self.days
     }
 
@@ -228,18 +249,13 @@ impl TurnBook {
         self.import.as_ref()
     }
 
-    pub fn is_imported(&self, day: NaiveDate, account: &LedgerAccount) -> bool {
+    pub fn is_imported(&self, day: Date, account: &LedgerAccount) -> bool {
         self.imported
             .get(&day)
             .is_some_and(|accounts| accounts.contains(account))
     }
 
-    pub fn import_days(
-        &mut self,
-        days: ImportedDays,
-        today: NaiveDate,
-        record: ImportRecord,
-    ) -> usize {
+    pub fn import_days(&mut self, days: ImportedDays, today: Date, record: ImportRecord) -> usize {
         let mut booked = 0;
         for (day, tallies) in days.into_iter().filter(|(day, _)| *day < today) {
             for (account, tally) in tallies {
@@ -411,12 +427,7 @@ impl TurnBook {
         }
     }
 
-    fn book(
-        &mut self,
-        day: NaiveDate,
-        account: &LedgerAccount,
-        change: impl FnOnce(&mut DayTally),
-    ) {
+    fn book(&mut self, day: Date, account: &LedgerAccount, change: impl FnOnce(&mut DayTally)) {
         if self.is_imported(day, account) {
             return;
         }
@@ -445,8 +456,8 @@ impl TurnBook {
         }
     }
 
-    fn prune(&mut self, today: NaiveDate) {
-        let Some(oldest) = today.checked_sub_days(chrono::Days::new(RETAINED_DAYS)) else {
+    fn prune(&mut self, today: Date) {
+        let Ok(oldest) = today.checked_sub(RETAINED_DAYS.days()) else {
             return;
         };
         self.days.retain(|day, _| *day > oldest);
@@ -454,7 +465,7 @@ impl TurnBook {
     }
 
     fn restore(file: LedgerFile) -> Self {
-        let mut days: BTreeMap<NaiveDate, BTreeMap<LedgerAccount, DayTally>> = BTreeMap::new();
+        let mut days: BTreeMap<Date, BTreeMap<LedgerAccount, DayTally>> = BTreeMap::new();
         for (day, entries) in file.days {
             for entry in entries {
                 if let Some(account) = file.accounts.get(entry.account) {
@@ -554,15 +565,15 @@ impl TurnBook {
     }
 }
 
-pub type LedgerDays = BTreeMap<LedgerAccount, BTreeMap<NaiveDate, DayTally>>;
+pub type LedgerDays = BTreeMap<LedgerAccount, BTreeMap<Date, DayTally>>;
 
 pub fn ledger_days(value: &serde_json::Value) -> Option<LedgerDays> {
     #[derive(Deserialize)]
     struct Published {
         #[serde(default)]
         accounts: Vec<LedgerAccount>,
-        #[serde(default)]
-        days: BTreeMap<NaiveDate, Vec<DayEntry>>,
+        #[serde(default, deserialize_with = "readable_days")]
+        days: BTreeMap<Date, Vec<DayEntry>>,
     }
     let published = Published::deserialize(value).ok()?;
     let mut days: LedgerDays = BTreeMap::new();
@@ -670,33 +681,23 @@ fn quarantine(path: &Path, reason: &str, now_ms: u64) {
 
 #[cfg(test)]
 mod tests {
-    use chrono::FixedOffset;
+    use jiff::tz::Offset;
 
     use super::*;
 
     const PARIS: i32 = 3600;
 
-    fn calendar() -> ZoneCalendar<FixedOffset> {
-        ZoneCalendar(FixedOffset::east_opt(PARIS).unwrap())
+    fn calendar() -> ZoneCalendar {
+        ZoneCalendar(TimeZone::fixed(Offset::from_seconds(PARIS).unwrap()))
     }
 
-    fn at(day: u32, hour: u32, minute: u32, second: u32) -> u64 {
-        let local = NaiveDate::from_ymd_opt(2026, 10, day)
-            .unwrap()
-            .and_hms_opt(hour, minute, second)
-            .unwrap();
-        u64::try_from(
-            calendar()
-                .0
-                .from_local_datetime(&local)
-                .unwrap()
-                .timestamp_millis(),
-        )
-        .unwrap()
+    fn at(day: i8, hour: i8, minute: i8, second: i8) -> u64 {
+        let local = date(day).at(hour, minute, second, 0);
+        u64::try_from(calendar().0.to_timestamp(local).unwrap().as_millisecond()).unwrap()
     }
 
-    fn date(day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+    fn date(day: i8) -> Date {
+        Date::new(2026, 10, day).unwrap()
     }
 
     fn claude() -> LedgerAccount {
@@ -986,7 +987,7 @@ mod tests {
         let days = reloaded.book().days();
         assert_eq!(days.len(), 400);
         let oldest = *days.keys().next().unwrap();
-        assert_eq!((calendar.day(today) - oldest).num_days(), 399);
+        assert_eq!((calendar.day(today) - oldest).get_days(), 399);
         let tally = reloaded.book().tally(calendar.day(today), &accounts[1]);
         assert_eq!(
             tally,
@@ -1044,7 +1045,7 @@ mod tests {
         }
     }
 
-    fn tallies(entries: &[(u32, LedgerAccount, DayTally)]) -> ImportedDays {
+    fn tallies(entries: &[(i8, LedgerAccount, DayTally)]) -> ImportedDays {
         let mut days = ImportedDays::new();
         for (day, account, tally) in entries {
             days.entry(date(*day))
@@ -1104,7 +1105,7 @@ mod tests {
     #[test]
     fn a_live_read_of_an_old_transcript_does_not_add_to_an_imported_day() {
         let mut book = TurnBook::default();
-        let tomorrow = date(31).succ_opt().unwrap();
+        let tomorrow = date(31).tomorrow().unwrap();
         book.import_days(
             tallies(&[(31, claude(), imported_tally(1, 212))]),
             tomorrow,
@@ -1185,9 +1186,9 @@ mod tests {
     fn message_ids_of_an_earlier_day_are_dropped_from_the_saved_cursors() {
         let mut book = TurnBook::default();
         let account = claude();
-        let seen_on = |day: u32| TokenCursor {
+        let seen_on = |day: i8| TokenCursor {
             offset: 10,
-            touched_ms: u64::from(day),
+            touched_ms: u64::try_from(day).unwrap(),
             seen_day: Some(date(day)),
             seen: vec!["msg_1".into(), "msg_2".into()],
             ..TokenCursor::default()
@@ -1204,5 +1205,118 @@ mod tests {
         );
         assert_eq!(book.token_cursor("/t/a.jsonl").offset, 10);
         assert_eq!(book.token_cursor("/t/b.jsonl").seen.len(), 2);
+    }
+
+    const CHRONO_ERA_LEDGER: &str = concat!(
+        r#"{"version":1,"accounts":[{"agent":"claude-code","config_dir":"/home/u/.claude"},{"agent":"codex","config_dir":"/home/a/.codex"}],"#,
+        r#""days":{"0999-03-01":[{"account":1,"turns":1}],"2025-12-31":[{"account":0,"turns":1,"active_ms":61000}],"#,
+        r#""2026-10-05":[{"account":0,"turns":2,"active_ms":120000,"tokens_in":30,"tokens_out":70},{"account":1,"tokens_in":5}]},"#,
+        r#""watermarks":{"s1":[1793481752042,3]},"#,
+        r#""cursors":{"/t/a.jsonl":{"offset":10,"touched_ms":1793481752042,"seen_day":"2026-10-05","seen":["msg_1"]}},"#,
+        r#""imported":{"2025-12-31":[0]},"import":{"finished_at_ms":1793481752042,"files":4}}"#,
+    );
+
+    #[test]
+    fn a_ledger_written_with_chrono_dates_reads_back_and_writes_the_same_bytes() {
+        let file: LedgerFile = serde_json::from_str(CHRONO_ERA_LEDGER).unwrap();
+        let book = TurnBook::restore(file);
+        let codex = LedgerAccount {
+            agent: "codex".to_string(),
+            config_dir: "/home/a/.codex".to_string(),
+        };
+        assert_eq!(
+            book.tally(Date::new(2026, 10, 5).unwrap(), &claude()),
+            DayTally {
+                turns: 2,
+                active_ms: 120_000,
+                tokens_in: 30,
+                tokens_out: 70
+            }
+        );
+        assert_eq!(book.tally(Date::new(999, 3, 1).unwrap(), &codex).turns, 1);
+        assert!(book.is_imported(Date::new(2025, 12, 31).unwrap(), &claude()));
+        assert_eq!(
+            book.token_cursor("/t/a.jsonl").seen_day,
+            Some(Date::new(2026, 10, 5).unwrap())
+        );
+        assert_eq!(
+            serde_json::to_string(&book.to_file()).unwrap(),
+            CHRONO_ERA_LEDGER
+        );
+    }
+
+    #[test]
+    fn a_day_beyond_the_calendar_range_is_dropped_without_quarantining_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage-ledger.json");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"version":1,"accounts":[{"agent":"claude-code","config_dir":"/home/u/.claude"}],"#,
+                r#""days":{"-262143-01-01":[{"account":0,"turns":9}],"2026-10-05":[{"account":0,"turns":2}],"+10000-01-01":[{"account":0,"turns":7}]},"#,
+                r#""imported":{"+262142-12-31":[0],"2026-10-05":[0]}}"#,
+            ),
+        )
+        .unwrap();
+        let ledger = Ledger::load(&path, &calendar(), at(5, 12, 0, 0));
+        assert_eq!(ledger.book().days().len(), 1);
+        assert_eq!(ledger.book().tally(date(5), &claude()).turns, 2);
+        assert!(ledger.book().is_imported(date(5), &claude()));
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["usage-ledger.json"]);
+    }
+
+    #[test]
+    fn a_published_frame_keeps_its_days_when_one_lies_beyond_the_calendar_range() {
+        let frame = serde_json::json!({
+            "accounts": [{"agent": "claude-code", "config_dir": "/home/u/.claude"}],
+            "days": {
+                "+10000-01-01": [{"account": 0, "turns": 7}],
+                "2026-10-05": [{"account": 0, "turns": 2}],
+            },
+        });
+        let days = ledger_days(&frame).unwrap();
+        assert_eq!(days[&claude()].len(), 1);
+        assert_eq!(days[&claude()][&date(5)].turns, 2);
+    }
+
+    #[test]
+    fn an_instant_past_the_calendar_falls_on_the_minimum_day_in_extended_year_form() {
+        assert_eq!(calendar().day(u64::MAX), Date::MIN);
+        assert_eq!(calendar().next_midnight_ms(u64::MAX), u64::MAX);
+        assert_eq!(
+            serde_json::to_string(&Date::MIN).unwrap(),
+            r#""-009999-01-01""#
+        );
+    }
+
+    #[test]
+    fn next_midnight_is_the_first_instant_of_the_next_local_day_across_midnight_transitions() {
+        let havana = ZoneCalendar(TimeZone::posix("CST5CDT,M3.2.0/0,M11.1.0/1").unwrap());
+        let utc_ms = |text: &str| {
+            u64::try_from(text.parse::<Timestamp>().unwrap().as_millisecond()).unwrap()
+        };
+        assert_eq!(
+            havana.next_midnight_ms(utc_ms("2026-03-07T18:00:00Z")),
+            utc_ms("2026-03-08T05:00:00Z"),
+            "midnight is skipped, so the day starts when the clock jumps to 01:00"
+        );
+        assert_eq!(
+            havana.next_midnight_ms(utc_ms("2026-10-31T17:00:00Z")),
+            utc_ms("2026-11-01T04:00:00Z"),
+            "midnight happens twice, and the day starts at the first one"
+        );
+        let year_start = utc_ms("2026-01-01T00:00:00Z");
+        let year_end = utc_ms("2027-01-01T00:00:00Z");
+        for at in (year_start..year_end).step_by(15 * 60 * 1000) {
+            let midnight = havana.next_midnight_ms(at);
+            let day = havana.day(at);
+            assert!(midnight > at);
+            assert_eq!(havana.day(midnight - 1), day, "at {at}");
+            assert_eq!(havana.day(midnight), day.tomorrow().unwrap(), "at {at}");
+        }
     }
 }

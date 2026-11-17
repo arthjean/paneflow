@@ -371,8 +371,8 @@ fn claude_status_line_window(window: Option<&Value>) -> Value {
     let resets_at = window
         .get("resets_at")
         .and_then(Value::as_str)
-        .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
-        .map(|at| at.timestamp());
+        .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+        .map(|at| at.as_second());
     match (utilization, resets_at) {
         (Some(utilization), Some(resets_at)) => {
             json!({"used_percentage": utilization, "resets_at": resets_at})

@@ -1791,7 +1791,9 @@ mod tests {
         let session = SessionId::new();
         state.apply_core_snapshot(&[agent_row(&session)]);
         state.drain_turn_signals();
-        let calendar = ZoneCalendar(chrono::FixedOffset::east_opt(3600).unwrap());
+        let calendar = ZoneCalendar(jiff::tz::TimeZone::fixed(
+            jiff::tz::Offset::from_seconds(3600).unwrap(),
+        ));
         let mut book = TurnBook::default();
         let mut inputs = Vec::new();
         let (steps, expected_active_ms) = twenty_turn_claude_session();

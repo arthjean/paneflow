@@ -359,11 +359,10 @@ impl Usage {
 }
 
 pub fn local_utc_offset_secs(at_secs: u64) -> i32 {
-    use chrono::{Offset, TimeZone};
     i64::try_from(at_secs)
         .ok()
-        .and_then(|secs| chrono::Local.timestamp_opt(secs, 0).earliest())
-        .map_or(0, |at| at.offset().fix().local_minus_utc())
+        .and_then(|secs| jiff::Timestamp::from_second(secs).ok())
+        .map_or(0, |at| jiff::tz::TimeZone::system().to_offset(at).seconds())
 }
 
 fn claude_transcript(signal: &TurnSignal) -> Option<TranscriptRead> {

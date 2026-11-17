@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
 use serde::{Deserialize, Serialize};
 
@@ -133,7 +133,7 @@ pub fn run_import(
     let mut outcome = ImportOutcome::default();
     let mut seen = SeenLines::new();
     let mut bytes = 0u64;
-    let mut cutoff: Option<NaiveDate> = None;
+    let mut cutoff: Option<Date> = None;
     for file in files {
         let over_bytes = bytes.saturating_add(file.len) > MAX_IMPORT_BYTES;
         if outcome.files >= MAX_IMPORT_FILES as u64 || over_bytes {
@@ -161,7 +161,7 @@ pub fn run_import(
     if let Some(cutoff) = cutoff {
         outcome.days.retain(|day, _| *day > cutoff);
         let today = calendar.day(now_ms);
-        outcome.limited_days = u64::try_from((today - cutoff).num_days()).ok();
+        outcome.limited_days = u64::try_from((today - cutoff).get_days()).ok();
     }
     Some(outcome)
 }
@@ -225,7 +225,8 @@ fn import_file(
 mod tests {
     use std::io::Write;
 
-    use chrono::{FixedOffset, TimeZone};
+    use jiff::civil::Time;
+    use jiff::tz::{Offset, TimeZone};
     use serde_json::json;
 
     use super::*;
@@ -233,12 +234,12 @@ mod tests {
 
     const NOW_MS: u64 = 1_793_481_752_042;
 
-    fn calendar() -> ZoneCalendar<FixedOffset> {
-        ZoneCalendar(FixedOffset::east_opt(3600).unwrap())
+    fn calendar() -> ZoneCalendar {
+        ZoneCalendar(TimeZone::fixed(Offset::from_seconds(3600).unwrap()))
     }
 
-    fn day(month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, month, day).unwrap()
+    fn day(month: i8, day: i8) -> Date {
+        Date::new(2026, month, day).unwrap()
     }
 
     fn write(path: &Path, lines: &[serde_json::Value]) {
@@ -257,12 +258,12 @@ mod tests {
         json!({"type": "assistant", "timestamp": stamp, "message": {"id": id, "usage": {"input_tokens": 1, "output_tokens": output}}})
     }
 
-    fn file(account: &LedgerAccount, path: PathBuf, modified: NaiveDate, len: u64) -> ImportFile {
+    fn file(account: &LedgerAccount, path: PathBuf, modified: Date, len: u64) -> ImportFile {
         let modified_ms = calendar()
             .0
-            .from_local_datetime(&modified.and_hms_opt(12, 0, 0).unwrap())
+            .to_timestamp(modified.to_datetime(Time::new(12, 0, 0, 0).unwrap()))
             .unwrap()
-            .timestamp_millis();
+            .as_millisecond();
         ImportFile {
             account: account.clone(),
             path,

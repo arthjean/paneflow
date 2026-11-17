@@ -3,7 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use chrono::NaiveDate;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,14 +31,14 @@ pub struct TokenCursor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totals: Option<(u64, u64)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seen_day: Option<NaiveDate>,
+    pub seen_day: Option<Date>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seen: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TokenEntry {
-    pub day: NaiveDate,
+    pub day: Date,
     pub input: u64,
     pub output: u64,
     pub key: Option<u64>,
@@ -45,7 +46,7 @@ pub struct TokenEntry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TurnStart {
-    pub day: NaiveDate,
+    pub day: Date,
     pub key: Option<u64>,
 }
 
@@ -191,8 +192,8 @@ fn is_claude_prompt(value: &Value) -> bool {
 
 fn entry_ms(value: &Value) -> Option<u64> {
     let stamp = value.get("timestamp")?.as_str()?;
-    let parsed = chrono::DateTime::parse_from_rfc3339(stamp).ok()?;
-    u64::try_from(parsed.timestamp_millis()).ok()
+    let parsed = stamp.parse::<Timestamp>().ok()?;
+    u64::try_from(parsed.as_millisecond()).ok()
 }
 
 fn count(value: &Value, key: &str) -> u64 {
@@ -203,7 +204,7 @@ fn claude_entry(
     value: &Value,
     seen: &mut HashSet<String>,
     cursor: &mut TokenCursor,
-    today: NaiveDate,
+    today: Date,
 ) -> Option<(u64, u64, u64)> {
     if value.get("type").and_then(Value::as_str) != Some("assistant") {
         return None;
@@ -257,7 +258,7 @@ fn codex_entry(value: &Value, cursor: &mut TokenCursor) -> Option<(u64, u64, u64
 mod tests {
     use std::io::Write;
 
-    use chrono::FixedOffset;
+    use jiff::tz::{Offset, TimeZone};
     use serde_json::json;
 
     use super::*;
@@ -265,8 +266,8 @@ mod tests {
 
     const NOW_MS: u64 = 1_793_481_752_042;
 
-    fn calendar() -> ZoneCalendar<FixedOffset> {
-        ZoneCalendar(FixedOffset::east_opt(3600).unwrap())
+    fn calendar() -> ZoneCalendar {
+        ZoneCalendar(TimeZone::fixed(Offset::from_seconds(3600).unwrap()))
     }
 
     fn assistant(id: &str, stamp: &str, input: u64, output: u64) -> String {
@@ -348,8 +349,8 @@ mod tests {
                 .map(|entry| entry.day)
                 .collect::<Vec<_>>(),
             [
-                NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
-                NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+                jiff::civil::date(2026, 10, 31),
+                jiff::civil::date(2026, 11, 1),
             ],
             "each entry counts for the local day of its timestamp"
         );
@@ -453,8 +454,8 @@ mod tests {
         assert_eq!(
             read.turns.iter().map(|turn| turn.day).collect::<Vec<_>>(),
             [
-                NaiveDate::from_ymd_opt(2026, 10, 31).unwrap(),
-                NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+                jiff::civil::date(2026, 10, 31),
+                jiff::civil::date(2026, 11, 1),
             ]
         );
 
@@ -470,7 +471,7 @@ mod tests {
         let read = pass(&codex, TranscriptKind::Codex, TokenCursor::default());
         assert_eq!(
             read.turns.iter().map(|turn| turn.day).collect::<Vec<_>>(),
-            [NaiveDate::from_ymd_opt(2026, 10, 31).unwrap()],
+            [jiff::civil::date(2026, 10, 31)],
             "a Codex turn is its task_started event, not the injected user items"
         );
     }
@@ -541,5 +542,31 @@ mod tests {
         let second = pass(&path, TranscriptKind::Claude, first.cursor);
         assert!(!second.cursor.skipping);
         assert_eq!(sum(&second), (3, 4));
+    }
+
+    #[test]
+    fn entry_timestamps_read_the_rfc_3339_shapes_agents_write() {
+        let cases = [
+            ("2026-10-05T12:34:56.789Z", Some(1_791_203_696_789)),
+            ("2025-10-26T09:41:22.123Z", Some(1_761_471_682_123)),
+            ("2026-10-05T12:34:56Z", Some(1_791_203_696_000)),
+            ("2026-10-05T12:34:56.7Z", Some(1_791_203_696_700)),
+            ("2026-10-05T12:34:56.789123Z", Some(1_791_203_696_789)),
+            ("2026-10-05T12:34:56.789123456Z", Some(1_791_203_696_789)),
+            ("2026-10-05T12:34:56.789000+00:00", Some(1_791_203_696_789)),
+            ("2026-10-05T12:34:56.789+02:00", Some(1_791_196_496_789)),
+            ("2026-10-05T12:34:56.789-05:30", Some(1_791_223_496_789)),
+            ("2026-10-05T12:34:56-00:00", Some(1_791_203_696_000)),
+            ("2026-10-05t12:34:56z", Some(1_791_203_696_000)),
+            ("2026-10-05 12:34:56Z", Some(1_791_203_696_000)),
+            ("2026-10-05T12:34:56", None),
+            ("2026-10-05", None),
+            ("2026-02-30T00:00:00Z", None),
+            ("1969-12-31T23:59:59Z", None),
+            ("not a date", None),
+        ];
+        for (stamp, expected) in cases {
+            assert_eq!(entry_ms(&json!({"timestamp": stamp})), expected, "{stamp}");
+        }
     }
 }
