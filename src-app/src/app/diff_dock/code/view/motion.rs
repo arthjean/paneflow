@@ -45,6 +45,10 @@ impl CodeView {
         cursor::page_rows(self.scroll.viewport_height(), CODE_ROW_HEIGHT)
     }
 
+    pub(crate) fn keep_h_offset(&mut self, h_offset: f32) {
+        self.h_offset = h_offset;
+    }
+
     pub(crate) fn reveal_cursor(&mut self) {
         let viewport_h = self.scroll.viewport_height();
         let geometry = self.geometry.get();
