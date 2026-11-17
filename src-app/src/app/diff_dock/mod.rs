@@ -448,6 +448,7 @@ impl PaneFlowApp {
                 frame,
                 card_background,
                 &self.diff_dock.tab_scroll,
+                &self.diff_dock.tab_strip_width,
                 ui,
                 cx,
             )
@@ -621,6 +622,7 @@ impl PaneFlowApp {
             crate::layout::CardFrame::Flush(gpui::Edges::default()),
             self.diff_dock_card_background(ui),
             &self.diff_dock.tab_scroll,
+            &self.diff_dock.tab_strip_width,
             ui,
             cx,
         ))

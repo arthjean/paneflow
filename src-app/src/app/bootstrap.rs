@@ -458,6 +458,7 @@ impl PaneFlowApp {
                 generation: 0,
                 scroll: gpui::ScrollHandle::new(),
                 tab_scroll: gpui::ScrollHandle::new(),
+                tab_strip_width: std::rc::Rc::default(),
                 diff_options_menu_open: false,
                 diff_options: crate::diff::DiffOptions::default(),
                 diff_new_tab_menu_open: false,

@@ -278,6 +278,18 @@ const UNIFIED_TAB_BAR_INSET: f32 = 6.0;
 const UNIFIED_TAB_HEIGHT: f32 = 32.0;
 const UNIFIED_TAB_WIDTH: f32 = 208.0;
 const UNIFIED_TAB_MIN_WIDTH: f32 = 96.0;
+const UNIFIED_TAB_ICON_ONLY_INSET: f32 = 10.0;
+const UNIFIED_TAB_BORDER_WIDTH: f32 = 1.0;
+const UNIFIED_TAB_ICON_ONLY_WIDTH: f32 =
+    2. * UNIFIED_TAB_ICON_ONLY_INSET + TAB_BADGE_WIDTH + 2. * UNIFIED_TAB_BORDER_WIDTH;
+const _: () = assert!(
+    UNIFIED_TAB_ICON_ONLY_WIDTH + UNIFIED_TAB_BAR_INSET + 2. <= crate::layout::MIN_PANE_SIZE
+);
+const TAB_BAR_DIVIDER_WIDTH: f32 = 1.0;
+const TAB_BAR_DIVIDER_MARGIN: f32 = 6.0;
+const DETACHED_TAB_BUTTON_SIZE: f32 = 32.0;
+const DETACHED_NEW_TAB_MARGIN: f32 = 7.0;
+const DETACHED_REATTACH_MARGIN: f32 = 3.0;
 pub(crate) const UNIFIED_TAB_CLOSE_GLYPH_SIZE: f32 = 12.0;
 const OVERLAY_RADIUS: f32 = 8.0;
 const DROP_OVERLAY_BLUE: u32 = 0x007aff;
@@ -704,6 +716,10 @@ pub struct Pane {
     card_frame: crate::layout::CardFrame,
     shimmer_drawn: Cell<bool>,
     shimmer_ticker: Option<gpui::Task<()>>,
+    tab_bar_width: Rc<Cell<f32>>,
+    tab_strip_width: Rc<Cell<f32>>,
+    tab_bar_identity_width: Rc<Cell<f32>>,
+    tab_bar_actions_width: Rc<Cell<f32>>,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -762,6 +778,10 @@ impl Pane {
             card_frame: crate::layout::CardFrame::Card,
             shimmer_drawn: Cell::new(false),
             shimmer_ticker: None,
+            tab_bar_width: Rc::new(Cell::new(0.)),
+            tab_strip_width: Rc::new(Cell::new(0.)),
+            tab_bar_identity_width: Rc::new(Cell::new(0.)),
+            tab_bar_actions_width: Rc::new(Cell::new(0.)),
         }
     }
 
@@ -1397,7 +1417,7 @@ impl Pane {
         self.surface().as_terminal()
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, show_actions: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = pane_colors();
 
         let has_attention = self.attention;
@@ -1486,9 +1506,14 @@ impl Pane {
         };
 
         let has_identity = status_dot.is_some() || progress_chip.is_some() || match_badge.is_some();
+        if !has_identity {
+            self.tab_bar_identity_width.set(0.);
+        }
         let identity = has_identity.then(|| {
             div()
                 .id("pane-header-identity")
+                .relative()
+                .child(width_probe(self.tab_bar_identity_width.clone()))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1546,17 +1571,19 @@ impl Pane {
                 }),
             )
             .children(identity)
-            .child(
+            .children(show_actions.then(|| {
                 div()
                     .flex_none()
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_end()
                     .gap(px(HEADER_GAP))
                     .h_full()
-                    .child(self.render_end_section(cx)),
-            )
+                    .child(self.render_end_section(cx))
+                    .child(width_probe(self.tab_bar_actions_width.clone()))
+            }))
     }
 
     pub(crate) fn open_new_tab_menu(
@@ -1652,6 +1679,62 @@ impl Pane {
         let content_group = SharedString::from(format!("pane-content-{pane_id}"));
         let chip_radius = self.card_shape().tab_chip_radius();
         let band_slot = self.title_band_slot().filter(|_| unified);
+        let detached = self.is_detached();
+        let (pad_left, pad_right) = if !unified {
+            (SECTION_PX, SECTION_PX)
+        } else if let Some(slot) = band_slot {
+            (UNIFIED_TAB_BAR_INSET + slot.leading, 2. + slot.trailing)
+        } else if detached {
+            (0., 2.)
+        } else {
+            (UNIFIED_TAB_BAR_INSET, 2.)
+        };
+        let fit = if unified && self.tab_bar_width.get() > 0. {
+            let reattach_width = if detached {
+                DETACHED_TAB_BUTTON_SIZE + DETACHED_REATTACH_MARGIN + TAB_BAR_GAP
+            } else {
+                0.
+            };
+            let new_tab_width = if !self.can_add_surface() {
+                0.
+            } else if detached {
+                DETACHED_TAB_BUTTON_SIZE + 2. * DETACHED_NEW_TAB_MARGIN + TAB_BAR_GAP
+            } else {
+                ACTION_BUTTON_SIZE + TAB_BAR_GAP
+            };
+            let identity_width = self.tab_bar_identity_width.get();
+            let header_base_width = if detached {
+                0.
+            } else if identity_width > 0. {
+                TAB_BAR_GAP + identity_width + SECTION_PX
+            } else {
+                TAB_BAR_GAP + SECTION_PX
+            };
+            let actions_width = if detached {
+                0.
+            } else {
+                TAB_BAR_DIVIDER_WIDTH
+                    + 2. * TAB_BAR_DIVIDER_MARGIN
+                    + TAB_BAR_GAP
+                    + HEADER_GAP
+                    + self.tab_bar_actions_width.get()
+            };
+            fit_tab_bar(
+                self.tab_bar_width.get()
+                    - pad_left
+                    - pad_right
+                    - reattach_width
+                    - header_base_width,
+                new_tab_width,
+                actions_width,
+            )
+        } else {
+            TabBarFit {
+                actions: true,
+                new_tab: true,
+                label: true,
+            }
+        };
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1681,10 +1764,16 @@ impl Pane {
             let group = SharedString::from(format!("pane-{pane_id}-tab-{index}-group"));
             let chip_id = SharedString::from(format!("pane-{pane_id}-tab-{index}"));
             let chip = if unified {
-                unified_tab_chip(chip_id, group.clone(), active, chip_radius)
-                    .w(px(UNIFIED_TAB_WIDTH))
-                    .max_w_full()
-                    .min_w(px(UNIFIED_TAB_MIN_WIDTH))
+                let chip = unified_tab_chip(chip_id, group.clone(), active, chip_radius);
+                if fit.label {
+                    chip.w(px(UNIFIED_TAB_WIDTH))
+                        .max_w_full()
+                        .min_w(px(UNIFIED_TAB_MIN_WIDTH))
+                } else {
+                    chip.w(px(UNIFIED_TAB_ICON_ONLY_WIDTH))
+                        .px(px(UNIFIED_TAB_ICON_ONLY_INSET))
+                        .justify_center()
+                }
             } else {
                 squircle_skin(
                     div()
@@ -1737,18 +1826,20 @@ impl Pane {
                         .text_color(ui.muted)
                         .into_any_element(),
                 })
-                .child(if unified {
-                    unified_tab_label(text).child(Self::surface_full_title(surface, cx))
-                } else {
-                    div()
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .text_size(crate::ui_primitives::BODY)
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(text)
-                        .child(label)
-                })
-                .child(
+                .children(fit.label.then(|| {
+                    if unified {
+                        unified_tab_label(text).child(Self::surface_full_title(surface, cx))
+                    } else {
+                        div()
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_size(crate::ui_primitives::BODY)
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text)
+                            .child(label)
+                    }
+                }))
+                .children(fit.label.then(|| {
                     tab_close_button(
                         SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),
                         unified && chip_radius.is_none(),
@@ -1769,8 +1860,8 @@ impl Pane {
                             .flex_none()
                             .path("icons/close.svg")
                             .text_color(ui.muted),
-                    ),
-                );
+                    )
+                }));
             strip = strip.child(chip);
         }
 
@@ -1801,17 +1892,12 @@ impl Pane {
                 TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET
             }))
             .pb(px(if unified { 0. } else { TAB_BAR_BOTTOM_INSET }))
-            .px(px(if unified { 2. } else { SECTION_PX }))
-            .when(unified && !self.is_detached(), |bar| {
-                bar.pl(px(UNIFIED_TAB_BAR_INSET))
-            })
-            .when(unified && self.is_detached(), |bar| bar.pl(px(0.)))
-            .when_some(band_slot, |bar, slot| {
-                bar.pl(px(UNIFIED_TAB_BAR_INSET + slot.leading))
-                    .pr(px(2. + slot.trailing))
-            })
+            .pl(px(pad_left))
+            .pr(px(pad_right))
             .gap(px(TAB_BAR_GAP))
-            .overflow_hidden();
+            .relative()
+            .overflow_hidden()
+            .child(width_probe(self.tab_bar_width.clone()));
 
         if unified && self.is_detached() {
             bar = bar.child(
@@ -1819,8 +1905,8 @@ impl Pane {
                     div()
                         .id(SharedString::from(format!("pane-{pane_id}-tab-reattach")))
                         .flex_none()
-                        .size(px(32.))
-                        .mr(px(3.))
+                        .size(px(DETACHED_TAB_BUTTON_SIZE))
+                        .mr(px(DETACHED_REATTACH_MARGIN))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1853,10 +1939,15 @@ impl Pane {
                 .min_w_0()
                 .h_full()
                 .child(strip)
-                .child(fades),
+                .child(fades)
+                .child(keep_active_tab_in_view(
+                    self.tab_scroll.clone(),
+                    self.active_surface,
+                    self.tab_strip_width.clone(),
+                )),
         );
 
-        if self.can_add_surface() {
+        if self.can_add_surface() && fit.new_tab {
             let menu_open = self.new_tab_menu.is_some();
             let new_tab_button = squircle_skin(
                 div()
@@ -1864,7 +1955,9 @@ impl Pane {
                     .flex_none()
                     .size(px(TAB_BAR_HEIGHT))
                     .when(unified && self.is_detached(), |button| {
-                        button.size(px(32.)).mx(px(7.))
+                        button
+                            .size(px(DETACHED_TAB_BUTTON_SIZE))
+                            .mx(px(DETACHED_NEW_TAB_MARGIN))
                     })
                     .when(!self.is_detached(), |button| {
                         button
@@ -1918,17 +2011,17 @@ impl Pane {
 
         if !self.is_detached() {
             bar = bar
-                .child(
+                .children(fit.actions.then(|| {
                     div()
                         .flex_none()
-                        .w(px(1.))
+                        .w(px(TAB_BAR_DIVIDER_WIDTH))
                         .h(px(16.))
-                        .mx(px(6.))
+                        .mx(px(TAB_BAR_DIVIDER_MARGIN))
                         .when(self.dimmed(), |element| {
                             hide_until_hover(element, &content_group)
                         })
-                        .bg(ui.border),
-                )
+                        .bg(ui.border)
+                }))
                 .child(
                     div()
                         .h_full()
@@ -1936,7 +2029,7 @@ impl Pane {
                         .when(self.dimmed(), |element| {
                             hide_until_hover(element, &content_group)
                         })
-                        .child(self.render_header(cx)),
+                        .child(self.render_header(fit.actions, cx)),
                 );
         }
         Some(bar.into_any_element())
@@ -2326,6 +2419,56 @@ fn new_tab_menu_item(
     } else {
         item.detail("not installed")
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TabBarFit {
+    pub(crate) actions: bool,
+    pub(crate) new_tab: bool,
+    pub(crate) label: bool,
+}
+
+pub(crate) fn fit_tab_bar(room: f32, new_tab_width: f32, actions_width: f32) -> TabBarFit {
+    let labelled = UNIFIED_TAB_MIN_WIDTH;
+    TabBarFit {
+        actions: room >= labelled + new_tab_width + actions_width,
+        new_tab: room >= labelled + new_tab_width,
+        label: room >= labelled,
+    }
+}
+
+pub(crate) fn keep_active_tab_in_view(
+    scroll: gpui::ScrollHandle,
+    active: usize,
+    width: Rc<Cell<f32>>,
+) -> AnyElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let measured = f32::from(bounds.size.width);
+            if width.replace(measured) != measured {
+                scroll.scroll_to_item(active);
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
+}
+
+fn width_probe(width: Rc<Cell<f32>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let measured = f32::from(bounds.size.width);
+            if width.replace(measured) != measured {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
 }
 
 #[cfg(test)]
@@ -2911,6 +3054,47 @@ mod tests {
             super::Pane::agent_title_from_terminal_title("user@host: /repo/codex-adapter"),
             None,
             "repo names must not be mistaken for agent processes"
+        );
+    }
+
+    #[test]
+    fn a_tab_bar_with_room_shows_every_control() {
+        assert_eq!(
+            super::fit_tab_bar(400., 25., 120.),
+            super::TabBarFit {
+                actions: true,
+                new_tab: true,
+                label: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_narrow_tab_bar_drops_the_actions_then_the_new_tab_button_then_the_label() {
+        let labelled = super::UNIFIED_TAB_MIN_WIDTH;
+        assert_eq!(
+            super::fit_tab_bar(labelled + 25. + 119., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: true,
+                label: true,
+            }
+        );
+        assert_eq!(
+            super::fit_tab_bar(labelled + 24., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: false,
+                label: true,
+            }
+        );
+        assert_eq!(
+            super::fit_tab_bar(labelled - 1., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: false,
+                label: false,
+            }
         );
     }
 }

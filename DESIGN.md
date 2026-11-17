@@ -400,7 +400,7 @@ call site never branches on the style to pick a radius.
 | Pane gutter | 8 in comfortable density, 1 px divider and no outer gutter in compact density |
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
-| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
+| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum. A labelled tab keeps at least 96; when the bar cannot hold that tab beside its controls, the pane actions (split and pop-out, with their divider) go first, then the new tab button, and below 96 the tab shows only its icon in a 44 wide chip with no label and no close slot; the pane menu and the shortcuts keep every action. When the strip changes width it scrolls the active tab back into view, in the pane and in the dock |
 | Diff dock tab bar | 44, the pane header chips (`unified_tab_chip`, `tab_close_button`, the terminal `tab_badge`), sized to the label between 64 and 208 instead of the pane's fixed 208; 32 tall, radius from the dock card frame; the strip scrolls with edge fades and the new tab button sits at the right beside the maximize action, with no close button since the title bar toggle closes the dock; a 1 px bottom divider, dropped while Changes is the active tab so its toolbar sits under the strip without a line; in Classic the strip sits in the title band at the title bar height with no divider (4.9) |
 | Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |

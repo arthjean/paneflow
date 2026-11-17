@@ -155,6 +155,7 @@ struct DiffDockState {
     pub(crate) generation: u64,
     pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) tab_scroll: gpui::ScrollHandle,
+    pub(crate) tab_strip_width: std::rc::Rc<std::cell::Cell<f32>>,
     pub(crate) diff_options_menu_open: bool,
     pub(crate) diff_options: crate::diff::DiffOptions,
     pub(crate) diff_new_tab_menu_open: bool,
