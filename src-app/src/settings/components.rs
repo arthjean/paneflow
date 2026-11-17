@@ -952,6 +952,38 @@ pub(crate) fn modal_header(
         )
 }
 
+pub(crate) const CONFIRMATION_TITLE_MAX_SHARE: f32 = 0.6;
+
+fn confirmation_row(ui: crate::theme::UiColors, title: SharedString, detail: SharedString) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex_none()
+                .min_w_0()
+                .max_w(gpui::relative(CONFIRMATION_TITLE_MAX_SHARE))
+                .truncate()
+                .text_size(crate::ui_primitives::BODY)
+                .text_color(ui.text)
+                .debug_selector(|| "confirmation-title".into())
+                .child(title),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_right()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(ui.muted)
+                .debug_selector(|| "confirmation-detail".into())
+                .child(detail),
+        )
+}
+
 pub(crate) fn confirmation_list(
     ui: crate::theme::UiColors,
     rows: impl IntoIterator<Item = (SharedString, SharedString)>,
@@ -972,30 +1004,7 @@ pub(crate) fn confirmation_list(
             hidden += 1;
             continue;
         }
-        list = list.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(crate::ui_primitives::BODY)
-                        .text_color(ui.text)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(crate::ui_primitives::LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(detail),
-                ),
-        );
+        list = list.child(confirmation_row(ui, title, detail));
     }
     if hidden > 0 {
         list = list.child(
@@ -1973,6 +1982,61 @@ mod tests {
         assert!(
             peaks[first..=last].iter().any(|alpha| *alpha < 24),
             "the two chevrons are kept apart by a clear row, row peaks {peaks:?}"
+        );
+    }
+
+    struct ConfirmationHarness;
+
+    impl gpui::Render for ConfirmationHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            div().w(px(460.)).debug_selector(|| "card".into()).child(confirmation_list(
+                ui,
+                [(
+                    SharedString::from("masks.rs"),
+                    SharedString::from(
+                        "/home/user/dev/paneflow/src-app/src/terminal/element/paint/a/very/deeply/nested/folder",
+                    ),
+                )],
+                8,
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_folder_wraps_inside_the_card_and_leaves_the_file_name_visible(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_view, cx) = cx.add_window_view(|_, _| ConfirmationHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let card = cx.debug_bounds("card").expect("card painted");
+        let title = cx
+            .debug_bounds("confirmation-title")
+            .expect("title painted");
+        let detail = cx
+            .debug_bounds("confirmation-detail")
+            .expect("detail painted");
+        assert!(
+            detail.right() <= card.right(),
+            "the folder ends at {:?}, past the card edge {:?}",
+            detail.right(),
+            card.right()
+        );
+        assert!(
+            title.size.width > px(30.),
+            "the file name keeps its width, got {:?}",
+            title.size.width
+        );
+        assert!(
+            detail.size.height > title.size.height,
+            "the folder wraps onto more lines than the file name, {:?} vs {:?}",
+            detail.size.height,
+            title.size.height
         );
     }
 }
