@@ -189,6 +189,14 @@ impl CellFlags {
     pub const DIM: Self = Self(1 << 9);
     pub const WIDE_CHAR: Self = Self(1 << 10);
     pub const WIDE_CHAR_SPACER: Self = Self(1 << 11);
+    pub const DECORATIONS: Self = Self(
+        Self::UNDERLINE.0
+            | Self::DOUBLE_UNDERLINE.0
+            | Self::UNDERCURL.0
+            | Self::DOTTED_UNDERLINE.0
+            | Self::DASHED_UNDERLINE.0
+            | Self::STRIKEOUT.0,
+    );
 
     #[inline]
     pub const fn empty() -> Self {
@@ -198,6 +206,11 @@ impl CellFlags {
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    #[inline]
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
     }
 }
 

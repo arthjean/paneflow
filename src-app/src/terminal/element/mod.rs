@@ -1167,36 +1167,38 @@ pub(crate) fn layout_from_snapshot_cached(
                 }
             }
 
-            let underline = if flags.contains(CellFlags::UNDERCURL) {
-                UnderlineKind::Curly
-            } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
-                UnderlineKind::Double
-            } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
-                UnderlineKind::Dotted
-            } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
-                UnderlineKind::Dashed
-            } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
-                UnderlineKind::Single
-            } else {
-                UnderlineKind::None
-            };
-            let underline_fg = match underline_color {
-                Some(color) if underline != UnderlineKind::None => {
-                    let mut color = convert_color(*color, theme, palette);
-                    if flags.contains(CellFlags::DIM) {
-                        color.a *= 0.5;
+            if *hyperlink || flags.intersects(CellFlags::DECORATIONS) || decorations.is_open() {
+                let underline = if flags.contains(CellFlags::UNDERCURL) {
+                    UnderlineKind::Curly
+                } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+                    UnderlineKind::Double
+                } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+                    UnderlineKind::Dotted
+                } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+                    UnderlineKind::Dashed
+                } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
+                    UnderlineKind::Single
+                } else {
+                    UnderlineKind::None
+                };
+                let underline_fg = match underline_color {
+                    Some(color) if underline != UnderlineKind::None => {
+                        let mut color = convert_color(*color, theme, palette);
+                        if flags.contains(CellFlags::DIM) {
+                            color.a *= 0.5;
+                        }
+                        color
                     }
-                    color
-                }
-                _ => fg,
-            };
-            decorations.add(
-                point.column.0,
-                cell_cols,
-                (underline, underline_fg),
-                flags.contains(CellFlags::STRIKEOUT),
-                fg,
-            );
+                    _ => fg,
+                };
+                decorations.add(
+                    point.column.0,
+                    cell_cols,
+                    (underline, underline_fg),
+                    flags.contains(CellFlags::STRIKEOUT),
+                    fg,
+                );
+            }
 
             let c = *c;
             if c == ' ' && previous_cell_had_extras {
@@ -1536,6 +1538,10 @@ impl DecorationRuns {
             kind,
             color,
         });
+    }
+
+    fn is_open(&self) -> bool {
+        self.underline.is_some() || self.strikethrough.is_some()
     }
 
     fn close(&mut self) {
