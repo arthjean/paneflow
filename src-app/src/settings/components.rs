@@ -1034,11 +1034,14 @@ pub(crate) fn modal_footer() -> Div {
         .pb(px(16.))
 }
 
+pub(crate) const SELECT_CHEVRON_SIZE: Pixels = px(12.);
+pub(crate) const SELECT_CHEVRON_ASSET: &str = "icons/settings/unfold-more.svg";
+
 pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
     svg()
-        .size(px(12.))
+        .size(SELECT_CHEVRON_SIZE)
         .flex_none()
-        .path("icons/settings/unfold-more.svg")
+        .path(SELECT_CHEVRON_ASSET)
         .text_color(with_alpha(ui.text, 0.8))
 }
 
@@ -1926,5 +1929,50 @@ mod tests {
         assert_eq!(*picks.borrow(), vec![1]);
         cx.simulate_keystrokes("up enter");
         assert_eq!(*picks.borrow(), vec![1, 0]);
+    }
+
+    #[test]
+    fn the_select_chevron_draws_two_solid_chevrons_with_a_clear_row_between_at_its_size() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(SELECT_CHEVRON_ASSET);
+        let data = std::fs::read(&path).expect("chevron asset");
+        let tree = resvg::usvg::Tree::from_data(&data, &Default::default()).expect("valid svg");
+        let side = f32::from(SELECT_CHEVRON_SIZE) as u32;
+        let oversample = 2;
+        let mut pixmap =
+            resvg::tiny_skia::Pixmap::new(side * oversample, side * oversample).expect("pixmap");
+        let scale = (side * oversample) as f32 / tree.size().width();
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::from_scale(scale, scale),
+            &mut pixmap.as_mut(),
+        );
+        let device_pixel = |x: u32, y: u32| -> u32 {
+            let mut sum = 0;
+            for dy in 0..oversample {
+                for dx in 0..oversample {
+                    sum += pixmap
+                        .pixel(x * oversample + dx, y * oversample + dy)
+                        .map_or(0, |pixel| u32::from(pixel.alpha()));
+                }
+            }
+            sum / (oversample * oversample)
+        };
+        let peaks: Vec<u32> = (0..side)
+            .map(|y| (0..side).map(|x| device_pixel(x, y)).max().unwrap_or(0))
+            .collect();
+        let (upper, lower) = peaks.split_at(side as usize / 2);
+        let solid = 230;
+        assert!(
+            upper.iter().any(|alpha| *alpha >= solid) && lower.iter().any(|alpha| *alpha >= solid),
+            "each chevron reaches full ink at {side} px, row peaks {peaks:?}"
+        );
+        let first = peaks.iter().position(|alpha| *alpha >= solid).unwrap_or(0);
+        let last = peaks.iter().rposition(|alpha| *alpha >= solid).unwrap_or(0);
+        assert!(
+            peaks[first..=last].iter().any(|alpha| *alpha < 24),
+            "the two chevrons are kept apart by a clear row, row peaks {peaks:?}"
+        );
     }
 }
