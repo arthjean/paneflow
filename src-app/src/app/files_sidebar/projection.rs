@@ -62,7 +62,7 @@ pub(super) struct FilesProjection {
 
 #[derive(Default)]
 struct Level<'a> {
-    dirs: BTreeMap<String, (&'a str, Level<'a>)>,
+    dirs: BTreeMap<(String, &'a str), Level<'a>>,
     files: Vec<(String, &'a str, &'a SearchHit)>,
 }
 
@@ -144,11 +144,10 @@ fn search_rows(root: &Path, hits: &[SearchHit], git: &GitStatuses) -> Vec<FileRo
         };
         let mut level = &mut top;
         for part in parts {
-            level = &mut level
+            level = level
                 .dirs
-                .entry(part.to_ascii_lowercase())
-                .or_insert_with(|| (part, Level::default()))
-                .1;
+                .entry((part.to_ascii_lowercase(), part))
+                .or_default();
         }
         level.files.push((name.to_ascii_lowercase(), name, hit));
     }
@@ -164,8 +163,8 @@ fn emit_level(
     git: &GitStatuses,
     rows: &mut Vec<FileRow>,
 ) {
-    for (name, child) in level.dirs.values_mut() {
-        let path = dir.join(*name);
+    for ((_, name), child) in level.dirs.iter_mut() {
+        let path = dir.join(name);
         let node = FileNode {
             path: path.clone(),
             is_dir: true,

@@ -54,6 +54,7 @@ pub(crate) struct FilesSidebar {
     pub(super) reveal_target: Option<PathBuf>,
     pub(super) reveal_generation: u64,
     pub(super) reveal_task: Option<Task<()>>,
+    pub(super) reveal_request: Option<PathBuf>,
     pub(super) refresh_ticket: u64,
     pub(super) refreshing: bool,
     pub(super) expand_all_ticket: u64,
@@ -116,6 +117,7 @@ impl FilesSidebar {
             reveal_target: None,
             reveal_generation: 0,
             reveal_task: None,
+            reveal_request: None,
             refresh_ticket: 0,
             refreshing: false,
             expand_all_ticket: 0,
@@ -173,6 +175,7 @@ impl FilesSidebar {
         self.reveal_target = None;
         self.reveal_generation = self.reveal_generation.wrapping_add(1);
         self.reveal_task = None;
+        self.reveal_request = None;
         self.refreshing = false;
         self.expanding_all = false;
         self.walk_cancelled.store(true, Ordering::Relaxed);

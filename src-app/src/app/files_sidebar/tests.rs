@@ -711,6 +711,99 @@ fn revealing_the_active_file_expands_its_parents_clears_the_search_and_keeps_foc
 }
 
 #[gpui::test]
+fn the_active_file_is_revealed_once_so_each_frame_keeps_the_search_and_the_collapses(
+    cx: &mut TestAppContext,
+) {
+    let mut snapshot = tree(300);
+    let root = snapshot.root.clone();
+    let src = root.join("src");
+    let file = src.join("deep.rs");
+    let other = root.join("file-0002.rs");
+    snapshot
+        .children
+        .get_mut(&root)
+        .expect("root")
+        .push(node(src.clone(), true));
+    snapshot
+        .children
+        .insert(src.clone(), vec![node(file.clone(), false)]);
+    let (panel, _, cx) = harness(cx, snapshot);
+    panel.update(cx, |panel, _| {
+        panel
+            .search
+            .install_files(project_files("workspace", &[rel(&["file-0001.rs"])]))
+    });
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&file, cx)));
+    wait_for_reveal(cx, &panel);
+    assert!(panel.read_with(cx, |panel, _| panel.expanded.contains(&src)));
+
+    type_query(cx, &panel, "0001");
+    settle_search(cx);
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&file, cx)));
+    wait_for_reveal(cx, &panel);
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.query.clone()),
+        "0001",
+        "a repeated reveal keeps the search"
+    );
+
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| panel.clear_files_filter(window, cx));
+    });
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.toggle_dir(&src, cx)));
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&file, cx)));
+    wait_for_reveal(cx, &panel);
+    assert!(
+        !panel.read_with(cx, |panel, _| panel.expanded.contains(&src)),
+        "a repeated reveal keeps the folder the user collapsed"
+    );
+
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&other, cx)));
+    wait_for_reveal(cx, &panel);
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.selected.clone()),
+        Some(other),
+        "a newly active file is revealed"
+    );
+}
+
+#[test]
+fn search_rows_keep_folders_that_differ_only_by_case_apart() {
+    let snapshot = FilesTreeState::root_shell(PathBuf::from("workspace"));
+    let root = snapshot.root.clone();
+    let hits = [
+        super::search::SearchHit {
+            rel: rel(&["Docs", "a.md"]),
+            highlights: Vec::new(),
+        },
+        super::search::SearchHit {
+            rel: rel(&["docs", "b.md"]),
+            highlights: Vec::new(),
+        },
+    ];
+    let projection = FilesProjection::build(
+        &snapshot,
+        &std::collections::HashSet::new(),
+        Some(&hits),
+        &GitStatuses::default(),
+    );
+    let paths: Vec<PathBuf> = projection
+        .rows
+        .iter()
+        .map(|row| row.node.path.clone())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![
+            root.join("Docs"),
+            root.join("Docs").join("a.md"),
+            root.join("docs"),
+            root.join("docs").join("b.md"),
+        ]
+    );
+}
+
+#[gpui::test]
 fn an_ignored_active_file_is_never_revealed(cx: &mut TestAppContext) {
     let temp = tempfile::tempdir().expect("temporary directory");
     let root = temp.path().to_path_buf();

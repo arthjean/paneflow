@@ -93,6 +93,10 @@ impl PaneFlowApp {
         let Some(super::diff_dock::DiffDockTab::File(view)) =
             self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab)
         else {
+            if self.files_sidebar.read(cx).reveal_request.is_some() {
+                self.files_sidebar
+                    .update(cx, |panel, _| panel.reveal_request = None);
+            }
             return;
         };
         let path = view.read(cx).path().to_path_buf();

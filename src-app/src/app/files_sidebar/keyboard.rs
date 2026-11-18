@@ -45,9 +45,10 @@ impl FilesSidebar {
     }
 
     pub(crate) fn reveal_file(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if !self.active {
+        if !self.active || self.reveal_request.as_deref() == Some(path) {
             return;
         }
+        self.reveal_request = Some(path.to_path_buf());
         let root = self.tree.root.clone();
         if path == root || !path.starts_with(&root) {
             return;
