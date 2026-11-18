@@ -59,6 +59,17 @@ pub(crate) struct UsagePanel {
 }
 
 impl UsagePanel {
+    #[cfg(test)]
+    pub(crate) fn set_snapshot_for_test(
+        &mut self,
+        inventory: Vec<InventoryEntry>,
+        plans: Vec<AccountPlan>,
+    ) {
+        self.inventory = inventory;
+        self.plans = plans;
+        self.origins = Some(Vec::new());
+    }
+
     pub(crate) fn new(cx: &mut App) -> Self {
         Self {
             plans: Vec::new(),

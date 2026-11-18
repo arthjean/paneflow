@@ -437,6 +437,9 @@ portable-pty = "0.9.0"
 # box-drawing and undercurl masks the way `paint_svg` does and read the pixels.
 resvg = { version = "0.46.0", default-features = false }
 tracing-test = "0.2"
+# The scene exporter splits proportional text where cosmic-text shapes words
+# apart, at UAX #14 break opportunities, with the crate cosmic-text uses.
+unicode-linebreak = "0.1.5"
 
 # Clippy lint policy (US-007). Mirrors `[workspace.lints.clippy]` in the
 # root Cargo.toml EXCEPT the unwrap/expect family is demoted from "warn"

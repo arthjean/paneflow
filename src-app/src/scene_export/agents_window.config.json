@@ -1,0 +1,38 @@
+{
+  "theme": "Tailwind Dark",
+  "theme_mode": "dark",
+  "font_family": "JetBrainsMono NFM",
+  "font_size": 13.0,
+  "line_height": 1.0,
+  "reduce_motion": false,
+  "linux_chrome_material": false,
+  "linux_terminal_material": false,
+  "telemetry": {
+    "enabled": false
+  },
+  "sidebar_show": {
+    "branch": false,
+    "diffstat": true,
+    "pr": false,
+    "status": false,
+    "indent_guide": false,
+    "agents": true,
+    "usage": true,
+    "agent_logo": true,
+    "agent_workspace": true,
+    "shimmer": false,
+    "agent_shimmer": true,
+    "agent_all_spaces": false
+  },
+  "spaces": [
+    {
+      "id": "b749d10e-fae1-42f8-b3e7-1c1e999f66a4",
+      "name": "Pro",
+      "color": "blue"
+    }
+  ],
+  "terminal": {
+    "backend": "ghostty"
+  },
+  "unfocused_pane_opacity": 0.7
+}

@@ -1160,3 +1160,73 @@ impl PaneFlowApp {
         self.toggle_diff_file_collapsed(path, cx);
     }
 }
+
+#[cfg(test)]
+impl PaneFlowApp {
+    /// Opens the unified Changes tab on `cwd` at `width`, settled: no
+    /// reveal animation and no checkout picker.
+    pub(crate) fn open_diff_dock_for_test(
+        &mut self,
+        cwd: String,
+        width: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff_dock.width = width;
+        self.diff_dock.picked = true;
+        self.diff_dock.picker = false;
+        self.diff_dock.split = false;
+        self.open_diff_changes_tab(cx);
+        self.open_diff_dock_panel(cwd, cx);
+        self.diff_dock.reveal_animation = None;
+    }
+
+    /// The dock's build outcome once it has landed: its file paths, or the
+    /// error it shows.
+    pub(crate) fn diff_dock_outcome_for_test(&self) -> Option<Result<Vec<String>, String>> {
+        let data = self.diff_dock.data.as_ref()?;
+        if data.loading {
+            return None;
+        }
+        Some(match &data.error {
+            Some(error) => Err(error.clone()),
+            None => Ok(data.paths.clone()),
+        })
+    }
+
+    /// Collapses every file but `open`, then scrolls so that `top`'s header
+    /// sits `past` pixels above the top of the dock body.
+    pub(crate) fn frame_diff_dock_for_test(
+        &mut self,
+        open: &str,
+        top: &str,
+        past: f32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let paths = self
+            .diff_dock
+            .data
+            .as_ref()
+            .ok_or("no dock data")?
+            .paths
+            .clone();
+        if !paths.iter().any(|path| path == open) {
+            return Err(format!("{open} is not in the diff"));
+        }
+        self.diff_dock.collapsed = paths.into_iter().filter(|path| path != open).collect();
+        self.diff_dock.expanded_folds.clear();
+        self.recompute_diff_dock_display();
+        let data = self.diff_dock.data.as_ref().ok_or("no dock data")?;
+        let row = data
+            .disp_anchors_unified
+            .iter()
+            .find(|(path, _)| path == top)
+            .map(|(_, row)| *row)
+            .ok_or_else(|| format!("{top} has no header row"))?;
+        let y = data.disp_unified_offsets[row] + past;
+        self.diff_dock
+            .scroll
+            .set_offset(gpui::point(gpui::px(0.), gpui::px(-y)));
+        cx.notify();
+        Ok(())
+    }
+}

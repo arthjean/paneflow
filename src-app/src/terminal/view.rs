@@ -376,6 +376,11 @@ impl TerminalView {
         self.search_active
     }
 
+    #[cfg(test)]
+    pub(crate) fn window_size_for_test(&self) -> Option<TerminalWindowSize> {
+        self.recorded_window_size()
+    }
+
     fn recorded_window_size(&self) -> Option<TerminalWindowSize> {
         *self
             .terminal_window_size

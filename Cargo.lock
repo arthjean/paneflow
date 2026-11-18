@@ -4478,6 +4478,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "ttf-parser",
+ "unicode-linebreak",
  "unicode-segmentation",
  "unicode-width",
  "ureq",

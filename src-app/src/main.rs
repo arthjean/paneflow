@@ -60,6 +60,8 @@ mod probe_log;
 #[cfg(test)]
 mod redraw_guard;
 mod runtime_paths;
+#[cfg(test)]
+mod scene_export;
 mod search;
 mod settings;
 mod sidebar_title;
