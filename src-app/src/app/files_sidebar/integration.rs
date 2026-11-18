@@ -34,6 +34,7 @@ impl PaneFlowApp {
                     });
                 });
             }
+            FilesEvent::Toast(message) => self.show_toast(message.clone(), cx),
             FilesEvent::ContextMenu(menu) => {
                 self.dismiss_transient_surfaces();
                 self.files_menu_open = Some(menu.clone());

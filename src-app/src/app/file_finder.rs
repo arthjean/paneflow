@@ -373,8 +373,8 @@ impl PaneFlowApp {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let icon = crate::file_icons::language_icon_path(&name);
-        let glyph = if icon.starts_with("icons/languages/") {
+        let icon = crate::file_icons::file_icon_path(&name);
+        let glyph = if crate::file_icons::is_file_icon_path(icon) {
             img(icon).flex_none().size(px(ICON_SIZE)).into_any_element()
         } else {
             svg()

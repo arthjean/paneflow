@@ -455,7 +455,7 @@ fn crumb_menu_items(menu: &CrumbMenu, ui: UiColors) -> ActionMenu<CrumbAction> {
                         .icon(crate::app::menu_icons::FOLDER_OPEN)
                         .keep_open()
                 } else {
-                    let icon = crate::file_icons::language_icon_path(&name);
+                    let icon = crate::file_icons::file_icon_path(&name);
                     MenuItem::new(name.clone(), CrumbAction::Open(node.path.clone())).glyph(Some(
                         MenuGlyph::Element(Rc::new(move || {
                             super::render::file_icon_element(icon, px(14.), ui.muted)

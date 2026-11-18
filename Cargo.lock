@@ -4492,6 +4492,7 @@ dependencies = [
  "windows-registry 0.5.3",
  "windows-sys 0.59.0",
  "winresource",
+ "zbus",
 ]
 
 [[package]]

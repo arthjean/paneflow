@@ -50,7 +50,6 @@ crates/paneflow-textdiff/src/tracker.rs refreshing_a_hundred_line_block_in_a_lar
 src-app/src/agent_launcher.rs installed_binary_reads_never_scan_on_the_caller_thread_once_warm 1
 src-app/src/app/diff_dock/code/view/mod.rs returning_focus_makes_the_caret_visible_immediately 1
 src-app/src/app/event_handlers/cwd_tracking.rs a_trip_out_of_the_repository_and_back_restores_the_workspace_state 1
-src-app/src/app/files_sidebar/filter.rs fifty_thousand_entries_filter_under_the_frame_budget 1
 src-app/src/app/ipc_handler/mod.rs a_closed_request_channel_ends_the_loop_instead_of_spinning 1
 src-app/src/app/ipc_handler/split.rs a_stuck_probe_times_out_instead_of_blocking 1
 src-app/src/app/ipc_handler/surface_methods.rs surface_reads_are_prepared_without_waiting_on_a_stalled_runtime 1

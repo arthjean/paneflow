@@ -104,16 +104,16 @@ pub(crate) fn read_dir_listing(root: &Path, dir: &Path) -> Option<Vec<FileNode>>
     let mut nodes: Vec<FileNode> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            let path = entry.path();
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let is_hidden = is_hidden_entry(&entry);
-            let is_ignored = gitignore
-                .as_ref()
-                .map(|gi| gi.matched(&path, is_dir).is_ignore())
-                .unwrap_or(false);
-            if is_hidden || is_ignored {
+            if entry.file_name() == GIT_DIR_NAME {
                 return None;
             }
+            let path = entry.path();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let is_hidden = has_windows_hidden_attribute(&entry);
+            let is_ignored = gitignore.as_ref().is_some_and(|gi| {
+                path.starts_with(gi.path())
+                    && gi.matched_path_or_any_parents(&path, is_dir).is_ignore()
+            });
             let size = if is_dir {
                 0
             } else {
@@ -130,6 +130,25 @@ pub(crate) fn read_dir_listing(root: &Path, dir: &Path) -> Option<Vec<FileNode>>
         .collect();
     nodes.sort_by(compare_nodes);
     Some(nodes)
+}
+
+pub(crate) const GIT_DIR_NAME: &str = ".git";
+
+pub(crate) fn path_is_git_ignored(root: &Path, path: &Path, is_dir: bool) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if !path.starts_with(root) || path == root {
+        return false;
+    }
+    if path.strip_prefix(root).is_ok_and(|rel| {
+        rel.components()
+            .any(|part| part.as_os_str() == GIT_DIR_NAME)
+    }) {
+        return true;
+    }
+    build_gitignore(root, parent)
+        .is_some_and(|gi| gi.matched_path_or_any_parents(path, is_dir).is_ignore())
 }
 
 pub(crate) fn is_hidden_entry(entry: &std::fs::DirEntry) -> bool {
@@ -306,21 +325,58 @@ mod tests {
     }
 
     #[test]
-    fn read_dir_filters_gitignored_and_hidden_entries() {
+    fn read_dir_marks_gitignored_entries_shows_dotfiles_and_hides_only_git() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         std::fs::write(root.join(".gitignore"), "target/\n").expect("gitignore");
-        std::fs::create_dir(root.join("target")).expect("target dir");
-        std::fs::write(root.join(".env"), "secret").expect("hidden file");
+        std::fs::create_dir_all(root.join("target").join("debug")).expect("target dir");
+        std::fs::write(root.join(".env"), "secret").expect("dot file");
+        std::fs::create_dir(root.join(".git")).expect("git dir");
         std::fs::create_dir(root.join("src")).expect("src dir");
         std::fs::write(root.join("README.md"), "").expect("readme");
 
-        let names: Vec<String> = read_dir_sorted(root, root)
-            .into_iter()
-            .map(|node| node_name(&node))
+        let nodes = read_dir_sorted(root, root);
+        let shown: Vec<(String, bool, bool)> = nodes
+            .iter()
+            .map(|node| (node_name(node), node.is_ignored, node.is_hidden))
             .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("src".to_string(), false, false),
+                ("target".to_string(), true, false),
+                (".env".to_string(), false, false),
+                (".gitignore".to_string(), false, false),
+                ("README.md".to_string(), false, false),
+            ]
+        );
 
-        assert_eq!(names, vec!["src".to_string(), "README.md".to_string()]);
+        let inside = read_dir_sorted(root, &root.join("target"));
+        assert_eq!(inside.len(), 1);
+        assert!(
+            inside[0].is_ignored,
+            "entries under an ignored folder inherit its status"
+        );
+        assert!(path_is_git_ignored(
+            root,
+            &root.join("target").join("debug").join("app"),
+            false
+        ));
+        assert!(path_is_git_ignored(
+            root,
+            &root.join(".git").join("HEAD"),
+            false
+        ));
+        assert!(!path_is_git_ignored(
+            root,
+            &root.join("src").join("main.rs"),
+            false
+        ));
+        assert!(!path_is_git_ignored(
+            root,
+            Path::new("/elsewhere/main.rs"),
+            false
+        ));
     }
 
     #[test]

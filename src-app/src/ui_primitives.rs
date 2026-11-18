@@ -557,6 +557,16 @@ fn spin(glyph: gpui::Svg, turn: Duration) -> gpui::Svg {
     }
 }
 
+pub(crate) const LOADER_TURN: Duration = Duration::from_millis(900);
+
+pub(crate) fn spinning_icon(path: &'static str, size: Pixels, color: Hsla) -> AnyElement {
+    spin(
+        svg().size(size).flex_none().path(path).text_color(color),
+        LOADER_TURN,
+    )
+    .into_any_element()
+}
+
 pub(crate) fn comet_spinner(size: Pixels, color: Hsla) -> AnyElement {
     spin(
         svg()
@@ -1407,6 +1417,15 @@ mod tests {
         assert_eq!(EMPTY_STATE_TURN, Duration::from_secs(1));
         assert_eq!(spinner_rotation(COMET_TURN, true), None);
         assert_eq!(spinner_rotation(EMPTY_STATE_TURN, true), None);
+        assert_eq!(
+            spinner_rotation(LOADER_TURN, false),
+            Some(turn(LOADER_TURN))
+        );
+        assert_eq!(
+            spinner_rotation(LOADER_TURN, true),
+            None,
+            "the file tree loading indicator stands still under reduce motion"
+        );
         assert_eq!(
             spinner_rotation(COMET_TURN, false),
             spinner_rotation(COMET_TURN, false),

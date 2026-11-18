@@ -122,7 +122,7 @@ impl PathPicker {
                 .file_name()
                 .map(|name| name.to_string_lossy())
                 .unwrap_or_default();
-            img(crate::file_icons::language_icon_path(&name))
+            img(crate::file_icons::file_icon_path(&name))
                 .flex_none()
                 .size(px(ICON_SIZE))
                 .into_any_element()

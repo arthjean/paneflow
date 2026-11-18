@@ -12,14 +12,30 @@ use crate::pane::PaneSurface;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, TabKey, WorkspaceContextMenu};
 
-struct EditorMenuEntry {
-    label: &'static str,
-    command: &'static str,
-    icon: &'static str,
-    mnemonic: char,
+pub(crate) struct EditorMenuEntry {
+    pub(crate) label: &'static str,
+    pub(crate) command: &'static str,
+    pub(crate) icon: &'static str,
+    pub(crate) mnemonic: char,
 }
 
-const EDITOR_MENU_ENTRIES: &[EditorMenuEntry] = &[
+static INSTALLED_EDITORS: std::sync::OnceLock<Vec<&'static EditorMenuEntry>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn detect_installed_editors() {
+    INSTALLED_EDITORS.get_or_init(|| {
+        EDITOR_MENU_ENTRIES
+            .iter()
+            .filter(|entry| crate::app::workspace_ops::find_editor_binary(entry.command).is_some())
+            .collect()
+    });
+}
+
+pub(crate) fn installed_editors() -> &'static [&'static EditorMenuEntry] {
+    INSTALLED_EDITORS.get().map_or(&[], Vec::as_slice)
+}
+
+pub(crate) const EDITOR_MENU_ENTRIES: &[EditorMenuEntry] = &[
     EditorMenuEntry {
         label: "Open in Zed",
         command: "zed",

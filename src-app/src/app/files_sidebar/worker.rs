@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::collections::{HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,12 +12,21 @@ use crate::app::files_tree::{FilesTreeState, read_dir_listing};
 const DEBOUNCE: Duration = Duration::from_millis(40);
 const MAX_LATENCY: Duration = Duration::from_millis(160);
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
+pub(super) const EXPAND_ALL_LIMIT: usize = 2_000;
 
 pub(super) struct TreeUpdate {
     pub revision: u64,
     pub tree: FilesTreeState,
     pub git: Arc<GitStatuses>,
     pub watcher_available: bool,
+    pub refreshed: u64,
+    pub expanded_all: Option<ExpandAllOutcome>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ExpandAllOutcome {
+    pub ticket: u64,
+    pub capped: bool,
 }
 
 pub(super) struct FilesWorker {
@@ -26,6 +35,9 @@ pub(super) struct FilesWorker {
 
 enum Request {
     Expanded(u64, Vec<PathBuf>),
+    ExpandAll { revision: u64, ticket: u64 },
+    Refresh(u64),
+    Reload(PathBuf),
     Changed(notify::Result<Event>),
 }
 
@@ -49,6 +61,20 @@ impl FilesWorker {
         let _ = self
             .requests
             .try_send(Request::Expanded(revision, expanded));
+    }
+
+    pub(super) fn expand_all(&self, revision: u64, ticket: u64) {
+        let _ = self
+            .requests
+            .try_send(Request::ExpandAll { revision, ticket });
+    }
+
+    pub(super) fn refresh(&self, ticket: u64) {
+        let _ = self.requests.try_send(Request::Refresh(ticket));
+    }
+
+    pub(super) fn reload(&self, dir: PathBuf) {
+        let _ = self.requests.try_send(Request::Reload(dir));
     }
 }
 
@@ -95,8 +121,64 @@ impl Scanner {
         self.tree.expanded.insert(self.tree.root.clone());
     }
 
+    fn load(&mut self, dir: &Path) {
+        if !self.watched.contains(dir)
+            && let Some(watcher) = self.watcher.as_mut()
+            && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok()
+        {
+            self.watched.insert(dir.to_path_buf());
+            self.dirty.insert(dir.to_path_buf());
+        }
+        if self.dirty.remove(dir) || !self.tree.children.contains_key(dir) {
+            let listing = read_dir_listing(&self.tree.root, dir);
+            if listing.is_some() {
+                self.tree.unreadable.remove(dir);
+            } else {
+                self.tree.unreadable.insert(dir.to_path_buf());
+            }
+            self.tree
+                .children
+                .insert(dir.to_path_buf(), listing.unwrap_or_default());
+        }
+    }
+
+    fn expand_all(&mut self, limit: usize, cancelled: impl Fn() -> bool) -> bool {
+        let root = self.tree.root.clone();
+        let mut expanded = std::mem::take(&mut self.tree.expanded);
+        expanded.insert(root.clone());
+        let mut queue = VecDeque::from([root]);
+        let mut capped = false;
+        'walk: while let Some(dir) = queue.pop_front() {
+            if cancelled() {
+                break;
+            }
+            self.load(&dir);
+            let Some(children) = self.tree.children.get(&dir) else {
+                continue;
+            };
+            let folders: Vec<PathBuf> = children
+                .iter()
+                .filter(|node| node.is_dir && !node.is_ignored)
+                .map(|node| node.path.clone())
+                .collect();
+            for folder in folders {
+                if !expanded.contains(&folder) {
+                    if expanded.len() > limit {
+                        capped = true;
+                        break 'walk;
+                    }
+                    expanded.insert(folder.clone());
+                }
+                queue.push_back(folder);
+            }
+        }
+        self.tree.expanded = expanded;
+        self.git_dirty = true;
+        capped
+    }
+
     fn scan(&mut self, cancelled: impl Fn() -> bool) -> bool {
-        let root = &self.tree.root;
+        let root = self.tree.root.clone();
         let mut pending = vec![(root.clone(), true)];
         let mut active = HashSet::new();
         if let Some(git_dir) = &self.git_dir {
@@ -107,28 +189,13 @@ impl Scanner {
                 return false;
             }
             active.insert(dir.clone());
-            if !self.watched.contains(&dir)
-                && let Some(watcher) = self.watcher.as_mut()
-                && watcher.watch(&dir, RecursiveMode::NonRecursive).is_ok()
-            {
-                self.watched.insert(dir.clone());
-                self.dirty.insert(dir.clone());
-            }
-            if self.dirty.remove(&dir) || !self.tree.children.contains_key(&dir) {
-                let listing = read_dir_listing(root, &dir);
-                if listing.is_some() {
-                    self.tree.unreadable.remove(&dir);
-                } else {
-                    self.tree.unreadable.insert(dir.clone());
-                }
-                self.tree
-                    .children
-                    .insert(dir.clone(), listing.unwrap_or_default());
-            }
+            self.load(&dir);
             if let Some(children) = self.tree.children.get(&dir) {
                 for node in children {
                     let expanded = expanded_ancestors && self.tree.expanded.contains(&node.path);
-                    if node.is_dir && (expanded || self.tree.children.contains_key(&node.path)) {
+                    let keeps_listing =
+                        !node.is_ignored && self.tree.children.contains_key(&node.path);
+                    if node.is_dir && (expanded || keeps_listing) {
                         pending.push((node.path.clone(), expanded));
                     }
                 }
@@ -136,7 +203,7 @@ impl Scanner {
         }
         self.tree.expanded.retain(|path| {
             path.ancestors()
-                .take_while(|path| *path != root)
+                .take_while(|path| *path != root.as_path())
                 .all(|path| {
                     path.parent()
                         .and_then(|parent| self.tree.children.get(parent))
@@ -288,6 +355,8 @@ async fn run(
 ) {
     scanner.set_expanded(expanded);
     let mut revision = 0;
+    let mut refreshed = 0;
+    let mut expanded_all = None;
     let mut ready = true;
     let mut first_event: Option<Instant> = None;
     let mut deadline = Instant::now() + FALLBACK_INTERVAL;
@@ -310,6 +379,8 @@ async fn run(
                     tree: scanner.tree.clone(),
                     git: scanner.git.clone(),
                     watcher_available: scanner.watcher_available(),
+                    refreshed,
+                    expanded_all: expanded_all.take(),
                 })
                 .is_err()
             {
@@ -337,6 +408,26 @@ async fn run(
                     {
                         revision = next_revision;
                         scanner.set_expanded(expanded);
+                        ready = true;
+                    }
+                    Some(Request::ExpandAll {
+                        revision: next_revision,
+                        ticket,
+                    }) if next_revision >= revision => {
+                        revision = next_revision;
+                        let capped = scanner.expand_all(EXPAND_ALL_LIMIT, || {
+                            requests.is_closed() || updates.is_closed()
+                        });
+                        expanded_all = Some(ExpandAllOutcome { ticket, capped });
+                        ready = true;
+                    }
+                    Some(Request::Refresh(ticket)) => {
+                        scanner.rescan();
+                        refreshed = refreshed.max(ticket);
+                        ready = true;
+                    }
+                    Some(Request::Reload(dir)) => {
+                        scanner.dirty.insert(dir);
                         ready = true;
                     }
                     Some(Request::Changed(event)) => {

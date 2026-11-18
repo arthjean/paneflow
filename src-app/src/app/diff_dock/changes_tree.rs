@@ -317,7 +317,7 @@ impl PaneFlowApp {
                                 this.reveal_diff_file(path.clone(), cx);
                             }))
                             .child(file_icon_element(
-                                crate::file_icons::language_icon_path(&row.label),
+                                crate::file_icons::file_icon_path(&row.label),
                                 px(TREE_ICON),
                                 ui.muted,
                             ))

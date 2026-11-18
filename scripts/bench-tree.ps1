@@ -1,0 +1,94 @@
+<#
+.SYNOPSIS
+Runs the paneflow-tree-bench suite and compares it against its baseline.
+
+.DESCRIPTION
+Builds the paneflow test binary under the release profile, runs the
+tree_pipeline_benchmark suite, writes
+bench/results/tree-<stamp>-<sha>.json, and prints a Markdown table between
+the PANEFLOW_BENCH_TABLE_BEGIN and PANEFLOW_BENCH_TABLE_END markers.
+
+Environment variables: PANEFLOW_BENCH_OUT is the result file this script sets,
+PANEFLOW_BENCH_BASELINE_DIR is set to bench/baselines, which holds one
+directory per <os>-<arch> (the suite compares only against the baseline of its
+own platform and otherwise drops the comparison columns), PANEFLOW_BENCH_SHA, PANEFLOW_BENCH_DIRTY and
+PANEFLOW_BENCH_STAMP are recorded in the result, PANEFLOW_BENCH_ALLOW_DEBUG
+allows a debug-profile run that the suite otherwise refuses.
+
+.PARAMETER SetBaseline
+Copy the fresh result over bench/baselines/<os>-<arch>/tree.json. Refused
+from a dirty tracked worktree, and when the run reports a cpu_share below 0.90, because a contended run inflates every timing
+it would freeze.
+
+.PARAMETER Help
+Print this help and exit.
+
+.EXAMPLE
+scripts/bench-tree.ps1
+
+.EXAMPLE
+scripts/bench-tree.ps1 -SetBaseline
+#>
+[CmdletBinding()]
+param(
+    [switch]$SetBaseline,
+    [switch]$Help
+)
+
+$ErrorActionPreference = "Stop"
+
+if ($Help) {
+    Get-Help $PSCommandPath -Detailed
+    exit 0
+}
+
+Set-Location (Join-Path $PSScriptRoot "..")
+
+$sha = (git rev-parse --short=12 HEAD).Trim()
+$dirty = if ((git status --porcelain --untracked-files=no | Measure-Object).Count -gt 0) { "true" } else { "false" }
+if ($SetBaseline -and $dirty -eq "true") {
+    Write-Error "the tracked worktree is dirty: commit before recording a baseline, so it records a commit that exists. Check with: git status --porcelain --untracked-files=no"
+    exit 1
+}
+$stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+New-Item -ItemType Directory -Force -Path "bench/results" | Out-Null
+$root = (Get-Location).Path
+$out = Join-Path $root "bench/results/tree-$stamp-$sha.json"
+
+$env:PANEFLOW_BENCH_OUT = $out
+$env:PANEFLOW_BENCH_SHA = $sha
+$env:PANEFLOW_BENCH_DIRTY = $dirty
+$env:PANEFLOW_BENCH_STAMP = $stamp
+$env:PANEFLOW_BENCH_BASELINE_DIR = Join-Path $root "bench/baselines"
+
+cargo test --release --locked -p paneflow-app --bin paneflow `
+    app::files_sidebar::perf_bench::tree_pipeline_benchmark `
+    -- --ignored --exact --nocapture --test-threads=1
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+if (-not (Test-Path $out)) {
+    Write-Error "benchmark produced no result file: $out"
+    exit 1
+}
+Write-Host "result: $out"
+if ($SetBaseline) {
+    $cpuShare = (Get-Content $out -Raw | ConvertFrom-Json).cpu_share
+    if ($null -eq $cpuShare) {
+        Write-Error "the result carries no cpu_share, refusing to record a baseline from it: $out"
+        exit 1
+    }
+    if ($cpuShare -lt 0.9) {
+        Write-Error "cpu_share $cpuShare is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again."
+        exit 1
+    }
+    $platform = (Get-Content $out -Raw | ConvertFrom-Json).platform
+    if (-not $platform) {
+        Write-Error "the result names no platform, refusing to record a baseline from it: $out"
+        exit 1
+    }
+    New-Item -ItemType Directory -Force -Path "bench/baselines/$platform" | Out-Null
+    Copy-Item $out "bench/baselines/$platform/tree.json" -Force
+    Write-Host "baseline: bench/baselines/$platform/tree.json now points at $sha"
+}

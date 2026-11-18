@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use gpui::{AppContext, Context};
 
-use super::panel::FilesSidebar;
+use super::panel::{FilesEvent, FilesSidebar};
 use super::projection::FilesProjection;
 use super::worker::FilesWorker;
+
+pub(crate) const EXPAND_ALL_CAPPED: &str = "Expanded the first 2,000 folders";
 
 impl FilesSidebar {
     pub(super) fn start_worker(
@@ -25,6 +27,17 @@ impl FilesSidebar {
                     }
                     this.expanded = update.tree.expanded.clone();
                     this.git = update.git;
+                    if this.refreshing && update.refreshed == this.refresh_ticket {
+                        this.refreshing = false;
+                    }
+                    if let Some(outcome) = update.expanded_all
+                        && outcome.ticket == this.expand_all_ticket
+                    {
+                        this.expanding_all = false;
+                        if outcome.capped {
+                            cx.emit(FilesEvent::Toast(EXPAND_ALL_CAPPED.into()));
+                        }
+                    }
                     if !update.watcher_available {
                         tracing::debug!(target: "paneflow_app::files_sidebar", "files watcher unavailable; background polling remains active");
                     }
@@ -50,12 +63,21 @@ impl FilesSidebar {
         let tree = self.tree.clone();
         let git = self.git.clone();
         let expanded = self.expanded.clone();
-        let query = self.query.clone();
+        let hits = if self.query.is_empty() {
+            None
+        } else {
+            Some(self.search.hits.clone().unwrap_or_default())
+        };
         self.projection_task = Some(cx.spawn(async move |this, cx| {
             let projection = cx
-                .background_spawn(
-                    async move { FilesProjection::build(&tree, &expanded, &query, &git) },
-                )
+                .background_spawn(async move {
+                    FilesProjection::build(
+                        &tree,
+                        &expanded,
+                        hits.as_deref().map(Vec::as_slice),
+                        &git,
+                    )
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if !this.active || this.epoch != epoch || this.projection_revision != revision {

@@ -106,6 +106,8 @@ install -m 644 "$REPO_ROOT/assets/io.github.arthurdev44.paneflow.metainfo.xml" \
                "$APPDIR/usr/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml"
 install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
                "$APPDIR/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md"
+install -m 644 "$REPO_ROOT/THIRD_PARTY_NOTICES.md" \
+               "$APPDIR/usr/share/doc/paneflow/APP_THIRD_PARTY_NOTICES.md"
 
 export UPDATE_INFORMATION="gh-releases-zsync|arthjean|paneflow|latest|paneflow-*-${ARCH}.AppImage.zsync"
 

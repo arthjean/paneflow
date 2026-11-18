@@ -4,7 +4,7 @@ use gpui::{
 };
 
 use super::panel::{FilesEvent, FilesSidebar};
-use super::projection::FileRow;
+use super::projection::{DirState, FileRow};
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::app::files_git;
 use crate::app::files_tree;
@@ -12,6 +12,12 @@ use crate::ui_primitives::{LABEL_SM, squircle_skin};
 
 const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
 const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
+const LOADING_ICON: &str = "icons/dock/loader-circle.svg";
+pub(crate) const FOLDER_FAILED: &str = "Unable to load folder.";
+
+pub(super) fn is_dimmed(node: &crate::app::files_tree::FileNode) -> bool {
+    node.is_ignored || node.is_hidden
+}
 
 impl FilesSidebar {
     pub(super) fn files_row(
@@ -23,7 +29,7 @@ impl FilesSidebar {
     ) -> AnyElement {
         let node = &row.node;
         let refused = files_tree::editor_refuses(node);
-        let dimmed = node.is_ignored || node.is_hidden;
+        let dimmed = is_dimmed(node);
         let text_color = files_git::label_color(row.status, ui).unwrap_or(if refused {
             ui.muted
         } else {
@@ -46,7 +52,18 @@ impl FilesSidebar {
             )
         };
 
-        let slot = if is_dir {
+        let loading = row.state == DirState::Loading;
+        let failed = row.state == DirState::Failed;
+        let slot = if loading {
+            let spinner = crate::ui_primitives::spinning_icon(LOADING_ICON, px(ROW_SLOT), ui.muted);
+            #[cfg(test)]
+            let spinner = div()
+                .flex_none()
+                .debug_selector(|| format!("files-row-loading-{}", row.node.path.display()))
+                .child(spinner)
+                .into_any_element();
+            spinner
+        } else if is_dir {
             svg()
                 .size(px(ROW_SLOT))
                 .flex_none()
@@ -58,10 +75,13 @@ impl FilesSidebar {
                 .text_color(ui.muted)
                 .into_any_element()
         } else {
-            img(row.icon)
-                .size(px(ROW_SLOT))
-                .flex_none()
-                .into_any_element()
+            img(crate::file_icons::icon_path_for(
+                row.icon_token,
+                crate::file_icons::IconVariant::for_ui(ui),
+            ))
+            .size(px(ROW_SLOT))
+            .flex_none()
+            .into_any_element()
         };
 
         let guide_color = ui.text.opacity(0.08);
@@ -124,18 +144,17 @@ impl FilesSidebar {
             cx.stop_propagation();
         }));
 
-        let name = match row.highlight.clone() {
-            Some(range) => StyledText::new(row.label.clone())
-                .with_highlights([(
-                    range,
-                    HighlightStyle {
-                        color: Some(ui.accent),
-                        font_weight: Some(FontWeight::SEMIBOLD),
-                        ..Default::default()
-                    },
-                )])
-                .into_any_element(),
-            None => row.label.clone().into_any_element(),
+        let name = if row.highlights.is_empty() {
+            row.label.clone().into_any_element()
+        } else {
+            let style = HighlightStyle {
+                color: Some(ui.accent),
+                font_weight: Some(FontWeight::SEMIBOLD),
+                ..Default::default()
+            };
+            StyledText::new(row.label.clone())
+                .with_highlights(row.highlights.iter().map(|range| (range.clone(), style)))
+                .into_any_element()
         };
 
         let el = el
@@ -152,7 +171,19 @@ impl FilesSidebar {
                     .text_ellipsis()
                     .child(name),
             )
-            .when_some(indicator, |el, (letter, color)| {
+            .when(failed, |el| {
+                let notice = div()
+                    .flex_none()
+                    .text_size(LABEL_SM)
+                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                    .text_color(ui.muted)
+                    .child(FOLDER_FAILED);
+                #[cfg(test)]
+                let notice = notice
+                    .debug_selector(|| format!("files-row-failed-{}", row.node.path.display()));
+                el.child(notice)
+            })
+            .when_some(indicator.filter(|_| !failed), |el, (letter, color)| {
                 el.child(
                     div()
                         .flex_none()

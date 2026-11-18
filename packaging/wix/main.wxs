@@ -77,6 +77,10 @@
                             DiskId='1'
                             Source='LICENSE'
                             KeyPath='yes'/>
+                        <File Id='AppThirdPartyNotices'
+                            Name='APP_THIRD_PARTY_NOTICES.md'
+                            DiskId='1'
+                            Source='THIRD_PARTY_NOTICES.md'/>
                     </Component>
 
                     <!-- Static libghostty compliance inventory. These are

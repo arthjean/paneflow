@@ -6,15 +6,25 @@ comes from one of the suites below, run with the scripts described here, and
 the raw result of each run is archived next to the baseline it is compared
 against.
 
-There are four suites, one baseline per suite and per platform, and four
+There are five suites, one baseline per suite and per platform, and five
 result prefixes:
 
 | Suite | Test | Script | Baseline | Result files |
 |---|---|---|---|---|
 | `paneflow-terminal-bench` | `terminal::perf_bench::terminal_pipeline_benchmark` | `scripts/bench-terminal.sh` / `.ps1` | `bench/baselines/<os>-<arch>/terminal.json` | `bench/results/<stamp>-<sha>.json` |
 | `paneflow-editor-bench` | `app::diff_dock::code::perf_bench::editor_pipeline_benchmark` | `scripts/bench-editor.sh` / `.ps1` | `bench/baselines/<os>-<arch>/editor.json` | `bench/results/editor-<stamp>-<sha>.json` |
+| `paneflow-tree-bench` | `app::files_sidebar::perf_bench::tree_pipeline_benchmark` | `scripts/bench-tree.sh` / `.ps1` | `bench/baselines/<os>-<arch>/tree.json` | `bench/results/tree-<stamp>-<sha>.json` |
 | `paneflow-startup-bench` | `startup_bench::startup_first_frame_benchmark` | `scripts/bench-startup.sh` / `.ps1` | `bench/baselines/<os>-<arch>/startup.json` | `bench/results/startup-<stamp>-<sha>.json` |
 | `paneflow-persistent-bench` | `tests/persistent_baseline.rs::persistent_session_baseline` (crate `paneflow-host`) | `scripts/bench-persistent.sh` / `.ps1` | `bench/baselines/<os>-<arch>/persistent.json` | `bench/results/persistent-<stamp>-<sha>.json` |
+
+The tree suite measures the file tree of the dock on two flat folders, 50,000
+and then 300,000 entries, built in memory so a run reads nothing from disk:
+`rows_after_expand_*` rebuilds the rows of the expanded folder as the
+projection does after a folder is expanded, `apply_1000_changes_*` clones the
+snapshot the worker sends, removes 500 entries, adds 500, re-sorts the listing
+and rebuilds the rows, and `search_*` ranks every file against a query and
+keeps the first 200, as the tree search does after its typing pause. Like the
+editor suite it refuses a debug build.
 
 ### Baselines per platform
 

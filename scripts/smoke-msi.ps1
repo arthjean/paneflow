@@ -154,6 +154,7 @@ function Invoke-SmokeProcess {
 
 $complianceSources = [ordered]@{
     'LICENSE.txt' = 'LICENSE'
+    'APP_THIRD_PARTY_NOTICES.md' = 'THIRD_PARTY_NOTICES.md'
     'THIRD_PARTY_NOTICES.md' = 'native/libghostty/THIRD_PARTY_NOTICES.md'
     'libghostty-sbom.cdx.json' = 'native/libghostty/sbom.cdx.json'
     'libghostty-manifest.toml' = 'native/libghostty/manifest.toml'

@@ -91,7 +91,8 @@ fn gitignore_changes_refresh_nested_cached_listings() {
     assert!(scanner.changed(changed(root.join(".gitignore"))));
     assert!(scanner.scan(|| false));
 
-    assert!(scanner.tree.children[&nested].is_empty());
+    assert_eq!(scanner.tree.children[&nested].len(), 1);
+    assert!(scanner.tree.children[&nested][0].is_ignored);
 }
 
 #[test]
@@ -142,16 +143,23 @@ fn ignoring_loaded_collapsed_parent_prunes_descendants_and_their_preferences() {
     let inner = outer.join("inner");
     std::fs::create_dir_all(&inner).expect("nested directory");
     let mut scanner = scanner(root.clone(), vec![outer, inner.clone()]);
-    scanner.set_expanded(vec![inner]);
+    scanner.set_expanded(vec![inner.clone()]);
     assert!(scanner.scan(|| false));
     std::fs::write(root.join(".gitignore"), "outer/\n").expect("ignore rules");
 
     assert!(scanner.changed(changed(root.join(".gitignore"))));
     assert!(scanner.scan(|| false));
 
-    assert_eq!(scanner.tree.expanded, HashSet::from([root.clone()]));
     assert_eq!(scanner.tree.children.len(), 1);
-    assert!(scanner.tree.children[&root].is_empty());
+    let listed = &scanner.tree.children[&root];
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .any(|node| node.path == root.join("outer") && node.is_ignored)
+    );
+    assert!(!scanner.tree.children.contains_key(&root.join("outer")));
+    assert!(!scanner.tree.children.contains_key(&inner));
 }
 
 #[test]
@@ -273,4 +281,87 @@ fn an_unreadable_root_is_reported_and_clears_once_it_can_be_read() {
     assert!(scanner.scan(|| false));
     assert!(!scanner.tree.root_unreadable());
     assert_eq!(scanner.tree.children[&root].len(), 1);
+}
+
+#[test]
+fn an_ignored_folder_is_read_only_while_expanded_and_unwatched_once_collapsed() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    let target = root.join("target");
+    std::fs::create_dir_all(target.join("debug")).expect("target directory");
+    std::fs::write(root.join(".gitignore"), "target/\n").expect("ignore rules");
+    let mut scanner = scanner(root.clone(), Vec::new());
+    scanner.watched = HashSet::from([root.clone()]);
+    assert!(
+        scanner.tree.children[&root]
+            .iter()
+            .any(|node| node.path == target && node.is_ignored)
+    );
+    assert!(!scanner.tree.children.contains_key(&target));
+
+    scanner.set_expanded(vec![target.clone()]);
+    assert!(scanner.scan(|| false));
+    assert_eq!(scanner.tree.children[&target].len(), 1);
+    assert!(scanner.tree.children[&target][0].is_ignored);
+    scanner.watched.insert(target.clone());
+
+    scanner.set_expanded(Vec::new());
+    assert!(scanner.scan(|| false));
+    assert!(!scanner.tree.children.contains_key(&target));
+    assert!(!scanner.watched.contains(&target));
+}
+
+#[test]
+fn expand_all_skips_ignored_folders_and_stops_at_its_limit() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    std::fs::write(root.join(".gitignore"), "node_modules/\n").expect("ignore rules");
+    std::fs::create_dir_all(root.join("node_modules").join("pkg")).expect("ignored tree");
+    for name in ["a", "b", "c"] {
+        std::fs::create_dir_all(root.join(name).join("inner")).expect("tree");
+    }
+    let mut scanner = scanner(root.clone(), Vec::new());
+
+    assert!(!scanner.expand_all(EXPAND_ALL_LIMIT, || false));
+    assert!(scanner.scan(|| false));
+    let mut expanded: Vec<PathBuf> = scanner.tree.expanded.iter().cloned().collect();
+    expanded.sort();
+    let mut wanted = vec![root.clone()];
+    for name in ["a", "b", "c"] {
+        wanted.push(root.join(name));
+        wanted.push(root.join(name).join("inner"));
+    }
+    wanted.sort();
+    assert_eq!(expanded, wanted);
+    assert!(
+        !scanner
+            .tree
+            .children
+            .contains_key(&root.join("node_modules"))
+    );
+
+    let mut capped = scanner_state_without_expansion(&root);
+    assert!(capped.expand_all(4, || false));
+    assert_eq!(capped.tree.expanded.len(), 5, "the root plus four folders");
+}
+
+fn scanner_state_without_expansion(root: &std::path::Path) -> Scanner {
+    scanner(root.to_path_buf(), Vec::new())
+}
+
+#[test]
+fn a_refresh_rereads_every_loaded_folder() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    let nested = root.join("nested");
+    std::fs::create_dir(&nested).expect("nested directory");
+    let mut scanner = scanner(root.clone(), vec![nested.clone()]);
+    std::fs::write(nested.join("late.txt"), "late").expect("late file");
+    std::fs::write(root.join("top.txt"), "top").expect("top file");
+
+    scanner.rescan();
+    assert!(scanner.scan(|| false));
+
+    assert_eq!(scanner.tree.children[&nested].len(), 1);
+    assert_eq!(scanner.tree.children[&root].len(), 2);
 }

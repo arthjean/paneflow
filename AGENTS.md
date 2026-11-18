@@ -222,10 +222,13 @@ not measure. For the terminal pipeline, `scripts/bench-terminal.sh` (or
 and prints a comparison against `bench/baselines/<os>-<arch>/terminal.json`.
 For the code editor, `scripts/bench-editor.sh` (or `.ps1`) runs the suite in
 `src-app/src/app/diff_dock/code/perf_bench.rs` and compares against
-`editor.json` in the same directory. For the time to first frame,
+`editor.json` in the same directory. For the dock's file tree,
+`scripts/bench-tree.sh` (or `.ps1`) runs the suite in
+`src-app/src/app/files_sidebar/perf_bench.rs` against `tree.json`. For the
+time to first frame,
 `scripts/bench-startup.sh` (or `.ps1`) launches the release binary with the
 startup trace in `src-app/src/startup_trace.rs` and compares against
-`startup.json`. All three share the harness and the single
+`startup.json`. All four share the harness and the single
 `#[global_allocator]` in `src-app/src/bench_harness.rs`. A suite compares only
 against its own platform's baseline, and `--set-baseline` refuses a dirty
 tree; see [bench/README.md](bench/README.md).

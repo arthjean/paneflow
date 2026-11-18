@@ -1372,14 +1372,26 @@ pub(crate) fn editor_toast_label(label: &str) -> &str {
     label.strip_prefix("Open in ").unwrap_or(label)
 }
 
+pub(crate) fn find_editor_binary(command: &str) -> Option<std::path::PathBuf> {
+    find_editor_binary_in(command, &editor_search_paths())
+}
+
 fn resolve_editor_binary_in(
     command: &str,
     fallback_paths: &[std::path::PathBuf],
 ) -> std::path::PathBuf {
+    find_editor_binary_in(command, fallback_paths)
+        .unwrap_or_else(|| std::path::PathBuf::from(command))
+}
+
+fn find_editor_binary_in(
+    command: &str,
+    fallback_paths: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
     if let Ok(path) = which::which(command)
         && let Some(path) = normalize_editor_candidate(path)
     {
-        return path;
+        return Some(path);
     }
     if !fallback_paths.is_empty()
         && let Ok(joined) = std::env::join_paths(fallback_paths)
@@ -1388,11 +1400,11 @@ fn resolve_editor_binary_in(
             if let Ok(path) = which::which_in(name, Some(&joined), ".")
                 && let Some(path) = normalize_editor_candidate(path)
             {
-                return path;
+                return Some(path);
             }
         }
     }
-    std::path::PathBuf::from(command)
+    None
 }
 
 struct JetBrainsProduct {

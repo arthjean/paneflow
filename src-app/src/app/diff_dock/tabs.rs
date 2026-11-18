@@ -276,6 +276,7 @@ impl PaneFlowApp {
             {
                 self.toggle_files_sidebar(cx);
             }
+            self.reveal_active_file_in_tree(cx);
             self.save_session(cx);
             cx.notify();
         }

@@ -39,21 +39,74 @@ impl FilesSidebar {
         if !path.starts_with(&root) {
             return;
         }
-        if !self.query.is_empty() {
-            self.query.clear();
-            self.filter_input.update(cx, |input, cx| input.clear(cx));
+        self.reveal_generation = self.reveal_generation.wrapping_add(1);
+        self.reveal_task = None;
+        self.reveal_entry(path, true, cx);
+    }
+
+    pub(crate) fn reveal_file(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if !self.active {
+            return;
         }
-        for ancestor in path.ancestors().take_while(|ancestor| *ancestor != root) {
+        let root = self.tree.root.clone();
+        if path == root || !path.starts_with(&root) {
+            return;
+        }
+        if self.selected.as_deref() == Some(path) && self.projection.index(path).is_some() {
+            return;
+        }
+        self.reveal_generation = self.reveal_generation.wrapping_add(1);
+        let generation = self.reveal_generation;
+        let target = path.to_path_buf();
+        self.reveal_task = Some(cx.spawn(async move |this, cx| {
+            let probe = target.clone();
+            let ignored = smol::unblock(move || {
+                crate::app::files_tree::path_is_git_ignored(&root, &probe, false)
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.reveal_generation != generation {
+                    return;
+                }
+                this.reveal_task = None;
+                if this.active && !ignored {
+                    this.reveal_entry(&target, false, cx);
+                }
+            });
+        }));
+    }
+
+    fn reveal_entry(&mut self, path: &Path, expand_self: bool, cx: &mut Context<Self>) {
+        let root = self.tree.root.clone();
+        self.clear_search(cx);
+        let first = if expand_self {
+            Some(path)
+        } else {
+            path.parent()
+        };
+        for ancestor in first
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|ancestor| *ancestor != root)
+        {
             self.expanded.insert(ancestor.to_path_buf());
         }
-        self.revision = self.revision.wrapping_add(1);
-        if let Some(worker) = &self.worker {
-            worker.set_expanded(self.revision, self.expanded_paths());
-        }
+        self.send_expansion();
         self.selected = Some(path.to_path_buf());
         self.reveal_target = Some(path.to_path_buf());
         self.emit_expansion(cx);
         self.schedule_projection(false, cx);
+    }
+
+    pub(super) fn clear_search(&mut self, cx: &mut Context<Self>) {
+        if self.query.is_empty() && self.filter_input.read(cx).value().is_empty() {
+            return;
+        }
+        self.query.clear();
+        self.search.cancel();
+        self.search.hits = None;
+        self.search.truncated = false;
+        self.filter_input.update(cx, |input, cx| input.clear(cx));
     }
 
     pub(super) fn settle_reveal_target(&mut self) {
@@ -83,10 +136,7 @@ impl FilesSidebar {
         if !self.expanded.remove(path) {
             self.expanded.insert(path.to_path_buf());
         }
-        self.revision = self.revision.wrapping_add(1);
-        if let Some(worker) = &self.worker {
-            worker.set_expanded(self.revision, self.expanded_paths());
-        }
+        self.send_expansion();
         self.emit_expansion(cx);
         self.schedule_projection(true, cx);
     }
@@ -103,7 +153,18 @@ impl FilesSidebar {
         }
         self.reveal_target = None;
         self.select_path(path, cx);
-        if is_dir {
+        if is_dir && !self.query.is_empty() {
+            self.reveal_dir(path, cx);
+        } else if is_dir {
+            if self
+                .projection
+                .index(path)
+                .and_then(|index| self.projection.rows.get(index))
+                .is_some_and(|row| row.state == super::projection::DirState::Failed)
+            {
+                self.reload_dir(path.to_path_buf(), cx);
+                return;
+            }
             self.toggle_dir(path, cx);
         } else {
             cx.emit(FilesEvent::OpenFile {

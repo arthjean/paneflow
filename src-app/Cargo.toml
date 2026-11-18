@@ -259,6 +259,7 @@ gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ff
 raw-window-handle = "0.6"
 wayland-client = { version = "0.31.14", features = ["dlopen", "system"] }
 wayland-protocols = { version = "0.32.12", features = ["client", "staging"] }
+zbus = { version = "5.19", default-features = false, features = ["async-io"] }
 # macOS: libproc powers detect_ports() (US-006) - walks per-PID socket FDs
 # via proc_pidinfo/proc_pidfdinfo wrappers. The macOS-only gate keeps it
 # out of the Linux dep closure entirely.
@@ -532,6 +533,7 @@ assets = [
     ["target/release/paneflow", "usr/bin/", "755"],
     ["target/release/paneflow-host", "usr/bin/", "755"],
     ["../native/libghostty/THIRD_PARTY_NOTICES.md", "usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md", "644"],
+    ["../THIRD_PARTY_NOTICES.md", "usr/share/doc/paneflow/APP_THIRD_PARTY_NOTICES.md", "644"],
     ["../assets/paneflow.desktop", "usr/share/applications/paneflow.desktop", "644"],
     ["../assets/icons/paneflow-16.png",  "usr/share/icons/hicolor/16x16/apps/paneflow.png",     "644"],
     ["../assets/icons/paneflow-32.png",  "usr/share/icons/hicolor/32x32/apps/paneflow.png",     "644"],
@@ -593,6 +595,7 @@ assets = [
     { source = "target/release/paneflow",                                       dest = "/usr/bin/paneflow",                                                         mode = "755" },
     { source = "target/release/paneflow-host",                                  dest = "/usr/bin/paneflow-host",                                                    mode = "755" },
     { source = "native/libghostty/THIRD_PARTY_NOTICES.md",                      dest = "/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md",                              mode = "644" },
+    { source = "THIRD_PARTY_NOTICES.md",                                        dest = "/usr/share/doc/paneflow/APP_THIRD_PARTY_NOTICES.md",                          mode = "644" },
     { source = "assets/paneflow.desktop",                                       dest = "/usr/share/applications/paneflow.desktop",                                  mode = "644" },
     { source = "assets/icons/paneflow-16.png",                                  dest = "/usr/share/icons/hicolor/16x16/apps/paneflow.png",                          mode = "644" },
     { source = "assets/icons/paneflow-32.png",                                  dest = "/usr/share/icons/hicolor/32x32/apps/paneflow.png",                          mode = "644" },

@@ -240,7 +240,7 @@ fn render_diff_tab(
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "Untitled".to_string());
             Some((
-                crate::file_icons::language_icon_path(&name),
+                crate::file_icons::file_icon_path(&name),
                 truncate_tab_label(&name),
                 view.path().display().to_string(),
                 view.is_dirty(),
@@ -360,7 +360,7 @@ fn render_diff_tab(
 }
 
 fn icon_is_colored(icon: &str) -> bool {
-    icon.starts_with("icons/languages/")
+    crate::file_icons::is_file_icon_path(icon)
 }
 
 pub(super) fn file_icon_element(icon: &'static str, size: Pixels, color: Hsla) -> AnyElement {
@@ -773,7 +773,7 @@ mod tests {
             "logo.png",
             "LICENSE",
         ] {
-            let icon = crate::file_icons::language_icon_path(name);
+            let icon = crate::file_icons::file_icon_path(name);
             assert!(
                 icon_is_colored(icon),
                 "{name} resolves to {icon}, which would be tinted flat"

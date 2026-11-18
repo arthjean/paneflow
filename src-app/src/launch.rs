@@ -407,6 +407,11 @@ pub(crate) fn run() {
                 );
             }
             startup_trace::mark("fonts_loaded");
+            cx.background_spawn(async {
+                crate::file_icons::warm_file_icons();
+                crate::app::sidebar::context_menu::detect_installed_editors();
+            })
+            .detach();
 
             #[cfg(target_os = "macos")]
             {

@@ -1,11 +1,14 @@
 mod context_menu;
-mod filter;
 mod integration;
 mod keyboard;
 mod list;
+mod open_with;
 mod panel;
+#[cfg(test)]
+mod perf_bench;
 mod projection;
 mod row;
+mod search;
 mod view;
 mod watch;
 mod worker;
@@ -83,6 +86,20 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn reveal_active_file_in_tree(&mut self, cx: &mut Context<Self>) {
+        if !self.files_sidebar_open {
+            return;
+        }
+        let Some(super::diff_dock::DiffDockTab::File(view)) =
+            self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab)
+        else {
+            return;
+        };
+        let path = view.read(cx).path().to_path_buf();
+        self.files_sidebar
+            .update(cx, |panel, cx| panel.reveal_file(&path, cx));
+    }
+
     pub(crate) fn focus_files_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.files_sidebar
             .read(cx)
@@ -106,6 +123,7 @@ impl PaneFlowApp {
         self.files_sidebar_root = Some(root.clone());
         self.files_sidebar
             .update(cx, |panel, cx| panel.open(root, persisted, cx));
+        self.reveal_active_file_in_tree(cx);
     }
 
     pub(crate) fn close_files_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -200,6 +218,7 @@ impl PaneFlowApp {
         if self.files_sidebar_root.as_ref() == Some(&root)
             && self.files_sidebar_workspace == Some(ws.id)
         {
+            self.reveal_active_file_in_tree(cx);
             return;
         }
         let persisted = ws.files_expanded.clone();
@@ -208,6 +227,7 @@ impl PaneFlowApp {
         self.files_menu_open = None;
         self.files_sidebar
             .update(cx, |panel, cx| panel.open(root, persisted, cx));
+        self.reveal_active_file_in_tree(cx);
     }
 
     pub(crate) fn begin_files_tree_resize(

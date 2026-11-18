@@ -1,11 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use gpui::SharedString;
 
+use super::search::SearchHit;
 use crate::app::files_git::{GitStatuses, GitSummary};
 use crate::app::files_tree::{self, FileNode, FilesTreeState};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DirState {
+    Ready,
+    Loading,
+    Failed,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct FileRow {
@@ -13,11 +21,12 @@ pub(super) struct FileRow {
     pub depth: usize,
     pub expanded: bool,
     pub label: SharedString,
-    pub highlight: Option<Range<usize>>,
-    pub icon: &'static str,
+    pub highlights: Vec<Range<usize>>,
+    pub icon_token: &'static str,
     pub id: SharedString,
     pub group: SharedString,
     pub status: GitSummary,
+    pub state: DirState,
 }
 
 impl FileRow {
@@ -25,20 +34,22 @@ impl FileRow {
         node: &FileNode,
         depth: usize,
         expanded: bool,
-        label: String,
-        highlight: Option<Range<usize>>,
+        highlights: Vec<Range<usize>>,
+        state: DirState,
         git: &GitStatuses,
     ) -> Self {
+        let label = files_tree::node_name(node);
         Self {
             node: node.clone(),
             depth,
             expanded,
+            icon_token: crate::file_icons::file_icon_token(&label),
             label: label.into(),
-            highlight,
+            highlights,
             status: git.summary(&node.path),
-            icon: crate::file_icons::language_icon_path(&files_tree::node_name(node)),
             id: format!("files-row-{}", node.path.display()).into(),
             group: format!("files-row-group-{}", node.path.display()).into(),
+            state,
         }
     }
 }
@@ -49,32 +60,34 @@ pub(super) struct FilesProjection {
     indices: HashMap<PathBuf, usize>,
 }
 
+#[derive(Default)]
+struct Level<'a> {
+    dirs: BTreeMap<String, (&'a str, Level<'a>)>,
+    files: Vec<(String, &'a str, &'a SearchHit)>,
+}
+
 impl FilesProjection {
     pub fn build(
         tree: &FilesTreeState,
         expanded: &HashSet<PathBuf>,
-        query: &str,
+        search: Option<&[SearchHit]>,
         git: &GitStatuses,
     ) -> Self {
-        let rows: Vec<FileRow> = if query.is_empty() {
-            files_tree::flatten_visible_refs(&tree.root, expanded, &tree.children)
+        let rows = match search {
+            Some(hits) => search_rows(&tree.root, hits, git),
+            None => files_tree::flatten_visible_refs(&tree.root, expanded, &tree.children)
                 .into_iter()
                 .map(|row| {
                     FileRow::new(
                         row.node,
                         row.depth,
                         row.expanded,
-                        files_tree::node_name(row.node),
-                        None,
+                        Vec::new(),
+                        dir_state(tree, row.node, row.expanded),
                         git,
                     )
                 })
-                .collect()
-        } else {
-            super::filter::filter_rows(&tree.root, &tree.children, query)
-                .into_iter()
-                .map(|row| FileRow::new(row.node, 0, false, row.rel, row.highlight, git))
-                .collect()
+                .collect(),
         };
         let indices = rows
             .iter()
@@ -103,5 +116,96 @@ impl FilesProjection {
         self.rows
             .get(previous_index.min(self.rows.len().saturating_sub(1)))
             .map(|row| row.node.path.clone())
+    }
+}
+
+fn dir_state(tree: &FilesTreeState, node: &FileNode, expanded: bool) -> DirState {
+    if !node.is_dir {
+        DirState::Ready
+    } else if tree.unreadable.contains(&node.path) {
+        DirState::Failed
+    } else if expanded && !tree.children.contains_key(&node.path) {
+        DirState::Loading
+    } else {
+        DirState::Ready
+    }
+}
+
+fn search_rows(root: &Path, hits: &[SearchHit], git: &GitStatuses) -> Vec<FileRow> {
+    let mut top = Level::default();
+    for hit in hits {
+        let mut parts: Vec<&str> = hit
+            .rel
+            .split(std::path::is_separator)
+            .filter(|part| !part.is_empty())
+            .collect();
+        let Some(name) = parts.pop() else {
+            continue;
+        };
+        let mut level = &mut top;
+        for part in parts {
+            level = &mut level
+                .dirs
+                .entry(part.to_ascii_lowercase())
+                .or_insert_with(|| (part, Level::default()))
+                .1;
+        }
+        level.files.push((name.to_ascii_lowercase(), name, hit));
+    }
+    let mut rows = Vec::new();
+    emit_level(root.to_path_buf(), &mut top, 0, git, &mut rows);
+    rows
+}
+
+fn emit_level(
+    dir: PathBuf,
+    level: &mut Level<'_>,
+    depth: usize,
+    git: &GitStatuses,
+    rows: &mut Vec<FileRow>,
+) {
+    for (name, child) in level.dirs.values_mut() {
+        let path = dir.join(*name);
+        let node = FileNode {
+            path: path.clone(),
+            is_dir: true,
+            is_ignored: false,
+            is_hidden: false,
+            size: 0,
+        };
+        rows.push(FileRow::new(
+            &node,
+            depth,
+            true,
+            Vec::new(),
+            DirState::Ready,
+            git,
+        ));
+        emit_level(path, child, depth + 1, git, rows);
+    }
+    level.files.sort_by(|a, b| a.0.cmp(&b.0));
+    for (_, name, hit) in &level.files {
+        let node = FileNode {
+            path: dir.join(name),
+            is_dir: false,
+            is_ignored: false,
+            is_hidden: false,
+            size: 0,
+        };
+        let start = hit.rel.len() - name.len();
+        let highlights = hit
+            .highlights
+            .iter()
+            .filter(|range| range.end > start)
+            .map(|range| range.start.max(start) - start..range.end - start)
+            .collect();
+        rows.push(FileRow::new(
+            &node,
+            depth,
+            false,
+            highlights,
+            DirState::Ready,
+            git,
+        ));
     }
 }

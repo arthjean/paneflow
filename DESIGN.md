@@ -491,8 +491,16 @@ sidebar footer settings button uses the matching `settings.svg` gear.
 | 16 | Sidebar tab icon, callout icon, diff dock tab icon, diff file header chevron, status icon and rename arrow, hunk separator icon, usage ring in the sidebar capsule |
 | 18 | Empty-state glyph |
 
-File type icons come from `src-app/src/file_icons.rs`, which maps extensions
-to `icons/languages/`.
+File type icons come from `src-app/src/file_icons.rs`, which resolves a file
+name to one of 79 tokens: the exact lowercase name, then Paneflow's and T3
+Code's extensions from the longest compound one (`test.ts` before `ts`), then
+the built-in names, then the built-in extensions, then `default`. Each token
+has a 16 px SVG under `icons/files/light/` and `icons/files/dark/` with its
+colors baked in, and a row takes the folder of its theme (a `base` lighter
+than 0.5 takes `light`). The tree, the dock tabs, the Changes tree, the file
+finder and the path picker share that resolver. Folders keep their chevrons
+and never get an icon. `scripts/generate-file-icons.ts` regenerates both
+folders and the tables from a T3 Code checkout.
 
 The usage ring (`ring` and `concentric_rings` in
 `src-app/src/ui_primitives/ring.rs`) is the one gauge glyph of the app: a track
@@ -1262,9 +1270,26 @@ is read off the render thread and states `Loading folder…`,
 `This folder is empty.` or `This folder is no longer available.`, capped at
 300 entries. The tree starts below that toolbar beside a 1 px left rule that is
 also its resize handle, at the width of 3.1. A root that cannot be read shows
-`Unable to load folder.` and a `Retry` button. The search field
-has an 8 px outer inset, 28 px height, 8 px corners and a 1 px border. Tree
-rows are 28 px tall with 13 px labels, 14 px icons, 18 px indentation and
+`Unable to load folder.` and a `Retry` button. The tree's own toolbar is
+40 px tall with a 6 px inset and 4 px gaps, and holds, in this order,
+`Refresh files`, the `Search files` field and `Expand all` or `Collapse all`;
+the two buttons are 28 px squircles at `ROW_RADIUS` with 14 px muted icons
+(`menu/refresh`, `menu/expand-all`, `menu/collapse-all`), reachable from the
+keyboard and labelled by their tooltip. While a refresh rereads every loaded
+folder its icon turns once per 900 ms; `Expand all` opens every folder git
+does not ignore, at most 2,000, and then toasts
+`Expanded the first 2,000 folders`. The search field fills the rest of the
+row at 28 px height, 8 px corners and a 1 px border. It searches the names of
+every file of the project, read off the render thread with `.gitignore`
+applied, 120 ms after the last keystroke, up to 256 characters and 200
+results: the tree then shows only the matches under their expanded parent
+folders, matched characters in `accent` semibold, with
+`More matches available. Refine your search.` in 12 px muted under the
+toolbar when more exist and `No matching files.` when none do. Escape empties
+the field and brings back the folds of before the search. A folder being read
+shows the 14 px loader in place of its chevron, still under reduce motion; a
+folder whose read failed shows `Unable to load folder.` at the right of its
+row in 11 px muted, and a click on the row reads it again. Tree rows are 28 px tall with 13 px labels, 14 px icons, 18 px indentation and
 6 px selection corners. These dimensions follow the Codex App reference
 provided for this surface and are contextual exceptions to the rail skin.
 
@@ -1275,8 +1300,21 @@ untracked path, and falls back to `text`. A file also shows a status letter at
 the right of the row, 11 px bold in a 14 px slot: `!` for a conflict, `U` for
 untracked, then `D` and `M` for the worktree side before the same two for the
 index, and `A` for a staged addition. A directory shows a 6 px dot at 0.5
-opacity in that slot instead, rolling up every descendant. Ignored paths never
-reach the tree, so they never carry a status.
+opacity in that slot instead, rolling up every descendant. Entries git
+ignores, and on Windows those with the hidden attribute, show at
+`DIMMED_OPACITY` 0.55 and still open; a dot file shows at full opacity, and
+only `.git` stays out of the tree. An ignored folder is read and watched only
+while it is expanded. The tree selects, expands the parents of and centers
+the file of the active tab without taking focus, unless that file lies outside
+the root or is ignored.
+
+A right click on a row opens a menu of 5.6: `Open with Default App`, the
+platform's reveal entry (`Reveal in Finder`, `Reveal in File Explorer`,
+`Reveal in File Manager`), `Open With` and the editors found on the machine
+(disabled when none is), then `Copy Path` and `Copy Relative Path`. On Linux
+the reveal asks `org.freedesktop.FileManager1` to select the file and opens
+the parent folder when the service does not answer. A launch that fails
+toasts the application and its error.
 
 The tree button sits immediately after Editor Controls in the file toolbar.
 It and `secondary-alt-f` toggle the embedded tree; on the Files tab the

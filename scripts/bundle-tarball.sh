@@ -57,6 +57,7 @@ install -m 644 "$REPO_ROOT/LICENSE"   "$APP/LICENSE"
 install -m 644 "$REPO_ROOT/README.md" "$APP/README.md"
 install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
                "$APP/THIRD_PARTY_NOTICES.md"
+install -m 644 "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP/APP_THIRD_PARTY_NOTICES.md"
 install -m 755 "$SCRIPT_DIR/tarball-install.sh" "$APP/install.sh"
 
 MTIME="${SOURCE_DATE_EPOCH:-$(date +%s)}"
