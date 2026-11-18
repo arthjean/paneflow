@@ -65,10 +65,10 @@
     {
       "id": "EP-008",
       "title": "The whole CI is green before merge",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     }
   ],
   "stories": [
@@ -364,37 +364,37 @@
       "id": "US-021",
       "title": "Every required run_tests job is green on the branch head",
       "epic": "EP-008",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
       "started_at": "2026-11-18",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-022",
       "title": "The other workflows the branch triggers are green",
       "epic": "EP-008",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
       "started_at": "2026-11-18",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-023",
       "title": "The branch is ready to merge",
       "epic": "EP-008",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-021", "US-022"],
       "started_at": "2026-11-18",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     }
   ]
 }
