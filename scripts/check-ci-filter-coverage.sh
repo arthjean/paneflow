@@ -149,7 +149,7 @@ for source in "${sources[@]}"; do
       continue
     fi
     if [ ! -e "$ROOT/$resolved" ]; then
-      echo "::notice file=$source,line=${line_number:-1}::$source:${line_number:-1}: '$cited' names no file in the repository, so no build that succeeds reads it"
+      echo "::notice file=$source,line=${line_number:-1}::$source:${line_number:-1}: '$cited' names no file in the checkout, so the path filter has no tracked input to watch"
       absent=$((absent + 1))
       continue
     fi

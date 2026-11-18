@@ -667,6 +667,46 @@ linux_leg() {
   printf '%s' "$dir"
 }
 
+filter_coverage_repo() {
+  local dir="$WORK/filter-coverage/$1"
+  mkdir -p "$dir/.github/workflows" "$dir/app/src" "$dir/app/assets" "$dir/other"
+  cat > "$dir/.github/workflows/run_tests.yml" <<'EOF'
+jobs:
+  changes:
+    steps:
+      - uses: dorny/paths-filter
+        with:
+          filters: |
+            rust:
+              - 'app/**'
+            docs:
+              - 'docs/**'
+EOF
+  printf '[package]\nname = "app"\n' > "$dir/app/Cargo.toml"
+  echo asset > "$dir/app/assets/a.txt"
+  echo outside > "$dir/other/b.txt"
+  git -C "$dir" init -q
+  printf '%s' "$dir"
+}
+
+filter_coverage_cases() {
+  local check="$ROOT/scripts/check-ci-filter-coverage.sh"
+  local dir
+
+  dir="$(filter_coverage_repo covered)"
+  printf 'const A: &str = include_str!("../assets/a.txt");\n' > "$dir/app/src/lib.rs"
+  expect "a cited file inside the filter passes" 0 "1 citations checked against 1 patterns, 0 naming no file" "$check" "$dir"
+
+  dir="$(filter_coverage_repo absent)"
+  printf 'const F: &[u8] = include_bytes!("../../fonts/x.ttf");\n' > "$dir/app/src/lib.rs"
+  expect "a cited file absent from the checkout is a notice, not an error" 0 "::notice file=app/src/lib.rs,line=1::.*'../../fonts/x.ttf' names no file in the checkout" "$check" "$dir"
+  expect "an absent citation is counted in the summary" 0 "1 citations checked against 1 patterns, 1 naming no file" "$check" "$dir"
+
+  dir="$(filter_coverage_repo uncovered)"
+  printf 'const B: &str = include_str!("../../other/b.txt");\n' > "$dir/app/src/lib.rs"
+  expect "a present file outside the filter still fails" 1 "build input 'other/b.txt' \(cited as '../../other/b.txt'\) is not covered" "$check" "$dir"
+}
+
 release_staging_cases() {
   local stage="$ROOT/scripts/stage-linux-assets.sh"
   local staged="$ROOT/scripts/check-staged-assets.sh"
@@ -1181,6 +1221,7 @@ render_cask_cases
 published_stream_cases
 release_publication_cases
 helper_size_cases
+filter_coverage_cases
 glibc_floor_cases
 release_staging_cases
 signing_detection_cases
