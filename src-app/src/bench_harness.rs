@@ -1000,9 +1000,10 @@ mod tests {
         );
     }
 
-    const HARNESS_BASELINES: [&str; 5] = [
+    const HARNESS_BASELINES: [&str; 6] = [
         "terminal",
         "editor",
+        "tree",
         "startup",
         "terminal-alloc",
         "editor-alloc",
