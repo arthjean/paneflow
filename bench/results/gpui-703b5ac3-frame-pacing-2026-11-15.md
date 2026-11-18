@@ -118,6 +118,37 @@ The new pin is 0.07 ms slower at the median (3.12 against 3.05 ms, means of
 the run medians) and at the p95 (3.70 against 3.63 ms). **Within the 2 ms
 budget.** Every keystroke reached the test window.
 
+### Focused keystroke latency on the final commit (2026-11-18)
+
+Re-measured by US-027 on the final branch commit, `650569c4`, against
+`9f606d3aa`, with debug builds from two worktrees whose probe thresholds were
+lowered to 0, as above. The driver followed the same procedure with three
+differences: the runs alternated between the pins (old, new, then new, old,
+and so on), the pane ran the login shell (`zsh`) instead of the seeded
+`/bin/bash` (seen on the new pin, not checked on the old one), and the driver
+unset the `PANEFLOW_*`
+variables of the pane it was started from, without which the test instance
+refused `paneflow send` as coming from an unknown session. Before each run the
+driver waited 20 s and required 15 s without input, since the synthetic keys
+reset GNOME's idle time; no run was skipped and every key reached the test
+window.
+
+| Pin | Run | Keystrokes | Median | p95 | Max |
+|---|---|---|---|---|---|
+| old `9f606d3aa` | 1 | 201 | 3.32 ms | 3.78 ms | 4.60 ms |
+| old `9f606d3aa` | 2 | 201 | 3.21 ms | 3.90 ms | 4.57 ms |
+| old `9f606d3aa` | 3 | 201 | 3.26 ms | 3.86 ms | 4.44 ms |
+| old `9f606d3aa` | 4 | 201 | 2.88 ms | 3.52 ms | 4.05 ms |
+| old `9f606d3aa` | 5 | 201 | 3.37 ms | 3.67 ms | 4.10 ms |
+| new `650569c4` | 1 | 201 | 3.45 ms | 3.80 ms | 4.64 ms |
+| new `650569c4` | 2 | 201 | 3.35 ms | 3.87 ms | 4.57 ms |
+| new `650569c4` | 3 | 201 | 3.11 ms | 3.81 ms | 6.14 ms |
+| new `650569c4` | 4 | 201 | 3.04 ms | 3.54 ms | 4.13 ms |
+| new `650569c4` | 5 | 201 | 3.51 ms | 3.72 ms | 4.14 ms |
+
+The new pin is 0.08 ms slower at the median (3.29 against 3.21 ms, means of
+the run medians) and equal at the p95 (3.75 ms). **Within the 2 ms budget.**
+
 ### Unfocused frame rate
 
 | Pin | Run | Focused, paints/s | Unfocused, paints/s | Unfocused, busiest second |
