@@ -2860,10 +2860,20 @@ mod tests {
         let mut cx = TestAppContext::build_with_text_system(
             gpui::TestDispatcher::new(0),
             None,
-            gpui_platform::current_platform(true).text_system(),
+            platform_text_system(),
         );
         assert_a_barely_fitting_title_never_flips(&mut cx);
         cx.quit();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn platform_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+        std::sync::Arc::new(gpui_apple::AppleTextSystem::new())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn platform_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+        gpui_platform::current_platform(true).text_system()
     }
 
     fn assert_a_barely_fitting_title_never_flips(cx: &mut TestAppContext) {

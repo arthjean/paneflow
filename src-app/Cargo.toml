@@ -399,6 +399,12 @@ winresource = "0.1.31"
 # frame through the real wgpu shaders and read its pixels back.
 gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", features = ["test-support"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# The CoreText text system on its own: `MacPlatform::new` asserts the main
+# thread, and libtest runs every test on a spawned one, so a test that measures
+# through the platform text system builds the one `MacPlatform` would own.
+gpui_apple = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", features = ["font-kit"] }
+
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.59", features = [
     # Job accounting in the `external_open` workspace-launch test.

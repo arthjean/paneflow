@@ -4411,6 +4411,7 @@ dependencies = [
  "flate2",
  "futures",
  "gpui",
+ "gpui_apple",
  "gpui_platform",
  "gpui_wgpu",
  "ignore",
