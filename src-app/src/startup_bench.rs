@@ -321,6 +321,11 @@ fn startup_first_frame_benchmark() {
         "no app binary at {}; build it first or set {EXE_ENV}",
         exe.display()
     );
+    if let Err(error) = paneflow_host::bootstrap::resolve_host_executable(&exe) {
+        panic!(
+            "{error}: a user's startup launches the host beside the app, so the suite refuses to measure one without it"
+        );
+    }
     let runs = std::env::var(RUNS_ENV)
         .ok()
         .and_then(|value| value.parse::<usize>().ok())

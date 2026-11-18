@@ -28,7 +28,7 @@ export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
 export PANEFLOW_BENCH_BASELINE_DIR="$root/bench/baselines"
 
-cargo build --release --locked -p paneflow-app
+cargo build --release --locked -p paneflow-app -p paneflow-host
 
 cargo test --release --locked -p paneflow-app --bin paneflow \
   startup_bench::startup_first_frame_benchmark \
