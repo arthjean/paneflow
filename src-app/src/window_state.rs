@@ -116,7 +116,7 @@ pub(crate) fn windowed_bounds(window: &Window) -> Option<Bounds<Pixels>> {
         return None;
     }
     let inner = window.inner_window_bounds().get_bounds().size;
-    let size = restorable_size(inner, window.window_decorations())?;
+    let size = restorable_size(inner, crate::window_chrome::csd::decorations(window))?;
     Some(Bounds::new(
         window.window_bounds().get_bounds().origin,
         size,

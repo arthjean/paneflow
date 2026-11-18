@@ -94,7 +94,10 @@ fn compositor_blur() -> CompositorBlur {
 }
 
 fn window_appearance(window: &Window, translucent: bool) -> WindowBackgroundAppearance {
-    let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
+    let client_decorated = matches!(
+        crate::window_chrome::csd::decorations(window),
+        Decorations::Client { .. }
+    );
     let surface = surface_kind(window);
     let blur_requested = BLUR_REQUESTED.load(Ordering::Relaxed);
     let blur = compositor_blur();

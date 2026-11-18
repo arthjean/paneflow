@@ -376,7 +376,10 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
-        let is_csd = matches!(window.window_decorations(), Decorations::Client { .. });
+        let is_csd = matches!(
+            crate::window_chrome::csd::decorations(window),
+            Decorations::Client { .. }
+        );
         let ui = crate::theme::ui_colors();
         let control_hover_bg = crate::app::constants::sidebar_tab_active_background();
         let is_maximized = window.is_maximized();

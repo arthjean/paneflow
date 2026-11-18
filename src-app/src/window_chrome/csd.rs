@@ -175,7 +175,7 @@ pub(crate) fn client_side_window_shell(
     background: Hsla,
     border_color: Hsla,
 ) -> impl IntoElement {
-    let decorations = window.window_decorations();
+    let decorations = crate::window_chrome::csd::decorations(window);
     let (_, corner_radii) = client_frame(decorations);
     window.set_client_inset(declared_client_inset(decorations, window.is_fullscreen()));
     window.set_client_corner_radii(corner_radii);
@@ -790,4 +790,23 @@ mod tests {
             (px(0.0), Corners::default())
         );
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static DECORATIONS_OVERRIDE: std::cell::Cell<Option<Decorations>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn override_decorations_for_test(decorations: Option<Decorations>) {
+    DECORATIONS_OVERRIDE.set(decorations);
+}
+
+pub(crate) fn decorations(window: &gpui::Window) -> Decorations {
+    #[cfg(test)]
+    if let Some(decorations) = DECORATIONS_OVERRIDE.get() {
+        return decorations;
+    }
+    window.window_decorations()
 }

@@ -433,7 +433,7 @@ impl PaneFlowApp {
             BubbleView::Intro {
                 from: intro_source(bubble_content_size(
                     window.viewport_size(),
-                    window.window_decorations(),
+                    crate::window_chrome::csd::decorations(window),
                 )),
             }
         } else {
@@ -1114,7 +1114,10 @@ impl PaneFlowApp {
                 let eased = spring(progress);
                 let frame = intro_frame(
                     from,
-                    bubble_content_size(window.viewport_size(), window.window_decorations()),
+                    bubble_content_size(
+                        window.viewport_size(),
+                        crate::window_chrome::csd::decorations(window),
+                    ),
                     eased,
                 );
                 let radius = lerp(f32::from(PANEL_RADIUS), PILL_HEIGHT / 2., eased);

@@ -186,10 +186,11 @@ impl Render for PaneFlowApp {
         );
         let title_bar_h =
             (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
-        let content_frame =
-            crate::window_chrome::csd::client_content_frame(window.window_decorations());
+        let content_frame = crate::window_chrome::csd::client_content_frame(
+            crate::window_chrome::csd::decorations(window),
+        );
         crate::window_chrome::csd::set_window_outline(crate::window_chrome::csd::window_outline(
-            window.window_decorations(),
+            crate::window_chrome::csd::decorations(window),
         ));
         let content_left = f32::from(content_frame.left);
         let content_width =
@@ -297,8 +298,9 @@ impl Render for PaneFlowApp {
         let welcome_left_gutter = crate::app::constants::PANE_OUTER_GUTTER * panel_edge_share;
         let grid_edges = crate::layout::grid_edges(!self.diff_dock_beside_grid());
         let panes_in_title_band = flush_shell && !settings_open && terminal_surface_mounted;
-        let rounded_window_corners =
-            crate::window_chrome::csd::rounded_window_corners(window.window_decorations());
+        let rounded_window_corners = crate::window_chrome::csd::rounded_window_corners(
+            crate::window_chrome::csd::decorations(window),
+        );
         let flush_window_corners = crate::window_chrome::title_band::window_corners_under_the_panel(
             rounded_window_corners,
             crate::window_chrome::title_band::OpenWindowEdges {

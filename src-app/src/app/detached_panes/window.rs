@@ -355,7 +355,7 @@ impl Render for DetachedPaneWindow {
         let render_controls = !cfg!(target_os = "macos")
             && !window.is_fullscreen()
             && (matches!(
-                window.window_decorations(),
+                crate::window_chrome::csd::decorations(window),
                 gpui::Decorations::Client { .. }
             ) || cfg!(target_os = "windows"));
         let right = render_controls
