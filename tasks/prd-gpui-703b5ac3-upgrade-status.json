@@ -316,7 +316,7 @@
       "id": "US-027",
       "title": "Re-baseline the Linux benchmarks on Fedora",
       "epic": "EP-007",
-      "status": "IN_PROGRESS",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-019"],
