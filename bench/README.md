@@ -87,20 +87,19 @@ cache now copies, hashes and compares each visible line where GPUI's
 `shape_line_by_hash` trusted a caller hash
 ([summary](results/gpui-bump-37faef81-2026-10-28.md)).
 
-Since 2026-11-16, every `linux-x86_64` baseline except `persistent.json`
-points at `d78d92927`, the GPUI upgrade to `zed@703b5ac3`: `terminal`,
-`editor` and `startup` from runs on the same Fedora machine (CPU share 1.00),
-`terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
+Since 2026-11-18, every `linux-x86_64` baseline except `persistent.json`
+points at `650569c4`, the last code commit of the GPUI upgrade to
+`zed@703b5ac3`: `terminal`, `editor` and `startup` from `--set-baseline` runs
+on a clean tree on the Fedora machine (CPU share 1.00 for the two in-process
+suites), `terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
 --refresh-alloc-baselines` on the same commit (US-027 of
-`tasks/prd-gpui-703b5ac3-upgrade.md`). `terminal.json` now carries the three
-`paths_*` cases that measure per-paint path building (badges within the 0.4 ms
-budget, terminal strokes 14 to 17 % slower than on `37faef81` on Fedora). The
-same suites on `9f606d3aa`, the commit before the upgrade, put every timing
-within 10 % except two bimodal 10 ns medians, with `prepaint_60_rows_warm` the
-slowest at +8 % (accepted), once `d78d92927` removed a regression US-013 had
-brought into the code editor's open path; one allocation column moved,
-`keystroke_3_7mb_plain` (4.0 to 4.05)
-([summary](results/gpui-bump-703b5ac3-2026-11-16.md)).
+`tasks/prd-gpui-703b5ac3-upgrade.md`). Interleaved runs of the three suites
+against `9f606d3aa`, the commit before the upgrade, put every timing at or
+below the old pin within the noise measured on the same machine, the
+`paths_*` stroke cases 52 and 81 % faster; the allocation columns that moved
+are the two `paths_*` cases (now 0), `keystroke_3_7mb_plain` (4.05 back to
+4.0) and `pipeline_corpus_mib_s` (3.83 to 3.54, grapheme clustering since
+`38726003`) ([summary](results/gpui-bump-703b5ac3-2026-11-16.md)).
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
