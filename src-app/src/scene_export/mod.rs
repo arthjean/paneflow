@@ -149,7 +149,7 @@ fn export(
         cx.set_text_rendering_mode(gpui::TextRenderingMode::Grayscale);
         crate::assets::Assets.load_fonts(cx)
     })?;
-    let window = cx.open_window(outer, |window, cx| {
+    let window = HeadlessAppContext::open_window(&mut cx, outer, |window, cx| {
         window.set_scale_factor(1.0);
         crate::app::window::mount_paneflow_app(window, cx)
     })?;

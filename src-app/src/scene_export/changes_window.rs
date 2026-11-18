@@ -4,7 +4,6 @@
 //! while EP-010 was certified: HEAD at `BASE`, files at `WORK`, uncommitted.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context as _, Result, anyhow, ensure};
 
@@ -29,10 +28,7 @@ pub(crate) const OPEN_FILE: &str = "xtask/src/parity/mod.rs";
 pub(crate) const TOP_FILE: (&str, f32) = ("xtask/src/differential/coverage.rs", 18.);
 
 fn git(repo: &Path, args: &[&str]) -> Result<()> {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
+    let status = crate::git_fixture::command(repo, args)
         .status()
         .with_context(|| format!("running git {args:?}"))?;
     ensure!(status.success(), "git {args:?} failed: {status}");
@@ -53,11 +49,13 @@ pub(crate) fn repository(out: &Path) -> Result<PathBuf> {
     if repo.exists() {
         std::fs::remove_dir_all(&repo)?;
     }
-    let status = Command::new("git")
-        .args(["clone", "--quiet", "--no-checkout"])
-        .arg(&source)
-        .arg(&repo)
-        .status()?;
+    let source_arg = source.to_string_lossy().into_owned();
+    let repo_arg = repo.to_string_lossy().into_owned();
+    let status = crate::git_fixture::command(
+        out,
+        &["clone", "--quiet", "--no-checkout", &source_arg, &repo_arg],
+    )
+    .status()?;
     ensure!(status.success(), "cloning {}", source.display());
     git(&repo, &["checkout", "--quiet", "-B", "main", BASE])?;
     git(&repo, &["checkout", WORK, "--", "."])?;
