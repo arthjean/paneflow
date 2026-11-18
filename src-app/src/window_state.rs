@@ -34,6 +34,20 @@ struct PersistedWindowState {
     agents_section_collapsed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sidebar_width: Option<f32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_width"
+    )]
+    files_tree_width: Option<f32>,
+}
+
+fn lenient_width<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_f64().map(|width| width as f32))
 }
 
 impl PersistedWindowState {
@@ -49,12 +63,24 @@ impl PersistedWindowState {
                 .filter(|height| is_valid_section_height(*height)),
             agents_section_collapsed: agents.collapsed.then_some(true),
             sidebar_width: sidebar_width.filter(|width| is_valid_section_height(*width)),
+            files_tree_width: None,
         }
+    }
+
+    fn with_files_tree_width(mut self, width: Option<f32>) -> Self {
+        self.files_tree_width =
+            width.filter(|width| crate::app::files_sidebar::valid_files_tree_width(*width));
+        self
     }
 
     fn sidebar_width(&self) -> Option<f32> {
         self.sidebar_width
             .filter(|width| is_valid_section_height(*width))
+    }
+
+    fn files_tree_width(&self) -> Option<f32> {
+        self.files_tree_width
+            .filter(|width| crate::app::files_sidebar::valid_files_tree_width(*width))
     }
 
     fn agents_section(&self) -> AgentsSectionState {
@@ -73,6 +99,7 @@ static AGENTS_SECTION: Mutex<AgentsSectionState> = Mutex::new(AgentsSectionState
     collapsed: false,
 });
 static SIDEBAR_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
+static FILES_TREE_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
 
 pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
     let loaded = load();
@@ -88,6 +115,7 @@ pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
         .map(|state| state.agents_section())
         .unwrap_or_default();
     *sidebar_width_guard() = loaded.and_then(|state| state.sidebar_width());
+    *files_tree_width_guard() = loaded.and_then(|state| state.files_tree_width());
     let visible_bounds = cx.primary_display().map(|display| display.visible_bounds());
     let display_size = visible_bounds.map(|bounds| bounds.size).unwrap_or_else(|| {
         size(
@@ -168,6 +196,14 @@ pub(crate) fn record_sidebar_width(width: Option<f32>) {
     *sidebar_width_guard() = width;
 }
 
+pub(crate) fn files_tree_width() -> Option<f32> {
+    *files_tree_width_guard()
+}
+
+pub(crate) fn record_files_tree_width(width: Option<f32>) {
+    *files_tree_width_guard() = width;
+}
+
 pub(crate) fn save() {
     if let Some(path) = state_path() {
         save_to(&path);
@@ -178,7 +214,8 @@ fn save_to(path: &std::path::Path) {
     let Some(size) = *last_windowed_size_guard() else {
         return;
     };
-    let state = PersistedWindowState::new(size, *agents_section_guard(), *sidebar_width_guard());
+    let state = PersistedWindowState::new(size, *agents_section_guard(), *sidebar_width_guard())
+        .with_files_tree_width(*files_tree_width_guard());
     if let Err(error) = write_state(path, &state) {
         log::warn!("window state: failed to persist: {error}");
     }
@@ -248,6 +285,12 @@ fn agents_section_guard() -> MutexGuard<'static, AgentsSectionState> {
 
 fn sidebar_width_guard() -> MutexGuard<'static, Option<f32>> {
     SIDEBAR_WIDTH.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn files_tree_width_guard() -> MutexGuard<'static, Option<f32>> {
+    FILES_TREE_WIDTH
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]
@@ -462,6 +505,43 @@ mod tests {
         )
         .expect("seed");
         assert!(load_from(&oversized).is_none());
+    }
+
+    #[test]
+    fn the_files_tree_width_round_trips_through_the_window_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+
+        write_state(
+            &path,
+            &PersistedWindowState::new(size(), AgentsSectionState::default(), Some(372.))
+                .with_files_tree_width(Some(320.)),
+        )
+        .expect("write");
+
+        assert_eq!(read_json(&path)["files_tree_width"], 320.);
+        let loaded = load_from(&path).expect("loaded");
+        assert_eq!(loaded.files_tree_width(), Some(320.));
+        assert_eq!(loaded.sidebar_width(), Some(372.));
+    }
+
+    #[test]
+    fn an_out_of_range_or_non_numeric_files_tree_width_falls_back_and_keeps_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        for raw in ["9000", "12", "-3", "\"wide\"", "null", "[1]"] {
+            std::fs::write(
+                &path,
+                format!(
+                    r#"{{"width": 1400.0, "height": 950.0, "sidebar_width": 300.0, "files_tree_width": {raw}}}"#
+                ),
+            )
+            .expect("seed");
+            let loaded = load_from(&path).expect("the file stays readable");
+            assert_eq!(loaded.files_tree_width(), None, "{raw}");
+            assert_eq!(loaded.sidebar_width(), Some(300.), "{raw}");
+            assert_eq!((loaded.size.width, loaded.size.height), (1400., 950.));
+        }
     }
 
     struct BoundsProbe;

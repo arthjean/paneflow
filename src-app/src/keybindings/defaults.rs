@@ -381,6 +381,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("!Terminal && !TextInput && !CodeEditor"),
     },
     DefaultBinding {
+        key: "secondary-p",
+        action_name: "open_file_finder",
+        context: Some("!Terminal && !TextInput"),
+    },
+    DefaultBinding {
         key: "secondary-shift-p",
         action_name: "open_command_palette",
         context: None,

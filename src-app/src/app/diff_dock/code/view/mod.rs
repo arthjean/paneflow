@@ -175,6 +175,8 @@ pub(crate) struct CodeView {
     hovered_marker: Option<usize>,
     popup: Option<MarkerPopup>,
     highlight_budget: Duration,
+    load_deferred: bool,
+    pending_scroll_rows: Option<f64>,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -185,6 +187,40 @@ impl CodeView {
         view.observe_blink(cx);
         view.start_load(cx);
         view
+    }
+
+    pub(crate) fn deferred(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let mut view = Self::with_state(path, CodeLoadState::Loading, None, cx);
+        view.observe_blink(cx);
+        view.load_deferred = true;
+        view
+    }
+
+    fn start_deferred_load(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.load_deferred) {
+            self.start_load(cx);
+        }
+    }
+
+    pub(crate) fn current_scroll_rows(&self) -> f64 {
+        self.pending_scroll_rows
+            .unwrap_or_else(|| self.scroll.rows())
+    }
+
+    pub(crate) fn restore_scroll_rows(&mut self, rows: f64) {
+        self.pending_scroll_rows = (rows.is_finite() && rows > 0.0).then_some(rows);
+    }
+
+    fn apply_pending_scroll(scroll: &CodeScroll, pending: &mut Option<f64>, window: &mut Window) {
+        let Some(rows) = *pending else {
+            return;
+        };
+        if scroll.viewport_height() <= 0.0 {
+            window.request_animation_frame();
+            return;
+        }
+        scroll.set_rows(rows);
+        *pending = None;
     }
 
     fn with_state(
@@ -238,6 +274,8 @@ impl CodeView {
             hovered_marker: None,
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
+            load_deferred: false,
+            pending_scroll_rows: None,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -301,6 +339,8 @@ impl CodeView {
             hovered_marker: None,
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
+            load_deferred: false,
+            pending_scroll_rows: None,
             _watcher: None,
             _watch_bridge: None,
         }

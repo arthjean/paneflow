@@ -62,6 +62,12 @@ impl PaneFlowApp {
                         .into_iter()
                         .zip(ws.tabs())
                         .map(|(mut tab_session, tab)| {
+                            tab_session.dock = self.dock_session_for_tab(
+                                tab.id,
+                                &ws.cwd,
+                                tab.files_sidebar_open,
+                                cx,
+                            );
                             tab_session.pull_request = self.tab_pull_request(ws, tab).map(|pr| {
                                 paneflow_config::schema::PullRequestSession {
                                     branch: self.tab_row_branch(ws, tab),
@@ -549,12 +555,15 @@ impl PaneFlowApp {
                         Self::spawn_pane_from_surfaces(ws_id, surfaces, &ws_cwd, cx)
                     })
                 });
-                tabs.push(Tab::restored(
+                let mut tab = Tab::restored(
                     tab_session.title.clone(),
                     restored_tab_title_source(tab_session, &ws_session.custom_buttons),
                     root,
                     restored_tab_worktree(tab_session),
-                ));
+                );
+                tab.files_sidebar_open = tab_session.dock.as_ref().is_some_and(|dock| dock.tree);
+                tab.restored_dock = tab_session.dock.clone();
+                tabs.push(tab);
             }
             let mut workspace =
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);

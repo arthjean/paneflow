@@ -72,6 +72,7 @@ impl FilesSidebar {
                 if std::mem::take(&mut this.pending_reveal) {
                     this.reveal_selection();
                 }
+                this.settle_reveal_target();
                 #[cfg(test)]
                 {
                     this.projection_count += 1;

@@ -295,6 +295,10 @@ impl Workspace {
         &self.tabs
     }
 
+    pub fn tabs_mut(&mut self) -> &mut [Tab] {
+        &mut self.tabs
+    }
+
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
     }
@@ -464,6 +468,7 @@ impl Workspace {
                     .agent_completion_notification
                     .is_unread_for(&tab.surface_ids(cx)),
                 pull_request: None,
+                dock: None,
             })
             .collect()
     }

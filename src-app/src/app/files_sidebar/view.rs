@@ -1,7 +1,9 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    Render, Styled, Window, div, px,
+    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
 };
+
+use crate::ui_primitives::AccessibleControlExt;
 
 use super::list;
 use super::panel::FilesSidebar;
@@ -44,7 +46,50 @@ impl FilesSidebar {
             .into_any_element()
     }
 
+    fn files_unreadable_body(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let retry = div()
+            .id("files-sidebar-retry")
+            .flex_none()
+            .h(px(26.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(ui.border)
+            .cursor(CursorStyle::PointingHand)
+            .hover(|style| style.bg(ui.subtle))
+            .text_size(crate::ui_primitives::BODY)
+            .text_color(ui.text)
+            .accessible_control(gpui::accesskit::Role::Button, "Retry")
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.retry(cx);
+            }))
+            .child("Retry");
+        #[cfg(test)]
+        let retry = retry.debug_selector(|| "files-sidebar-retry".into());
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(8.))
+            .p(px(14.))
+            .text_size(px(12.))
+            .text_color(ui.muted)
+            .child("Unable to load folder.")
+            .child(retry)
+            .into_any_element()
+    }
+
     fn files_sidebar_body(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
+        if self.tree.root_unreadable() {
+            return self.files_unreadable_body(ui, cx);
+        }
         if self.projection.rows.is_empty() {
             let message = if self.projection_task.is_some() && !self.tree.root_listing_ready() {
                 "Loading files..."

@@ -192,6 +192,32 @@ pub struct TabSession {
     pub unread: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request: Option<PullRequestSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dock: Option<DockSession>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DockSession {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub open: bool,
+    #[serde(default)]
+    pub tabs: Vec<DockTabSession>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub active: usize,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tree: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DockTabSession {
+    Changes,
+    Files,
+    File {
+        path: String,
+    },
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,6 +241,7 @@ impl TabSession {
             worktree_raw: None,
             unread: false,
             pull_request: None,
+            dock: None,
         }
     }
 }
@@ -399,6 +426,7 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                     worktree_raw: None,
                     unread: false,
                     pull_request: None,
+                    dock: None,
                 });
             }
         }

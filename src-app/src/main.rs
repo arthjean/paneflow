@@ -191,6 +191,13 @@ struct DiffDockState {
     pub(crate) h_offsets: std::rc::Rc<Vec<f32>>,
     pub(crate) hover: Option<crate::app::diff_dock::DiffHover>,
     pub(crate) header_hover: Option<usize>,
+    pub(crate) tab_menu: Option<crate::app::diff_dock::DiffTabMenu>,
+    pub(crate) closed_files: crate::app::diff_dock::ClosedFileTabs,
+    pub(crate) crumb_menu: Option<crate::app::diff_dock::CrumbMenu>,
+    pub(crate) crumb_generation: u64,
+    pub(crate) crumb_scroll: gpui::ScrollHandle,
+    pub(crate) crumb_scroll_pending: bool,
+    pub(crate) restoring: std::collections::HashMap<u64, paneflow_config::schema::DockSession>,
 }
 
 struct PaneFlowApp {
@@ -308,6 +315,12 @@ struct PaneFlowApp {
     agent_sessions: AgentSessionsState,
     files_sidebar_open: bool,
     files_sidebar_animation: Option<SidebarWidthAnimation>,
+    files_tree_width: f32,
+    files_tree_resize: Option<(f32, f32)>,
+    files_tree_resize_focus: FocusHandle,
+    file_finder: Option<app::file_finder::FileFinderState>,
+    file_finder_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    dock_file_opens: app::file_finder::FileOpenHistory,
     files_sidebar: Entity<app::files_sidebar::FilesSidebar>,
     files_sidebar_root: Option<std::path::PathBuf>,
     files_sidebar_workspace: Option<u64>,

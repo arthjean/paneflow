@@ -88,6 +88,7 @@ actions!(
         ToggleDiffDockMaximize,
         DiffNewFileTab,
         DiffNewTerminalTab,
+        OpenFileFinder,
         OpenCommandPalette,
         CloneRepository,
         InsertPath,

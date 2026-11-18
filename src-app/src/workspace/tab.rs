@@ -96,6 +96,7 @@ pub struct Tab {
     pub worktree: Option<std::path::PathBuf>,
     worktree_generation: u64,
     pub files_sidebar_open: bool,
+    pub restored_dock: Option<paneflow_config::schema::DockSession>,
 }
 
 impl Tab {
@@ -109,6 +110,7 @@ impl Tab {
             worktree: None,
             worktree_generation: 0,
             files_sidebar_open: false,
+            restored_dock: None,
         }
     }
 

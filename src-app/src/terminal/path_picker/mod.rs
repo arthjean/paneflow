@@ -5,6 +5,7 @@ mod index;
 mod listing;
 #[cfg(test)]
 mod perf_bench;
+pub(crate) mod project_files;
 mod render;
 mod search;
 pub(in crate::terminal) mod wsl;

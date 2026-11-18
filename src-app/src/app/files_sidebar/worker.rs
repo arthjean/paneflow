@@ -7,7 +7,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smol::channel::{Receiver, Sender};
 
 use crate::app::files_git::{self, GitStatuses};
-use crate::app::files_tree::{FilesTreeState, read_dir_sorted};
+use crate::app::files_tree::{FilesTreeState, read_dir_listing};
 
 const DEBOUNCE: Duration = Duration::from_millis(40);
 const MAX_LATENCY: Duration = Duration::from_millis(160);
@@ -115,9 +115,15 @@ impl Scanner {
                 self.dirty.insert(dir.clone());
             }
             if self.dirty.remove(&dir) || !self.tree.children.contains_key(&dir) {
+                let listing = read_dir_listing(root, &dir);
+                if listing.is_some() {
+                    self.tree.unreadable.remove(&dir);
+                } else {
+                    self.tree.unreadable.insert(dir.clone());
+                }
                 self.tree
                     .children
-                    .insert(dir.clone(), read_dir_sorted(root, &dir));
+                    .insert(dir.clone(), listing.unwrap_or_default());
             }
             if let Some(children) = self.tree.children.get(&dir) {
                 for node in children {
@@ -140,6 +146,7 @@ impl Scanner {
                 })
         });
         self.tree.children.retain(|dir, _| active.contains(dir));
+        self.tree.unreadable.retain(|dir| active.contains(dir));
         self.watched.retain(|dir| {
             if active.contains(dir) {
                 return true;

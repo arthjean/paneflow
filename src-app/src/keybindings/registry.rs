@@ -633,6 +633,13 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         group: ShortcutGroup::Diff,
     },
     ActionMeta {
+        name: "open_file_finder",
+        factory: || Box::new(crate::OpenFileFinder),
+        context: "!Terminal && !TextInput",
+        description: "Open a project file",
+        group: ShortcutGroup::Diff,
+    },
+    ActionMeta {
         name: "open_command_palette",
         factory: || Box::new(crate::OpenCommandPalette),
         context: "",

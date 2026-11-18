@@ -45,6 +45,7 @@ pub(crate) struct FilesSidebar {
     pub(super) updates_task: Option<Task<()>>,
     pub(super) worker: Option<FilesWorker>,
     pub(super) pending_reveal: bool,
+    pub(super) reveal_target: Option<PathBuf>,
     #[cfg(test)]
     pub(super) render_count: usize,
     #[cfg(test)]
@@ -92,6 +93,7 @@ impl FilesSidebar {
             updates_task: None,
             worker: None,
             pending_reveal: false,
+            reveal_target: None,
             #[cfg(test)]
             render_count: 0,
             #[cfg(test)]
@@ -120,6 +122,15 @@ impl FilesSidebar {
         cx.notify();
     }
 
+    pub(crate) fn retry(&mut self, cx: &mut Context<Self>) {
+        if !self.active {
+            return;
+        }
+        let root = self.tree.root.clone();
+        let expanded = self.expanded_paths();
+        self.open(root, expanded, cx);
+    }
+
     pub(crate) fn deactivate(&mut self) {
         self.active = false;
         self.epoch = self.epoch.wrapping_add(1);
@@ -128,6 +139,7 @@ impl FilesSidebar {
         self.updates_task = None;
         self.projection_task = None;
         self.pending_reveal = false;
+        self.reveal_target = None;
     }
 
     pub(crate) fn release_snapshot(&mut self, cx: &mut Context<Self>) {

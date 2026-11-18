@@ -12,6 +12,7 @@ mod input;
 pub mod kitty;
 mod marks;
 mod path_picker;
+pub(crate) use path_picker::project_files;
 #[cfg(test)]
 mod perf_bench;
 mod pty_session;

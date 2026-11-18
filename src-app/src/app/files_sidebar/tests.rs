@@ -335,3 +335,91 @@ fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collaps
         Some(root.join("file-0002.rs"))
     );
 }
+
+#[test]
+fn the_tree_width_follows_the_pointer_within_its_bounds_and_spares_the_content() {
+    use super::{FILES_TREE_DEFAULT_WIDTH, files_tree_fit};
+    assert_eq!(FILES_TREE_DEFAULT_WIDTH, 256.);
+    assert_eq!(files_tree_fit(300., 1200.), 300.);
+    assert_eq!(files_tree_fit(100., 1200.), 160.);
+    assert_eq!(files_tree_fit(900., 1200.), 560.);
+    assert_eq!(
+        files_tree_fit(400., 600.),
+        344.,
+        "the content keeps 256 px beside the tree"
+    );
+    assert_eq!(
+        files_tree_fit(400., 300.),
+        160.,
+        "a dock too narrow for both keeps the tree at its minimum"
+    );
+    assert_eq!(files_tree_fit(f32::NAN, 1200.), FILES_TREE_DEFAULT_WIDTH);
+}
+
+#[test]
+fn the_tree_handle_steps_by_sixteen_and_jumps_to_its_bounds() {
+    use super::{FilesTreeStep, stepped_files_tree_width};
+    let step = |key| FilesTreeStep::from_key(key).expect("bound key");
+    assert_eq!(stepped_files_tree_width(256., step("left")), 272.);
+    assert_eq!(stepped_files_tree_width(256., step("right")), 240.);
+    assert_eq!(stepped_files_tree_width(256., step("home")), 160.);
+    assert_eq!(stepped_files_tree_width(256., step("end")), 560.);
+    assert_eq!(stepped_files_tree_width(552., step("left")), 560.);
+    assert_eq!(stepped_files_tree_width(168., step("right")), 160.);
+    assert_eq!(FilesTreeStep::from_key("up"), None);
+}
+
+#[gpui::test]
+fn an_unreadable_root_offers_a_retry_instead_of_an_empty_tree(cx: &mut TestAppContext) {
+    let mut snapshot = FilesTreeState::root_shell(PathBuf::from("workspace"));
+    snapshot
+        .children
+        .insert(PathBuf::from("workspace"), Vec::new());
+    snapshot.unreadable.insert(PathBuf::from("workspace"));
+    let (_panel, _, cx) = harness(cx, snapshot);
+    assert!(
+        cx.debug_bounds("files-sidebar-retry").is_some(),
+        "the Retry button is shown"
+    );
+}
+
+#[gpui::test]
+fn revealing_a_folder_expands_its_ancestors_and_selects_it(cx: &mut TestAppContext) {
+    let mut snapshot = tree(400);
+    let root = snapshot.root.clone();
+    let src = root.join("src");
+    let inner = src.join("inner");
+    snapshot
+        .children
+        .get_mut(&root)
+        .unwrap()
+        .push(node(src.clone(), true));
+    snapshot
+        .children
+        .insert(src.clone(), vec![node(inner.clone(), true)]);
+    snapshot
+        .children
+        .insert(inner.clone(), vec![node(inner.join("deep.rs"), false)]);
+    let (panel, _, cx) = harness(cx, snapshot);
+    assert!(!panel.read_with(cx, |panel, _| panel.expanded.contains(&src)));
+
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_dir(&inner, cx)));
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _| {
+        assert!(panel.expanded.contains(&src));
+        assert!(panel.expanded.contains(&inner));
+        assert_eq!(panel.selected.as_deref(), Some(inner.as_path()));
+        assert!(panel.reveal_target.is_none(), "the reveal has landed");
+        assert!(panel.projection.index(&inner).is_some());
+    });
+
+    let outside = PathBuf::from("elsewhere").join("dir");
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_dir(&outside, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.selected.clone()),
+        Some(inner),
+        "a folder outside the tree leaves the selection alone"
+    );
+}

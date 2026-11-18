@@ -257,3 +257,20 @@ fn a_failed_git_status_keeps_the_previous_statuses() {
     assert!(Arc::ptr_eq(&scanner.git, &previous));
     assert_eq!(scanner.git.summary(&tracked).worktree.modified, 1);
 }
+
+#[test]
+fn an_unreadable_root_is_reported_and_clears_once_it_can_be_read() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("not-yet");
+    let mut scanner = scanner(root.clone(), Vec::new());
+    assert!(scanner.tree.root_unreadable());
+    assert!(scanner.tree.root_listing_ready());
+    assert!(scanner.tree.children[&root].is_empty());
+
+    std::fs::create_dir(&root).expect("root directory");
+    std::fs::write(root.join("main.rs"), "fn main() {}").expect("file");
+    scanner.rescan();
+    assert!(scanner.scan(|| false));
+    assert!(!scanner.tree.root_unreadable());
+    assert_eq!(scanner.tree.children[&root].len(), 1);
+}

@@ -12,12 +12,16 @@ mod worker;
 
 use std::path::PathBuf;
 
-use gpui::{Context, Focusable, Pixels, Window, px};
+use gpui::{AppContext, Context, Focusable, Pixels, Window, px};
 
 use crate::{PaneFlowApp, ToggleFilesSidebar};
 pub(crate) use panel::{FilesEvent, FilesSidebar};
 
-pub(crate) const FILES_SIDEBAR_WIDTH: f32 = 250.;
+pub(crate) const FILES_TREE_DEFAULT_WIDTH: f32 = 256.;
+pub(crate) const FILES_TREE_MIN_WIDTH: f32 = 160.;
+pub(crate) const FILES_TREE_MAX_WIDTH: f32 = 560.;
+pub(crate) const FILES_TREE_CONTENT_MIN_WIDTH: f32 = 256.;
+pub(crate) const FILES_TREE_KEY_STEP: f32 = 16.;
 pub(super) const ROW_HEIGHT: Pixels = px(28.);
 pub(super) const INDENT_STEP: f32 = 18.;
 pub(super) const ROW_SLOT: f32 = 14.;
@@ -39,6 +43,12 @@ impl PaneFlowApp {
             return;
         }
         self.sync_files_sidebar_session(cx);
+        if self.diff_dock_visible() && self.diff_files_tab_active() && self.files_sidebar_open {
+            let index = self.diff_dock.diff_active_tab;
+            self.remove_diff_tab(index, cx);
+            self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
+            return;
+        }
         if self.diff_dock_visible() && self.diff_file_tab_active() && self.files_sidebar_open {
             self.close_files_sidebar(cx);
             self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
@@ -110,17 +120,17 @@ impl PaneFlowApp {
         }
     }
 
-    fn files_sidebar_width_at(&self, now: std::time::Instant) -> f32 {
+    fn files_sidebar_progress_at(&self, now: std::time::Instant) -> f32 {
         if let Some(animation) = self.files_sidebar_animation {
             animation.width_at(now)
         } else if self.files_sidebar_open {
-            FILES_SIDEBAR_WIDTH
+            1.
         } else {
             0.
         }
     }
 
-    pub(crate) fn rendered_files_sidebar_width(
+    pub(crate) fn rendered_files_sidebar_progress(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -139,7 +149,7 @@ impl PaneFlowApp {
                 animation.width_at(now)
             }
         } else if self.files_sidebar_open {
-            FILES_SIDEBAR_WIDTH
+            1.
         } else {
             0.
         }
@@ -147,14 +157,15 @@ impl PaneFlowApp {
 
     fn set_files_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
         let now = std::time::Instant::now();
-        let from_width = self.files_sidebar_width_at(now);
+        let from_width = self.files_sidebar_progress_at(now);
         self.files_sidebar_open = open;
         if let Some(ws) = self.active_workspace_mut() {
             ws.active_tab_mut().files_sidebar_open = open;
         }
-        let to_width = if open { FILES_SIDEBAR_WIDTH } else { 0. };
+        self.save_session(cx);
+        let to_width = if open { 1. } else { 0. };
         self.files_sidebar_animation =
-            if (from_width - to_width).abs() > crate::PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA {
+            if !crate::ui_primitives::reduce_motion() && (from_width - to_width).abs() > 0.01 {
                 Some(crate::SidebarWidthAnimation {
                     from_width,
                     to_width,
@@ -198,6 +209,103 @@ impl PaneFlowApp {
         self.files_sidebar
             .update(cx, |panel, cx| panel.open(root, persisted, cx));
     }
+
+    pub(crate) fn begin_files_tree_resize(
+        &mut self,
+        cursor_x: f32,
+        shown_width: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.files_tree_resize = Some((cursor_x, clamp_files_tree_width(shown_width)));
+        cx.notify();
+    }
+
+    pub(crate) fn drag_files_tree_resize(&mut self, cursor_x: f32, cx: &mut Context<Self>) {
+        let Some((anchor_x, anchor_width)) = self.files_tree_resize else {
+            return;
+        };
+        let width = clamp_files_tree_width(anchor_width + anchor_x - cursor_x);
+        if width != self.files_tree_width {
+            self.files_tree_width = width;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn end_files_tree_resize(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.files_tree_resize.take().is_none() {
+            return false;
+        }
+        self.persist_files_tree_width(cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn step_files_tree_width(
+        &mut self,
+        step: FilesTreeStep,
+        shown_width: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let width = stepped_files_tree_width(shown_width, step);
+        if width != self.files_tree_width {
+            self.files_tree_width = width;
+            self.persist_files_tree_width(cx);
+            cx.notify();
+        }
+    }
+
+    fn persist_files_tree_width(&self, cx: &mut Context<Self>) {
+        crate::window_state::record_files_tree_width(Some(self.files_tree_width));
+        cx.background_spawn(async { crate::window_state::save() })
+            .detach();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FilesTreeStep {
+    Wider,
+    Narrower,
+    Minimum,
+    Maximum,
+}
+
+impl FilesTreeStep {
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "left" => Some(Self::Wider),
+            "right" => Some(Self::Narrower),
+            "home" => Some(Self::Minimum),
+            "end" => Some(Self::Maximum),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn clamp_files_tree_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.clamp(FILES_TREE_MIN_WIDTH, FILES_TREE_MAX_WIDTH)
+    } else {
+        FILES_TREE_DEFAULT_WIDTH
+    }
+}
+
+pub(crate) fn valid_files_tree_width(width: f32) -> bool {
+    width.is_finite() && (FILES_TREE_MIN_WIDTH..=FILES_TREE_MAX_WIDTH).contains(&width)
+}
+
+pub(crate) fn stepped_files_tree_width(width: f32, step: FilesTreeStep) -> f32 {
+    match step {
+        FilesTreeStep::Wider => clamp_files_tree_width(width + FILES_TREE_KEY_STEP),
+        FilesTreeStep::Narrower => clamp_files_tree_width(width - FILES_TREE_KEY_STEP),
+        FilesTreeStep::Minimum => FILES_TREE_MIN_WIDTH,
+        FilesTreeStep::Maximum => FILES_TREE_MAX_WIDTH,
+    }
+}
+
+pub(crate) fn files_tree_fit(preferred: f32, available: f32) -> f32 {
+    let preferred = clamp_files_tree_width(preferred);
+    let room = (available - FILES_TREE_CONTENT_MIN_WIDTH).max(0.);
+    preferred.min(room).max(FILES_TREE_MIN_WIDTH)
 }
 
 #[cfg(test)]

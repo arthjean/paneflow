@@ -11,6 +11,7 @@ const RUNS_ENV: &str = "PANEFLOW_BENCH_STARTUP_RUNS";
 const DEFAULT_RUNS: usize = 10;
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 const RESTORE_WORKSPACES: usize = 3;
+const RESTORE_DOCK_FILES: usize = 50;
 const STEP_NOTE: &str =
     "wall-clock median across launches of the time between this mark and the previous one";
 const TOTAL_NOTE: &str =
@@ -20,20 +21,27 @@ const TOTAL_NOTE: &str =
 enum Scenario {
     Welcome,
     Restore,
+    RestoreDock,
     #[cfg(unix)]
     StaleSocket,
 }
 
 impl Scenario {
     #[cfg(unix)]
-    const ALL: [Scenario; 3] = [Scenario::Welcome, Scenario::Restore, Scenario::StaleSocket];
+    const ALL: [Scenario; 4] = [
+        Scenario::Welcome,
+        Scenario::Restore,
+        Scenario::RestoreDock,
+        Scenario::StaleSocket,
+    ];
     #[cfg(not(unix))]
-    const ALL: [Scenario; 2] = [Scenario::Welcome, Scenario::Restore];
+    const ALL: [Scenario; 3] = [Scenario::Welcome, Scenario::Restore, Scenario::RestoreDock];
 
     fn prefix(self) -> &'static str {
         match self {
             Scenario::Welcome => "welcome",
             Scenario::Restore => "restore3",
+            Scenario::RestoreDock => "restore3_dock50",
             #[cfg(unix)]
             Scenario::StaleSocket => "stale_socket",
         }
@@ -42,7 +50,7 @@ impl Scenario {
     #[cfg(unix)]
     fn before_launch(self, home: &Path) {
         match self {
-            Scenario::Welcome | Scenario::Restore => {}
+            Scenario::Welcome | Scenario::Restore | Scenario::RestoreDock => {}
             Scenario::StaleSocket => leave_stale_socket(home),
         }
     }
@@ -55,8 +63,20 @@ impl Scenario {
             Scenario::Welcome => Vec::new(),
             #[cfg(unix)]
             Scenario::StaleSocket => Vec::new(),
-            Scenario::Restore => (0..RESTORE_WORKSPACES)
+            Scenario::Restore | Scenario::RestoreDock => (0..RESTORE_WORKSPACES)
                 .map(|index| {
+                    let dock = (matches!(self, Scenario::RestoreDock) && index == 0).then(|| {
+                        serde_json::json!({
+                            "open": true,
+                            "active": RESTORE_DOCK_FILES - 1,
+                            "tabs": (0..RESTORE_DOCK_FILES)
+                                .map(|file| serde_json::json!({
+                                    "kind": "file",
+                                    "path": dock_fixture_file(file),
+                                }))
+                                .collect::<Vec<_>>(),
+                        })
+                    });
                     serde_json::json!({
                         "id": fixture_workspace_id(index),
                         "title": format!("bench-{index}"),
@@ -75,7 +95,8 @@ impl Scenario {
                                     "focus": true,
                                     "session": fixture_session_id(index)
                                 }]
-                            }
+                            },
+                            "dock": dock
                         }]
                     })
                 })
@@ -122,6 +143,10 @@ fn leave_stale_socket(home: &Path) {
     );
 }
 
+fn dock_fixture_file(index: usize) -> String {
+    format!("bench-file-{index:02}.rs")
+}
+
 fn fixture_workspace_id(index: usize) -> String {
     format!("00000000-0000-4000-8000-00000000{index:04x}")
 }
@@ -149,6 +174,12 @@ fn app_binary() -> PathBuf {
 
 fn seed_home(home: &Path, scenario: Scenario, cwd: &Path) {
     std::fs::create_dir_all(home).expect("fixture home");
+    if matches!(scenario, Scenario::RestoreDock) {
+        let body = "fn main() {\n    println!(\"bench\");\n}\n".repeat(200);
+        for file in 0..RESTORE_DOCK_FILES {
+            std::fs::write(cwd.join(dock_fixture_file(file)), &body).expect("fixture dock file");
+        }
+    }
     let session = serde_json::to_string_pretty(&scenario.session(cwd)).expect("session json");
     std::fs::write(home.join("session.json"), session).expect("fixture session");
     std::fs::write(home.join("paneflow.json"), "{}\n").expect("fixture config");
@@ -456,6 +487,22 @@ mod tests {
         let restore = Scenario::Restore.session(cwd);
         assert_eq!(restore.workspaces.len(), super::RESTORE_WORKSPACES);
         assert!(restore.workspaces.iter().all(|ws| ws.tabs.len() == 1));
+        assert!(
+            restore
+                .workspaces
+                .iter()
+                .all(|ws| ws.tabs[0].dock.is_none())
+        );
+        let docked = Scenario::RestoreDock.session(cwd);
+        let dock = docked.workspaces[0].tabs[0].dock.as_ref().expect("dock");
+        assert!(dock.open);
+        assert_eq!(dock.tabs.len(), super::RESTORE_DOCK_FILES);
+        assert_eq!(dock.active, super::RESTORE_DOCK_FILES - 1);
+        assert!(
+            docked.workspaces[1..]
+                .iter()
+                .all(|ws| ws.tabs[0].dock.is_none())
+        );
         let text = serde_json::to_string(&restore).unwrap();
         let back: paneflow_config::schema::SessionState = serde_json::from_str(&text).unwrap();
         assert_eq!(back, restore);

@@ -7,7 +7,8 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::app::diff_dock::code::controls::{EditorDisplay, editor_display, set_editor_display};
 use crate::app::diff_dock::code::view::CodeView;
-use crate::app::diff_dock::{DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab};
+use crate::app::diff_dock::{ClosedFileTabs, DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab};
+use paneflow_config::schema::{DockSession, DockTabSession};
 
 const PANE_GRID_RESERVED_WIDTH: f32 =
     crate::layout::MIN_PANE_SIZE + 2. * crate::layout::PANE_GUTTER_PX;
@@ -57,12 +58,103 @@ pub(crate) struct DiffDockSlot {
     tabs: Vec<DiffDockTab>,
     active_tab: usize,
     data: Option<DiffDockData>,
+    closed_files: ClosedFileTabs,
 }
 
 impl DiffDockSlot {
     fn is_idle(&self) -> bool {
-        !self.open && !self.picked && self.tabs.is_empty()
+        !self.open && !self.picked && self.tabs.is_empty() && self.closed_files.is_empty()
     }
+}
+
+fn stored_dock_path(root: &std::path::Path, path: &std::path::Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(relative) if !root.as_os_str().is_empty() => relative.to_string_lossy().into_owned(),
+        _ => path.to_string_lossy().into_owned(),
+    }
+}
+
+pub(crate) fn resolved_dock_path(root: &std::path::Path, stored: &str) -> std::path::PathBuf {
+    let stored = std::path::Path::new(stored);
+    if stored.is_absolute() {
+        stored.to_path_buf()
+    } else {
+        root.join(stored)
+    }
+}
+
+fn dock_session_from(
+    entries: Vec<Option<DockTabSession>>,
+    active: usize,
+    open: bool,
+    tree: bool,
+) -> Option<DockSession> {
+    let active = kept_index(entries.iter().map(Option::is_some), active);
+    let tabs: Vec<DockTabSession> = entries.into_iter().flatten().collect();
+    let tree = tree
+        && tabs
+            .iter()
+            .any(|tab| matches!(tab, DockTabSession::Files | DockTabSession::File { .. }));
+    (open || !tabs.is_empty()).then_some(DockSession {
+        open,
+        tabs,
+        active,
+        tree,
+    })
+}
+
+fn kept_index(kept: impl Iterator<Item = bool>, active: usize) -> usize {
+    let kept: Vec<bool> = kept.collect();
+    let before = |end: usize| kept[..end.min(kept.len())].iter().filter(|k| **k).count();
+    if kept.get(active).copied().unwrap_or(false) {
+        before(active)
+    } else {
+        before(active).saturating_sub(1)
+    }
+}
+
+pub(crate) struct RestoredDockPlan {
+    pub(crate) entries: Vec<RestoredDockEntry>,
+    pub(crate) active: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RestoredDockEntry {
+    Changes,
+    Files,
+    File(std::path::PathBuf),
+}
+
+pub(crate) fn restored_dock_plan(
+    session: &DockSession,
+    root: &std::path::Path,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> RestoredDockPlan {
+    let candidates: Vec<Option<RestoredDockEntry>> = session
+        .tabs
+        .iter()
+        .map(|tab| match tab {
+            DockTabSession::Changes => Some(RestoredDockEntry::Changes),
+            DockTabSession::Files => Some(RestoredDockEntry::Files),
+            DockTabSession::File { path } => {
+                let path = resolved_dock_path(root, path);
+                exists(&path).then_some(RestoredDockEntry::File(path))
+            }
+            DockTabSession::Unknown => None,
+        })
+        .collect();
+    let active = kept_index(candidates.iter().map(Option::is_some), session.active);
+    let mut seen = std::collections::HashSet::new();
+    let entries = candidates
+        .into_iter()
+        .flatten()
+        .filter(|entry| match entry {
+            RestoredDockEntry::File(path) => seen.insert(path.clone()),
+            _ => true,
+        })
+        .collect::<Vec<_>>();
+    let active = active.min(entries.len().saturating_sub(1));
+    RestoredDockPlan { entries, active }
 }
 
 pub(crate) fn unsaved_file_views(
@@ -86,6 +178,151 @@ pub(crate) fn take_unsaved_tabs(tabs: &mut Vec<DiffDockTab>, cx: &gpui::App) -> 
 }
 
 impl PaneFlowApp {
+    fn dock_entries(
+        tabs: &[DiffDockTab],
+        root: &std::path::Path,
+        cx: &gpui::App,
+    ) -> Vec<Option<DockTabSession>> {
+        tabs.iter()
+            .map(|tab| match tab {
+                DiffDockTab::Changes => Some(DockTabSession::Changes),
+                DiffDockTab::PendingFile => Some(DockTabSession::Files),
+                DiffDockTab::File(view) => Some(DockTabSession::File {
+                    path: stored_dock_path(root, view.read(cx).path()),
+                }),
+                DiffDockTab::Terminal(_) => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn dock_session_for_tab(
+        &self,
+        tab_id: u64,
+        ws_cwd: &str,
+        tree: bool,
+        cx: &gpui::App,
+    ) -> Option<DockSession> {
+        if let Some(pending) = self.diff_dock.restoring.get(&tab_id) {
+            return Some(pending.clone());
+        }
+        let root = std::path::Path::new(ws_cwd);
+        if self.diff_dock.owner == Some(tab_id) {
+            return dock_session_from(
+                Self::dock_entries(&self.diff_dock.diff_tabs, root, cx),
+                self.diff_dock.diff_active_tab,
+                self.diff_dock.open,
+                tree,
+            );
+        }
+        let slot = self.diff_dock.parked.get(&tab_id)?;
+        dock_session_from(
+            Self::dock_entries(&slot.tabs, root, cx),
+            slot.active_tab,
+            slot.open,
+            tree,
+        )
+    }
+
+    pub(crate) fn restore_dock_sessions(&mut self, cx: &mut Context<Self>) {
+        let mut pending = Vec::new();
+        for ws in &mut self.workspaces {
+            let root = std::path::PathBuf::from(&ws.cwd);
+            for tab in ws.tabs_mut() {
+                if let Some(session) = tab.restored_dock.take() {
+                    pending.push((tab.id, root.clone(), session));
+                }
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        for (tab_id, _, session) in &pending {
+            self.diff_dock.restoring.insert(*tab_id, session.clone());
+        }
+        let probes: Vec<std::path::PathBuf> = pending
+            .iter()
+            .flat_map(|(_, root, session)| {
+                session.tabs.iter().filter_map(|tab| match tab {
+                    DockTabSession::File { path } => Some(resolved_dock_path(root, path)),
+                    _ => None,
+                })
+            })
+            .collect();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let existing: std::collections::HashSet<std::path::PathBuf> =
+                    smol::unblock(move || {
+                        probes.into_iter().filter(|path| path.is_file()).collect()
+                    })
+                    .await;
+                let _ = this.update(cx, |app, cx| {
+                    for (tab_id, root, session) in pending {
+                        if app.diff_dock.restoring.remove(&tab_id).is_none() {
+                            continue;
+                        }
+                        let plan =
+                            restored_dock_plan(&session, &root, |path| existing.contains(path));
+                        app.install_restored_dock(tab_id, session.open, plan, cx);
+                    }
+                    cx.notify();
+                });
+            },
+        )
+        .detach();
+    }
+
+    fn install_restored_dock(
+        &mut self,
+        tab_id: u64,
+        open: bool,
+        plan: RestoredDockPlan,
+        cx: &mut Context<Self>,
+    ) {
+        let tabs: Vec<DiffDockTab> = plan
+            .entries
+            .into_iter()
+            .map(|entry| match entry {
+                RestoredDockEntry::Changes => DiffDockTab::Changes,
+                RestoredDockEntry::Files => DiffDockTab::PendingFile,
+                RestoredDockEntry::File(path) => {
+                    DiffDockTab::File(self.new_code_view(path, true, cx))
+                }
+            })
+            .collect();
+        let live = self.diff_dock.owner == Some(tab_id)
+            && self.diff_dock.diff_tabs.is_empty()
+            && !self.diff_dock.open;
+        if live {
+            let has_tabs = !tabs.is_empty();
+            self.diff_dock.diff_tabs = tabs;
+            self.diff_dock.diff_active_tab = plan.active;
+            self.diff_dock.picker = !has_tabs;
+            self.diff_dock.picked = has_tabs;
+            if open {
+                let cwd = self.active_checkout().unwrap_or_default();
+                self.open_diff_dock_panel(cwd, cx);
+                self.diff_dock.reveal_animation = None;
+            }
+            return;
+        }
+        if self.diff_dock.owner == Some(tab_id) || self.diff_dock.parked.contains_key(&tab_id) {
+            return;
+        }
+        let picked = !tabs.is_empty();
+        self.diff_dock.parked.insert(
+            tab_id,
+            DiffDockSlot {
+                open,
+                picker: !picked,
+                picked,
+                tabs,
+                active_tab: plan.active,
+                data: None,
+                closed_files: ClosedFileTabs::default(),
+            },
+        );
+    }
+
     pub(crate) fn sync_diff_dock_session(&mut self, cx: &mut Context<Self>) {
         let active = self.active_session_id();
         if self.diff_dock.owner == active {
@@ -185,6 +422,7 @@ impl PaneFlowApp {
             tabs: std::mem::take(&mut self.diff_dock.diff_tabs),
             active_tab: std::mem::replace(&mut self.diff_dock.diff_active_tab, 0),
             data: self.diff_dock.data.take(),
+            closed_files: std::mem::take(&mut self.diff_dock.closed_files),
         };
         self.close_diff_dock_panel(cx);
         self.diff_dock.picker = false;
@@ -226,6 +464,7 @@ impl PaneFlowApp {
         self.diff_dock.diff_tabs = slot.tabs;
         self.diff_dock.diff_tabs.extend(rescued);
         self.diff_dock.diff_active_tab = slot.active_tab;
+        self.diff_dock.closed_files = slot.closed_files;
         let cwd = slot
             .data
             .as_ref()
@@ -442,7 +681,7 @@ impl PaneFlowApp {
             top: dock_top,
         } = slot;
         self.sync_files_sidebar_session(cx);
-        let files_width = self.rendered_files_sidebar_width(window, cx);
+        let files_progress = self.rendered_files_sidebar_progress(window, cx);
         self.diff_dock.title_bar_zone_left = None;
         if !self.diff_dock_visible() && !self.diff_dock_closing() {
             return body;
@@ -556,9 +795,10 @@ impl PaneFlowApp {
                     .child(self.render_diff_dock_panel(
                         width,
                         max_width,
-                        files_width,
+                        files_progress,
                         dock_frame,
                         ui,
+                        window,
                         cx,
                     ))
                     .when(flush_shell && grid != PaneGridLayout::Hidden, |dock| {
@@ -691,7 +931,94 @@ mod tests {
             tabs: (0..tabs).map(|_| DiffDockTab::Changes).collect(),
             active_tab: 0,
             data: None,
+            closed_files: ClosedFileTabs::default(),
         }
+    }
+
+    #[test]
+    fn a_dock_session_keeps_its_order_and_active_tab_without_terminals() {
+        let file = |path: &str| {
+            Some(DockTabSession::File {
+                path: path.to_string(),
+            })
+        };
+        let session = dock_session_from(
+            vec![
+                Some(DockTabSession::Changes),
+                None,
+                file("src/a.rs"),
+                file("/etc/hosts"),
+            ],
+            3,
+            true,
+            true,
+        )
+        .expect("a session");
+        assert_eq!(session.active, 2, "the terminal before it is dropped");
+        assert_eq!(session.tabs.len(), 3);
+        assert!(session.tree, "the tree was open beside the file tabs");
+        let on_terminal =
+            dock_session_from(vec![Some(DockTabSession::Changes), None], 1, false, true)
+                .expect("kept");
+        assert_eq!(on_terminal.active, 0);
+        assert!(!on_terminal.tree, "no file tab, so no tree to bring back");
+        let hidden = dock_session_from(vec![file("src/a.rs")], 0, true, false).expect("kept");
+        assert!(!hidden.tree, "a tree the user hid stays hidden");
+        assert_eq!(dock_session_from(vec![None], 0, false, false), None);
+        assert_eq!(
+            stored_dock_path(
+                std::path::Path::new("/repo"),
+                std::path::Path::new("/repo/src/a.rs")
+            ),
+            std::path::Path::new("src").join("a.rs").to_string_lossy()
+        );
+        assert_eq!(
+            stored_dock_path(
+                std::path::Path::new("/repo"),
+                std::path::Path::new("/etc/hosts")
+            ),
+            "/etc/hosts"
+        );
+    }
+
+    #[test]
+    fn a_restored_dock_omits_missing_files_and_keeps_fifty_in_order() {
+        let root = std::path::Path::new("/repo");
+        let mut tabs: Vec<DockTabSession> = (0..50)
+            .map(|index| DockTabSession::File {
+                path: format!("src/{index}.rs"),
+            })
+            .collect();
+        tabs.insert(0, DockTabSession::Changes);
+        let session = DockSession {
+            open: true,
+            tabs,
+            active: 50,
+            tree: true,
+        };
+        let plan = restored_dock_plan(&session, root, |_| true);
+        assert_eq!(plan.entries.len(), 51);
+        assert_eq!(plan.active, 50);
+        assert_eq!(
+            plan.entries[50],
+            RestoredDockEntry::File(root.join("src/49.rs"))
+        );
+
+        let gone = root.join("src/49.rs");
+        let plan = restored_dock_plan(&session, root, |path| path != gone);
+        assert_eq!(plan.entries.len(), 50);
+        assert_eq!(plan.active, 49, "the neighbour takes the active slot");
+        assert!(!plan.entries.contains(&RestoredDockEntry::File(gone)));
+
+        let unknown = DockSession {
+            open: false,
+            tabs: vec![DockTabSession::Unknown, DockTabSession::Files],
+            active: 0,
+            tree: true,
+        };
+        let plan = restored_dock_plan(&unknown, root, |_| true);
+        assert_eq!(plan.entries, vec![RestoredDockEntry::Files]);
+        assert_eq!(plan.active, 0);
     }
 
     #[test]

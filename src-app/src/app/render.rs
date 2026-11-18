@@ -610,6 +610,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_open_command_palette))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
+            .on_action(cx.listener(Self::handle_open_file_finder))
             .on_action(cx.listener(Self::handle_diff_new_terminal_tab))
             .capture_key_down(cx.listener(|_this, e: &gpui::KeyDownEvent, window, cx| {
                 if cx.has_active_drag() && e.keystroke.key == "escape" {
@@ -1056,6 +1057,22 @@ impl Render for PaneFlowApp {
 
         if let Some(menu) = self.files_menu_open.clone() {
             app_content = app_content.child(self.render_files_context_menu(menu, ui, window, cx));
+        }
+
+        if let Some(menu) = self.diff_dock.tab_menu
+            && menu
+                .target
+                .is_none_or(|index| index < self.diff_dock.diff_tabs.len())
+        {
+            app_content = app_content.child(self.render_diff_tab_menu(menu, window, cx));
+        }
+
+        if let Some(menu) = self.diff_dock.crumb_menu.clone() {
+            app_content = app_content.child(self.render_crumb_menu(&menu, window, cx));
+        }
+
+        if self.file_finder.is_some() {
+            app_content = app_content.child(self.render_file_finder(window, cx));
         }
 
         let shell = crate::window_chrome::csd::client_side_window_shell(

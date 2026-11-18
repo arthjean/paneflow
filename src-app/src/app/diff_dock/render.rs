@@ -81,6 +81,7 @@ pub(super) fn render_diff_tab_strip(
     active: usize,
     close_armed: Option<usize>,
     new_tab_menu_open: bool,
+    can_reopen: bool,
     maximized: bool,
     in_title_bar: bool,
     frame: CardFrame,
@@ -134,10 +135,19 @@ pub(super) fn render_diff_tab_strip(
         .when(divided, |strip| strip.border_b_1().border_color(ui.border))
         .child(
             div()
+                .id("diff-dock-tab-strip")
                 .relative()
                 .flex_1()
                 .min_w_0()
                 .h_full()
+                .on_aux_click(cx.listener(|this, event: &ClickEvent, _w, cx| {
+                    if event.is_right_click()
+                        && let Some(position) = event.mouse_position()
+                    {
+                        this.open_diff_tab_menu(None, position, cx);
+                        cx.stop_propagation();
+                    }
+                }))
                 .child(chips)
                 .child(crate::pane::tab_strip_fades(
                     scroll.clone(),
@@ -176,7 +186,7 @@ pub(super) fn render_diff_tab_strip(
                     .text_color(ui.muted),
             )
             .when(open, |trigger| {
-                trigger.child(render_diff_new_tab_menu(ui, cx))
+                trigger.child(render_diff_new_tab_menu(ui, can_reopen, cx))
             }),
         )
         .child(render_diff_header_icon_button(
@@ -245,13 +255,12 @@ fn render_diff_tab(
             "Terminal".to_string(),
             None,
         ),
-        (DiffDockTab::PendingFile, _) => {
-            ("icons/dock/file-code.svg", "Open a file".to_string(), None)
-        }
+        (DiffDockTab::PendingFile, _) => ("icons/dock/folder-tree.svg", "Files".to_string(), None),
         (_, Some((icon, label, path, _))) => (*icon, label.clone(), Some(path.clone())),
         _ => ("icons/dock/file-code.svg", "File".to_string(), None),
     };
     let tooltip = tooltip.unwrap_or_else(|| label.clone());
+    let closes_on_middle_click = matches!(tab, DiffDockTab::File(_) | DiffDockTab::PendingFile);
     let dirty = file.is_some_and(|(_, _, _, dirty)| dirty);
     let text = if active { ui.text } else { ui.muted };
     let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
@@ -312,6 +321,17 @@ fn render_diff_tab(
         this.select_diff_tab(index, cx);
         this.focus_diff_tab(index, window, cx);
     }))
+    .on_aux_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+        if event.is_right_click() {
+            if let Some(position) = event.mouse_position() {
+                this.open_diff_tab_menu(Some(index), position, cx);
+            }
+            cx.stop_propagation();
+        } else if event.is_middle_click() && closes_on_middle_click {
+            this.request_close_diff_tab(index, window, cx);
+            cx.stop_propagation();
+        }
+    }))
     .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
     .child(icon_element)
     .child(
@@ -369,35 +389,11 @@ fn truncate_tab_label(name: &str) -> String {
     format!("…{kept}")
 }
 
-const FILE_HEADER_MAX_CHARS: usize = 64;
-
-pub(super) fn diff_file_header_path(root: &str, path: &std::path::Path) -> String {
-    let relative = if root.is_empty() {
-        None
-    } else {
-        path.strip_prefix(std::path::Path::new(root)).ok()
-    };
-    let shown = relative
-        .map(|rel| rel.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let count = shown.chars().count();
-    if count <= FILE_HEADER_MAX_CHARS {
-        return shown;
-    }
-    let kept: String = shown
-        .chars()
-        .skip(count - (FILE_HEADER_MAX_CHARS - 1))
-        .collect();
-    format!("…{kept}")
-}
-
 pub(super) fn render_diff_file_header(
-    root: &str,
-    path: String,
-    line: usize,
-    column: usize,
-    controls: AnyElement,
-    tree_toggle: AnyElement,
+    crumbs: AnyElement,
+    position: Option<(usize, usize)>,
+    controls: Option<AnyElement>,
+    tree_toggle: Option<AnyElement>,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
     div()
@@ -410,17 +406,17 @@ pub(super) fn render_diff_file_header(
         .pr(px(8.))
         .border_b_1()
         .border_color(ui.border)
-        .child(super::file_chrome::render_file_breadcrumbs(root, &path, ui))
-        .child(
+        .child(crumbs)
+        .children(position.map(|(line, column)| {
             div()
                 .flex_none()
                 .whitespace_nowrap()
                 .text_size(crate::ui_primitives::BODY)
                 .text_color(ui.muted)
-                .child(format!("Ln {line}, Col {column}")),
-        )
-        .child(controls)
-        .child(tree_toggle)
+                .child(format!("Ln {line}, Col {column}"))
+        }))
+        .children(controls)
+        .children(tree_toggle)
         .into_any_element()
 }
 
@@ -696,17 +692,6 @@ pub(super) fn render_diff_files_toolbar(
         .into_any_element()
 }
 
-pub(super) fn render_pending_file_body(ui: crate::theme::UiColors) -> AnyElement {
-    crate::ui_primitives::panel_empty_state(
-        ui,
-        Some("icons/dock/folder-open.svg"),
-        Some("Open a file".into()),
-        "Select a file in the workspace tree",
-        false,
-    )
-    .into_any_element()
-}
-
 pub(super) fn render_diff_error_banner(error: &str, ui: crate::theme::UiColors) -> AnyElement {
     div()
         .flex_none()
@@ -757,7 +742,6 @@ pub(super) fn diff_panel_centered(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn the_dock_card_takes_the_terminal_card_color_under_a_material() {
@@ -813,32 +797,5 @@ mod tests {
         let cut = truncate_tab_label(accented);
         assert_eq!(cut.chars().count(), TAB_LABEL_MAX_CHARS);
         assert!(cut.ends_with(".rs"));
-    }
-
-    #[test]
-    fn the_file_header_path_is_relative_and_elides_from_the_left() {
-        assert_eq!(
-            diff_file_header_path("/repo", Path::new("/repo/src/main.rs")),
-            "src/main.rs"
-        );
-        assert_eq!(
-            diff_file_header_path("/repo", Path::new("/etc/hosts")),
-            "/etc/hosts"
-        );
-        assert_eq!(
-            diff_file_header_path("", Path::new("/repo/src/main.rs")),
-            "/repo/src/main.rs"
-        );
-
-        let deep = Path::new(
-            "/repo/crates/paneflow-config/src/schema/very/deeply/nested/module/config.rs",
-        );
-        let shown = diff_file_header_path("/repo", deep);
-        assert_eq!(shown.chars().count(), FILE_HEADER_MAX_CHARS);
-        assert!(shown.starts_with('…'));
-        assert!(
-            shown.ends_with("config.rs"),
-            "the file itself must survive the elision, got {shown}"
-        );
     }
 }

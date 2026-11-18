@@ -14,6 +14,7 @@ enum NewTabAction {
     Changes,
     File,
     Terminal,
+    Reopen,
 }
 
 impl PaneFlowApp {
@@ -32,6 +33,7 @@ impl PaneFlowApp {
 
 pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
+    can_reopen: bool,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let shortcut = |key: &str| {
@@ -59,7 +61,12 @@ pub(super) fn render_diff_new_tab_menu(
                 .icon(icon::TERMINAL)
                 .mnemonic('t')
                 .shortcut(shortcut("secondary-j")),
-        );
+        )
+        .separator()
+        .item(super::tab_menu::reopen_item(
+            can_reopen,
+            NewTabAction::Reopen,
+        ));
     let handlers = MenuHandlers {
         activate: Rc::new(cx.listener(|this, action: &NewTabAction, window, cx| {
             this.close_diff_new_tab_menu(cx);
@@ -67,6 +74,7 @@ pub(super) fn render_diff_new_tab_menu(
                 NewTabAction::Changes => this.open_diff_changes_tab(cx),
                 NewTabAction::File => this.open_diff_file_picker(window, cx),
                 NewTabAction::Terminal => this.open_diff_terminal_tab(window, cx),
+                NewTabAction::Reopen => this.reopen_closed_diff_tab(window, cx),
             }
         })),
         dismiss: Rc::new(cx.listener(|this, _: &(), _, cx| this.close_diff_new_tab_menu(cx))),

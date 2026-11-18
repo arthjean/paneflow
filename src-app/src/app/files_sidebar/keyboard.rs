@@ -25,7 +25,50 @@ impl FilesSidebar {
         }
     }
 
+    pub(crate) fn reveal_dir(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if !self.active {
+            return;
+        }
+        let root = self.tree.root.clone();
+        if path == root {
+            self.reveal_target = None;
+            self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+            cx.notify();
+            return;
+        }
+        if !path.starts_with(&root) {
+            return;
+        }
+        if !self.query.is_empty() {
+            self.query.clear();
+            self.filter_input.update(cx, |input, cx| input.clear(cx));
+        }
+        for ancestor in path.ancestors().take_while(|ancestor| *ancestor != root) {
+            self.expanded.insert(ancestor.to_path_buf());
+        }
+        self.revision = self.revision.wrapping_add(1);
+        if let Some(worker) = &self.worker {
+            worker.set_expanded(self.revision, self.expanded_paths());
+        }
+        self.selected = Some(path.to_path_buf());
+        self.reveal_target = Some(path.to_path_buf());
+        self.emit_expansion(cx);
+        self.schedule_projection(false, cx);
+    }
+
+    pub(super) fn settle_reveal_target(&mut self) {
+        let Some(target) = self.reveal_target.as_ref() else {
+            return;
+        };
+        if let Some(index) = self.projection.index(target) {
+            self.selected = Some(target.clone());
+            self.scroll.scroll_to_item(index, ScrollStrategy::Center);
+            self.reveal_target = None;
+        }
+    }
+
     fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.reveal_target = None;
         if let Some(row) = self.projection.rows.get(index) {
             self.selected = Some(row.node.path.clone());
             self.reveal_selection();
@@ -58,6 +101,7 @@ impl FilesSidebar {
         if !self.active {
             return;
         }
+        self.reveal_target = None;
         self.select_path(path, cx);
         if is_dir {
             self.toggle_dir(path, cx);

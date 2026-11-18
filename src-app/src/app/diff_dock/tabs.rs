@@ -1,22 +1,68 @@
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Context, Focusable, Window};
 
 use super::code::view::CodeView;
-use super::model::{DiffDockTab, MAX_DIFF_FILE_TABS};
+use super::model::DiffDockTab;
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
 use crate::terminal::{TerminalEvent, TerminalView};
 
 const CLOSE_ARM_DELAY: Duration = Duration::from_millis(400);
 const CLOSE_ARM_EXPIRY: Duration = Duration::from_secs(4);
+pub(crate) const CLOSED_FILE_TABS_KEPT: usize = 20;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ClosedFileTab {
+    pub(crate) path: PathBuf,
+    pub(crate) scroll_rows: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ClosedFileTabs(VecDeque<ClosedFileTab>);
+
+impl ClosedFileTabs {
+    pub(crate) fn record(&mut self, closed: ClosedFileTab) {
+        self.0.retain(|known| known.path != closed.path);
+        self.0.push_front(closed);
+        self.0.truncate(CLOSED_FILE_TABS_KEPT);
+    }
+
+    pub(crate) fn take_latest(&mut self) -> Option<ClosedFileTab> {
+        self.0.pop_front()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn paths(&self) -> Vec<PathBuf> {
+        self.0.iter().map(|closed| closed.path.clone()).collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabBatch {
+    Others(usize),
+    ToTheRight(usize),
+    All,
+}
 
 impl PaneFlowApp {
     pub(crate) fn diff_file_tab_active(&self) -> bool {
         matches!(
             self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab),
             Some(DiffDockTab::File(_) | DiffDockTab::PendingFile)
+        )
+    }
+
+    pub(crate) fn diff_files_tab_active(&self) -> bool {
+        matches!(
+            self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab),
+            Some(DiffDockTab::PendingFile)
         )
     }
 
@@ -77,33 +123,57 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_diff_file_tab_at(path, None, window, cx);
+    }
+
+    pub(crate) fn open_diff_file_tab_at(
+        &mut self,
+        path: PathBuf,
+        scroll_rows: Option<f64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_dock_file_open(&path);
         let pending = self.pending_file_tab();
         if let Some(index) = pending {
             self.diff_dock.diff_tabs.remove(index);
         }
+        let index = match file_open_plan(&self.diff_tab_facts(cx), &path, pending) {
+            FileOpen::Activate(index) => index,
+            FileOpen::Insert(index) => {
+                let view = self.new_code_view(path, false, cx);
+                if let Some(rows) = scroll_rows {
+                    view.update(cx, |view, _| view.restore_scroll_rows(rows));
+                }
+                self.diff_dock
+                    .diff_tabs
+                    .insert(index, DiffDockTab::File(view));
+                index
+            }
+        };
+        self.select_diff_tab(index, cx);
+        self.focus_diff_tab(index, window, cx);
+    }
 
-        if let Some(index) = file_tab_index(&self.diff_tab_facts(cx), &path) {
-            self.select_diff_tab(index, cx);
-            self.focus_diff_tab(index, window, cx);
-            return;
-        }
-
-        self.evict_oldest_diff_file_tab(cx);
-
-        let view = cx.new(|cx| CodeView::new(path, cx));
+    pub(crate) fn new_code_view(
+        &mut self,
+        path: PathBuf,
+        deferred: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<CodeView> {
+        let view = cx.new(|cx| {
+            if deferred {
+                CodeView::deferred(path, cx)
+            } else {
+                CodeView::new(path, cx)
+            }
+        });
         let controls = view.read(cx).controls.clone();
         cx.subscribe(&controls, |this, _, display, cx| {
             this.persist_setting(false, "editor", display.to_config_value(), cx);
         })
         .detach();
-        let index = pending
-            .filter(|index| *index <= self.diff_dock.diff_tabs.len())
-            .unwrap_or(self.diff_dock.diff_tabs.len());
-        self.diff_dock
-            .diff_tabs
-            .insert(index, DiffDockTab::File(view));
-        self.select_diff_tab(index, cx);
-        self.focus_diff_tab(index, window, cx);
+        view
     }
 
     fn pending_file_tab(&self) -> Option<usize> {
@@ -113,7 +183,7 @@ impl PaneFlowApp {
             .position(|tab| matches!(tab, DiffDockTab::PendingFile))
     }
 
-    fn diff_tab_facts(&self, cx: &Context<Self>) -> Vec<DiffTabFact> {
+    pub(super) fn diff_tab_facts(&self, cx: &gpui::App) -> Vec<DiffTabFact> {
         self.diff_dock
             .diff_tabs
             .iter()
@@ -125,16 +195,10 @@ impl PaneFlowApp {
                         dirty: view.is_dirty(),
                     }
                 }
-                _ => DiffTabFact::Fixed,
+                DiffDockTab::PendingFile => DiffTabFact::Files,
+                DiffDockTab::Changes | DiffDockTab::Terminal(_) => DiffTabFact::Fixed,
             })
             .collect()
-    }
-
-    fn evict_oldest_diff_file_tab(&mut self, cx: &mut Context<Self>) {
-        let facts = self.diff_tab_facts(cx);
-        if let Some(index) = file_tab_eviction(&facts, self.diff_dock.diff_active_tab) {
-            self.close_diff_tab(index, cx);
-        }
     }
 
     pub(crate) fn focus_diff_tab(
@@ -190,9 +254,6 @@ impl PaneFlowApp {
                 self.select_diff_tab(self.diff_dock.diff_tabs.len() - 1, cx);
             }
         }
-        if !self.files_sidebar_open {
-            self.toggle_files_sidebar(cx);
-        }
         if self.files_sidebar_open {
             self.focus_files_sidebar(window, cx);
         }
@@ -206,6 +267,16 @@ impl PaneFlowApp {
             self.diff_dock.diff_tab_close_armed = None;
             self.diff_dock.vertical_scrollbar.cancel_drag();
             self.diff_dock.tab_scroll.scroll_to_item(index);
+            self.diff_dock.crumb_menu = None;
+            self.diff_dock.crumb_scroll_pending = true;
+            if matches!(
+                self.diff_dock.diff_tabs.get(index),
+                Some(DiffDockTab::PendingFile)
+            ) && !self.files_sidebar_open
+            {
+                self.toggle_files_sidebar(cx);
+            }
+            self.save_session(cx);
             cx.notify();
         }
     }
@@ -249,18 +320,69 @@ impl PaneFlowApp {
         self.request_close(CloseTarget::DiffTerminal(index), Some(window), cx);
     }
 
-    pub(crate) fn close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.diff_dock.diff_tabs.len() {
-            return;
+    pub(crate) fn close_diff_tab_batch(
+        &mut self,
+        batch: TabBatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let plan = plan_batch_close(
+            &self.diff_tab_facts(cx),
+            batch,
+            self.diff_dock.diff_active_tab,
+        );
+        for index in &plan.close {
+            self.remove_diff_tab(*index, cx);
         }
-        if matches!(
-            self.diff_dock.diff_tabs.get(index),
-            Some(DiffDockTab::Terminal(_))
-        ) {
-            self.request_close(CloseTarget::DiffTerminal(index), None, cx);
-            return;
+        if let Some(active) = plan.active_after
+            && active < self.diff_dock.diff_tabs.len()
+        {
+            self.select_diff_tab(active, cx);
+            self.focus_diff_tab(active, window, cx);
         }
-        self.remove_diff_tab(index, cx);
+        if plan.kept_modified > 0 {
+            self.show_toast(
+                format!(
+                    "{} kept",
+                    crate::app::plural(plan.kept_modified, "modified tab", "modified tabs")
+                ),
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn reopen_closed_diff_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(closed) = self.diff_dock.closed_files.take_latest() else {
+            return;
+        };
+        cx.notify();
+        let window = window.window_handle();
+        let probe = closed.path.clone();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let exists = smol::unblock(move || probe.is_file()).await;
+                cx.update(|cx| {
+                    let _ = window.update(cx, |_, window, cx| {
+                        let _ = this.update(cx, |app, cx| {
+                            if exists {
+                                app.diff_dock.picker = false;
+                                app.diff_dock.picked = true;
+                                app.open_diff_file_tab_at(
+                                    closed.path,
+                                    Some(closed.scroll_rows),
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                app.show_toast("File no longer exists", cx);
+                            }
+                        });
+                    });
+                });
+            },
+        )
+        .detach();
     }
 
     pub(crate) fn remove_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -268,6 +390,13 @@ impl PaneFlowApp {
             return;
         }
         let closed = self.diff_dock.diff_tabs.remove(index);
+        if let DiffDockTab::File(view) = &closed {
+            let view = view.read(cx);
+            self.diff_dock.closed_files.record(ClosedFileTab {
+                path: view.path().to_path_buf(),
+                scroll_rows: view.current_scroll_rows(),
+            });
+        }
         if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
             && !self
                 .diff_dock
@@ -281,6 +410,8 @@ impl PaneFlowApp {
             active_tab_after_close(self.diff_dock.diff_active_tab, index);
         self.diff_dock.diff_tab_close_armed = None;
         self.diff_dock.vertical_scrollbar.cancel_drag();
+        self.diff_dock.tab_menu = None;
+        self.diff_dock.crumb_menu = None;
         if self.diff_dock.diff_tabs.is_empty() {
             self.diff_dock.picker = true;
             self.diff_dock.picked = false;
@@ -289,6 +420,7 @@ impl PaneFlowApp {
         self.close_diff_options_menu(cx);
         self.close_diff_new_tab_menu(cx);
         self.diff_dock.diff_branch_menu = None;
+        self.save_session(cx);
         cx.notify();
     }
 }
@@ -296,7 +428,39 @@ impl PaneFlowApp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum DiffTabFact {
     Fixed,
+    Files,
     File { path: PathBuf, dirty: bool },
+}
+
+impl DiffTabFact {
+    fn batch_closable(&self) -> bool {
+        matches!(self, Self::Files | Self::File { dirty: false, .. })
+    }
+
+    fn modified(&self) -> bool {
+        matches!(self, Self::File { dirty: true, .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FileOpen {
+    Activate(usize),
+    Insert(usize),
+}
+
+pub(super) fn file_open_plan(
+    facts: &[DiffTabFact],
+    path: &Path,
+    pending: Option<usize>,
+) -> FileOpen {
+    if let Some(index) = file_tab_index(facts, path) {
+        return FileOpen::Activate(index);
+    }
+    FileOpen::Insert(
+        pending
+            .filter(|index| *index <= facts.len())
+            .unwrap_or(facts.len()),
+    )
 }
 
 pub(super) fn file_tab_index(facts: &[DiffTabFact], path: &Path) -> Option<usize> {
@@ -305,17 +469,56 @@ pub(super) fn file_tab_index(facts: &[DiffTabFact], path: &Path) -> Option<usize
         .position(|fact| matches!(fact, DiffTabFact::File { path: open, .. } if open == path))
 }
 
-pub(super) fn file_tab_eviction(facts: &[DiffTabFact], active: usize) -> Option<usize> {
-    let open = facts
-        .iter()
-        .filter(|fact| matches!(fact, DiffTabFact::File { .. }))
-        .count();
-    if open < MAX_DIFF_FILE_TABS {
-        return None;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct BatchPlan {
+    pub(super) close: Vec<usize>,
+    pub(super) kept_modified: usize,
+    pub(super) active_after: Option<usize>,
+}
+
+pub(super) fn plan_batch_close(facts: &[DiffTabFact], batch: TabBatch, active: usize) -> BatchPlan {
+    let targeted = |index: usize| match batch {
+        TabBatch::Others(keep) => index != keep,
+        TabBatch::ToTheRight(from) => index > from,
+        TabBatch::All => true,
+    };
+    let mut close = Vec::new();
+    let mut kept_modified = 0;
+    for (index, fact) in facts.iter().enumerate() {
+        if !targeted(index) {
+            continue;
+        }
+        if fact.batch_closable() {
+            close.push(index);
+        } else if fact.modified() {
+            kept_modified += 1;
+        }
     }
-    facts.iter().enumerate().position(|(index, fact)| {
-        index != active && matches!(fact, DiffTabFact::File { dirty: false, .. })
-    })
+    let shifted = |index: usize| index - close.iter().filter(|closed| **closed < index).count();
+    let remaining = facts.len() - close.len();
+    let active_after = if remaining == 0 {
+        None
+    } else if !close.contains(&active) {
+        Some(shifted(active))
+    } else {
+        match batch {
+            TabBatch::Others(anchor) | TabBatch::ToTheRight(anchor) if anchor < facts.len() => {
+                Some(shifted(anchor))
+            }
+            _ => Some(
+                (0..active)
+                    .rev()
+                    .find(|index| !close.contains(index))
+                    .map_or(0, shifted),
+            ),
+        }
+    };
+    close.reverse();
+    BatchPlan {
+        close,
+        kept_modified,
+        active_after,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -372,6 +575,12 @@ mod tests {
         }
     }
 
+    fn files(count: usize) -> Vec<DiffTabFact> {
+        (0..count)
+            .map(|i| file(&format!("/repo/{i}.rs"), false))
+            .collect()
+    }
+
     #[test]
     fn reopening_a_file_finds_its_existing_tab() {
         let facts = [
@@ -394,31 +603,121 @@ mod tests {
             file_tab_index(&[DiffTabFact::Fixed], Path::new("/repo")),
             None
         );
-    }
-
-    #[test]
-    fn the_cap_evicts_the_oldest_saved_inactive_tab() {
-        let mut facts = vec![DiffTabFact::Fixed];
-        facts.extend((0..MAX_DIFF_FILE_TABS - 1).map(|i| file(&format!("/repo/{i}.rs"), false)));
-        assert_eq!(file_tab_eviction(&facts, 0), None);
-
-        facts.push(file("/repo/last.rs", false));
-        assert_eq!(file_tab_eviction(&facts, 0), Some(1));
-        assert_eq!(file_tab_eviction(&facts, 1), Some(2));
-    }
-
-    #[test]
-    fn the_cap_never_evicts_a_modified_tab() {
-        let mut facts = vec![DiffTabFact::Fixed];
-        facts.extend((0..MAX_DIFF_FILE_TABS).map(|i| file(&format!("/repo/{i}.rs"), true)));
         assert_eq!(
-            file_tab_eviction(&facts, 0),
-            None,
-            "every file tab is modified: the cap gives way rather than losing edits"
+            file_open_plan(&facts, Path::new("/repo/README.md"), None),
+            FileOpen::Activate(3),
+            "a file already open is activated, never duplicated"
         );
+    }
 
-        facts[3] = file("/repo/saved.rs", false);
-        assert_eq!(file_tab_eviction(&facts, 0), Some(3));
+    #[test]
+    fn a_ninth_and_a_fiftieth_file_open_beside_the_others() {
+        let mut facts = files(8);
+        assert_eq!(
+            file_open_plan(&facts, Path::new("/repo/ninth.rs"), None),
+            FileOpen::Insert(8)
+        );
+        facts.push(file("/repo/ninth.rs", false));
+        assert_eq!(facts.len(), 9);
+
+        let mut facts = files(49);
+        assert_eq!(
+            file_open_plan(&facts, Path::new("/repo/last.rs"), None),
+            FileOpen::Insert(49)
+        );
+        facts.push(file("/repo/last.rs", false));
+        assert_eq!(
+            file_open_plan(&facts, Path::new("/repo/0.rs"), None),
+            FileOpen::Activate(0),
+            "fifty tabs keep the oldest one open"
+        );
+    }
+
+    #[test]
+    fn a_file_opened_from_the_files_tab_takes_its_place() {
+        let facts = [DiffTabFact::Fixed, file("/repo/a.rs", false)];
+        assert_eq!(
+            file_open_plan(&facts, Path::new("/repo/b.rs"), Some(1)),
+            FileOpen::Insert(1)
+        );
+        assert_eq!(
+            file_open_plan(&facts, Path::new("/repo/b.rs"), Some(9)),
+            FileOpen::Insert(2)
+        );
+    }
+
+    #[test]
+    fn a_batch_close_keeps_modified_tabs_and_the_fixed_surfaces() {
+        let facts = [
+            DiffTabFact::Fixed,
+            file("/repo/a.rs", false),
+            file("/repo/b.rs", true),
+            DiffTabFact::Files,
+            DiffTabFact::Fixed,
+            file("/repo/c.rs", true),
+            file("/repo/d.rs", false),
+        ];
+
+        let all = plan_batch_close(&facts, TabBatch::All, 6);
+        assert_eq!(all.close, vec![6, 3, 1], "highest index first");
+        assert_eq!(all.kept_modified, 2);
+        assert_eq!(all.active_after, Some(3), "the nearest tab to the left");
+
+        let others = plan_batch_close(&facts, TabBatch::Others(2), 2);
+        assert_eq!(others.close, vec![6, 3, 1]);
+        assert_eq!(others.kept_modified, 1);
+        assert_eq!(others.active_after, Some(1), "the active tab survives");
+
+        let others = plan_batch_close(&facts, TabBatch::Others(6), 3);
+        assert_eq!(others.close, vec![3, 1]);
+        assert_eq!(others.active_after, Some(4), "the anchor takes over");
+
+        let right = plan_batch_close(&facts, TabBatch::ToTheRight(3), 6);
+        assert_eq!(right.close, vec![6]);
+        assert_eq!(right.kept_modified, 1);
+        assert_eq!(right.active_after, Some(3));
+    }
+
+    #[test]
+    fn closing_every_tab_leaves_no_active_tab() {
+        let plan = plan_batch_close(&files(3), TabBatch::All, 1);
+        assert_eq!(plan.close, vec![2, 1, 0]);
+        assert_eq!(plan.active_after, None);
+        assert_eq!(plan.kept_modified, 0);
+    }
+
+    #[test]
+    fn closed_tabs_reopen_newest_first_and_keep_twenty() {
+        let mut closed = ClosedFileTabs::default();
+        assert!(closed.is_empty());
+        for index in 0..CLOSED_FILE_TABS_KEPT + 5 {
+            closed.record(ClosedFileTab {
+                path: PathBuf::from(format!("/repo/{index}.rs")),
+                scroll_rows: index as f64,
+            });
+        }
+        assert_eq!(closed.paths().len(), CLOSED_FILE_TABS_KEPT);
+        let latest = closed.take_latest().expect("latest");
+        assert_eq!(
+            latest.path,
+            PathBuf::from(format!("/repo/{}.rs", CLOSED_FILE_TABS_KEPT + 4))
+        );
+        assert_eq!(latest.scroll_rows, (CLOSED_FILE_TABS_KEPT + 4) as f64);
+
+        closed.record(ClosedFileTab {
+            path: PathBuf::from("/repo/10.rs"),
+            scroll_rows: 3.0,
+        });
+        let paths = closed.paths();
+        assert_eq!(paths[0], PathBuf::from("/repo/10.rs"));
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|p| p.as_path() == Path::new("/repo/10.rs"))
+                .count(),
+            1,
+            "a path closed twice is listed once"
+        );
     }
 
     #[test]

@@ -172,6 +172,11 @@ impl<A> MenuItem<A> {
         self.action.is_some() || self.submenu.is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn label_for_test(&self) -> &str {
+        &self.label
+    }
+
     fn checked(&self) -> bool {
         matches!(self.check, Check::Toggle(true) | Check::Radio(true))
     }
@@ -286,6 +291,16 @@ impl<A: Clone + 'static> ActionMenu<A> {
 
     pub(crate) fn action_at(&self, index: usize) -> Option<A> {
         self.item_at(index)?.action.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checked_at_for_test(&self, index: usize) -> bool {
+        self.item_at(index).is_some_and(MenuItem::checked)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn enabled_at_for_test(&self, index: usize) -> bool {
+        self.item_at(index).is_some_and(MenuItem::enabled)
     }
 
     fn submenu_at(&self, index: usize) -> Option<&ActionMenu<A>> {

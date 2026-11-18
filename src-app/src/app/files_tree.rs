@@ -30,6 +30,7 @@ pub(crate) struct FilesTreeState {
     pub root: PathBuf,
     pub expanded: HashSet<PathBuf>,
     pub children: HashMap<PathBuf, Vec<FileNode>>,
+    pub unreadable: HashSet<PathBuf>,
 }
 
 impl FilesTreeState {
@@ -40,11 +41,16 @@ impl FilesTreeState {
             root,
             expanded,
             children: HashMap::new(),
+            unreadable: HashSet::new(),
         }
     }
 
     pub(crate) fn root_listing_ready(&self) -> bool {
         self.children.contains_key(&self.root)
+    }
+
+    pub(crate) fn root_unreadable(&self) -> bool {
+        self.unreadable.contains(&self.root)
     }
 }
 
@@ -87,11 +93,14 @@ pub(crate) fn compare_nodes(a: &FileNode, b: &FileNode) -> std::cmp::Ordering {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
+    read_dir_listing(root, dir).unwrap_or_default()
+}
+
+pub(crate) fn read_dir_listing(root: &Path, dir: &Path) -> Option<Vec<FileNode>> {
     let gitignore = build_gitignore(root, dir);
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+    let entries = std::fs::read_dir(dir).ok()?;
     let mut nodes: Vec<FileNode> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
@@ -120,7 +129,7 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
         })
         .collect();
     nodes.sort_by(compare_nodes);
-    nodes
+    Some(nodes)
 }
 
 pub(crate) fn is_hidden_entry(entry: &std::fs::DirEntry) -> bool {

@@ -18,6 +18,7 @@ pub(crate) mod detached_panes;
 pub mod diff_dock;
 pub mod drag;
 pub mod event_handlers;
+pub mod file_finder;
 pub mod files_git;
 pub mod files_sidebar;
 pub mod files_tree;

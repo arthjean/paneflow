@@ -241,6 +241,15 @@ impl PaneFlowApp {
         cx.observe(&sidebar_filter_input, |_, _, cx| cx.notify())
             .detach();
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
+        let file_finder_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Search files…", cx)
+                .with_accessible_name("Search files")
+        });
+        cx.observe(&file_finder_input, |this: &mut PaneFlowApp, input, cx| {
+            let query = input.read(cx).value();
+            this.file_finder_query_changed(query, cx);
+        })
+        .detach();
 
         crate::workspace::worktree::set_worktrees_root(cached_config.worktrees.dir_path());
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
@@ -379,6 +388,13 @@ impl PaneFlowApp {
                 sessions_in_flight: std::array::from_fn(|_| None),
             },
             files_sidebar_open: false,
+            files_tree_width: crate::window_state::files_tree_width()
+                .unwrap_or(crate::app::files_sidebar::FILES_TREE_DEFAULT_WIDTH),
+            files_tree_resize: None,
+            files_tree_resize_focus: cx.focus_handle(),
+            file_finder: None,
+            file_finder_input,
+            dock_file_opens: Default::default(),
             files_sidebar_animation: None,
             files_sidebar,
             files_sidebar_root: None,
@@ -491,6 +507,13 @@ impl PaneFlowApp {
                 h_offsets: std::rc::Rc::new(Vec::new()),
                 hover: None,
                 header_hover: None,
+                tab_menu: None,
+                closed_files: Default::default(),
+                crumb_menu: None,
+                crumb_generation: 0,
+                crumb_scroll: gpui::ScrollHandle::new(),
+                crumb_scroll_pending: false,
+                restoring: std::collections::HashMap::new(),
             },
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };
@@ -504,6 +527,7 @@ impl PaneFlowApp {
             app.plan_conversation_restore(cx);
         }
 
+        app.restore_dock_sessions(cx);
         app.spawn_restore_probe(cx);
         app.spawn_recents_prune(cx);
         app.refresh_pull_requests(cx);

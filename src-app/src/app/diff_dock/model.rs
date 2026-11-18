@@ -19,8 +19,6 @@ pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 540.0;
 pub(crate) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
 pub(super) const DIFF_DOCK_PANEL_MAX_WIDTH: f32 = 1400.0;
 
-pub(crate) const MAX_DIFF_FILE_TABS: usize = 8;
-
 #[derive(Clone)]
 pub(crate) enum DiffDockTab {
     Changes,

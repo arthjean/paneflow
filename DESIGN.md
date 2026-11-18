@@ -175,8 +175,8 @@ changes.
 | Main panel | The inset card that holds the pane grid or a Settings page | Inset 4 on right and bottom, and on the left only when the sidebar is hidden; radius 10; four corner masks painted in the shell color, transparent while a chrome material is active, so no surface inside the panel paints its own square background | `src-app/src/app/render.rs`, `src-app/src/window_chrome/mod.rs` |
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Comfortable density: gutter 8, divider hit area 7, minimum pane 80. Compact density (`comfortable_density: false`): no outer gutter, a 1 px `border` divider whose 7 px hit area straddles both panes, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
-| File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
-| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has once the pane grid keeps a minimum pane (80) and its gutters, so it drops below 360 only when the panel cannot hold both with the sidebar at its minimum; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
+| File tree | The full width of the dock's Files tab; inside a file tab, below its shared toolbar, to the right of the editor | Beside a file: width 256 by default, resized from 160 to 560 by its left edge (7 px hit area, 1 px visible rule, arrow keys step 16, Home and End jump to the bounds), never leaving less than 256 for the editor and staying at 160 when the dock cannot hold both; remembered in `window-state.json` as `files_tree_width` | `src-app/src/app/files_sidebar/mod.rs`, `src-app/src/app/files_sidebar/integration.rs` |
+| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has once the pane grid keeps a minimum pane (80) and its gutters, so it drops below 360 only when the panel cannot hold both with the sidebar at its minimum; no cap on file tabs | `src-app/src/app/diff_dock/model.rs` |
 | Footer | The Settings row, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
 ### 3.2 Modes
@@ -201,6 +201,7 @@ hides the workspace name while Settings is open.
 | Menus and selects | Deferred, anchored under the trigger | Radius 8, list padding 4, item height 28: the menu contract of 5.6, the same in every interface style | `src-app/src/ui_primitives/action_menu.rs`, `src-app/src/settings/components.rs` |
 | Tooltip | After 800 ms | Squircle 14 on the title bar color with a 1 px border | `src-app/src/ui_primitives.rs` |
 | Terminal search | Top right of the pane, 8 px inset | Squircle 14 on `subtle` with a 1 px `border`, 325 by 36, padding 14 left and 4 right, gap 8: the field, a `.*` mark only while regex mode is on, the match count, a 1 px divider, then previous, next and close as 28 px squircle icon buttons with the sidebar hover tint | `src-app/src/terminal/view.rs` |
+| File finder | `secondary-p` outside a terminal or a text field, docked like the command palette | The command palette panel of 5.7 at 560 wide: the search field, then up to 200 files with a 14 px language icon and the matched characters in Semibold, each path elided from its start so the file name stays visible, the list never running past the window's bottom edge, or one muted 29 px status row (`No matching files.`, `Indexing files…`, `Showing the first 100,000 files.`); an empty query lists the files of this workspace opened from the dock, by frecency | `src-app/src/app/file_finder.rs` |
 | Path picker | Anchored to the terminal cursor: under it, or above it with the field last when the space below cannot hold ten rows | The command palette panel of 5.7 at 420 wide, ten rows before the list scrolls | `src-app/src/terminal/path_picker/` |
 | Toast | Bottom right, 18 px inset | Squircle 20 on `subtle`, minimum width 220, one header row and an optional action row; a one-line toast is too short for 20, so its corner caps at the height limit and reads as a capsule | `src-app/src/app/notifications.rs` |
 | Worktree removal dialog | Centered | The card of the unsaved files dialog: squircle at `PANE_CARD_RADIUS`, 460 wide, padding 20 over a 0.55 black scrim, the blocking workspaces, tabs and sessions on `subtle` at 0.5 on radius 8, one kind word per row at 10 px muted, then `Cancel` and a destructive `Remove` | `src-app/src/app/worktree_remove.rs` |
@@ -1158,8 +1159,24 @@ picker takes the focus when the dock opens empty, so `1`, `2`, `3`, the arrow
 keys with Enter, and Escape work at once, and the focus returns to where it
 was when the picker goes away. The dock starts with no content tabs: Changes
 is created only when selected in the picker or the `+` menu, which also offers
-File and Terminal. Every content tab is closable, including Changes and the
-first tab. Closing the last tab returns to the picker; switching sessions
+File and Terminal and, below a separator, `Reopen Closed Tab`. File opens the
+single `Files` tab, titled with the 16 px folder-tree icon, whose body is the
+file tree at the full width of the dock; opening a file from it replaces the
+Files tab with the file's tab. Every content tab is closable, including Changes and the
+first tab. File tabs have no cap. A middle click closes a file tab, through the
+same two-click arming as its `×` when it is modified. A right click on a tab
+opens the tab menu of 5.6: `Copy Path` and `Copy Relative Path` on a file tab,
+then `Close`, `Close Others`, `Close to the Right`, `Close All`, and below a
+separator `Reopen Closed Tab`, disabled while the dock has closed nothing; a
+right click on the empty strip offers `Close All` and `Reopen Closed Tab`.
+Batch closes never touch Changes or Terminal and keep modified file tabs,
+reported by a `N modified tabs kept` toast. Each dock remembers its 20 most
+recent closed files, newest first, and reopens one at its scroll position.
+Every dock's Changes, Files and file tabs come back after a restart in the
+same order with the same active tab and the tree shown or hidden as it was;
+only the active file is read at launch,
+the others on their first activation, and a file gone since is dropped
+silently. Closing the last tab returns to the picker; switching sessions
 preserves the chosen tabs. Tabs are chips with the sidebar rail skin: no
 separators, active chip on the active tint, inactive chips wash in on hover.
 
@@ -1233,9 +1250,19 @@ the file has unsaved changes in a dock tab or changed on disk since the build.
 
 The file surface shares one frame, retaining the 40 px tab bar and its
 26 px tabs, original spacing, typography and corner radius. A 40 px
-breadcrumb toolbar spans both the editor and the tree. The tree
-starts below that toolbar with a 1 px left divider. Its width is 250 px,
-shrinking only when needed to leave 200 px for the editor. The search field
+breadcrumb toolbar spans both the editor and the tree. The breadcrumbs are the
+project then each folder down to the file, 12 px, 22 px tall segments with a
+4 px inset and the sidebar hover tint, separated by 18 px chevron buttons; the
+row scrolls horizontally and shows its last segment when a file opens. A
+folder segment reveals that folder in the tree: expanded, selected and
+centered. A chevron opens a menu of 5.6 listing the folder on its left,
+folders first, the open file checked; a folder entry shows its content in
+place under a `Back to <name>` entry, a file entry opens the file. The listing
+is read off the render thread and states `Loading folder…`,
+`This folder is empty.` or `This folder is no longer available.`, capped at
+300 entries. The tree starts below that toolbar beside a 1 px left rule that is
+also its resize handle, at the width of 3.1. A root that cannot be read shows
+`Unable to load folder.` and a `Retry` button. The search field
 has an 8 px outer inset, 28 px height, 8 px corners and a 1 px border. Tree
 rows are 28 px tall with 13 px labels, 14 px icons, 18 px indentation and
 6 px selection corners. These dimensions follow the Codex App reference
@@ -1252,9 +1279,10 @@ opacity in that slot instead, rolling up every descendant. Ignored paths never
 reach the tree, so they never carry a status.
 
 The tree button sits immediately after Editor Controls in the file toolbar.
-It and `secondary-alt-f` toggle the embedded tree.
-Opening it selects an existing file tab or creates a file picker tab. Closing
-the last file or file picker tab closes the tree; Changes and Terminal remain
+It and `secondary-alt-f` toggle the embedded tree; on the Files tab the
+shortcut closes that tab.
+Opening it selects an existing file tab or creates the Files tab. Closing
+the last file or Files tab closes the tree; Changes and Terminal remain
 available. Selecting those surfaces temporarily hides the tree and gives them
 the full dock width. Sessions can remain open alongside the integrated tree.
 Tree visibility remains local to the active agent session.
@@ -1617,6 +1645,7 @@ every modal answers Enter and Escape.
 | Jump to next waiting agent | `secondary-shift-j`: agents waiting for input, then errored, then finished and not yet seen, in the Agents section order, active space first |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |
 | Command palette | `secondary-shift-p` |
+| Open a project file | `secondary-p`, outside a terminal and a text field |
 | Insert a path at the terminal cursor | `secondary-shift-i` |
 | Settings | `secondary-,` |
 

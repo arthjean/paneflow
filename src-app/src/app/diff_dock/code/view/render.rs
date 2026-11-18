@@ -140,6 +140,7 @@ impl CodeView {
 
 impl Render for CodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.start_deferred_load(cx);
         self.ensure_focus_observers(window, cx);
         self.sync_theme();
         self.fill_visible_highlights(window);
@@ -157,6 +158,7 @@ impl Render for CodeView {
         };
 
         self.scroll.set_line_count(doc.line_count());
+        Self::apply_pending_scroll(&self.scroll, &mut self.pending_scroll_rows, window);
         let banners = self.banners(ui, cx);
         let popup = self.render_marker_popup(ui, window, cx);
         let theme = crate::theme::active_theme();

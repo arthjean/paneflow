@@ -710,6 +710,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     worktree_raw: None,
                     unread: false,
                     pull_request: None,
+                    dock: None,
                 },
                 TabSession {
                     title: "wire up the parser".to_string(),
@@ -719,6 +720,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     worktree_raw: None,
                     unread: false,
                     pull_request: None,
+                    dock: None,
                 },
             ],
         )],
@@ -996,4 +998,52 @@ fn the_previous_version_reads_a_session_that_carries_spaces() {
     assert_eq!(previous.version, SESSION_SCHEMA_VERSION);
     assert_eq!(previous.active_workspace, 0);
     assert_eq!(previous.workspaces[0].title, "api");
+}
+
+#[test]
+fn a_dock_session_round_trips_its_tabs_and_an_older_session_has_none() {
+    let tab: TabSession = serde_json::from_value(serde_json::json!({
+        "title": "work",
+        "dock": {
+            "open": true,
+            "active": 2,
+            "tree": true,
+            "tabs": [
+                { "kind": "changes" },
+                { "kind": "files" },
+                { "kind": "file", "path": "src/main.rs" },
+                { "kind": "diagram" }
+            ]
+        }
+    }))
+    .expect("a dock session parses");
+    let dock = tab.dock.clone().expect("dock");
+    assert!(dock.open);
+    assert!(dock.tree);
+    assert_eq!(dock.active, 2);
+    assert_eq!(
+        dock.tabs,
+        vec![
+            DockTabSession::Changes,
+            DockTabSession::Files,
+            DockTabSession::File {
+                path: "src/main.rs".to_string()
+            },
+            DockTabSession::Unknown,
+        ]
+    );
+    let reparsed: TabSession =
+        serde_json::from_str(&serde_json::to_string(&tab).expect("serialize")).expect("reparse");
+    assert_eq!(reparsed, tab);
+
+    let older: TabSession =
+        serde_json::from_value(serde_json::json!({ "title": "old", "layout": null }))
+            .expect("an older tab parses");
+    assert_eq!(older.dock, None);
+    assert!(
+        !serde_json::to_string(&older)
+            .expect("serialize")
+            .contains("dock"),
+        "a tab without a dock writes no dock field"
+    );
 }
