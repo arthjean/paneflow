@@ -89,9 +89,10 @@ cache now copies, hashes and compares each visible line where GPUI's
 
 Since 2026-11-18, every `linux-x86_64` baseline except `persistent.json`
 points at `650569c4`, the last code commit of the GPUI upgrade to
-`zed@703b5ac3`: `terminal`, `editor` and `startup` from `--set-baseline` runs
-on a clean tree on the Fedora machine (CPU share 1.00 for the two in-process
-suites), `terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
+`zed@703b5ac3`, or for `startup` at `e939a24c`, the same app with a script that
+builds the host it launches: `terminal`, `editor` and `startup` from
+`--set-baseline` runs on a clean tree on the Fedora machine (CPU share 1.00
+for the two in-process suites), `terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
 --refresh-alloc-baselines` on the same commit (US-027 of
 `tasks/prd-gpui-703b5ac3-upgrade.md`). Interleaved runs of the three suites
 against `9f606d3aa`, the commit before the upgrade, put every timing at or
