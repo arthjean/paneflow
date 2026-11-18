@@ -6,10 +6,12 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-18 | Arthur Jean | PRD initial, issu de la recherche du 2026-11-18 sur t3code (`52f0f8af`) et Zed (`5b282ac8bb`) : panneau Files du dock, icônes et mesure de l'arbre, éditeur (retour à la ligne, recherche, révélation de ligne), aperçus, liens fichiers-agents par le terminal. 6 epics, 37 stories, 3 phases. |
+| 1.1 | 2026-11-18 | Arthur Jean | Chaque story reçoit une ligne « Référence t3code » vers le code source de t3code (`52f0f8af`) et des paquets `@pierre/*` installés, chemins vérifiés un par un. US-032 cite aussi la technique de bloc de Zed. |
+| 1.2 | 2026-11-18 | Arthur Jean | Mesure US-016 : ligne de base `bench/baselines/linux-x86_64/tree.json` enregistrée par `scripts/bench-tree.sh --set-baseline` sur `f69413df`, arbre propre, Ryzen 7 7800X3D, part CPU 0,99 ([résultat](../bench/results/tree-20261118T182030Z-f69413dfc269.json)). 50 000 entrées : lignes après dépliage 19,57 ms (27,65 Mio alloués), 1 000 ajouts et suppressions 37,12 ms (38,17 Mio), recherche 2,41 ms. 300 000 entrées : 164,81 ms (173,04 Mio), 267,52 ms (232,48 Mio), 14,12 ms. Ces calculs tournent hors du fil de rendu, mais la construction des lignes dépasse 16 ms sur 50 000 entrées : **décision, porter** l'index de lignes visibles par nœud et l'application par différence de t3code. Story de suivi US-038 ajoutée au PRD, dans le nouvel EP-007. |
 
 ## Problem Statement
 
-**Convention de référence.** Les chemins désignent Paneflow au commit `8650e3c3`. La référence produit est t3code au commit `52f0f8af`. Les constats viennent de `tasks/research-t3code-files-experience.md`, une note locale non suivie par git : chaque constat repris ici cite le fichier du dépôt qui le prouve.
+**Convention de référence.** Les chemins désignent Paneflow au commit `8650e3c3`. La référence produit est t3code au commit `52f0f8af`. Chaque story porte une ligne « Référence t3code » : chemins relatifs à `/home/arthur/dev/t3code`, numéros de ligne au commit `52f0f8af` ; les paquets `@pierre/*` sont les copies installées sous `node_modules/.pnpm/`. Les constats viennent de `tasks/research-t3code-files-experience.md`, une note locale non suivie par git : chaque constat repris ici cite le fichier du dépôt qui le prouve.
 
 1. **Le dock ne permet pas de parcourir un projet sans ouvrir un fichier.** L'arbre n'apparaît que lorsqu'un onglet de fichier est actif (`src-app/src/app/diff_dock/mod.rs:558`) et se ferme avec le dernier (`src-app/src/app/diff_dock/tabs.rs:271-279`). Sa largeur est fixe, 250 px (`src-app/src/app/files_sidebar/mod.rs:20`). Le filtre ne cherche que dans les dossiers déjà dépliés (`src-app/src/app/files_sidebar/filter.rs:25`). Le fil d'Ariane est statique (`src-app/src/app/diff_dock/file_chrome.rs:55-110`).
 2. **Les onglets de fichier sont plafonnés et volatils.** 8 onglets au plus, le plus ancien fermé d'office (`src-app/src/app/diff_dock/model.rs:22`, `tabs.rs:308-319`). Aucun clic droit ni clic milieu sur un onglet (`src-app/src/app/diff_dock/render.rs:303-338`). Rien n'est restauré au redémarrage : `TabSession` ne porte aucun état du dock (`crates/paneflow-config/src/schema/session.rs:180-195`).
@@ -28,7 +30,7 @@ L'éditeur reçoit une table de correspondance entre lignes et positions vertica
 
 Les liens avec les agents passent par le terminal, décision d'Arthur du 2026-11-18. Un chemin ou un commentaire de ligne est collé pré-rempli dans le terminal de l'agent et n'est jamais validé à la place de l'utilisateur. ACP est reporté. Pour le moteur de coloration, ce PRD ne livre qu'un prototype mesuré du moteur lexical de Pierre (`@pierre/highlights`, Apache-2.0) derrière le banc de l'éditeur ; le choix entre réécriture native en Rust et binaire embarqué se fera sur ces mesures.
 
-Le travail est découpé en trois phases. Phase 1 : EP-001 et EP-002 (dock et arbre). Phase 2 : EP-003 et EP-004 (éditeur et aperçus). Phase 3 : EP-005 (liens agents), puis EP-006, la validation sur matériel réel. Chaque epic se construit et se vérifie sur Fedora ; les contrôles Windows sont regroupés dans EP-006.
+Le travail est découpé en trois phases. Phase 1 : EP-001 et EP-002 (dock et arbre). Phase 2 : EP-003 et EP-004 (éditeur et aperçus). Phase 3 : EP-005 (liens agents) et EP-007 (projection incrémentale de l'arbre), puis EP-006, la validation sur matériel réel. Chaque epic se construit et se vérifie sur Fedora ; les contrôles Windows sont regroupés dans EP-006.
 
 ## Goals
 
@@ -123,6 +125,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx` (corps et explorateur, 1589-1821), `apps/web/src/components/files/filePreviewMode.ts:40-49` (quand l'explorateur s'affiche), `apps/web/src/components/files/FileExplorerPane.tsx`, `apps/web/src/rightPanelStore.ts:916-976` (`openFile`, `navigateFolder`, surface `files` unique), `apps/web/src/components/chat/RightPanelSurfaceContent.tsx:242-277`
 
 **Acceptance Criteria:**
 - [x] Given un dock sans onglet de fichier, when je choisis « File » dans le sélecteur de surface ou que j'exécute `diff_new_file_tab`, then un onglet intitulé « Files » s'ouvre et l'arbre occupe toute la largeur utile du dock
@@ -137,6 +140,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-001
+**Référence t3code :** `apps/web/src/components/files/FileExplorerPane.tsx:9-115` (160, 560, 256, réserve de 256 px pour le contenu, clavier 88-110), `apps/web/src/components/preview/RightPanelResizeHandle.tsx:14-33`, `apps/web/src/hooks/useResizableWidth.ts:38-67`
 
 **Acceptance Criteria:**
 - [x] Given un fichier ouvert, when je fais glisser le bord gauche de l'arbre, then sa largeur suit le pointeur entre 160 et 560 px, sans jamais laisser moins de 256 px au contenu ; si le dock ne peut pas offrir les deux, l'arbre garde 160 px
@@ -152,6 +156,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P0
 **Size:** S (2 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/rightPanelStore.ts:916-950` (un onglet par fichier, réutilisation de l'onglet existant, aucun plafond)
 
 **Acceptance Criteria:**
 - [x] Given 8 onglets de fichier ouverts, when j'en ouvre un neuvième, then les 9 restent ouverts
@@ -166,6 +171,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-003
+**Référence t3code :** `apps/web/src/components/RightPanelTabs.tsx:1252-1343` (menu d'onglet, clic milieu), `apps/web/src/components/chat/useRightPanelActions.ts:258-283` (copie du chemin)
 
 **Acceptance Criteria:**
 - [x] Given un clic droit sur un onglet de fichier, when le menu s'ouvre, then il liste « Copy Path », « Copy Relative Path », « Close », « Close Others », « Close to the Right », « Close All »
@@ -180,6 +186,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P1
 **Size:** S (2 pts)
 **Dependencies:** Blocked by US-003
+**Référence t3code :** `apps/web/src/rightPanelStore.ts:1322-1346`, `apps/web/src/closedViewStore.ts`, `apps/web/src/reopenClosedView.ts`, `apps/web/src/components/ReopenClosedViewShortcut.tsx`
 
 **Acceptance Criteria:**
 - [x] Given un onglet de fichier fermé, when je choisis « Reopen Closed Tab » dans le menu contextuel de la bande d'onglets ou dans le menu de nouvel onglet, then le fichier se rouvre à la même position de défilement
@@ -193,6 +200,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-003
+**Référence t3code :** `apps/web/src/rightPanelStore.ts:101-102` (clé de stockage), `:551-718` (migration validée), `:1291-1318` (persistance)
 
 **Acceptance Criteria:**
 - [x] Given des onglets de fichier ouverts, when Paneflow redémarre, then chaque dock retrouve ses onglets dans le même ordre, avec le même onglet actif
@@ -208,6 +216,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-001
+**Référence t3code :** `apps/web/src/components/files/FileBreadcrumbs.tsx` (menus de dossier 231-279, retour 103-133, états 135-226), `apps/web/src/components/files/FilePreviewPanel.tsx:1417-1425` (défilement du dernier segment), `apps/web/src/rightPanelStore.ts:951-976` (`folderTrail`)
 
 **Acceptance Criteria:**
 - [x] Given un fichier ouvert, when je clique un segment de dossier, then ce dossier est déplié, sélectionné et centré dans l'arbre
@@ -223,6 +232,7 @@ Phase 1. Le dock devient un endroit où l'on parcourt un projet : un onglet File
 **Priority:** P2
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-003
+**Référence t3code :** `apps/web/src/components/files/ProjectFilePicker.tsx:49-122`, `apps/web/src/components/files/ProjectFilePicker.logic.ts:4,36-63` (200 résultats, surlignage), `apps/web/src/components/files/projectFilesQueryState.ts:216-236` (classement par fréquence et récence)
 
 **Acceptance Criteria:**
 - [x] Given le focus hors d'un terminal et hors d'un champ de saisie, when j'appuie sur `secondary-p`, then un sélecteur s'ouvre sur les fichiers de l'espace de travail actif
@@ -246,14 +256,15 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:549-631` (barre de 40 px, rafraîchir, recherche, tout déplier), `:148-150,329-337` (tout déplier sans les dossiers ignorés), `:307-322,375-380` (indicateur de chargement), `apps/web/src/pierre-tree-theme.ts` (animation et `prefers-reduced-motion`), `apps/web/src/components/files/useDirectoryEntries.ts:32-161` (4 lectures simultanées, relance)
 
 **Acceptance Criteria:**
-- [ ] La barre de l'arbre contient, dans cet ordre : « Refresh files », le champ « Search files », « Expand all » ou « Collapse all » selon l'état
-- [ ] Given « Refresh files », when je clique, then tous les dossiers chargés sont relus et l'icône tourne jusqu'à la fin de la lecture
-- [ ] Given « Expand all », when je clique, then les dossiers non ignorés par git se déplient ; au-delà de 2 000 dossiers l'opération s'arrête et un toast indique « Expanded the first 2,000 folders »
-- [ ] Given un dossier en cours de lecture, when il est déplié, then sa ligne montre un indicateur de chargement à la place du chevron
-- [ ] Given `reduce_motion` activé, when un dossier charge, then l'indicateur est statique
-- [ ] Given une lecture de dossier qui échoue, when elle se termine, then la ligne du dossier affiche « Unable to load folder. » et un clic relance la lecture
+- [x] La barre de l'arbre contient, dans cet ordre : « Refresh files », le champ « Search files », « Expand all » ou « Collapse all » selon l'état
+- [x] Given « Refresh files », when je clique, then tous les dossiers chargés sont relus et l'icône tourne jusqu'à la fin de la lecture
+- [x] Given « Expand all », when je clique, then les dossiers non ignorés par git se déplient ; au-delà de 2 000 dossiers l'opération s'arrête et un toast indique « Expanded the first 2,000 folders »
+- [x] Given un dossier en cours de lecture, when il est déplié, then sa ligne montre un indicateur de chargement à la place du chevron
+- [x] Given `reduce_motion` activé, when un dossier charge, then l'indicateur est statique
+- [x] Given une lecture de dossier qui échoue, when elle se termine, then la ligne du dossier affiche « Unable to load folder. » et un clic relance la lecture
 
 #### US-010: Entrées ignorées par git affichées en atténué
 **Description:** As a développeur qui supervise des agents, I want voir `target/` ou `node_modules/` en atténué so that je peux ouvrir un fichier généré sans quitter Paneflow.
@@ -261,13 +272,14 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:396-406` (statut « ignoré » atténué), `apps/server/src/workspace/WorkspaceEntries.ts:494-535` (`git check-ignore` par lots de 1000, raccourci au-delà de 1000 enfants)
 
 **Acceptance Criteria:**
-- [ ] Given un dossier qui contient une entrée ignorée par `.gitignore`, when il est déplié, then l'entrée apparaît à l'opacité `DIMMED_OPACITY` et reste ouvrable
-- [ ] Given un fichier ou dossier dont le nom commence par un point, when son parent est déplié, then il apparaît à l'opacité normale, sauf `.git` qui reste masqué
-- [ ] Given un dossier ignoré jamais déplié, when l'arbre se charge, then son contenu n'est ni lu ni surveillé
-- [ ] Given un dossier ignoré replié après avoir été déplié, when il est replié, then sa surveillance est arrêtée
-- [ ] Given une entrée ignorée, when le fichier actif change, then elle n'est jamais révélée automatiquement
+- [x] Given un dossier qui contient une entrée ignorée par `.gitignore`, when il est déplié, then l'entrée apparaît à l'opacité `DIMMED_OPACITY` et reste ouvrable
+- [x] Given un fichier ou dossier dont le nom commence par un point, when son parent est déplié, then il apparaît à l'opacité normale, sauf `.git` qui reste masqué
+- [x] Given un dossier ignoré jamais déplié, when l'arbre se charge, then son contenu n'est ni lu ni surveillé
+- [x] Given un dossier ignoré replié après avoir été déplié, when il est replié, then sa surveillance est arrêtée
+- [x] Given une entrée ignorée, when le fichier actif change, then elle n'est jamais révélée automatiquement
 
 #### US-011: Recherche sur tout le projet
 **Description:** As a développeur qui explore un dépôt, I want chercher un fichier dans tout le projet depuis l'arbre so that je le trouve même dans un dossier jamais déplié.
@@ -275,15 +287,16 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-009
+**Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:114-152,184-189` (fusion des résultats avec leurs parents, 256 caractères, 200 résultats, Échap), `:602-624` (messages), `apps/web/src/state/queries.ts:50,307-343` (anti-rebond de 120 ms), `apps/server/src/workspace/WorkspaceSearchIndex.ts:53-57` (index de 25 000 entrées)
 
 **Acceptance Criteria:**
-- [ ] Given une requête dans « Search files », when je m'arrête de taper 120 ms, then l'arbre n'affiche plus que les fichiers trouvés dans tout le projet et leurs dossiers parents, dépliés
-- [ ] La requête est limitée à 256 caractères et les résultats à 200
-- [ ] Given plus de 200 fichiers trouvés, when les résultats s'affichent, then « More matches available. Refine your search. » apparaît sous la barre
-- [ ] Given aucun fichier trouvé, when la recherche se termine, then « No matching files. » s'affiche
-- [ ] Given Échap dans le champ, when j'appuie, then la requête est vidée et l'arbre retrouve ses dossiers dépliés d'avant la recherche
-- [ ] Given une nouvelle frappe pendant une recherche, when le résultat précédent arrive, then il est ignoré
-- [ ] Le parcours du projet se fait hors du fil de rendu et respecte `.gitignore`
+- [x] Given une requête dans « Search files », when je m'arrête de taper 120 ms, then l'arbre n'affiche plus que les fichiers trouvés dans tout le projet et leurs dossiers parents, dépliés
+- [x] La requête est limitée à 256 caractères et les résultats à 200
+- [x] Given plus de 200 fichiers trouvés, when les résultats s'affichent, then « More matches available. Refine your search. » apparaît sous la barre
+- [x] Given aucun fichier trouvé, when la recherche se termine, then « No matching files. » s'affiche
+- [x] Given Échap dans le champ, when j'appuie, then la requête est vidée et l'arbre retrouve ses dossiers dépliés d'avant la recherche
+- [x] Given une nouvelle frappe pendant une recherche, when le résultat précédent arrive, then il est ignoré
+- [x] Le parcours du projet se fait hors du fil de rendu et respecte `.gitignore`
 
 #### US-012: Révéler le fichier actif dans l'arbre
 **Description:** As a développeur qui supervise des agents, I want voir où se trouve le fichier que je lis so that je repère ses voisins.
@@ -291,13 +304,14 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:467-528` (vider la recherche, déplier les ancêtres, centrer, ne pas rejouer après un rafraîchissement), `apps/web/src/components/files/loadFileAncestors.ts:1-15`
 
 **Acceptance Criteria:**
-- [ ] Given un fichier ouvert depuis un terminal, le fil d'Ariane ou un changement d'onglet, when il devient actif, then ses dossiers parents se déplient, sa ligne est sélectionnée et centrée dans l'arbre
-- [ ] Given une recherche active, when un fichier est révélé, then la recherche est vidée d'abord
-- [ ] La révélation ne déplace jamais le focus clavier
-- [ ] Given un fichier hors de la racine de l'espace de travail ou ignoré par git, when il devient actif, then l'arbre ne change pas
-- [ ] Given un rafraîchissement de l'arbre, when il se termine, then la dernière révélation n'est pas rejouée
+- [x] Given un fichier ouvert depuis un terminal, le fil d'Ariane ou un changement d'onglet, when il devient actif, then ses dossiers parents se déplient, sa ligne est sélectionnée et centrée dans l'arbre
+- [x] Given une recherche active, when un fichier est révélé, then la recherche est vidée d'abord
+- [x] La révélation ne déplace jamais le focus clavier
+- [x] Given un fichier hors de la racine de l'espace de travail ou ignoré par git, when il devient actif, then l'arbre ne change pas
+- [x] Given un rafraîchissement de l'arbre, when il se termine, then la dernière révélation n'est pas rejouée
 
 #### US-013: Menu contextuel de l'arbre
 **Description:** As a développeur qui explore un dépôt, I want ouvrir une entrée avec une autre application so that je traite ce que Paneflow n'affiche pas.
@@ -305,14 +319,15 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/fileContextMenu.ts:62-150` (ouvrir, révéler avec libellé par OS, ouvrir avec), `apps/web/src/components/files/FileBrowserPanel.tsx:198-272`
 
 **Acceptance Criteria:**
-- [ ] Given un clic droit sur une ligne, when le menu s'ouvre, then il liste « Open with Default App », le libellé de révélation, « Open With » suivi des éditeurs installés, « Copy Path », « Copy Relative Path »
-- [ ] Le libellé de révélation est « Reveal in Finder » sur macOS, « Reveal in File Explorer » sur Windows, « Reveal in File Manager » sur Linux
-- [ ] Given la révélation d'un fichier, when elle s'exécute, then le gestionnaire s'ouvre sur le dossier parent avec le fichier sélectionné sur macOS et Windows ; sur Linux il sélectionne le fichier si le service `org.freedesktop.FileManager1` répond, sinon il ouvre le dossier parent
-- [ ] Given aucun éditeur détecté, when le menu s'ouvre, then « Open With » est désactivé
-- [ ] Given une commande externe qui échoue, when elle se termine, then un toast donne le nom de l'application et l'erreur
-- [ ] Chaque lancement de processus se fait hors du fil de rendu
+- [x] Given un clic droit sur une ligne, when le menu s'ouvre, then il liste « Open with Default App », le libellé de révélation, « Open With » suivi des éditeurs installés, « Copy Path », « Copy Relative Path »
+- [x] Le libellé de révélation est « Reveal in Finder » sur macOS, « Reveal in File Explorer » sur Windows, « Reveal in File Manager » sur Linux
+- [x] Given la révélation d'un fichier, when elle s'exécute, then le gestionnaire s'ouvre sur le dossier parent avec le fichier sélectionné sur macOS et Windows ; sur Linux il sélectionne le fichier si le service `org.freedesktop.FileManager1` répond, sinon il ouvre le dossier parent
+- [x] Given aucun éditeur détecté, when le menu s'ouvre, then « Open With » est désactivé
+- [x] Given une commande externe qui échoue, when elle se termine, then un toast donne le nom de l'application et l'erreur
+- [x] Chaque lancement de processus se fait hors du fil de rendu
 
 #### US-014: Jeu d'icônes de fichier étendu
 **Description:** As a développeur qui explore un dépôt, I want une icône par type de fichier so that je reconnais un fichier sans lire son extension.
@@ -320,15 +335,16 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** None
+**Référence t3code :** `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/builtInIcons.js`, symboles 218-287), `apps/web/src/pierre-icons.ts:26-133` (22 ajouts et leurs licences), `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/style.js`, palette claire et sombre), `apps/web/src/components/chat/PierreEntryIcon.tsx:7-79`
 
 **Acceptance Criteria:**
-- [ ] `src-app/assets/icons/files/light/` et `src-app/assets/icons/files/dark/` contiennent chacun au moins 75 SVG de 16 par 16, un par jeton, issus du jeu de `@pierre/trees` 1.0.0-beta.6 et des ajouts de t3code
-- [ ] Les icônes propres à Paneflow sans équivalent (angular, react-native, makefile, log) sont conservées dans les deux variantes
-- [ ] Given un thème clair puis un thème sombre, when l'arbre s'affiche, then chaque icône utilise la variante du thème
-- [ ] Un script suivi par git régénère les deux dossiers à partir d'un chemin source passé en argument
-- [ ] Un fichier d'attribution à la racine du dépôt cite les sources et leurs licences (Apache-2.0, ISC, CC0), et les métadonnées de paquet y renvoient
-- [ ] Les dossiers gardent leurs chevrons : aucune icône de dossier n'est ajoutée
-- [ ] Given un SVG absent pour un jeton, when la ligne s'affiche, then l'icône générique est utilisée et un test échoue sur ce jeton
+- [x] `src-app/assets/icons/files/light/` et `src-app/assets/icons/files/dark/` contiennent chacun au moins 75 SVG de 16 par 16, un par jeton, issus du jeu de `@pierre/trees` 1.0.0-beta.6 et des ajouts de t3code
+- [x] Les icônes propres à Paneflow sans équivalent (angular, react-native, makefile, log) sont conservées dans les deux variantes
+- [x] Given un thème clair puis un thème sombre, when l'arbre s'affiche, then chaque icône utilise la variante du thème
+- [x] Un script suivi par git régénère les deux dossiers à partir d'un chemin source passé en argument
+- [x] Un fichier d'attribution à la racine du dépôt cite les sources et leurs licences (Apache-2.0, ISC, CC0), et les métadonnées de paquet y renvoient
+- [x] Les dossiers gardent leurs chevrons : aucune icône de dossier n'est ajoutée
+- [x] Given un SVG absent pour un jeton, when la ligne s'affiche, then l'icône générique est utilisée et un test échoue sur ce jeton
 
 #### US-015: Résolution du chemin vers l'icône
 **Description:** As a développeur qui explore un dépôt, I want que `vite.config.ts`, `Dockerfile` et `a.test.ts` aient leur icône so that les fichiers de configuration se distinguent du code.
@@ -336,14 +352,15 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-014
+**Référence t3code :** `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/render/iconResolver.js:8-60`), `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/builtInIcons.js:288-575`, tables de noms et d'extensions), `apps/web/src/pierre-icons.ts:135-192` (5 noms et 41 extensions ajoutés), `apps/web/src/pierre-icons.test.ts`
 
 **Acceptance Criteria:**
-- [ ] La résolution suit cet ordre : nom de fichier exact en minuscules, extensions ajoutées par l'application de la plus longue à la plus courte, table de noms intégrée, table d'extensions intégrée de la plus longue à la plus courte, icône par défaut
-- [ ] Les tables reprennent celles de `@pierre/trees` (noms et extensions) et de t3code (`apps/web/src/pierre-icons.ts:135-192`)
-- [ ] Given `a.test.ts`, when il est résolu, then `test.ts` est essayé avant `ts`
-- [ ] Given `.js`, `.yaml`, `.html`, `.c`, `.java`, `.sh`, when ils sont résolus, then aucun ne retombe sur l'icône par défaut
-- [ ] Given un nom sans extension et inconnu, un nom vide ou un nom fait uniquement de points, when il est résolu, then l'icône par défaut est renvoyée sans panique
-- [ ] L'arbre, les onglets du dock, l'arbre Changes et le sélecteur de chemins utilisent la même fonction
+- [x] La résolution suit cet ordre : nom de fichier exact en minuscules, extensions ajoutées par l'application de la plus longue à la plus courte, table de noms intégrée, table d'extensions intégrée de la plus longue à la plus courte, icône par défaut
+- [x] Les tables reprennent celles de `@pierre/trees` (noms et extensions) et de t3code (`apps/web/src/pierre-icons.ts:135-192`)
+- [x] Given `a.test.ts`, when il est résolu, then `test.ts` est essayé avant `ts`
+- [x] Given `.js`, `.yaml`, `.html`, `.c`, `.java`, `.sh`, when ils sont résolus, then aucun ne retombe sur l'icône par défaut
+- [x] Given un nom sans extension et inconnu, un nom vide ou un nom fait uniquement de points, when il est résolu, then l'icône par défaut est renvoyée sans panique
+- [x] L'arbre, les onglets du dock, l'arbre Changes et le sélecteur de chemins utilisent la même fonction
 
 #### US-016: Banc de mesure de l'arbre et décision d'optimisation
 **Description:** As a mainteneur de Paneflow, I want mesurer l'arbre sur de gros dossiers so that les optimisations de t3code ne sont portées que si elles gagnent quelque chose.
@@ -351,14 +368,15 @@ Phase 1. L'arbre garde ses lignes, son retrait, ses lettres git et ses chevrons.
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-010
+**Référence t3code :** `apps/web/src/components/files/fileTreePathReconciliation.ts:3-76` (seuil de 300 mesuré sur 50 000 et 332 000 entrées), `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/path-store/src/child-index.js:2-118` et `path-store/src/store.js:15-93`, compteurs de lignes visibles), `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/model/virtualization.js:4-45`, fenêtre conservée)
 
 **Acceptance Criteria:**
-- [ ] `scripts/bench-tree.sh` et `scripts/bench-tree.ps1` lancent une suite qui partage `src-app/src/bench_harness.rs` et compare à `bench/baselines/<os>-<arch>/tree.json`
-- [ ] La suite mesure, sur un dossier plat de 50 000 puis de 300 000 entrées : la construction des lignes après un dépliage, l'application de 1 000 ajouts et suppressions, et le filtrage
-- [ ] La ligne de base Linux x86_64 est enregistrée par `--set-baseline` sur un arbre git propre
-- [ ] Le PRD reçoit une entrée de changelog avec les valeurs mesurées et la décision : porter ou non l'index de lignes visibles par nœud et l'application par différence de t3code
-- [ ] Given une construction des lignes au-dessus de 16 ms sur 50 000 entrées, when la décision est écrite, then une story de suivi est ajoutée à ce PRD ; en dessous, la décision consigne qu'aucun portage n'est fait
-- [ ] `bench/README.md` décrit la suite
+- [x] `scripts/bench-tree.sh` et `scripts/bench-tree.ps1` lancent une suite qui partage `src-app/src/bench_harness.rs` et compare à `bench/baselines/<os>-<arch>/tree.json`
+- [x] La suite mesure, sur un dossier plat de 50 000 puis de 300 000 entrées : la construction des lignes après un dépliage, l'application de 1 000 ajouts et suppressions, et le filtrage
+- [x] La ligne de base Linux x86_64 est enregistrée par `--set-baseline` sur un arbre git propre
+- [x] Le PRD reçoit une entrée de changelog avec les valeurs mesurées et la décision : porter ou non l'index de lignes visibles par nœud et l'application par différence de t3code
+- [x] Given une construction des lignes au-dessus de 16 ms sur 50 000 entrées, when la décision est écrite, then une story de suivi est ajoutée à ce PRD ; en dessous, la décision consigne qu'aucun portage n'est fait
+- [x] `bench/README.md` décrit la suite
 
 ---
 
@@ -374,6 +392,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** None
+**Référence t3code :** `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/VirtualizedFile.js:11,68-71,124-158,512-534`, hauteur fixe par défaut, mesures seulement pour les lignes repliées, totaux tous les 5 000 lignes), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/constants.js:87-92`, 20 px, blocs de 50 lignes), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/utils/createWindowFromScrollPosition.js:3-21`)
 
 **Acceptance Criteria:**
 - [ ] Une structure unique répond à : position verticale d'une ligne, ligne à une position verticale, hauteur totale du document, rangées visibles
@@ -388,6 +407,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-017
+**Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:1193-1195,1543-1551` (bascule par panneau sur un réglage global), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/VirtualizedFile.js:124-158`), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/Virtualizer.js:286-364`, ancrage de la première ligne visible)
 
 **Acceptance Criteria:**
 - [ ] Given un fichier ouvert, when j'active « Word Wrap » dans le menu Editor Controls, then les lignes se replient à la largeur du contenu et le défilement horizontal disparaît
@@ -403,6 +423,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-017
+**Référence t3code :** `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/editor/command.js:5-54,123-132`, rechercher, remplacer, occurrence suivante), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/constants.js:55-85`, libellés de la barre de recherche)
 
 **Acceptance Criteria:**
 - [ ] Given le focus dans l'éditeur, when j'appuie sur `secondary-f`, then une barre de recherche s'ouvre, pré-remplie avec la sélection si elle tient sur une ligne
@@ -421,6 +442,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-017
+**Référence t3code :** `apps/web/src/components/files/fileLineReveal.ts:16-24` (centrage), `apps/web/src/components/files/FilePreviewPanel.tsx:472-687` (borne de ligne, garde de 20 images, abandon au premier geste), `apps/web/src/components/files/fileSurfaceChrome.tsx:27-59` (fond de la ligne révélée), `apps/web/src/rightPanelStore.ts:916-937` (`revealLine`, `revealRequestId`). t3code ne surligne qu'une ligne ; ce PRD surligne la plage
 
 **Acceptance Criteria:**
 - [ ] L'ouverture d'un onglet de fichier accepte une ligne, une colonne et une ligne de fin, toutes facultatives
@@ -436,6 +458,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P2
 **Size:** S (2 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:501-599` (mémoire et restauration), `apps/web/src/components/diffs/useCodeViewScrollRestore.ts`
 
 **Acceptance Criteria:**
 - [ ] Given un onglet fermé, when je rouvre le fichier dans la même session, then le défilement et le curseur reviennent à leur position
@@ -449,6 +472,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** None
+**Référence t3code :** `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/highlighter.js:9-10,44-46,80,157-242`, mémoire, fonctions d'accueil Unicode, choix du langage), `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/live.js:101,441-550`, reprise incrémentale et budget de 1 ms), `apps/web/src/lib/syntaxHighlighting.ts:17-22`, `apps/web/src/components/DiffWorkerPoolProvider.tsx:21-26,64-71`, `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/highlighter/highlights-editor.js:26-163`)
 
 **Acceptance Criteria:**
 - [ ] Le binaire `highlights.wasm` de `@pierre/highlights` 0.5.1 est exécuté depuis Rust, avec ses deux fonctions d'accueil de classes Unicode, derrière une fonctionnalité Cargo désactivée par défaut
@@ -464,6 +488,7 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-022
+**Référence t3code :** `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/token-types.js:2-76`, 73 catégories), `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/languages.js:3-350`, 152 langages), `apps/web/src/lib/syntaxHighlighting.ts:13-15` (alias de dialectes)
 
 **Acceptance Criteria:**
 - [ ] Pour Rust, TypeScript, Python, Markdown avec blocs de code et HTML avec script, un fichier du corpus est coloré par les deux moteurs et les écarts sont comptés par catégorie de jeton
@@ -487,6 +512,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:1210-1220,1607-1783` (ordre d'aiguillage), `packages/shared/src/filePreview.ts:38-96` (`filePreviewKind`), `apps/web/src/components/files/AttachmentFilePreview.tsx:394-407` (écran « No preview for this file »), `apps/server/src/workspace/fileHeaderMimeType.ts:1-20`
 
 **Acceptance Criteria:**
 - [ ] L'ouverture d'un fichier choisit sa visionneuse dans cet ordre : image par extension, tableau pour `.csv` et `.tsv`, Markdown, archive par extension, sinon chargeur de texte
@@ -502,6 +528,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-024
+**Référence t3code :** `apps/web/src/components/files/LargeTextViewer.tsx:12-253` (16 Kio immédiats, en-tête, colonnes), `apps/web/src/components/files/largeText.worker.ts:12-201` (index des débuts de ligne, pages), `apps/web/src/components/files/largeTextProtocol.ts:2-5` (256 Mio, 5 000 000 de lignes, pages de 32), `apps/web/src/components/files/VirtualTablePreview.tsx:261-347`, `apps/web/src/components/files/FilePreviewPanel.tsx:1894-1933` (barre « Full file »)
 
 **Acceptance Criteria:**
 - [ ] Given un fichier texte entre 10 Mio et 256 Mio, when il s'ouvre, then une visionneuse en lecture seule, sans coloration, l'affiche avec la bannière « Large file: read-only, no syntax colors »
@@ -518,6 +545,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-024
+**Référence t3code :** `apps/web/src/components/files/PreviewImageContent.tsx:30-133` (barre, zoom ×1,25 entre 0,05 et 8, ajuster, taille réelle), `apps/web/src/components/files/decodeImagePreview.ts`, `apps/web/src/components/files/imageDecode.worker.ts:3-213` (plafonds 50 Mo, 16 384 px, 32 Mpx), `packages/shared/src/mediaPreview.ts:22-36` (extensions d'image)
 
 **Acceptance Criteria:**
 - [ ] Les fichiers PNG, JPEG, GIF, WebP, BMP, ICO, TIFF et SVG s'ouvrent dans une visionneuse ; un GIF ou un WebP animé affiche sa première image
@@ -536,6 +564,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-024
+**Référence t3code :** `apps/web/src/components/files/FileMarkdownPreview.tsx`, `apps/web/src/components/files/filePreviewMode.ts:13-14` (extensions Markdown), `apps/web/src/components/files/FilePreviewPanel.tsx:1092-1155,1261-1296` (bascule, préférence, source forcée quand une ligne est demandée)
 
 **Acceptance Criteria:**
 - [ ] Given un fichier `.md`, `.mdx` ou `.markdown`, when il est ouvert, then l'en-tête montre une bascule « Show rendered markdown » / « Show markdown source »
@@ -552,6 +581,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P1
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-024
+**Référence t3code :** `apps/web/src/components/files/DelimitedTablePreview.tsx`, `packages/shared/src/delimitedPreview.ts:3-108` (guillemets, marque d'ordre, détection du `;`), `apps/web/src/components/files/VirtualTablePreview.tsx`, `apps/web/src/components/files/largeTextProtocol.ts:4` (1 024 colonnes)
 
 **Acceptance Criteria:**
 - [ ] Given un fichier `.csv` ou `.tsv` de 10 Mio au plus, when il s'ouvre, then un tableau s'affiche, première ligne en en-tête fixe, numéros de ligne à gauche, avec une bascule « Show source » / « Show table »
@@ -570,6 +600,7 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Priority:** P2
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-024
+**Référence t3code :** `apps/web/src/components/files/BinaryViewer.tsx`, `apps/web/src/components/files/binaryPreview.worker.ts:45-156` (lecture des en-têtes tar) et `:228-243` (signatures zip et gzip), `packages/client-runtime/src/zip/boundedZip.ts:5-8` (50 Mo, 10 Mo par entrée, 2 048 entrées, ratio de 200)
 
 **Acceptance Criteria:**
 - [ ] Given un fichier `.zip`, `.jar`, `.tar`, `.tar.gz` ou `.tgz` de 50 Mo au plus, when il s'ouvre, then un tableau liste Name, Size et Modified, dossiers d'abord
@@ -594,6 +625,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** None
+**Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:209-259` (« Add to chat », toast sans conversation ouverte), `packages/shared/src/composerTrigger.ts:31-34` (forme de la mention). t3code insère dans son compositeur ; ce PRD insère dans le terminal de l'agent
 
 **Acceptance Criteria:**
 - [ ] Les menus contextuels de l'arbre et des onglets de fichier contiennent « Send to Agent »
@@ -610,6 +642,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P1
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-030
+**Référence t3code :** `apps/web/src/components/files/fileTreeDragMention.ts:35-85` (sélection entière ou ligne seule, pas d'ouverture, désélection), `apps/web/src/components/chat/composerMentionDrag.ts:5-103` (zone de dépôt)
 
 **Acceptance Criteria:**
 - [ ] Given une ligne de l'arbre, when je la fais glisser, then un aperçu avec l'icône et le nom suit le pointeur et le fichier ne s'ouvre pas
@@ -625,6 +658,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P0
 **Size:** L (5 pts)
 **Dependencies:** Blocked by US-017
+**Référence t3code :** `apps/web/src/components/files/fileCommentAnnotations.ts:5-70` (brouillon, étiquette `L12 to L15`, suivi des lignes), `apps/web/src/components/files/FilePreviewPanel.tsx:820-1040` (création depuis la gouttière, un seul brouillon, annulation). Technique du bloc sous une ligne : Zed, `/home/arthur/dev/zed/crates/editor/src/display_map/block_map.rs:159-336` et `crates/editor/src/git.rs:557-692,2440-2490`
 
 **Acceptance Criteria:**
 - [ ] Given le pointeur au-dessus de la gouttière pendant 200 ms, when il s'arrête sur une ligne, then un bouton « + » apparaît avec l'infobulle « Comment on this line (drag for a range) »
@@ -643,6 +677,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-030, US-032
+**Référence t3code :** `apps/web/src/reviewCommentContext.ts:61-99` (contenu du commentaire), `packages/contracts/src/composerContext.ts:45-46` (16 000 et 32 000 caractères), `packages/shared/src/composerContextReferences.ts:226-427` (mise en forme et échappement des balises), `apps/web/src/lib/composerContextRecords.ts:401-554` (troncature)
 
 **Acceptance Criteria:**
 - [ ] Given un brouillon non vide, when je choisis « Send to Agent » ou `secondary-enter`, then le terminal de l'agent reçoit, en un seul collage encadré : le chemin relatif suivi de `:12` ou `:12-15`, une ligne vide, le commentaire, une ligne vide, puis les lignes citées dans un bloc de code dont la langue est l'extension du fichier
@@ -660,6 +695,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-020
+**Référence t3code :** `apps/web/src/terminal-links.ts:45-170` (détection des chemins et de `:ligne:colonne`), `apps/web/src/markdown-links.ts:74-106`, `apps/web/src/components/chat/MarkdownFileLink.tsx:347-359` (clic dans le panneau, modificateur pour l'éditeur externe)
 
 **Acceptance Criteria:**
 - [ ] Given un chemin de code dans la sortie d'un terminal, when je clique avec le modificateur de lien existant, then le fichier s'ouvre dans le dock de l'onglet, à la ligne et à la colonne indiquées, la ligne surlignée
@@ -676,6 +712,7 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Priority:** P2
 **Size:** S (2 pts)
 **Dependencies:** Blocked by US-034
+**Référence t3code :** `apps/web/src/components/ChatMarkdown.tsx:805-897` (`findWorkspaceFileMatch`) (dossier courant, autres racines, puis nom de fichier ; seule la dernière recherche compte)
 
 **Acceptance Criteria:**
 - [ ] Given un chemin relatif qui n'existe pas depuis le dossier courant du terminal, when le lien est évalué, then il est essayé depuis la racine de l'espace de travail
@@ -686,11 +723,36 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 
 ---
 
+### EP-007: Arbre : projection incrémentale
+
+Phase 3, avant EP-006. La mesure d'US-016 place la construction des lignes au-dessus de 16 ms sur 50 000 entrées ; cet epic porte l'index de lignes visibles par nœud et l'application par différence de t3code.
+
+**Definition of Done:** `rows_after_expand_50k` et `apply_1000_changes_50k` passent sous 16 ms sur la machine de référence, et la ligne de base de l'arbre est réenregistrée.
+
+#### US-038: Projection incrémentale de l'arbre
+**Description:** As a développeur qui explore un gros dépôt, I want que l'arbre se mette à jour sans reconstruire toutes ses lignes so that un dépliage ou une rafale de changements sur disque s'affiche dans l'image suivante.
+
+**Priority:** P1
+**Size:** L (5 pts)
+**Dependencies:** Blocked by US-016
+**Référence t3code :** `@pierre/trees` (`node_modules/.pnpm/@pierre+trees@1.0.0-beta.6*/node_modules/@pierre/trees/dist/path-store/src/child-index.js:2-118` et `path-store/src/store.js:15-93`, compteurs de lignes visibles par nœud), `apps/web/src/components/files/fileTreePathReconciliation.ts:3-76` (application par différence au-delà de 300 changements)
+
+Story de suivi issue de la décision d'US-016 (changelog 1.2), sortie d'EP-002 pour que l'epic de mesure ne porte pas l'optimisation qu'elle déclenche : `rows_after_expand_50k` mesure 19,57 ms, au-dessus du budget de 16 ms.
+
+**Acceptance Criteria:**
+- [ ] Chaque dossier chargé porte le nombre de ses lignes visibles, tenu à jour au dépliage, au repli et à chaque changement de son contenu
+- [ ] Une ligne de l'arbre est construite seulement quand elle entre dans la fenêtre affichée ; rien n'est alloué par ligne hors de cette fenêtre
+- [ ] Given 1 000 ajouts et suppressions dans un dossier, when ils arrivent du surveillant, then seules les entrées changées sont appliquées, sans copier l'arbre entier
+- [ ] Sur la machine de référence, `rows_after_expand_50k` et `apply_1000_changes_50k` passent sous 16 ms, mesurés par `scripts/bench-tree.sh` en release
+- [ ] La ligne de base `bench/baselines/linux-x86_64/tree.json` est réenregistrée par `--set-baseline` sur un arbre propre
+
+---
+
 ### EP-006: Validation sur matériel réel
 
 Clôture. Les branches `cfg(windows)` ne se compilent pas sous Linux et ne sont relues que par inspection pendant les epics précédents. Cet epic les exerce sur Windows 11 et consigne l'état de macOS.
 
-**Definition of Done:** chaque story d'EP-001 à EP-005 a été exercée sur Windows 11, les défauts trouvés sont corrigés ou consignés, et l'état de macOS (essayé ou inspecté) est écrit pour chaque epic.
+**Definition of Done:** chaque story d'EP-001 à EP-005 et d'EP-007 a été exercée sur Windows 11, les défauts trouvés sont corrigés ou consignés, et l'état de macOS (essayé ou inspecté) est écrit pour chaque epic.
 
 #### US-036: Passe Windows 11 du dock et de l'arbre
 **Description:** As a utilisateur de Paneflow sur Windows, I want que le dock Files et l'arbre fonctionnent comme sur Linux so that la version Windows n'est pas en retrait.
@@ -698,6 +760,7 @@ Clôture. Les branches `cfg(windows)` ne se compilent pas sous Linux et ne sont 
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-001, US-002, US-003, US-004, US-005, US-006, US-007, US-009, US-010, US-011, US-012, US-013, US-014, US-015
+**Référence t3code :** aucune : story de validation sur matériel
 
 **Acceptance Criteria:**
 - [ ] Sur Windows 11 x64, chaque critère d'EP-001 et d'EP-002 qui ne dépend pas de la machine de mesure est rejoué et son résultat consigné dans le PRD
@@ -713,6 +776,7 @@ Clôture. Les branches `cfg(windows)` ne se compilent pas sous Linux et ne sont 
 **Priority:** P0
 **Size:** M (3 pts)
 **Dependencies:** Blocked by US-018, US-019, US-020, US-024, US-025, US-026, US-027, US-028, US-030, US-031, US-032, US-033, US-034
+**Référence t3code :** aucune : story de validation sur matériel
 
 **Acceptance Criteria:**
 - [ ] Sur Windows 11 x64, chaque critère d'EP-003, EP-004 et EP-005 qui ne dépend pas de la machine de mesure est rejoué et son résultat consigné dans le PRD

@@ -17,7 +17,7 @@
     {
       "id": "EP-002",
       "title": "Arbre : barre d'outils, recherche, icônes et mesure",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 8,
       "stories_done": 0
@@ -44,6 +44,14 @@
       "status": "TODO",
       "priority": "P0",
       "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "Arbre : projection incrémentale",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 1,
       "stories_done": 0
     },
     {
@@ -168,11 +176,11 @@
       "id": "US-009",
       "title": "Barre d'outils de l'arbre",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -180,11 +188,11 @@
       "id": "US-010",
       "title": "Entrées ignorées par git affichées en atténué",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -192,13 +200,13 @@
       "id": "US-011",
       "title": "Recherche sur tout le projet",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -206,11 +214,11 @@
       "id": "US-012",
       "title": "Révéler le fichier actif dans l'arbre",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -218,11 +226,11 @@
       "id": "US-013",
       "title": "Menu contextuel de l'arbre",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -230,11 +238,11 @@
       "id": "US-014",
       "title": "Jeu d'icônes de fichier étendu",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -242,13 +250,13 @@
       "id": "US-015",
       "title": "Résolution du chemin vers l'icône",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-014"
       ],
-      "started_at": null,
+      "started_at": "2026-11-18T18:08:04+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -256,11 +264,25 @@
       "id": "US-016",
       "title": "Banc de mesure de l'arbre et décision d'optimisation",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-010"
+      ],
+      "started_at": "2026-11-18T18:08:04+01:00",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-038",
+      "title": "Projection incrémentale de l'arbre",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": [
+        "US-016"
       ],
       "started_at": null,
       "completed_at": null,
