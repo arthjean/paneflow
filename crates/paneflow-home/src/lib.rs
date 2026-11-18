@@ -316,7 +316,7 @@ pub fn migrate_legacy_home() -> Vec<PathBuf> {
     let Some(home) = paneflow_home() else {
         return Vec::new();
     };
-    let mut pairs: Vec<(Option<PathBuf>, PathBuf)> = vec![
+    let pairs: Vec<(PathBuf, PathBuf)> = [
         (legacy_config_path(), home.join("paneflow.json")),
         (legacy_session_path(), home.join("session.json")),
         (legacy_window_state_path(), home.join("window-state.json")),
@@ -324,12 +324,18 @@ pub fn migrate_legacy_home() -> Vec<PathBuf> {
             legacy_data_dir().map(|dir| dir.join("telemetry_id")),
             home.join("telemetry_id"),
         ),
-    ];
-    let pairs: Vec<(PathBuf, PathBuf)> = pairs
-        .drain(..)
-        .filter_map(|(legacy, target)| legacy.map(|legacy| (legacy, target)))
-        .collect();
-    migrate_files(&pairs)
+    ]
+    .into_iter()
+    .filter_map(|(legacy, target)| legacy.map(|legacy| (legacy, target)))
+    .collect();
+    migrate_legacy_files_into(is_default_home(&home), &pairs)
+}
+
+fn migrate_legacy_files_into(default_home: bool, pairs: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
+    if !default_home {
+        return Vec::new();
+    }
+    migrate_files(pairs)
 }
 
 pub fn migrate_files(pairs: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
@@ -363,6 +369,26 @@ fn copy_private(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_explicit_home_never_imports_the_legacy_state() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let legacy = tmp.path().join("legacy");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&legacy).expect("legacy dir");
+        std::fs::write(legacy.join("window-state.json"), "{}").expect("window state");
+        let pairs = vec![(
+            legacy.join("window-state.json"),
+            home.join("window-state.json"),
+        )];
+
+        assert!(migrate_legacy_files_into(false, &pairs).is_empty());
+        assert!(!home.join("window-state.json").exists());
+        assert_eq!(
+            migrate_legacy_files_into(true, &pairs),
+            vec![home.join("window-state.json")]
+        );
+    }
 
     #[test]
     fn migration_copies_only_what_is_missing_at_the_target() {

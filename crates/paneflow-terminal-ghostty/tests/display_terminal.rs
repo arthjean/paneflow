@@ -417,7 +417,7 @@ fn feed_produces_owned_snapshot_and_ordered_effects() {
     assert!(snapshot.cells.iter().any(|cell| {
         cell.character == 'e' && cell.zerowidth.as_deref() == Some(['\u{301}'].as_slice())
     }));
-    assert!(snapshot.cells.iter().take(5).all(|cell| !cell.flags.bold));
+    assert!(snapshot.cells.iter().take(5).all(|cell| !cell.flags.bold()));
 
     let events = terminal.drain_events();
     assert!(matches!(events.first(), Some(BackendEvent::Title(title)) if title == "owned title"));

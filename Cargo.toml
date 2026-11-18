@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
+    "crates/paneflow-colrv1",
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
@@ -42,6 +43,9 @@ categories = ["command-line-utilities"]
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Calendar dates and the local time zone
+jiff = { version = "0.2.35", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform", "tzdb-zoneinfo"] }
 
 # Error handling
 thiserror = "2"
@@ -94,12 +98,22 @@ missing_safety_doc = "allow"
 # in src-app/Cargo.toml. When bumping GPUI rev, verify these still resolve.
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
 # Not a GPUI fork: portable-pty 0.9.0 with an atomic O_CLOEXEC openpty, see
 # vendor/portable-pty/Cargo.toml.
 portable-pty = { path = "vendor/portable-pty" }
+# Not a GPUI fork: cosmic-text 0.19.0 shaping a word that mixes scripts one
+# script at a time, see vendor/cosmic-text/Cargo.toml.
+cosmic-text = { path = "vendor/cosmic-text" }
+
+# gpui_wgpu and gpui_linux at the pinned Zed revision, vendored so that Linux
+# paints COLRv1 color emoji and the Wayland client survives seats whose devices
+# change, see vendor/gpui_wgpu/Cargo.toml and vendor/gpui_linux/Cargo.toml.
+[patch."https://github.com/zed-industries/zed"]
+gpui_wgpu = { path = "vendor/gpui_wgpu" }
+gpui_linux = { path = "vendor/gpui_linux" }
 
 # The worker hashes its own executable for its build id; an unoptimized sha2
 # takes ~18 s on the debug binary and misses the 10 s worker startup window.

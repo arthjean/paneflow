@@ -73,8 +73,8 @@ pub use kitty::{
     PlacementCursor, PlacementRenderInfo, SourceRect,
 };
 pub use model::{
-    BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
-    Modes, MouseShape, OscTerminator, Overscan, OverscanRow, Point, ProgramStatusKind,
+    BackendEvent, Cell, CellAttribute, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape,
+    Hyperlink, Modes, MouseShape, OscTerminator, Overscan, OverscanRow, Point, ProgramStatusKind,
     ProgramStatusReport, ProgramStatusState, ProgressReport, ProgressState, PromptKind, RenderHold,
     Rgb, RowId, RowIdentity, Scroll, SearchMatch, SearchResult, SelectionRange, SemanticPromptKind,
     TerminalAppearance, TerminalMemoryUsage, UnderlineStyle, UnknownSequenceKind, WideCell,

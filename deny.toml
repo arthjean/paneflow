@@ -146,11 +146,14 @@ allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 # Zed forks of `async-task` and `khronos-egl` mirrored in the root
 # `[patch.crates-io]`. It dropped `proptest-rs/proptest` (now a crates.io dep of
 # gpui) and `smol-rs/async-task`.
+# The 2026-11-15 bump to `703b5ac3` follows Zed back to `smol-rs/async-task`
+# at `41fd3359` (the waker identity fix of async-task#108, unreleased) and
+# drops `zed-industries/async-task.git`.
 allow-git = [
     "https://github.com/gfx-rs/wgpu",
     "https://github.com/tree-sitter/tree-sitter-cpp",
     "https://github.com/zed-industries/async-process.git",
-    "https://github.com/zed-industries/async-task.git",
+    "https://github.com/smol-rs/async-task",
     "https://github.com/zed-industries/calloop",
     "https://github.com/zed-industries/font-kit",
     "https://github.com/zed-industries/khronos-egl",

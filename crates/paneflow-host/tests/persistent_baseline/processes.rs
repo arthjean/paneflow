@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) fn fixture_agent_accounts(home: &Path) -> [(&'static str, PathBuf); 2] {
+    let accounts = home.join("agent-accounts");
+    paneflow_host::agent::ACCOUNT_ENV_KEYS.map(|key| (key, accounts.join(key.to_lowercase())))
+}
+
 pub(super) struct WorkerProcess {
     pub(super) child: std::process::Child,
     pub(super) endpoint: PathBuf,
@@ -18,6 +23,7 @@ impl WorkerProcess {
             .args(["serve", "run", "--home"])
             .arg(home)
             .env("PANEFLOW_HOME", home)
+            .envs(fixture_agent_accounts(home))
             .stdin(std::process::Stdio::null())
             .stdout(log.try_clone().unwrap())
             .stderr(log);
@@ -288,6 +294,7 @@ impl DesktopProcess {
         let started = Instant::now();
         let child = Command::new(executable)
             .env("PANEFLOW_HOME", home)
+            .envs(fixture_agent_accounts(home))
             .env("PANEFLOW_SOCKET_PATH", &endpoint)
             .env("PANEFLOW_ALLOW_SOCKET_OVERRIDE", "1")
             .env(
@@ -709,4 +716,48 @@ pub(super) fn paused_follower_probe(client: &mut HostClient, endpoint: &Path) ->
         "independent_reattach_ms": reattach_ms,
         "scope": "one follower pauses receipt; independent real IPC inspect and attachment complete; no queue-capacity claim",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use paneflow_agent_config::usage::accounts::{AccountOrigin, OriginKind, inventory};
+
+    fn existing_accounts(origin: &AccountOrigin, user_home: &Path) -> Vec<PathBuf> {
+        inventory(std::slice::from_ref(origin), Some(user_home))
+            .into_iter()
+            .map(|account| account.config_dir)
+            .filter(|dir| dir.is_dir())
+            .collect()
+    }
+
+    #[test]
+    fn a_fixture_process_never_finds_the_developer_agent_accounts() {
+        let user_home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(user_home.path().join(".claude").join("projects")).unwrap();
+        std::fs::create_dir_all(user_home.path().join(".codex").join("sessions")).unwrap();
+        let fixture = tempfile::tempdir().unwrap();
+        let mut origin = AccountOrigin {
+            kind: OriginKind::Default,
+            name: "default".into(),
+            agent: None,
+            env: BTreeMap::new(),
+        };
+        assert_eq!(
+            existing_accounts(&origin, user_home.path()).len(),
+            2,
+            "an inherited environment finds the developer's Claude and Codex accounts"
+        );
+        origin.env = fixture_agent_accounts(fixture.path())
+            .into_iter()
+            .map(|(key, dir)| (key.to_string(), dir.display().to_string()))
+            .collect();
+        assert_eq!(
+            existing_accounts(&origin, user_home.path()),
+            Vec::<PathBuf>::new()
+        );
+        for (_, dir) in fixture_agent_accounts(fixture.path()) {
+            assert!(dir.starts_with(fixture.path()));
+        }
+    }
 }

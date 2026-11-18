@@ -252,7 +252,7 @@ impl AiHookFrame {
         Self { method, params }
     }
 
-    pub fn to_agent_event_params(&self, session: &str) -> Value {
+    pub fn into_agent_event_params(self, session: &str) -> Value {
         let mut value = Map::new();
         value.insert("session".into(), Value::String(session.to_owned()));
         value.insert(
@@ -265,8 +265,8 @@ impl AiHookFrame {
         if let Some(pid) = self.params.pid {
             value.insert("pid".into(), Value::from(pid.get()));
         }
-        if let Some(tool_name) = &self.params.tool_name {
-            value.insert("tool_name".into(), Value::String(tool_name.clone()));
+        if let Some(tool_name) = self.params.tool_name {
+            value.insert("tool_name".into(), Value::String(tool_name));
         }
         if let Some(exit_code) = self.params.exit_code {
             value.insert("exit_code".into(), Value::from(exit_code));
@@ -283,7 +283,7 @@ impl AiHookFrame {
         if let Some(runtime_generation) = self.params.runtime_generation {
             value.insert("runtime_generation".into(), Value::from(runtime_generation));
         }
-        value.insert("hook_payload".into(), self.params.hook_payload.clone());
+        value.insert("hook_payload".into(), self.params.hook_payload);
         Value::Object(value)
     }
 }
@@ -327,7 +327,7 @@ mod tests {
         params.pid = SessionPid::new(42);
         params.emitted_at_ms = Some(1_234);
         let frame = AiHookFrame::new(AiHookMethod::Stop, params);
-        let event = frame.to_agent_event_params("11112222-3333-4444-5555-666677778888");
+        let event = frame.into_agent_event_params("11112222-3333-4444-5555-666677778888");
 
         assert_eq!(event["session"], "11112222-3333-4444-5555-666677778888");
         assert_eq!(event["kind"], METHOD_STOP);

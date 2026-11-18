@@ -9,6 +9,7 @@ use super::element::{CodeScroll, code_font};
 use super::navigation::{MINIMAP_FONT_SIZE, MINIMAP_LINE_HEIGHT, Track, minimap_top};
 use super::view::CodeView;
 use crate::diff::text_runs;
+use crate::tab_stops::TabExpandedLine;
 
 pub(crate) fn visible_rows(line_count: usize, scroll: &CodeScroll) -> Range<usize> {
     let first = minimap_top(line_count, scroll).floor() as usize;
@@ -52,10 +53,13 @@ impl MinimapPaint {
                 highlighter.runs_into(row, &mut syntax);
             }
             let runs = text_runs(&text, &syntax, &font, foreground);
-            let line =
-                window
-                    .text_system()
-                    .shape_line(text.into(), px(MINIMAP_FONT_SIZE), &runs, None);
+            let line = TabExpandedLine::shape(
+                &text.into(),
+                px(MINIMAP_FONT_SIZE),
+                &runs,
+                window.text_system(),
+            )
+            .into_shaped();
             lines.push((
                 point(
                     track.bounds.origin.x,

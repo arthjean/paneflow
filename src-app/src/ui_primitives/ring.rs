@@ -1,8 +1,8 @@
 use std::f32::consts::{PI, TAU};
 
 use gpui::{
-    AnyElement, Bounds, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled,
-    Window, canvas, div, point, px,
+    AnyElement, Bounds, Hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point,
+    StrokeOptions, Styled, Window, canvas, div, point, px,
 };
 use paneflow_agent_config::usage::model::UsageLevel;
 
@@ -55,10 +55,10 @@ pub(crate) struct ArcSweep {
 }
 
 pub(crate) fn arc_sweep(value: f64) -> Option<ArcSweep> {
-    let value = if value.is_nan() {
-        0.
-    } else {
+    let value = if value.is_finite() {
         value.clamp(0., 1.)
+    } else {
+        0.
     };
     if value <= 0. {
         return None;
@@ -83,7 +83,7 @@ pub(crate) fn level_color(level: UsageLevel, ui: UiColors) -> Hsla {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Gauge {
     radius: f32,
     stroke: f32,
@@ -149,43 +149,94 @@ fn ring_canvas(size: RingSize, gauges: Vec<Gauge>, ui: UiColors) -> AnyElement {
         .into_any_element()
 }
 
-fn paint_gauge(bounds: Bounds<Pixels>, gauge: Gauge, track: Hsla, window: &mut Window) {
-    if gauge.radius <= gauge.stroke / 2. {
-        return;
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GaugeLayer {
+    Track,
+    Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GaugeShape {
+    Circle,
+    Arc(ArcSweep),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GaugeStroke {
+    layer: GaugeLayer,
+    shape: GaugeShape,
+    options: StrokeOptions,
+}
+
+fn gauge_strokes(gauge: Gauge) -> Vec<GaugeStroke> {
+    let geometry_valid = gauge.radius.is_finite() && gauge.stroke.is_finite() && gauge.stroke > 0.;
+    if !geometry_valid || gauge.radius <= gauge.stroke / 2. {
+        return Vec::new();
     }
-    let center = bounds.center();
-    if let Some(path) = circle_stroke(center, gauge.radius, gauge.stroke) {
-        window.paint_path(path, track);
-    }
-    let Some(sweep) = arc_sweep(gauge.value) else {
-        return;
+    let circle = StrokeOptions {
+        line_width: gauge.stroke,
+        ..StrokeOptions::default()
     };
-    if sweep.closed {
-        if let Some(path) = circle_stroke(center, gauge.radius, gauge.stroke) {
-            window.paint_path(path, gauge.color);
+    let mut strokes = vec![GaugeStroke {
+        layer: GaugeLayer::Track,
+        shape: GaugeShape::Circle,
+        options: circle,
+    }];
+    if let Some(sweep) = arc_sweep(gauge.value) {
+        strokes.push(if sweep.closed {
+            GaugeStroke {
+                layer: GaugeLayer::Value,
+                shape: GaugeShape::Circle,
+                options: circle,
+            }
+        } else {
+            GaugeStroke {
+                layer: GaugeLayer::Value,
+                shape: GaugeShape::Arc(sweep),
+                options: super::stroke::round_stroke_options(px(gauge.stroke)),
+            }
+        });
+    }
+    strokes
+}
+
+#[cfg(test)]
+thread_local! {
+    static PAINTED_STROKES: std::cell::RefCell<Vec<GaugeStroke>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn paint_gauge(bounds: Bounds<Pixels>, gauge: Gauge, track: Hsla, window: &mut Window) {
+    let center = bounds.center();
+    for stroke in gauge_strokes(gauge) {
+        let color = match stroke.layer {
+            GaugeLayer::Track => track,
+            GaugeLayer::Value => gauge.color,
+        };
+        if let Some(path) = stroke_path(center, gauge.radius, stroke) {
+            #[cfg(test)]
+            PAINTED_STROKES.with(|painted| painted.borrow_mut().push(stroke));
+            window.paint_path(path, color);
         }
-        return;
     }
-    let start = on_circle(center, gauge.radius, sweep.start_radians);
-    let end = on_circle(center, gauge.radius, sweep.end_radians);
-    let radii = point(px(gauge.radius), px(gauge.radius));
-    let mut arc = PathBuilder::stroke(px(gauge.stroke));
-    arc.move_to(start);
-    arc.arc_to(
-        radii,
-        px(0.),
-        sweep.end_radians - sweep.start_radians > PI,
-        true,
-        end,
-    );
-    if let Ok(path) = arc.build() {
-        window.paint_path(path, gauge.color);
-    }
-    for cap in [start, end] {
-        if let Some(path) = disc(cap, gauge.stroke / 2.) {
-            window.paint_path(path, gauge.color);
+}
+
+fn stroke_path(center: Point<Pixels>, radius: f32, stroke: GaugeStroke) -> Option<gpui::Path> {
+    let mut builder = super::stroke::stroke_with(stroke.options);
+    match stroke.shape {
+        GaugeShape::Circle => trace_circle(&mut builder, center, radius),
+        GaugeShape::Arc(sweep) => {
+            builder.move_to(on_circle(center, radius, sweep.start_radians));
+            builder.arc_to(
+                point(px(radius), px(radius)),
+                px(0.),
+                sweep.end_radians - sweep.start_radians > PI,
+                sweep.clockwise,
+                on_circle(center, radius, sweep.end_radians),
+            );
         }
     }
+    builder.build().ok()
 }
 
 fn on_circle(center: Point<Pixels>, radius: f32, radians: f32) -> Point<Pixels> {
@@ -193,18 +244,6 @@ fn on_circle(center: Point<Pixels>, radius: f32, radians: f32) -> Point<Pixels> 
         center.x + px(radius * radians.sin()),
         center.y - px(radius * radians.cos()),
     )
-}
-
-fn circle_stroke(center: Point<Pixels>, radius: f32, stroke: f32) -> Option<gpui::Path<Pixels>> {
-    let mut builder = PathBuilder::stroke(px(stroke));
-    trace_circle(&mut builder, center, radius);
-    builder.build().ok()
-}
-
-fn disc(center: Point<Pixels>, radius: f32) -> Option<gpui::Path<Pixels>> {
-    let mut builder = PathBuilder::fill();
-    trace_circle(&mut builder, center, radius);
-    builder.build().ok()
 }
 
 fn trace_circle(builder: &mut PathBuilder, center: Point<Pixels>, radius: f32) {
@@ -264,7 +303,128 @@ mod tests {
     fn test_values_outside_the_unit_range_are_bounded() {
         assert_eq!(arc_sweep(-0.3), None);
         assert_eq!(arc_sweep(f64::NAN), None);
+        assert_eq!(arc_sweep(f64::INFINITY), None);
+        assert_eq!(arc_sweep(f64::NEG_INFINITY), None);
         assert_eq!(arc_sweep(1.7), arc_sweep(1.));
+    }
+
+    fn gauge(radius: f32, stroke: f32, value: f64) -> Gauge {
+        Gauge {
+            radius,
+            stroke,
+            value,
+            color: gpui::white(),
+        }
+    }
+
+    #[test]
+    fn test_an_open_gauge_is_a_track_and_one_round_capped_value_stroke() {
+        let strokes = gauge_strokes(gauge(6.75, 2.5, 0.54));
+        assert_eq!(strokes.len(), 2, "track and value, no cap discs");
+        assert_eq!(strokes[0].layer, GaugeLayer::Track);
+        assert_eq!(strokes[0].shape, GaugeShape::Circle);
+        assert_eq!(strokes[1].layer, GaugeLayer::Value);
+        assert_eq!(strokes[1].shape, GaugeShape::Arc(arc_sweep(0.54).unwrap()));
+        assert_eq!(strokes[1].options.line_cap, gpui::LineCap::Round);
+        assert_eq!(strokes[1].options.line_width, 2.5);
+    }
+
+    #[test]
+    fn test_a_full_gauge_strokes_a_closed_circle() {
+        let strokes = gauge_strokes(gauge(6.75, 2.5, 1.));
+        assert_eq!(
+            strokes
+                .iter()
+                .map(|s| (s.layer, s.shape))
+                .collect::<Vec<_>>(),
+            vec![
+                (GaugeLayer::Track, GaugeShape::Circle),
+                (GaugeLayer::Value, GaugeShape::Circle)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_a_radius_at_or_below_half_the_stroke_paints_nothing() {
+        for (radius, stroke) in [(1.25, 2.5), (1., 2.5), (0., 2.5), (-3., 2.5)] {
+            assert!(gauge_strokes(gauge(radius, stroke, 0.5)).is_empty());
+        }
+        assert!(gauge_strokes(gauge(f32::NAN, 2.5, 0.5)).is_empty());
+        assert!(gauge_strokes(gauge(6., f32::INFINITY, 0.5)).is_empty());
+    }
+
+    #[test]
+    fn test_a_zero_or_non_finite_value_paints_only_the_track() {
+        for value in [0., -0.2, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let strokes = gauge_strokes(gauge(6.75, 2.5, value));
+            assert_eq!(
+                strokes.iter().map(|s| s.layer).collect::<Vec<_>>(),
+                vec![GaugeLayer::Track],
+                "{value}"
+            );
+        }
+    }
+
+    struct RingHarness {
+        value: f64,
+    }
+
+    impl gpui::Render for RingHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            div()
+                .flex()
+                .child(ring(RingSize::Small, self.value, UsageLevel::Normal, ui))
+                .child(concentric_rings(
+                    RingSize::Large,
+                    (self.value, UsageLevel::Warn),
+                    (self.value, UsageLevel::Critical),
+                    ui,
+                ))
+        }
+    }
+
+    fn painted_layers(cx: &mut gpui::TestAppContext, value: f64) -> Vec<(GaugeLayer, GaugeShape)> {
+        let (_view, cx) = cx.add_window_view(|_, _| RingHarness { value });
+        PAINTED_STROKES.with(|painted| painted.borrow_mut().clear());
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        PAINTED_STROKES.with(|painted| {
+            painted
+                .borrow()
+                .iter()
+                .map(|stroke| (stroke.layer, stroke.shape))
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn test_rendered_rings_paint_at_most_two_paths_per_gauge(cx: &mut gpui::TestAppContext) {
+        let open = arc_sweep(0.54).unwrap();
+        let track = (GaugeLayer::Track, GaugeShape::Circle);
+        let value = (GaugeLayer::Value, GaugeShape::Arc(open));
+        assert_eq!(
+            painted_layers(cx, 0.54),
+            vec![track, value, track, value, track, value]
+        );
+        let full = (GaugeLayer::Value, GaugeShape::Circle);
+        assert_eq!(
+            painted_layers(cx, 1.),
+            vec![track, full, track, full, track, full]
+        );
+        for value in [0., f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                painted_layers(cx, value),
+                vec![track, track, track],
+                "{value}"
+            );
+        }
     }
 
     #[test]

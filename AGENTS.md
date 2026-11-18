@@ -163,9 +163,16 @@ the two you did.
   the script after `cargo nextest run` on Linux x86_64 to measure them locally.
   Do not add heavy dependencies to them; `toml_edit`, for instance, is
   deliberately confined to `paneflow-mcp-install`.
-- **GPUI is pinned to an exact upstream Zed revision** across four `rev` values
-  in `src-app/Cargo.toml`, and `gpui_platform` must keep
-  `features = ["font-kit"]` or macOS renders empty glyph bitmaps.
+- **GPUI is pinned to an exact upstream Zed revision** across every `rev` value
+  in `src-app/Cargo.toml`, dev-dependencies included, and `gpui_platform` must keep
+  `features = ["font-kit"]` or macOS renders empty glyph bitmaps. Linux's
+  `gpui_wgpu` and `gpui_linux` are vendored copies of that revision under
+  `vendor/gpui_wgpu` and `vendor/gpui_linux`,
+  patched in from the root `Cargo.toml`, whose manifests repeat the revision:
+  a GPUI bump re-vendors both from the new revision and re-applies the changes
+  each manifest header names. `vendor/cosmic-text` patches the cosmic-text
+  version `gpui_wgpu` requires: when a bump moves that version, Cargo reports
+  the patch as unused, so re-vendor it at the new version as well.
 - The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
   `LICENSE` and `Cargo.toml`.
 

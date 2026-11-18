@@ -35,6 +35,7 @@ focused library crates:
 | `paneflow-mcp-install` | `crates/paneflow-mcp-install/` | GPU-free install engine behind `paneflow integrations` and `paneflow mcp`: hooks, MCP entry and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force` |
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
+| `paneflow-colrv1` | `crates/paneflow-colrv1/` | COLRv1 color-glyph rasterizer (skrifa paint graph onto tiny-skia, gradients interpolated in linear light) called by the vendored `vendor/gpui_wgpu` Linux text system, whose swash backend reads only COLRv0 and CBDT emoji |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
 
 `src-app` is the default workspace member, so bare `cargo run` starts the
@@ -200,7 +201,18 @@ KeyDownEvent
 ```
 
 The leading Ghostty wakeup notifies GPUI immediately. Presentation follows the
-platform frame scheduler.
+platform frame scheduler, under the frame policy that `frame_policy.rs` states
+for every Paneflow window (`paced_window_options`): an unfocused window
+presents at most 30 frames per second (33.333 ms), a window under the
+platform's low-power mode at most 30 (33.333 ms), and one under serious or
+critical thermal pressure at most 60 (16.667 ms). Since `703b5ac3` the
+limit holds for every redraw, a notify or a keystroke echo included, where
+GPUI used to limit only forced renders and next-frame callbacks (#66237).
+GPUI applies the longest interval that holds and lifts the unfocused cap
+during sustained high-rate input; a mandatory platform presentation bypasses all three. The values equal
+GPUI's defaults at `703b5ac3` and are written out so that a later GPUI default
+cannot change them silently: `every_paneflow_window_is_opened_with_the_paced_options`
+fails when a new `open_window` call skips them.
 
 Two gates decide how much of that pipeline actually runs, and both exist
 because the natural rate of each stage is far above the rate a display can
@@ -296,15 +308,32 @@ divs: terminal rendering wants per-cell control over background quads, glyph
 runs, cursor shapes, underlines and hyperlink hitboxes. Everything else in the
 app (sidebar, tabs, settings, diff viewer) is regular GPUI flex layout.
 
-`TerminalElement::paint` draws the grid in two `paint_layer` calls, one for
-the base fill, overscan row, cell backgrounds, selection, search highlights
-and block quads, one for sprites, text and symbols, with kitty images below
-the text between them. A primitive inside a layer takes the layer's draw
-order instead of being inserted one by one into GPUI's `BoundsTree`, and
-GPUI draws a layer's quads before its glyphs, so the visible order is kept.
-Decorations, kitty images above the text, the hyperlink underline, the
-cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
+`TerminalElement::paint` draws the grid in two sibling `paint_layer` calls,
+one for the base fill, overscan row, cell backgrounds, selection, search
+highlights and block quads, one for sprites, text and symbols, with kitty
+images of negative z-index between them. GPUI gives a layer a single draw
+order and draws its primitives by kind (shadows, quads, paths, underlines,
+monochrome, subpixel and polychrome sprites, surfaces), then by atlas texture,
+and only then in paint order (`PrimitiveKind` in `gpui/src/scene.rs`). That
+is safe here because the primitives of one layer sit in distinct cells and do
+not overlap. Outside a layer, overlapping primitives keep their paint order,
+and a layer opened inside another one would draw above everything its parent
+paints, even what the parent paints after it; the terminal nests none.
+Decorations, kitty images of non-negative z-index, the hyperlink underline,
+the cursors, the scrollbar, search ticks, IME preedit and the exit overlay are
 painted after the second layer, in that order.
+`a_terminal_frame_paints_backgrounds_then_glyphs_in_two_layers_and_overlays_above_them`
+in `terminal/view.rs` asserts the sequence of the paint phases.
+
+Rounded corners, diagonals, Powerline separators and curly underlines are
+curves, which GPUI `703b5ac3` would stroke and bin into tiles on every paint.
+The terminal draws them as Ghostty draws its sprite font instead: each shape is
+an SVG outline built once per cell size (`MaskKey` in
+`terminal/element/paint/masks.rs`), rasterized once into GPUI's monochrome
+sprite atlas through `Window::paint_svg`, and painted as a sprite in the color
+of its cell. A curly underline's mask covers only the band of its wave, so it
+never overlaps the row below. Straight box-drawing lines and blocks stay
+quads.
 
 The workspace sidebar is its own cached view, `SidebarView`
 (`src-app/src/app/sidebar/view.rs`). It observes the app entity and calls
@@ -313,6 +342,28 @@ replays the sidebar instead of rebuilding it; the app notifies whenever state
 the sidebar shows changes. The sidebar's spinner and shimmer clock
 (`SpinnerClock`) lives in that view and notifies only it.
 `sidebar_renders` in `system.counters` counts the rebuilds.
+`SidebarView::faded_column` puts the cached view under the column whose
+opacity follows the collapse; GPUI keys the view cache on the inherited
+opacity, so the sidebar repaints in the frame that changes it.
+
+A cached view that reads an entity it does not observe still wakes the window
+when that entity notifies, including after a frame that drew the view from
+its cache, but it keeps its cached output until it is rebuilt: a view observes
+what it shows. `redraw_guard::assert_no_redraw_loop` (test-only) draws 60
+frames and names any watched view that rebuilt on every one of them, so an
+entity notifying each frame under a cached view fails its test instead of
+pinning the UI thread.
+
+A view drawn from the cache does not re-emit its accessibility nodes at GPUI
+`703b5ac3`: the cache replays prepaint and paint ranges (`reuse_prepaint`,
+`reuse_paint`) and the accessibility tree is rebuilt only from elements that
+run, so the roles of a cached `SidebarView` or `TerminalView` leave the tree on
+frames that reuse it and come back when it rebuilds. This is upstream
+zed-industries/zed#66690, open. GPUI's test platform has no accessibility
+adapter, so no unit test can observe it; on Windows the sidebar was seen
+dropping from 60 to 12 accessibility references once it stopped re-rendering.
+No workaround is carried: disabling the cache for those views costs the
+rebuild the cache exists to avoid, and the choice is Arthur's.
 
 The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
 the end of CPU painting. It does not identify the echoed character or observe

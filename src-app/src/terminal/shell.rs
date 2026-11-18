@@ -35,7 +35,10 @@ __paneflow_path_prepend() {
 autoload -Uz add-zsh-hook
 if [[ -o interactive ]]; then
     __paneflow_osc133_precmd() {
-        printf '\e]133;A\a'
+        if [[ ${precmd_functions[-1]} != __paneflow_osc133_precmd ]]; then
+            precmd_functions=(${precmd_functions:#__paneflow_osc133_precmd} __paneflow_osc133_precmd)
+        fi
+        printf '\e]133;A;redraw=1\a'
     }
     __paneflow_osc133_preexec() {
         printf '\e]133;C\a'
@@ -74,7 +77,7 @@ __paneflow_path_prepend() {
     export PATH
 }
 __paneflow_osc133_precmd() {
-    printf '\e]133;A\a'
+    printf '\e]133;A;redraw=last\a'
 }
 PS0=$'\e]133;C\a'"${PS0-}"
 PROMPT_COMMAND="__paneflow_osc133_precmd;__paneflow_osc7;__paneflow_path_prepend${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
@@ -91,7 +94,7 @@ if set -q PANEFLOW_BIN_DIR; and test -n "$PANEFLOW_BIN_DIR"
 end
 if status is-interactive
     function __paneflow_osc133_prompt --on-event fish_prompt
-        printf '\e]133;A\a'
+        printf '\e]133;A;redraw=1\a'
     end
     function __paneflow_osc133_preexec --on-event fish_preexec
         printf '\e]133;C\a'
@@ -1053,6 +1056,91 @@ mod tests {
             !s.contains("`e]7;"),
             "`e is PowerShell 7-only for ESC and must not be used in shared 5.1/7 script"
         );
+    }
+
+    fn prompt_mark(script: &str, function: &str) -> Vec<u8> {
+        let body = &script[script.find(function).expect("the prompt hook exists")..];
+        let start = body.find("printf '").expect("the hook prints its mark") + "printf '".len();
+        let end = start + body[start..].find('\'').expect("the mark is quoted");
+        body[start..end]
+            .replace("\\e", "\x1b")
+            .replace("\\a", "\x07")
+            .into_bytes()
+    }
+
+    fn screen_rows(terminal: &mut paneflow_terminal_ghostty::DisplayTerminal) -> Vec<String> {
+        let content = terminal.snapshot().expect("snapshot");
+        (0..content.rows)
+            .map(|row| {
+                content.cells[row * content.cols..(row + 1) * content.cols]
+                    .iter()
+                    .map(|cell| cell.character)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_shell_declares_how_much_of_its_prompt_it_redraws() {
+        assert_eq!(
+            prompt_mark(super::ZSH_OSC7, "__paneflow_osc133_precmd()"),
+            b"\x1b]133;A;redraw=1\x07"
+        );
+        assert_eq!(
+            prompt_mark(super::BASH_OSC7, "__paneflow_osc133_precmd()"),
+            b"\x1b]133;A;redraw=last\x07"
+        );
+        assert_eq!(
+            prompt_mark(super::FISH_OSC7, "__paneflow_osc133_prompt"),
+            b"\x1b]133;A;redraw=1\x07"
+        );
+        assert!(super::ZSH_OSC7.contains(
+            "precmd_functions=(${precmd_functions:#__paneflow_osc133_precmd} __paneflow_osc133_precmd)"
+        ));
+    }
+
+    #[test]
+    fn a_full_prompt_redraw_after_a_resize_keeps_the_output_above_the_prompt() {
+        use paneflow_terminal_ghostty::{DisplayTerminal, TerminalAppearance, WindowSize};
+
+        let prompt: &[u8] = b"\r\ndune /tmp/claude-1000/fxt\r\n> ";
+        for (shell, mark) in [
+            (
+                "zsh",
+                prompt_mark(super::ZSH_OSC7, "__paneflow_osc133_precmd()"),
+            ),
+            (
+                "fish",
+                prompt_mark(super::FISH_OSC7, "__paneflow_osc133_prompt"),
+            ),
+        ] {
+            let mut terminal = DisplayTerminal::new(
+                WindowSize::new(20, 12, 8, 16).unwrap(),
+                100,
+                TerminalAppearance::default(),
+            )
+            .unwrap();
+            terminal.feed(b"out1\r\nout2\r\nout3\r\n").unwrap();
+            terminal.feed(&mark).unwrap();
+            terminal.feed(prompt).unwrap();
+            for (cols, rows_above_cursor) in [(60, 3), (20, 2), (60, 3)] {
+                terminal
+                    .resize(WindowSize::new(cols, 12, 8, 16).unwrap())
+                    .unwrap();
+                terminal
+                    .feed(format!("\r\x1b[{rows_above_cursor}A\x1b[J").as_bytes())
+                    .unwrap();
+                terminal.feed(prompt).unwrap();
+                let rows = screen_rows(&mut terminal);
+                assert_eq!(
+                    rows[..3],
+                    ["out1", "out2", "out3"],
+                    "{shell}: the prompt redraw at {cols} columns erased output: {rows:?}"
+                );
+            }
+        }
     }
 
     #[test]

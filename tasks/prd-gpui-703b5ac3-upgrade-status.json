@@ -1,0 +1,400 @@
+{
+  "prd": {
+    "file": "tasks/prd-gpui-703b5ac3-upgrade.md",
+    "title": "Move Paneflow to GPUI at Zed 703b5ac3 and bring the UI in line with it",
+    "created_at": "2026-11-15",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "The pin moves and every target builds",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-002",
+      "title": "Shapes, paths and layers follow the new renderer",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 6
+    },
+    {
+      "id": "EP-003",
+      "title": "Frame pacing and animation follow the new scheduler",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-004",
+      "title": "Text follows the new text system",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-005",
+      "title": "Platform integration",
+      "status": "DONE",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-006",
+      "title": "Evidence and records",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 2
+    },
+    {
+      "id": "EP-007",
+      "title": "Linux is validated on a real desktop session",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4
+    },
+    {
+      "id": "EP-008",
+      "title": "The whole CI is green before merge",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Move the pin, mirror Zed's patch set and migrate every broken call site",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": [],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-002",
+      "title": "Prove the Linux and Windows legs locally",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-003",
+      "title": "Validate assumption: per-paint path building fits the frame budget",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-004",
+      "title": "Lock the squircle cost behind a benchmark, and mitigate if the budget fails",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-003"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-005",
+      "title": "Ring gauge and check mark paint as single round-capped strokes",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-006",
+      "title": "A fill and its border never share a coincident path edge",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-007",
+      "title": "Shadows, gradients and terminal layer order conform to DESIGN.md",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-008",
+      "title": "Re-evaluate the Linux translucent-window squircle fallback",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "S",
+      "blocked_by": ["US-006"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-009",
+      "title": "Write the frame-interval policy explicitly on both windows",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-010",
+      "title": "Validate assumption: macOS key-to-present latency does not regress",
+      "epic": "EP-003",
+      "status": "CANCELLED",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-002"],
+      "started_at": "2026-11-15",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Spinners rotate through TimedTransformation",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-012",
+      "title": "Cached views repaint on inherited opacity and keep subscriptions without redraw loops",
+      "epic": "EP-003",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "M",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-15",
+      "reviewed_at": "2026-11-15"
+    },
+    {
+      "id": "US-013",
+      "title": "Tabs expand to columns in the code editor and the diff view",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "L",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-014",
+      "title": "Wrapping surfaces hold under UAX #14",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-015",
+      "title": "Glyph placement holds for emoji, combining marks and scale factors",
+      "epic": "EP-004",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-15",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-016",
+      "title": "Linux window observers and surface setup hold",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-002"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-017",
+      "title": "Blurred backdrop on Linux through ext-background-effect",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": ["US-016"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-018",
+      "title": "Submenus and popovers attach on the side that has room",
+      "epic": "EP-005",
+      "status": "DONE",
+      "priority": "P2",
+      "size": "M",
+      "blocked_by": ["US-001"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-019",
+      "title": "Write the bump summary",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-004", "US-009", "US-011", "US-013"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-020",
+      "title": "Changelog, design and architecture documents, visual-pass checklist",
+      "epic": "EP-006",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-019"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-16",
+      "reviewed_at": "2026-11-16"
+    },
+    {
+      "id": "US-027",
+      "title": "Re-baseline the Linux benchmarks on Fedora",
+      "epic": "EP-007",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-019"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-024",
+      "title": "Keystroke latency and unfocused frame rate hold on Fedora",
+      "epic": "EP-007",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-009", "US-019"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-025",
+      "title": "Linux window, startup and backdrop behave on real sessions",
+      "epic": "EP-007",
+      "status": "DONE",
+      "priority": "P1",
+      "size": "S",
+      "blocked_by": ["US-016", "US-017"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-026",
+      "title": "The Linux visual pass is clean",
+      "epic": "EP-007",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-020", "US-024", "US-025"],
+      "started_at": "2026-11-16",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-021",
+      "title": "Every required run_tests job is green on the branch head",
+      "epic": "EP-008",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "L",
+      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
+      "started_at": "2026-11-18",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-022",
+      "title": "The other workflows the branch triggers are green",
+      "epic": "EP-008",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "M",
+      "blocked_by": ["US-002", "US-005", "US-007", "US-008", "US-010", "US-012", "US-014", "US-015", "US-017", "US-018", "US-020", "US-024", "US-025", "US-026", "US-027"],
+      "started_at": "2026-11-18",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    },
+    {
+      "id": "US-023",
+      "title": "The branch is ready to merge",
+      "epic": "EP-008",
+      "status": "DONE",
+      "priority": "P0",
+      "size": "S",
+      "blocked_by": ["US-021", "US-022"],
+      "started_at": "2026-11-18",
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
+    }
+  ]
+}

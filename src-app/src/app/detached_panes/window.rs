@@ -94,7 +94,7 @@ impl PaneFlowApp {
                 ),
                 focus: restored_bounds.is_none(),
                 icon: crate::app_icon::window_icon(config.resolved_app_icon()),
-                ..Default::default()
+                ..crate::frame_policy::paced_window_options()
             },
             move |window, cx| {
                 crate::app_icon::apply_to_window(window, config.resolved_app_icon());
@@ -124,6 +124,10 @@ impl PaneFlowApp {
                 crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
                     window,
                     config.native_material_requested(),
+                    crate::app::constants::window_backdrop_requests_blur(
+                        config.window_backdrop.as_deref(),
+                    ),
+                    cx,
                 );
                 let window_id = window.window_handle().window_id();
                 crate::agents::notifications::set_window_active(
@@ -205,8 +209,7 @@ impl PaneFlowApp {
                     cx.observe_window_bounds(window, |this, window, cx| {
                         this.reveal_tabs = true;
                         cx.notify();
-                        if !window.is_maximized() && !window.is_fullscreen() {
-                            let bounds = window.window_bounds().get_bounds();
+                        if let Some(bounds) = crate::window_state::windowed_bounds(window) {
                             this.pane.update(cx, |pane, _| {
                                 if let Some(placement) = &mut pane.detached {
                                     placement.bounds = bounds;

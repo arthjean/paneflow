@@ -58,6 +58,9 @@ pub fn paint_ime_preedit<H, F>(
     F: FnOnce(Option<Bounds<Pixels>>) -> H,
 {
     if !element.focused {
+        element
+            .terminal_view
+            .update(cx, |view, _| view.ime_caret.follow(None));
         return;
     }
 
@@ -79,6 +82,12 @@ pub fn paint_ime_preedit<H, F>(
     });
     let handler = make_handler(cursor_bounds);
     window.handle_input(&element.focus_handle, handler, cx);
+    if element
+        .terminal_view
+        .update(cx, |view, _| view.ime_caret.follow(cursor_bounds))
+    {
+        window.invalidate_character_coordinates();
+    }
 
     if !element.ime_marked_text.is_empty()
         && let Some(cb) = cursor_bounds

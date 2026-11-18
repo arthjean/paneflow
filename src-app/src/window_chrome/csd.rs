@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
+    AnyElement, App, Bounds, ClickEvent, Corners, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
     SharedString, Size, Styled, Tiling, Window, WindowButton, WindowControlArea, WindowControls,
     canvas, div, point, prelude::*, px, size, svg,
@@ -48,6 +48,125 @@ impl ClientDecorationGeometry {
             draw_shadow: !tiling.is_tiled(),
         }
     }
+
+    fn corner_radii(self) -> Corners<Pixels> {
+        let radius = |rounded: bool| {
+            if rounded {
+                crate::app::constants::WINDOW_CORNER_RADIUS
+            } else {
+                px(0.0)
+            }
+        };
+        Corners {
+            top_left: radius(self.round_top_left),
+            top_right: radius(self.round_top_right),
+            bottom_left: radius(self.round_bottom_left),
+            bottom_right: radius(self.round_bottom_right),
+        }
+    }
+}
+
+fn declared_client_inset(decorations: Decorations, fullscreen: bool) -> Pixels {
+    if fullscreen {
+        crate::RESIZE_BORDER
+    } else {
+        client_frame(decorations).0
+    }
+}
+
+pub(crate) fn client_frame_inset(decorations: Decorations) -> Pixels {
+    client_frame(decorations).0
+}
+
+fn client_frame(decorations: Decorations) -> (Pixels, Corners<Pixels>) {
+    match decorations {
+        Decorations::Client { tiling } => (
+            crate::RESIZE_BORDER,
+            ClientDecorationGeometry::from_tiling(tiling).corner_radii(),
+        ),
+        Decorations::Server => (px(0.0), Corners::default()),
+    }
+}
+
+pub(crate) fn rounded_window_corners(decorations: Decorations) -> Corners<bool> {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            Corners {
+                top_left: geometry.round_top_left,
+                top_right: geometry.round_top_right,
+                bottom_right: geometry.round_bottom_right,
+                bottom_left: geometry.round_bottom_left,
+            }
+        }
+        Decorations::Server => Corners::default(),
+    }
+}
+
+pub(crate) fn client_content_frame(decorations: Decorations) -> gpui::Edges<Pixels> {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            let side = |free: bool| {
+                if free {
+                    crate::RESIZE_BORDER + crate::app::constants::WINDOW_BORDER_SIZE
+                } else {
+                    px(0.0)
+                }
+            };
+            gpui::Edges {
+                top: side(geometry.free_top),
+                right: side(geometry.free_right),
+                bottom: side(geometry.free_bottom),
+                left: side(geometry.free_left),
+            }
+        }
+        Decorations::Server => gpui::Edges::default(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct WindowOutline {
+    pub(crate) border: gpui::Edges<Pixels>,
+    pub(crate) radii: Corners<Pixels>,
+}
+
+pub(crate) fn window_outline(decorations: Decorations) -> WindowOutline {
+    match decorations {
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            let side = |free: bool| {
+                if free {
+                    crate::app::constants::WINDOW_BORDER_SIZE
+                } else {
+                    px(0.0)
+                }
+            };
+            WindowOutline {
+                border: gpui::Edges {
+                    top: side(geometry.free_top),
+                    right: side(geometry.free_right),
+                    bottom: side(geometry.free_bottom),
+                    left: side(geometry.free_left),
+                },
+                radii: geometry.corner_radii(),
+            }
+        }
+        Decorations::Server => WindowOutline::default(),
+    }
+}
+
+thread_local! {
+    static ACTIVE_WINDOW_OUTLINE: std::cell::Cell<WindowOutline> =
+        std::cell::Cell::new(WindowOutline::default());
+}
+
+pub(crate) fn set_window_outline(outline: WindowOutline) {
+    ACTIVE_WINDOW_OUTLINE.set(outline);
+}
+
+pub(crate) fn active_window_outline() -> WindowOutline {
+    ACTIVE_WINDOW_OUTLINE.get()
 }
 
 pub(crate) fn client_side_window_shell(
@@ -57,10 +176,9 @@ pub(crate) fn client_side_window_shell(
     border_color: Hsla,
 ) -> impl IntoElement {
     let decorations = window.window_decorations();
-    match decorations {
-        Decorations::Client { .. } => window.set_client_inset(crate::RESIZE_BORDER),
-        Decorations::Server => window.set_client_inset(px(0.0)),
-    }
+    let (_, corner_radii) = client_frame(decorations);
+    window.set_client_inset(declared_client_inset(decorations, window.is_fullscreen()));
+    window.set_client_corner_radii(corner_radii);
 
     let mut outer = div().id("window-backdrop").relative().size_full();
     let mut surface = div()
@@ -455,8 +573,38 @@ pub(crate) fn window_button_label(button: WindowButton, is_maximized: bool) -> &
 
 #[cfg(test)]
 mod tests {
-    use super::ClientDecorationGeometry;
-    use gpui::Tiling;
+    use super::{
+        ClientDecorationGeometry, WindowOutline, client_content_frame, client_frame,
+        declared_client_inset, rounded_window_corners, window_outline,
+    };
+    use gpui::{Corners, Decorations, Tiling, px};
+
+    #[test]
+    fn a_fullscreen_window_keeps_declaring_the_inset_it_returns_to() {
+        assert_eq!(
+            declared_client_inset(Decorations::Server, true),
+            crate::RESIZE_BORDER
+        );
+        assert_eq!(
+            declared_client_inset(
+                Decorations::Client {
+                    tiling: Tiling::tiled()
+                },
+                true
+            ),
+            crate::RESIZE_BORDER
+        );
+        assert_eq!(declared_client_inset(Decorations::Server, false), px(0.0));
+        assert_eq!(
+            declared_client_inset(
+                Decorations::Client {
+                    tiling: Tiling::default()
+                },
+                false
+            ),
+            crate::RESIZE_BORDER
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -497,5 +645,149 @@ mod tests {
         assert!(geometry.round_bottom_left);
         assert!(geometry.round_bottom_right);
         assert!(!geometry.draw_shadow);
+    }
+
+    #[test]
+    fn client_decorations_report_the_drawn_corner_radius_next_to_the_inset() {
+        let radius = crate::app::constants::WINDOW_CORNER_RADIUS;
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            (crate::RESIZE_BORDER, Corners::all(radius))
+        );
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling {
+                    left: true,
+                    ..Tiling::default()
+                }
+            }),
+            (
+                crate::RESIZE_BORDER,
+                Corners {
+                    top_left: px(0.0),
+                    top_right: radius,
+                    bottom_left: px(0.0),
+                    bottom_right: radius,
+                }
+            )
+        );
+        assert_eq!(
+            client_frame(Decorations::Client {
+                tiling: Tiling::tiled()
+            }),
+            (crate::RESIZE_BORDER, Corners::default())
+        );
+    }
+
+    #[test]
+    fn the_rounded_window_corners_follow_the_drawn_radius() {
+        for decorations in [
+            Decorations::Server,
+            Decorations::Client {
+                tiling: Tiling::default(),
+            },
+            Decorations::Client {
+                tiling: Tiling {
+                    right: true,
+                    ..Tiling::default()
+                },
+            },
+            Decorations::Client {
+                tiling: Tiling::tiled(),
+            },
+        ] {
+            let radii = client_frame(decorations).1;
+            let rounded = rounded_window_corners(decorations);
+            assert_eq!(rounded.top_left, radii.top_left > px(0.0));
+            assert_eq!(rounded.top_right, radii.top_right > px(0.0));
+            assert_eq!(rounded.bottom_right, radii.bottom_right > px(0.0));
+            assert_eq!(rounded.bottom_left, radii.bottom_left > px(0.0));
+        }
+    }
+
+    #[test]
+    fn the_content_sits_inside_the_inset_and_border_of_each_free_side() {
+        let frame = crate::RESIZE_BORDER + crate::app::constants::WINDOW_BORDER_SIZE;
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            gpui::Edges::all(frame)
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling {
+                    right: true,
+                    ..Tiling::default()
+                }
+            }),
+            gpui::Edges {
+                top: frame,
+                right: px(0.0),
+                bottom: frame,
+                left: frame,
+            }
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Client {
+                tiling: Tiling::tiled()
+            }),
+            gpui::Edges::default()
+        );
+        assert_eq!(
+            client_content_frame(Decorations::Server),
+            gpui::Edges::default()
+        );
+    }
+
+    #[test]
+    fn the_window_outline_is_the_drawn_border_and_corners() {
+        let border = crate::app::constants::WINDOW_BORDER_SIZE;
+        let radius = crate::app::constants::WINDOW_CORNER_RADIUS;
+        assert_eq!(
+            window_outline(Decorations::Client {
+                tiling: Tiling::default()
+            }),
+            WindowOutline {
+                border: gpui::Edges::all(border),
+                radii: Corners::all(radius),
+            }
+        );
+        assert_eq!(
+            window_outline(Decorations::Client {
+                tiling: Tiling {
+                    left: true,
+                    ..Tiling::default()
+                }
+            }),
+            WindowOutline {
+                border: gpui::Edges {
+                    top: border,
+                    right: border,
+                    bottom: border,
+                    left: px(0.0),
+                },
+                radii: Corners {
+                    top_left: px(0.0),
+                    top_right: radius,
+                    bottom_right: radius,
+                    bottom_left: px(0.0),
+                },
+            }
+        );
+        assert_eq!(
+            window_outline(Decorations::Server),
+            WindowOutline::default()
+        );
+    }
+
+    #[test]
+    fn server_decorations_report_no_inset_and_square_corners() {
+        assert_eq!(
+            client_frame(Decorations::Server),
+            (px(0.0), Corners::default())
+        );
     }
 }

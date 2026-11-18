@@ -11,6 +11,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::ime_caret::{ImeCaretReport, follow_ime_caret};
 use super::utf16::{byte_offset_from_utf16, byte_range_from_utf16, utf16_offset_from_byte};
 
 actions!(
@@ -133,6 +134,7 @@ pub struct TextInput {
     blink_anchor: Instant,
     blink_task: Option<Task<()>>,
     focused_since: Option<Instant>,
+    ime_caret: ImeCaretReport,
 }
 
 impl TextInput {
@@ -162,6 +164,7 @@ impl TextInput {
             blink_anchor: Instant::now(),
             blink_task: None,
             focused_since: None,
+            ime_caret: ImeCaretReport::default(),
         }
     }
 
@@ -813,13 +816,6 @@ struct PrepaintState {
     selection: Option<PaintQuad>,
 }
 
-impl IntoElement for TextElement {
-    type Element = Self;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for TextElement {
     type RequestLayoutState = ();
     type PrepaintState = PrepaintState;
@@ -1005,6 +1001,14 @@ impl Element for TextElement {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
         });
+        follow_ime_caret(
+            &self.input,
+            |input| &input.ime_caret,
+            &focus_handle,
+            bounds,
+            window,
+            cx,
+        );
     }
 }
 
@@ -1208,6 +1212,48 @@ mod tests {
         });
 
         assert_eq!(index, None);
+    }
+
+    #[gpui::test]
+    fn the_ime_follows_the_caret_without_a_preedit(cx: &mut gpui::TestAppContext) {
+        let (input, cx) = painted_input("hello world", "", cx);
+        let caret = |input: &Entity<TextInput>, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    let bounds = input.last_bounds.expect("painted bounds");
+                    let selection = input.selected_text_range(false, window, cx)?;
+                    input.bounds_for_range(selection.range, bounds, window, cx)
+                })
+            })
+        };
+        let redraw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        };
+        assert_eq!(
+            input.read_with(cx, |input, _| input.ime_caret.reported()),
+            None
+        );
+
+        cx.update(|window, cx| input.read(cx).focus_handle.clone().focus(window, cx));
+        redraw(cx);
+        let at_end = caret(&input, cx);
+        assert!(at_end.is_some());
+        assert_eq!(
+            input.read_with(cx, |input, _| input.ime_caret.reported()),
+            at_end
+        );
+
+        cx.update(|window, cx| input.update(cx, |input, cx| input.home(&Home, window, cx)));
+        redraw(cx);
+        let at_home = caret(&input, cx);
+        assert_ne!(at_home, at_end, "Home moved the caret");
+        assert_eq!(
+            input.read_with(cx, |input, _| input.ime_caret.reported()),
+            at_home
+        );
     }
 
     #[gpui::test]

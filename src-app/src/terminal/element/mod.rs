@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Element, ElementId, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseMoveEvent,
-    Pixels, Point, SharedString, Style, Window, px, relative,
+    GlobalElementId, Hsla, InspectorElementId, LayoutId, MouseButton, MouseMoveEvent, Pixels,
+    Point, SharedString, Style, Window, px, relative,
 };
 
 use crate::terminal::TerminalSessionBackend;
@@ -25,8 +25,6 @@ mod sprites;
 
 use crate::theme::ThemePalette;
 use color::{HarmonyTargets, convert_color, is_same_visible_color, rgb_to_hsla};
-#[cfg(test)]
-pub(crate) use font::base_font;
 pub use font::{
     CellMetrics, MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, resolve_font_family,
     resolve_frame_metrics, sanitize_font_override,
@@ -35,6 +33,8 @@ pub(crate) use font::{
     DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, apply_font_config,
     normalize_font_weight_key,
 };
+#[cfg(test)]
+pub(crate) use font::{base_font, embedded_mono_cell_metrics};
 use geometry::CellGeometry;
 pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
@@ -47,6 +47,8 @@ use crate::terminal::scrollbar_reveal::ScrollbarPresence;
 pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
 pub(crate) use paint::scrollbar::ScrollbarMetrics;
+#[cfg(test)]
+pub(crate) use paint::{PaintStep, take_paint_steps};
 
 pub(crate) const SELECTION_MIN_APCA_CONTRAST: f32 = 45.0;
 
@@ -516,8 +518,6 @@ struct CellStyle {
     italic: bool,
     fg: Hsla,
     bg: Hsla,
-    underline: UnderlineKind,
-    strikethrough: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -889,6 +889,41 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     layout_from_snapshot_cached(inputs, &[], 0, &mut RowLayoutCache::default())
 }
 
+#[cfg(test)]
+pub(crate) fn decoration_and_sprite_counts(layout: &LayoutState) -> (usize, usize) {
+    (layout.decorations().count(), layout.sprites().count())
+}
+
+#[cfg(test)]
+pub(crate) fn paint_sprite_paths(
+    layout: &LayoutState,
+    metrics: CellMetrics,
+    window: &mut Window,
+    cx: &App,
+) {
+    paint::sprites::paint_sprites(
+        layout,
+        &CellGeometry::new(Point::default(), metrics),
+        window,
+        cx,
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn paint_decoration_paths(
+    layout: &LayoutState,
+    metrics: CellMetrics,
+    window: &mut Window,
+    cx: &App,
+) {
+    paint::decorations::paint_decorations(
+        layout,
+        &CellGeometry::new(Point::default(), metrics),
+        window,
+        cx,
+    );
+}
+
 pub(crate) fn layout_from_snapshot_cached(
     inputs: LayoutInputs<'_>,
     row_versions: &[u64],
@@ -1010,6 +1045,7 @@ pub(crate) fn layout_from_snapshot_cached(
 
     let build_row = |cells: &[Cell]| {
         let mut batch = BatchAccumulator::new(base_font.clone());
+        let mut decorations = DecorationRuns::default();
         let mut rects: Vec<LayoutRect> = Vec::new();
         let mut block_quads: Vec<BlockQuad> = Vec::new();
         let mut sprites: Vec<SpriteGlyph> = Vec::new();
@@ -1029,6 +1065,7 @@ pub(crate) fn layout_from_snapshot_cached(
                 flags,
                 zerowidth: zw,
                 hyperlink,
+                underline_color,
             } = cell;
             let point = *point;
             let flags = *flags;
@@ -1043,6 +1080,7 @@ pub(crate) fn layout_from_snapshot_cached(
 
             if point.line.0 != last_line {
                 batch.flush();
+                decorations.close();
                 if let Some(rect) = current_rect.take() {
                     rects.push(rect);
                 }
@@ -1129,6 +1167,39 @@ pub(crate) fn layout_from_snapshot_cached(
                 }
             }
 
+            if *hyperlink || flags.intersects(CellFlags::DECORATIONS) || decorations.is_open() {
+                let underline = if flags.contains(CellFlags::UNDERCURL) {
+                    UnderlineKind::Curly
+                } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+                    UnderlineKind::Double
+                } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+                    UnderlineKind::Dotted
+                } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+                    UnderlineKind::Dashed
+                } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
+                    UnderlineKind::Single
+                } else {
+                    UnderlineKind::None
+                };
+                let underline_fg = match underline_color {
+                    Some(color) if underline != UnderlineKind::None => {
+                        let mut color = convert_color(*color, theme, palette);
+                        if flags.contains(CellFlags::DIM) {
+                            color.a *= 0.5;
+                        }
+                        color
+                    }
+                    _ => fg,
+                };
+                decorations.add(
+                    point.column.0,
+                    cell_cols,
+                    (underline, underline_fg),
+                    flags.contains(CellFlags::STRIKEOUT),
+                    fg,
+                );
+            }
+
             let c = *c;
             if c == ' ' && previous_cell_had_extras {
                 previous_cell_had_extras = false;
@@ -1196,26 +1267,11 @@ pub(crate) fn layout_from_snapshot_cached(
                 continue;
             }
 
-            let underline = if flags.contains(CellFlags::UNDERCURL) {
-                UnderlineKind::Curly
-            } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
-                UnderlineKind::Double
-            } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
-                UnderlineKind::Dotted
-            } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
-                UnderlineKind::Dashed
-            } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
-                UnderlineKind::Single
-            } else {
-                UnderlineKind::None
-            };
             let style = CellStyle {
                 bold: flags.contains(CellFlags::BOLD) || flags.contains(CellFlags::BOLD_ITALIC),
                 italic: flags.contains(CellFlags::ITALIC) || flags.contains(CellFlags::BOLD_ITALIC),
                 fg,
                 bg,
-                underline,
-                strikethrough: flags.contains(CellFlags::STRIKEOUT),
             };
 
             if batch.can_append(style, point.column.0) {
@@ -1237,7 +1293,7 @@ pub(crate) fn layout_from_snapshot_cached(
         }
         RowLayout {
             batched_runs: batch.runs,
-            decorations: batch.decorations,
+            decorations: decorations.finish(),
             symbols,
             rects,
             block_quads,
@@ -1422,9 +1478,85 @@ pub(crate) fn layout_from_snapshot_cached(
     }
 }
 
+#[derive(Default)]
+struct DecorationRuns {
+    finished: Vec<Decoration>,
+    underline: Option<Decoration>,
+    strikethrough: Option<Decoration>,
+}
+
+impl DecorationRuns {
+    fn add(
+        &mut self,
+        col: usize,
+        cell_cols: usize,
+        (underline, underline_color): (UnderlineKind, Hsla),
+        strikethrough: bool,
+        color: Hsla,
+    ) {
+        let underline =
+            (underline != UnderlineKind::None).then_some(DecorationKind::Underline(underline));
+        Self::extend(
+            &mut self.finished,
+            &mut self.underline,
+            underline,
+            col,
+            cell_cols,
+            underline_color,
+        );
+        let strikethrough = strikethrough.then_some(DecorationKind::Strikethrough);
+        Self::extend(
+            &mut self.finished,
+            &mut self.strikethrough,
+            strikethrough,
+            col,
+            cell_cols,
+            color,
+        );
+    }
+
+    fn extend(
+        finished: &mut Vec<Decoration>,
+        open: &mut Option<Decoration>,
+        kind: Option<DecorationKind>,
+        col: usize,
+        cell_cols: usize,
+        color: Hsla,
+    ) {
+        if let (Some(run), Some(kind)) = (open.as_mut(), kind)
+            && run.kind == kind
+            && run.color == color
+            && run.col_start + run.num_cols == col
+        {
+            run.num_cols += cell_cols;
+            return;
+        }
+        finished.extend(open.take());
+        *open = kind.map(|kind| Decoration {
+            col_start: col,
+            num_cols: cell_cols,
+            kind,
+            color,
+        });
+    }
+
+    fn is_open(&self) -> bool {
+        self.underline.is_some() || self.strikethrough.is_some()
+    }
+
+    fn close(&mut self) {
+        self.finished.extend(self.underline.take());
+        self.finished.extend(self.strikethrough.take());
+    }
+
+    fn finish(mut self) -> Vec<Decoration> {
+        self.close();
+        self.finished
+    }
+}
+
 struct BatchAccumulator {
     runs: Vec<BatchedTextRun>,
-    decorations: Vec<Decoration>,
     text: String,
     cells: Vec<RunCell>,
     uniform: bool,
@@ -1432,8 +1564,6 @@ struct BatchAccumulator {
     base_font: Font,
     font: Font,
     fg: Hsla,
-    underline: UnderlineKind,
-    strikethrough: bool,
     col_start: usize,
     col_end: usize,
 }
@@ -1442,7 +1572,6 @@ impl BatchAccumulator {
     fn new(base_font: Font) -> Self {
         Self {
             runs: Vec::new(),
-            decorations: Vec::new(),
             text: String::new(),
             cells: Vec::new(),
             uniform: true,
@@ -1450,8 +1579,6 @@ impl BatchAccumulator {
             font: base_font.clone(),
             base_font,
             fg: Hsla::default(),
-            underline: UnderlineKind::None,
-            strikethrough: false,
             col_start: 0,
             col_end: 0,
         }
@@ -1518,8 +1645,6 @@ impl BatchAccumulator {
         }
         self.font = font;
         self.fg = style.fg;
-        self.underline = style.underline;
-        self.strikethrough = style.strikethrough;
         self.style = Some(style);
         self.col_start = col_start;
         self.col_end = col_start + cell_cols;
@@ -1540,23 +1665,6 @@ impl BatchAccumulator {
                 Box::from(self.cells.as_slice())
             },
         });
-        let num_cols = self.col_end.saturating_sub(self.col_start);
-        if self.underline != UnderlineKind::None {
-            self.decorations.push(Decoration {
-                col_start: self.col_start,
-                num_cols,
-                kind: DecorationKind::Underline(self.underline),
-                color: self.fg,
-            });
-        }
-        if self.strikethrough {
-            self.decorations.push(Decoration {
-                col_start: self.col_start,
-                num_cols,
-                kind: DecorationKind::Strikethrough,
-                color: self.fg,
-            });
-        }
         self.style = None;
     }
 }
@@ -1692,7 +1800,8 @@ impl Element for TerminalElement {
         };
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.paint_layer(bounds, |window| {
+            window.paint_layer(|window| {
+                paint::record_step(paint::PaintStep::BackgroundLayer);
                 paint::background::paint_base_fill(&layout, bounds, window);
 
                 if let Some(above) = layout.overscan_above.as_deref()
@@ -1726,18 +1835,26 @@ impl Element for TerminalElement {
                     &cell_y_bounds,
                     window,
                 );
+                paint::record_step(paint::PaintStep::Backgrounds);
+                paint::record_step(paint::PaintStep::LayerEnd);
             });
 
+            paint::record_step(paint::PaintStep::KittyBelowText);
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
 
-            window.paint_layer(bounds, |window| {
-                paint::sprites::paint_sprites(&layout, &geom, window);
+            window.paint_layer(|window| {
+                paint::record_step(paint::PaintStep::TextLayer);
+                paint::sprites::paint_sprites(&layout, &geom, window, cx);
                 paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
                 paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
+                paint::record_step(paint::PaintStep::Glyphs);
+                paint::record_step(paint::PaintStep::LayerEnd);
             });
 
-            paint::decorations::paint_decorations(&layout, &geom, window);
+            paint::record_step(paint::PaintStep::Decorations);
+            paint::decorations::paint_decorations(&layout, &geom, window, cx);
 
+            paint::record_step(paint::PaintStep::KittyAboveText);
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
 
             #[cfg(debug_assertions)]
@@ -1748,6 +1865,7 @@ impl Element for TerminalElement {
             paint::overlay::paint_hyperlink_underline(self, &layout, &geom, window);
 
             if self.cursor_visible {
+                paint::record_step(paint::PaintStep::Cursor);
                 paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
             }
 
@@ -1847,18 +1965,10 @@ fn paint_overscan_row(
     let cell_y_bounds = geom.y_boundaries(layout.desired_rows);
     paint::background::paint_cell_backgrounds(layout, None, &cell_x_bounds, &cell_y_bounds, window);
     paint::background::paint_block_quads(layout, &cell_x_bounds, &cell_y_bounds, window);
-    paint::sprites::paint_sprites(layout, geom, window);
-    paint::decorations::paint_decorations(layout, geom, window);
+    paint::sprites::paint_sprites(layout, geom, window, cx);
+    paint::decorations::paint_decorations(layout, geom, window, cx);
     paint::text::paint_text_runs(layout, geom, base_font, font_size, window, cx);
     paint::text::paint_symbols(layout, geom, font_size, window, cx);
-}
-
-impl IntoElement for TerminalElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 struct TerminalInputHandler {
@@ -2284,6 +2394,7 @@ mod golden_frame_tests {
             flags,
             zerowidth: None,
             hyperlink: false,
+            underline_color: None,
         }
     }
 
@@ -3105,7 +3216,29 @@ mod golden_frame_tests {
         for (i, d) in state.decorations().enumerate() {
             assert_eq!((d.line, d.col_start, d.num_cols), (0, i, 1));
         }
-        assert_eq!(state.batched_runs().count(), 6);
+        assert_eq!(state.batched_runs().count(), 1);
+    }
+
+    #[test]
+    fn an_underline_runs_unbroken_across_the_spaces_between_words() {
+        let words = text_row(0, "ab  cd", default_fg(), CellFlags::UNDERCURL);
+        let state = run(words, None, None);
+        let spans: Vec<(DecorationKind, usize, usize)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(DecorationKind::Underline(UnderlineKind::Curly), 0, 6)]
+        );
+
+        let struck = text_row(0, "a b", default_fg(), CellFlags::STRIKEOUT);
+        let state = run(struck, None, None);
+        let spans: Vec<(DecorationKind, usize, usize)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols))
+            .collect();
+        assert_eq!(spans, vec![(DecorationKind::Strikethrough, 0, 3)]);
     }
 
     #[test]
@@ -4226,6 +4359,51 @@ mod golden_frame_tests {
             color_emoji_enabled: true,
             minimum_contrast,
         })
+    }
+
+    #[test]
+    fn an_sgr_58_underline_color_paints_the_underline_and_resets_to_the_foreground() {
+        let size = ghostty::WindowSize::new(CORPUS_COLS, CORPUS_ROWS, 8, 16)
+            .expect("the corpus grid is valid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 256, ghostty::TerminalAppearance::default())
+                .expect("libghostty must initialize");
+        terminal
+            .feed(b"\x1b[4:3;58:2::255:0:0mred curl\x1b[59m plain\x1b[0m \x1b[4;58;5;4mblue\x1b[0m")
+            .expect("the underline color fixture must parse");
+        let content = crate::terminal::ghostty_session::CellMirror::default()
+            .publish(terminal.snapshot().expect("the snapshot must succeed"));
+        let theme = crate::theme::paneflow_dark();
+        let palette = ThemePalette::from_theme(&theme);
+        let state = corpus_layout(&content, &theme, &palette, 0.0);
+        let foreground = state
+            .batched_runs()
+            .next()
+            .expect("the fixture prints text")
+            .color;
+        let red = convert_color(Color::Spec(Rgb { r: 255, g: 0, b: 0 }), &theme, &palette);
+        let spans: Vec<(DecorationKind, usize, usize, Hsla)> = state
+            .decorations()
+            .map(|d| (d.kind, d.col_start, d.num_cols, d.color))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                (DecorationKind::Underline(UnderlineKind::Curly), 0, 8, red),
+                (
+                    DecorationKind::Underline(UnderlineKind::Curly),
+                    8,
+                    6,
+                    foreground
+                ),
+                (
+                    DecorationKind::Underline(UnderlineKind::Single),
+                    15,
+                    4,
+                    theme.blue
+                ),
+            ]
+        );
     }
 
     fn composite_over(top: Hsla, under: Hsla) -> Hsla {

@@ -11,8 +11,8 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 interprocess.workspace = true
+jiff = { workspace = true, features = ["serde"] }
 log.workspace = true
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
 paneflow-config.workspace = true

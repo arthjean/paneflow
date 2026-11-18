@@ -54,7 +54,10 @@ fn assert_bold_link(
         .find(|cell| cell.point == point)
         .unwrap();
     assert_eq!(cell.character, character, "{context}");
-    assert!(cell.flags.bold, "{context}: the cursor style must survive");
+    assert!(
+        cell.flags.bold(),
+        "{context}: the cursor style must survive"
+    );
     assert_eq!(
         cell.foreground, foreground,
         "{context}: the cursor style must survive"

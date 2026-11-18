@@ -2748,6 +2748,7 @@ mod tests {
         scroll: ScrollHandle,
         collapsed: bool,
         height: f32,
+        width: f32,
         picks: Rc<RefCell<Vec<u64>>>,
         toggles: Rc<Cell<usize>>,
     }
@@ -2758,7 +2759,7 @@ mod tests {
             let toggles = self.toggles.clone();
             let groups = agent_groups(&self.rows);
             div()
-                .w(px(SIDEBAR_WIDTH))
+                .w(px(self.width))
                 .h(px(self.height))
                 .flex()
                 .flex_col()
@@ -2810,11 +2811,104 @@ mod tests {
             scroll: ScrollHandle::new(),
             collapsed,
             height,
+            width: SIDEBAR_WIDTH,
             picks,
             toggles,
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         (cx, held_picks, held_toggles)
+    }
+
+    fn sized_harness(
+        cx: &mut TestAppContext,
+        rows: Vec<AgentRow>,
+    ) -> (gpui::Entity<SectionHarness>, &mut gpui::VisualTestContext) {
+        cx.add_window_view(move |_, _| SectionHarness {
+            rows,
+            cursor: None,
+            scroll: ScrollHandle::new(),
+            collapsed: false,
+            height: 800.,
+            width: SIDEBAR_WIDTH,
+            picks: Rc::new(RefCell::new(Vec::new())),
+            toggles: Rc::new(Cell::new(0)),
+        })
+    }
+
+    fn title_width_at(
+        view: &gpui::Entity<SectionHarness>,
+        cx: &mut gpui::VisualTestContext,
+        width: f32,
+    ) -> gpui::Pixels {
+        view.update(cx, |harness, cx| {
+            harness.width = width;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("agent-title-1").expect("title").size.width
+    }
+
+    #[gpui::test]
+    fn a_title_that_fits_by_less_than_half_a_pixel_never_flips_between_frames(
+        cx: &mut TestAppContext,
+    ) {
+        assert_a_barely_fitting_title_never_flips(cx);
+    }
+
+    #[test]
+    fn a_title_measured_by_the_platform_text_system_never_flips_at_its_fitting_edge() {
+        let mut cx = TestAppContext::build_with_text_system(
+            gpui::TestDispatcher::new(0),
+            None,
+            platform_text_system(),
+        );
+        assert_a_barely_fitting_title_never_flips(&mut cx);
+        cx.quit();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn platform_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+        std::sync::Arc::new(gpui_apple::AppleTextSystem::new())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn platform_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+        gpui_platform::current_platform(true).text_system()
+    }
+
+    fn assert_a_barely_fitting_title_never_flips(cx: &mut TestAppContext) {
+        const WIDE: f32 = 1200.;
+        let mut rows = ranked_rows(&[AgentRank::Idle]);
+        rows[0].title = "Attention sidebar".to_string();
+        rows[0].details.workspace = false;
+        let (view, cx) = sized_harness(cx, rows);
+        let natural = title_width_at(&view, cx, WIDE);
+        let mut truncating = 40.0f32;
+        let mut fitting = WIDE;
+        assert!(title_width_at(&view, cx, truncating) < natural);
+        while fitting - truncating > 0.05 {
+            let middle = (fitting + truncating) / 2.;
+            if close(title_width_at(&view, cx, middle), natural) {
+                fitting = middle;
+            } else {
+                truncating = middle;
+            }
+        }
+
+        let barely = fitting + 0.4;
+        for frame in 0..3 {
+            let width = title_width_at(&view, cx, barely);
+            assert!(
+                close(width, natural),
+                "frame {frame}: a title with under 0.5 px to spare is shown whole, {width:?} vs {natural:?}"
+            );
+        }
+        let short = title_width_at(&view, cx, truncating);
+        for frame in 0..3 {
+            let width = title_width_at(&view, cx, truncating);
+            assert!(width < natural, "frame {frame}: {width:?}");
+            assert!(close(width, short), "frame {frame}: {width:?} vs {short:?}");
+        }
     }
 
     const GROUP_KEYS: [&str; 6] = ["need-you", "error", "done", "working", "idle", "no-status"];
@@ -3519,6 +3613,7 @@ mod tests {
             scroll: held,
             collapsed: false,
             height: 900.,
+            width: SIDEBAR_WIDTH,
             picks: Rc::new(RefCell::new(Vec::new())),
             toggles: Rc::new(Cell::new(0)),
         });
@@ -3590,6 +3685,7 @@ mod tests {
             scroll: ScrollHandle::new(),
             collapsed: false,
             height: 900.,
+            width: SIDEBAR_WIDTH,
             picks: Rc::new(RefCell::new(Vec::new())),
             toggles: Rc::new(Cell::new(0)),
         });

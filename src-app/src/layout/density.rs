@@ -72,21 +72,42 @@ pub(crate) enum CardFrame {
 
 pub(crate) fn morph_corners(outer: Edges<bool>, comfort: f32) -> Corners<Pixels> {
     let card = crate::app::constants::PANE_CARD_RADIUS;
-    let flush = flush_radius();
-    let corner = |a: bool, b: bool| {
-        let from = if a && b { flush } else { px(0.) };
-        from + (card - from) * comfort
-    };
+    let flush = flush_corner_radii(outer);
+    let blend = |from: Pixels| from + (card - from) * comfort;
     Corners {
-        top_left: corner(outer.top, outer.left),
-        top_right: corner(outer.top, outer.right),
-        bottom_right: corner(outer.bottom, outer.right),
-        bottom_left: corner(outer.bottom, outer.left),
+        top_left: blend(flush.top_left),
+        top_right: blend(flush.top_right),
+        bottom_right: blend(flush.bottom_right),
+        bottom_left: blend(flush.bottom_left),
     }
 }
 
-fn flush_radius() -> Pixels {
-    crate::ui_primitives::interface_style::pick(crate::app::constants::PANEL_CORNER_RADIUS, px(0.))
+fn flush_corner_radii(outer: Edges<bool>) -> Corners<Pixels> {
+    let window_corners = crate::window_chrome::title_band::active()
+        .map(|band| band.window_corners)
+        .unwrap_or_default();
+    let inside_window_corner =
+        crate::app::constants::WINDOW_CORNER_RADIUS - crate::app::constants::WINDOW_BORDER_SIZE;
+    let corner = |a: bool, b: bool, at_window_corner: bool| {
+        if !(a && b) {
+            return px(0.);
+        }
+        let classic = if at_window_corner {
+            inside_window_corner
+        } else {
+            px(0.)
+        };
+        crate::ui_primitives::interface_style::pick(
+            crate::app::constants::PANEL_CORNER_RADIUS,
+            classic,
+        )
+    };
+    Corners {
+        top_left: corner(outer.top, outer.left, window_corners.top_left),
+        top_right: corner(outer.top, outer.right, window_corners.top_right),
+        bottom_right: corner(outer.bottom, outer.right, window_corners.bottom_right),
+        bottom_left: corner(outer.bottom, outer.left, window_corners.bottom_left),
+    }
 }
 
 pub(crate) fn grid_edges(right_is_outer: bool) -> Edges<bool> {
@@ -119,12 +140,11 @@ pub(crate) fn child_edges(
 }
 
 pub(crate) fn flush_corners(div: Div, outer: Edges<bool>) -> Div {
-    let radius = flush_radius();
-    let corner = |a: bool, b: bool| if a && b { radius } else { px(0.) };
-    div.rounded_tl(corner(outer.top, outer.left))
-        .rounded_tr(corner(outer.top, outer.right))
-        .rounded_br(corner(outer.bottom, outer.right))
-        .rounded_bl(corner(outer.bottom, outer.left))
+    let radii = flush_corner_radii(outer);
+    div.rounded_tl(radii.top_left)
+        .rounded_tr(radii.top_right)
+        .rounded_br(radii.bottom_right)
+        .rounded_bl(radii.bottom_left)
 }
 
 pub(crate) fn flush_fill(outer: Edges<bool>, color: Hsla) -> Div {
@@ -160,6 +180,88 @@ mod tests {
 
     fn all() -> Edges<bool> {
         grid_edges(true)
+    }
+
+    fn radii_under_band(
+        shape: crate::ui_primitives::interface_style::Shape,
+        window_corners: Option<Corners<bool>>,
+        outer: Edges<bool>,
+    ) -> Corners<Pixels> {
+        let band =
+            window_corners.map(
+                |window_corners| crate::window_chrome::title_band::TitleBand {
+                    height: 40.,
+                    leading_inset: 0.,
+                    trailing_inset: 0.,
+                    window_corners,
+                },
+            );
+        crate::window_chrome::title_band::set(band);
+        let radii = crate::ui_primitives::interface_style::scoped(shape, || {
+            (flush_corner_radii(outer), morph_corners(outer, 0.0))
+        });
+        crate::window_chrome::title_band::set(None);
+        assert_eq!(radii.0, radii.1, "a flush morph keeps the flush corners");
+        radii.0
+    }
+
+    const RIGHT_WINDOW_CORNERS: Corners<bool> = Corners {
+        top_left: false,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: false,
+    };
+
+    #[test]
+    fn a_classic_flush_card_rounds_only_the_corners_it_shares_with_a_rounded_window() {
+        let radii = radii_under_band(
+            crate::ui_primitives::interface_style::Shape::Classic,
+            Some(RIGHT_WINDOW_CORNERS),
+            all(),
+        );
+        let inside =
+            crate::app::constants::WINDOW_CORNER_RADIUS - crate::app::constants::WINDOW_BORDER_SIZE;
+        assert_eq!(radii.top_right, inside);
+        assert_eq!(radii.bottom_right, inside);
+        assert_eq!(radii.top_left, px(0.));
+        assert_eq!(radii.bottom_left, px(0.));
+    }
+
+    #[test]
+    fn a_classic_card_off_the_window_edge_stays_square_at_a_rounded_window_corner() {
+        let left_of_the_dock = Edges {
+            right: false,
+            ..all()
+        };
+        let radii = radii_under_band(
+            crate::ui_primitives::interface_style::Shape::Classic,
+            Some(RIGHT_WINDOW_CORNERS),
+            left_of_the_dock,
+        );
+        assert_eq!(radii, Corners::all(px(0.)));
+    }
+
+    #[test]
+    fn a_classic_card_without_a_title_band_stays_square() {
+        let radii = radii_under_band(
+            crate::ui_primitives::interface_style::Shape::Classic,
+            None,
+            all(),
+        );
+        assert_eq!(radii, Corners::all(px(0.)));
+    }
+
+    #[test]
+    fn the_rounded_style_keeps_the_panel_radius_whatever_the_window_corners() {
+        let radii = radii_under_band(
+            crate::ui_primitives::interface_style::Shape::Rounded,
+            Some(RIGHT_WINDOW_CORNERS),
+            all(),
+        );
+        assert_eq!(
+            radii,
+            Corners::all(crate::app::constants::PANEL_CORNER_RADIUS)
+        );
     }
 
     #[test]

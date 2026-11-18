@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Bounds, BoxShadow, ClickEvent, Context, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, PathBuilder, Pixels, SharedString, Stateful, Styled, Window,
+    AnyElement, Bounds, BoxShadow, ClickEvent, Context, Decorations, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, Size, Stateful, Styled, Window,
     canvas, deferred, div, point, prelude::*, px, size, svg,
 };
 
@@ -13,7 +13,9 @@ use crate::PaneFlowApp;
 use crate::app::clone_repo::{CloneFailure, CloneProgress, run_clone};
 use crate::settings::components::{select_menu_surface, with_alpha};
 use crate::ui_primitives::quick_pick::{PANEL_RADIUS, ROW_RADIUS};
-use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
+use crate::ui_primitives::squircle::{
+    squircle_border, squircle_fill, squircle_fill_beneath_border,
+};
 
 const PILL_WIDTH: f32 = 224.;
 const PILL_HEIGHT: f32 = 44.;
@@ -135,6 +137,47 @@ fn lerp(from: f32, to: f32, t: f32) -> f32 {
     from + (to - from) * t
 }
 
+fn bubble_content_size(viewport: Size<Pixels>, decorations: Decorations) -> Size<Pixels> {
+    let frame = crate::window_chrome::csd::client_content_frame(decorations);
+    size(
+        (viewport.width - frame.left - frame.right).max(px(0.)),
+        (viewport.height - frame.top - frame.bottom).max(px(0.)),
+    )
+}
+
+fn intro_source(content: Size<Pixels>) -> Bounds<Pixels> {
+    let left = (f32::from(content.width) - SOURCE_WIDTH) / 2.;
+    Bounds::new(
+        point(px(left), px(SOURCE_TOP)),
+        size(px(SOURCE_WIDTH), px(SOURCE_HEIGHT)),
+    )
+}
+
+fn pill_rest(content: Size<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        point(
+            px(f32::from(content.width) - EDGE_INSET - PILL_WIDTH),
+            px(f32::from(content.height) - EDGE_INSET - PILL_HEIGHT),
+        ),
+        size(px(PILL_WIDTH), px(PILL_HEIGHT)),
+    )
+}
+
+fn intro_frame(from: Bounds<Pixels>, content: Size<Pixels>, eased: f32) -> Bounds<Pixels> {
+    let to = pill_rest(content);
+    let along = |from: Pixels, to: Pixels| px(lerp(f32::from(from), f32::from(to), eased));
+    Bounds::new(
+        point(
+            along(from.origin.x, to.origin.x),
+            along(from.origin.y, to.origin.y),
+        ),
+        size(
+            along(from.size.width, to.size.width),
+            along(from.size.height, to.size.height),
+        ),
+    )
+}
+
 fn motion_progress(since: Instant, millis: u64) -> f32 {
     if crate::ui_primitives::reduce_motion() {
         return 1.;
@@ -245,6 +288,21 @@ pub(crate) fn check_stroke_points(draw: f32) -> Vec<(f32, f32)> {
     }
 }
 
+fn check_stroke_options() -> gpui::StrokeOptions {
+    crate::ui_primitives::stroke::round_stroke_options(px(CHECK_STROKE))
+}
+
+fn check_path(origin: gpui::Point<Pixels>, points: &[(f32, f32)]) -> Option<gpui::Path> {
+    let (first, rest) = points.split_first()?;
+    let at = |(x, y): (f32, f32)| point(origin.x + px(x), origin.y + px(y));
+    let mut builder = crate::ui_primitives::stroke::stroke_with(check_stroke_options());
+    builder.move_to(at(*first));
+    for vertex in rest {
+        builder.line_to(at(*vertex));
+    }
+    builder.build().ok()
+}
+
 fn drawn_check(draw: f32) -> AnyElement {
     let points = check_stroke_points(draw);
     canvas(
@@ -253,31 +311,8 @@ fn drawn_check(draw: f32) -> AnyElement {
             if draw <= 0. {
                 return;
             }
-            let at = |(x, y): (f32, f32)| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
-            let mut builder = PathBuilder::stroke(px(CHECK_STROKE));
-            for (idx, vertex) in points.iter().enumerate() {
-                if idx == 0 {
-                    builder.move_to(at(*vertex));
-                } else {
-                    builder.line_to(at(*vertex));
-                }
-            }
-            if let Ok(path) = builder.build() {
+            if let Some(path) = check_path(bounds.origin, &points) {
                 window.paint_path(path, gpui::white());
-            }
-            let cap = CHECK_STROKE / 2.;
-            for vertex in &points {
-                let center = at(*vertex);
-                window.paint_quad(
-                    gpui::fill(
-                        Bounds::new(
-                            point(center.x - px(cap), center.y - px(cap)),
-                            size(px(CHECK_STROKE), px(CHECK_STROKE)),
-                        ),
-                        gpui::white(),
-                    )
-                    .corner_radii(px(cap)),
-                );
             }
         },
     )
@@ -395,13 +430,11 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let view = if self.clone_repo.is_some() {
-            let viewport = window.viewport_size();
-            let left = (f32::from(viewport.width) - SOURCE_WIDTH) / 2.;
             BubbleView::Intro {
-                from: Bounds::new(
-                    point(px(left), px(SOURCE_TOP)),
-                    size(px(SOURCE_WIDTH), px(SOURCE_HEIGHT)),
-                ),
+                from: intro_source(bubble_content_size(
+                    window.viewport_size(),
+                    window.window_decorations(),
+                )),
             }
         } else {
             BubbleView::Collapsed { animate: false }
@@ -1065,7 +1098,12 @@ impl PaneFlowApp {
                 .rounded(px(radius))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                .child(squircle_fill(px(radius), surface))
+                .child(squircle_fill_beneath_border(
+                    px(radius),
+                    surface,
+                    px(1.),
+                    border,
+                ))
                 .child(squircle_border(px(radius), px(1.), border))
         };
 
@@ -1074,19 +1112,17 @@ impl PaneFlowApp {
                 window.request_animation_frame();
                 let progress = motion_progress(job.view_since, INTRO_MS);
                 let eased = spring(progress);
-                let viewport = window.viewport_size();
-                let to_left = f32::from(viewport.width) - EDGE_INSET - PILL_WIDTH;
-                let to_top = f32::from(viewport.height) - EDGE_INSET - PILL_HEIGHT;
-                let left = lerp(f32::from(from.origin.x), to_left, eased);
-                let top = lerp(f32::from(from.origin.y), to_top, eased);
-                let width = lerp(f32::from(from.size.width), PILL_WIDTH, eased);
-                let height = lerp(f32::from(from.size.height), PILL_HEIGHT, eased);
+                let frame = intro_frame(
+                    from,
+                    bubble_content_size(window.viewport_size(), window.window_decorations()),
+                    eased,
+                );
                 let radius = lerp(f32::from(PANEL_RADIUS), PILL_HEIGHT / 2., eased);
                 shell("clone-bubble-intro", radius)
-                    .left(px(left))
-                    .top(px(top))
-                    .w(px(width))
-                    .h(px(height))
+                    .left(frame.origin.x)
+                    .top(frame.origin.y)
+                    .w(frame.size.width)
+                    .h(frame.size.height)
                     .shadow(shadow(eased))
                     .child(self.render_bubble_ghost(
                         job,
@@ -1191,6 +1227,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_intro_flies_inside_the_content_and_lands_on_the_resting_pill() {
+        let viewport = size(px(1200.), px(800.));
+        let floating = Decorations::Client {
+            tiling: gpui::Tiling::default(),
+        };
+        let content = bubble_content_size(viewport, floating);
+        let frame = crate::window_chrome::csd::client_content_frame(floating);
+        assert_eq!(
+            content,
+            size(
+                viewport.width - frame.left - frame.right,
+                viewport.height - frame.top - frame.bottom
+            )
+        );
+        let from = intro_source(content);
+        for step in 0..=100 {
+            let bounds = intro_frame(from, content, spring(step as f32 / 100.));
+            assert!(
+                bounds.left() >= px(0.) && bounds.top() >= px(0.),
+                "{bounds:?}"
+            );
+            assert!(
+                bounds.right() <= content.width - px(EDGE_INSET)
+                    && bounds.bottom() <= content.height - px(EDGE_INSET),
+                "frame {step} leaves the content area {content:?}: {bounds:?}"
+            );
+        }
+        assert_eq!(intro_frame(from, content, 1.), pill_rest(content));
+        assert_eq!(bubble_content_size(viewport, Decorations::Server), viewport);
+    }
+
+    #[test]
     fn the_spring_starts_at_rest_settles_exactly_and_never_overshoots() {
         assert_eq!(spring(0.), 0.);
         assert!((spring(1.) - 1.).abs() < f32::EPSILON);
@@ -1233,6 +1301,43 @@ mod tests {
         let partial = check_stroke_points(0.2);
         assert_eq!(partial.len(), 2);
         assert!(partial[1].0 < CHECK_POINTS[1].0);
+    }
+
+    #[test]
+    fn the_check_is_one_stroke_with_round_caps_and_round_joins() {
+        let options = check_stroke_options();
+        assert_eq!(options.line_cap, gpui::LineCap::Round);
+        assert_eq!(options.line_join, gpui::LineJoin::Round);
+        assert_eq!(options.line_width, CHECK_STROKE);
+        let origin = point(px(0.), px(0.));
+        for draw in [0., 0.2, 0.5, 1.] {
+            assert!(check_path(origin, &check_stroke_points(draw)).is_some());
+        }
+        assert!(check_path(origin, &[]).is_none());
+    }
+
+    struct CheckHarness {
+        draw: f32,
+    }
+
+    impl gpui::Render for CheckHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size(px(BADGE_SIZE))
+                .relative()
+                .child(drawn_check(self.draw))
+        }
+    }
+
+    #[gpui::test]
+    fn the_drawn_check_paints_at_every_stage_of_its_animation(cx: &mut gpui::TestAppContext) {
+        for draw in [0., 0.01, 0.2, 0.6, 1.] {
+            let (_view, cx) = cx.add_window_view(|_, _| CheckHarness { draw });
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
     }
 
     #[test]

@@ -30,6 +30,9 @@ mod host_attach;
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
 const SEARCH_REGEX_TOGGLE_LABEL: &str = "Regular expression";
+const SEARCH_OVERLAY_WIDTH: f32 = 325.;
+const SEARCH_FIELD_MIN_WIDTH: f32 = 48.;
+const SEARCH_CONTROL_SIZE: f32 = 28.;
 
 fn search_regex_toggle(
     active: bool,
@@ -60,6 +63,100 @@ fn search_regex_toggle(
         })
         .when(active, |toggle| toggle.bg(active_background))
         .child(".*")
+}
+
+fn search_overlay_shell(
+    input: gpui::AnyElement,
+    regex_toggle: gpui::AnyElement,
+    status: Option<gpui::AnyElement>,
+    navigation: [gpui::AnyElement; 3],
+) -> gpui::AnyElement {
+    use gpui::px;
+
+    use crate::settings::components::with_alpha;
+    use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+
+    let ui = crate::theme::ui_colors();
+    let field = div()
+        .id("search-field")
+        .flex()
+        .items_center()
+        .flex_1()
+        .min_w(px(SEARCH_FIELD_MIN_WIDTH))
+        .text_size(px(14.))
+        .text_color(ui.text)
+        .child(input);
+    let divider = div()
+        .flex_none()
+        .w(px(1.))
+        .h(px(16.))
+        .bg(with_alpha(ui.text, 0.12));
+    let optional_controls = div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(8.))
+        .h(px(SEARCH_CONTROL_SIZE))
+        .min_w(px(0.))
+        .flex_shrink_1()
+        .overflow_hidden()
+        .child(div().flex_none().w(px(0.)).h(px(SEARCH_CONTROL_SIZE)))
+        .child(regex_toggle)
+        .children(status)
+        .child(divider);
+    let navigation = div()
+        .flex()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(px(2.))
+        .children(navigation);
+    let overlay = squircle_skin(
+        div()
+            .id("search-overlay")
+            .occlude()
+            .flex()
+            .flex_row()
+            .items_center()
+            .w(px(SEARCH_OVERLAY_WIDTH))
+            .min_w(px(0.))
+            .flex_shrink_1()
+            .h(px(36.))
+            .pl(px(14.))
+            .pr(px(4.))
+            .gap(px(8.)),
+        "search-overlay",
+        ROW_RADIUS,
+        None,
+        None,
+    )
+    .child(
+        crate::ui_primitives::squircle::squircle_fill_beneath_border(
+            ROW_RADIUS,
+            ui.subtle,
+            px(1.),
+            ui.border,
+        ),
+    )
+    .child(crate::ui_primitives::squircle::squircle_border(
+        ROW_RADIUS,
+        px(1.),
+        ui.border,
+    ))
+    .child(field)
+    .child(optional_controls)
+    .child(navigation);
+    div()
+        .absolute()
+        .top_2()
+        .left_2()
+        .right_2()
+        .flex()
+        .flex_row()
+        .justify_end()
+        .child(overlay)
+        .into_any_element()
 }
 
 #[cfg(debug_assertions)]
@@ -260,6 +357,7 @@ pub struct TerminalView {
     pub(super) mouse_down_link: Option<HyperlinkZone>,
     pub(super) mouse_down_cell: Option<Point>,
     ime_marked_text: String,
+    pub(crate) ime_caret: crate::widgets::ime_caret::ImeCaretReport,
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     launch: HostedLaunch,
@@ -669,6 +767,7 @@ impl TerminalView {
             mouse_down_link: None,
             mouse_down_cell: None,
             ime_marked_text: String::new(),
+            ime_caret: Default::default(),
             needs_initial_clear: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             terminal_window_size: Arc::new(Mutex::new(None)),
             launch,
@@ -1110,7 +1209,6 @@ impl TerminalView {
     fn render_search_overlay(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use gpui::{Hsla, px, svg};
 
-        use crate::settings::components::with_alpha;
         use crate::ui_primitives::{AccessibleControlExt, ROW_RADIUS, squircle_skin};
 
         let ui = crate::theme::ui_colors();
@@ -1150,16 +1248,6 @@ impl TerminalView {
         };
 
         let button_hover = crate::app::constants::sidebar_tab_hover_background();
-
-        let field = div()
-            .id("search-field")
-            .flex()
-            .items_center()
-            .flex_1()
-            .min_w(px(0.))
-            .text_size(px(14.))
-            .text_color(ui.text)
-            .child(self.search_input.clone());
 
         let icon_btn =
             move |id: &'static str, label: &'static str, icon: &'static str, color: Hsla| {
@@ -1207,61 +1295,25 @@ impl TerminalView {
         let regex_toggle = search_regex_toggle(regex_active, ui, button_hover)
             .on_pointer_press(cx.listener(|this, _, _window, cx| this.toggle_search_regex(cx)));
 
-        squircle_skin(
+        let status = (!status_text.is_empty()).then(|| {
             div()
-                .id("search-overlay")
-                .occlude()
-                .flex()
-                .flex_row()
-                .items_center()
-                .w(px(325.))
-                .h(px(36.))
-                .pl(px(14.))
-                .pr(px(4.))
-                .gap(px(8.)),
-            "search-overlay",
-            ROW_RADIUS,
-            Some(ui.subtle),
-            None,
-        )
-        .absolute()
-        .top_2()
-        .right_2()
-        .child(crate::ui_primitives::squircle::squircle_border(
-            ROW_RADIUS,
-            px(1.),
-            ui.border,
-        ))
-        .child(field)
-        .child(regex_toggle)
-        .when(!status_text.is_empty(), |el| {
-            el.child(
-                div()
-                    .id("search-status")
-                    .flex_none()
-                    .text_size(px(13.))
-                    .text_color(status_color)
-                    .child(status_text.clone()),
-            )
-        })
-        .child(
-            div()
+                .id("search-status")
                 .flex_none()
-                .w(px(1.))
-                .h(px(16.))
-                .bg(with_alpha(ui.text, 0.12)),
+                .text_size(px(13.))
+                .text_color(status_color)
+                .child(status_text.clone())
+                .into_any_element()
+        });
+        search_overlay_shell(
+            self.search_input.clone().into_any_element(),
+            regex_toggle.into_any_element(),
+            status,
+            [
+                prev_btn.into_any_element(),
+                next_btn.into_any_element(),
+                close_btn.into_any_element(),
+            ],
         )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(2.))
-                .child(prev_btn)
-                .child(next_btn)
-                .child(close_btn),
-        )
-        .into_any_element()
     }
 }
 
@@ -2035,6 +2087,44 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn the_ime_follows_the_terminal_caret_when_the_terminal_takes_the_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let redraw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        };
+        let reported = |cx: &mut gpui::VisualTestContext| {
+            terminal.read_with(cx, |view, _| view.ime_caret.reported())
+        };
+        redraw(cx);
+        assert_eq!(reported(cx), None, "an unfocused terminal reports no caret");
+
+        focus_terminal(&terminal, cx);
+        redraw(cx);
+        let focused_caret = reported(cx);
+        assert!(
+            focused_caret.is_some(),
+            "a focused terminal reports its caret to the input method"
+        );
+
+        cx.update(|window, cx| window.blur(cx));
+        redraw(cx);
+        assert_eq!(reported(cx), None, "losing the focus forgets the caret");
+
+        focus_terminal(&terminal, cx);
+        redraw(cx);
+        assert_eq!(
+            reported(cx),
+            focused_caret,
+            "taking the focus back reports the caret again"
+        );
+    }
+
     fn focus_terminal(view: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext) {
         let handle = view.read_with(cx, |view, _| view.focus_handle.clone());
         cx.update(|window, cx| handle.focus(window, cx));
@@ -2056,6 +2146,36 @@ mod tests {
                 ..Default::default()
             }
         }
+    }
+
+    #[gpui::test]
+    fn a_terminal_frame_paints_backgrounds_then_glyphs_in_two_layers_and_overlays_above_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::terminal::element::{PaintStep, take_paint_steps};
+
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        take_paint_steps();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(
+            take_paint_steps(),
+            vec![
+                PaintStep::BackgroundLayer,
+                PaintStep::Backgrounds,
+                PaintStep::LayerEnd,
+                PaintStep::KittyBelowText,
+                PaintStep::TextLayer,
+                PaintStep::Glyphs,
+                PaintStep::LayerEnd,
+                PaintStep::Decorations,
+                PaintStep::KittyAboveText,
+                PaintStep::Cursor,
+            ]
+        );
     }
 
     #[gpui::test]
@@ -3628,5 +3748,95 @@ mod tests {
         assert!(!resolve_cursor_visible(M::TerminalControlled, true, false));
         assert!(resolve_cursor_visible(M::TerminalControlled, true, true));
         assert!(resolve_cursor_visible(M::TerminalControlled, false, false));
+    }
+
+    struct SearchOverlayHarness {
+        width: f32,
+    }
+
+    impl Render for SearchOverlayHarness {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            use gpui::px;
+            let square = |name: &'static str| {
+                div()
+                    .flex_none()
+                    .size(px(28.))
+                    .debug_selector(move || name.into())
+                    .into_any_element()
+            };
+            div().size_full().child(
+                div()
+                    .relative()
+                    .w(px(self.width))
+                    .h(px(120.))
+                    .debug_selector(|| "pane".into())
+                    .child(search_overlay_shell(
+                        div()
+                            .w_full()
+                            .h(px(20.))
+                            .debug_selector(|| "input".into())
+                            .into_any_element(),
+                        square("regex"),
+                        Some(
+                            div()
+                                .flex_none()
+                                .w(px(34.))
+                                .h(px(16.))
+                                .debug_selector(|| "status".into())
+                                .into_any_element(),
+                        ),
+                        [square("previous"), square("next"), square("close")],
+                    )),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn the_search_overlay_keeps_its_field_and_buttons_inside_a_narrow_pane(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::px;
+        for width in [190.0, 200.0, 210.0, 260.0, 600.0] {
+            let (_view, cx) = cx.add_window_view(move |_, _| SearchOverlayHarness { width });
+            cx.simulate_resize(gpui::size(px(800.), px(300.)));
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let mut bounds = |name: &'static str| {
+                cx.debug_bounds(name)
+                    .unwrap_or_else(|| panic!("{name} was not painted at {width}"))
+            };
+            let pane = bounds("pane");
+            let input = bounds("input");
+            let close = bounds("close");
+            assert!(
+                input.left() >= pane.left() + px(8.) && close.right() <= pane.right(),
+                "at {width} px the overlay leaves the pane: field from {:?}, close button to {:?}, pane {:?}",
+                input.left(),
+                close.right(),
+                pane
+            );
+            assert!(
+                input.size.width >= px(40.),
+                "at {width} px the query field is only {:?} wide",
+                input.size.width
+            );
+            for extra in ["regex", "status"] {
+                let item = bounds(extra);
+                let in_row = item.top() < close.bottom();
+                assert!(
+                    !in_row || (item.left() >= input.right() && item.right() <= close.left()),
+                    "at {width} px the {extra} control overlaps the field or the buttons: {item:?}"
+                );
+            }
+            if width >= 600.0 {
+                assert_eq!(
+                    input.left() - pane.left(),
+                    pane.size.width - px(8. + 325.) + px(14.)
+                );
+                assert!(
+                    bounds("status").top() < close.bottom(),
+                    "a wide pane shows the match count"
+                );
+            }
+        }
     }
 }

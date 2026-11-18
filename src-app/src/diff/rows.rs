@@ -35,7 +35,10 @@ pub fn split_row_height(row: &SplitRow) -> f32 {
     }
 }
 
-fn offsets_with_body_gaps(heights: impl Iterator<Item = (f32, bool)>, len: usize) -> Vec<f32> {
+pub(crate) fn offsets_with_body_gaps(
+    heights: impl Iterator<Item = (f32, bool)>,
+    len: usize,
+) -> Vec<f32> {
     let mut acc = 0.0;
     let mut out = Vec::with_capacity(len + 1);
     out.push(0.0);
@@ -65,6 +68,13 @@ pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
             .map(|r| (split_row_height(r), matches!(r, SplitRow::Header(_)))),
         rows.len(),
     )
+}
+
+pub fn content_height(offsets: &[f32]) -> f32 {
+    match offsets.last() {
+        Some(&bottom) if offsets.len() > 1 => bottom + FILE_BODY_GAP,
+        _ => 0.0,
+    }
 }
 
 pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
@@ -102,7 +112,9 @@ pub fn unified_file_spans(rows: &[DisplayRow]) -> Vec<FileSpan> {
             }),
             RowKind::Context | RowKind::Added | RowKind::Removed => {
                 if let Some(span) = spans.last_mut() {
-                    span.max_chars = span.max_chars.max(r.text.chars().count());
+                    span.max_chars = span
+                        .max_chars
+                        .max(crate::tab_stops::display_columns(&r.text));
                 }
             }
             RowKind::Fold | RowKind::Binary | RowKind::Truncated => {}
@@ -122,9 +134,11 @@ pub fn split_file_spans(rows: &[SplitRow]) -> Vec<FileSpan> {
             }),
             SplitRow::Pair { left, right } => {
                 if let Some(span) = spans.last_mut() {
-                    span.max_chars = span.max_chars.max(left.text.chars().count());
+                    span.max_chars = span
+                        .max_chars
+                        .max(crate::tab_stops::display_columns(&left.text));
                     let right_max = span.right_max_chars.get_or_insert(0);
-                    *right_max = (*right_max).max(right.text.chars().count());
+                    *right_max = (*right_max).max(crate::tab_stops::display_columns(&right.text));
                 }
             }
             SplitRow::Note(_) | SplitRow::Fold(_) => {}

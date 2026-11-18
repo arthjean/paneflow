@@ -23,7 +23,7 @@ $env:PANEFLOW_BENCH_DIRTY = $dirty
 $env:PANEFLOW_BENCH_STAMP = $stamp
 $env:PANEFLOW_BENCH_BASELINE_DIR = Join-Path $root "bench/baselines"
 
-cargo build --release --locked -p paneflow-app
+cargo build --release --locked -p paneflow-app -p paneflow-host
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -125,8 +125,8 @@ fn last_rate_limits(
         let observed_at_ms = entry
             .get("timestamp")
             .and_then(Value::as_str)
-            .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
-            .and_then(|stamp| u64::try_from(stamp.timestamp_millis()).ok());
+            .and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok())
+            .and_then(|stamp| u64::try_from(stamp.as_millisecond()).ok());
         Some((limits, observed_at_ms))
     })
 }

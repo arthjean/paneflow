@@ -6,6 +6,7 @@ pub(crate) mod resize_edge;
 pub(crate) mod ring;
 pub(crate) mod shimmer;
 pub(crate) mod squircle;
+pub(crate) mod stroke;
 
 use gpui::{
     AnimationExt, AnyElement, AnyView, App, Bounds, ClickEvent, CursorStyle, Div, Element,
@@ -64,6 +65,10 @@ impl HoverAnimationState {
         self.started_at = now;
         self.duration = span.mul_f32((target - current).abs());
         true
+    }
+
+    fn aims_at(&self, hovered: bool) -> bool {
+        self.target == if hovered { 1.0 } else { 0.0 }
     }
 
     fn is_animating(&self, now: Instant) -> bool {
@@ -136,14 +141,6 @@ pub(crate) fn clip_below_line(child: impl IntoElement, line: ClipLine) -> ClipBe
     ClipBelowLine {
         child: child.into_any_element(),
         line,
-    }
-}
-
-impl IntoElement for ClipBelowLine {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
     }
 }
 
@@ -462,6 +459,26 @@ impl Element for AnimatedHover {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.driven_by.is_none()
+            && let Some(global_id) = global_id
+        {
+            let has_drag = cx.has_active_drag();
+            let stale = window.with_element_state(
+                global_id,
+                |state: Option<HoverAnimationState>, window| {
+                    let state = state.unwrap_or_else(|| HoverAnimationState::resting_at(false));
+                    let hovered = !has_drag
+                        && state
+                            .hitbox
+                            .as_ref()
+                            .is_some_and(|hitbox| hitbox.is_hovered(window));
+                    (!state.aims_at(hovered), state)
+                },
+            );
+            if stale {
+                window.request_animation_frame();
+            }
+        }
         self.element.paint(
             global_id,
             inspector_id,
@@ -471,14 +488,6 @@ impl Element for AnimatedHover {
             window,
             cx,
         )
-    }
-}
-
-impl IntoElement for AnimatedHover {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -534,25 +543,30 @@ pub(crate) fn animated_squircle_skin(
 }
 
 const COMET_TURN: Duration = Duration::from_millis(700);
+const EMPTY_STATE_TURN: Duration = Duration::from_secs(1);
 
-pub(crate) fn comet_spinner(id: impl Into<ElementId>, size: Pixels, color: Hsla) -> AnyElement {
-    let glyph = svg()
-        .size(size)
-        .flex_none()
-        .path("icons/comet.svg")
-        .text_color(color);
-    if reduce_motion() {
-        return glyph.into_any_element();
+fn spinner_rotation(turn: Duration, reduce_motion: bool) -> Option<gpui::TimedTransformation> {
+    (!reduce_motion)
+        .then(|| gpui::TimedTransformation::rotation(turn, gpui::Transformation::default()))
+}
+
+fn spin(glyph: gpui::Svg, turn: Duration) -> gpui::Svg {
+    match spinner_rotation(turn, reduce_motion()) {
+        Some(rotation) => glyph.with_timed_transformation(rotation),
+        None => glyph,
     }
-    glyph
-        .with_animation(
-            id,
-            gpui::Animation::new(COMET_TURN).repeat(),
-            |glyph, delta| {
-                glyph.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
-            },
-        )
-        .into_any_element()
+}
+
+pub(crate) fn comet_spinner(size: Pixels, color: Hsla) -> AnyElement {
+    spin(
+        svg()
+            .size(size)
+            .flex_none()
+            .path("icons/comet.svg")
+            .text_color(color),
+        COMET_TURN,
+    )
+    .into_any_element()
 }
 
 pub(crate) const DISMISS_BUTTON_SIZE: Pixels = px(24.);
@@ -606,8 +620,42 @@ impl<E: StatefulInteractiveElement> TooltipDelayExt for E {
         self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
-        self.tooltip(build_tooltip)
-            .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
+        self.capture_any_mouse_down(|event, _window, _cx| {
+            LAST_PRESS.set(Some(event.position));
+        })
+        .tooltip(move |window, cx| {
+            if pointer_still_since_press(LAST_PRESS.get(), window.mouse_position()) {
+                cx.new(|_| SuppressedTooltip).into()
+            } else {
+                build_tooltip(window, cx)
+            }
+        })
+        .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
+    }
+}
+
+thread_local! {
+    static LAST_PRESS: std::cell::Cell<Option<gpui::Point<Pixels>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+const PRESS_STILLNESS: Pixels = px(3.);
+
+fn pointer_still_since_press(
+    press: Option<gpui::Point<Pixels>>,
+    pointer: gpui::Point<Pixels>,
+) -> bool {
+    press.is_some_and(|press| {
+        (press.x - pointer.x).abs() <= PRESS_STILLNESS
+            && (press.y - pointer.y).abs() <= PRESS_STILLNESS
+    })
+}
+
+struct SuppressedTooltip;
+
+impl Render for SuppressedTooltip {
+    fn render(&mut self, _w: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::Empty
     }
 }
 
@@ -658,21 +706,35 @@ pub(crate) trait AccessibleControlExt: StatefulInteractiveElement + Sized {
 impl<E: StatefulInteractiveElement> AccessibleControlExt for E {}
 
 pub(crate) const TOOLTIP_RADIUS: Pixels = px(14.);
+pub(crate) const TOOLTIP_MAX_WIDTH: Pixels = px(400.);
 
 pub(crate) fn tooltip_shell() -> Div {
     let theme = crate::theme::active_theme();
     let ui = crate::theme::ui_colors();
     div()
         .relative()
+        .max_w(TOOLTIP_MAX_WIDTH)
         .px(px(8.))
         .py(px(6.))
         .text_color(ui.text)
         .text_sm()
-        .child(squircle::squircle_fill(
+        .child(squircle::squircle_fill_beneath_border(
             TOOLTIP_RADIUS,
             theme.title_bar_background,
+            px(1.),
+            ui.border,
         ))
         .child(squircle::squircle_border(TOOLTIP_RADIUS, px(1.), ui.border))
+}
+
+pub(crate) const TOOLTIP_POINTER_CLEARANCE_X: Pixels = px(8.);
+pub(crate) const TOOLTIP_POINTER_CLEARANCE_Y: Pixels = px(12.);
+
+fn clear_of_the_pointer(shell: Div) -> Div {
+    div()
+        .px(TOOLTIP_POINTER_CLEARANCE_X)
+        .py(TOOLTIP_POINTER_CLEARANCE_Y)
+        .child(shell)
 }
 
 pub(crate) struct PaneflowTooltip {
@@ -681,7 +743,11 @@ pub(crate) struct PaneflowTooltip {
 
 impl Render for PaneflowTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        tooltip_shell().child(self.label.clone())
+        clear_of_the_pointer(
+            tooltip_shell()
+                .debug_selector(|| "paneflow-tooltip".into())
+                .child(self.label.clone()),
+        )
     }
 }
 
@@ -938,6 +1004,15 @@ pub(crate) fn filter_field(
         })
 }
 
+pub(crate) fn single_line_label() -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .overflow_x_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+}
+
 pub(crate) fn highlight_matches(text: String, query: &str) -> gpui::StyledText {
     let mut ranges = Vec::new();
     if !query.is_empty() {
@@ -1010,15 +1085,7 @@ pub(crate) fn panel_empty_state(
             .path(path)
             .text_color(with_alpha(ui.muted, 0.8));
         let glyph = if empty_state_spins(animate, reduce_motion()) {
-            glyph
-                .with_animation(
-                    "panel-empty-spin",
-                    gpui::Animation::new(std::time::Duration::from_secs(1)).repeat(),
-                    |s, delta| {
-                        s.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))
-                    },
-                )
-                .into_any_element()
+            spin(glyph, EMPTY_STATE_TURN).into_any_element()
         } else {
             glyph.into_any_element()
         };
@@ -1327,6 +1394,70 @@ mod tests {
         assert!(!EMPTY_STATE_PROGRESS_LABEL.is_empty());
     }
 
+    #[test]
+    fn spinners_turn_once_per_period_on_the_shared_clock_and_rest_under_reduce_motion() {
+        let turn =
+            |period| gpui::TimedTransformation::rotation(period, gpui::Transformation::default());
+        assert_eq!(spinner_rotation(COMET_TURN, false), Some(turn(COMET_TURN)));
+        assert_eq!(COMET_TURN, Duration::from_millis(700));
+        assert_eq!(
+            spinner_rotation(EMPTY_STATE_TURN, false),
+            Some(turn(EMPTY_STATE_TURN))
+        );
+        assert_eq!(EMPTY_STATE_TURN, Duration::from_secs(1));
+        assert_eq!(spinner_rotation(COMET_TURN, true), None);
+        assert_eq!(spinner_rotation(EMPTY_STATE_TURN, true), None);
+        assert_eq!(
+            spinner_rotation(COMET_TURN, false),
+            spinner_rotation(COMET_TURN, false),
+            "two comet spinners carry the same rotation, so the shared clock gives them one phase"
+        );
+    }
+
+    struct SpinnersOnly {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SpinnersOnly {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .size_full()
+                .child(comet_spinner(px(14.), gpui::white()))
+                .child(comet_spinner(px(12.), gpui::white()))
+                .child(panel_empty_state(
+                    crate::theme::ui_colors(),
+                    Some("icons/comet.svg"),
+                    None,
+                    "Loading",
+                    true,
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn spinners_turn_for_sixty_frames_without_rendering_their_view_again(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let (_view, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            move |_, _| SpinnersOnly { renders }
+        });
+        cx.run_until_parked();
+        assert_eq!(renders.get(), 1);
+        for _ in 0..60 {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            cx.update(|window, cx| {
+                window.simulate_next_frame(cx);
+            });
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            renders.get(),
+            1,
+            "a spinner must turn in the retained scene, not by rendering its view each frame"
+        );
+    }
+
     #[gpui::test]
     fn squircle_skin_hover_repaints_on_pointer_transitions(cx: &mut TestAppContext) {
         let renders = Rc::new(Cell::new(0));
@@ -1380,6 +1511,12 @@ mod tests {
                 .size_full()
                 .relative()
                 .child(squircle::squircle_fill(px(24.), gpui::white()))
+                .child(squircle::squircle_fill_beneath_border(
+                    px(24.),
+                    gpui::white(),
+                    px(1.),
+                    gpui::black(),
+                ))
                 .child(squircle::squircle_border(px(24.), px(1.), gpui::black()))
                 .child(squircle::squircle_fill_blend(
                     px(14.),
@@ -1470,6 +1607,389 @@ mod tests {
         assert!(
             progress.get() > 0.0,
             "hover progress stayed at zero after pointer entry"
+        );
+    }
+
+    #[test]
+    fn a_pointer_that_has_not_moved_since_a_press_holds_the_tooltip_back() {
+        let press = Some(point(px(40.), px(20.)));
+        assert!(pointer_still_since_press(press, point(px(40.), px(20.))));
+        assert!(pointer_still_since_press(press, point(px(42.), px(18.))));
+        assert!(!pointer_still_since_press(press, point(px(48.), px(20.))));
+        assert!(!pointer_still_since_press(None, point(px(40.), px(20.))));
+    }
+
+    struct TooltipHarness {
+        built: Rc<Cell<usize>>,
+    }
+
+    impl Render for TooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let built = self.built.clone();
+            div().size_full().child(
+                div()
+                    .id("tooltip-trigger")
+                    .w(px(100.))
+                    .h(px(30.))
+                    .on_click(|_, _, _| {})
+                    .delayed_tooltip(move |_window, cx| {
+                        built.set(built.get() + 1);
+                        cx.new(|_| PaneflowTooltip {
+                            label: "Customize sidebar".into(),
+                        })
+                        .into()
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_click_holds_its_trigger_tooltip_back_until_the_pointer_comes_back(
+        cx: &mut TestAppContext,
+    ) {
+        let built = Rc::new(Cell::new(0));
+        let built_for_view = built.clone();
+        let (_view, cx) = cx.add_window_view(move |_, _| TooltipHarness {
+            built: built_for_view,
+        });
+        cx.simulate_resize(size(px(300.), px(200.)));
+        let wait_for_tooltip = |cx: &mut gpui::VisualTestContext| {
+            cx.executor().advance_clock(TOOLTIP_SHOW_DELAY * 2);
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        };
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        cx.simulate_mouse_move(point(px(50.), px(15.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(built.get(), 1, "a hovered trigger shows its tooltip");
+
+        cx.simulate_mouse_move(point(px(250.), px(150.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        cx.simulate_mouse_move(point(px(60.), px(15.)), None, Modifiers::default());
+        cx.simulate_click(point(px(60.), px(15.)), Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(
+            built.get(),
+            1,
+            "a tooltip that comes due after a click on its trigger, with the pointer still, would cover the menu the click opened"
+        );
+
+        cx.simulate_mouse_move(point(px(250.), px(150.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        cx.simulate_mouse_move(point(px(40.), px(15.)), None, Modifiers::default());
+        wait_for_tooltip(cx);
+        assert_eq!(built.get(), 2, "the tooltip comes back on the next hover");
+    }
+
+    struct LongTooltipHarness;
+
+    impl Render for LongTooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full().child(
+                tooltip_shell()
+                    .debug_selector(|| "tooltip".into())
+                    .child("arthur@dune:/tmp/claude-1000/-home-arthur-dev-paneflow/defde28f-5ff0-423e-a803-98654a37048c/scratchpad/ep7/work/repo"),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_long_path_tooltip_wraps_within_its_maximum_width(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| LongTooltipHarness);
+        cx.simulate_resize(size(px(1200.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = cx.debug_bounds("tooltip").expect("tooltip painted");
+        assert!(
+            bounds.size.width <= TOOLTIP_MAX_WIDTH,
+            "the tooltip is {:?} wide, past its {:?} maximum",
+            bounds.size.width,
+            TOOLTIP_MAX_WIDTH
+        );
+        assert!(
+            bounds.size.height > px(40.),
+            "a path longer than the maximum width wraps onto a second line, got {:?}",
+            bounds.size.height
+        );
+    }
+
+    struct PointerTooltipHarness {
+        trigger: Bounds<Pixels>,
+    }
+
+    impl Render for PointerTooltipHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div().size_full().relative().child(
+                div()
+                    .id("pointer-tooltip-trigger")
+                    .absolute()
+                    .left(self.trigger.origin.x)
+                    .top(self.trigger.origin.y)
+                    .w(self.trigger.size.width)
+                    .h(self.trigger.size.height)
+                    .on_click(|_, _, _| {})
+                    .delayed_tooltip(text_tooltip("Split right")),
+            )
+        }
+    }
+
+    fn tooltip_shown_at(
+        cx: &mut TestAppContext,
+        trigger: Bounds<Pixels>,
+        pointer: gpui::Point<Pixels>,
+    ) -> Bounds<Pixels> {
+        let (_view, cx) = cx.add_window_view(move |_, _| PointerTooltipHarness { trigger });
+        cx.simulate_resize(size(px(400.), px(300.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(pointer, None, Modifiers::default());
+        cx.executor().advance_clock(TOOLTIP_SHOW_DELAY * 2);
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("paneflow-tooltip")
+            .expect("tooltip painted")
+    }
+
+    #[gpui::test]
+    fn a_tooltip_opens_below_and_beside_the_pointer_without_touching_it(cx: &mut TestAppContext) {
+        let pointer = point(px(60.), px(52.));
+        let tooltip = tooltip_shown_at(
+            cx,
+            Bounds::new(point(px(40.), px(40.)), size(px(24.), px(24.))),
+            pointer,
+        );
+        assert!(
+            tooltip.top() >= pointer.y + TOOLTIP_POINTER_CLEARANCE_Y,
+            "the tooltip at {tooltip:?} starts too close under the pointer {pointer:?}"
+        );
+        assert!(
+            tooltip.left() >= pointer.x + TOOLTIP_POINTER_CLEARANCE_X,
+            "the tooltip at {tooltip:?} starts too close beside the pointer {pointer:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn a_tooltip_that_flips_above_the_pointer_keeps_the_same_clearance(cx: &mut TestAppContext) {
+        let pointer = point(px(380.), px(288.));
+        let tooltip = tooltip_shown_at(
+            cx,
+            Bounds::new(point(px(360.), px(276.)), size(px(24.), px(24.))),
+            pointer,
+        );
+        assert!(
+            tooltip.bottom() <= pointer.y - TOOLTIP_POINTER_CLEARANCE_Y,
+            "the flipped tooltip at {tooltip:?} covers the pointer row {pointer:?}"
+        );
+        assert!(
+            tooltip.right() <= pointer.x - TOOLTIP_POINTER_CLEARANCE_X,
+            "the flipped tooltip at {tooltip:?} covers the pointer {pointer:?}"
+        );
+    }
+
+    struct ScrimHarness {
+        progress: Rc<Cell<f32>>,
+        covered: bool,
+    }
+
+    impl Render for ScrimHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let progress = self.progress.clone();
+            div()
+                .size_full()
+                .relative()
+                .child(
+                    div()
+                        .id("row-under-a-modal")
+                        .w(px(100.))
+                        .h(px(30.))
+                        .animated_hover(move |_, delta| progress.set(delta)),
+                )
+                .when(self.covered, |root| {
+                    root.child(div().id("modal-scrim").absolute().inset_0().occlude())
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn a_row_covered_by_a_modal_schedules_the_frame_that_drops_its_hover(cx: &mut TestAppContext) {
+        let progress = Rc::new(Cell::new(0.0));
+        let held = progress.clone();
+        let (view, cx) = cx.add_window_view(move |_, _| ScrimHarness {
+            progress: held,
+            covered: false,
+        });
+        cx.simulate_resize(size(px(200.), px(100.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(20.), px(15.)), None, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        thread::sleep(HOVER_ANIMATION_DURATION * 2);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            progress.get() > 0.99,
+            "the row is hovered: {}",
+            progress.get()
+        );
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+
+        view.update(cx, |harness, cx| {
+            harness.covered = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        for _ in 0..4 {
+            thread::sleep(HOVER_ANIMATION_DURATION);
+            cx.update(|window, cx| window.simulate_next_frame(cx));
+            cx.run_until_parked();
+        }
+        assert!(
+            progress.get() < 0.01,
+            "a modal that now covers the hovered row drops its hover without a pointer move: {}",
+            progress.get()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    struct InkedAtlasAssets;
+
+    #[cfg(target_os = "linux")]
+    const INKED_TILE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" fill="currentColor"/></svg>"#;
+
+    #[cfg(target_os = "linux")]
+    impl gpui::AssetSource for InkedAtlasAssets {
+        fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+            if path.starts_with("inked/") {
+                return Ok(Some(std::borrow::Cow::Borrowed(INKED_TILE_SVG.as_bytes())));
+            }
+            gpui::AssetSource::load(&crate::assets::Assets, path)
+        }
+
+        fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+            gpui::AssetSource::list(&crate::assets::Assets, path)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_ORIGIN: f32 = 100.;
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_SIZE: f32 = 6.;
+    #[cfg(target_os = "linux")]
+    const TURNING_COMET_BACKGROUND: u32 = 0x202020;
+
+    #[cfg(target_os = "linux")]
+    struct TurningCometBetweenInkedTiles {
+        angle: f32,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Render for TurningCometBetweenInkedTiles {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let inked = |index: usize| {
+                svg()
+                    .path(SharedString::from(format!("inked/{index}.svg")))
+                    .size(px(TURNING_COMET_SIZE))
+                    .flex_none()
+                    .text_color(gpui::white())
+            };
+            div()
+                .size_full()
+                .bg(gpui::rgb(TURNING_COMET_BACKGROUND))
+                .child(div().flex().gap_2().children((0..4).map(inked)))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(TURNING_COMET_ORIGIN))
+                        .top(px(TURNING_COMET_ORIGIN))
+                        .child(
+                            svg()
+                                .path("icons/comet.svg")
+                                .size(px(TURNING_COMET_SIZE))
+                                .flex_none()
+                                .text_color(gpui::white())
+                                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                    self.angle,
+                                ))),
+                        ),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .bottom_0()
+                        .flex()
+                        .gap_2()
+                        .children((4..8).map(inked)),
+                )
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_turning_comet_samples_only_its_own_atlas_tile() {
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new("Lilex")),
+            std::sync::Arc::new(InkedAtlasAssets),
+            || {
+                let renderer = gpui_wgpu::WgpuHeadlessRenderer::new()?;
+                Ok(Some(
+                    Box::new(renderer) as Box<dyn gpui::PlatformHeadlessRenderer>
+                ))
+            },
+        );
+        let window =
+            gpui::HeadlessAppContext::open_window(&mut cx, size(px(200.), px(200.)), |_, cx| {
+                cx.new(|_| TurningCometBetweenInkedTiles { angle: 0. })
+            })
+            .expect("a headless window");
+        let background = (TURNING_COMET_BACKGROUND >> 16) as i32;
+        let mut strays = Vec::new();
+        for degrees in (0..360).step_by(5) {
+            cx.update_window(window.into(), |root, _, cx| {
+                let root = root
+                    .downcast::<TurningCometBetweenInkedTiles>()
+                    .expect("the comet root");
+                root.update(cx, |root, cx| {
+                    root.angle = (degrees as f32).to_radians();
+                    cx.notify();
+                });
+            })
+            .expect("an open window");
+            cx.run_until_parked();
+            let image = cx
+                .capture_screenshot(window.into())
+                .expect("a headless frame");
+            let scale = image.width() as f32 / 200.;
+            let centre = (TURNING_COMET_ORIGIN + TURNING_COMET_SIZE / 2.) * scale;
+            let ring = TURNING_COMET_SIZE / 2. * scale + 1.;
+            let reach = (TURNING_COMET_SIZE * scale) as u32;
+            let first = centre as u32 - reach;
+            for y in first..first + 2 * reach {
+                for x in first..first + 2 * reach {
+                    let distance = (x as f32 + 0.5 - centre).hypot(y as f32 + 0.5 - centre);
+                    let ink = image.get_pixel(x, y)[0] as i32 - background;
+                    if distance > ring && ink.abs() > 6 {
+                        strays.push((degrees, x, y, ink));
+                    }
+                }
+            }
+        }
+        assert!(
+            strays.is_empty(),
+            "a rotated comet painted outside its ring (degrees, x, y, ink): {strays:?}"
         );
     }
 }

@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Length, Path, PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Length, Path,
+    PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
     TransformationMatrix, Window, fill, point, px, quad, relative, size,
 };
 
@@ -18,6 +18,7 @@ use super::rows::{
     DisplayRow, FILE_HEADER_HEIGHT, FileSpan, HalfCell, HeaderParts, ROW_HEIGHT, RowKind,
     RowPalette, SplitRow,
 };
+use crate::tab_stops::TabExpandedLine;
 
 const UI_FONT_FAMILY: &str = "Geist";
 const CODE_FONT_SIZE: f32 = 13.0;
@@ -170,7 +171,7 @@ struct HatchLine {
 }
 
 struct HatchPath {
-    path: Path<Pixels>,
+    path: Path,
     color: Hsla,
 }
 
@@ -387,7 +388,7 @@ impl DiffElement {
         text: &SharedString,
         syntax: &[(Range<usize>, Hsla)],
         default: Hsla,
-    ) -> ShapedLine {
+    ) -> TabExpandedLine {
         if syntax.is_empty() {
             let runs = [TextRun {
                 len: text.len(),
@@ -397,15 +398,11 @@ impl DiffElement {
                 underline: None,
                 strikethrough: None,
             }];
-            return window
-                .text_system()
-                .shape_line(text.clone(), self.font_size, &runs, None);
+            return TabExpandedLine::shape(text, self.font_size, &runs, window.text_system());
         }
 
         let runs = text_runs(text, syntax, &self.font, default);
-        window
-            .text_system()
-            .shape_line(text.clone(), self.font_size, &runs, None)
+        TabExpandedLine::shape(text, self.font_size, &runs, window.text_system())
     }
 
     fn shape_ui(
@@ -577,7 +574,7 @@ impl DiffElement {
     #[allow(clippy::too_many_arguments)]
     fn push_word_rects(
         &self,
-        line: &ShapedLine,
+        line: &TabExpandedLine,
         runs: &[Range<usize>],
         code_x: Pixels,
         clip_left: Pixels,
@@ -951,7 +948,7 @@ impl DiffElement {
         }
         glyphs.push(Glyphs {
             origin: point(code_x, origin.y),
-            line,
+            line: line.into_shaped(),
             clip: Some(Bounds::new(point(content_x, origin.y), size(content_w, lh))),
         });
     }
@@ -1215,7 +1212,7 @@ impl Element for DiffElement {
     ) -> (LayoutId, ()) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        let h = px(self.body.offsets_rc().last().copied().unwrap_or(0.0));
+        let h = px(super::rows::content_height(&self.body.offsets_rc()));
         style.size.height = Length::Definite(h.into());
         (window.request_layout(style, [], cx), ())
     }
@@ -1547,7 +1544,7 @@ impl Element for DiffElement {
                 }
             }
             if !layout.scrollbars.is_empty() {
-                window.paint_layer(bounds, |window| {
+                window.paint_layer(|window| {
                     for q in &layout.scrollbars {
                         window.paint_quad(quad(
                             q.bounds,
@@ -1561,14 +1558,6 @@ impl Element for DiffElement {
                 });
             }
         });
-    }
-}
-
-impl IntoElement for DiffElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -1761,5 +1750,39 @@ mod tests {
             |x0, x1| out.push((x0, x1)),
         );
         assert_eq!(out, vec![(100.0, 132.0)]);
+    }
+
+    #[gpui::test]
+    fn a_word_diff_range_over_a_tab_covers_its_expanded_width(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_empty_window();
+        window.update(|window, _cx| {
+            let text = SharedString::from("x\ty");
+            let runs = [TextRun {
+                len: text.len(),
+                font: gpui::font("Lilex"),
+                color: gpui::black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            let line = TabExpandedLine::shape(&text, px(13.), &runs, window.text_system());
+            assert_eq!(line.shaped().text.as_ref(), "x   y");
+            let mut out = Vec::new();
+            for_each_word_rect(
+                std::slice::from_ref(&(1..2)),
+                |index| f32::from(line.x_for_index(index)),
+                0.0,
+                0.0,
+                1000.0,
+                |x0, x1| out.push((x0, x1)),
+            );
+            let start = f32::from(line.shaped().x_for_index(1));
+            let end = f32::from(line.shaped().x_for_index(4));
+            assert_eq!(out, vec![(start, end)]);
+            assert!(
+                end - start > 2.0 * start,
+                "the tab spans three columns after x"
+            );
+        });
     }
 }

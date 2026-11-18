@@ -127,7 +127,7 @@ impl TitleBar {
             UpdatePill::Checking
             | UpdatePill::Downloading
             | UpdatePill::Installing
-            | UpdatePill::Restarting => Some(comet_spinner("update-pill-spinner", px(12.), ink)),
+            | UpdatePill::Restarting => Some(comet_spinner(px(12.), ink)),
             UpdatePill::Available(_) => Some(
                 svg()
                     .size(px(12.))

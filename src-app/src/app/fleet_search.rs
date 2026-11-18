@@ -30,6 +30,14 @@ pub(crate) struct FleetSearchState {
     pub(crate) return_focus: crate::FocusReturn,
 }
 
+fn fleet_search_footer(matches: usize, panes: usize) -> String {
+    format!(
+        "{} in {} · Enter focuses with the search armed · Esc closes",
+        crate::app::plural(matches, "match", "matches"),
+        crate::app::plural(panes, "pane", "panes")
+    )
+}
+
 impl PaneFlowApp {
     pub(crate) fn start_fleet_search(
         &mut self,
@@ -424,11 +432,7 @@ impl PaneFlowApp {
                     .border_color(ui.border)
                     .text_size(px(10.))
                     .text_color(ui.muted)
-                    .child(format!(
-                        "{} match(es) in {} pane(s) · Enter focuses with the search armed · Esc closes",
-                        state.total,
-                        state.results.len()
-                    )),
+                    .child(fleet_search_footer(state.total, state.results.len())),
             );
         }
 
@@ -448,5 +452,22 @@ impl PaneFlowApp {
         )
         .with_priority(6)
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fleet_search_footer_agrees_its_counts_with_their_nouns() {
+        assert_eq!(
+            fleet_search_footer(1, 1),
+            "1 match in 1 pane · Enter focuses with the search armed · Esc closes"
+        );
+        assert_eq!(
+            fleet_search_footer(2, 3),
+            "2 matches in 3 panes · Enter focuses with the search armed · Esc closes"
+        );
     }
 }

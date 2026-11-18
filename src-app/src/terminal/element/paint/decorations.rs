@@ -1,9 +1,10 @@
-use gpui::{PathBuilder, Window, fill, px};
+use gpui::{App, Window, fill, px};
 
 use super::super::geometry::CellGeometry;
 use super::super::{DecorationKind, LayoutState, UnderlineKind};
+use super::masks::{MaskKey, MaskShape, Outline, paint_mask};
 
-pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
+pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut Window, cx: &App) {
     if layout.decorations().next().is_none() || layout.desired_cols == 0 || layout.desired_rows == 0
     {
         return;
@@ -99,38 +100,51 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
                 }
             }
             DecorationKind::Underline(UnderlineKind::Curly) => {
-                let t = m.underline_thickness.max(1) as f32;
-                let w = cell_w as f32;
-                let amplitude = w / std::f32::consts::PI;
-                let top =
-                    (m.underline_position as f32).min((cell_h + padding) as f32 - amplitude - t);
-                let bottom = top + amplitude;
-                let r = 0.4;
-                let center = 0.5 * w;
-                let mut path = PathBuilder::stroke(px(t / geom.scale_factor));
-                let pt = |x: f32, y: f32| gpui::Point {
-                    x: px(x / geom.scale_factor),
-                    y: px(y / geom.scale_factor),
+                let key = MaskKey {
+                    shape: MaskShape::Undercurl,
+                    width: cell_w,
+                    height: cell_h + padding,
+                    thickness: m.underline_thickness.max(1),
+                    offset: m.underline_position,
                 };
                 for col in d.col_start..col_end {
-                    let cx = geom.x_device(col) as f32;
-                    let cy = y0 as f32;
-                    path.move_to(pt(cx, cy + bottom));
-                    path.cubic_bezier_to(
-                        pt(cx + center, cy + top),
-                        pt(cx + center * r, cy + bottom),
-                        pt(cx + center - center * r, cy + top),
-                    );
-                    path.cubic_bezier_to(
-                        pt(cx + w, cy + bottom),
-                        pt(cx + center + center * r, cy + top),
-                        pt(cx + w - center * r, cy + bottom),
-                    );
-                }
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, d.color);
+                    paint_mask(window, cx, geom, (geom.x_device(col), y0), key, d.color);
                 }
             }
         }
     }
+}
+
+fn undercurl_extent(key: MaskKey) -> (f32, f32, f32) {
+    let t = key.thickness.max(1) as f32;
+    let amplitude = key.width as f32 / std::f32::consts::PI;
+    let top = (key.offset as f32).min(key.height as f32 - amplitude - t);
+    (t, top, top + amplitude)
+}
+
+pub(super) fn undercurl_band(key: MaskKey) -> (i32, i32) {
+    let (t, top, bottom) = undercurl_extent(key);
+    let first = ((top - t / 2.0).floor() as i32 - 1).max(0);
+    let end = ((bottom + t / 2.0).ceil() as i32 + 1).min(key.height);
+    (first, (end - first).max(0))
+}
+
+pub(super) fn undercurl_outline(key: MaskKey) -> Outline {
+    let (t, top, bottom) = undercurl_extent(key);
+    let w = key.width as f32;
+    let r = 0.4;
+    let center = 0.5 * w;
+    let mut outline = Outline::stroke(t);
+    outline.move_to(0.0, bottom);
+    outline.cubic_to(
+        (center, top),
+        (center * r, bottom),
+        (center - center * r, top),
+    );
+    outline.cubic_to(
+        (w, bottom),
+        (center + center * r, top),
+        (w - center * r, bottom),
+    );
+    outline
 }

@@ -172,7 +172,8 @@ pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
     div().h(px(1.)).w_full().bg(with_alpha(ui.border, 0.5))
 }
 
-pub const CARD_PADDING_X: f32 = 16.;
+pub const CARD_PADDING_X: f32 = 12.;
+pub const SETTINGS_ROW_PADDING_Y: f32 = 10.;
 pub const CARD_PADDING_Y: f32 = 6.;
 pub const ROW_HAIRLINE_INSET: f32 = CARD_PADDING_X + 18. + 12.;
 
@@ -272,7 +273,7 @@ pub fn toggle_row_with(
         .items_center()
         .gap(px(16.))
         .px(px(CARD_PADDING_X))
-        .py(px(12.))
+        .py(px(SETTINGS_ROW_PADDING_Y))
         .when_some(icon, |d, icon| d.child(icon))
         .child(setting_text(ui, title, description))
         .child(control)
@@ -328,28 +329,36 @@ pub fn setting_text(
                 .text_color(ui.text)
                 .child(highlight_matches(title.to_string(), &query)),
         )
-        .child(
-            div()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(ui.muted)
-                .child(highlight_matches(description.to_string(), &query)),
-        )
+        .child(setting_description(
+            ui,
+            highlight_matches(description.to_string(), &query),
+        ))
+}
+
+pub(crate) fn setting_description(ui: crate::theme::UiColors, text: gpui::StyledText) -> gpui::Div {
+    div()
+        .text_size(crate::ui_primitives::LABEL_SM)
+        .text_color(ui.muted)
+        .child(text)
 }
 
 pub(crate) fn input_surface<E: ParentElement + Styled>(
     element: E,
     ui: crate::theme::UiColors,
 ) -> E {
+    let edge = with_alpha(ui.text, 0.14);
     element
         .relative()
-        .child(squircle_fill(
+        .child(squircle::squircle_fill_beneath_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
             with_alpha(ui.text, 0.03),
+            px(1.),
+            edge,
         ))
         .child(squircle_border(
             SETTINGS_CONTROL_CORNER_RADIUS,
             px(1.),
-            with_alpha(ui.text, 0.14),
+            edge,
         ))
 }
 
@@ -378,6 +387,10 @@ pub(crate) fn input_frame<E: ParentElement + Styled>(
                 .size_full(),
             ),
     )
+}
+
+fn focus_ring_stroke_under_border(width: Pixels, scale_factor: f32) -> Pixels {
+    width + squircle::layer_clearance(scale_factor)
 }
 
 fn paint_input_focus(
@@ -444,7 +457,7 @@ fn paint_input_focus(
         && let Some(path) = squircle::squircle_stroke_path(
             bounds.inset(full - width),
             SETTINGS_CONTROL_CORNER_RADIUS + width,
-            width,
+            focus_ring_stroke_under_border(width, window.scale_factor()),
         )
     {
         window.paint_path(path, ring.opacity(progress));
@@ -861,13 +874,19 @@ pub(crate) fn modal_backdrop(
     child: impl IntoElement,
     on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> AnyElement {
+    let outline = crate::window_chrome::csd::active_window_outline();
     deferred(
         div()
             .id(id)
             .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
+            .top(-outline.border.top)
+            .right(-outline.border.right)
+            .bottom(-outline.border.bottom)
+            .left(-outline.border.left)
+            .rounded_tl(outline.radii.top_left)
+            .rounded_tr(outline.radii.top_right)
+            .rounded_br(outline.radii.bottom_right)
+            .rounded_bl(outline.radii.bottom_left)
             .flex()
             .items_center()
             .justify_center()
@@ -897,7 +916,12 @@ pub(crate) fn modal_card(
         .shadow_lg()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
-        .child(squircle::squircle_fill(radius, card_color()))
+        .child(squircle::squircle_fill_beneath_border(
+            radius,
+            card_color(),
+            px(1.),
+            surface_edge(ui),
+        ))
         .child(content.relative().flex().flex_col())
         .child(squircle::squircle_border(radius, px(1.), surface_edge(ui)))
 }
@@ -929,11 +953,47 @@ pub(crate) fn modal_header(
         )
 }
 
+pub(crate) const CONFIRMATION_TITLE_MAX_SHARE: f32 = 0.6;
+
+fn confirmation_row(ui: crate::theme::UiColors, title: SharedString, detail: SharedString) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex_none()
+                .min_w_0()
+                .max_w(gpui::relative(CONFIRMATION_TITLE_MAX_SHARE))
+                .truncate()
+                .text_size(crate::ui_primitives::BODY)
+                .text_color(ui.text)
+                .debug_selector(|| "confirmation-title".into())
+                .child(title),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_right()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(ui.muted)
+                .debug_selector(|| "confirmation-detail".into())
+                .child(detail),
+        )
+}
+
 pub(crate) fn confirmation_list(
     ui: crate::theme::UiColors,
     rows: impl IntoIterator<Item = (SharedString, SharedString)>,
     max_listed: usize,
 ) -> Div {
+    let mut rows = rows.into_iter().peekable();
+    if rows.peek().is_none() {
+        return div();
+    }
     let mut list = div()
         .flex()
         .flex_col()
@@ -944,35 +1004,12 @@ pub(crate) fn confirmation_list(
         .rounded(px(8.))
         .bg(with_alpha(ui.subtle, 0.5));
     let mut hidden = 0usize;
-    for (index, (title, detail)) in rows.into_iter().enumerate() {
+    for (index, (title, detail)) in rows.enumerate() {
         if index >= max_listed {
             hidden += 1;
             continue;
         }
-        list = list.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(crate::ui_primitives::BODY)
-                        .text_color(ui.text)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(crate::ui_primitives::LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(detail),
-                ),
-        );
+        list = list.child(confirmation_row(ui, title, detail));
     }
     if hidden > 0 {
         list = list.child(
@@ -1011,11 +1048,14 @@ pub(crate) fn modal_footer() -> Div {
         .pb(px(16.))
 }
 
+pub(crate) const SELECT_CHEVRON_SIZE: Pixels = px(12.);
+pub(crate) const SELECT_CHEVRON_ASSET: &str = "icons/settings/unfold-more.svg";
+
 pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
     svg()
-        .size(px(12.))
+        .size(SELECT_CHEVRON_SIZE)
         .flex_none()
-        .path("icons/settings/unfold-more.svg")
+        .path(SELECT_CHEVRON_ASSET)
         .text_color(with_alpha(ui.text, 0.8))
 }
 
@@ -1053,7 +1093,7 @@ pub fn select_trigger(
         .min_w(px(190.))
         .max_w(px(260.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .border_1()
+        .border(SELECT_TRIGGER_BORDER)
         .border_color(ui.border)
         .bg(fill)
         .shadow(if expanded {
@@ -1092,7 +1132,12 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
 ) -> E {
     with_surface_shape(|| {
         el.relative()
-            .child(squircle::squircle_fill(MENU_RADIUS, fill))
+            .child(squircle::squircle_fill_beneath_border(
+                MENU_RADIUS,
+                fill,
+                px(1.),
+                surface_edge(ui),
+            ))
             .child(squircle::squircle_border(
                 MENU_RADIUS,
                 px(1.),
@@ -1217,7 +1262,9 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
     let list_id: ElementId = (id.clone(), "list").into();
     let reveal_id: ElementId = (id.clone(), "reveal").into();
     SelectMenu {
+        state_id: (id.clone(), "keyboard").into(),
         reveal_id,
+        highlight: with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA),
         shell: div()
             .id(id)
             .relative()
@@ -1240,6 +1287,7 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
             .p(action_menu::PANEL_PADDING)
             .min_h_0()
             .overflow_y_scroll(),
+        entries: Vec::new(),
     }
 }
 
@@ -1294,10 +1342,33 @@ fn styled_select_option(
     })
 }
 
+type SelectHandler = std::rc::Rc<dyn Fn(&(), &mut gpui::Window, &mut gpui::App)>;
+
+enum SelectEntry {
+    Element(AnyElement),
+    Option(Stateful<Div>, SelectHandler),
+}
+
+#[derive(IntoElement)]
 pub struct SelectMenu {
+    state_id: ElementId,
     reveal_id: ElementId,
+    highlight: Hsla,
     shell: Stateful<Div>,
     list: Stateful<Div>,
+    entries: Vec<SelectEntry>,
+}
+
+impl SelectMenu {
+    pub fn option(
+        mut self,
+        row: Stateful<Div>,
+        on_select: impl Fn(&(), &mut gpui::Window, &mut gpui::App) + 'static,
+    ) -> Self {
+        self.entries
+            .push(SelectEntry::Option(row, std::rc::Rc::new(on_select)));
+        self
+    }
 }
 
 impl Styled for SelectMenu {
@@ -1316,15 +1387,166 @@ impl StatefulInteractiveElement for SelectMenu {}
 
 impl ParentElement for SelectMenu {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.list.extend(elements);
+        self.entries
+            .extend(elements.into_iter().map(SelectEntry::Element));
     }
 }
 
-impl IntoElement for SelectMenu {
-    type Element = Stateful<Div>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SelectKey {
+    Highlight(usize),
+    Choose(usize),
+    Ignored,
+}
 
-    fn into_element(self) -> Self::Element {
-        self.shell.child(self.list)
+pub(crate) fn select_key(key: &str, highlighted: Option<usize>, options: usize) -> SelectKey {
+    if options == 0 {
+        return SelectKey::Ignored;
+    }
+    let last = options - 1;
+    let current = highlighted.filter(|index| *index <= last);
+    match key {
+        "down" => SelectKey::Highlight(current.map_or(0, |index| (index + 1) % options)),
+        "up" => SelectKey::Highlight(current.map_or(last, |index| (index + last) % options)),
+        "home" => SelectKey::Highlight(0),
+        "end" => SelectKey::Highlight(last),
+        "enter" | "space" => current.map_or(SelectKey::Ignored, SelectKey::Choose),
+        _ => SelectKey::Ignored,
+    }
+}
+
+struct SelectKeyboard {
+    focus: gpui::FocusHandle,
+    restore: Option<gpui::FocusHandle>,
+    highlighted: Option<usize>,
+    scroll: gpui::ScrollHandle,
+}
+
+impl SelectKeyboard {
+    fn open(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        let restore = window.focused(cx);
+        let target = focus.clone();
+        window.defer(cx, move |window, cx| window.focus(&target, cx));
+        Self {
+            focus,
+            restore,
+            highlighted: None,
+            scroll: gpui::ScrollHandle::new(),
+        }
+    }
+}
+
+fn restore_select_focus(
+    state: &gpui::Entity<SelectKeyboard>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    if let Some(handle) = state.read(cx).restore.clone() {
+        window.focus(&handle, cx);
+    }
+}
+
+impl RenderOnce for SelectMenu {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let SelectMenu {
+            state_id,
+            highlight,
+            shell,
+            list,
+            entries,
+            ..
+        } = self;
+        if !entries
+            .iter()
+            .any(|entry| matches!(entry, SelectEntry::Option(..)))
+        {
+            return shell
+                .child(
+                    list.children(entries.into_iter().filter_map(|entry| match entry {
+                        SelectEntry::Element(element) => Some(element),
+                        SelectEntry::Option(..) => None,
+                    })),
+                )
+                .into_any_element();
+        }
+
+        let state = window.use_keyed_state(state_id, cx, SelectKeyboard::open);
+        let (focus, highlighted, scroll) = {
+            let state = state.read(cx);
+            (state.focus.clone(), state.highlighted, state.scroll.clone())
+        };
+        let mut handlers: Vec<SelectHandler> = Vec::new();
+        let mut option_children: Vec<usize> = Vec::new();
+        let mut children: Vec<AnyElement> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match entry {
+                SelectEntry::Element(element) => children.push(element),
+                SelectEntry::Option(row, handler) => {
+                    let index = handlers.len();
+                    let click_state = state.clone();
+                    let click_handler = handler.clone();
+                    option_children.push(children.len());
+                    handlers.push(handler);
+                    children.push(
+                        row.when(highlighted == Some(index), |row| {
+                            row.bg(highlight).rounded(action_menu::ROW_RADIUS)
+                        })
+                        .on_click(move |_, window, cx| {
+                            restore_select_focus(&click_state, window, cx);
+                            click_handler(&(), window, cx);
+                        })
+                        .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        let key_state = state.clone();
+        let move_state = state.clone();
+        let out_state = state;
+        shell
+            .track_focus(&focus)
+            .on_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                let key = event.keystroke.key.as_str();
+                let current = key_state.read(cx).highlighted;
+                match select_key(key, current, handlers.len()) {
+                    SelectKey::Highlight(index) => {
+                        let child = option_children[index];
+                        key_state.update(cx, |state, cx| {
+                            state.highlighted = Some(index);
+                            state.scroll.scroll_to_item(child);
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    }
+                    SelectKey::Choose(index) => {
+                        restore_select_focus(&key_state, window, cx);
+                        handlers[index](&(), window, cx);
+                        cx.stop_propagation();
+                    }
+                    SelectKey::Ignored => {
+                        if key == "escape" {
+                            restore_select_focus(&key_state, window, cx);
+                        }
+                    }
+                }
+            })
+            .on_mouse_move(move |_, _, cx| {
+                if move_state.read(cx).highlighted.is_some() {
+                    move_state.update(cx, |state, cx| {
+                        state.highlighted = None;
+                        cx.notify();
+                    });
+                }
+            })
+            .on_mouse_down_out(move |_, window, cx| restore_select_focus(&out_state, window, cx))
+            .child(list.track_scroll(&scroll).children(children))
+            .into_any_element()
     }
 }
 
@@ -1385,19 +1607,108 @@ pub fn select_item_shaped(
     )
 }
 
+pub(crate) const SELECT_TRIGGER_BORDER: Pixels = px(1.);
+pub(crate) const SELECT_MENU_GAP: Pixels = px(4.);
+
 pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
     let reveal_id = menu.reveal_id.clone();
-    deferred(crate::ui_primitives::menu_reveal(
-        reveal_id,
-        div()
-            .absolute()
-            .top(px(36.))
-            .right(px(0.))
-            .occlude()
-            .child(menu),
-    ))
-    .with_priority(1)
-    .into_any_element()
+    let trigger: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>> = std::rc::Rc::default();
+    let probe = trigger.clone();
+    div()
+        .absolute()
+        .top(-SELECT_TRIGGER_BORDER)
+        .left(-SELECT_TRIGGER_BORDER)
+        .right(-SELECT_TRIGGER_BORDER)
+        .bottom(-SELECT_TRIGGER_BORDER)
+        .child(
+            canvas(move |bounds, _, _| probe.set(Some(bounds)), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            deferred(AttachedBelowTrigger {
+                trigger,
+                popup: Some(crate::ui_primitives::menu_reveal(
+                    reveal_id,
+                    div().occlude().child(menu),
+                )),
+                placed: None,
+            })
+            .with_priority(1),
+        )
+        .into_any_element()
+}
+
+struct AttachedBelowTrigger {
+    trigger: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    popup: Option<AnyElement>,
+    placed: Option<AnyElement>,
+}
+
+impl gpui::Element for AttachedBelowTrigger {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        let style = gpui::Style {
+            position: gpui::Position::Absolute,
+            ..gpui::Style::default()
+        };
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let (Some(trigger), Some(popup)) = (self.trigger.get(), self.popup.take()) else {
+            return;
+        };
+        let mut placed = gpui::anchored()
+            .position_mode(gpui::AnchoredPositionMode::Window)
+            .attach(trigger, gpui::Anchor::BottomRight)
+            .anchor(gpui::Anchor::TopRight)
+            .offset(gpui::point(px(0.), SELECT_MENU_GAP))
+            .child(popup)
+            .into_any_element();
+        placed.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+        placed.prepaint_at(bounds.origin, window, cx);
+        self.placed = Some(placed);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut (),
+        _prepaint: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        if let Some(placed) = self.placed.as_mut() {
+            placed.paint(window, cx);
+        }
+    }
 }
 
 pub(crate) fn settings_label(
@@ -1521,5 +1832,283 @@ mod tests {
             assert_eq!(menu_text_size(), px(13.));
             assert_eq!(menu_text_weight(), FontWeight::MEDIUM);
         });
+    }
+
+    #[test]
+    fn select_keys_walk_the_options_and_wrap() {
+        assert_eq!(select_key("down", None, 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("down", Some(0), 3), SelectKey::Highlight(1));
+        assert_eq!(select_key("down", Some(2), 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("up", None, 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("up", Some(0), 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("home", Some(2), 3), SelectKey::Highlight(0));
+        assert_eq!(select_key("end", None, 3), SelectKey::Highlight(2));
+        assert_eq!(select_key("enter", Some(1), 3), SelectKey::Choose(1));
+        assert_eq!(select_key("space", Some(2), 3), SelectKey::Choose(2));
+        assert_eq!(select_key("enter", None, 3), SelectKey::Ignored);
+        assert_eq!(select_key("escape", Some(1), 3), SelectKey::Ignored);
+        assert_eq!(select_key("down", None, 0), SelectKey::Ignored);
+    }
+
+    struct SelectHarness {
+        trigger_top: f32,
+        picks: std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
+    }
+
+    impl gpui::Render for SelectHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            let mut menu =
+                select_menu("harness-select", ui).debug_selector(|| "select-menu".into());
+            for index in 0..3usize {
+                let picks = self.picks.clone();
+                menu = menu.option(
+                    select_option(("harness-option", index), index == 0, ui)
+                        .child(format!("Option {index}")),
+                    move |_, _, _| picks.borrow_mut().push(index),
+                );
+            }
+            div().size_full().relative().child(
+                div()
+                    .absolute()
+                    .top(px(self.trigger_top))
+                    .right(px(20.))
+                    .child(
+                        select_trigger("harness-trigger", "Harness", true, ui)
+                            .debug_selector(|| "select-trigger".into())
+                            .child("Option 0")
+                            .child(deferred_select_menu(menu)),
+                    ),
+            )
+        }
+    }
+
+    fn open_select(
+        cx: &mut gpui::TestAppContext,
+        trigger_top: f32,
+    ) -> (
+        &mut gpui::VisualTestContext,
+        std::rc::Rc<std::cell::RefCell<Vec<usize>>>,
+    ) {
+        let picks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let held = picks.clone();
+        let (_view, cx) = cx.add_window_view(move |_, _| SelectHarness {
+            trigger_top,
+            picks: held,
+        });
+        cx.simulate_resize(gpui::size(px(600.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        (cx, picks)
+    }
+
+    #[gpui::test]
+    fn a_select_popup_opens_under_its_trigger_when_there_is_room(cx: &mut gpui::TestAppContext) {
+        let (cx, _) = open_select(cx, 20.);
+        let trigger = cx.debug_bounds("select-trigger").expect("trigger painted");
+        let menu = cx.debug_bounds("select-menu").expect("menu painted");
+        assert!(
+            menu.top() >= trigger.bottom(),
+            "the menu at {menu:?} starts under the trigger at {trigger:?}"
+        );
+        assert!((menu.right() - trigger.right()).abs() <= px(0.5));
+    }
+
+    #[gpui::test]
+    fn a_select_popup_near_the_window_bottom_opens_above_its_trigger(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (cx, _) = open_select(cx, 352.);
+        let trigger = cx.debug_bounds("select-trigger").expect("trigger painted");
+        let menu = cx.debug_bounds("select-menu").expect("menu painted");
+        assert!(
+            menu.bottom() <= px(400.),
+            "the menu at {menu:?} runs past the 400 px window"
+        );
+        assert!(
+            menu.bottom() <= trigger.top(),
+            "the menu at {menu:?} covers the trigger at {trigger:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn a_select_popup_answers_the_arrow_keys_and_enter(cx: &mut gpui::TestAppContext) {
+        let (cx, picks) = open_select(cx, 20.);
+        cx.simulate_keystrokes("down down enter");
+        assert_eq!(*picks.borrow(), vec![1]);
+        cx.simulate_keystrokes("up enter");
+        assert_eq!(*picks.borrow(), vec![1, 0]);
+    }
+
+    #[test]
+    fn the_select_chevron_draws_two_solid_chevrons_with_a_clear_row_between_at_its_size() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(SELECT_CHEVRON_ASSET);
+        let data = std::fs::read(&path).expect("chevron asset");
+        let tree = resvg::usvg::Tree::from_data(&data, &Default::default()).expect("valid svg");
+        let side = f32::from(SELECT_CHEVRON_SIZE) as u32;
+        let oversample = 2;
+        let mut pixmap =
+            resvg::tiny_skia::Pixmap::new(side * oversample, side * oversample).expect("pixmap");
+        let scale = (side * oversample) as f32 / tree.size().width();
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::from_scale(scale, scale),
+            &mut pixmap.as_mut(),
+        );
+        let device_pixel = |x: u32, y: u32| -> u32 {
+            let mut sum = 0;
+            for dy in 0..oversample {
+                for dx in 0..oversample {
+                    sum += pixmap
+                        .pixel(x * oversample + dx, y * oversample + dy)
+                        .map_or(0, |pixel| u32::from(pixel.alpha()));
+                }
+            }
+            sum / (oversample * oversample)
+        };
+        let peaks: Vec<u32> = (0..side)
+            .map(|y| (0..side).map(|x| device_pixel(x, y)).max().unwrap_or(0))
+            .collect();
+        let (upper, lower) = peaks.split_at(side as usize / 2);
+        let solid = 230;
+        assert!(
+            upper.iter().any(|alpha| *alpha >= solid) && lower.iter().any(|alpha| *alpha >= solid),
+            "each chevron reaches full ink at {side} px, row peaks {peaks:?}"
+        );
+        let first = peaks.iter().position(|alpha| *alpha >= solid).unwrap_or(0);
+        let last = peaks.iter().rposition(|alpha| *alpha >= solid).unwrap_or(0);
+        assert!(
+            peaks[first..=last].iter().any(|alpha| *alpha < 24),
+            "the two chevrons are kept apart by a clear row, row peaks {peaks:?}"
+        );
+    }
+
+    struct ToggleRowHarness;
+
+    impl gpui::Render for ToggleRowHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            div().w(px(600.)).child(toggle_row_with(
+                "Native OS notifications",
+                "Alert you when an agent needs attention.",
+                None,
+                ui,
+                div()
+                    .debug_selector(|| "row-control".into())
+                    .flex_none()
+                    .w(px(36.))
+                    .h(px(22.)),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn a_toggle_row_insets_its_control_like_every_settings_row(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| ToggleRowHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(200.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let control = cx.debug_bounds("row-control").expect("control painted");
+        assert_eq!(
+            control.right(),
+            px(600. - 12.),
+            "a settings row is padded 12 by 10 (DESIGN.md 4.5)"
+        );
+    }
+
+    struct ConfirmationHarness;
+
+    impl gpui::Render for ConfirmationHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            div().w(px(460.)).debug_selector(|| "card".into()).child(confirmation_list(
+                ui,
+                [(
+                    SharedString::from("masks.rs"),
+                    SharedString::from(
+                        "/home/user/dev/paneflow/src-app/src/terminal/element/paint/a/very/deeply/nested/folder",
+                    ),
+                )],
+                8,
+            ))
+        }
+    }
+
+    struct EmptyConfirmationHarness;
+
+    impl gpui::Render for EmptyConfirmationHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let rows: [(SharedString, SharedString); 0] = [];
+            div().flex().flex_col().child(
+                div()
+                    .w(px(460.))
+                    .debug_selector(|| "card".into())
+                    .child(confirmation_list(crate::theme::ui_colors(), rows, 8)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn an_empty_confirmation_list_draws_no_band(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| EmptyConfirmationHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let card = cx.debug_bounds("card").expect("card painted");
+        assert_eq!(
+            card.size.height,
+            px(0.),
+            "a list with nothing to list takes no room and paints no band"
+        );
+    }
+
+    #[gpui::test]
+    fn a_long_folder_wraps_inside_the_card_and_leaves_the_file_name_visible(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_view, cx) = cx.add_window_view(|_, _| ConfirmationHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(400.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let card = cx.debug_bounds("card").expect("card painted");
+        let title = cx
+            .debug_bounds("confirmation-title")
+            .expect("title painted");
+        let detail = cx
+            .debug_bounds("confirmation-detail")
+            .expect("detail painted");
+        assert!(
+            detail.right() <= card.right(),
+            "the folder ends at {:?}, past the card edge {:?}",
+            detail.right(),
+            card.right()
+        );
+        assert!(
+            title.size.width > px(30.),
+            "the file name keeps its width, got {:?}",
+            title.size.width
+        );
+        assert!(
+            detail.size.height > title.size.height,
+            "the folder wraps onto more lines than the file name, {:?} vs {:?}",
+            detail.size.height,
+            title.size.height
+        );
     }
 }

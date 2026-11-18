@@ -77,16 +77,30 @@ passed both thresholds. No `windows-x86_64` or `macos-aarch64` baseline exists
 yet; the Windows ones are recorded on the dual boot machine with the `.ps1`
 scripts.
 
-Since 2026-10-28, `terminal`, `editor` and `startup` point at `92a5c29d`, the
-GPUI bump to `zed@37faef81`, on the same machine (CPU share 0.99 and 1.00).
-The same suites on `3eaaafb6`, the commit before the bump, give identical
+From 2026-10-28 to 2026-11-16, `terminal`, `editor` and `startup` pointed at
+`92a5c29d`, the GPUI bump to `zed@37faef81`, on the same machine (CPU share
+0.99 and 1.00). The same suites on `3eaaafb6`, the commit before it, gave identical
 allocation columns, and every timing moves within run-to-run noise except
 `textdiff_5k_lines_one_word_each`, about 15 % faster for an unidentified
 reason, and `prepaint_60_rows_warm`, about 3.5 us slower: the code editor's own shape
 cache now copies, hashes and compares each visible line where GPUI's
 `shape_line_by_hash` trusted a caller hash
-([summary](results/gpui-bump-37faef81-2026-10-28.md)). The allocation
-baselines stay on `880d1d18`, which the bump matches within 1 %.
+([summary](results/gpui-bump-37faef81-2026-10-28.md)).
+
+Since 2026-11-18, every `linux-x86_64` baseline except `persistent.json`
+points at `650569c4`, the last code commit of the GPUI upgrade to
+`zed@703b5ac3`, or for `startup` at `e939a24c`, the same app with a script that
+builds the host it launches: `terminal`, `editor` and `startup` from
+`--set-baseline` runs on a clean tree on the Fedora machine (CPU share 1.00
+for the two in-process suites), `terminal-alloc` and `editor-alloc` from `scripts/perf-gates.sh
+--refresh-alloc-baselines` on the same commit (US-027 of
+`tasks/prd-gpui-703b5ac3-upgrade.md`). Interleaved runs of the three suites
+against `9f606d3aa`, the commit before the upgrade, put every timing at or
+below the old pin within the noise measured on the same machine, the
+`paths_*` stroke cases 52 and 81 % faster; the allocation columns that moved
+are the two `paths_*` cases (now 0), `keystroke_3_7mb_plain` (4.05 back to
+4.0) and `pipeline_corpus_mib_s` (3.83 to 3.54, grapheme clustering since
+`38726003`) ([summary](results/gpui-bump-703b5ac3-2026-11-16.md)).
 
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
@@ -294,7 +308,9 @@ commits, never a dirty tree.
 Each attempt runs 10 rounds ordered base, head, head, base. A slot runs the
 artifact's own terminal suite (`terminal_pipeline_benchmark`, idle scenarios
 skipped), which writes every per-iteration sample to
-`PANEFLOW_BENCH_SAMPLES_OUT`, then the active scenario of US-002 against the
+`PANEFLOW_BENCH_SAMPLES_OUT`, then the artifact's own editor suite
+(`editor_pipeline_benchmark`) the same way, unless `PERF_AB_TIMED_EDITOR=0`,
+then the active scenario of US-002 against the
 artifact's own `paneflow-host`, host only: 8 `stream 16384 60` sessions plus one
 `flood 8388608`, 4 s of settling, a 15 s window cut into 5 slices of 3 s, then
 200 echo round trips (`ab::perf_ab_active_samples`). The measuring harness and
@@ -304,6 +320,7 @@ and the same measurement code. The metrics are:
 | Metric | Unit | Samples per artifact and attempt |
 |---|---|---|
 | `terminal.<metric>`, every timed terminal metric | ns per iteration, as the mean of 10 consecutive iterations | 30 per slot, 600 |
+| `editor.<metric>`, every timed editor metric | ns per iteration, one sample per iteration | 5 to 200 per slot, 100 to 4 000 |
 | `active.cpu.<role>`, host CPU per named thread role, and `active.cpu.total` | CPU ms per wall second | 5 per slot, 100 |
 | `active.echo_round_trip` | ms | 200 per slot, 4 000 |
 
@@ -311,18 +328,25 @@ The terminal suite exports each iteration in measurement order, and the
 comparator averages 10 consecutive iterations into one sample, as Criterion
 does: on a first A/A run on a loaded desktop, the p50 of single iterations moved
 by at most 0.6 % between the two base passes but their p95 by up to 57 %, one
-preempted iteration being enough to set a pooled tail. The comparator
+preempted iteration being enough to set a pooled tail. An editor iteration is a whole operation of 1 us to 40 ms, so the
+comparator takes each one as a sample: `open_3_7mb`, with 5 iterations per
+slot, gives exactly the 50 samples a cohort needs. The comparator
 (`ab::perf_ab_compare`) pools each cohort and applies the rule
 of pf (`pf/scripts/pgso/qualify.py:42,365-392`), nearest-rank percentiles: a
 metric regresses when the head's p50 exceeds the base's by more than 10 %, or
 its p95 does where that p95 is judged. The A/A cohort is the first base pass of
 every round against its last base pass, measured interleaved with the head, so
 it sees the same neighbors and the same thermal drift; a separate A/A pass
-would not fit the 60 minute budget. The run is rejected as uncalibrated when
-any metric's A/A p50 moves by more than 5 %. A metric's p95 is judged only when
-its own A/A p95 moves by at most 5 %; otherwise the row reads `p95 not judged`
-and only its p50 decides, because one preempted batch on a shared runner sets a
-pooled tail (see the evidence below). Every cohort needs at least 50 samples, and a run at
+would not fit the 60 minute budget. A metric whose own A/A p50 moves by more
+than 5 % is not judged: its row reads `uncalibrated`, and an execution where no
+judged metric regresses but one is uncalibrated is `uncalibrated`. A metric's
+p95 is judged only when its own A/A p95 moves by at most 5 %; otherwise the row
+reads `p95 not judged` and only its p50 decides, because one preempted batch on
+a shared runner sets a pooled tail (see the evidence below). Until 2026-11-17
+one drifting metric rejected the whole execution: on a release-profile A/B of
+`f501e320` against `afcd1219` that day, `active.echo_round_trip` drifted 5.1 %
+and voided four `open_*` regressions of +32 to +36 % whose own A/A moved
+0.8 % at most. Every cohort needs at least 50 samples, and a run at
 least 10 rounds; below that, or when a suite compares no metric, the verdict
 is `insufficient`, never a pass. A value under the measurement resolution of
 its unit is compared at that resolution, so an idle thread that wakes once is
@@ -332,13 +356,18 @@ for the thread roles, 0.01 ms for the echo. A metric measured by one side only
 (added or removed by the change) is listed as not compared.
 
 A first attempt that ends in a regression or uncalibrated is measured once
-more with the same builds before any verdict, and only two calibrated
-regressions in a row make a regression:
+more with the same builds before any verdict, and a regression verdict needs
+the same calibrated metric to regress in both. Until 2026-11-17 any two
+regressions did: a `gates` A/B of the same pair that day flagged the p95 of
+`editor.theme_switch` and `terminal.line_text_at_220x60` first and of
+`terminal.layout_echo_uncached_220x60` second, three 1 us to 140 us metrics,
+and read `regression`; it now reads `unconfirmed_regression`.
 
 | Attempts | Verdict | Exit | `promotion.effect` |
 |---|---|---|---|
 | pass | `pass` | 0 | `calibrated` |
-| regression, regression | `regression` | 1 | `calibrated` |
+| regression, regression, one metric in both | `regression` | 1 | `calibrated` |
+| regression, regression, no metric in both | `unconfirmed_regression` | 0 | `resets` |
 | regression, pass | `unconfirmed_regression` | 0 | `resets` |
 | uncalibrated, pass | `pass` | 0 | `uncalibrated` |
 | uncalibrated, regression | `unconfirmed_regression` | 0 | `uncalibrated` |
@@ -376,6 +405,38 @@ reads that file whatever the timed outcome, so an uncalibrated run or an
 unavailable slot never hides an instruction regression. The layout pass is not counted: it lives
 in the `paneflow-app` binary crate, which has no library target a benchmark
 could call, and the PRD keeps it out of scope until that crate gains one.
+
+The code editor lives in that binary crate too, so its instructions are
+counted without Gungraun: each commit's `editor_instruction_benchmark` (in
+`src-app/src/app/diff_dock/code/perf_bench.rs`) runs under Callgrind with
+collection off, and each case runs once to warm up, then once through the
+exported function `paneflow_bench_counted_instructions`
+(`src-app/src/bench_harness.rs`), which Callgrind collects
+(`--toggle-collect`) and dumps (`--dump-after`) on its own; the suite prints
+`PANEFLOW_BENCH_INSTRUCTION_CASE <name>` before each case, so the n-th dump is
+the n-th case. The cases are the editor's timed scenarios with every budget the
+benchmark passes raised to an hour and only the 300 KB file parsed, because
+Callgrind runs about 50 times slower and a path cut short by a clock would
+count a different amount of work on each run; the 2 MB parse would also pass
+the 5 s initial parse timeout. Each case appears as `editor::<case>` in
+`instructions.json`, against the same +2 % limit and with the same verdict as
+the terminal benchmark. Two executions of the same binary on Fedora 45,
+Valgrind 3.28.0, counted 18 of the 19 cases identically and
+`shape_cold_60_rows` 0.02 % apart. A base without the benchmark counts no case,
+so its cases read `not_compared`. The `gates` builds of the A/B keep their
+symbols (`CARGO_PROFILE_GATES_STRIP=false`), which changes no generated code.
+
+Instruction counts do not see a regression that comes from code placement
+alone, and neither does a timed A/B of another profile. `afcd1219` moved the 22-byte loop of the longest-line measure from the start
+of a 64-byte line to 48 bytes into one, so that it straddles the next line, and
+made opening a file 25 to 31 % slower on a Ryzen 7
+7800X3D, with exactly the same instructions (Callgrind: 995 653 997 against
+995 652 036 in `CodeDocument::new` over the whole editor suite). The `gates`
+builds of both commits placed the loop the slow way: a timed A/B of
+`f501e320` against `afcd1219` in that profile read `open_300kb_highlighted` at
+209.6 against 208.9 us. `PERF_AB_PROFILE=release` builds both sides in the
+profile Paneflow ships instead, the one whose placement users get; the CI job
+keeps `gates`, whose builds fit its 60 minutes.
 
 The counts need Valgrind and a `gungraun-runner` of the same version as the
 `gungraun` library in `Cargo.lock` (`cargo install gungraun-runner --version
@@ -440,6 +501,10 @@ failure (exit 2 or 4) turns it red otherwise:
 - `PERF_AB_BLOCKING: "false"`: the real-time verdict stays in shadow mode, green
   whatever it says. An unavailable base or a twice uncalibrated run adds a
   warning. It stays consultative: see the decision below.
+- `PERF_AB_TIMED_EDITOR: "0"`: the slots skip the timed editor suite, which
+  would add 40 runs of 5 to 8 s per attempt to a job that took 46 of its 60
+  minutes on 2026-11-17 (two attempts). The editor's instruction counts still
+  run and block. A local `scripts/perf-ab.sh` times the editor by default.
 
 A `workflow_dispatch` run has its own concurrency group, so manual runs with
 different commits proceed in parallel instead of replacing each other; pull
@@ -1187,9 +1252,10 @@ tab badge regression is confirmed in v0.17.5 and fixed on `main` (desktop CPU
 25.0 % to 2.8 % of a core while an agent thinks, GPU p50 39 % to 12 %), and the
 run found two new causes the gates miss. Seed the isolated home before the
 first launch (`session.json` with no workspace, `paneflow.json` as `{}`,
-`window-state.json`, `telemetry_id`), as the startup suite does: a home that
-lacks them inherits the developer's legacy session through
-`migrate_legacy_home`.
+`window-state.json`, `telemetry_id`), as the startup suite does, so its first
+launch is the one the scenario describes. `migrate_legacy_home` only fills the
+default home, so an isolated home never inherits the developer's legacy
+files.
 
 ```bash
 scripts/perf-hardware.sh --state idle-4-panes --label v0.17.5
@@ -1625,11 +1691,11 @@ seeded `PANEFLOW_HOME` under the system temp directory:
 | Stale socket (Linux, macOS) | `stale_socket_` | The welcome home, with a desktop IPC socket left behind by an unclean exit bound before every launch: the file exists and refuses connections. `stale_socket_step_ipc_server_started` is the US-010 startup budget the performance gates enforce. |
 
 The seed writes `session.json`, `paneflow.json` (`{}`), `window-state.json`
-(a fixed 1400x900 window) and `telemetry_id` before the first launch. Every
-one of those files must exist: `migrate_legacy_home` copies the developer's
-own files from the legacy `dirs::config_dir()` locations into any home that
-lacks them, which would silently turn the fixture into the developer's real
-session. One untimed warm-up launch per scenario absorbs whatever else the app
+(a fixed 1400x900 window) and `telemetry_id` before the first launch, so every
+launch starts from the same state. `migrate_legacy_home` copies the files of
+the legacy `dirs::config_dir()` locations only into the default home, never
+into a home set through `PANEFLOW_HOME`, so the fixture cannot turn into the
+developer's real session. One untimed warm-up launch per scenario absorbs whatever else the app
 creates on first run; the timed launches that follow
 (`PANEFLOW_BENCH_STARTUP_RUNS`, default 10) therefore measure a second launch.
 The suite refuses a debug binary unless `PANEFLOW_BENCH_ALLOW_DEBUG` is set.

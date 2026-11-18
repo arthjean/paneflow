@@ -290,6 +290,22 @@ pub(crate) fn measure(
     )
 }
 
+pub(crate) const INSTRUCTION_CASE_MARKER: &str = "PANEFLOW_BENCH_INSTRUCTION_CASE";
+
+pub(crate) fn instruction_case(name: &str, mut op: impl FnMut()) {
+    op();
+    println!("{INSTRUCTION_CASE_MARKER} {name}");
+    paneflow_bench_counted_instructions(name.len(), &mut op);
+}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+fn paneflow_bench_counted_instructions(name_len: usize, op: &mut dyn FnMut()) {
+    std::hint::black_box(name_len);
+    op();
+    std::hint::black_box(INSTRUCTION_CASE_MARKER);
+}
+
 #[derive(Default)]
 pub(crate) struct SegmentTimer {
     elapsed: Duration,

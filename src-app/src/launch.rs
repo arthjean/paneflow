@@ -149,6 +149,8 @@ fn detach_lonely_windows_console_for_gui_launch(is_scriptable_invocation: bool) 
     }
 }
 
+const DEFAULT_LOG_FILTER: &str = "warn,gpui_wgpu::wgpu_context=info,wgpu_hal=off,naga=warn,gpui_apple::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn";
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const DESKTOP_MALLOC_ARENAS: i32 = 2;
 
@@ -163,6 +165,19 @@ fn cap_malloc_arenas() {
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 fn cap_malloc_arenas() {}
+
+const MAIN_WINDOW_TITLE: &str = "Paneflow";
+
+#[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
+fn main_window_titlebar() -> gpui::TitlebarOptions {
+    gpui::TitlebarOptions {
+        title: Some(MAIN_WINDOW_TITLE.into()),
+        appears_transparent: true,
+        #[cfg(target_os = "macos")]
+        traffic_light_position: Some(point(px(12.0), px(14.0))),
+        ..Default::default()
+    }
+}
 
 pub(crate) fn run() {
     if crate::tmux_compat::is_shim_invocation(std::env::args_os().next().as_deref()) {
@@ -251,10 +266,19 @@ pub(crate) fn run() {
 
     unsafe { agents::parent_guard::scrub_claudecode_env_before_threads() };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        "warn,wgpu_hal=off,naga=warn,gpui_apple::text_system=error,zbus=warn,zbus::proxy=error,tracing::span=warn",
-    ))
-    .init();
+    let logger = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER),
+    )
+    .build();
+    let max_level = logger.filter();
+    if log::set_boxed_logger(Box::new(crate::probe_log::ProbeAwareLogger::new(
+        logger,
+        crate::probe_log::presentation_probe_running,
+    )))
+    .is_ok()
+    {
+        log::set_max_level(max_level);
+    }
     cap_malloc_arenas();
     crate::terminal::kitty::install_png_decoder();
 
@@ -403,14 +427,7 @@ pub(crate) fn run() {
                 }
             };
 
-            #[cfg_attr(target_os = "macos", allow(clippy::needless_update))]
-            let titlebar_options = gpui::TitlebarOptions {
-                title: None,
-                appears_transparent: true,
-                #[cfg(target_os = "macos")]
-                traffic_light_position: Some(point(px(12.0), px(14.0))),
-                ..Default::default()
-            };
+            let titlebar_options = main_window_titlebar();
 
             startup_trace::mark("window_requested");
             let window_result = cx.open_window(
@@ -424,7 +441,7 @@ pub(crate) fn run() {
                     ),
                     app_id: Some("paneflow".into()),
                     icon: crate::app_icon::window_icon(config.resolved_app_icon()),
-                    ..Default::default()
+                    ..crate::frame_policy::paced_window_options()
                 },
                 |window, cx| {
                     crate::app_icon::apply_to_window(window, config.resolved_app_icon());
@@ -452,6 +469,8 @@ pub(crate) fn run() {
                     crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
                         window,
                         config.native_material_requested(),
+                        crate::app::constants::window_backdrop_requests_blur(config.window_backdrop.as_deref()),
+                        cx,
                     );
 
                     startup_trace::mark("window_created");
@@ -463,22 +482,12 @@ pub(crate) fn run() {
             match window_result {
                 Ok(_) => cx.activate(true),
                 Err(e) => {
-                    log::error!("Failed to open PaneFlow window: {e}");
+                    log::error!("Failed to open the Paneflow window: {e}");
                     #[cfg(target_os = "linux")]
-                    eprintln!(
-                        "Error: PaneFlow requires a GPU with Vulkan support.\n\n\
-                         Install mesa-vulkan-drivers (AMD/Intel) or your GPU's proprietary driver.\n\n\
-                         Install commands:\n\
-                         \x20 Debian/Ubuntu:  sudo apt install mesa-vulkan-drivers\n\
-                         \x20 Fedora/RHEL:    sudo dnf install mesa-vulkan-drivers\n\
-                         \x20 Arch:           sudo pacman -S vulkan-radeon vulkan-intel or nvidia-utils\n\n\
-                         Run `vulkaninfo` to verify Vulkan support.\n\
-                         If drivers are already installed, run with RUST_LOG=error for details.\n\n\
-                         Underlying error: {e}"
-                    );
+                    eprintln!("{}", linux_window_failure_message(&e.to_string()));
                     #[cfg(target_os = "windows")]
                     eprintln!(
-                        "Error: PaneFlow could not create its GPU-backed window on Windows.\n\n\
+                        "Error: Paneflow could not create its GPU-backed window on Windows.\n\n\
                          Update your GPU driver from NVIDIA, AMD, Intel, or your PC vendor, then restart Paneflow.\n\
                          If this started after enabling a native backdrop, launch once with:\n\
                          \x20 PANEFLOW_WINDOW_BACKDROP=off\n\n\
@@ -486,7 +495,7 @@ pub(crate) fn run() {
                     );
                     #[cfg(target_os = "macos")]
                     eprintln!(
-                        "Error: PaneFlow could not create its GPU-backed window on macOS.\n\n\
+                        "Error: Paneflow could not create its GPU-backed window on macOS.\n\n\
                          Update macOS and restart Paneflow. If this started after enabling a native backdrop, launch once with:\n\
                          \x20 PANEFLOW_WINDOW_BACKDROP=off\n\n\
                          Underlying error: {e}"
@@ -495,6 +504,36 @@ pub(crate) fn run() {
                 }
             }
         });
+}
+
+#[cfg(target_os = "linux")]
+fn linux_window_failure_message(underlying: &str) -> String {
+    format!(
+        "Error: Paneflow found no GPU that can draw into this window.\n\n\
+         Each GPU was tried in turn, and the reason each one was rejected is logged at the info level:\n\
+         \x20 RUST_LOG=info paneflow\n\n\
+         Common causes:\n\
+         \x20 - No Vulkan driver is installed. Install mesa-vulkan-drivers (AMD, Intel) or your GPU's \
+         proprietary driver, then check with `vulkaninfo`.\n\
+         \x20 - A variable such as VK_ICD_FILENAMES, VK_DRIVER_FILES or DRI_PRIME restricts Paneflow \
+         to a GPU other than the one your desktop draws on. Unset it and try again.\n\n\
+         Underlying error: {underlying}"
+    )
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_window_failure_tests {
+    use super::linux_window_failure_message;
+
+    #[test]
+    fn the_linux_window_failure_points_at_the_adapter_log_and_a_forced_gpu() {
+        let message = linux_window_failure_message("No GPU adapter found");
+        assert!(message.starts_with("Error: Paneflow "));
+        assert!(message.contains("RUST_LOG=info"));
+        assert!(message.contains("VK_ICD_FILENAMES"));
+        assert!(message.ends_with("Underlying error: No GPU adapter found"));
+        assert!(!message.contains("PaneFlow"));
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -516,7 +555,43 @@ mod windows_startup_console_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup};
+    use super::{
+        DEFAULT_LOG_FILTER, MAIN_WINDOW_TITLE, main_window_titlebar,
+        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
+    };
+
+    #[test]
+    fn the_main_window_is_named_paneflow_for_window_managers_and_switchers() {
+        let titlebar = main_window_titlebar();
+        assert_eq!(titlebar.title.as_deref(), Some(MAIN_WINDOW_TITLE));
+        assert_eq!(MAIN_WINDOW_TITLE, "Paneflow");
+        assert!(titlebar.appears_transparent);
+    }
+
+    fn logs_by_default(target: &str, level: log::Level) -> bool {
+        let logger = env_logger::Builder::new()
+            .parse_filters(DEFAULT_LOG_FILTER)
+            .build();
+        log::Log::enabled(
+            &logger,
+            &log::Metadata::builder().target(target).level(level).build(),
+        )
+    }
+
+    #[test]
+    fn the_default_log_names_a_gpu_adapter_the_surface_test_rejects() {
+        assert!(logs_by_default("gpui_wgpu::wgpu_context", log::Level::Info));
+        assert!(!logs_by_default(
+            "gpui_wgpu::wgpu_context",
+            log::Level::Debug
+        ));
+        assert!(!logs_by_default(
+            "gpui_wgpu::wgpu_renderer",
+            log::Level::Info
+        ));
+        assert!(!logs_by_default("paneflow_app", log::Level::Info));
+        assert!(!logs_by_default("wgpu_hal::vulkan", log::Level::Error));
+    }
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_string()).collect()

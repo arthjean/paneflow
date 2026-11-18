@@ -22,7 +22,7 @@ pub(crate) fn paint(
         let Some(track) = layout.track(part) else {
             continue;
         };
-        window.paint_layer(track.bounds, |window| {
+        window.paint_layer(|window| {
             let vertical_edges = Edges {
                 left: px(1.),
                 ..Default::default()

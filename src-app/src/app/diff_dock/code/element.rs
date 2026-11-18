@@ -8,9 +8,9 @@ use std::rc::Rc;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window,
-    WindowTextSystem, fill, point, px, quad, relative, size,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, LayoutId, Pixels, Point,
+    ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowTextSystem,
+    fill, point, px, quad, relative, size,
 };
 use paneflow_textdiff::BlockKind;
 use ropey::RopeSlice;
@@ -28,6 +28,8 @@ use super::navigation::{
 };
 use super::view::CodeView;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
+use crate::tab_stops::TabExpandedLine;
+use crate::widgets::ime_caret::follow_ime_caret;
 use crate::widgets::scrollbar::ScrollableHandle;
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = 18.0;
@@ -102,8 +104,8 @@ pub(crate) fn text_viewport_width(element_w: f32, gutter_w: f32) -> f32 {
     (element_w - gutter_w - CODE_PAD_L - CODE_PAD_R).max(0.0)
 }
 
-pub(crate) fn max_h_offset(longest_line_chars: usize, char_w: f32, text_viewport_w: f32) -> f32 {
-    let content_w = longest_line_chars as f32 * char_w + H_SCROLL_MARGIN;
+pub(crate) fn max_h_offset(longest_line_columns: usize, char_w: f32, text_viewport_w: f32) -> f32 {
+    let content_w = longest_line_columns as f32 * char_w + H_SCROLL_MARGIN;
     (content_w - text_viewport_w).max(0.0)
 }
 
@@ -143,6 +145,23 @@ pub(crate) fn reveal_h_offset(
         next = caret_x + margin - text_viewport_w;
     }
     next.clamp(0.0, max_offset)
+}
+
+pub(crate) fn h_offset_after_viewport_change(
+    caret_x: f32,
+    previous_viewport_w: f32,
+    viewport_w: f32,
+    max_offset: f32,
+    current: f32,
+) -> f32 {
+    let resized =
+        previous_viewport_w > 0.0 && (previous_viewport_w - viewport_w).abs() > SCROLL_EPSILON;
+    let caret_was_shown = caret_x >= current && caret_x <= current + previous_viewport_w;
+    if resized && caret_was_shown {
+        reveal_h_offset(caret_x, viewport_w, max_offset, current)
+    } else {
+        current.clamp(0.0, max_offset)
+    }
 }
 
 pub(crate) fn autoscroll_step(pos: f32, lo: f32, hi: f32, step: f32) -> f32 {
@@ -351,14 +370,15 @@ pub(crate) struct CodeHitMap {
     pub(crate) markers: Vec<MarkerHit>,
     pub(crate) materialized_lines: usize,
     pub(crate) materialized_numbers: usize,
-    pub(crate) lines: Vec<Option<ShapedLine>>,
+    pub(crate) lines: Vec<Option<Rc<TabExpandedLine>>>,
     pub(crate) shapes: CodeShapes,
 }
 
 struct CachedShape {
     font_size: Pixels,
     runs: Vec<TextRun>,
-    line: ShapedLine,
+    source: SharedString,
+    line: Rc<TabExpandedLine>,
     seen: bool,
 }
 
@@ -375,7 +395,7 @@ impl ShapeCache {
         font_size: Pixels,
         runs: &[TextRun],
         text_system: &WindowTextSystem,
-    ) -> (ShapedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         let Self { entries, text } = self;
         text.clear();
         for chunk in line.chunks() {
@@ -401,7 +421,7 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (ShapedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         Self::shape_in(
             &mut self.entries,
             key,
@@ -421,18 +441,25 @@ impl ShapeCache {
         runs: &[TextRun],
         text_system: &WindowTextSystem,
         materialize: impl FnOnce() -> SharedString,
-    ) -> (ShapedLine, bool) {
+    ) -> (Rc<TabExpandedLine>, bool) {
         let bucket = entries.entry(key).or_default();
         if let Some(cached) = bucket.iter_mut().find(|cached| {
-            cached.font_size == font_size && cached.runs == runs && holds(&cached.line.text)
+            cached.font_size == font_size && cached.runs == runs && holds(&cached.source)
         }) {
             cached.seen = true;
             return (cached.line.clone(), false);
         }
-        let line = text_system.shape_line(materialize(), font_size, runs, None);
+        let source = materialize();
+        let line = Rc::new(TabExpandedLine::shape(
+            &source,
+            font_size,
+            runs,
+            text_system,
+        ));
         bucket.push(CachedShape {
             font_size,
             runs: runs.to_vec(),
+            source,
             line: line.clone(),
             seen: true,
         });
@@ -680,8 +707,16 @@ impl Element for CodeElement {
         );
         let element_w = (f32::from(bounds.size.width) - scrollbar_w - minimap_w).max(0.0);
         let text_viewport_w = text_viewport_width(element_w, gutter_w);
-        let h_max = max_h_offset(doc.longest_line_chars(), memo.digit_w, text_viewport_w);
-        let h_offset = self.h_offset.clamp(0.0, h_max);
+        let h_max = max_h_offset(doc.longest_line_columns(), memo.digit_w, text_viewport_w);
+        let caret_x = cursor::display_column(doc, self.caret.cursor) as f32 * memo.digit_w;
+        let h_offset = h_offset_after_viewport_change(
+            caret_x,
+            self.geometry.get().text_viewport_w,
+            text_viewport_w,
+            h_max,
+            self.h_offset,
+        );
+        let revealed = (h_offset != self.h_offset).then_some(h_offset);
         let scrollbar_h = if display.scrollbar && h_max > SCROLL_EPSILON {
             SCROLLBAR_SIZE
         } else {
@@ -911,7 +946,7 @@ impl Element for CodeElement {
             let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
             glyphs.push(CodeGlyph {
                 origin: point(num_x, y),
-                line: num_line,
+                line: num_line.shaped().clone(),
                 clip: None,
             });
 
@@ -1008,7 +1043,7 @@ impl Element for CodeElement {
             if let Some(line) = line {
                 glyphs.push(CodeGlyph {
                     origin,
-                    line: line.clone(),
+                    line: line.shaped().clone(),
                     clip: Some(text_clip),
                 });
                 hits.lines.push(Some(line));
@@ -1020,6 +1055,10 @@ impl Element for CodeElement {
         shapes.numbers.end_frame();
         hits.shapes = shapes;
         *self.hits.borrow_mut() = hits;
+        if let Some(h_offset) = revealed {
+            let view = self.view.clone();
+            cx.defer(move |cx| view.update(cx, |view, _| view.keep_h_offset(h_offset)));
+        }
 
         Some(CodePrepaint {
             content_bounds: bounds,
@@ -1051,6 +1090,14 @@ impl Element for CodeElement {
         window.handle_input(
             &focus,
             ElementInputHandler::new(bounds, self.view.clone()),
+            cx,
+        );
+        follow_ime_caret(
+            &self.view,
+            |view| &view.ime_caret,
+            &focus,
+            bounds,
+            window,
             cx,
         );
         let lh = self.line_height;
@@ -1120,14 +1167,6 @@ impl Element for CodeElement {
     }
 }
 
-impl IntoElement for CodeElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -1144,6 +1183,34 @@ mod tests {
             viewport_h,
             line_count,
         )
+    }
+
+    #[gpui::test]
+    fn a_warm_shape_hit_shares_the_cached_line_instead_of_copying_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let window = cx.add_empty_window();
+        window.update(|window, _| {
+            let rope = ropey::Rope::from_str("\tlet answer = 42;");
+            let runs = [TextRun {
+                len: rope.line(0).len_bytes(),
+                font: gpui::font("Zed Plex Mono"),
+                color: gpui::hsla(0.0, 0.0, 0.9, 1.0),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            let mut shapes = ShapeCache::default();
+            let (cold, cold_materialized) =
+                shapes.shape_rope_line(rope.line(0), px(13.), &runs, window.text_system());
+            shapes.end_frame();
+            let (warm, warm_materialized) =
+                shapes.shape_rope_line(rope.line(0), px(13.), &runs, window.text_system());
+            assert!(cold_materialized);
+            assert!(!warm_materialized);
+            assert!(Rc::ptr_eq(&cold, &warm));
+            assert_eq!(warm.shaped().text.as_ref(), "    let answer = 42;");
+        });
     }
 
     #[test]
@@ -1637,5 +1704,31 @@ mod tests {
         assert_eq!(below, doc.len_bytes());
         assert_eq!(map.offset_at(&doc, point(px(0.), px(-10_000.))), 0);
         assert_eq!(map.offset_at(&doc, point(px(0.), px(105.))), 4);
+    }
+
+    #[test]
+    fn a_narrower_viewport_brings_a_caret_it_showed_back_into_view() {
+        let max = 1_000.0;
+        let caret_x = 590.0;
+        let next = h_offset_after_viewport_change(caret_x, 600.0, 500.0, max, 0.0);
+        assert!(
+            caret_x + H_SCROLL_MARGIN <= next + 500.0 + 0.01,
+            "the caret at {caret_x} stays inside 500 px once scrolled to {next}"
+        );
+        assert_eq!(
+            h_offset_after_viewport_change(caret_x, 600.0, 600.0, max, 0.0),
+            0.0,
+            "an unchanged width keeps the scroll"
+        );
+        assert_eq!(
+            h_offset_after_viewport_change(900.0, 600.0, 500.0, max, 0.0),
+            0.0,
+            "a caret already scrolled out of view does not pull the view"
+        );
+        assert_eq!(
+            h_offset_after_viewport_change(caret_x, 0.0, 500.0, max, 0.0),
+            0.0,
+            "the first layout has no previous width to compare"
+        );
     }
 }

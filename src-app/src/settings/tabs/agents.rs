@@ -507,11 +507,7 @@ impl PaneFlowApp {
         }));
 
         let action: Option<AnyElement> = if running {
-            Some(crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("agent-update-spinner-{tag}")),
-                px(14.),
-                ui.muted,
-            ))
+            Some(crate::ui_primitives::comet_spinner(px(14.), ui.muted))
         } else if newer.is_some() && can_update {
             Some(
                 soft_button(
@@ -697,11 +693,7 @@ impl PaneFlowApp {
         }
 
         let control: Option<AnyElement> = if running {
-            Some(crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("agent-update-row-spinner-{tag}")),
-                px(14.),
-                ui.muted,
-            ))
+            Some(crate::ui_primitives::comet_spinner(px(14.), ui.muted))
         } else if offers_update {
             Some(
                 soft_button(
@@ -780,16 +772,13 @@ impl PaneFlowApp {
                 cx.notify();
             }));
             for method in offered {
-                menu = menu.child(
+                menu = menu.option(
                     select_option(
                         SharedString::from(format!("agent-update-method-{tag}-{}", method.id())),
                         method == selected,
                         ui,
                     )
                     .cursor(CursorStyle::Arrow)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.set_agent_update_method(agent, method, cx);
-                    }))
                     .child(
                         div()
                             .flex_1()
@@ -798,6 +787,9 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .child(option_label(method)),
                     ),
+                    cx.listener(move |this, _: &(), _w, cx| {
+                        this.set_agent_update_method(agent, method, cx);
+                    }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
@@ -916,11 +908,7 @@ impl PaneFlowApp {
             },
         };
         let control = if self.integration_busy.as_deref() == Some(slug) {
-            crate::ui_primitives::comet_spinner(
-                SharedString::from(format!("integration-spinner-{slug}")),
-                px(14.),
-                ui.muted,
-            )
+            crate::ui_primitives::comet_spinner(px(14.), ui.muted)
         } else {
             let owned = slug.to_string();
             toggle_switch(
@@ -1388,13 +1376,6 @@ impl PaneFlowApp {
                     ui,
                 )
                 .cursor(CursorStyle::Arrow)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    if let Some(editor) = this.agent_profile_editor.as_mut() {
-                        editor.agent = agent;
-                        editor.agent_menu_open = false;
-                    }
-                    cx.notify();
-                }))
                 .child(agent_icon_sized(agent, 14., ui))
                 .child(
                     div()
@@ -1404,7 +1385,16 @@ impl PaneFlowApp {
                         .text_color(ui.text)
                         .child(agent.display_name()),
                 );
-                menu = menu.child(item);
+                menu = menu.option(
+                    item,
+                    cx.listener(move |this, _: &(), _w, cx| {
+                        if let Some(editor) = this.agent_profile_editor.as_mut() {
+                            editor.agent = agent;
+                            editor.agent_menu_open = false;
+                        }
+                        cx.notify();
+                    }),
+                );
             }
             trigger = trigger.child(deferred_select_menu(menu));
         }

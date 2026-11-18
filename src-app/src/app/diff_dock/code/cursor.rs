@@ -117,6 +117,18 @@ pub(crate) fn goal_column(doc: &CodeDocument, offset: usize) -> usize {
     slice.byte_to_char(local)
 }
 
+pub(crate) fn display_column(doc: &CodeDocument, offset: usize) -> usize {
+    let (row, range) = row_of(doc, offset);
+    let Some(slice) = doc.line(row) else {
+        return 0;
+    };
+    let local = offset.saturating_sub(range.start).min(slice.len_bytes());
+    slice
+        .slice(..slice.byte_to_char(local))
+        .chars()
+        .fold(0, crate::tab_stops::advance)
+}
+
 pub(crate) fn grapheme_left(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     if offset <= range.start {
@@ -428,5 +440,19 @@ mod tests {
         assert_eq!(grapheme_right(&d, 0), 0);
         assert_eq!(vertical(&d, 0, 4, -1), 0);
         assert_eq!(word_range_at(&d, 0), 0..0);
+    }
+
+    #[test]
+    fn display_column_counts_tab_stops_and_tolerates_an_offset_inside_a_character() {
+        let d = doc("\u{e9}\tx\n\t\u{4e2d}\ty\n");
+        assert_eq!(display_column(&d, 0), 0);
+        assert_eq!(display_column(&d, 1), 0);
+        assert_eq!(display_column(&d, 2), 1);
+        assert_eq!(display_column(&d, 3), 4);
+        assert_eq!(display_column(&d, 6), 4);
+        assert_eq!(display_column(&d, 7), 4);
+        assert_eq!(display_column(&d, 9), 6);
+        assert_eq!(display_column(&d, 10), 8);
+        assert_eq!(display_column(&d, 11), 9);
     }
 }

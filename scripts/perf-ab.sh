@@ -12,6 +12,23 @@ base_ref=$1
 head_ref=$2
 rounds=10
 cargo=${CARGO:-cargo}
+timed_editor=${PERF_AB_TIMED_EDITOR:-1}
+ab_profile=${PERF_AB_PROFILE:-gates}
+case "$ab_profile" in
+  gates) strip_variable=CARGO_PROFILE_GATES_STRIP ;;
+  release) strip_variable=CARGO_PROFILE_RELEASE_STRIP ;;
+  *)
+    echo "PERF_AB_PROFILE is $ab_profile: set it to gates, the profile of the CI job, or release, the profile Paneflow ships" >&2
+    exit 2
+    ;;
+esac
+case "$timed_editor" in
+  0 | 1) ;;
+  *)
+    echo "PERF_AB_TIMED_EDITOR is $timed_editor: set it to 1 to time the editor suite in every slot, or 0 to leave it to the instruction counts" >&2
+    exit 2
+    ;;
+esac
 
 for variable in $(compgen -e | grep '^PANEFLOW_' || true); do
   case "$variable" in
@@ -108,17 +125,18 @@ build() {
   local side=$1
   local worktree="$scratch/$side" bin="$scratch/bin-$side" log="$out/build-$side.log"
   mkdir -p "$bin"
-  echo "== building $side $(git rev-parse --short=12 "$2")"
+  echo "== building $side $(git rev-parse --short=12 "$2") in the $ab_profile profile"
   set +e
   (
     set -e
     cd "$worktree"
+    export "$strip_variable=false"
     bash scripts/fetch-libghostty.sh --target "$host_triple"
-    "$cargo" build --profile gates --locked -p paneflow-host
-    "$cargo" test --profile gates --locked -p paneflow-app --bin paneflow --no-run \
+    "$cargo" build --profile "$ab_profile" --locked -p paneflow-host
+    "$cargo" test --profile "$ab_profile" --locked -p paneflow-app --bin paneflow --no-run \
       --message-format=json-render-diagnostics >"$bin/terminal.jsonl"
     if [ "$side" = head ]; then
-      "$cargo" test --profile gates --locked -p paneflow-host --test persistent_baseline --no-run \
+      "$cargo" test --profile "$ab_profile" --locked -p paneflow-host --test persistent_baseline --no-run \
         --message-format=json-render-diagnostics >"$bin/harness.jsonl"
     fi
   ) >"$log" 2>&1
@@ -133,9 +151,9 @@ build() {
     unavailable "$side" "the terminal suite executable was not built" "$log"
   fi
   cp "$terminal" "$bin/terminal-suite"
-  cp "$CARGO_TARGET_DIR/gates/paneflow-host" "$bin/paneflow-host"
+  cp "$CARGO_TARGET_DIR/$ab_profile/paneflow-host" "$bin/paneflow-host"
   if [ "$side" = head ]; then
-    cp "$CARGO_TARGET_DIR/gates/paneflow-session-fixture" "$bin/paneflow-session-fixture"
+    cp "$CARGO_TARGET_DIR/$ab_profile/paneflow-session-fixture" "$bin/paneflow-session-fixture"
     local harness
     harness=$(executable "$bin/harness.jsonl" persistent_baseline)
     if [ ! -x "$harness" ]; then
@@ -160,6 +178,20 @@ run_slot() {
   set -e
   if [ "$status" -ne 0 ] || [ ! -s "$dir/$tag-terminal.json" ]; then
     unavailable "$side" "the terminal suite exited $status without samples in round $round; a commit older than the A/B sample export writes none" "$dir/$tag-terminal.log"
+  fi
+  if [ "$timed_editor" = 1 ]; then
+    set +e
+    (
+      cd "$scratch/$side/src-app"
+      PANEFLOW_BENCH_SAMPLES_OUT="$dir/$tag-editor.json" \
+        "$bin/terminal-suite" app::diff_dock::code::perf_bench::editor_pipeline_benchmark \
+        --ignored --exact --nocapture --test-threads=1
+    ) >"$dir/$tag-editor.log" 2>&1
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ] || [ ! -s "$dir/$tag-editor.json" ]; then
+      unavailable "$side" "the editor suite exited $status without samples in round $round" "$dir/$tag-editor.log"
+    fi
   fi
   set +e
   (
@@ -204,6 +236,48 @@ instruction_benches=(
   "paneflow-terminal-ghostty|native"
 )
 instruction_limit_percent=2
+editor_instruction_function=paneflow_bench_counted_instructions
+
+count_editor_instructions_side() {
+  local side=$1 status=0
+  local dumps="$scratch/callgrind-$side" log="$out/instructions-$side-editor.log"
+  rm -rf "$dumps"
+  mkdir -p "$dumps"
+  set +e
+  (
+    cd "$scratch/$side/src-app"
+    valgrind --tool=callgrind --collect-atstart=no \
+      "--toggle-collect=$editor_instruction_function" \
+      "--dump-after=$editor_instruction_function" \
+      "--callgrind-out-file=$dumps/callgrind.out" \
+      "$scratch/bin-$side/terminal-suite" app::diff_dock::code::perf_bench::editor_instruction_benchmark \
+      --ignored --exact --nocapture --test-threads=1
+  ) >"$log" 2>&1
+  status=$?
+  set -e
+  python3 - "$dumps" "$log" "$out/instructions-$side-editor.json" "$status" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+dumps, log, target, status = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), int(sys.argv[4])
+names = re.findall(r"PANEFLOW_BENCH_INSTRUCTION_CASE (\S+)", log.read_text(errors="replace"))
+files = sorted((path for path in dumps.glob("callgrind.out.*") if re.fullmatch(r"callgrind\.out\.\d+", path.name)), key=lambda path: int(path.suffix[1:]))
+counts = []
+for path in files:
+    totals = [line for line in path.read_text(errors="replace").splitlines() if line.startswith(("summary:", "totals:"))]
+    counts.append(int(totals[-1].split()[1]) if totals else 0)
+report = {"status": status, "cases": {}, "reason": None}
+if status != 0:
+    report["reason"] = f"the editor instruction suite exited {status}"
+elif len(names) != len(counts):
+    report["reason"] = f"{len(names)} editor cases ran but Callgrind wrote {len(counts)} dumps"
+else:
+    report["cases"] = dict(zip(names, counts))
+target.write_text(json.dumps(report, indent=2) + "\n")
+PY
+}
 
 count_instructions_side() {
   local side=$1 status=0
@@ -245,6 +319,9 @@ count_instructions() {
     elif ! count_instructions_side head; then
       reason="the head instruction benchmarks failed; see instructions-head.log"
     fi
+    echo "== counting editor instructions"
+    count_editor_instructions_side base
+    count_editor_instructions_side head
   fi
   python3 - "$out" "$instruction_limit_percent" "$reason" <<'PY'
 import json
@@ -275,10 +352,27 @@ if not reason:
         })
     if not benchmarks:
         reason = "the instruction benchmarks reported nothing"
-if reason:
-    verdict = "not_measured"
-elif any(entry["verdict"] == "regression" for entry in benchmarks):
+editor = {}
+for side in ("base", "head"):
+    path = out / f"instructions-{side}-editor.json"
+    editor[side] = json.loads(path.read_text()) if path.exists() else {"cases": {}, "reason": "the editor instruction suite did not run"}
+editor_reason = editor["head"].get("reason")
+if editor_reason:
+    reason = "; ".join(part for part in (reason, f"head: {editor_reason}, see instructions-head-editor.log") if part)
+for case, head in editor["head"].get("cases", {}).items():
+    base = editor["base"].get("cases", {}).get(case)
+    delta = (head - base) / base * 100 if base else None
+    benchmarks.append({
+        "name": f"editor::{case}",
+        "base_ir": base or None,
+        "head_ir": head,
+        "delta_percent": delta,
+        "verdict": "not_compared" if delta is None else ("regression" if delta > limit else "pass"),
+    })
+if any(entry["verdict"] == "regression" for entry in benchmarks):
     verdict = "regression"
+elif reason:
+    verdict = "not_measured"
 else:
     verdict = "pass"
 report = {"verdict": verdict, "limit_percent": limit, "reason": reason or None, "benchmarks": benchmarks}
@@ -287,7 +381,7 @@ report = {"verdict": verdict, "limit_percent": limit, "reason": reason or None, 
 lines = ["", "## Instruction counts", "", f"Verdict: **{verdict}** (Callgrind `Ir`, soft limit +{limit:g} % against the base built in this run)"]
 if reason:
     lines += ["", f"Not measured: {reason}."]
-else:
+if benchmarks:
     lines += ["", "| Benchmark | Base Ir | Head Ir | Delta | Verdict |", "|---|---|---|---|---|"]
     for entry in benchmarks:
         delta = "n/a" if entry["delta_percent"] is None else f"{entry['delta_percent']:+.3f} %"

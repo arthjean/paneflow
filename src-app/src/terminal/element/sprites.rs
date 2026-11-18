@@ -25,7 +25,7 @@ pub(super) struct Lines {
     pub left: Arm,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Corner {
     TopLeft,
     TopRight,
@@ -57,7 +57,7 @@ impl Shade {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Powerline {
     RightTriangle,
     RightChevron,
@@ -95,6 +95,7 @@ pub(super) enum Sprite {
     Shade(Shade),
     Braille(u8),
     Powerline(Powerline),
+    CornerTriangleOutline(Corner),
 }
 
 const BOX_ARMS: [u8; 128] = [
@@ -153,6 +154,14 @@ pub(super) fn sprite_for(c: char) -> Option<Sprite> {
         0x2591 => Some(Sprite::Shade(Shade::Light)),
         0x2592 => Some(Sprite::Shade(Shade::Medium)),
         0x2593 => Some(Sprite::Shade(Shade::Dark)),
+        0x25e2 => Some(Sprite::Powerline(Powerline::LowerRightTriangle)),
+        0x25e3 => Some(Sprite::Powerline(Powerline::LowerLeftTriangle)),
+        0x25e4 => Some(Sprite::Powerline(Powerline::UpperLeftTriangle)),
+        0x25e5 => Some(Sprite::Powerline(Powerline::UpperRightTriangle)),
+        0x25f8 => Some(Sprite::CornerTriangleOutline(Corner::TopLeft)),
+        0x25f9 => Some(Sprite::CornerTriangleOutline(Corner::TopRight)),
+        0x25fa => Some(Sprite::CornerTriangleOutline(Corner::BottomLeft)),
+        0x25ff => Some(Sprite::CornerTriangleOutline(Corner::BottomRight)),
         0x2800..=0x28ff => Some(Sprite::Braille((cp & 0xff) as u8)),
         0xe0b0 => Some(Sprite::Powerline(Powerline::RightTriangle)),
         0xe0b1 => Some(Sprite::Powerline(Powerline::RightChevron)),
@@ -292,6 +301,48 @@ mod tests {
             sprite_for('\u{e0b7}'),
             Some(Sprite::Powerline(Powerline::LeftHalfCircleOutline))
         );
+    }
+
+    #[test]
+    fn the_corner_triangles_ghostty_draws_are_sprites() {
+        assert_eq!(
+            sprite_for('◢'),
+            Some(Sprite::Powerline(Powerline::LowerRightTriangle))
+        );
+        assert_eq!(
+            sprite_for('◣'),
+            Some(Sprite::Powerline(Powerline::LowerLeftTriangle))
+        );
+        assert_eq!(
+            sprite_for('◤'),
+            Some(Sprite::Powerline(Powerline::UpperLeftTriangle))
+        );
+        assert_eq!(
+            sprite_for('◥'),
+            Some(Sprite::Powerline(Powerline::UpperRightTriangle))
+        );
+        assert_eq!(
+            sprite_for('◸'),
+            Some(Sprite::CornerTriangleOutline(Corner::TopLeft))
+        );
+        assert_eq!(
+            sprite_for('◹'),
+            Some(Sprite::CornerTriangleOutline(Corner::TopRight))
+        );
+        assert_eq!(
+            sprite_for('◺'),
+            Some(Sprite::CornerTriangleOutline(Corner::BottomLeft))
+        );
+        assert_eq!(
+            sprite_for('◿'),
+            Some(Sprite::CornerTriangleOutline(Corner::BottomRight))
+        );
+        for c in ['▲', '▶', '◆', '○', '◠', '◦', '◧', '◻'] {
+            assert!(
+                sprite_for(c).is_none(),
+                "{c} stays a font glyph, as in Ghostty"
+            );
+        }
     }
 
     #[test]

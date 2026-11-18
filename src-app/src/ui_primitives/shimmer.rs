@@ -175,7 +175,7 @@ pub(crate) fn shimmer_text(
                     }
                 })
                 .collect::<Vec<_>>();
-            window.paint_layer(bounds, |window| {
+            window.paint_layer(|window| {
                 let mut first = 0;
                 for strip in strips {
                     let left = bounds.origin.x + px(strip.left);

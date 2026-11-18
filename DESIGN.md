@@ -176,7 +176,7 @@ changes.
 | Pane grid | Binary split tree of pane cards, one per workspace tab | Comfortable density: gutter 8, divider hit area 7, minimum pane 80. Compact density (`comfortable_density: false`): no outer gutter, a 1 px `border` divider whose 7 px hit area straddles both panes, minimum pane 80 | `src-app/src/layout/tree.rs`, `src-app/src/layout/render.rs` |
 | Right rail | Sessions rail | Width 300 | `src-app/src/app/sessions_sidebar.rs` |
 | File tree | Inside the file dock, below its shared toolbar, to the right of the editor | Width 250, shrinking to preserve 200 px for the editor | `src-app/src/app/files_sidebar/mod.rs` |
-| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
+| Diff dock | Side dock attached to a tab, holding the branch diff and editable file tabs | Width 540 default, 360 minimum, 1400 maximum, clamped to the room the panel has once the pane grid keeps a minimum pane (80) and its gutters, so it drops below 360 only when the panel cannot hold both with the sidebar at its minimum; 8 file tabs maximum | `src-app/src/app/diff_dock/model.rs` |
 | Footer | The Settings row, with the IPC offline and update banners stacked above it | Persistent primary navigation | `src-app/src/app/sidebar_actions_menu.rs` |
 
 ### 3.2 Modes
@@ -371,6 +371,21 @@ Squircle means `squircle_fill` and `squircle_border` from
 `setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
 small circular controls and the explicitly round surfaces in the table.
 
+A squircle is built where it paints. Each fill, border, band and stroke is
+traced at its final bounds inside its element's paint and handed to
+`paint_path` on every frame; nothing keeps or moves a built shape, because
+GPUI `703b5ac3` makes `Path` opaque and bins it into tiles on every paint
+(`gpui/src/path_builder.rs`). Under an opaque border the fill stops half a
+border width inside the outer edge, so no fill edge coincides with a border
+edge; under a translucent border it reaches the outer edge, so the border
+composites over the fill across its whole width (`fill_depth_under_border`).
+Stacked badge layers overlap the layer below by 0.5 device pixel
+(`LAYER_CLEARANCE_DEVICE_PX`). The budget is 0.4 ms per frame for a strip of
+12 tab badges, 48 shapes: `paths_tab_strip_12_badges` in the terminal suite
+measures it (0.16 ms at the median on GPUI `703b5ac3`, WSL2 on the baseline
+CPU), and the performance gates hold its allocations
+(`bench/baselines/linux-x86_64/terminal-alloc.json`).
+
 This table is the Rounded interface style, and its radii are the design
 radii every call site passes. The surface shape and the Classic style of 4.9
 resolve the same design radii to their own scales inside the squircle
@@ -385,7 +400,7 @@ call site never branches on the style to pick a radius.
 | Pane gutter | 8 in comfortable density, 1 px divider and no outer gutter in compact density |
 | Pane content inset | 10 horizontal, 6 vertical |
 | Pane header | One 44 px surface tab and action row; action gap 7 |
-| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum |
+| Pane tab bar | 26 chips plus 6 below, 32 total; gap 3; 8 tabs maximum. A labelled tab keeps at least 96; when the bar cannot hold that tab beside its controls, the pane actions (split and pop-out, with their divider) go first, then the new tab button, and below 96 the tab shows only its icon in a 44 wide chip with no label and no close slot; the pane menu and the shortcuts keep every action. When the strip changes width it scrolls the active tab back into view, in the pane and in the dock |
 | Diff dock tab bar | 44, the pane header chips (`unified_tab_chip`, `tab_close_button`, the terminal `tab_badge`), sized to the label between 64 and 208 instead of the pane's fixed 208; 32 tall, radius from the dock card frame; the strip scrolls with edge fades and the new tab button sits at the right beside the maximize action, with no close button since the title bar toggle closes the dock; a 1 px bottom divider, dropped while Changes is the active tab so its toolbar sits under the strip without a line; in Classic the strip sits in the title band at the title bar height with no divider (4.9) |
 | Sidebar row | margin 8, padding 7 by 6, minimum height 32, content gap 3, icon-to-title gap 8, line height 20, spacing 2 (10 before the workspace that opens a new group), radius 9 |
 | Sidebar tab icon stack | 16 px icons, cap 4, overlap 11, 24 by 24 icon card |
@@ -503,11 +518,21 @@ middle) leads each Settings › Usage tile, and the 44 px size is reserved.
 | Workspaces selection | 150 ms | cubic ease-out | `SidebarSelectionMotion`: selecting or releasing a row fades its `accent` wash and turns a workspace title to `text`; where it touches a selected row, the wash between them fades in and the shared corners square off at the pace of the slower of the two; a new toggle retargets from the current state. Rows closed from a selection fade and fold over 180 ms, through `SidebarRowMotion` in the folder grouping, and are removed 200 ms after the close is confirmed. Reduced motion applies every state at once and removes the rows immediately |
 | Menu reveal | 140 ms | cubic ease-out | `menu_reveal`: every menu, select popup, context menu, and submenu fades in from 0 while dropping 4 px into place; the pane palette's `New branch` form and the branch row it folds back to use the same reveal. No exit animation |
 | Toast | 180 ms in, 1440 ms hold, 180 ms out | ease-in-out | 8 px lift on entry, 8 px drop on exit |
-| Status spinner | 1 s loop | linear rotate | Empty states |
+| Status spinner | 1 s loop | linear rotate | Empty states (`panel_empty_state`). Static under reduced motion |
 | Comet spinner | 700 ms loop | linear rotate | `comet_spinner` on `icons/comet.svg`: a ring stroked at 0.12 of its size whose opacity ramps linearly from 0 to 1 clockwise from the top, with a round head at the top; every busy state of the title bar update pill. Static under reduced motion |
 | Sidebar thinking matrix | 720 ms cycle | stepped | 3 by 3 dots of 3 px, gap 1, trailing opacities 0.81, 0.49, 0.26 over a 0.06 base |
 | Startup splash | 2600 ms shimmer, 900 ms minimum on screen | linear | Letters at 0.54 alpha, shimmer to 0.82 |
 | Tooltip | 800 ms delay | none | `delayed_tooltip`. `accessible_control` already calls it with the control's label, and GPUI panics in a debug build on a second tooltip for one element: a control built with `accessible_control` takes no other tooltip, and a test that builds the element catches the mistake (`every_app_icon_tile_builds_with_a_single_tooltip`) |
+
+Both spinners turn through GPUI's `TimedTransformation::rotation`
+(`ui_primitives::spin`): the glyph is painted once and the window turns it in
+the retained scene on each frame, so a spinner never rebuilds its view
+(`spinners_turn_for_sixty_frames_without_rendering_their_view_again`). The
+phase is app-wide, not per element: every rotation is locked to the app's
+shared animation clock, so two spinners of the same period always point the
+same way, and one that appears mid-turn joins the others instead of starting
+from the top. The sidebar thinking matrix keeps its stepped `SpinnerClock`,
+which already shares one clock across the sidebar.
 
 `reduce_motion` (Settings, Appearance) sets both
 `ui_primitives::reduce_motion()` and GPUI's `cx.reduce_motion()`
@@ -539,8 +564,8 @@ menus and the path picker, and motion are shared by every style.
 
 | Style | Corners | Floating surfaces |
 | --- | --- | --- |
-| Classic (default) | Circular corners on a 6, 8, 12, 14 scale, in the edge-to-edge shell described below | A `text` edge at 0.07 and a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12) |
-| Rounded | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 and a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10) on menus and select popups; a `border` edge at 0.6 and no shadow elsewhere |
+| Classic (default) | Circular corners on a 6, 8, 12, 14 scale, in the edge-to-edge shell described below | A `text` edge at 0.07; toasts carry a deeper two-layer shadow (0 4 16 at 0.16, 0 1 4 at 0.12), and menus and select popups the panel shadow of the shadow inventory below |
+| Rounded | The continuous corners and radii of 4.4 on the chrome; circular corners on a 6, 8, 12, 14 scale on menus, select popups, the usage bubble and settings cards | A `text` edge at 0.12 on menus and select popups, which carry the panel shadow of the shadow inventory below; toasts carry a two-layer shadow (0 6 20 at 0.10, 0 1 3 at 0.10); a `border` edge at 0.6 and no shadow elsewhere |
 
 The Rounded style draws two shapes. Its chrome (pane cards, tabs, rail rows,
 dialogs, toasts, the command palette, the pane palette, buttons) keeps the
@@ -596,8 +621,8 @@ and the composer at radius 12; a menu at radius 14 with 6 px of padding.
 | Under 8 | The design radius, capped at 6 | Header controls, inline actions, badges, chips |
 
 A corner never exceeds half the short side of its surface. Fills and borders
-paint as quads; the path API (`squircle_path`, `cached_squircle_path`) traces
-the same circular corners, and the shape cache keys on the shape. A radius
+paint as quads; the path API (`squircle_path` and its band and stroke
+variants) traces the same circular corners. A radius
 passed to a squircle primitive is always a design radius: resolving it twice
 gives a wrong corner, so a surface that needs an exact value passes one that
 its scale maps to itself (under 8, or 8 on a control at least 26 px tall in
@@ -612,6 +637,7 @@ Classic overrides, each behind `interface_style::pick`, `classic()` or
 | Menus and context menus | Radius 14, padding 6, rows 28 tall at radius 8 with no gap: 6 plus 8 keeps a row concentric in the surface. Labels are 13 px Medium with a 10 px inset on both sides; shortcuts are 12 px Medium in `muted`; dividers are `text` at 0.12 with the same 10 px inset and 4 px above and below; the submenu chevron is 16 px and overhangs the inset by 4 px. In Geist, 13 px Medium reproduces the label width and stem weight measured on Claude Code desktop, which sets 14 px Medium in the system font. Every value comes from `menu_text_size`, `menu_text_weight`, `menu_row_inset`, `menu_shortcut`, `menu_divider` and `menu_chevron` | `settings/components.rs` |
 | Path picker | The panel takes the menu design radius (14 in Classic), so its radius 8 rows stay concentric in 6 px of padding; rows are 36 px tall with no spacing, and the highlighted row is a `text` wash at 0.14 with the regular text colors, not the selection blue | `terminal/path_picker/render.rs` |
 | Toast | Radius 12 on the menu surface with the edge and shadow, padding 14 by 10, one row: the 16 px error glyph, the message in Medium, then the actions as raised buttons in the inverse fill on the trailing edge | `app/notifications.rs` |
+| Window corners | The shell is edge to edge, so a flush pane card, the diff dock card or the Settings panel can sit in a corner of the window. GPUI clips content to rectangles only, so a surface that does rounds that corner itself to 9, the 10 of the client-side window inside its 1 px border, and only where the window draws that corner round (client decorations on that side, not tiled, maximized or fullscreen) and nothing stands between the surface and the window edge: no primary sidebar on the left, no right rail on the right, and the panes in the title band at the top. Every other flush corner stays square. The main window sets which corners qualify on each frame (`title_band::TitleBand::window_corners`), and `flush_corner_radii` reads it | `app/render.rs`, `layout/density.rs`, `window_chrome/title_band.rs` |
 | Pane tabs | Radius 8 instead of the capsule, in the pane and in the dock; the close slot is a radius 4 square | `pane.rs` |
 | Pane drop veil | Radius 8 | `pane.rs` |
 | Settings card | Radius 12 and no border, as on a surface | `settings/components.rs` |
@@ -638,6 +664,32 @@ Classic also changes the shell, after T3 Code: `flush_shell` in
 
 Toggles, status dots, avatars, segmented pills, and the usage ring keep their
 full radius in every style. The window and the main panel keep radius 10.
+
+#### Shadow inventory
+
+Every shadow Paneflow paints, as offset x y, blur, spread, then black or a
+named color at an alpha. GPUI draws each one with Raph Levien's closed-form
+blurred rounded rectangle and bounds it to three times its blur past the
+shape; upstream states the approximation differs from the previous renderer
+by at most 5/255 per channel (#66812), and no value below compensates for it.
+
+| Surface | Shadow | Source |
+| --- | --- | --- |
+| Client-side window, floating | 0 0, blur 5, black 0.40 | `window_chrome/csd.rs` |
+| Menus and select popups, every style | 0 18, blur 44, spread -18, black 0.80 in dark; 0 16, blur 40, spread -18, black 0.55 in light | `panel_shadow` in `ui_primitives/action_menu.rs` |
+| Toast, Rounded | 0 6, blur 20, black 0.10, then 0 1, blur 3, black 0.10 | `floating_shadow` in `settings/components.rs`, called by `app/notifications.rs` |
+| Toast, Classic | 0 4, blur 16, black 0.16, then 0 1, blur 4, black 0.12 | `floating_shadow` |
+| Dialog card (`modal_card`), drag ghosts, fleet search, custom buttons dialog | GPUI `shadow_lg`: 0 10, blur 15, spread -3, black 0.10, then 0 4, blur 6, spread -4, black 0.10 | `settings/components.rs`, `app/drag.rs`, `pane_drag.rs`, `app/fleet_search.rs`, `app/custom_buttons_modal.rs` |
+| Clone progress bubble | 0 10, blur 28, black 0.28, scaled by the intro and leave motion | `app/clone_bubble.rs` |
+| Active tab capsule of the detached pane window | 0 1, blur 2, black 0.24 in dark; 0 1, blur 3, black 0.10 in light | `unified_tab_chip` in `pane.rs` |
+| Raised button at rest | 0 1, blur 2, its own fill at 0.24, removed while pressed | `raised_skin` in `settings/components.rs` |
+| Select trigger | 0 1, blur 2, black 0.05, plus a 0 1 black 0.04 edge in light or a 0 -1 white 0.06 edge in dark, removed while pressed | `select_trigger` in `settings/components.rs` |
+
+On Linux, the wgpu renderer dithers gradients since GPUI `703b5ac3`
+(`caead827d7`): an ordered 4 by 4 Bayer offset of at most 1/255 on color and
+1.5/255 on alpha. The gradients are the tab badge fills (`tinted_badge_colors`
+and the graphite tile in `pane.rs`) and the sidebar resize edge glow
+(`app/sidebar/resize.rs`).
 
 ## 5. Component Contracts
 
@@ -718,8 +770,10 @@ in `text` at 0.16 on the rail's last pixel column, fading to nothing toward
 both ends so it never meets the panel's rounded corners; the rule is invisible
 at rest and goes out while the drag is held against a limit. The width follows
 the pointer from where it was pressed, between 240 px and the smaller of
-480 px and the window width minus the right rail and 200 px for the main
-panel; rows, the title bar rail, the footer and the drag previews follow it.
+480 px and the window width minus the right rail and the room the main
+panel needs: 200 px, or while the diff dock is open the dock's 360 px minimum
+plus a minimum pane and its gutters, so in a narrow window the sidebar
+narrows before the dock or the pane grid gives way; rows, the title bar rail, the footer and the drag previews follow it.
 Reaching either limit plays the resize edge nudge of 4.8. The default width,
 432 px, is a detent with no mark of its own: while the pointer asks for a
 width within 12 px of it the edge holds on 432 px and the rule turns solid
@@ -1412,8 +1466,9 @@ a 4 px capsule bar on a `text` at 0.13 track in the level color of 4.3, and the
 percentage right-aligned on 34 px, with the reset time in the meter's tooltip.
 A week window with a projection adds one line: the warning glyph and `At this
 pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets.`
-when it overshoots, otherwise `On track: about {66%} of the week used when it
-resets.` in muted. An account without limits shows one muted sentence that
+when it overshoots, `Weekly limit reached. It resets {Thu 09:00}.` with the
+glyph in the `Critical` color once the week is used up, otherwise `On track:
+about {66%} of the week used when it resets.` in muted. An account without limits shows one muted sentence that
 says why and names the fix (no snapshot yet, API key billing, no limits
 reported, reset since the snapshot). The list scrolls past 420 px with the
 header and the last row fixed; the last row, a `menu_row`, opens Settings ›
@@ -1609,7 +1664,7 @@ while the window is unfocused.
 | Windows 11 build 22621 and later | Mica by default (`window_backdrop: auto`), transparent by choice; `blurred` and `acrylic` in `paneflow.json` resolve to `auto`, so blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch | Reveals the backdrop when `windows_chrome_material` is on; with `windows_material_veil` (the Blended style) the backdrop switches to the Acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`, a blur of what lies behind the window, not GPUI's `Blurred` accent, which lags on drag) and the sidebar reveals the Linux theme veil over it (0.72 dark, 0.80 light) | Transparent default background when `windows_terminal_material` is on, masked to the panel; the panel inset gutters are repainted opaque only while `windows_chrome_material` is off; with `windows_material_veil` the terminal card takes the Linux 0.35 shade over the veil | Native caption glyphs in light and dark |
 | Windows 10 and older 11 | Opaque | Opaque card | Opaque | Same glyphs |
 | macOS | Transparent window surface, material dropped in fullscreen | AppKit Sidebar material when `macos_chrome_material` is on | Opaque | Traffic lights with 80 px brand padding |
-| Linux | Opaque shell by default. `linux_chrome_material` or `linux_terminal_material` makes the surface transparent and paints the shell as a theme veil (0.72 on dark themes, 0.80 on light ones, since a light veil lets a mid-tone wallpaper grey it); Paneflow requests no blur, so any blur comes from the compositor, for instance Blur my Shell on GNOME | Opaque, tinted from the title bar color; reveals the veil when `linux_chrome_material` is on | Opaque; with `linux_terminal_material` the terminal card adds a 0.35 shade over the veil, black on dark themes and white on light ones, so the terminal reads denser than the sidebar | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
+| Linux | Opaque shell by default. `linux_chrome_material` or `linux_terminal_material` makes the surface transparent and paints the shell as a theme veil (0.72 on dark themes, 0.80 on light ones, since a light veil lets a mid-tone wallpaper grey it); Paneflow requests blur only when `window_backdrop` is `blurred`, one of the two materials makes the surface transparent, and the Wayland compositor offers ext-background-effect-v1 or KDE blur, and logs once when it falls back; otherwise any blur comes from the compositor, for instance Blur my Shell on GNOME | Opaque, tinted from the title bar color; reveals the veil when `linux_chrome_material` is on | Opaque; with `linux_terminal_material` the terminal card adds a 0.35 shade over the veil, black on dark themes and white on light ones, so the terminal reads denser than the sidebar | Client-side decorations with GPUI's generic glyphs, or server-side when `window_decorations: server` |
 
 The right dock follows the Terminal column: while the terminal material is
 on, its card takes the terminal card color (`pane_card_background`), and the
@@ -1695,8 +1750,9 @@ already need the same behavior.
   not a persistent follow-the-OS mode.
 - `window_decorations` and `window_backdrop` are read once at startup.
 - The Linux sidebar cannot reveal a native material. The translucent shell is
-  opt-in and requests no compositor blur, so without an external blur it
-  shows the raw wallpaper through the veil.
+  opt-in, and it is blurred only with `window_backdrop: blurred` on a Wayland
+  compositor that offers ext-background-effect-v1 or KDE blur; elsewhere,
+  without an external blur, it shows the raw wallpaper through the veil.
 - `reduce_motion` stops hover interpolation, the toggle slide, the sidebar slide, the resize edge
-  nudge, the resize detent settle, the Workspaces row motion, menu reveals, and the thinking matrix only; the other animations
+  nudge, the resize detent settle, the Workspaces row motion, menu reveals, the empty-state and comet spinners, and the thinking matrix only; the other animations
   listed in 4.8 ignore it.

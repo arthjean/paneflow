@@ -14,6 +14,7 @@ mod bench_corpus;
 
 const PUBLISHED_CORPUS_DIGEST: u64 = 4_802_858_128_671_786_933;
 const PRE_ROW_REUSE_CONTENT_DIGEST: u64 = 11_315_952_540_898_940_023;
+const LEGACY_GRAPHEME_WIDTHS: &[u8] = b"\x1b[?2027l";
 
 fn fnv1a(digest: &mut u64, bytes: &[u8]) {
     for byte in bytes {
@@ -35,7 +36,8 @@ fn fold(digest: &mut u64, content: &Content, with_dirty_rows: bool) {
         content.rows,
         content.display_offset,
         content.history_size,
-    );
+    )
+    .replace(", underline_color: Default", "");
     fnv1a(digest, published.as_bytes());
 }
 
@@ -50,6 +52,7 @@ fn corpus_digest(with_dirty_rows: bool, configure: impl FnOnce(&mut DisplayTermi
         TerminalAppearance::default(),
     )
     .unwrap();
+    terminal.feed(LEGACY_GRAPHEME_WIDTHS).unwrap();
     configure(&mut terminal);
     let mut digest = 0xcbf2_9ce4_8422_2325;
     for (index, stream) in bench_corpus::deterministic_streams().iter().enumerate() {

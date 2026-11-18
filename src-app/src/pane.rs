@@ -12,8 +12,9 @@ use gpui::{
 
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle::{
-    cached_squircle_path, cached_squircle_stroke_path, squircle_border, squircle_corners_border,
-    squircle_corners_fill, squircle_fill,
+    layer_clearance, squircle_band_path, squircle_border, squircle_corners_border,
+    squircle_corners_fill, squircle_corners_fill_beneath_border, squircle_fill,
+    squircle_fill_beneath_border, squircle_path, squircle_stroke_path,
 };
 use crate::ui_primitives::{AccessibleControlExt, squircle_skin};
 
@@ -143,11 +144,17 @@ impl CardShape {
         }
     }
 
-    pub(crate) fn background(self, color: Hsla) -> AnyElement {
+    pub(crate) fn background(self, color: Hsla, border: Option<Hsla>) -> AnyElement {
+        let (border_width, border_color) = card_border_edge(border);
         match self {
-            Self::Squircle(radius) => pane_card_fill(radius, color),
+            Self::Squircle(radius) => pane_card_fill(radius, color, border),
             Self::Flush(edges) => crate::layout::flush_fill(edges, color).into_any_element(),
-            Self::Morph { radii, .. } => squircle_corners_fill(radii, color),
+            Self::Morph { radii, .. } if card_paints_quads(color) => {
+                squircle_corners_fill(radii, color)
+            }
+            Self::Morph { radii, .. } => {
+                squircle_corners_fill_beneath_border(radii, color, border_width, border_color)
+            }
         }
     }
 
@@ -160,7 +167,9 @@ impl CardShape {
                 .border_1()
                 .border_color(color)
                 .into_any_element(),
-            Self::Squircle(radius) => squircle_border(radius, px(1.), color).into_any_element(),
+            Self::Squircle(radius) => {
+                squircle_border(radius, CARD_BORDER_WIDTH, color).into_any_element()
+            }
             Self::Flush(edges) if outline => {
                 crate::layout::flush_outline(edges, color).into_any_element()
             }
@@ -176,7 +185,7 @@ impl CardShape {
                 .border_color(color)
                 .into_any_element(),
             Self::Morph { radii, .. } => {
-                squircle_corners_border(radii, px(1.), color).into_any_element()
+                squircle_corners_border(radii, CARD_BORDER_WIDTH, color).into_any_element()
             }
         }
     }
@@ -220,7 +229,7 @@ impl CardShape {
         div()
             .absolute()
             .inset_0()
-            .child(squircle_fill(radius, fill))
+            .child(squircle_fill_beneath_border(radius, fill, px(2.), stroke))
             .child(squircle_border(radius, px(2.), stroke))
             .into_any_element()
     }
@@ -232,7 +241,13 @@ fn card_paints_quads(background: Hsla) -> bool {
         && !crate::ui_primitives::interface_style::circular()
 }
 
-fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
+fn card_border_edge(border: Option<Hsla>) -> (Pixels, Hsla) {
+    border.map_or((px(0.), gpui::transparent_black()), |color| {
+        (CARD_BORDER_WIDTH, color)
+    })
+}
+
+fn pane_card_fill(radius: Pixels, color: Hsla, border: Option<Hsla>) -> AnyElement {
     if card_paints_quads(color) {
         div()
             .absolute()
@@ -241,10 +256,12 @@ fn pane_card_fill(radius: Pixels, color: Hsla) -> AnyElement {
             .bg(color)
             .into_any_element()
     } else {
-        squircle_fill(radius, color).into_any_element()
+        let (border_width, border_color) = card_border_edge(border);
+        squircle_fill_beneath_border(radius, color, border_width, border_color)
     }
 }
 
+const CARD_BORDER_WIDTH: Pixels = px(1.);
 const HEADER_GAP: f32 = 7.0;
 const VEILED_TERMINAL_SHADE: f32 = 0.35;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
@@ -261,6 +278,18 @@ const UNIFIED_TAB_BAR_INSET: f32 = 6.0;
 const UNIFIED_TAB_HEIGHT: f32 = 32.0;
 const UNIFIED_TAB_WIDTH: f32 = 208.0;
 const UNIFIED_TAB_MIN_WIDTH: f32 = 96.0;
+const UNIFIED_TAB_ICON_ONLY_INSET: f32 = 10.0;
+const UNIFIED_TAB_BORDER_WIDTH: f32 = 1.0;
+const UNIFIED_TAB_ICON_ONLY_WIDTH: f32 =
+    2. * UNIFIED_TAB_ICON_ONLY_INSET + TAB_BADGE_WIDTH + 2. * UNIFIED_TAB_BORDER_WIDTH;
+const _: () = assert!(
+    UNIFIED_TAB_ICON_ONLY_WIDTH + UNIFIED_TAB_BAR_INSET + 2. <= crate::layout::MIN_PANE_SIZE
+);
+const TAB_BAR_DIVIDER_WIDTH: f32 = 1.0;
+const TAB_BAR_DIVIDER_MARGIN: f32 = 6.0;
+const DETACHED_TAB_BUTTON_SIZE: f32 = 32.0;
+const DETACHED_NEW_TAB_MARGIN: f32 = 7.0;
+const DETACHED_REATTACH_MARGIN: f32 = 3.0;
 pub(crate) const UNIFIED_TAB_CLOSE_GLYPH_SIZE: f32 = 12.0;
 const OVERLAY_RADIUS: f32 = 8.0;
 const DROP_OVERLAY_BLUE: u32 = 0x007aff;
@@ -278,8 +307,8 @@ const NEW_TAB_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8
 const TAB_CLOSE_SIZE: f32 = 16.0;
 const TAB_CLOSE_GLYPH_SIZE: f32 = 11.0;
 pub(crate) const TAB_FADE_WIDTH: f32 = 28.0;
-const TAB_BADGE_WIDTH: f32 = 22.0;
-const TAB_BADGE_HEIGHT: f32 = 18.0;
+pub(crate) const TAB_BADGE_WIDTH: f32 = 22.0;
+pub(crate) const TAB_BADGE_HEIGHT: f32 = 18.0;
 const TAB_BADGE_RADIUS: f32 = 5.5;
 const TAB_BADGE_LOGO_SIZE: f32 = 10.0;
 const TAB_BADGE_GRAPHITE_TOP: u32 = 0x3a3c3e;
@@ -518,44 +547,74 @@ pub(crate) fn tinted_badge_colors(tint: gpui::Rgba) -> (gpui::Background, Hsla) 
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BadgeGeometry {
+    ring: (gpui::Bounds<Pixels>, Pixels),
+    body: (gpui::Bounds<Pixels>, Pixels),
+    highlight: (gpui::Bounds<Pixels>, gpui::Bounds<Pixels>, Pixels),
+    rim: (gpui::Bounds<Pixels>, Pixels),
+}
+
+fn badge_geometry(bounds: gpui::Bounds<Pixels>, scale_factor: f32) -> BadgeGeometry {
+    let radius = px(TAB_BADGE_RADIUS);
+    let clearance = layer_clearance(scale_factor);
+    let rim = bounds.inset(clearance);
+    let highlight_outer = bounds.inset(clearance * 2.);
+    let highlight_inner = gpui::Bounds {
+        origin: highlight_outer.origin + gpui::point(px(0.), px(1.)),
+        size: gpui::size(
+            highlight_outer.size.width,
+            highlight_outer.size.height - px(1.),
+        ),
+    };
+    BadgeGeometry {
+        ring: (bounds.dilate(px(1.)), radius + px(1.)),
+        body: (bounds, radius),
+        highlight: (highlight_outer, highlight_inner, radius - clearance * 2.),
+        rim: (rim, radius - clearance),
+    }
+}
+
+pub(crate) fn paint_badge_tile(
+    bounds: gpui::Bounds<Pixels>,
+    background: gpui::Background,
+    ring: Hsla,
+    window: &mut Window,
+) {
+    let geometry = badge_geometry(bounds, window.scale_factor());
+    let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
+    let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
+    let (outer, inner, highlight_radius) = geometry.highlight;
+    let layers = [
+        (
+            squircle_path(geometry.ring.0, geometry.ring.1),
+            gpui::Background::from(ring),
+        ),
+        (squircle_path(geometry.body.0, geometry.body.1), background),
+        (
+            squircle_band_path(outer, inner, highlight_radius),
+            highlight.into(),
+        ),
+        (
+            squircle_stroke_path(geometry.rim.0, geometry.rim.1, px(1.)),
+            rim.into(),
+        ),
+    ];
+    for (path, fill) in layers {
+        if let Some(path) = path {
+            window.paint_path(path, fill);
+        }
+    }
+}
+
 pub(crate) fn badge_tile(
     background: gpui::Background,
     ring: Hsla,
     glyph: AnyElement,
 ) -> AnyElement {
-    let radius = px(TAB_BADGE_RADIUS);
-    let highlight = gpui::white().opacity(TAB_BADGE_HIGHLIGHT_ALPHA);
-    let rim = gpui::white().opacity(TAB_BADGE_RIM_ALPHA);
     let tile = gpui::canvas(
         |_, _, _| {},
-        move |bounds, _, window, _| {
-            let scale = window.scale_factor();
-            let lowered = gpui::Bounds {
-                origin: bounds.origin + gpui::point(px(0.), px(1.)),
-                size: gpui::size(bounds.size.width, bounds.size.height - px(1.)),
-            };
-            let layers = [
-                (
-                    cached_squircle_path(bounds.dilate(px(1.)), radius + px(1.), scale),
-                    gpui::Background::from(ring),
-                ),
-                (cached_squircle_path(bounds, radius, scale), background),
-                (
-                    cached_squircle_path(bounds, radius, scale),
-                    highlight.into(),
-                ),
-                (cached_squircle_path(lowered, radius, scale), background),
-                (
-                    cached_squircle_stroke_path(bounds, radius, px(1.), scale),
-                    rim.into(),
-                ),
-            ];
-            for (path, fill) in layers {
-                if let Some(path) = path {
-                    window.paint_path(path, fill);
-                }
-            }
-        },
+        move |bounds, _, window, _| paint_badge_tile(bounds, background, ring, window),
     )
     .size_full();
     div()
@@ -657,6 +716,10 @@ pub struct Pane {
     card_frame: crate::layout::CardFrame,
     shimmer_drawn: Cell<bool>,
     shimmer_ticker: Option<gpui::Task<()>>,
+    tab_bar_width: Rc<Cell<f32>>,
+    tab_strip_width: Rc<Cell<f32>>,
+    tab_bar_identity_width: Rc<Cell<f32>>,
+    tab_bar_actions_width: Rc<Cell<f32>>,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -715,6 +778,10 @@ impl Pane {
             card_frame: crate::layout::CardFrame::Card,
             shimmer_drawn: Cell::new(false),
             shimmer_ticker: None,
+            tab_bar_width: Rc::new(Cell::new(0.)),
+            tab_strip_width: Rc::new(Cell::new(0.)),
+            tab_bar_identity_width: Rc::new(Cell::new(0.)),
+            tab_bar_actions_width: Rc::new(Cell::new(0.)),
         }
     }
 
@@ -1350,7 +1417,7 @@ impl Pane {
         self.surface().as_terminal()
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, show_actions: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = pane_colors();
 
         let has_attention = self.attention;
@@ -1433,15 +1500,20 @@ impl Pane {
                         .bg(ui.subtle)
                         .text_size(px(9.))
                         .text_color(ui.accent)
-                        .child(format!("{count} hits"))
+                        .child(search_hits_label(count))
                         .into_any_element()
                 })
         };
 
         let has_identity = status_dot.is_some() || progress_chip.is_some() || match_badge.is_some();
+        if !has_identity {
+            self.tab_bar_identity_width.set(0.);
+        }
         let identity = has_identity.then(|| {
             div()
                 .id("pane-header-identity")
+                .relative()
+                .child(width_probe(self.tab_bar_identity_width.clone()))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1499,17 +1571,19 @@ impl Pane {
                 }),
             )
             .children(identity)
-            .child(
+            .children(show_actions.then(|| {
                 div()
                     .flex_none()
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_end()
                     .gap(px(HEADER_GAP))
                     .h_full()
-                    .child(self.render_end_section(cx)),
-            )
+                    .child(self.render_end_section(cx))
+                    .child(width_probe(self.tab_bar_actions_width.clone()))
+            }))
     }
 
     pub(crate) fn open_new_tab_menu(
@@ -1605,6 +1679,62 @@ impl Pane {
         let content_group = SharedString::from(format!("pane-content-{pane_id}"));
         let chip_radius = self.card_shape().tab_chip_radius();
         let band_slot = self.title_band_slot().filter(|_| unified);
+        let detached = self.is_detached();
+        let (pad_left, pad_right) = if !unified {
+            (SECTION_PX, SECTION_PX)
+        } else if let Some(slot) = band_slot {
+            (UNIFIED_TAB_BAR_INSET + slot.leading, 2. + slot.trailing)
+        } else if detached {
+            (0., 2.)
+        } else {
+            (UNIFIED_TAB_BAR_INSET, 2.)
+        };
+        let fit = if unified && self.tab_bar_width.get() > 0. {
+            let reattach_width = if detached {
+                DETACHED_TAB_BUTTON_SIZE + DETACHED_REATTACH_MARGIN + TAB_BAR_GAP
+            } else {
+                0.
+            };
+            let new_tab_width = if !self.can_add_surface() {
+                0.
+            } else if detached {
+                DETACHED_TAB_BUTTON_SIZE + 2. * DETACHED_NEW_TAB_MARGIN + TAB_BAR_GAP
+            } else {
+                ACTION_BUTTON_SIZE + TAB_BAR_GAP
+            };
+            let identity_width = self.tab_bar_identity_width.get();
+            let header_base_width = if detached {
+                0.
+            } else if identity_width > 0. {
+                TAB_BAR_GAP + identity_width + SECTION_PX
+            } else {
+                TAB_BAR_GAP + SECTION_PX
+            };
+            let actions_width = if detached {
+                0.
+            } else {
+                TAB_BAR_DIVIDER_WIDTH
+                    + 2. * TAB_BAR_DIVIDER_MARGIN
+                    + TAB_BAR_GAP
+                    + HEADER_GAP
+                    + self.tab_bar_actions_width.get()
+            };
+            fit_tab_bar(
+                self.tab_bar_width.get()
+                    - pad_left
+                    - pad_right
+                    - reattach_width
+                    - header_base_width,
+                new_tab_width,
+                actions_width,
+            )
+        } else {
+            TabBarFit {
+                actions: true,
+                new_tab: true,
+                label: true,
+            }
+        };
 
         let mut strip = div()
             .id("pane-tab-strip")
@@ -1634,10 +1764,16 @@ impl Pane {
             let group = SharedString::from(format!("pane-{pane_id}-tab-{index}-group"));
             let chip_id = SharedString::from(format!("pane-{pane_id}-tab-{index}"));
             let chip = if unified {
-                unified_tab_chip(chip_id, group.clone(), active, chip_radius)
-                    .w(px(UNIFIED_TAB_WIDTH))
-                    .max_w_full()
-                    .min_w(px(UNIFIED_TAB_MIN_WIDTH))
+                let chip = unified_tab_chip(chip_id, group.clone(), active, chip_radius);
+                if fit.label {
+                    chip.w(px(UNIFIED_TAB_WIDTH))
+                        .max_w_full()
+                        .min_w(px(UNIFIED_TAB_MIN_WIDTH))
+                } else {
+                    chip.w(px(UNIFIED_TAB_ICON_ONLY_WIDTH))
+                        .px(px(UNIFIED_TAB_ICON_ONLY_INSET))
+                        .justify_center()
+                }
             } else {
                 squircle_skin(
                     div()
@@ -1690,18 +1826,20 @@ impl Pane {
                         .text_color(ui.muted)
                         .into_any_element(),
                 })
-                .child(if unified {
-                    unified_tab_label(text).child(Self::surface_full_title(surface, cx))
-                } else {
-                    div()
-                        .flex_none()
-                        .whitespace_nowrap()
-                        .text_size(crate::ui_primitives::BODY)
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(text)
-                        .child(label)
-                })
-                .child(
+                .children(fit.label.then(|| {
+                    if unified {
+                        unified_tab_label(text).child(Self::surface_full_title(surface, cx))
+                    } else {
+                        div()
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_size(crate::ui_primitives::BODY)
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(text)
+                            .child(label)
+                    }
+                }))
+                .children(fit.label.then(|| {
                     tab_close_button(
                         SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),
                         unified && chip_radius.is_none(),
@@ -1722,8 +1860,8 @@ impl Pane {
                             .flex_none()
                             .path("icons/close.svg")
                             .text_color(ui.muted),
-                    ),
-                );
+                    )
+                }));
             strip = strip.child(chip);
         }
 
@@ -1754,17 +1892,12 @@ impl Pane {
                 TAB_BAR_HEIGHT + TAB_BAR_BOTTOM_INSET
             }))
             .pb(px(if unified { 0. } else { TAB_BAR_BOTTOM_INSET }))
-            .px(px(if unified { 2. } else { SECTION_PX }))
-            .when(unified && !self.is_detached(), |bar| {
-                bar.pl(px(UNIFIED_TAB_BAR_INSET))
-            })
-            .when(unified && self.is_detached(), |bar| bar.pl(px(0.)))
-            .when_some(band_slot, |bar, slot| {
-                bar.pl(px(UNIFIED_TAB_BAR_INSET + slot.leading))
-                    .pr(px(2. + slot.trailing))
-            })
+            .pl(px(pad_left))
+            .pr(px(pad_right))
             .gap(px(TAB_BAR_GAP))
-            .overflow_hidden();
+            .relative()
+            .overflow_hidden()
+            .child(width_probe(self.tab_bar_width.clone()));
 
         if unified && self.is_detached() {
             bar = bar.child(
@@ -1772,8 +1905,8 @@ impl Pane {
                     div()
                         .id(SharedString::from(format!("pane-{pane_id}-tab-reattach")))
                         .flex_none()
-                        .size(px(32.))
-                        .mr(px(3.))
+                        .size(px(DETACHED_TAB_BUTTON_SIZE))
+                        .mr(px(DETACHED_REATTACH_MARGIN))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1806,10 +1939,15 @@ impl Pane {
                 .min_w_0()
                 .h_full()
                 .child(strip)
-                .child(fades),
+                .child(fades)
+                .child(keep_active_tab_in_view(
+                    self.tab_scroll.clone(),
+                    self.active_surface,
+                    self.tab_strip_width.clone(),
+                )),
         );
 
-        if self.can_add_surface() {
+        if self.can_add_surface() && fit.new_tab {
             let menu_open = self.new_tab_menu.is_some();
             let new_tab_button = squircle_skin(
                 div()
@@ -1817,7 +1955,9 @@ impl Pane {
                     .flex_none()
                     .size(px(TAB_BAR_HEIGHT))
                     .when(unified && self.is_detached(), |button| {
-                        button.size(px(32.)).mx(px(7.))
+                        button
+                            .size(px(DETACHED_TAB_BUTTON_SIZE))
+                            .mx(px(DETACHED_NEW_TAB_MARGIN))
                     })
                     .when(!self.is_detached(), |button| {
                         button
@@ -1871,17 +2011,17 @@ impl Pane {
 
         if !self.is_detached() {
             bar = bar
-                .child(
+                .children(fit.actions.then(|| {
                     div()
                         .flex_none()
-                        .w(px(1.))
+                        .w(px(TAB_BAR_DIVIDER_WIDTH))
                         .h(px(16.))
-                        .mx(px(6.))
+                        .mx(px(TAB_BAR_DIVIDER_MARGIN))
                         .when(self.dimmed(), |element| {
                             hide_until_hover(element, &content_group)
                         })
-                        .bg(ui.border),
-                )
+                        .bg(ui.border)
+                }))
                 .child(
                     div()
                         .h_full()
@@ -1889,7 +2029,7 @@ impl Pane {
                         .when(self.dimmed(), |element| {
                             hide_until_hover(element, &content_group)
                         })
-                        .child(self.render_header(cx)),
+                        .child(self.render_header(fit.actions, cx)),
                 );
         }
         Some(bar.into_any_element())
@@ -2175,25 +2315,22 @@ impl Render for Pane {
         let has_attention = self.attention;
         let attention_color = pane_colors().vc_conflict;
         self.sync_shimmer_clock(cx);
+        let border_color = if has_attention {
+            attention_color.opacity(0.7)
+        } else if self.split_focus == SplitFocus::Focused && !self.zoomed {
+            pane_colors().text.opacity(FOCUSED_PANE_BORDER_ALPHA)
+        } else {
+            pane_colors().border
+        };
         div()
             .flex()
             .flex_col()
             .size_full()
             .relative()
             .overflow_hidden()
-            .child(card_shape.background(card_background))
+            .child(card_shape.background(card_background, Some(border_color)))
             .child(content)
-            .child(card_shape.border(
-                card_background,
-                if has_attention {
-                    attention_color.opacity(0.7)
-                } else if self.split_focus == SplitFocus::Focused && !self.zoomed {
-                    pane_colors().text.opacity(FOCUSED_PANE_BORDER_ALPHA)
-                } else {
-                    pane_colors().border
-                },
-                has_attention,
-            ))
+            .child(card_shape.border(card_background, border_color, has_attention))
     }
 }
 
@@ -2269,6 +2406,10 @@ fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Opt
     }
 }
 
+fn search_hits_label(count: usize) -> String {
+    crate::app::plural(count, "hit", "hits")
+}
+
 fn new_tab_menu_item(
     pane_id: u64,
     index: usize,
@@ -2284,6 +2425,56 @@ fn new_tab_menu_item(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TabBarFit {
+    pub(crate) actions: bool,
+    pub(crate) new_tab: bool,
+    pub(crate) label: bool,
+}
+
+pub(crate) fn fit_tab_bar(room: f32, new_tab_width: f32, actions_width: f32) -> TabBarFit {
+    let labelled = UNIFIED_TAB_MIN_WIDTH;
+    TabBarFit {
+        actions: room >= labelled + new_tab_width + actions_width,
+        new_tab: room >= labelled + new_tab_width,
+        label: room >= labelled,
+    }
+}
+
+pub(crate) fn keep_active_tab_in_view(
+    scroll: gpui::ScrollHandle,
+    active: usize,
+    width: Rc<Cell<f32>>,
+) -> AnyElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let measured = f32::from(bounds.size.width);
+            if width.replace(measured) != measured {
+                scroll.scroll_to_item(active);
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
+}
+
+fn width_probe(width: Rc<Cell<f32>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let measured = f32::from(bounds.size.width);
+            if width.replace(measured) != measured {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 #[cfg(test)]
 mod tests {
     use paneflow_terminal_ghostty::{ProgressReport, ProgressState};
@@ -2292,15 +2483,17 @@ mod tests {
 
     use super::{
         ChipTone, MAX_SURFACE_TITLE_LEN, PANE_ZOOM_BADGE_LABEL, Pane, PaneEvent, PaneSurface,
-        card_paints_quads, header_hover_animates, pane_card_background, pane_status_label,
-        progress_chip_label, progress_chip_tone, tab_badge, truncate_surface_title,
+        badge_geometry, card_paints_quads, header_hover_animates, pane_card_background,
+        pane_status_label, progress_chip_label, progress_chip_tone, search_hits_label, tab_badge,
+        truncate_surface_title,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::terminal::TerminalView;
-    use crate::ui_primitives::squircle::{cached_squircle_path, squircle_builds};
+    use crate::ui_primitives::squircle::{squircle_builds, squircle_builds_since};
 
     struct BadgeStrip {
         tabs: usize,
+        inset: gpui::Pixels,
     }
 
     impl gpui::Render for BadgeStrip {
@@ -2310,60 +2503,214 @@ mod tests {
             _cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
             use gpui::{ParentElement, Styled};
-            gpui::div().flex().children((0..self.tabs).map(|tab| {
-                tab_badge(match tab % 3 {
-                    0 => None,
-                    1 => Some(TerminalAgent::ClaudeCode),
-                    _ => Some(TerminalAgent::Codex),
-                })
-            }))
+            gpui::div()
+                .flex()
+                .pl(self.inset)
+                .children((0..self.tabs).map(|tab| {
+                    tab_badge(match tab % 3 {
+                        0 => None,
+                        1 => Some(TerminalAgent::ClaudeCode),
+                        _ => Some(TerminalAgent::Codex),
+                    })
+                }))
+        }
+    }
+
+    const BADGE_CONTOURS: usize = 5;
+
+    struct CardFill {
+        border: Option<gpui::Hsla>,
+    }
+
+    impl gpui::Render for CardFill {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{ParentElement, Styled};
+            gpui::div().size_full().relative().child(
+                super::CardShape::Squircle(gpui::px(12.)).background(gpui::white(), self.border),
+            )
         }
     }
 
     #[gpui::test]
-    fn twelve_tab_badges_paint_the_next_frame_without_rebuilding_a_squircle(
-        cx: &mut TestAppContext,
-    ) {
-        let before = squircle_builds();
-        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip { tabs: 12 });
+    fn a_card_fill_stops_under_an_opaque_border_and_stays_whole_otherwise(cx: &mut TestAppContext) {
+        let window = gpui::size(gpui::px(200.), gpui::px(120.));
+        let bounds = gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), window);
+        for (border, depth) in [
+            (Some(gpui::black()), gpui::px(0.5)),
+            (Some(gpui::black().opacity(0.3)), gpui::px(0.)),
+            (None, gpui::px(0.)),
+        ] {
+            let (_view, cx) = cx.add_window_view(|_, _| CardFill { border });
+            cx.simulate_resize(window);
+            assert_eq!(
+                draw_badge_frame(cx),
+                vec![bounds.inset(depth)],
+                "border {border:?}"
+            );
+        }
+    }
+
+    fn draw_badge_frame(cx: &mut gpui::VisualTestContext) -> Vec<gpui::Bounds<gpui::Pixels>> {
+        let start = squircle_builds();
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        squircle_builds_since(start)
+    }
+
+    #[gpui::test]
+    fn twelve_tab_badges_build_one_path_per_painted_shape_on_every_frame(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 12,
+            inset: gpui::px(0.),
+        });
         cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(80.)));
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        let first_frame = squircle_builds();
-        assert!(
-            first_frame > before && first_frame - before <= 4,
-            "the first frame builds the four badge shapes once: {}",
-            first_frame - before
+        let first = draw_badge_frame(cx);
+        assert_eq!(
+            first.len(),
+            12 * BADGE_CONTOURS,
+            "the ring, the body, the two contours of the highlight band and the rim, once per badge"
         );
         view.update(cx, |_, cx| cx.notify());
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert_eq!(
-            squircle_builds(),
-            first_frame,
-            "the second frame rebuilt a squircle"
-        );
+        let second = draw_badge_frame(cx);
+        assert_eq!(second, first, "every frame builds the same shapes again");
+    }
+
+    #[gpui::test]
+    fn a_badge_strip_that_moves_builds_its_shapes_at_the_new_origin(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 12,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(80.)));
+        let before = draw_badge_frame(cx);
+        let shift = gpui::px(40.);
+        view.update(cx, |strip, cx| {
+            strip.inset = shift;
+            cx.notify();
+        });
+        let after = draw_badge_frame(cx);
+        assert_eq!(after.len(), before.len());
+        for (moved, held) in after.iter().zip(&before) {
+            assert_eq!(moved.size, held.size);
+            assert_eq!(moved.origin, held.origin + gpui::point(shift, gpui::px(0.)));
+        }
+    }
+
+    fn expected_badge_contours(
+        body: gpui::Bounds<gpui::Pixels>,
+        scale: f32,
+    ) -> Vec<gpui::Bounds<gpui::Pixels>> {
+        let layers = badge_geometry(body, scale);
+        vec![
+            layers.ring.0,
+            layers.body.0,
+            layers.highlight.0,
+            layers.highlight.1,
+            layers.rim.0,
+        ]
+    }
+
+    #[gpui::test]
+    fn a_scale_change_rebuilds_every_badge_shape_for_the_new_scale(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 1,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(200.), gpui::px(80.)));
+        for scale in [2., 1., 1.5] {
+            cx.simulate_scale_factor_change(scale);
+            let built = draw_badge_frame(cx);
+            assert_eq!(built.len(), BADGE_CONTOURS);
+            assert_eq!(
+                built,
+                expected_badge_contours(built[1], scale),
+                "every contour follows the scale {scale}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn a_thousand_origins_build_each_badge_where_it_paints_and_retain_nothing(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = cx.add_window_view(|_, _| BadgeStrip {
+            tabs: 1,
+            inset: gpui::px(0.),
+        });
+        cx.simulate_resize(gpui::size(gpui::px(1100.), gpui::px(80.)));
+        let origin = draw_badge_frame(cx)[1].origin;
+        for step in 1..=1000 {
+            let inset = gpui::px(step as f32);
+            view.update(cx, |strip, cx| {
+                strip.inset = inset;
+                cx.notify();
+            });
+            let built = draw_badge_frame(cx);
+            assert_eq!(built.len(), BADGE_CONTOURS, "frame {step}");
+            assert_eq!(built[1].origin, origin + gpui::point(inset, gpui::px(0.)));
+        }
+    }
+
+    fn device_gap(
+        outer: gpui::Bounds<gpui::Pixels>,
+        inner: gpui::Bounds<gpui::Pixels>,
+        scale: f32,
+    ) -> f32 {
+        [
+            inner.left() - outer.left(),
+            outer.right() - inner.right(),
+            inner.top() - outer.top(),
+            outer.bottom() - inner.bottom(),
+        ]
+        .into_iter()
+        .map(|gap| f32::from(gap) * scale)
+        .fold(f32::INFINITY, f32::min)
     }
 
     #[test]
-    fn a_scale_change_rebuilds_each_badge_shape_once_then_reuses_it() {
-        let radius = gpui::px(5.);
-        let shape = |x: f32| {
-            gpui::Bounds::new(
-                gpui::point(gpui::px(x), gpui::px(4.)),
-                gpui::size(gpui::px(26.), gpui::px(17.)),
-            )
-        };
-        cached_squircle_path(shape(0.), radius, 1.5).unwrap();
-        let held = squircle_builds();
-        for tab in 0..12 {
-            cached_squircle_path(shape(30. * tab as f32), radius, 1.5).unwrap();
+    fn every_badge_layer_clears_the_contours_beneath_it_by_half_a_device_pixel() {
+        let bounds = gpui::Bounds::new(
+            gpui::point(gpui::px(40.), gpui::px(7.)),
+            gpui::size(gpui::px(22.), gpui::px(18.)),
+        );
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            let layers = badge_geometry(bounds, scale);
+            let (ring, body, rim) = (layers.ring.0, layers.body.0, layers.rim.0);
+            let (outer, inner, _) = layers.highlight;
+            let clear = |gap: f32| gap >= 0.5 - 1e-4;
+            assert!(
+                clear(device_gap(ring, body, scale)),
+                "body inside the ring at {scale}"
+            );
+            assert!(
+                clear(device_gap(body, rim, scale)),
+                "rim inside the body at {scale}"
+            );
+            assert!(
+                clear(device_gap(rim, outer, scale)),
+                "highlight inside the rim edge at {scale}"
+            );
+            let rim_inner_top = f32::from(rim.top() + gpui::px(1.));
+            let highlight_inner_top = f32::from(inner.top());
+            assert!(
+                clear((highlight_inner_top - rim_inner_top) * scale),
+                "the highlight band ends below the rim's inner edge at {scale}"
+            );
+            let near =
+                |a: gpui::Pixels, b: gpui::Pixels| (f32::from(a) - f32::from(b)).abs() < 1e-4;
+            assert!(
+                near(inner.top() - outer.top(), gpui::px(1.)),
+                "the highlight band stays 1 px thick"
+            );
+            assert!(near(inner.bottom(), outer.bottom()));
+            assert!(near(inner.left(), outer.left()) && near(inner.right(), outer.right()));
         }
-        assert_eq!(squircle_builds(), held);
-        cached_squircle_path(shape(0.), radius, 3.).unwrap();
-        assert_eq!(squircle_builds(), held + 1);
-        for tab in 0..12 {
-            cached_squircle_path(shape(30. * tab as f32), radius, 3.).unwrap();
-        }
-        assert_eq!(squircle_builds(), held + 1);
     }
 
     #[test]
@@ -2546,6 +2893,13 @@ mod tests {
     }
 
     #[test]
+    fn search_hits_label_names_a_single_hit_in_the_singular() {
+        assert_eq!(search_hits_label(1), "1 hit");
+        assert_eq!(search_hits_label(2), "2 hits");
+        assert_eq!(search_hits_label(12), "12 hits");
+    }
+
+    #[test]
     fn progress_chip_label_prefers_the_percentage_and_names_every_other_state() {
         let label = |state, percent| progress_chip_label(ProgressReport { state, percent });
 
@@ -2711,6 +3065,47 @@ mod tests {
             super::Pane::agent_title_from_terminal_title("user@host: /repo/codex-adapter"),
             None,
             "repo names must not be mistaken for agent processes"
+        );
+    }
+
+    #[test]
+    fn a_tab_bar_with_room_shows_every_control() {
+        assert_eq!(
+            super::fit_tab_bar(400., 25., 120.),
+            super::TabBarFit {
+                actions: true,
+                new_tab: true,
+                label: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_narrow_tab_bar_drops_the_actions_then_the_new_tab_button_then_the_label() {
+        let labelled = super::UNIFIED_TAB_MIN_WIDTH;
+        assert_eq!(
+            super::fit_tab_bar(labelled + 25. + 119., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: true,
+                label: true,
+            }
+        );
+        assert_eq!(
+            super::fit_tab_bar(labelled + 24., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: false,
+                label: true,
+            }
+        );
+        assert_eq!(
+            super::fit_tab_bar(labelled - 1., 25., 120.),
+            super::TabBarFit {
+                actions: false,
+                new_tab: false,
+                label: false,
+            }
         );
     }
 }

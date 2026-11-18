@@ -1,0 +1,16 @@
+[package]
+name = "paneflow-colrv1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Rasterizer for COLRv1 color glyphs, used by the vendored GPUI Linux text system to paint color emoji"
+
+[dependencies]
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std", "simd"] }
+
+[lints]
+workspace = true

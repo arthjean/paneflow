@@ -5,8 +5,10 @@ use crate::snapshot_ffi::{
     cell_grapheme, raw_cell_data, raw_cell_palette, raw_cell_rgb,
     render_cell_data, underline, wide_cell,
 };
-use crate::style::{StyleFlags, style_color};
-use crate::{Cell, CellFlags, Color, GhosttyError, Point, Result};
+use crate::style::{attribute_bits, style_color, underline_bits};
+use crate::{
+    Cell, CellFlags, Color, GhosttyError, Point, Result, UnderlineStyle,
+};
 
 impl DisplayTerminal {
     #[inline(always)]
@@ -39,26 +41,23 @@ impl DisplayTerminal {
         let background = cell_background(rendered.raw, raw.content_tag, style.bg_color)?;
         let row = i32::try_from(row)
             .map_err(|_| GhosttyError::AbiMismatch("snapshot row overflow".into()))?;
-        let attributes = StyleFlags::decode(style.flags);
+        let underline_style = underline(underline_bits(style.flags))?;
+        let underline_color = if underline_style != UnderlineStyle::None || raw.has_hyperlink {
+            style_color(style.underline_color)?
+        } else {
+            Color::Default
+        };
         Ok(Cell {
             point: Point::new(row, column),
             character,
             zerowidth,
             foreground,
             background,
-            flags: CellFlags {
-                bold: attributes.bold,
-                dim: attributes.faint,
-                italic: attributes.italic,
-                inverse: attributes.inverse,
-                invisible: attributes.invisible,
-                strikethrough: attributes.strikethrough,
-                overline: attributes.overline,
-                underline: underline(attributes.underline)?,
-            },
+            flags: CellFlags::from_attribute_bits(attribute_bits(style.flags), underline_style),
             wide: wide_cell(raw.wide)?,
             selected,
             hyperlink: raw.has_hyperlink,
+            underline_color,
         })
     }
 }

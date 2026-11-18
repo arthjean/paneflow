@@ -407,6 +407,12 @@ fn muted_line(text: String, ui: UiColors) -> AnyElement {
 
 pub(super) fn pace_line(pace: &Pace, ui: UiColors) -> AnyElement {
     let (icon, icon_color, text_color, text) = match pace {
+        Pace::Reached(text) => (
+            "icons/triangle-alert.svg",
+            level_color(UsageLevel::Critical, ui),
+            ui.text,
+            text,
+        ),
         Pace::ReachesLimit(text) => (
             "icons/triangle-alert.svg",
             level_color(UsageLevel::Warn, ui),

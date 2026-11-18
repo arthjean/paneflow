@@ -45,6 +45,10 @@ impl CodeView {
         cursor::page_rows(self.scroll.viewport_height(), CODE_ROW_HEIGHT)
     }
 
+    pub(crate) fn keep_h_offset(&mut self, h_offset: f32) {
+        self.h_offset = h_offset;
+    }
+
     pub(crate) fn reveal_cursor(&mut self) {
         let viewport_h = self.scroll.viewport_height();
         let geometry = self.geometry.get();
@@ -54,7 +58,7 @@ impl CodeView {
         };
         let offset = self.selection.cursor();
         let row = doc.byte_to_line(offset);
-        let column = cursor::goal_column(doc, offset);
+        let column = cursor::display_column(doc, offset);
         self.scroll.set_line_count(doc.line_count());
 
         let target = reveal_rows(row, viewport_h, self.scroll.max_rows(), self.scroll.rows());

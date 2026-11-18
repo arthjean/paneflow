@@ -6,8 +6,8 @@ mod render;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::NaiveDate;
 use gpui::{App, Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
+use jiff::civil::Date;
 use paneflow_agent_config::usage::accounts::{
     AccountOrigin, UsageAgent, claude_status_line_state, inventory,
 };
@@ -50,8 +50,8 @@ pub(crate) struct UsagePanel {
     open_agents_focus: FocusHandle,
     register_focus: Vec<FocusHandle>,
     register_scroll: Vec<ScrollHandle>,
-    register_cursor: Option<(usize, NaiveDate)>,
-    hover_day: Option<NaiveDate>,
+    register_cursor: Option<(usize, Date)>,
+    hover_day: Option<Date>,
     import: ImportStatus,
     import_focus: FocusHandle,
     auto_attempts: ProbeAttempts,
@@ -160,11 +160,12 @@ fn read_worker_snapshot() -> Option<WorkerUsage> {
     }
 }
 
-pub(super) fn day_at(now_ms: u64, utc_offset_secs: i32) -> NaiveDate {
+pub(super) fn day_at(now_ms: u64, utc_offset_secs: i32) -> Date {
     let local_secs = i64::try_from(now_ms / 1000)
         .unwrap_or(i64::MAX)
         .saturating_add(i64::from(utc_offset_secs));
-    chrono::DateTime::from_timestamp(local_secs, 0).map_or(NaiveDate::MIN, |at| at.date_naive())
+    jiff::Timestamp::from_second(local_secs)
+        .map_or(Date::MIN, |at| jiff::tz::Offset::UTC.to_datetime(at).date())
 }
 
 fn refresh_worker_usage(entries: &[InventoryEntry]) -> Option<WorkerUsage> {
@@ -743,9 +744,9 @@ mod tests {
             },
         });
         assert!(worker.apply_plan_limits(&relayed, now_ms));
-        let stamp = chrono::DateTime::from_timestamp_millis(i64::try_from(now_ms).unwrap())
+        let stamp = jiff::Timestamp::from_millisecond(i64::try_from(now_ms).unwrap())
             .unwrap()
-            .to_rfc3339();
+            .to_string();
         let transcript = projects.join("session.jsonl");
         std::fs::write(
             &transcript,
@@ -810,7 +811,7 @@ mod tests {
 
         let (ledger, revision) = usage.ledger.expect("the snapshot carries the ledger");
         assert!(revision.is_some());
-        let today = chrono::Local::now().date_naive();
+        let today = jiff::Zoned::now().date();
         assert_eq!(
             day_at(
                 now_ms,

@@ -217,3 +217,14 @@ changed `openpty` in `src/unix.rs` to open both ends of the PTY with
 `O_CLOEXEC`, and left out the published examples. It is MIT licensed,
 Copyright (c) 2018 Wez Furlong; the full text is in
 [vendor/portable-pty/LICENSE.md](vendor/portable-pty/LICENSE.md).
+
+## cosmic-text
+
+`vendor/cosmic-text/` is cosmic-text 0.19.0, Copyright (c) 2022 System76, as
+published on crates.io from
+https://github.com/pop-os/cosmic-text. Paneflow changed `ShapeWord::build` in
+`src/shape.rs` to end a shaping run where the script changes inside a word, and
+left out the published tests, benches and dev-dependencies. It is dual licensed
+under MIT or Apache-2.0; both texts are in
+[vendor/cosmic-text/LICENSE-MIT](vendor/cosmic-text/LICENSE-MIT) and
+[vendor/cosmic-text/LICENSE-APACHE](vendor/cosmic-text/LICENSE-APACHE).

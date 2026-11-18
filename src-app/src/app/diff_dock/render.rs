@@ -29,8 +29,12 @@ pub(super) fn dock_card_background(
     }
 }
 
-pub(super) fn dock_card_fill(frame: CardFrame, background: Hsla) -> AnyElement {
-    CardShape::from(frame).background(background)
+pub(super) fn dock_card_fill(
+    frame: CardFrame,
+    background: Hsla,
+    border: Option<Hsla>,
+) -> AnyElement {
+    CardShape::from(frame).background(background, border)
 }
 
 pub(super) fn dock_card_border(
@@ -82,6 +86,7 @@ pub(super) fn render_diff_tab_strip(
     frame: CardFrame,
     card_background: Hsla,
     scroll: &gpui::ScrollHandle,
+    strip_width: &std::rc::Rc<std::cell::Cell<f32>>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
@@ -137,6 +142,11 @@ pub(super) fn render_diff_tab_strip(
                 .child(crate::pane::tab_strip_fades(
                     scroll.clone(),
                     card_background,
+                ))
+                .child(crate::pane::keep_active_tab_in_view(
+                    scroll.clone(),
+                    active,
+                    strip_width.clone(),
                 )),
         )
         .child(

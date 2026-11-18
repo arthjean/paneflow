@@ -98,6 +98,7 @@ pub(crate) struct WindowRow {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Pace {
+    Reached(String),
     ReachesLimit(String),
     OnTrack(String),
 }
@@ -345,6 +346,10 @@ fn window_row(reading: &WindowReading, now: u64, offset: i32) -> WindowRow {
         reset,
         reset_note,
         pace: reading.projection.map(|projection| match projection {
+            Projection::Reached => Pace::Reached(format!(
+                "Weekly limit reached. It resets {}.",
+                reset_text(reading.resets_at, now, offset)
+            )),
             Projection::ReachesLimit {
                 at,
                 before_reset_secs,
@@ -1033,6 +1038,22 @@ mod tests {
             rows[0].pace,
             Some(Pace::OnTrack(
                 "On track: about 66% of the week used when it resets.".into()
+            ))
+        );
+
+        let full = [plan(
+            UsageAgent::ClaudeCode,
+            "/home/a/.claude",
+            [None, Some(window(100., WEEK, WEEK_RESET))],
+            NOW_MS,
+        )];
+        let BlockBody::Windows(rows) = &view(&inventory, &full, None).blocks[0].body else {
+            panic!("windows");
+        };
+        assert_eq!(
+            rows[0].pace,
+            Some(Pace::Reached(
+                "Weekly limit reached. It resets Thu 09:00.".into()
             ))
         );
     }

@@ -1,20 +1,23 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use gpui::{Font, FontStyle, FontWeight, px};
+use gpui::{Font, FontStyle, FontWeight, Styled, px};
 use paneflow_terminal_ghostty as ghostty;
 
 use crate::theme::ThemePalette;
 
 use crate::bench_harness::{
-    Direction, Metric, allocation_counters, measure, measure_segments, process_cpu_time, publish,
-    refuse_debug_profile,
+    Direction, Metric, SegmentTimer, allocation_counters, measure, measure_segments,
+    process_cpu_time, publish, refuse_debug_profile,
 };
 
 use super::bench_corpus::{CORPUS_SEED, deterministic_streams};
 use super::element::{
-    CellDimensions, LayoutInputs, RowLayoutCache, base_font, layout_from_snapshot,
-    layout_from_snapshot_cached, overscan_row_layout,
+    CellDimensions, LayoutInputs, RowLayoutCache, base_font, decoration_and_sprite_counts,
+    embedded_mono_cell_metrics, layout_from_snapshot, layout_from_snapshot_cached,
+    overscan_row_layout, paint_decoration_paths, paint_sprite_paths,
 };
 use super::ghostty_session::{
     CellMirror, RUNTIME_LOOP_ATTENTIVE_REASONS, RUNTIME_LOOP_GATE_WAITS, RUNTIME_LOOP_IDLE_WAITS,
@@ -571,6 +574,165 @@ fn pipeline_scenario(metrics: &mut Vec<Metric>) {
     });
 }
 
+const PATH_BENCH_COLS: usize = 200;
+const PATH_BENCH_ROWS: usize = 50;
+const PATH_BENCH_FONT_SIZE: f32 = 14.0;
+const PATH_BENCH_SCALE_FACTOR: f32 = 2.0;
+const TAB_STRIP_BADGES: usize = 12;
+const TAB_STRIP_PITCH: f32 = 140.0;
+const BOX_DRAWING_ROW: &str = "╭╮╰╯╱╲╳";
+
+type PathPaint = Rc<dyn Fn(&mut gpui::Window, &mut gpui::App)>;
+
+struct PathPaintBench {
+    paint: PathPaint,
+    timer: Rc<RefCell<SegmentTimer>>,
+}
+
+impl gpui::Render for PathPaintBench {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        let paint = self.paint.clone();
+        let timer = self.timer.clone();
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, _, window, cx| timer.borrow_mut().time(|| paint(window, cx)),
+        )
+        .size_full()
+    }
+}
+
+fn measure_path_paint(
+    cx: &mut gpui::TestAppContext,
+    name: &'static str,
+    note: &'static str,
+    paint: PathPaint,
+) -> Metric {
+    let shared = Rc::new(RefCell::new(SegmentTimer::default()));
+    let timer = shared.clone();
+    let (_view, cx) = cx.add_window_view(move |_, _| PathPaintBench { paint, timer });
+    cx.simulate_resize(gpui::size(px(1800.0), px(1000.0)));
+    cx.simulate_scale_factor_change(PATH_BENCH_SCALE_FACTOR);
+    measure_segments(name, note, 20, 300, |timer| {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        *timer = std::mem::take(&mut *shared.borrow_mut());
+    })
+}
+
+fn path_layout(bytes: &[u8]) -> super::element::LayoutState {
+    let mut term = terminal(PATH_BENCH_COLS, PATH_BENCH_ROWS);
+    term.feed(bytes).expect("path corpus must parse");
+    let content = Publisher::default().publish(&mut term).clone();
+    let theme = crate::theme::paneflow_dark();
+    let palette = ThemePalette::from_theme(&theme);
+    layout_from_snapshot(layout_inputs(
+        &content,
+        PATH_BENCH_COLS,
+        PATH_BENCH_ROWS,
+        &theme,
+        &palette,
+        0.0,
+    ))
+}
+
+fn screen_of(row: impl Fn(usize) -> String) -> Vec<u8> {
+    (0..PATH_BENCH_ROWS)
+        .map(|line| {
+            let separator = if line + 1 < PATH_BENCH_ROWS {
+                "\r\n"
+            } else {
+                ""
+            };
+            format!("{}{separator}", row(line))
+        })
+        .collect::<String>()
+        .into_bytes()
+}
+
+fn curly_underline_screen() -> Vec<u8> {
+    screen_of(|line| {
+        let text: String = (0..PATH_BENCH_COLS)
+            .map(|col| char::from(b'a' + ((line + col) % 26) as u8))
+            .collect();
+        format!("\x1b[4:3m{text}\x1b[0m")
+    })
+}
+
+fn box_drawing_screen() -> Vec<u8> {
+    screen_of(|_| {
+        BOX_DRAWING_ROW
+            .chars()
+            .cycle()
+            .take(PATH_BENCH_COLS)
+            .collect()
+    })
+}
+
+fn tab_strip_badges() -> Vec<gpui::Bounds<gpui::Pixels>> {
+    (0..TAB_STRIP_BADGES)
+        .map(|index| {
+            gpui::Bounds::new(
+                gpui::point(px(12.0 + TAB_STRIP_PITCH * index as f32), px(7.0)),
+                gpui::size(
+                    px(crate::pane::TAB_BADGE_WIDTH),
+                    px(crate::pane::TAB_BADGE_HEIGHT),
+                ),
+            )
+        })
+        .collect()
+}
+
+fn path_scenarios(metrics: &mut Vec<Metric>) {
+    let cell_metrics =
+        embedded_mono_cell_metrics(px(PATH_BENCH_FONT_SIZE), PATH_BENCH_SCALE_FACTOR);
+    let mut cx = gpui::TestAppContext::single();
+
+    let badges = tab_strip_badges();
+    let (background, ring) = crate::pane::tinted_badge_colors(gpui::rgba(0x4f7cffff));
+    metrics.push(measure_path_paint(
+        &mut cx,
+        "paths_tab_strip_12_badges",
+        "paint of 12 tab badges at scale 2, each building its ring, body, two-contour highlight band and rim (48 shapes) at their final bounds and binning those 4 paths",
+        Rc::new(move |window, _| {
+            for &bounds in &badges {
+                crate::pane::paint_badge_tile(bounds, background, ring, window);
+            }
+        }),
+    ));
+
+    let curly = Rc::new(path_layout(&curly_underline_screen()));
+    assert_eq!(
+        decoration_and_sprite_counts(&curly).0,
+        PATH_BENCH_ROWS,
+        "every row of the curly corpus carries one curly underline"
+    );
+    metrics.push(measure_path_paint(
+        &mut cx,
+        "paths_curly_underline_200x50",
+        "terminal decoration paint of a 200x50 screen with a curly underline on every row: one cached undercurl mask per cell, painted as a sprite at scale 2",
+        Rc::new(move |window, cx| paint_decoration_paths(&curly, cell_metrics, window, cx)),
+    ));
+
+    let box_drawing = Rc::new(path_layout(&box_drawing_screen()));
+    assert_eq!(
+        decoration_and_sprite_counts(&box_drawing).1,
+        PATH_BENCH_COLS * PATH_BENCH_ROWS,
+        "every cell of the box-drawing corpus is an arc or a diagonal sprite"
+    );
+    metrics.push(measure_path_paint(
+        &mut cx,
+        "paths_box_drawing_200x50",
+        "terminal sprite paint of a 200x50 screen of rounded corners and diagonals: one cached mask per arc, diagonal or cross, painted as a sprite at scale 2",
+        Rc::new(move |window, cx| paint_sprite_paths(&box_drawing, cell_metrics, window, cx)),
+    ));
+}
+
 #[test]
 #[ignore = "terminal performance benchmark: run through scripts/bench-terminal"]
 fn terminal_pipeline_benchmark() {
@@ -589,6 +751,7 @@ fn terminal_pipeline_benchmark() {
     render_thread_lookups(&mut metrics);
     gate_scenario(&mut metrics);
     pipeline_scenario(&mut metrics);
+    path_scenarios(&mut metrics);
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("{acc_delta}");

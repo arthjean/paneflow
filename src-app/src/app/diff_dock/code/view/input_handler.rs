@@ -103,7 +103,7 @@ impl EntityInputHandler for CodeView {
         let doc = self.state.document()?;
         let start = doc.utf16_to_byte(range_utf16.start);
         let row = doc.byte_to_line(start);
-        let column = cursor::goal_column(doc, start);
+        let column = cursor::display_column(doc, start);
         let hits = self.hits.borrow();
         let (x, y) = if hits.lines.is_empty() {
             (
@@ -136,7 +136,7 @@ impl EntityInputHandler for CodeView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::super::tests::*;
     use super::*;
@@ -161,6 +161,47 @@ mod tests {
             f32::from(caret.origin.y),
             view.read_with(cx, |view, _| view.row_top(0)),
             "the IME caret sits on the painted row"
+        );
+    }
+
+    #[gpui::test]
+    fn the_ime_follows_the_caret_without_a_preedit(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/ime-follow.rs", "\tlet answer = 43;\n");
+        let reported = |view: &Entity<CodeView>, cx: &mut VisualTestContext| {
+            view.read_with(cx, |view, _| view.ime_caret.reported())
+        };
+        let caret = |view: &Entity<CodeView>, cx: &mut VisualTestContext| {
+            view.update_in(cx, |view, window, cx| {
+                let selection = view.selected_text_range(false, window, cx)?;
+                let element_bounds = view.scroll.bounds();
+                view.bounds_for_range(selection.range, element_bounds, window, cx)
+            })
+        };
+
+        frame(&view, cx);
+        assert_eq!(
+            reported(&view, cx),
+            None,
+            "an unfocused editor owns no IME caret"
+        );
+
+        cx.update(|window, cx| view.read(cx).focus.clone().focus(window, cx));
+        frame(&view, cx);
+        let at_start = caret(&view, cx).expect("a laid out caret");
+        assert_eq!(
+            reported(&view, cx),
+            Some(at_start),
+            "focus reports the editor's caret, not the previous owner's"
+        );
+
+        view.update_in(cx, |view, window, cx| view.end(&CeEnd, window, cx));
+        frame(&view, cx);
+        let at_end = caret(&view, cx).expect("a laid out caret");
+        assert!(at_end.origin.x > at_start.origin.x, "End moved the caret");
+        assert_eq!(
+            reported(&view, cx),
+            Some(at_end),
+            "a caret move reports the new caret"
         );
     }
 }

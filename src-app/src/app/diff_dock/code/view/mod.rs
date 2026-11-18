@@ -56,6 +56,7 @@ use super::spawn_blocking_then;
 use crate::diff::{DiffSyntax, highlight_lines, palette};
 use crate::settings::components::menu_surface;
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
+use crate::widgets::ime_caret::ImeCaretReport;
 pub(crate) use keymap::*;
 use render::*;
 
@@ -152,6 +153,7 @@ pub(crate) struct CodeView {
     geometry: Rc<Cell<CodeGeometry>>,
     gutter_memo: Rc<Cell<GutterMemo>>,
     hits: Rc<RefCell<CodeHitMap>>,
+    pub(super) ime_caret: ImeCaretReport,
     element_id: SharedString,
     history: edit::UndoHistory,
     saved_mark: edit::HistoryMark,
@@ -215,6 +217,7 @@ impl CodeView {
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
             hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            ime_caret: ImeCaretReport::default(),
             history: edit::UndoHistory::default(),
             saved_mark: edit::HistoryMark::default(),
             indent: IndentUnit::Spaces(4),
@@ -277,6 +280,7 @@ impl CodeView {
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
             hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            ime_caret: ImeCaretReport::default(),
             history: edit::UndoHistory::default(),
             saved_mark: edit::HistoryMark::default(),
             indent: IndentUnit::Spaces(4),

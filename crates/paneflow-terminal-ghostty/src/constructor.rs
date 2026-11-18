@@ -11,6 +11,7 @@ use crate::{BackendEvent, ColorScheme, GhosttyError, Result, TerminalAppearance,
 
 const MAX_APC_BYTES: usize = 1024 * 1024;
 const COLOR_SCHEME_UPDATES_MODE: u16 = 2031;
+const GRAPHEME_CLUSTER_MODE: u16 = 2027;
 
 impl DisplayTerminal {
     pub fn new(
@@ -64,6 +65,7 @@ impl DisplayTerminal {
         callbacks::install(terminal.raw(), (&mut *callbacks) as *mut CallbackState)?;
         configure_scrollback(terminal.raw(), max_scrollback)?;
         configure_safety_limits(terminal.raw())?;
+        configure_grapheme_clustering(terminal.raw())?;
         configure_appearance(terminal.raw(), appearance)?;
         crate::engine::resize_terminal(terminal.raw(), size)?;
         unsafe { Self::assemble(terminal, callbacks, allocator) }
@@ -223,6 +225,21 @@ pub(crate) fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<
     Ok(())
 }
 
+pub(crate) fn configure_grapheme_clustering(terminal: sys::GhosttyTerminal) -> Result<()> {
+    let config = sys::GhosttyTerminalModeConfig {
+        mode: GRAPHEME_CLUSTER_MODE,
+        value: true,
+    };
+    let result = unsafe {
+        sys::ghostty_terminal_set(
+            terminal,
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+            (&raw const config).cast::<c_void>(),
+        )
+    };
+    check("terminal_set_grapheme_cluster_default", result)
+}
+
 pub(crate) fn configure_scrollback(terminal: sys::GhosttyTerminal, max_scrollback: usize) -> Result<()> {
     let result = unsafe {
         sys::ghostty_terminal_set(
@@ -352,6 +369,92 @@ mod tests {
         free: Some(tracked_free),
         reserved: [std::ptr::null_mut(); 4],
     };
+
+    fn columns_of(terminal: &mut DisplayTerminal, markers: &[char]) -> Vec<usize> {
+        let content = terminal.snapshot().expect("snapshot must succeed");
+        markers
+            .iter()
+            .map(|marker| {
+                content
+                    .cells
+                    .iter()
+                    .find(|cell| cell.point.line == 0 && cell.character == *marker)
+                    .map_or(usize::MAX, |cell| cell.point.column)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn emoji_graphemes_take_two_cells_even_after_a_reset_or_a_restore() {
+        let line = "\u{2764}\u{fe0f}a\u{1f44d}\u{1f3fd}b\u{1f1ef}\u{1f1f5}c\u{1f469}\u{200d}\u{1f4bb}d";
+        let markers = ['a', 'b', 'c', 'd'];
+        let expected = vec![2, 5, 8, 11];
+        let mut terminal =
+            DisplayTerminal::new(WindowSize::new(40, 4, 8, 16).unwrap(), 100, TerminalAppearance::default())
+                .expect("terminal must initialize");
+        terminal.feed(line.as_bytes()).expect("emoji output must parse");
+        assert_eq!(columns_of(&mut terminal, &markers), expected);
+
+        terminal
+            .feed(format!("\x1bc{line}").as_bytes())
+            .expect("a full reset must parse");
+        assert_eq!(columns_of(&mut terminal, &markers), expected, "after RIS");
+
+        let encoded = terminal.encode_snapshot().expect("terminal must encode");
+        let mut decoder = crate::SnapshotDecoder::from_bytes(&encoded).expect("decoder must open");
+        decoder
+            .decode(crate::SnapshotRestore {
+                max_scrollback: 100,
+                cell_width: 8,
+                cell_height: 16,
+                appearance: TerminalAppearance::default(),
+            })
+            .expect("snapshot must decode");
+        let mut restored = decoder.into_terminal().expect("decode produces a terminal");
+        restored
+            .feed(format!("\x1bc{line}").as_bytes())
+            .expect("output after a restore must parse");
+        assert_eq!(columns_of(&mut restored, &markers), expected, "after a reset of a restored terminal");
+    }
+
+    #[test]
+    fn a_spacing_vowel_sign_stays_with_its_consonant_at_a_wrap_and_after_a_reflow() {
+        let consonant_row = |terminal: &mut DisplayTerminal| {
+            let content = terminal.snapshot().expect("snapshot must succeed");
+            content
+                .cells
+                .iter()
+                .filter(|cell| cell.character == '\u{915}' || cell.character == '\u{93f}')
+                .map(|cell| {
+                    (
+                        cell.point.line,
+                        cell.character,
+                        cell.zerowidth.as_deref().map(<[char]>::to_vec),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut terminal =
+            DisplayTerminal::new(WindowSize::new(10, 4, 8, 16).unwrap(), 100, TerminalAppearance::default())
+                .expect("terminal must initialize");
+        terminal
+            .feed("123456789\u{915}\u{93f}x".as_bytes())
+            .expect("Devanagari output must parse");
+        assert_eq!(
+            consonant_row(&mut terminal),
+            vec![(1, '\u{915}', Some(vec!['\u{93f}']))],
+            "at the wrap the cluster moves to the next row whole"
+        );
+        terminal
+            .resize(WindowSize::new(7, 4, 8, 16).unwrap())
+            .expect("a narrower grid must reflow");
+        terminal
+            .resize(WindowSize::new(13, 4, 8, 16).unwrap())
+            .expect("a wider grid must reflow");
+        let after = consonant_row(&mut terminal);
+        assert_eq!(after.len(), 1, "after a reflow: {after:?}");
+        assert_eq!(after[0].2, Some(vec!['\u{93f}']), "after a reflow");
+    }
 
     #[test]
     fn configured_default_colors_answer_osc_queries() {

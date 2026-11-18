@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use chrono::{Datelike, Days, NaiveDate};
+use jiff::Span;
+use jiff::civil::Date;
 use paneflow_agent_config::runtime_catalog::runtime_by_slug;
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key};
 use paneflow_serve::usage::ledger::{DayTally, LedgerAccount, LedgerDays};
@@ -154,15 +155,15 @@ pub(crate) struct ActivityInputs<'a> {
     pub(crate) ledger: &'a LedgerDays,
     pub(crate) inventory: &'a [InventoryEntry],
     pub(crate) home: Option<&'a Path>,
-    pub(crate) today: NaiveDate,
+    pub(crate) today: Date,
     pub(crate) metric: Metric,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ActivityView {
     pub(crate) metric: Metric,
-    pub(crate) first_day: NaiveDate,
-    pub(crate) today: NaiveDate,
+    pub(crate) first_day: Date,
+    pub(crate) today: Date,
     pub(crate) months: Vec<(usize, &'static str)>,
     pub(crate) registers: Vec<Register>,
 }
@@ -183,15 +184,15 @@ impl ActivityView {
         self.registers.is_empty()
     }
 
-    pub(crate) fn day_index(&self, day: NaiveDate) -> Option<usize> {
-        let offset = day.signed_duration_since(self.first_day).num_days();
-        (0..=self.today.signed_duration_since(self.first_day).num_days())
+    pub(crate) fn day_index(&self, day: Date) -> Option<usize> {
+        let offset = days_between(self.first_day, day);
+        (0..=days_between(self.first_day, self.today))
             .contains(&offset)
             .then(|| usize::try_from(offset).ok())
             .flatten()
     }
 
-    pub(crate) fn detail(&self, day: NaiveDate) -> String {
+    pub(crate) fn detail(&self, day: Date) -> String {
         let index = self.day_index(day);
         let names: Vec<&str> = self
             .registers
@@ -225,7 +226,7 @@ impl ActivityView {
         format!("{}: {}", short_date(day), parts.join(" · "))
     }
 
-    pub(crate) fn cell_name(&self, day: NaiveDate, value: u64) -> String {
+    pub(crate) fn cell_name(&self, day: Date, value: u64) -> String {
         let amount = if value == 0 {
             "no activity".to_string()
         } else {
@@ -248,49 +249,62 @@ impl ActivityView {
     }
 }
 
-pub(crate) fn short_date(day: NaiveDate) -> String {
+pub(crate) fn short_date(day: Date) -> String {
     format!(
         "{}, {} {}",
-        WEEKDAYS[day.weekday().num_days_from_monday() as usize],
-        MONTHS[day.month0() as usize],
+        WEEKDAYS[weekday_row(day)],
+        MONTHS[month_index(day)],
         day.day()
     )
 }
 
-pub(crate) fn long_date(day: NaiveDate) -> String {
+pub(crate) fn long_date(day: Date) -> String {
     format!(
         "{}, {} {}, {}",
-        WEEKDAY_NAMES[day.weekday().num_days_from_monday() as usize],
-        MONTH_NAMES[day.month0() as usize],
+        WEEKDAY_NAMES[weekday_row(day)],
+        MONTH_NAMES[month_index(day)],
         day.day(),
         day.year()
     )
 }
 
-pub(crate) fn first_day(today: NaiveDate) -> NaiveDate {
-    let monday = today
-        .checked_sub_days(Days::new(u64::from(today.weekday().num_days_from_monday())))
-        .unwrap_or(today);
-    monday
-        .checked_sub_days(Days::new(7 * (WEEKS as u64 - 1)))
-        .unwrap_or(monday)
+fn weekday_row(day: Date) -> usize {
+    day.weekday().to_monday_zero_offset().unsigned_abs().into()
 }
 
-fn month_labels(first: NaiveDate) -> Vec<(usize, &'static str)> {
+fn month_index(day: Date) -> usize {
+    (day.month() - 1).unsigned_abs().into()
+}
+
+pub(crate) fn days_between(from: Date, to: Date) -> i64 {
+    i64::from((to - from).get_days())
+}
+
+pub(crate) fn shift_days(day: Date, days: i64) -> Option<Date> {
+    let span = Span::new().try_days(days).ok()?;
+    day.checked_add(span).ok()
+}
+
+pub(crate) fn first_day(today: Date) -> Date {
+    let monday = shift_days(today, -(weekday_row(today) as i64)).unwrap_or(today);
+    shift_days(monday, -7 * (WEEKS as i64 - 1)).unwrap_or(monday)
+}
+
+fn month_labels(first: Date) -> Vec<(usize, &'static str)> {
     let mut labels = Vec::new();
     let mut previous = None;
     let mut last_column: Option<usize> = None;
     for column in 0..WEEKS {
-        let Some(monday) = first.checked_add_days(Days::new(7 * column as u64)) else {
+        let Some(monday) = shift_days(first, 7 * column as i64) else {
             break;
         };
-        if previous == Some(monday.month0()) {
+        if previous == Some(month_index(monday)) {
             continue;
         }
-        previous = Some(monday.month0());
+        previous = Some(month_index(monday));
         let room = last_column.is_none_or(|last| column - last >= 3);
         if (column > 0 || monday.day() <= 17) && room && column + 2 <= WEEKS {
-            labels.push((column, MONTHS[monday.month0() as usize]));
+            labels.push((column, MONTHS[month_index(monday)]));
             last_column = Some(column);
         }
     }
@@ -355,8 +369,7 @@ pub(crate) fn level(value: u64, thresholds: [u64; 3]) -> u8 {
 
 pub(crate) fn activity_view(inputs: &ActivityInputs<'_>) -> ActivityView {
     let first = first_day(inputs.today);
-    let span =
-        usize::try_from(inputs.today.signed_duration_since(first).num_days() + 1).unwrap_or(0);
+    let span = usize::try_from(days_between(first, inputs.today) + 1).unwrap_or(0);
     let mut rows: Vec<((u8, String, usize, String), Register)> = Vec::new();
     for (account, days) in inputs.ledger {
         let window = days.range(first..=inputs.today);
@@ -368,7 +381,7 @@ pub(crate) fn activity_view(inputs: &ActivityInputs<'_>) -> ActivityView {
         }
         let mut values = vec![0; span];
         for (day, tally) in window {
-            if let Ok(offset) = usize::try_from(day.signed_duration_since(first).num_days())
+            if let Ok(offset) = usize::try_from(days_between(first, *day))
                 && let Some(slot) = values.get_mut(offset)
             {
                 *slot = inputs.metric.value(tally);
@@ -424,21 +437,19 @@ pub(crate) fn activity_view(inputs: &ActivityInputs<'_>) -> ActivityView {
     }
 }
 
-pub(crate) fn step_day(view: &ActivityView, day: NaiveDate, key: &str) -> NaiveDate {
-    let row = u64::from(day.weekday().num_days_from_monday());
+pub(crate) fn step_day(view: &ActivityView, day: Date, key: &str) -> Date {
+    let row = weekday_row(day) as i64;
     let target = match key {
-        "left" => day.checked_sub_days(Days::new(7)),
-        "right" => day.checked_add_days(Days::new(7)),
-        "up" if row > 0 => day.checked_sub_days(Days::new(1)),
-        "down" if row < 6 => day.checked_add_days(Days::new(1)),
-        "home" => view.first_day.checked_add_days(Days::new(row)),
+        "left" => shift_days(day, -7),
+        "right" => shift_days(day, 7),
+        "up" if row > 0 => shift_days(day, -1),
+        "down" if row < 6 => shift_days(day, 1),
+        "home" => shift_days(view.first_day, row),
         "end" => {
-            let last_week = view
-                .first_day
-                .checked_add_days(Days::new(7 * (WEEKS as u64 - 1) + row));
+            let last_week = shift_days(view.first_day, 7 * (WEEKS as i64 - 1) + row);
             last_week.and_then(|candidate| {
                 if candidate > view.today {
-                    candidate.checked_sub_days(Days::new(7))
+                    shift_days(candidate, -7)
                 } else {
                     Some(candidate)
                 }
@@ -461,13 +472,13 @@ mod tests {
 
     use super::*;
 
-    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    fn date(year: i16, month: i8, day: i8) -> Date {
+        Date::new(year, month, day).unwrap()
     }
 
-    const TODAY: (i32, u32, u32) = (2026, 8, 18);
+    const TODAY: (i16, i8, i8) = (2026, 8, 18);
 
-    fn today() -> NaiveDate {
+    fn today() -> Date {
         date(TODAY.0, TODAY.1, TODAY.2)
     }
 
@@ -540,9 +551,9 @@ mod tests {
     #[test]
     fn the_grid_spans_fifty_three_weeks_from_a_monday_and_stops_today() {
         let first = first_day(today());
-        assert_eq!(first.weekday(), chrono::Weekday::Mon);
+        assert_eq!(first.weekday(), jiff::civil::Weekday::Monday);
         assert_eq!(
-            today().signed_duration_since(first).num_days(),
+            days_between(first, today()),
             52 * 7 + 1,
             "2026-08-18 is a Tuesday in the last column"
         );
@@ -552,7 +563,7 @@ mod tests {
                 .iter()
                 .all(|register| register.values.len() == 52 * 7 + 2)
         );
-        assert_eq!(view.day_index(today().succ_opt().unwrap()), None);
+        assert_eq!(view.day_index(today().tomorrow().unwrap()), None);
     }
 
     #[test]

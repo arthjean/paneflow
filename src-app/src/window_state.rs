@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use gpui::{App, Bounds, Pixels, Size, Window, px, size};
+use gpui::{App, Bounds, Decorations, Pixels, Size, Window, px, size};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_WINDOW_WIDTH: f32 = 1200.;
@@ -111,11 +111,32 @@ pub(crate) fn minimum_size() -> Size<Pixels> {
     size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))
 }
 
-pub(crate) fn record_windowed_size(window: &Window) {
+pub(crate) fn windowed_bounds(window: &Window) -> Option<Bounds<Pixels>> {
     if window.is_maximized() || window.is_fullscreen() {
-        return;
+        return None;
     }
-    let size = window.window_bounds().get_bounds().size;
+    let inner = window.inner_window_bounds().get_bounds().size;
+    let size = restorable_size(inner, window.window_decorations())?;
+    Some(Bounds::new(
+        window.window_bounds().get_bounds().origin,
+        size,
+    ))
+}
+
+fn restorable_size(inner: Size<Pixels>, decorations: Decorations) -> Option<Size<Pixels>> {
+    if let Decorations::Client { tiling } = decorations
+        && tiling.is_tiled()
+    {
+        return None;
+    }
+    let frame = crate::window_chrome::csd::client_frame_inset(decorations) * 2.0;
+    Some(size(inner.width + frame, inner.height + frame))
+}
+
+pub(crate) fn record_windowed_size(window: &Window) {
+    let Some(Bounds { size, .. }) = windowed_bounds(window) else {
+        return;
+    };
     let state = PersistedWindowSize {
         width: size.width.into(),
         height: size.height.into(),
@@ -148,15 +169,17 @@ pub(crate) fn record_sidebar_width(width: Option<f32>) {
 }
 
 pub(crate) fn save() {
+    if let Some(path) = state_path() {
+        save_to(&path);
+    }
+}
+
+fn save_to(path: &std::path::Path) {
     let Some(size) = *last_windowed_size_guard() else {
         return;
     };
     let state = PersistedWindowState::new(size, *agents_section_guard(), *sidebar_width_guard());
-
-    let Some(path) = state_path() else {
-        return;
-    };
-    if let Err(error) = write_state(&path, &state) {
+    if let Err(error) = write_state(path, &state) {
         log::warn!("window state: failed to persist: {error}");
     }
 }
@@ -238,6 +261,40 @@ mod tests {
             .status()
             .is_ok_and(|status| status.success());
         assert!(made, "mkfifo {}", path.display());
+    }
+
+    #[test]
+    fn the_restorable_size_adds_the_client_frame_whatever_inset_the_window_reports() {
+        let floating = Decorations::Client {
+            tiling: gpui::Tiling::default(),
+        };
+        let inset = f32::from(crate::window_chrome::csd::client_frame_inset(floating));
+        assert!(inset > 0.0);
+        let frame = gpui::size(px(1180.0), px(780.0));
+        assert_eq!(
+            restorable_size(frame, floating),
+            Some(gpui::size(
+                px(1180.0 + 2.0 * inset),
+                px(780.0 + 2.0 * inset)
+            ))
+        );
+        assert_eq!(restorable_size(frame, Decorations::Server), Some(frame));
+    }
+
+    #[test]
+    fn a_tiled_window_records_no_restorable_size() {
+        let tiled = Decorations::Client {
+            tiling: gpui::Tiling {
+                left: true,
+                top: true,
+                bottom: true,
+                right: false,
+            },
+        };
+        assert_eq!(
+            restorable_size(gpui::size(px(720.0), px(900.0)), tiled),
+            None
+        );
     }
 
     #[cfg(unix)]
@@ -405,5 +462,62 @@ mod tests {
         )
         .expect("seed");
         assert!(load_from(&oversized).is_none());
+    }
+
+    struct BoundsProbe;
+
+    impl gpui::Render for BoundsProbe {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            gpui::Empty
+        }
+    }
+
+    #[gpui::test]
+    fn a_fullscreen_round_trip_saves_the_windowed_size(cx: &mut gpui::TestAppContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            cx.observe_window_bounds(window, |_, window, _| record_windowed_size(window))
+                .detach();
+            BoundsProbe
+        });
+        let windowed = gpui::size(px(1000.), px(700.));
+        let screen = gpui::size(px(1920.), px(1080.));
+
+        cx.simulate_resize(windowed);
+        cx.run_until_parked();
+        cx.update(|window, _| window.toggle_fullscreen());
+        cx.run_until_parked();
+        cx.simulate_resize(screen);
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert!(window.is_fullscreen());
+            assert_eq!(windowed_bounds(window), None);
+        });
+        assert!(!path.exists(), "the bounds observer wrote the state file");
+        let fullscreen_path = dir.path().join("fullscreen-window-state.json");
+        save_to(&fullscreen_path);
+        let saved = load_from(&fullscreen_path).expect("saved while fullscreen");
+        assert_eq!((saved.size.width, saved.size.height), (1000., 700.));
+
+        cx.update(|window, _| window.toggle_fullscreen());
+        cx.run_until_parked();
+        cx.simulate_resize(windowed);
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert_eq!(
+                windowed_bounds(window).map(|bounds| bounds.size),
+                Some(windowed)
+            );
+        });
+        assert!(!path.exists(), "the bounds observer wrote the state file");
+
+        save_to(&path);
+        let saved = load_from(&path).expect("saved");
+        assert_eq!((saved.size.width, saved.size.height), (1000., 700.));
     }
 }

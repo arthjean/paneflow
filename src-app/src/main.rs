@@ -24,6 +24,9 @@ mod bench_harness;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod color_emoji_raster;
 mod command_sessions;
 mod config_snapshot;
 mod config_writer;
@@ -33,6 +36,7 @@ mod env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
+mod frame_policy;
 mod fs_probe;
 mod git_command;
 #[cfg(test)]
@@ -52,6 +56,9 @@ mod opencode_sessions;
 mod pane;
 mod pane_drag;
 mod pi_sessions;
+mod probe_log;
+#[cfg(test)]
+mod redraw_guard;
 mod runtime_paths;
 mod search;
 mod settings;
@@ -62,8 +69,11 @@ mod space_env;
 mod startup_bench;
 mod startup_trace;
 mod system_info;
+mod tab_stops;
 mod telemetry;
 mod terminal;
+#[cfg(test)]
+mod text_wrap_probe;
 pub mod theme;
 mod tmux_compat;
 mod ui_primitives;
@@ -146,6 +156,7 @@ struct DiffDockState {
     pub(crate) generation: u64,
     pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) tab_scroll: gpui::ScrollHandle,
+    pub(crate) tab_strip_width: std::rc::Rc<std::cell::Cell<f32>>,
     pub(crate) diff_options_menu_open: bool,
     pub(crate) diff_options: crate::diff::DiffOptions,
     pub(crate) diff_new_tab_menu_open: bool,

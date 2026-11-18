@@ -38,6 +38,7 @@ env:
   CARGO_TERM_COLOR: always
   PERF_AB_BLOCKING: "false"
   PERF_AB_INSTRUCTIONS_BLOCKING: "true"
+  PERF_AB_TIMED_EDITOR: "0"
 
 jobs:
   ab:

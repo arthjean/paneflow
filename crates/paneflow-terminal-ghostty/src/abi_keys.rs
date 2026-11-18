@@ -167,6 +167,7 @@ pub(crate) const KEY_CONTRACTS: &[KeyContract] = keys![
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE => "GhosttyString": sys::GhosttyString,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT => "u64": u64,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE => "GhosttyTerminalModeConfig": sys::GhosttyTerminalModeConfig,
+    GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT => "GhosttyTerminalModeConfig": sys::GhosttyTerminalModeConfig,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS => "GhosttyTerminalProgramStatusFn": Callback,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT => "GhosttyTerminalProgressReportFn": Callback,
     GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED => "GhosttyTerminalPwdChangedFn": Callback,

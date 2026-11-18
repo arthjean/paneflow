@@ -156,16 +156,88 @@ pub enum WideCell {
     SpacerHead,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CellAttribute {
+    Bold = 0,
+    Italic = 1,
+    Dim = 2,
+    Inverse = 4,
+    Invisible = 5,
+    Strikethrough = 6,
+    Overline = 7,
+}
+
+impl CellAttribute {
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct CellFlags {
-    pub bold: bool,
-    pub dim: bool,
-    pub italic: bool,
-    pub inverse: bool,
-    pub invisible: bool,
-    pub strikethrough: bool,
-    pub overline: bool,
-    pub underline: UnderlineStyle,
+    attributes: u8,
+    underline: UnderlineStyle,
+}
+
+impl CellFlags {
+    pub(crate) const fn from_attribute_bits(attributes: u8, underline: UnderlineStyle) -> Self {
+        Self {
+            attributes,
+            underline,
+        }
+    }
+
+    pub const fn has(self, attribute: CellAttribute) -> bool {
+        self.attributes & attribute.bit() != 0
+    }
+
+    pub const fn bold(self) -> bool {
+        self.has(CellAttribute::Bold)
+    }
+
+    pub const fn dim(self) -> bool {
+        self.has(CellAttribute::Dim)
+    }
+
+    pub const fn italic(self) -> bool {
+        self.has(CellAttribute::Italic)
+    }
+
+    pub const fn inverse(self) -> bool {
+        self.has(CellAttribute::Inverse)
+    }
+
+    pub const fn invisible(self) -> bool {
+        self.has(CellAttribute::Invisible)
+    }
+
+    pub const fn strikethrough(self) -> bool {
+        self.has(CellAttribute::Strikethrough)
+    }
+
+    pub const fn overline(self) -> bool {
+        self.has(CellAttribute::Overline)
+    }
+
+    pub const fn underline(self) -> UnderlineStyle {
+        self.underline
+    }
+}
+
+impl std::fmt::Debug for CellFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CellFlags")
+            .field("bold", &self.bold())
+            .field("dim", &self.dim())
+            .field("italic", &self.italic())
+            .field("inverse", &self.inverse())
+            .field("invisible", &self.invisible())
+            .field("strikethrough", &self.strikethrough())
+            .field("overline", &self.overline())
+            .field("underline", &self.underline)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,6 +251,7 @@ pub struct Cell {
     pub wide: WideCell,
     pub selected: bool,
     pub hyperlink: bool,
+    pub underline_color: Color,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -462,4 +535,18 @@ pub enum BackendEvent {
         dropped_events: usize,
         dropped_bytes: usize,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snapshot_cell_stays_within_seven_machine_words() {
+        assert!(
+            std::mem::size_of::<Cell>() <= 7 * std::mem::size_of::<usize>(),
+            "every publish walks the whole cached screen, so a Cell of {} bytes slows each frame",
+            std::mem::size_of::<Cell>()
+        );
+    }
 }

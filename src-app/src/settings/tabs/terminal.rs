@@ -507,18 +507,13 @@ impl PaneFlowApp {
             );
 
             if default_matches {
-                menu = menu.child(
+                menu = menu.option(
                     select_option(
                         ("terminal-font-default", 0usize),
                         current_font == default_font,
                         ui,
                     )
                     .cursor(CursorStyle::Arrow)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                        this.font_dropdown_open = false;
-                        this.font_search.clear();
-                        this.persist_setting(false, "font_family", Value::Null, cx);
-                    }))
                     .child(
                         div()
                             .flex_1()
@@ -527,25 +522,20 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .child(default_label),
                     ),
+                    cx.listener(|this, _: &(), _w, cx| {
+                        this.font_dropdown_open = false;
+                        this.font_search.clear();
+                        this.persist_setting(false, "font_family", Value::Null, cx);
+                    }),
                 );
             }
 
             for (i, name) in filtered.iter().enumerate() {
                 let name_owned = (*name).to_string();
                 let is_current = *name == current_font;
-                menu = menu.child(
+                menu = menu.option(
                     select_option(("terminal-font", i), is_current, ui)
                         .cursor(CursorStyle::Arrow)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                            this.font_dropdown_open = false;
-                            this.font_search.clear();
-                            this.persist_setting(
-                                false,
-                                "font_family",
-                                Value::String(name_owned.clone()),
-                                cx,
-                            );
-                        }))
                         .child(
                             div()
                                 .flex_1()
@@ -554,6 +544,16 @@ impl PaneFlowApp {
                                 .text_color(ui.text)
                                 .child(name.to_string()),
                         ),
+                    cx.listener(move |this, _: &(), _w, cx| {
+                        this.font_dropdown_open = false;
+                        this.font_search.clear();
+                        this.persist_setting(
+                            false,
+                            "font_family",
+                            Value::String(name_owned.clone()),
+                            cx,
+                        );
+                    }),
                 );
             }
 
@@ -788,10 +788,6 @@ impl PaneFlowApp {
                 let value_for_click = value;
                 let item = select_option((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        this.terminal_dropdown = None;
-                        this.persist_setting(nested, config_key, value_for_click.clone(), cx);
-                    }))
                     .child(
                         div()
                             .flex_1()
@@ -800,7 +796,13 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .child(label),
                     );
-                menu = menu.child(item);
+                menu = menu.option(
+                    item,
+                    cx.listener(move |this, _: &(), _w, cx| {
+                        this.terminal_dropdown = None;
+                        this.persist_setting(nested, config_key, value_for_click.clone(), cx);
+                    }),
+                );
             }
             trigger = trigger.child(deferred_select_menu(menu));
         }

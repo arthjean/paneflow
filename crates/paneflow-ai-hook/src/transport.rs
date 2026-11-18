@@ -11,11 +11,11 @@ const HOOK_REQUEST_DEADLINE: Duration = Duration::from_millis(350);
 pub(crate) fn send_agent_event(
     endpoint: &Path,
     session: &str,
-    frame: &AiHookFrame,
+    frame: AiHookFrame,
 ) -> io::Result<()> {
     send_event_params(
         endpoint,
-        frame.to_agent_event_params(session),
+        frame.into_agent_event_params(session),
         HOOK_REQUEST_DEADLINE,
     )
 }

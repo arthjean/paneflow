@@ -145,6 +145,7 @@ fn cells_from_ghostty(cells: &[ghostty::Cell]) -> Arc<[Cell]> {
     cells.iter().map(cell_from_ghostty).collect()
 }
 
+#[inline(always)]
 fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
     Cell {
         point: point_from_ghostty(cell.point),
@@ -152,8 +153,12 @@ fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
         fg: color_from_ghostty(cell.foreground, NamedColor::Foreground),
         bg: color_from_ghostty(cell.background, NamedColor::Background),
         flags: ghostty_cell_flags(cell),
-        zerowidth: cell.zerowidth.as_deref().map(<[_]>::to_vec),
+        zerowidth: cell.zerowidth.clone(),
         hyperlink: cell.hyperlink,
+        underline_color: match cell.underline_color {
+            ghostty::Color::Default => None,
+            color => Some(color_from_ghostty(color, NamedColor::Foreground)),
+        },
     }
 }
 
@@ -374,22 +379,22 @@ fn mouse_shape_from_ghostty(shape: ghostty::MouseShape) -> MouseShape {
 
 fn ghostty_cell_flags(cell: &ghostty::Cell) -> CellFlags {
     let mut flags = CellFlags::empty();
-    if cell.flags.inverse {
+    if cell.flags.inverse() {
         flags |= CellFlags::INVERSE;
     }
-    if cell.flags.bold {
+    if cell.flags.bold() {
         flags |= CellFlags::BOLD;
     }
-    if cell.flags.italic {
+    if cell.flags.italic() {
         flags |= CellFlags::ITALIC;
     }
-    if cell.flags.dim {
+    if cell.flags.dim() {
         flags |= CellFlags::DIM;
     }
-    if cell.flags.strikethrough {
+    if cell.flags.strikethrough() {
         flags |= CellFlags::STRIKEOUT;
     }
-    match cell.flags.underline {
+    match cell.flags.underline() {
         ghostty::UnderlineStyle::None => {}
         ghostty::UnderlineStyle::Single => flags |= CellFlags::UNDERLINE,
         ghostty::UnderlineStyle::Double => flags |= CellFlags::DOUBLE_UNDERLINE,
@@ -448,6 +453,7 @@ pub(in crate::terminal) fn blank_content(cols: usize, rows: usize) -> Content {
                 flags: CellFlags::empty(),
                 zerowidth: None,
                 hyperlink: false,
+                underline_color: None,
             })
         })
         .collect::<Vec<_>>()

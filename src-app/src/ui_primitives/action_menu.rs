@@ -2,11 +2,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, ClickEvent, CursorStyle, Div, ElementId, Entity,
-    FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Role, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Styled, TextRun, Toggled, Window, canvas, deferred, div, font,
-    prelude::*, px, size, svg,
+    Anchor, AnchoredPositionMode, AnyElement, App, Bounds, BoxShadow, ClickEvent, CursorStyle, Div,
+    ElementId, Entity, FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Role,
+    SharedString, Size, Stateful, StatefulInteractiveElement, Styled, TextRun, Toggled, Window,
+    anchored, canvas, deferred, div, font, point, prelude::*, px, size, svg,
 };
 
 use crate::settings::components::{select_menu_surface, with_alpha};
@@ -437,11 +437,8 @@ impl<A: Clone + 'static> ActionMenu<A> {
         let width = menu.size(window).width;
         let submenu = snapshot
             .submenu
-            .and_then(|index| Some((index, menu.submenu_at(index)?.size(window).width)))
-            .map(|(index, child_width)| {
-                let opens_left = snapshot.root_bounds.get().is_some_and(|bounds| {
-                    bounds.right() + SUBMENU_GAP + child_width > window.viewport_size().width
-                });
+            .filter(|index| menu.submenu_at(*index).is_some())
+            .map(|index| {
                 let panel = render_panel(
                     &menu,
                     Some(index),
@@ -454,9 +451,7 @@ impl<A: Clone + 'static> ActionMenu<A> {
                     window,
                 )
                 .child(bounds_probe(snapshot.submenu_bounds.clone()));
-                let attached =
-                    attach_submenu(panel.into_any_element(), width, child_width, opens_left);
-                (index, attached)
+                (index, attach_submenu(panel.into_any_element(), width))
             });
         let key_menu = menu.clone();
         let key_state = state.clone();
@@ -466,7 +461,6 @@ impl<A: Clone + 'static> ActionMenu<A> {
         render_panel(
             &menu, None, id, submenu, &state, &snapshot, &handlers, ui, window,
         )
-        .child(bounds_probe(snapshot.root_bounds.clone()))
         .track_focus(&snapshot.focus)
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if handle_key(&key_menu, &key_state, &key_handlers, event, window, cx) {
@@ -527,7 +521,6 @@ struct MenuState {
     highlighted: Option<usize>,
     submenu: Option<usize>,
     submenu_highlighted: Option<usize>,
-    root_bounds: BoundsCell,
     submenu_bounds: BoundsCell,
 }
 
@@ -537,7 +530,6 @@ struct Snapshot {
     highlighted: Option<usize>,
     submenu: Option<usize>,
     submenu_highlighted: Option<usize>,
-    root_bounds: BoundsCell,
     submenu_bounds: BoundsCell,
 }
 
@@ -553,7 +545,6 @@ impl MenuState {
             highlighted: None,
             submenu: None,
             submenu_highlighted: None,
-            root_bounds: Rc::default(),
             submenu_bounds: Rc::default(),
         }
     }
@@ -564,7 +555,6 @@ impl MenuState {
             highlighted: self.highlighted,
             submenu: self.submenu,
             submenu_highlighted: self.submenu_highlighted,
-            root_bounds: self.root_bounds.clone(),
             submenu_bounds: self.submenu_bounds.clone(),
         }
     }
@@ -861,28 +851,33 @@ pub(crate) fn menu_heading(label: SharedString, ui: UiColors) -> Div {
         .child(label)
 }
 
-fn attach_submenu(
-    panel: AnyElement,
-    parent_width: Pixels,
-    width: Pixels,
-    opens_left: bool,
-) -> AnyElement {
+fn submenu_row_bounds(parent_width: Pixels) -> Bounds<Pixels> {
     let inset = PANEL_PADDING + PANEL_BORDER;
-    let left = if opens_left {
-        -(inset + SUBMENU_GAP + width)
-    } else {
-        parent_width - inset + SUBMENU_GAP
-    };
-    deferred(
-        div()
-            .absolute()
-            .top(-inset)
-            .left(left)
-            .occlude()
-            .child(panel),
+    Bounds::new(
+        Point::default(),
+        size(parent_width - inset * 2., ROW_HEIGHT),
     )
-    .priority(SUBMENU_PRIORITY)
-    .into_any_element()
+}
+
+fn attach_submenu(panel: AnyElement, parent_width: Pixels) -> AnyElement {
+    let inset = PANEL_PADDING + PANEL_BORDER;
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_0()
+        .child(
+            deferred(
+                anchored()
+                    .position_mode(AnchoredPositionMode::Local)
+                    .attach(submenu_row_bounds(parent_width), Anchor::TopRight)
+                    .anchor(Anchor::TopLeft)
+                    .offset(point(inset + SUBMENU_GAP, -inset))
+                    .child(div().occlude().child(panel)),
+            )
+            .priority(SUBMENU_PRIORITY),
+        )
+        .into_any_element()
 }
 
 fn bounds_probe(bounds: BoundsCell) -> impl IntoElement {
@@ -974,15 +969,7 @@ fn render_row<A>(
             row.delayed_tooltip(crate::ui_primitives::text_tooltip(text))
         })
         .children(glyph)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(item.label.clone()),
-        )
+        .child(crate::ui_primitives::single_line_label().child(item.label.clone()))
         .when_some(item.detail.clone(), |row, detail| {
             row.child(
                 div()
@@ -1068,10 +1055,19 @@ mod tests {
 
     use super::{ActionMenu, MenuEntry, MenuHandlers, MenuItem, MenuKey};
 
+    #[derive(Clone, Copy)]
+    enum Placement {
+        TopLeft,
+        Centered,
+        RightEdge,
+        BottomRightEdge,
+    }
+
     struct Harness {
         open: bool,
         picked: Rc<RefCell<Vec<&'static str>>>,
         outer: FocusHandle,
+        placement: Placement,
     }
 
     impl Render for Harness {
@@ -1085,7 +1081,9 @@ mod tests {
                 .item(
                     MenuItem::submenu(
                         "Move",
-                        ActionMenu::new().item(MenuItem::new("Left", "left").id("left")),
+                        ActionMenu::new()
+                            .item(MenuItem::new("Left", "left").id("left"))
+                            .item(MenuItem::new("Right", "right").id("right")),
                     )
                     .id("move")
                     .mnemonic('m'),
@@ -1102,18 +1100,41 @@ mod tests {
                     cx.notify();
                 })),
             };
-            root.child(
-                div()
-                    .absolute()
-                    .left(px(20.))
-                    .top(px(20.))
-                    .child(menu.element("menu", handlers, crate::theme::ui_colors())),
-            )
+            let element = menu.element("menu", handlers, crate::theme::ui_colors());
+            let frame = div().absolute().size_full().flex();
+            root.child(match self.placement {
+                Placement::TopLeft => div().absolute().left(px(20.)).top(px(20.)).child(element),
+                Placement::Centered => frame.justify_center().items_center().child(element),
+                Placement::RightEdge => frame
+                    .justify_end()
+                    .items_start()
+                    .pt(px(20.))
+                    .pr(px(20.))
+                    .child(element),
+                Placement::BottomRightEdge => frame
+                    .justify_end()
+                    .items_end()
+                    .pb(px(20.))
+                    .pr(px(20.))
+                    .child(element),
+            })
         }
     }
 
     fn harness(
         cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<Harness>,
+        Rc<RefCell<Vec<&'static str>>>,
+        &mut VisualTestContext,
+    ) {
+        harness_in(cx, size(px(800.), px(600.)), Placement::TopLeft)
+    }
+
+    fn harness_in(
+        cx: &mut TestAppContext,
+        window_size: gpui::Size<gpui::Pixels>,
+        placement: Placement,
     ) -> (
         gpui::Entity<Harness>,
         Rc<RefCell<Vec<&'static str>>>,
@@ -1125,8 +1146,9 @@ mod tests {
             open: false,
             picked: shared,
             outer: cx.focus_handle(),
+            placement,
         });
-        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.simulate_resize(window_size);
         cx.update(|window, cx| {
             let outer = view.read(cx).outer.clone();
             window.focus(&outer, cx);
@@ -1177,6 +1199,85 @@ mod tests {
         redraw(cx);
         assert_eq!(*picked.borrow(), vec!["left"]);
         assert!(!view.read_with(cx, |view, _| view.open));
+    }
+
+    fn open_submenu(
+        cx: &mut TestAppContext,
+        window_size: gpui::Size<gpui::Pixels>,
+        placement: Placement,
+    ) -> (gpui::Bounds<gpui::Pixels>, gpui::Bounds<gpui::Pixels>) {
+        let (_, _, cx) = harness_in(cx, window_size, placement);
+        cx.simulate_keystrokes("m");
+        redraw(cx);
+        let parent = cx.debug_bounds("move").expect("submenu row is painted");
+        let first = cx
+            .debug_bounds("left")
+            .expect("first submenu item is painted");
+        let last = cx
+            .debug_bounds("right")
+            .expect("last submenu item is painted");
+        (parent, first.union(&last))
+    }
+
+    fn panel_around(rows: gpui::Bounds<gpui::Pixels>) -> gpui::Bounds<gpui::Pixels> {
+        rows.dilate(super::PANEL_PADDING + super::PANEL_BORDER)
+    }
+
+    fn inside(bounds: gpui::Bounds<gpui::Pixels>, window_size: gpui::Size<gpui::Pixels>) -> bool {
+        bounds.left() >= px(0.)
+            && bounds.top() >= px(0.)
+            && bounds.right() <= window_size.width
+            && bounds.bottom() <= window_size.height
+    }
+
+    #[gpui::test]
+    fn a_submenu_with_room_on_both_sides_opens_on_the_right(cx: &mut TestAppContext) {
+        let window_size = size(px(800.), px(600.));
+        let (parent, child) = open_submenu(cx, window_size, Placement::Centered);
+        assert!(child.left() > parent.right(), "{parent:?} {child:?}");
+        assert_eq!(child.top(), parent.top(), "the first rows line up");
+        assert!(inside(panel_around(child), window_size));
+    }
+
+    #[gpui::test]
+    fn a_submenu_near_the_right_edge_opens_on_the_left(cx: &mut TestAppContext) {
+        let window_size = size(px(800.), px(600.));
+        let (parent, child) = open_submenu(cx, window_size, Placement::RightEdge);
+        assert!(child.right() < parent.left(), "{parent:?} {child:?}");
+        assert_eq!(child.top(), parent.top(), "the first rows line up");
+        assert!(inside(panel_around(child), window_size));
+    }
+
+    #[gpui::test]
+    fn a_submenu_near_the_bottom_edge_stays_inside_the_window(cx: &mut TestAppContext) {
+        let window_size = size(px(800.), px(600.));
+        let (parent, child) = open_submenu(cx, window_size, Placement::BottomRightEdge);
+        assert!(child.right() < parent.left(), "{parent:?} {child:?}");
+        assert!(child.top() < parent.top(), "the submenu moved up to fit");
+        assert!(
+            inside(panel_around(child), window_size),
+            "{child:?} spans both submenu rows"
+        );
+    }
+
+    #[gpui::test]
+    fn a_submenu_with_room_on_neither_side_stays_inside_and_leaves_its_row_visible(
+        cx: &mut TestAppContext,
+    ) {
+        let window_size = size(px(400.), px(300.));
+        let (parent, child) = open_submenu(cx, window_size, Placement::Centered);
+        let panel = panel_around(child);
+        let root = panel_around(parent);
+        let gap = super::SUBMENU_GAP;
+        assert!(root.right() + gap + panel.size.width > window_size.width);
+        assert!(root.left() - gap - panel.size.width < px(0.));
+        assert!(inside(panel, window_size), "{panel:?}");
+        let covered = parent.intersect(&panel).size.width;
+        assert!(
+            covered * 2. < parent.size.width,
+            "the submenu covers {covered:?} of a {:?} row",
+            parent.size.width
+        );
     }
 
     #[gpui::test]
