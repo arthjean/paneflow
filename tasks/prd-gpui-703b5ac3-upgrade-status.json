@@ -57,10 +57,10 @@
     {
       "id": "EP-007",
       "title": "Linux is validated on a real desktop session",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-008",
@@ -316,49 +316,49 @@
       "id": "US-027",
       "title": "Re-baseline the Linux benchmarks on Fedora",
       "epic": "EP-007",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-019"],
       "started_at": "2026-11-16",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-024",
       "title": "Keystroke latency and unfocused frame rate hold on Fedora",
       "epic": "EP-007",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "S",
       "blocked_by": ["US-009", "US-019"],
       "started_at": "2026-11-16",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-025",
       "title": "Linux window, startup and backdrop behave on real sessions",
       "epic": "EP-007",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": ["US-016", "US-017"],
       "started_at": "2026-11-16",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-026",
       "title": "The Linux visual pass is clean",
       "epic": "EP-007",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": ["US-020", "US-024", "US-025"],
       "started_at": "2026-11-16",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-18",
+      "reviewed_at": "2026-11-18"
     },
     {
       "id": "US-021",
