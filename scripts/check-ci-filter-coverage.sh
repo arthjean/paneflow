@@ -120,6 +120,7 @@ fi
 
 status=0
 checked=0
+absent=0
 for source in "${sources[@]}"; do
   [ -f "$ROOT/$source" ] || continue
   text="$(tr '\r\n' '  ' < "$ROOT/$source")"
@@ -147,6 +148,11 @@ for source in "${sources[@]}"; do
       status=1
       continue
     fi
+    if [ ! -e "$ROOT/$resolved" ]; then
+      echo "::notice file=$source,line=${line_number:-1}::$source:${line_number:-1}: '$cited' names no file in the repository, so no build that succeeds reads it"
+      absent=$((absent + 1))
+      continue
+    fi
     if ! covered "$resolved"; then
       echo "::error file=$source,line=${line_number:-1}::$source:${line_number:-1}: build input '$resolved' (cited as '$cited') is not covered by the '$FILTER_NAME' path filter of .github/workflows/run_tests.yml"
       status=1
@@ -160,6 +166,6 @@ if [ "$checked" -eq 0 ]; then
 fi
 
 if [ "$status" -eq 0 ]; then
-  echo "every build input path cited in ${#sources[@]} Rust file(s) is covered by the '$FILTER_NAME' filter ($checked citations checked against ${#patterns[@]} patterns)"
+  echo "every build input path cited in ${#sources[@]} Rust file(s) is covered by the '$FILTER_NAME' filter ($checked citations checked against ${#patterns[@]} patterns, $absent naming no file)"
 fi
 exit "$status"
