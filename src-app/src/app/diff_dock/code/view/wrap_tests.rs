@@ -285,3 +285,77 @@ fn a_remembered_position_lands_on_the_same_line_when_the_tab_wraps(cx: &mut Test
         "a reopened wrapped tab starts on line 151, not at its count of visual rows"
     );
 }
+
+#[gpui::test]
+fn a_crlf_file_wraps_finds_and_comments_without_a_carriage_return(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        super::keymap::register_keybindings(cx);
+        crate::widgets::text_input::register_keybindings(cx);
+        crate::widgets::text_area::register_keybindings(cx);
+    });
+    let text: String = (0..40)
+        .map(|row| {
+            if row % 5 == 2 {
+                format!("{};\r\n", long_line(60))
+            } else {
+                format!("let short_{row} = {row};\r\n")
+            }
+        })
+        .collect();
+    let (dir, view, cx) = file_view_named(cx, "notes.rs", &text, false);
+    view.read_with(cx, |view, _| {
+        let doc = view.document().expect("document");
+        assert_eq!(doc.line_ending(), LineEnding::Crlf);
+        assert!(!doc.slice_string(0..doc.len_bytes()).contains('\r'));
+    });
+    let rows_before = view.read_with(cx, |view, _| view.scroll.map().total_rows());
+
+    toggle_wrap(&view, cx);
+    view.read_with(cx, |view, _| {
+        let map = view.scroll.map();
+        assert!(
+            map.total_rows() > rows_before,
+            "long lines take several rows"
+        );
+        assert_eq!(map.text_rows(0), 1, "a carriage return adds no row");
+    });
+
+    view.update_in(cx, |view, window, cx| {
+        view.open_find(&CeFind, window, cx);
+        view.toggle_find_option(true, cx);
+    });
+    let query = view.read_with(cx, |view, _| view.find_bar().expect("open").query.clone());
+    cx.update(|_, cx| query.update(cx, |input, cx| input.set_value(";$".to_string(), cx)));
+    frame(&view, cx);
+    let status = view.read_with(cx, |view, _| view.find_bar().expect("open").status());
+    assert_eq!(status, "1 of 40", "every line ends on its semicolon");
+
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    let sink = sent.clone();
+    let _subscription = cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, event: &CodeViewEvent, _| {
+            if let CodeViewEvent::SendComment { comment, .. } = event {
+                sink.borrow_mut().push(comment.clone());
+            }
+        })
+    });
+    view.update_in(cx, |view, window, cx| view.open_comment(1..3, window, cx));
+    cx.run_until_parked();
+    let field = view
+        .read_with(cx, |view, _| view.comment_field())
+        .expect("draft field");
+    field.update(cx, |field, cx| field.set_value("split this", cx));
+    cx.run_until_parked();
+    let send = cx.debug_bounds("code-comment-send").expect("send").center();
+    cx.simulate_click(send, gpui::Modifiers::default());
+    cx.run_until_parked();
+
+    let comment = sent.borrow().first().cloned().expect("the comment is sent");
+    assert_eq!(
+        comment.quoted,
+        format!("let short_1 = 1;\n{};\n", long_line(60))
+    );
+    let prompt = crate::app::agent_send::comment_prompt(dir.path(), &comment);
+    assert!(!prompt.contains('\r'), "{prompt:?}");
+    assert!(prompt.starts_with("notes.rs:2-3\n\nsplit this\n\n```rs\nlet short_1 = 1;\n"));
+}

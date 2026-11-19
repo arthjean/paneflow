@@ -644,17 +644,49 @@ fn refresh_spins_until_the_reread_lands_and_expand_all_stops_at_two_thousand_fol
 }
 
 #[cfg(unix)]
+fn lock_folder(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).expect("lock");
+}
+
+#[cfg(unix)]
+fn unlock_folder(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+}
+
+#[cfg(windows)]
+fn lock_folder(path: &std::path::Path) {
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/deny", "*S-1-1-0:(OI)(CI)(RD)"])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("icacls runs");
+    assert!(status.success(), "icacls /deny exited with {status}");
+}
+
+#[cfg(windows)]
+fn unlock_folder(path: &std::path::Path) {
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/remove:d", "*S-1-1-0"])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("icacls runs");
+    assert!(status.success(), "icacls /remove:d exited with {status}");
+}
+
 #[gpui::test]
 fn a_folder_that_fails_to_load_retries_on_click(cx: &mut TestAppContext) {
-    use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().expect("temporary directory");
     let root = temp.path().to_path_buf();
     let locked = root.join("locked");
     std::fs::create_dir(&locked).expect("folder");
     std::fs::write(locked.join("inside.txt"), "x").expect("file");
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("lock");
+    lock_folder(&locked);
     if std::fs::read_dir(&locked).is_ok() {
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).ok();
+        unlock_folder(&locked);
         return;
     }
     let (panel, _, cx) = harness(cx, Snapshot::root_shell(root.clone()));
@@ -670,7 +702,7 @@ fn a_folder_that_fails_to_load_retries_on_click(cx: &mut TestAppContext) {
                 .is_some_and(|row| row.state == super::projection::DirState::Failed)
         })
     });
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+    unlock_folder(&locked);
     cx.update(|window, cx| {
         window.refresh();
         window.draw(cx).clear(cx);
