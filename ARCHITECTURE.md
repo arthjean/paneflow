@@ -154,7 +154,12 @@ Four parts have separate lifetimes, following Zed's project panel model:
 
 - `worker.rs` owns the directory listings and nonrecursive filesystem watches
   on a dedicated thread. It registers each watch before reading the directory,
-  loads newly expanded directories, and refreshes invalidated listings. Loaded
+  loads newly expanded directories, and refreshes invalidated listings. On
+  macOS one recursive FSEvents watch on the root covers every loaded
+  directory instead, because `notify` stops and recreates the FSEvents stream
+  on each watch or unwatch, which made Expand all over 2,000 folders take
+  about 30 s; the worker drops events outside the loaded directories so the
+  subtree's extra events never re-read a listing or re-run git. Loaded
   collapsed directories remain searchable and watched. Deleted or ignored
   subtrees are pruned. Watch events are coalesced in the worker; unavailable
   watches fall back to background polling and registration retries. Each

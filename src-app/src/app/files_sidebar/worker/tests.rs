@@ -400,3 +400,70 @@ fn a_root_reached_through_a_symlink_knows_its_real_path() {
     direct.resolve_real_root();
     assert_eq!(direct.real_root, None);
 }
+
+#[test]
+fn a_root_watched_recursively_counts_every_loaded_folder_as_watched_without_a_watch_each() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    for ix in 0..50 {
+        std::fs::create_dir_all(root.join(format!("d{ix:02}")).join("inner")).expect("folder");
+    }
+    let mut scanner = Scanner::new(root.clone());
+    scanner.recursive_root = Some(root.clone());
+    assert!(!scanner.expand_all(EXPAND_ALL_LIMIT, || false));
+    assert!(scanner.scan(|| false));
+
+    assert_eq!(scanner.tree.children.len(), 101);
+    assert!(
+        scanner
+            .tree
+            .children
+            .keys()
+            .all(|dir| scanner.watched.contains(dir))
+    );
+    assert!(scanner.watcher_available());
+
+    let removed = root.join("d00");
+    std::fs::remove_dir_all(&removed).expect("remove folder");
+    assert!(scanner.changed(Ok(
+        Event::new(EventKind::Remove(notify::event::RemoveKind::Folder)).add_path(removed.clone())
+    )));
+    assert!(!scanner.watched.contains(&removed.join("inner")));
+    assert!(scanner.scan(|| false));
+    assert!(!scanner.tree.children.contains_key(&removed));
+    assert!(
+        scanner
+            .tree
+            .children
+            .keys()
+            .all(|dir| scanner.watched.contains(dir))
+    );
+}
+
+#[test]
+fn an_event_outside_the_loaded_folders_neither_rereads_a_listing_nor_reruns_git() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    fixture::init(&root);
+    let deep = root.join("deep");
+    std::fs::create_dir_all(deep.join("inner")).expect("nested folder");
+    let mut scanner = scanner(root.clone(), Vec::new());
+    let git_dir = scanner.git_dir.clone().expect("the repository git dir");
+    assert!(!scanner.git_dirty);
+
+    assert!(!scanner.changed(changed(deep.join("inner").join("build.log"))));
+    assert!(!scanner.changed(changed(git_dir.join("objects").join("ab").join("cdef"))));
+    assert!(scanner.dirty.is_empty());
+    assert!(!scanner.git_dirty);
+
+    assert!(scanner.changed(changed(git_dir.join("index"))));
+    assert!(scanner.git_dirty);
+    assert!(scanner.dirty.is_empty());
+    assert!(scanner.scan(|| false));
+
+    assert!(scanner.changed(changed(deep.clone())));
+    assert!(scanner.dirty.contains(&root));
+    assert!(scanner.scan(|| false));
+    assert!(scanner.changed(changed(root.join("top.txt"))));
+    assert!(scanner.dirty.contains(&root));
+}

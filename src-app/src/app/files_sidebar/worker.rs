@@ -14,6 +14,7 @@ const DEBOUNCE: Duration = Duration::from_millis(40);
 const MAX_LATENCY: Duration = Duration::from_millis(160);
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
 pub(super) const EXPAND_ALL_LIMIT: usize = 2_000;
+const WATCH_ROOT_RECURSIVELY: bool = cfg!(target_os = "macos");
 
 pub(super) struct TreeUpdate {
     pub revision: u64,
@@ -89,6 +90,7 @@ impl Drop for FilesWorker {
 struct Scanner {
     tree: FilesTreeState,
     watcher: Option<RecommendedWatcher>,
+    recursive_root: Option<PathBuf>,
     real_root: Option<PathBuf>,
     watched: HashSet<PathBuf>,
     dirty: HashSet<PathBuf>,
@@ -103,6 +105,7 @@ impl Scanner {
         Self {
             tree: FilesTreeState::root_shell(root),
             watcher: None,
+            recursive_root: None,
             real_root: None,
             watched: HashSet::new(),
             dirty: HashSet::new(),
@@ -118,6 +121,30 @@ impl Scanner {
             .ok()
             .map(crate::runtime_paths::strip_verbatim_prefix)
             .filter(|real| *real != self.tree.root);
+    }
+
+    fn start_watching(&mut self, events: Sender<Request>) {
+        self.resolve_real_root();
+        self.watcher = notify::recommended_watcher(move |event| {
+            let _ = events.try_send(Request::Changed(event));
+        })
+        .inspect_err(|error| log::warn!("files watcher unavailable: {error}"))
+        .ok();
+        self.recursive_root = None;
+        if WATCH_ROOT_RECURSIVELY
+            && let Some(watcher) = self.watcher.as_mut()
+            && watcher
+                .watch(&self.tree.root, RecursiveMode::Recursive)
+                .is_ok()
+        {
+            self.recursive_root = Some(self.tree.root.clone());
+        }
+    }
+
+    fn stop_watching(&mut self) {
+        self.watcher = None;
+        self.recursive_root = None;
+        self.watched.clear();
     }
 
     fn tree_path(&self, path: PathBuf) -> PathBuf {
@@ -147,8 +174,7 @@ impl Scanner {
 
     fn load(&mut self, dir: &Path) {
         if !self.watched.contains(dir)
-            && let Some(watcher) = self.watcher.as_mut()
-            && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok()
+            && watch_dir(&mut self.watcher, self.recursive_root.as_deref(), dir)
         {
             self.watched.insert(dir.to_path_buf());
             self.dirty.insert(dir.to_path_buf());
@@ -257,13 +283,13 @@ impl Scanner {
             keep
         });
         self.tree.unreadable.retain(|dir| active.contains(dir));
+        let recursive_root = self.recursive_root.as_deref();
+        let watcher = &mut self.watcher;
         self.watched.retain(|dir| {
             if active.contains(dir) {
                 return true;
             }
-            if let Some(watcher) = self.watcher.as_mut() {
-                let _ = watcher.unwatch(dir);
-            }
+            unwatch_dir(watcher, recursive_root, dir);
             false
         });
         self.dirty.clear();
@@ -278,17 +304,14 @@ impl Scanner {
         let git_dir = crate::workspace::find_git_dir(&self.tree.root.to_string_lossy());
         if git_dir != self.git_dir {
             if let Some(previous) = self.git_dir.take() {
-                if let Some(watcher) = self.watcher.as_mut() {
-                    let _ = watcher.unwatch(&previous);
-                }
+                unwatch_dir(&mut self.watcher, self.recursive_root.as_deref(), &previous);
                 self.watched.remove(&previous);
             }
             self.git_dir = git_dir;
         }
         if let Some(git_dir) = self.git_dir.clone()
             && !self.watched.contains(&git_dir)
-            && let Some(watcher) = self.watcher.as_mut()
-            && watcher.watch(&git_dir, RecursiveMode::NonRecursive).is_ok()
+            && watch_dir(&mut self.watcher, self.recursive_root.as_deref(), &git_dir)
         {
             self.watched.insert(git_dir);
         }
@@ -323,13 +346,13 @@ impl Scanner {
                 .filter(|dir| dir.starts_with(path))
                 .cloned(),
         );
+        let recursive_root = self.recursive_root.as_deref();
+        let watcher = &mut self.watcher;
         self.watched.retain(|dir| {
             if !dir.starts_with(path) {
                 return true;
             }
-            if let Some(watcher) = self.watcher.as_mut() {
-                let _ = watcher.unwatch(dir);
-            }
+            unwatch_dir(watcher, recursive_root, dir);
             false
         });
     }
@@ -339,8 +362,7 @@ impl Scanner {
             Ok(event) if !event.need_rescan() && !event.paths.is_empty() => event,
             Err(error) => {
                 log::warn!("files watcher failed: {error}");
-                self.watcher = None;
-                self.watched.clear();
+                self.stop_watching();
                 self.rescan();
                 return true;
             }
@@ -352,16 +374,23 @@ impl Scanner {
         if matches!(event.kind, EventKind::Access(_)) {
             return false;
         }
-        self.git_dirty = true;
+        let mut watched_change = false;
         for path in event.paths {
             let path = self.tree_path(path);
-            if self
-                .git_dir
-                .as_ref()
-                .is_some_and(|git_dir| path.starts_with(git_dir))
+            if let Some(git_dir) = self.git_dir.as_ref()
+                && path.starts_with(git_dir)
             {
+                watched_change |= path == *git_dir || path.parent() == Some(git_dir.as_path());
                 continue;
             }
+            let in_loaded_folder = self.tree.children.contains_key(&path)
+                || path
+                    .parent()
+                    .is_some_and(|parent| self.tree.children.contains_key(parent));
+            if !in_loaded_folder {
+                continue;
+            }
+            watched_change = true;
             if matches!(
                 event.kind,
                 EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))
@@ -386,7 +415,34 @@ impl Scanner {
                 }
             }
         }
+        self.git_dirty |= watched_change;
         !self.dirty.is_empty() || self.git_dirty
+    }
+}
+
+fn watch_dir(
+    watcher: &mut Option<RecommendedWatcher>,
+    recursive_root: Option<&Path>,
+    dir: &Path,
+) -> bool {
+    if recursive_root.is_some_and(|root| dir.starts_with(root)) {
+        return true;
+    }
+    watcher
+        .as_mut()
+        .is_some_and(|watcher| watcher.watch(dir, RecursiveMode::NonRecursive).is_ok())
+}
+
+fn unwatch_dir(
+    watcher: &mut Option<RecommendedWatcher>,
+    recursive_root: Option<&Path>,
+    dir: &Path,
+) {
+    if recursive_root.is_some_and(|root| dir.starts_with(root)) {
+        return;
+    }
+    if let Some(watcher) = watcher.as_mut() {
+        let _ = watcher.unwatch(dir);
     }
 }
 
@@ -408,13 +464,7 @@ async fn run(
     while !requests.is_closed() && !updates.is_closed() {
         if ready {
             if scanner.watcher.is_none() {
-                scanner.resolve_real_root();
-                let events = events.clone();
-                scanner.watcher = notify::recommended_watcher(move |event| {
-                    let _ = events.try_send(Request::Changed(event));
-                })
-                .inspect_err(|error| log::warn!("files watcher unavailable: {error}"))
-                .ok();
+                scanner.start_watching(events.clone());
             }
             if !scanner.scan(|| requests.is_closed() || updates.is_closed()) {
                 break;
