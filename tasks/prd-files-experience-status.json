@@ -57,7 +57,7 @@
     {
       "id": "EP-006",
       "title": "Validation sur matériel réel",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 2,
       "stories_done": 0
@@ -549,7 +549,7 @@
       "id": "US-036",
       "title": "Passe Windows 11 du dock et de l'arbre",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -568,7 +568,7 @@
         "US-014",
         "US-015"
       ],
-      "started_at": null,
+      "started_at": "2026-11-19T12:00:00+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -576,7 +576,7 @@
       "id": "US-037",
       "title": "Passe Windows 11 de l'éditeur, des aperçus et des liens agents",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -594,7 +594,7 @@
         "US-033",
         "US-034"
       ],
-      "started_at": null,
+      "started_at": "2026-11-19T12:00:00+01:00",
       "completed_at": null,
       "reviewed_at": null
     }
