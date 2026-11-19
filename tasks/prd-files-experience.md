@@ -13,6 +13,8 @@
 | 1.5 | 2026-11-19 | Arthur Jean | Revue d'EP-003. Deux défauts corrigés. (1) La mémoire de défilement d'US-021 et la réouverture d'un onglet fermé enregistraient la position en rangées visuelles, puis la rejouaient comme une position de ligne sur la table uniforme d'un onglet neuf : avec `editor.word_wrap` actif, un fichier relu à la ligne 151 se rouvrait à la ligne 271. La position est maintenant une position de ligne (`FilePosition::scroll_line`, `ClosedFileTab::scroll_line`), appliquée une fois la table du retour à la ligne installée ; test `a_remembered_position_lands_on_the_same_line_when_the_tab_wraps`, rouge sans le correctif. (2) Le lavis d'une ligne révélée par `:N` restait affiché quand Entrée ou une nouvelle requête emmenait le curseur sur une occurrence ailleurs ; il part maintenant avec le curseur (`stepping_to_a_match_clears_the_highlight_of_a_revealed_line`). Écart mineur aligné : la découpe du retour à la ligne retirait toutes les fins `\r` d'une ligne, le document une seule. Banc après correctifs ([résultat](../bench/results/editor-20261119T065327Z-f08ffcef5d04.json), part CPU 0,99) : `keystroke_to_runs` +0,7 %, requête d'un écran -0,2 %, première image d'une ligne géante repliée 2,60 ms. Passe visuelle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep003`, dans un Xvfb privé de 800 par 500 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark, Paneflow Light et Claude Dark, sur un dépôt de test (chemin à quatre niveaux, Markdown à lignes longues modifié, JSON d'une ligne de 12 008 caractères) : menu Editor Controls avec Word Wrap (survol, coché depuis le réglage), lignes repliées aux espaces sans numéro sur les rangées de continuation, barre git sur toutes les rangées d'une ligne repliée, `:24` centré et lavé sur ses sept rangées, compteur « 5 of 29 » et occurrence courante distincte, rangée de remplacement, expression invalide (bordure et message « unclosed group », Replace désactivé), Échap qui rend le focus, rangée de remplacement absente sur le fichier en lecture seule dont la ligne géante se replie. Constat non corrigé : un onglet replié de moins de 2 Mio reconstruit toute sa table à chaque frappe (0,66 ms pour 300 Ko, environ 4,6 ms à 2 Mio) ; une mise à jour incrémentale de la table est à prévoir. L'ouverture à une ligne d'un onglet déjà ouvert (`open_diff_file_tab_at`) n'a pas encore d'appelant : US-034 en sera le premier. EP-003 certifié. |
 | 1.6 | 2026-11-19 | Arthur Jean | EP-004 remis en revue. Aiguillage par type dans `diff_dock/preview/` : l'onglet de fichier choisit image, tableau, Markdown, archive puis texte, sur l'extension puis les 8 premiers Kio, hors du fil de rendu ; `BINARY_EXTENSIONS` et l'atténuation des lignes refusées sont retirés. Écran « No preview for this file » (icône, taille, raison, « Open with Default App », révélation, « Open With » ouvrant la liste des éditeurs), « File no longer exists. » avec « Retry », fichier spécial jamais lu. Visionneuse de texte de 10 à 256 Mio : index des débuts de ligne en `u32` (4 octets par ligne), premier écran après 16 Kio, pages de 32 lignes et 12 pages gardées, sélection par lignes et copie plafonnée à 16 Mio, réindexation qui garde la position, arrêt de l'index à la fermeture. Images : PNG, JPEG, GIF, WebP, BMP, ICO, TIFF et SVG (resvg déjà lié, références de fichier refusées), dimensions lues dans l'en-tête avant tout décodage, plafonds 50 Mio, 16 384 px et 32 mégapixels, zoom par 1,25 de 5 % à 800 %, Fit à 100 % au plus avec 16 px de marge. Markdown et CSV : bascule dans l'en-tête, préférences `editor.markdown_rendered` (faux) et `editor.csv_table` (vrai), rendu du texte en cours d'édition, source forcée par une ligne demandée. Tableau : guillemets, sauts de ligne, marque d'ordre, `;` cohérent, 1 024 colonnes, largeurs sur 100 lignes entre 60 et 400 px. Archives zip, jar, tar, tar.gz, tgz : lecteur zip natif sans dépendance, `tar` et `flate2` existants, 2 048 entrées, 30 s, expansion plafonnée à 200 fois, noms hostiles affichés tels quels. Aucune dépendance ajoutée à `Cargo.lock` (fonctionnalité `ico` d'`image`, `resvg` passé des dépendances de test aux dépendances). Passe visuelle non faite. |
 | 1.7 | 2026-11-19 | Arthur Jean | Revue d'EP-004. Cinq défauts corrigés. (1) Un fichier `.svg` compressé en gzip était décompressé sans plafond par usvg : quelques centaines de Ko pouvaient occuper des dizaines de Go de mémoire. La visionneuse décompresse maintenant elle-même, s'arrête à 50 Mio avec l'écran « pas d'aperçu » et refuse une double compression (`a_compressed_svg_renders_and_one_that_expands_past_the_limit_is_refused`). (2) Dans un `.tar.gz`, un enregistrement de nom long (GNU ou pax) était lu en entier en mémoire par la crate `tar`, jusqu'au budget d'expansion de 200 fois la taille, soit 10 Go. La liste parcourt maintenant les en-têtes bruts et refuse un enregistrement de nom de plus de 64 Kio (`a_long_tar_name_is_listed_and_an_oversized_name_record_is_refused`). (3) Sur un CSV ou un Markdown de plus de 10 Mio, ouvert dans la visionneuse de gros fichiers, la bascule annonçait l'état inverse et son premier clic changeait la préférence globale sans rien afficher ; elle annonce maintenant « Show table » ou « Show rendered markdown » et ne fait qu'émettre le toast (`a_csv_past_ten_megabytes_opens_as_large_text`). (4) La bannière « Large file » débordait sur l'arbre dans un dock étroit ; son libellé est maintenant tronqué. (5) Dans une archive, la colonne Name tombait à un caractère quand l'arbre est ouvert à 800 par 500 ; elle garde 120 px et Size et Modified rétrécissent d'abord. Banc après correctifs ([résultat](../bench/results/editor-20261119T081246Z-50d4993eef0f.json), part CPU 0,99) : `keystroke_to_runs` +1,9 %, requête d'un écran +2,3 %. Deux mesures hors seuil du PRD dépassent 10 % face à la ligne de base du 17 novembre, antérieure à EP-003 (`open_to_first_tree_300kb` +10,4 %, `disk_splices_100k_lines` +14,7 %), sur du code que cet epic ne modifie pas ; l'origine n'a pas été isolée. Passe visuelle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep004`, dans un Xvfb privé de 800 par 500 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark, Paneflow Light et Claude Light, sur un dépôt de test (images de 240 par 120 et de 3000 par 2000, SVG avec script, GIF animé, PNG corrompu, HEIC, binaire, journal de 400 000 lignes, CSV à `;` et cellules multi-lignes, CSV de 1 030 colonnes, CSV de 13 Mio, Markdown, zip avec nom `../../etc/passwd`, zip de 2 100 entrées, zip corrompu) : lignes de l'arbre non atténuées ; barre d'image, « Loading image… », Fit à 98 % et 8 %, zoom à 195 %, glisser, infobulles ; « Unable to load image. » ; écran « No preview for this file » et menu « Open With » (Zed, Cursor) ; bannière et compteur du gros fichier, sélection par Maj+clic, copie relue dans le presse-papiers, Ctrl+Fin ; tableau à en-tête fixe, bannière des colonnes masquées ; bascule Markdown avec préférence relue au redémarrage ; archive avec fil d'Ariane, « Back », troncature à 2 048 et nom hostile affiché tel quel. Non vu à l'écran : le toast de copie refusée et de bascule refusée (couverts par test), la dernière ligne du journal (la fenêtre dépassait l'écran virtuel de 22 px). Constats non corrigés : « Unable to load image. » s'affiche en haut de la zone et non au centre ; le tableau met en page toutes les colonnes de chaque ligne visible, jusqu'à 1 024 ; le premier écran d'un fichier de 256 Mio en 200 ms n'est mesuré par aucun banc. EP-004 certifié. |
+| 1.8 | 2026-11-19 | Arthur Jean | EP-005 remis en revue. « Send to Agent » dans les menus de l'arbre et des onglets de fichier, avec la table de mention par runtime dans `app/agent_send.rs` ; glisser d'une ligne de l'arbre vers un terminal (`FileTreeDrag`, zone de dépôt seulement sur un terminal qui accepte la saisie) ; commentaire de plage dans l'éditeur (bouton de gouttière après 200 ms, glisser, « Comment Selection », bloc de 8 rangées réservé dans la table des rangées, champ multi-ligne `widgets/text_area.rs`) ; envoi en un collage encadré sans retour chariot, caractères de contrôle retirés, troncature à 16 000 et 32 000 caractères ; liens de code du terminal ouverts dans le dock à la ligne, Maj ou `terminal.open_links_in` pour l'éditeur externe ; repli d'un chemin relatif sur la racine de l'espace de travail puis sur une fin de chemin unique du projet, hors du fil de rendu avec un délai de 200 ms, et sélecteur de fichiers pré-rempli quand plusieurs fichiers correspondent. Aucune dépendance ajoutée. Banc éditeur ([résultat](../bench/results/editor-20261119T085823Z-84fc4a05c15f.json), part CPU 0,99) : `keystroke_to_runs` +0,0 %, requête d'un écran +0,6 %. Passe visuelle partielle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep005`, dans un Xvfb privé de 1100 par 700 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark et Paneflow Light, avec un agent factice (`cat` annoncé comme Claude Code par le hook) : entrée « Send to Agent » et collage `@src/hostile.rs ` sans retour chariot, bouton de gouttière, glisser d'une plage, bloc « L5-L8 », envoi (chemin `:5-8`, commentaire, lignes citées en bloc `rs`, bloc refermé), liens direct, tronqué et ambigu, zone de dépôt et chemin inséré sur un shell, menu contextuel de l'éditeur et « Comment Selection ». Défaut trouvé et corrigé pendant la passe : le menu contextuel de l'éditeur était placé hors de la fenêtre. Non vus à l'écran : sous-menu à plusieurs agents, confirmation de collage multi-ligne, toast « File not found », clic avec Maj, dépôt sur le terminal d'un agent, thème Claude. Format de mention de Codex, OpenCode, Pi et Hermes non essayé sur les vrais CLI. Branches Windows relues, non exécutées. |
+| 1.9 | 2026-11-19 | Arthur Jean | Revue d'EP-005. Un défaut bloquant corrigé, trouvé à l'écran : confirmer le collage multi-ligne d'un commentaire vers un terminal sans collage encadré (cas 14) faisait paniquer l'application (« cannot read TerminalView while it is already being updated »). `confirm_multiline_paste` appelait la suite de l'envoi pendant la mise à jour du terminal, et cette suite relit le terminal pour lui donner le focus ; l'écriture se fait maintenant dans la mise à jour et la suite après elle, avec un test qui échoue sur l'ancien code (`a_confirmed_multiline_prefill_settles_after_the_terminal_is_released`). Deux améliorations appliquées. (1) L'index des fichiers du repli d'US-035 était tenu par terminal et jeté après 30 s : sur un dépôt dont le parcours dépasse 200 ms, les liens tronqués disparaissaient à chaque expiration et chaque terminal gardait sa propre liste. Il est partagé par racine d'espace de travail, un index expiré répond pendant qu'il est reconstruit, et l'index d'une racine fermée est libéré. (2) « Comment Selection » n'était atteignable qu'à la souris : `secondary-shift-m` commente la sélection, ou la ligne du curseur sans sélection, et le menu affiche le raccourci (`DESIGN.md` et `CHANGELOG.md` mis à jour). Passe visuelle complétée sur un build debug d'un `PANEFLOW_HOME` isolé, Xvfb privé avec openbox et lavapipe, `reduce_motion` actif, deux agents factices (`cat` lancé sous les noms `claude` et `codex`, annoncés par le hook), en 800 par 500 puis 1100 par 700, en Paneflow Dark et Claude Light : entrée désactivée « No agent in this workspace », sous-menu à deux agents avec logos, titres et noms de runtime, envoi à Claude (`@"my docs/a b.md" ` en collage encadré) et à Codex, zone de dépôt et `@src/main.rs ` sur le terminal d'un agent, liste d'agents du brouillon, confirmation de collage multi-ligne (Cancel : brouillon gardé et toast « Paste cancelled » ; Paste : brouillon fermé, focus au terminal, `ESC[201~` du fichier réduit à `[201~`), lien tronqué souligné, toast « File not found », Maj + clic vers l'éditeur externe (script témoin), réglage `open_links_in` inversé à chaud avec ouverture du dock fermé à la ligne 12 colonne 3, bouton de gouttière, glisser d'une plage et menu contextuel en Claude Light. Gates rejouées après la dernière modification : fmt, clippy, 5 111 tests nextest, contrôle des durées, et banc éditeur ([résultat](../bench/results/editor-20261119T092510Z-84fc4a05c15f.json), part CPU 1,00) : `keystroke_to_runs` +0,8 %. Restent pour EP-006 : format de mention de Codex, OpenCode, Pi et Hermes sur les vrais CLI, branches Windows relues et non exécutées, macOS non essayé. |
 
 ## Problem Statement
 
@@ -633,13 +635,13 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/components/files/FileBrowserPanel.tsx:209-259` (« Add to chat », toast sans conversation ouverte), `packages/shared/src/composerTrigger.ts:31-34` (forme de la mention). t3code insère dans son compositeur ; ce PRD insère dans le terminal de l'agent
 
 **Acceptance Criteria:**
-- [ ] Les menus contextuels de l'arbre et des onglets de fichier contiennent « Send to Agent »
-- [ ] Given un seul agent dans l'espace de travail actif, when je choisis l'entrée, then le chemin est inséré dans son terminal et le focus y passe
-- [ ] Given plusieurs agents, when je survole l'entrée, then un sous-menu les liste dans l'ordre de `order_agents` (`src-app/src/app/sidebar/agents.rs:69`), avec le logo du runtime et le titre de l'onglet
-- [ ] Given aucun agent, when le menu s'ouvre, then l'entrée est désactivée avec le libellé « No agent in this workspace »
-- [ ] Le texte inséré est `@` suivi du chemin relatif à la racine de l'espace de travail et d'une espace pour Claude Code, Codex et Gemini ; pour les autres runtimes, le chemin relatif suivi d'une espace ; un fichier hors de la racine donne son chemin absolu
-- [ ] Given un chemin qui contient une espace, when il est inséré, then il est mis entre guillemets selon la règle du runtime
-- [ ] Le texte n'est jamais suivi d'un retour chariot : rien n'est soumis à l'agent
+- [x] Les menus contextuels de l'arbre et des onglets de fichier contiennent « Send to Agent »
+- [x] Given un seul agent dans l'espace de travail actif, when je choisis l'entrée, then le chemin est inséré dans son terminal et le focus y passe
+- [x] Given plusieurs agents, when je survole l'entrée, then un sous-menu les liste dans l'ordre de `order_agents` (`src-app/src/app/sidebar/agents.rs:69`), avec le logo du runtime et le titre de l'onglet
+- [x] Given aucun agent, when le menu s'ouvre, then l'entrée est désactivée avec le libellé « No agent in this workspace »
+- [x] Le texte inséré est `@` suivi du chemin relatif à la racine de l'espace de travail et d'une espace pour Claude Code, Codex et Gemini ; pour les autres runtimes, le chemin relatif suivi d'une espace ; un fichier hors de la racine donne son chemin absolu
+- [x] Given un chemin qui contient une espace, when il est inséré, then il est mis entre guillemets selon la règle du runtime
+- [x] Le texte n'est jamais suivi d'un retour chariot : rien n'est soumis à l'agent
 
 #### US-031: Glisser des fichiers de l'arbre vers un terminal
 **Description:** As a développeur qui supervise des agents, I want glisser un fichier de l'arbre sur un terminal so that le geste marche aussi pour un shell.
@@ -650,12 +652,12 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/components/files/fileTreeDragMention.ts:35-85` (sélection entière ou ligne seule, pas d'ouverture, désélection), `apps/web/src/components/chat/composerMentionDrag.ts:5-103` (zone de dépôt)
 
 **Acceptance Criteria:**
-- [ ] Given une ligne de l'arbre, when je la fais glisser, then un aperçu avec l'icône et le nom suit le pointeur et le fichier ne s'ouvre pas
-- [ ] Given un dépôt sur le terminal d'un agent, when je relâche, then le texte de US-030 est inséré
-- [ ] Given un dépôt sur un terminal sans agent, when je relâche, then le chemin est inséré avec l'échappement du shell de ce terminal, comme pour un dépôt de fichier du système (`src-app/src/terminal/input.rs:1167-1185`)
-- [ ] Given un terminal en lecture seule ou terminé, when je survole, then aucune zone de dépôt n'apparaît et le dépôt ne fait rien
-- [ ] Le dépôt dans l'arbre lui-même reste sans effet
-- [ ] Rien n'est soumis : aucun retour chariot n'est envoyé
+- [x] Given une ligne de l'arbre, when je la fais glisser, then un aperçu avec l'icône et le nom suit le pointeur et le fichier ne s'ouvre pas
+- [x] Given un dépôt sur le terminal d'un agent, when je relâche, then le texte de US-030 est inséré
+- [x] Given un dépôt sur un terminal sans agent, when je relâche, then le chemin est inséré avec l'échappement du shell de ce terminal, comme pour un dépôt de fichier du système (`src-app/src/terminal/input.rs:1167-1185`)
+- [x] Given un terminal en lecture seule ou terminé, when je survole, then aucune zone de dépôt n'apparaît et le dépôt ne fait rien
+- [x] Le dépôt dans l'arbre lui-même reste sans effet
+- [x] Rien n'est soumis : aucun retour chariot n'est envoyé
 
 #### US-032: Commenter une plage de lignes
 **Description:** As a développeur qui supervise des agents, I want attacher un commentaire à une plage de lignes so that je dis à l'agent quoi changer, à l'endroit exact.
@@ -666,15 +668,15 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/components/files/fileCommentAnnotations.ts:5-70` (brouillon, étiquette `L12 to L15`, suivi des lignes), `apps/web/src/components/files/FilePreviewPanel.tsx:820-1040` (création depuis la gouttière, un seul brouillon, annulation). Technique du bloc sous une ligne : Zed, `/home/arthur/dev/zed/crates/editor/src/display_map/block_map.rs:159-336` et `crates/editor/src/git.rs:557-692,2440-2490`
 
 **Acceptance Criteria:**
-- [ ] Given le pointeur au-dessus de la gouttière pendant 200 ms, when il s'arrête sur une ligne, then un bouton « + » apparaît avec l'infobulle « Comment on this line (drag for a range) »
-- [ ] Given un clic sur « + », when je relâche sans glisser, then un brouillon s'ouvre sous cette ligne ; un glisser sélectionne une plage et le brouillon s'ouvre sous sa dernière ligne
-- [ ] Given une sélection dans l'éditeur, when je choisis « Comment Selection » dans son menu contextuel, then le brouillon s'ouvre pour les lignes de la sélection
-- [ ] Le brouillon affiche l'étiquette « L12 » ou « L12-L15 », un champ de saisie multi-ligne au focus, et les boutons « Send to Agent » et « Cancel »
-- [ ] Un seul brouillon existe par onglet : en ouvrir un second remplace le premier après confirmation si son champ n'est pas vide
-- [ ] Given une modification du fichier au-dessus de la plage, when le texte bouge, then le brouillon suit ses lignes ; si toutes ses lignes sont supprimées, il est fermé
-- [ ] Échap ou « Cancel » ferme le brouillon et rend le focus à l'éditeur
-- [ ] Given la visionneuse de très gros fichiers ou un aperçu non textuel, when le pointeur survole la gouttière, then aucun bouton n'apparaît
-- [ ] Les lignes situées sous le brouillon sont décalées de sa hauteur et le défilement reste continu
+- [x] Given le pointeur au-dessus de la gouttière pendant 200 ms, when il s'arrête sur une ligne, then un bouton « + » apparaît avec l'infobulle « Comment on this line (drag for a range) »
+- [x] Given un clic sur « + », when je relâche sans glisser, then un brouillon s'ouvre sous cette ligne ; un glisser sélectionne une plage et le brouillon s'ouvre sous sa dernière ligne
+- [x] Given une sélection dans l'éditeur, when je choisis « Comment Selection » dans son menu contextuel, then le brouillon s'ouvre pour les lignes de la sélection
+- [x] Le brouillon affiche l'étiquette « L12 » ou « L12-L15 », un champ de saisie multi-ligne au focus, et les boutons « Send to Agent » et « Cancel »
+- [x] Un seul brouillon existe par onglet : en ouvrir un second remplace le premier après confirmation si son champ n'est pas vide
+- [x] Given une modification du fichier au-dessus de la plage, when le texte bouge, then le brouillon suit ses lignes ; si toutes ses lignes sont supprimées, il est fermé
+- [x] Échap ou « Cancel » ferme le brouillon et rend le focus à l'éditeur
+- [x] Given la visionneuse de très gros fichiers ou un aperçu non textuel, when le pointeur survole la gouttière, then aucun bouton n'apparaît
+- [x] Les lignes situées sous le brouillon sont décalées de sa hauteur et le défilement reste continu
 
 #### US-033: Envoyer un commentaire de plage à un agent
 **Description:** As a développeur qui supervise des agents, I want que mon commentaire arrive pré-rempli dans le terminal de l'agent so that je le relis et l'envoie moi-même.
@@ -685,14 +687,14 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/reviewCommentContext.ts:61-99` (contenu du commentaire), `packages/contracts/src/composerContext.ts:45-46` (16 000 et 32 000 caractères), `packages/shared/src/composerContextReferences.ts:226-427` (mise en forme et échappement des balises), `apps/web/src/lib/composerContextRecords.ts:401-554` (troncature)
 
 **Acceptance Criteria:**
-- [ ] Given un brouillon non vide, when je choisis « Send to Agent » ou `secondary-enter`, then le terminal de l'agent reçoit, en un seul collage encadré : le chemin relatif suivi de `:12` ou `:12-15`, une ligne vide, le commentaire, une ligne vide, puis les lignes citées dans un bloc de code dont la langue est l'extension du fichier
-- [ ] Le choix de l'agent suit les règles de US-030 ; avec plusieurs agents, le bouton ouvre la liste et retient le dernier agent choisi pour cet espace de travail
-- [ ] Le commentaire est tronqué à 16 000 caractères et les lignes citées à 32 000, avec la marque « … truncated … »
-- [ ] Les caractères de contrôle autres que le saut de ligne et la tabulation sont retirés du texte, dont toute séquence `ESC[201~`
-- [ ] Given un terminal qui n'a pas activé le collage encadré, when j'envoie, then la confirmation de collage multi-ligne existante s'affiche (`src-app/src/terminal/input.rs:1187-1209`)
-- [ ] Le collage ne se termine pas par un retour chariot : rien n'est soumis
-- [ ] Given l'envoi réussi, when le texte est inséré, then le brouillon se ferme et le focus passe au terminal ; en cas d'échec, le brouillon reste ouvert avec son texte et un toast donne la raison
-- [ ] Given un champ vide ou fait d'espaces, when le brouillon est affiché, then « Send to Agent » est désactivé
+- [x] Given un brouillon non vide, when je choisis « Send to Agent » ou `secondary-enter`, then le terminal de l'agent reçoit, en un seul collage encadré : le chemin relatif suivi de `:12` ou `:12-15`, une ligne vide, le commentaire, une ligne vide, puis les lignes citées dans un bloc de code dont la langue est l'extension du fichier
+- [x] Le choix de l'agent suit les règles de US-030 ; avec plusieurs agents, le bouton ouvre la liste et retient le dernier agent choisi pour cet espace de travail
+- [x] Le commentaire est tronqué à 16 000 caractères et les lignes citées à 32 000, avec la marque « … truncated … »
+- [x] Les caractères de contrôle autres que le saut de ligne et la tabulation sont retirés du texte, dont toute séquence `ESC[201~`
+- [x] Given un terminal qui n'a pas activé le collage encadré, when j'envoie, then la confirmation de collage multi-ligne existante s'affiche (`src-app/src/terminal/input.rs:1187-1209`)
+- [x] Le collage ne se termine pas par un retour chariot : rien n'est soumis
+- [x] Given l'envoi réussi, when le texte est inséré, then le brouillon se ferme et le focus passe au terminal ; en cas d'échec, le brouillon reste ouvert avec son texte et un toast donne la raison
+- [x] Given un champ vide ou fait d'espaces, when le brouillon est affiché, then « Send to Agent » est désactivé
 
 #### US-034: Ouvrir dans le dock un chemin cliqué dans un terminal
 **Description:** As a développeur qui supervise des agents, I want qu'un chemin `fichier:ligne` cliqué ouvre le dock so that je lis ce que l'agent désigne sans changer d'application.
@@ -703,13 +705,13 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/terminal-links.ts:45-170` (détection des chemins et de `:ligne:colonne`), `apps/web/src/markdown-links.ts:74-106`, `apps/web/src/components/chat/MarkdownFileLink.tsx:347-359` (clic dans le panneau, modificateur pour l'éditeur externe)
 
 **Acceptance Criteria:**
-- [ ] Given un chemin de code dans la sortie d'un terminal, when je clique avec le modificateur de lien existant, then le fichier s'ouvre dans le dock de l'onglet, à la ligne et à la colonne indiquées, la ligne surlignée
-- [ ] Given le même geste avec Maj en plus, when je clique, then le fichier s'ouvre dans l'éditeur externe, comme aujourd'hui
-- [ ] Le réglage `terminal.open_links_in` (`dock` par défaut, ou `external_editor`) inverse ces deux gestes
-- [ ] Given le dock fermé, when le lien est suivi, then le dock s'ouvre
-- [ ] Given un chemin vers un fichier que le dock n'affiche qu'en « pas d'aperçu », when je clique, then cet écran s'affiche avec ses actions
-- [ ] Given un fichier qui n'existe plus, when je clique, then un toast indique « File not found » et rien ne s'ouvre
-- [ ] Les chemins `.md` gardent leur comportement actuel
+- [x] Given un chemin de code dans la sortie d'un terminal, when je clique avec le modificateur de lien existant, then le fichier s'ouvre dans le dock de l'onglet, à la ligne et à la colonne indiquées, la ligne surlignée
+- [x] Given le même geste avec Maj en plus, when je clique, then le fichier s'ouvre dans l'éditeur externe, comme aujourd'hui
+- [x] Le réglage `terminal.open_links_in` (`dock` par défaut, ou `external_editor`) inverse ces deux gestes
+- [x] Given le dock fermé, when le lien est suivi, then le dock s'ouvre
+- [x] Given un chemin vers un fichier que le dock n'affiche qu'en « pas d'aperçu », when je clique, then cet écran s'affiche avec ses actions
+- [x] Given un fichier qui n'existe plus, when je clique, then un toast indique « File not found » et rien ne s'ouvre
+- [x] Les chemins `.md` gardent leur comportement actuel
 
 #### US-035: Repli par nom de fichier pour un chemin relatif
 **Description:** As a développeur qui supervise des agents, I want qu'un chemin relatif à un sous-dossier s'ouvre quand même so that les chemins tronqués par un agent restent cliquables.
@@ -720,11 +722,11 @@ Phase 3. Un fichier, une plage de lignes ou un commentaire rejoint le terminal d
 **Référence t3code :** `apps/web/src/components/ChatMarkdown.tsx:805-897` (`findWorkspaceFileMatch`) (dossier courant, autres racines, puis nom de fichier ; seule la dernière recherche compte)
 
 **Acceptance Criteria:**
-- [ ] Given un chemin relatif qui n'existe pas depuis le dossier courant du terminal, when le lien est évalué, then il est essayé depuis la racine de l'espace de travail
-- [ ] Given aucun des deux, when un seul fichier du projet se termine par ce chemin, then ce fichier est ouvert
-- [ ] Given plusieurs fichiers candidats, when je clique, then le sélecteur de fichiers s'ouvre pré-rempli avec le chemin
-- [ ] Given aucun candidat, when le pointeur survole le texte, then il n'est pas présenté comme un lien
-- [ ] La recherche de candidats se fait hors du fil de rendu, avec un délai de 200 ms au-delà duquel le texte n'est pas un lien
+- [x] Given un chemin relatif qui n'existe pas depuis le dossier courant du terminal, when le lien est évalué, then il est essayé depuis la racine de l'espace de travail
+- [x] Given aucun des deux, when un seul fichier du projet se termine par ce chemin, then ce fichier est ouvert
+- [x] Given plusieurs fichiers candidats, when je clique, then le sélecteur de fichiers s'ouvre pré-rempli avec le chemin
+- [x] Given aucun candidat, when le pointeur survole le texte, then il n'est pas présenté comme un lien
+- [x] La recherche de candidats se fait hors du fil de rendu, avec un délai de 200 ms au-delà duquel le texte n'est pas un lien
 
 ---
 
@@ -745,11 +747,11 @@ Phase 3, avant EP-006. La mesure d'US-016 place la construction des lignes au-de
 Story de suivi issue de la décision d'US-016 (changelog 1.2), sortie d'EP-002 pour que l'epic de mesure ne porte pas l'optimisation qu'elle déclenche : `rows_after_expand_50k` mesure 19,57 ms, au-dessus du budget de 16 ms.
 
 **Acceptance Criteria:**
-- [ ] Chaque dossier chargé porte le nombre de ses lignes visibles, tenu à jour au dépliage, au repli et à chaque changement de son contenu
-- [ ] Une ligne de l'arbre est construite seulement quand elle entre dans la fenêtre affichée ; rien n'est alloué par ligne hors de cette fenêtre
-- [ ] Given 1 000 ajouts et suppressions dans un dossier, when ils arrivent du surveillant, then seules les entrées changées sont appliquées, sans copier l'arbre entier
-- [ ] Sur la machine de référence, `rows_after_expand_50k` et `apply_1000_changes_50k` passent sous 16 ms, mesurés par `scripts/bench-tree.sh` en release
-- [ ] La ligne de base `bench/baselines/linux-x86_64/tree.json` est réenregistrée par `--set-baseline` sur un arbre propre
+- [x] Chaque dossier chargé porte le nombre de ses lignes visibles, tenu à jour au dépliage, au repli et à chaque changement de son contenu
+- [x] Une ligne de l'arbre est construite seulement quand elle entre dans la fenêtre affichée ; rien n'est alloué par ligne hors de cette fenêtre
+- [x] Given 1 000 ajouts et suppressions dans un dossier, when ils arrivent du surveillant, then seules les entrées changées sont appliquées, sans copier l'arbre entier
+- [x] Sur la machine de référence, `rows_after_expand_50k` et `apply_1000_changes_50k` passent sous 16 ms, mesurés par `scripts/bench-tree.sh` en release
+- [x] La ligne de base `bench/baselines/linux-x86_64/tree.json` est réenregistrée par `--set-baseline` sur un arbre propre
 
 ---
 

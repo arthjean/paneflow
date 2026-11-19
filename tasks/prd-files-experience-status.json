@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Liens entre fichiers et agents par le terminal",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-007",
@@ -466,84 +466,84 @@
       "id": "US-030",
       "title": "Envoyer un fichier à un agent",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:21:17+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-031",
       "title": "Glisser des fichiers de l'arbre vers un terminal",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-030"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:41:16+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-032",
       "title": "Commenter une plage de lignes",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:41:16+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-033",
       "title": "Envoyer un commentaire de plage à un agent",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-030",
         "US-032"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:41:16+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-034",
       "title": "Ouvrir dans le dock un chemin cliqué dans un terminal",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-020"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:41:16+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-035",
       "title": "Repli par nom de fichier pour un chemin relatif",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [
         "US-034"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T09:41:16+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-036",
