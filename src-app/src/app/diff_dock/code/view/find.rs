@@ -1024,11 +1024,11 @@ mod tests {
             view.selection = CodeSelection { anchor: 4, head: 9 };
             cx.notify();
         });
-        cx.simulate_keystrokes("ctrl-f");
+        cx.simulate_keystrokes("secondary-f");
         cx.run_until_parked();
         frame(&view, cx);
         let (value, focused) = view.read_with(cx, |view, cx| {
-            let find = view.find_bar().expect("ctrl-f opened the bar");
+            let find = view.find_bar().expect("secondary-f opened the bar");
             (
                 find.query.read(cx).value(),
                 find.query.read(cx).focus_handle.clone(),
