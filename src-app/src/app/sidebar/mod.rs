@@ -24,6 +24,9 @@ use gpui::{
     px, svg,
 };
 
+use crate::ui_primitives::scroll_edge_fade::{
+    EdgeFadeLine, EdgeFadeSurface, edge_faded, scroll_edge_fades,
+};
 use crate::ui_primitives::squircle_skin;
 pub(crate) use agents_section::AgentsSection;
 use drop::*;
@@ -345,7 +348,6 @@ impl PaneFlowApp {
         crate::work_counters::count(&crate::work_counters::SIDEBAR_RENDERS);
         let _render_canary = SidebarRenderTimeCanary::new(self.workspaces.len());
         let ui = crate::theme::ui_colors();
-        let theme = crate::theme::active_theme();
         let mut sidebar = div()
             .font_family("Geist")
             .text_size(px(13.))
@@ -354,10 +356,7 @@ impl PaneFlowApp {
             .w(px(self.sidebar_width()))
             .flex_shrink_0()
             .h_full()
-            .bg(crate::app::constants::cockpit_chrome_background(
-                theme.title_bar_background,
-                self.cached_config.cockpit_chrome_material_enabled(),
-            ))
+            .bg(self.sidebar_chrome_background())
             .flex()
             .flex_col();
 
@@ -470,11 +469,17 @@ impl PaneFlowApp {
             list = list.child(self.render_sidebar_empty_state(ui, cx));
         }
 
-        list = self.render_workspace_rows(list, ui, window, cx);
+        let edge_fade = EdgeFadeLine::default();
+        list = self.render_workspace_rows(list, &edge_fade, ui, window, cx);
+        let fade = scroll_edge_fades(
+            self.sidebar_scroll.clone(),
+            self.sidebar_edge_fade_surface(window),
+            edge_fade,
+        );
         let agents_shown = self.agents_section_shown();
         let bubble_top = self.usage.bubble_top();
         sidebar = sidebar.child(crate::ui_primitives::clip_below_line(
-            self.sidebar_list_wrapper(list, cx)
+            self.sidebar_list_wrapper(list, fade, cx)
                 .when(agents_shown, |tree| {
                     tree.min_h(px(agents_section::AGENTS_TREE_MIN_HEIGHT))
                 }),
@@ -687,6 +692,7 @@ impl PaneFlowApp {
     fn render_workspace_rows(
         &self,
         mut list: gpui::Stateful<gpui::Div>,
+        edge_fade: &EdgeFadeLine,
         ui: crate::theme::UiColors,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -698,7 +704,7 @@ impl PaneFlowApp {
             .trim()
             .to_lowercase();
         if self.grouped_by_status() {
-            return self.render_status_rows(list, &query, ui, window, cx);
+            return self.render_status_rows(list, edge_fade, &query, ui, window, cx);
         }
         let rows = self.sidebar_rows(&query, cx);
         let keyboard_focused = self.sidebar_focus.is_focused(window);
@@ -756,24 +762,26 @@ impl PaneFlowApp {
             if query.is_empty() && !animating {
                 let divider = self.render_drop_divider(k, slots[k], spacing, ui, cx);
                 list = match bridge {
-                    Some(bridge) => list.child(
+                    Some(bridge) => list.child(edge_faded(
                         div()
                             .relative()
                             .flex_none()
                             .w_full()
                             .child(bridge)
                             .child(divider),
-                    ),
+                        edge_fade,
+                    )),
                     None => list.child(divider),
                 };
             } else {
-                list = list.child(
+                list = list.child(edge_faded(
                     div()
                         .relative()
                         .flex_none()
                         .h(px(spacing * amount))
                         .children(bridge),
-                );
+                    edge_fade,
+                ));
             }
             let content = match *row {
                 SidebarRow::Folder(i) => self
@@ -819,7 +827,7 @@ impl PaneFlowApp {
                 .get(row)
                 .copied()
                 .unwrap_or(SIDEBAR_ROW_PADDING_Y * 2. + SIDEBAR_ROW_LINE_HEIGHT);
-            list = list.child(
+            list = list.child(edge_faded(
                 div()
                     .flex_none()
                     .w_full()
@@ -827,7 +835,8 @@ impl PaneFlowApp {
                     .opacity(*amount)
                     .when(*amount < 1., |row| row.h(px(height * amount)))
                     .child(natural),
-            );
+                edge_fade,
+            ));
         }
         if self
             .sidebar_row_motion
@@ -851,9 +860,41 @@ impl PaneFlowApp {
         list
     }
 
+    fn sidebar_chrome_background(&self) -> gpui::Hsla {
+        crate::app::constants::cockpit_chrome_background(
+            crate::theme::active_theme().title_bar_background,
+            self.cached_config.cockpit_chrome_material_enabled(),
+        )
+    }
+
+    pub(super) fn sidebar_edge_fade_surface(&self, window: &Window) -> EdgeFadeSurface {
+        let theme = crate::theme::active_theme();
+        let chrome_background = self.sidebar_chrome_background();
+        let chrome_material = self.cached_config.cockpit_chrome_material_enabled()
+            && !crate::window_chrome::native_material_suppressed_by_fullscreen(
+                window.is_fullscreen(),
+            );
+        let native_material = crate::window_chrome::native_backdrop_material_active(
+            self.cached_config.terminal_material_enabled(),
+            chrome_material,
+        );
+        let shell = if window.is_window_active() {
+            theme.title_bar_background
+        } else {
+            theme.title_bar_inactive_background
+        };
+        let backdrop = crate::app::constants::cockpit_shell_background(
+            shell,
+            native_material,
+            self.cached_config.material_veiled(),
+        );
+        EdgeFadeSurface::behind([chrome_background, backdrop])
+    }
+
     pub(crate) fn sidebar_list_wrapper(
         &self,
         list: gpui::Stateful<gpui::Div>,
+        fade: impl IntoElement,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         div()
@@ -870,6 +911,7 @@ impl PaneFlowApp {
                 }),
             )
             .child(list)
+            .child(fade)
             .child(Self::render_sidebar_drop_placeholder(cx))
     }
 }

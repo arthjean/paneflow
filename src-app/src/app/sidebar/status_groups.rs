@@ -119,6 +119,7 @@ impl PaneFlowApp {
     pub(super) fn render_status_rows(
         &self,
         mut list: gpui::Stateful<gpui::Div>,
+        edge_fade: &crate::ui_primitives::scroll_edge_fade::EdgeFadeLine,
         query: &str,
         ui: crate::theme::UiColors,
         window: &mut Window,
@@ -161,12 +162,15 @@ impl PaneFlowApp {
             .collect();
         self.join_sidebar_selection(&seams);
         for (group_index, group) in groups.iter().enumerate() {
-            list = list.child(render_status_group_header(
-                group.status,
-                group.tabs.len(),
-                StatusGroupKind::Tabs,
-                group_index == 0,
-                ui,
+            list = list.child(crate::ui_primitives::scroll_edge_fade::edge_faded(
+                render_status_group_header(
+                    group.status,
+                    group.tabs.len(),
+                    StatusGroupKind::Tabs,
+                    group_index == 0,
+                    ui,
+                ),
+                edge_fade,
             ));
             for (index, &(ws_idx, tab_idx)) in group.tabs.iter().enumerate() {
                 let cursor = keyboard_focused
@@ -187,7 +191,8 @@ impl PaneFlowApp {
                         let tab_id = self.workspaces[ws_idx].tabs()[tab_idx].id;
                         sidebar_leaving_row(tab_id, row, spacing)
                     } else {
-                        row.into_any_element()
+                        crate::ui_primitives::scroll_edge_fade::edge_faded(row, edge_fade)
+                            .into_any_element()
                     },
                 );
             }

@@ -4,6 +4,7 @@ pub(crate) mod interface_style;
 pub(crate) mod quick_pick;
 pub(crate) mod resize_edge;
 pub(crate) mod ring;
+pub(crate) mod scroll_edge_fade;
 pub(crate) mod shimmer;
 pub(crate) mod squircle;
 pub(crate) mod stroke;

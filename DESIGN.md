@@ -893,8 +893,12 @@ the active space in rail order, a 13 px folder glyph and the name, scrolling
 past 320 px.
 
 The Agents section sits between the workspace tree and the footer, with no
-separator. Its 36 px header (padding 8 horizontal) holds a 20 px toggle with
-no fill, Cerata's section header: the 12 px Hugeicons `arrow-down-01` chevron,
+separator. Where the tree or the Agents list scrolls, content hidden past its
+top or bottom edge fades out over 48 px instead (`scroll_edge_fade`): a
+gradient to the surface color under Themed, and a per-row opacity ramp under
+Blended and Mica, whose translucent surface a color gradient cannot erase.
+Nothing fades while the list fits. The section's 36 px header (padding 8
+horizontal) holds a 20 px toggle with no fill, Cerata's section header: the 12 px Hugeicons `arrow-down-01` chevron,
 then `Agents` at 12 px Medium 4 px after it, both `muted` and turning `text`
 under the pointer.
 At the header's trailing edge, a 22 px button at radius 7 holds the 15 px

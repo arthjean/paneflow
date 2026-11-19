@@ -13,6 +13,9 @@ use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::ui_primitives::action_menu::ActionMenu;
+use crate::ui_primitives::scroll_edge_fade::{
+    EdgeFadeLine, EdgeFadeSurface, edge_faded, scroll_edge_fades,
+};
 use crate::window_state::AgentsSectionState;
 
 pub(super) const AGENTS_HEADER_HEIGHT: f32 = 36.;
@@ -1094,12 +1097,14 @@ pub(super) struct AgentsSectionFrame<'a> {
     pub(super) scrollbar: Option<AnyElement>,
     pub(super) resize_handle: Option<AnyElement>,
     pub(super) display_button: Option<AnyElement>,
+    pub(super) edge_fade: EdgeFadeSurface,
 }
 
 fn render_agents_list(
     groups: &[AgentGroup<'_>],
     cursor: Option<u64>,
     scroll: &ScrollHandle,
+    edge_fade: &EdgeFadeLine,
     ui: crate::theme::UiColors,
     on_pick: PickAgent,
 ) -> gpui::Stateful<gpui::Div> {
@@ -1130,12 +1135,18 @@ fn render_agents_list(
         );
     }
     for (group_index, group) in groups.iter().enumerate() {
-        list = list.child(render_agent_group_header(group, group_index == 0, ui));
+        list = list.child(edge_faded(
+            render_agent_group_header(group, group_index == 0, ui),
+            edge_fade,
+        ));
         for (index, row) in group.rows.iter().enumerate() {
-            list = list.child(render_agent_group_member(
-                render_agent_row(row, cursor == Some(row.surface_id), ui, on_pick.clone()),
-                index,
-                group.rows.len(),
+            list = list.child(edge_faded(
+                render_agent_group_member(
+                    render_agent_row(row, cursor == Some(row.surface_id), ui, on_pick.clone()),
+                    index,
+                    group.rows.len(),
+                ),
+                edge_fade,
             ));
         }
     }
@@ -1158,6 +1169,7 @@ pub(super) fn render_agents_section(
         scrollbar,
         resize_handle,
         display_button,
+        edge_fade,
     } = frame;
     let section = div()
         .relative()
@@ -1178,7 +1190,8 @@ pub(super) fn render_agents_section(
         return section;
     }
     let resize_handle = resize_handle.filter(|_| !groups.is_empty());
-    let list = render_agents_list(groups, cursor, scroll, ui, on_pick);
+    let fade_line = EdgeFadeLine::default();
+    let list = render_agents_list(groups, cursor, scroll, &fade_line, ui, on_pick);
     section
         .child(
             div()
@@ -1188,6 +1201,7 @@ pub(super) fn render_agents_section(
                 .flex()
                 .flex_col()
                 .child(list)
+                .child(scroll_edge_fades(scroll.clone(), edge_fade, fade_line))
                 .children(scrollbar),
         )
         .children(resize_handle)
@@ -1290,6 +1304,7 @@ impl PaneFlowApp {
                 scrollbar,
                 resize_handle: Some(resize_handle),
                 display_button: Some(self.render_agents_display_button(ui, cx)),
+                edge_fade: self.sidebar_edge_fade_surface(window),
             },
             ui,
             move |_, cx| {
@@ -2033,6 +2048,7 @@ mod tests {
                         scrollbar: None,
                         resize_handle: Some(handle),
                         display_button: None,
+                        edge_fade: EdgeFadeSurface::Translucent,
                     },
                     crate::theme::ui_colors(),
                     |_, _| {},
@@ -2781,6 +2797,7 @@ mod tests {
                         scrollbar: None,
                         resize_handle: None,
                         display_button: None,
+                        edge_fade: EdgeFadeSurface::Translucent,
                     },
                     crate::theme::ui_colors(),
                     move |_, _| toggles.set(toggles.get() + 1),
@@ -3588,6 +3605,7 @@ mod tests {
             &agent_groups(&rows),
             None,
             &ScrollHandle::new(),
+            &EdgeFadeLine::default(),
             crate::theme::ui_colors(),
             Rc::new(|_, _, _| {}),
         );
@@ -3767,6 +3785,7 @@ mod tests {
                 scrollbar: None,
                 resize_handle: None,
                 display_button: None,
+                edge_fade: EdgeFadeSurface::Translucent,
             },
             crate::theme::ui_colors(),
             |_, _| {},
