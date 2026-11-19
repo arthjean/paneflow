@@ -10,12 +10,15 @@ use crate::app::attention::{AttentionLevel, SpaceAttention};
 use crate::app::menu_icons as icon;
 use crate::app::spaces::{SPACE_LIMIT_REASON, space_label, space_order};
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::ui_primitives::AnimatedHoverExt;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuElement, MenuGlyph, MenuItem};
 
 use super::lane::lane_visual;
 
 const SPACE_CONTROL_RADIUS: f32 = 7.0;
 const SPACE_MARK_SIZE: f32 = 16.0;
+const SPACE_TRIGGER_MARK_SIZE: f32 = 18.0;
+const SPACE_SELECTOR_GLYPH_SIZE: f32 = 12.0;
 const ATTENTION_MARK_WIDTH: f32 = 28.0;
 const SPACE_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
@@ -206,10 +209,13 @@ impl PaneFlowApp {
                 .map_or(DEFAULT_SPACE_NAME, |space| space.name.as_str())
                 .to_string(),
             match declared {
-                Some(space) => {
-                    space_mark(space.color, space.avatar.as_deref(), SPACE_MARK_SIZE, ui)
-                }
-                None => default_space_mark(SPACE_MARK_SIZE, ui),
+                Some(space) => space_mark(
+                    space.color,
+                    space.avatar.as_deref(),
+                    SPACE_TRIGGER_MARK_SIZE,
+                    ui,
+                ),
+                None => default_space_mark(SPACE_TRIGGER_MARK_SIZE, ui),
             },
         )
     }
@@ -253,64 +259,58 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let open = self.sidebar_space_menu_open;
         let (name, mark) = self.space_name_and_mark(self.active_space.as_ref(), ui);
-        let active_bg = crate::app::constants::sidebar_tab_active_background();
-        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
-        squircle_skin(
-            div()
-                .id("sidebar-space-trigger")
-                .min_w_0()
-                .h(px(SIDEBAR_ACTION_BUTTON_SIZE))
-                .pl(px(SIDEBAR_ROW_PADDING_X))
-                .pr(px(6.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(SIDEBAR_TITLE_ROW_GAP)),
-            "sidebar-space-trigger-group",
-            px(SPACE_CONTROL_RADIUS),
-            open.then_some(active_bg),
-            (!open).then_some(hover_bg),
-        )
-        .role(Role::Button)
-        .aria_label(format!("Space {name}"))
-        .aria_expanded(open)
-        .delayed_tooltip(crate::ui_primitives::text_tooltip("Switch space"))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.sidebar_space_menu_open = !open;
-            cx.notify();
-        }))
-        .child(
-            div()
-                .w(px(SIDEBAR_FOLDER_SLOT_WIDTH))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(mark),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(ui.text)
-                .child(name),
-        )
-        .child(
-            svg()
-                .size(px(12.))
-                .flex_none()
-                .path("icons/chevron-down.svg")
-                .text_color(ui.muted),
-        )
-        .when(open, |trigger| {
-            trigger.child(self.render_space_menu(attention, ui, cx))
-        })
-        .into_any_element()
+        div()
+            .id("sidebar-space-trigger")
+            .min_w_0()
+            .h(px(SIDEBAR_ACTION_BUTTON_SIZE))
+            .pl(px(SIDEBAR_ROW_PADDING_X))
+            .pr(px(4.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SIDEBAR_TITLE_ROW_GAP))
+            .role(Role::Button)
+            .aria_label(format!("Space {name}"))
+            .aria_expanded(open)
+            .delayed_tooltip(crate::ui_primitives::text_tooltip("Switch space"))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.sidebar_space_menu_open = !open;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(SIDEBAR_FOLDER_SLOT_WIDTH))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(mark),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(crate::ui_primitives::BODY_EMPHASIS)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.text)
+                    .child(name),
+            )
+            .when(open, |trigger| {
+                trigger.child(self.render_space_menu(attention, ui, cx))
+            })
+            .animated_hover_element(move |trigger, hover| {
+                let reveal = if open { 1. } else { hover };
+                trigger.extend([svg()
+                    .size(px(SPACE_SELECTOR_GLYPH_SIZE))
+                    .flex_none()
+                    .path("icons/chevrons-up-down.svg")
+                    .text_color(ui.muted.opacity(reveal))
+                    .into_any_element()]);
+            })
+            .into_any_element()
     }
 
     fn render_space_attention_button(
