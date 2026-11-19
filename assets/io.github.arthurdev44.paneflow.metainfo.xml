@@ -64,6 +64,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.20.0" date="2026-11-19">
+      <description>
+        <p>The dock becomes a place to work on files: a Files tab with a project search, a file finder, find and replace in the code editor, and viewers for images, tables, Markdown, archives and large files. The window opens in the new edge-to-edge Classic style, and the terminal engine moves to libghostty-vt 1.0.1.</p>
+        <ul>
+          <li>Send a file, or a comment on a range of lines, to an agent in the workspace</li>
+          <li>Terminal file links open in the dock at their line and column</li>
+          <li>The Workspaces sidebar resizes, closes several rows at once and groups tabs by status</li>
+          <li>Every menu shares one keyboard-driven look, and the Changes tab is redesigned</li>
+          <li>App icon and workspace icon choices, and WebStorm replaces Windsurf</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.1" date="2026-11-13">
       <description>
         <p>The Agents section groups agents by status and can list the agents of every space, and new menus choose what the Agents rows and the workspace tree show. Closing a pane, a tab or a workspace takes one click and stops what it closes.</p>
