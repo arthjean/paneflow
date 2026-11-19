@@ -201,12 +201,12 @@ impl CardShape {
     }
 
     pub(crate) fn tab_chip_radius(self) -> Option<Pixels> {
+        if crate::ui_primitives::interface_style::classic() {
+            return Some(crate::ui_primitives::interface_style::CLASSIC_CONTROL);
+        }
         let compact = crate::app::constants::PANEL_CORNER_RADIUS - px(UNIFIED_TAB_BAR_INSET);
         match self {
-            Self::Squircle(_) => crate::ui_primitives::interface_style::pick(
-                None,
-                Some(crate::ui_primitives::interface_style::CLASSIC_CONTROL),
-            ),
+            Self::Squircle(_) => None,
             Self::Flush(_) => Some(compact),
             Self::Morph { comfort, .. } => {
                 Some(compact + (px(UNIFIED_TAB_HEIGHT / 2.) - compact) * comfort)
@@ -2988,6 +2988,23 @@ mod tests {
             super::CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS).tab_chip_radius(),
             None
         );
+    }
+
+    #[test]
+    fn a_classic_tab_takes_the_classic_control_radius_whatever_the_frame() {
+        use crate::ui_primitives::interface_style::{CLASSIC_CONTROL, Shape, scoped};
+        scoped(Shape::Classic, || {
+            for shape in [
+                super::CardShape::Flush(gpui::Edges::default()),
+                super::CardShape::Squircle(crate::app::constants::PANE_CARD_RADIUS),
+                super::CardShape::Morph {
+                    radii: gpui::Corners::default(),
+                    comfort: 0.5,
+                },
+            ] {
+                assert_eq!(shape.tab_chip_radius(), Some(CLASSIC_CONTROL));
+            }
+        });
     }
 
     #[test]
