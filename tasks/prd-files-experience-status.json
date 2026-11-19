@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Aperçus et très gros fichiers",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-005",
@@ -384,83 +384,83 @@
       "id": "US-024",
       "title": "Aiguillage par type et écran « pas d'aperçu »",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-025",
       "title": "Visionneuse de très gros fichiers texte",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-026",
       "title": "Visionneuse d'images",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-027",
       "title": "Markdown : bascule entre rendu et source dans le dock",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-028",
       "title": "Tableau pour CSV et TSV",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-029",
       "title": "Liste du contenu d'une archive",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-19T08:13:40+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-030",

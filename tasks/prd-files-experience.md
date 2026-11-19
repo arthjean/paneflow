@@ -11,6 +11,8 @@
 | 1.3 | 2026-11-18 | Arthur Jean | Revue d'EP-002. Deux défauts corrigés. (1) `sync_files_sidebar_session`, appelé à chaque rendu du dock, relançait la révélation d'US-012 dès que la sélection quittait le fichier actif : la recherche était vidée à la frappe suivante et un dossier parent replié se redépliait. La révélation ne se déclenche plus qu'au changement de fichier actif (`FilesSidebar::reveal_request`). (2) La recherche fusionnait deux dossiers qui ne diffèrent que par la casse (`Docs/`, `docs/`) et donnait un chemin faux aux fichiers du second. (3) `tree.json` manquait à la liste des lignes de base connues de `src-app/src/bench_harness.rs`, ce qui faisait échouer `every_committed_baseline_is_clean_current_and_on_its_platform` ; le test valide maintenant son schéma, son arbre propre et sa plateforme. US-015 et US-016 certifiées. Passe visuelle d'US-009 à US-014 sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-files`, dans un Xvfb privé avec openbox et lavapipe, piloté par agent-desktop et xdotool, sur un dépôt de test (`.gitignore`, fichiers à point, dossier illisible, `Docs/` et `docs/`, chemin de 14 niveaux) : barre dans l'ordre, rotation de « Refresh files » jusqu'à la fin de la relecture, « Expand all » sans les dossiers ignorés puis « Collapse all », indicateur de chargement tournant puis statique sous `reduce_motion`, « Unable to load folder. » sur un dossier illisible ; ignorés atténués et ouvrables, fichiers à point normaux, `.git` masqué ; recherche dans un dossier jamais déplié avec parents dépliés et surlignage, « No matching files. », « More matches available. Refine your search. », Échap, `.gitignore` respecté ; révélation au changement d'onglet sans vol de focus, fichier ignoré jamais révélé, et le correctif (1) confirmé à l'écran (recherche et repli conservés) ; menu de l'arbre, « Reveal in File Manager » sélectionnant le fichier par `FileManager1`, toast d'échec du repli `xdg-open` ; icônes claires et sombres en Paneflow Dark, Paneflow Light et Claude Light, fenêtre de 800 par 500. Question ouverte d'US-014 tranchée : les icônes de Pierre remplacent celles de Paneflow quand un équivalent existe. EP-002 certifié. Constat hors epic : sur 14 niveaux, le retrait de 18 px dépasse la largeur par défaut de l'arbre et masque le nom du fichier. |
 | 1.4 | 2026-11-18 | Arthur Jean | EP-003 remis en revue, sauf la décision d'US-023. Table `RowMap` (`code/rows.rs`) entre lignes et rangées visuelles ; retour à la ligne par onglet (`editor.word_wrap`, faux par défaut), dont la première image d'une ligne géante tombe de 17,96 ms à 2,60 ms ; barre de recherche et de remplacement hors du fil de rendu ; révélation d'une ligne ou d'une plage, utilisée aujourd'hui par `:N` et prête pour US-034 ; mémoire de 200 positions par fenêtre. Banc sans régression au-delà de 5 % (`keystroke_to_runs` +0,5 %, requête d'un écran +2,0 %). Prototype lexical derrière la fonctionnalité `lexer-prototype` et rapport de mesure et de justesse ajoutés (section « Rapport du prototype lexical »). Décision de moteur d'Arthur (2026-11-19) : coloration progressive à deux couches, voie 1 en hybride. Couche 0, un lexer natif en Rust réécrit à partir des lexers de Pierre (Apache-2.0), sans wasm ni compilation à la volée, colore la première image, tous les langages et les blocs imbriqués. Couche 1, tree-sitter avec injections, le remplace dès que l'arbre est prêt pour les langages qui ont une grammaire, Rust en tête. Les jetons sémantiques du LSP sont une troisième couche envisagée plus tard. Le binaire embarqué n'est pas livré. L'intégration fera l'objet d'un PRD suivant ; son premier sujet est une transition invisible entre les deux couches. |
 | 1.5 | 2026-11-19 | Arthur Jean | Revue d'EP-003. Deux défauts corrigés. (1) La mémoire de défilement d'US-021 et la réouverture d'un onglet fermé enregistraient la position en rangées visuelles, puis la rejouaient comme une position de ligne sur la table uniforme d'un onglet neuf : avec `editor.word_wrap` actif, un fichier relu à la ligne 151 se rouvrait à la ligne 271. La position est maintenant une position de ligne (`FilePosition::scroll_line`, `ClosedFileTab::scroll_line`), appliquée une fois la table du retour à la ligne installée ; test `a_remembered_position_lands_on_the_same_line_when_the_tab_wraps`, rouge sans le correctif. (2) Le lavis d'une ligne révélée par `:N` restait affiché quand Entrée ou une nouvelle requête emmenait le curseur sur une occurrence ailleurs ; il part maintenant avec le curseur (`stepping_to_a_match_clears_the_highlight_of_a_revealed_line`). Écart mineur aligné : la découpe du retour à la ligne retirait toutes les fins `\r` d'une ligne, le document une seule. Banc après correctifs ([résultat](../bench/results/editor-20261119T065327Z-f08ffcef5d04.json), part CPU 0,99) : `keystroke_to_runs` +0,7 %, requête d'un écran -0,2 %, première image d'une ligne géante repliée 2,60 ms. Passe visuelle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep003`, dans un Xvfb privé de 800 par 500 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark, Paneflow Light et Claude Dark, sur un dépôt de test (chemin à quatre niveaux, Markdown à lignes longues modifié, JSON d'une ligne de 12 008 caractères) : menu Editor Controls avec Word Wrap (survol, coché depuis le réglage), lignes repliées aux espaces sans numéro sur les rangées de continuation, barre git sur toutes les rangées d'une ligne repliée, `:24` centré et lavé sur ses sept rangées, compteur « 5 of 29 » et occurrence courante distincte, rangée de remplacement, expression invalide (bordure et message « unclosed group », Replace désactivé), Échap qui rend le focus, rangée de remplacement absente sur le fichier en lecture seule dont la ligne géante se replie. Constat non corrigé : un onglet replié de moins de 2 Mio reconstruit toute sa table à chaque frappe (0,66 ms pour 300 Ko, environ 4,6 ms à 2 Mio) ; une mise à jour incrémentale de la table est à prévoir. L'ouverture à une ligne d'un onglet déjà ouvert (`open_diff_file_tab_at`) n'a pas encore d'appelant : US-034 en sera le premier. EP-003 certifié. |
+| 1.6 | 2026-11-19 | Arthur Jean | EP-004 remis en revue. Aiguillage par type dans `diff_dock/preview/` : l'onglet de fichier choisit image, tableau, Markdown, archive puis texte, sur l'extension puis les 8 premiers Kio, hors du fil de rendu ; `BINARY_EXTENSIONS` et l'atténuation des lignes refusées sont retirés. Écran « No preview for this file » (icône, taille, raison, « Open with Default App », révélation, « Open With » ouvrant la liste des éditeurs), « File no longer exists. » avec « Retry », fichier spécial jamais lu. Visionneuse de texte de 10 à 256 Mio : index des débuts de ligne en `u32` (4 octets par ligne), premier écran après 16 Kio, pages de 32 lignes et 12 pages gardées, sélection par lignes et copie plafonnée à 16 Mio, réindexation qui garde la position, arrêt de l'index à la fermeture. Images : PNG, JPEG, GIF, WebP, BMP, ICO, TIFF et SVG (resvg déjà lié, références de fichier refusées), dimensions lues dans l'en-tête avant tout décodage, plafonds 50 Mio, 16 384 px et 32 mégapixels, zoom par 1,25 de 5 % à 800 %, Fit à 100 % au plus avec 16 px de marge. Markdown et CSV : bascule dans l'en-tête, préférences `editor.markdown_rendered` (faux) et `editor.csv_table` (vrai), rendu du texte en cours d'édition, source forcée par une ligne demandée. Tableau : guillemets, sauts de ligne, marque d'ordre, `;` cohérent, 1 024 colonnes, largeurs sur 100 lignes entre 60 et 400 px. Archives zip, jar, tar, tar.gz, tgz : lecteur zip natif sans dépendance, `tar` et `flate2` existants, 2 048 entrées, 30 s, expansion plafonnée à 200 fois, noms hostiles affichés tels quels. Aucune dépendance ajoutée à `Cargo.lock` (fonctionnalité `ico` d'`image`, `resvg` passé des dépendances de test aux dépendances). Passe visuelle non faite. |
+| 1.7 | 2026-11-19 | Arthur Jean | Revue d'EP-004. Cinq défauts corrigés. (1) Un fichier `.svg` compressé en gzip était décompressé sans plafond par usvg : quelques centaines de Ko pouvaient occuper des dizaines de Go de mémoire. La visionneuse décompresse maintenant elle-même, s'arrête à 50 Mio avec l'écran « pas d'aperçu » et refuse une double compression (`a_compressed_svg_renders_and_one_that_expands_past_the_limit_is_refused`). (2) Dans un `.tar.gz`, un enregistrement de nom long (GNU ou pax) était lu en entier en mémoire par la crate `tar`, jusqu'au budget d'expansion de 200 fois la taille, soit 10 Go. La liste parcourt maintenant les en-têtes bruts et refuse un enregistrement de nom de plus de 64 Kio (`a_long_tar_name_is_listed_and_an_oversized_name_record_is_refused`). (3) Sur un CSV ou un Markdown de plus de 10 Mio, ouvert dans la visionneuse de gros fichiers, la bascule annonçait l'état inverse et son premier clic changeait la préférence globale sans rien afficher ; elle annonce maintenant « Show table » ou « Show rendered markdown » et ne fait qu'émettre le toast (`a_csv_past_ten_megabytes_opens_as_large_text`). (4) La bannière « Large file » débordait sur l'arbre dans un dock étroit ; son libellé est maintenant tronqué. (5) Dans une archive, la colonne Name tombait à un caractère quand l'arbre est ouvert à 800 par 500 ; elle garde 120 px et Size et Modified rétrécissent d'abord. Banc après correctifs ([résultat](../bench/results/editor-20261119T081246Z-50d4993eef0f.json), part CPU 0,99) : `keystroke_to_runs` +1,9 %, requête d'un écran +2,3 %. Deux mesures hors seuil du PRD dépassent 10 % face à la ligne de base du 17 novembre, antérieure à EP-003 (`open_to_first_tree_300kb` +10,4 %, `disk_splices_100k_lines` +14,7 %), sur du code que cet epic ne modifie pas ; l'origine n'a pas été isolée. Passe visuelle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep004`, dans un Xvfb privé de 800 par 500 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark, Paneflow Light et Claude Light, sur un dépôt de test (images de 240 par 120 et de 3000 par 2000, SVG avec script, GIF animé, PNG corrompu, HEIC, binaire, journal de 400 000 lignes, CSV à `;` et cellules multi-lignes, CSV de 1 030 colonnes, CSV de 13 Mio, Markdown, zip avec nom `../../etc/passwd`, zip de 2 100 entrées, zip corrompu) : lignes de l'arbre non atténuées ; barre d'image, « Loading image… », Fit à 98 % et 8 %, zoom à 195 %, glisser, infobulles ; « Unable to load image. » ; écran « No preview for this file » et menu « Open With » (Zed, Cursor) ; bannière et compteur du gros fichier, sélection par Maj+clic, copie relue dans le presse-papiers, Ctrl+Fin ; tableau à en-tête fixe, bannière des colonnes masquées ; bascule Markdown avec préférence relue au redémarrage ; archive avec fil d'Ariane, « Back », troncature à 2 048 et nom hostile affiché tel quel. Non vu à l'écran : le toast de copie refusée et de bascule refusée (couverts par test), la dernière ligne du journal (la fenêtre dépassait l'écran virtuel de 22 px). Constats non corrigés : « Unable to load image. » s'affiche en haut de la zone et non au centre ; le tableau met en page toutes les colonnes de chaque ligne visible, jusqu'à 1 024 ; le premier écran d'un fichier de 256 Mio en 200 ms n'est mesuré par aucun banc. EP-004 certifié. |
 
 ## Problem Statement
 
@@ -518,12 +520,12 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:1210-1220,1607-1783` (ordre d'aiguillage), `packages/shared/src/filePreview.ts:38-96` (`filePreviewKind`), `apps/web/src/components/files/AttachmentFilePreview.tsx:394-407` (écran « No preview for this file »), `apps/server/src/workspace/fileHeaderMimeType.ts:1-20`
 
 **Acceptance Criteria:**
-- [ ] L'ouverture d'un fichier choisit sa visionneuse dans cet ordre : image par extension, tableau pour `.csv` et `.tsv`, Markdown, archive par extension, sinon chargeur de texte
-- [ ] Given un fichier que le chargeur de texte reconnaît comme binaire ou non UTF-8, when il s'ouvre, then l'écran « No preview for this file » s'affiche avec l'icône du type, la taille, et les boutons « Open with Default App », le libellé de révélation et « Open With »
-- [ ] Given un fichier d'une extension de l'ancienne liste `BINARY_EXTENSIONS`, when il apparaît dans l'arbre, then sa ligne n'est plus atténuée pour cette raison
-- [ ] Given un fichier supprimé pendant l'ouverture, when le chargement échoue, then l'onglet affiche « File no longer exists » avec « Retry »
-- [ ] Given un fichier spécial (tube, périphérique), when il est ouvert, then l'écran « pas d'aperçu » s'affiche sans lecture du fichier
-- [ ] Le choix repose sur l'extension, puis sur les 8 premiers Kio pour le texte ; aucune lecture ne se fait sur le fil de rendu
+- [x] L'ouverture d'un fichier choisit sa visionneuse dans cet ordre : image par extension, tableau pour `.csv` et `.tsv`, Markdown, archive par extension, sinon chargeur de texte
+- [x] Given un fichier que le chargeur de texte reconnaît comme binaire ou non UTF-8, when il s'ouvre, then l'écran « No preview for this file » s'affiche avec l'icône du type, la taille, et les boutons « Open with Default App », le libellé de révélation et « Open With »
+- [x] Given un fichier d'une extension de l'ancienne liste `BINARY_EXTENSIONS`, when il apparaît dans l'arbre, then sa ligne n'est plus atténuée pour cette raison
+- [x] Given un fichier supprimé pendant l'ouverture, when le chargement échoue, then l'onglet affiche « File no longer exists » avec « Retry »
+- [x] Given un fichier spécial (tube, périphérique), when il est ouvert, then l'écran « pas d'aperçu » s'affiche sans lecture du fichier
+- [x] Le choix repose sur l'extension, puis sur les 8 premiers Kio pour le texte ; aucune lecture ne se fait sur le fil de rendu
 
 #### US-025: Visionneuse de très gros fichiers texte
 **Description:** As a développeur qui supervise des agents, I want ouvrir un journal de 200 Mio so that je lis la fin d'une exécution sans quitter Paneflow.
@@ -534,13 +536,13 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/LargeTextViewer.tsx:12-253` (16 Kio immédiats, en-tête, colonnes), `apps/web/src/components/files/largeText.worker.ts:12-201` (index des débuts de ligne, pages), `apps/web/src/components/files/largeTextProtocol.ts:2-5` (256 Mio, 5 000 000 de lignes, pages de 32), `apps/web/src/components/files/VirtualTablePreview.tsx:261-347`, `apps/web/src/components/files/FilePreviewPanel.tsx:1894-1933` (barre « Full file »)
 
 **Acceptance Criteria:**
-- [ ] Given un fichier texte entre 10 Mio et 256 Mio, when il s'ouvre, then une visionneuse en lecture seule, sans coloration, l'affiche avec la bannière « Large file: read-only, no syntax colors »
-- [ ] Given l'ouverture, when les 16 premiers Kio sont lus, then le premier écran s'affiche avant la fin de l'indexation et l'en-tête indique « Indexing… » puis « N lines · taille »
-- [ ] L'index des débuts de ligne est construit hors du fil de rendu et les lignes sont lues par pages à la demande ; la mémoire retenue ne dépasse pas 8 octets par ligne plus 12 pages
-- [ ] Given un fichier de plus de 256 Mio, de plus de 5 000 000 de lignes, avec une ligne de plus de 1 Mio ou un octet nul, when il s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison
-- [ ] La sélection, la copie et le défilement jusqu'à la dernière ligne fonctionnent ; une copie de plus de 16 Mio est refusée avec un toast
-- [ ] Given le fichier modifié sur le disque, when la modification est détectée, then l'index est reconstruit et la position conservée si la ligne existe encore
-- [ ] Given l'onglet fermé pendant l'indexation, when il se ferme, then l'indexation s'arrête
+- [x] Given un fichier texte entre 10 Mio et 256 Mio, when il s'ouvre, then une visionneuse en lecture seule, sans coloration, l'affiche avec la bannière « Large file: read-only, no syntax colors »
+- [x] Given l'ouverture, when les 16 premiers Kio sont lus, then le premier écran s'affiche avant la fin de l'indexation et l'en-tête indique « Indexing… » puis « N lines · taille »
+- [x] L'index des débuts de ligne est construit hors du fil de rendu et les lignes sont lues par pages à la demande ; la mémoire retenue ne dépasse pas 8 octets par ligne plus 12 pages
+- [x] Given un fichier de plus de 256 Mio, de plus de 5 000 000 de lignes, avec une ligne de plus de 1 Mio ou un octet nul, when il s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison
+- [x] La sélection, la copie et le défilement jusqu'à la dernière ligne fonctionnent ; une copie de plus de 16 Mio est refusée avec un toast
+- [x] Given le fichier modifié sur le disque, when la modification est détectée, then l'index est reconstruit et la position conservée si la ligne existe encore
+- [x] Given l'onglet fermé pendant l'indexation, when il se ferme, then l'indexation s'arrête
 
 #### US-026: Visionneuse d'images
 **Description:** As a développeur qui explore un dépôt, I want voir une image du dépôt so that je vérifie une ressource qu'un agent vient de produire.
@@ -551,15 +553,15 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/PreviewImageContent.tsx:30-133` (barre, zoom ×1,25 entre 0,05 et 8, ajuster, taille réelle), `apps/web/src/components/files/decodeImagePreview.ts`, `apps/web/src/components/files/imageDecode.worker.ts:3-213` (plafonds 50 Mo, 16 384 px, 32 Mpx), `packages/shared/src/mediaPreview.ts:22-36` (extensions d'image)
 
 **Acceptance Criteria:**
-- [ ] Les fichiers PNG, JPEG, GIF, WebP, BMP, ICO, TIFF et SVG s'ouvrent dans une visionneuse ; un GIF ou un WebP animé affiche sa première image
-- [ ] La barre affiche la taille « L × H », « Zoom out », le pourcentage, « Zoom in », « Fit » et « Actual size »
-- [ ] Le zoom avance par facteur 1,25 entre 5 % et 800 % ; « Fit » ajuste l'image à la zone sans jamais dépasser 100 %, avec 16 px de marge
-- [ ] Given une image plus grande que la zone, when je fais défiler ou glisser, then l'image se déplace
-- [ ] Le décodage se fait hors du fil de rendu, et la barre affiche « Loading image… » jusqu'à sa fin
-- [ ] Given un fichier de plus de 50 Mo, un côté de plus de 16 384 px ou plus de 32 mégapixels, when il s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison, sans décodage ; les dimensions sont lues dans l'en-tête avant toute allocation
-- [ ] Given un fichier corrompu, AVIF ou HEIC, when il s'ouvre, then « Unable to load image. » ou l'écran « pas d'aperçu » s'affiche
-- [ ] Un SVG est rendu sans exécuter de script et sans charger de ressource externe
-- [ ] Given l'image modifiée sur le disque, when la modification est détectée, then elle est rechargée en gardant le zoom
+- [x] Les fichiers PNG, JPEG, GIF, WebP, BMP, ICO, TIFF et SVG s'ouvrent dans une visionneuse ; un GIF ou un WebP animé affiche sa première image
+- [x] La barre affiche la taille « L × H », « Zoom out », le pourcentage, « Zoom in », « Fit » et « Actual size »
+- [x] Le zoom avance par facteur 1,25 entre 5 % et 800 % ; « Fit » ajuste l'image à la zone sans jamais dépasser 100 %, avec 16 px de marge
+- [x] Given une image plus grande que la zone, when je fais défiler ou glisser, then l'image se déplace
+- [x] Le décodage se fait hors du fil de rendu, et la barre affiche « Loading image… » jusqu'à sa fin
+- [x] Given un fichier de plus de 50 Mo, un côté de plus de 16 384 px ou plus de 32 mégapixels, when il s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison, sans décodage ; les dimensions sont lues dans l'en-tête avant toute allocation
+- [x] Given un fichier corrompu, AVIF ou HEIC, when il s'ouvre, then « Unable to load image. » ou l'écran « pas d'aperçu » s'affiche
+- [x] Un SVG est rendu sans exécuter de script et sans charger de ressource externe
+- [x] Given l'image modifiée sur le disque, when la modification est détectée, then elle est rechargée en gardant le zoom
 
 #### US-027: Markdown : bascule entre rendu et source dans le dock
 **Description:** As a développeur qui supervise des agents, I want lire un Markdown rendu dans le dock so that je lis le plan d'un agent sans ouvrir un autre panneau.
@@ -570,13 +572,13 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/FileMarkdownPreview.tsx`, `apps/web/src/components/files/filePreviewMode.ts:13-14` (extensions Markdown), `apps/web/src/components/files/FilePreviewPanel.tsx:1092-1155,1261-1296` (bascule, préférence, source forcée quand une ligne est demandée)
 
 **Acceptance Criteria:**
-- [ ] Given un fichier `.md`, `.mdx` ou `.markdown`, when il est ouvert, then l'en-tête montre une bascule « Show rendered markdown » / « Show markdown source »
-- [ ] La source est l'affichage par défaut ; le dernier choix est mémorisé dans la configuration et vaut pour tous les fichiers Markdown
-- [ ] La vue rendue réutilise `MarkdownView` (`src-app/src/markdown/view.rs`) et se recharge quand le fichier change
-- [ ] Given une ouverture avec une ligne demandée, when le fichier s'affiche, then la source est affichée quelle que soit la préférence
-- [ ] Given un fichier modifié non enregistré, when je passe au rendu, then le rendu montre le contenu en cours d'édition
-- [ ] Given un Markdown au-dessus de la limite du rendu, when je bascule, then la source reste affichée et un toast indique « File too large to render »
-- [ ] Le clic sur un chemin `.md` dans un terminal garde son comportement actuel
+- [x] Given un fichier `.md`, `.mdx` ou `.markdown`, when il est ouvert, then l'en-tête montre une bascule « Show rendered markdown » / « Show markdown source »
+- [x] La source est l'affichage par défaut ; le dernier choix est mémorisé dans la configuration et vaut pour tous les fichiers Markdown
+- [x] La vue rendue réutilise `MarkdownView` (`src-app/src/markdown/view.rs`) et se recharge quand le fichier change
+- [x] Given une ouverture avec une ligne demandée, when le fichier s'affiche, then la source est affichée quelle que soit la préférence
+- [x] Given un fichier modifié non enregistré, when je passe au rendu, then le rendu montre le contenu en cours d'édition
+- [x] Given un Markdown au-dessus de la limite du rendu, when je bascule, then la source reste affichée et un toast indique « File too large to render »
+- [x] Le clic sur un chemin `.md` dans un terminal garde son comportement actuel
 
 #### US-028: Tableau pour CSV et TSV
 **Description:** As a développeur qui explore un dépôt, I want lire un CSV en colonnes so that je vérifie des données sans tableur.
@@ -587,15 +589,15 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/DelimitedTablePreview.tsx`, `packages/shared/src/delimitedPreview.ts:3-108` (guillemets, marque d'ordre, détection du `;`), `apps/web/src/components/files/VirtualTablePreview.tsx`, `apps/web/src/components/files/largeTextProtocol.ts:4` (1 024 colonnes)
 
 **Acceptance Criteria:**
-- [ ] Given un fichier `.csv` ou `.tsv` de 10 Mio au plus, when il s'ouvre, then un tableau s'affiche, première ligne en en-tête fixe, numéros de ligne à gauche, avec une bascule « Show source » / « Show table »
-- [ ] Le tableau est le mode par défaut ; le dernier choix est mémorisé dans la configuration
-- [ ] L'analyse gère les guillemets et les sauts de ligne dans une cellule, ignore la marque d'ordre des octets, et retient `;` comme séparateur seulement s'il est cohérent sur les deux premières lignes
-- [ ] Les lignes sont virtualisées ; seules les lignes visibles sont mises en page
-- [ ] La largeur de chaque colonne est calculée sur les 100 premières lignes, entre 60 et 400 px ; une cellule plus longue est tronquée
-- [ ] Given plus de 1 024 colonnes, when le fichier s'ouvre, then les colonnes suivantes sont masquées et une bannière l'indique
-- [ ] Given un fichier dont une ligne n'a pas le même nombre de colonnes, when il s'affiche, then les cellules manquantes sont vides et aucune ligne n'est perdue
-- [ ] Given un CSV de plus de 10 Mio, when il s'ouvre, then la visionneuse de très gros fichiers l'affiche en texte
-- [ ] L'analyse se fait hors du fil de rendu
+- [x] Given un fichier `.csv` ou `.tsv` de 10 Mio au plus, when il s'ouvre, then un tableau s'affiche, première ligne en en-tête fixe, numéros de ligne à gauche, avec une bascule « Show source » / « Show table »
+- [x] Le tableau est le mode par défaut ; le dernier choix est mémorisé dans la configuration
+- [x] L'analyse gère les guillemets et les sauts de ligne dans une cellule, ignore la marque d'ordre des octets, et retient `;` comme séparateur seulement s'il est cohérent sur les deux premières lignes
+- [x] Les lignes sont virtualisées ; seules les lignes visibles sont mises en page
+- [x] La largeur de chaque colonne est calculée sur les 100 premières lignes, entre 60 et 400 px ; une cellule plus longue est tronquée
+- [x] Given plus de 1 024 colonnes, when le fichier s'ouvre, then les colonnes suivantes sont masquées et une bannière l'indique
+- [x] Given un fichier dont une ligne n'a pas le même nombre de colonnes, when il s'affiche, then les cellules manquantes sont vides et aucune ligne n'est perdue
+- [x] Given un CSV de plus de 10 Mio, when il s'ouvre, then la visionneuse de très gros fichiers l'affiche en texte
+- [x] L'analyse se fait hors du fil de rendu
 
 #### US-029: Liste du contenu d'une archive
 **Description:** As a développeur qui explore un dépôt, I want voir ce que contient une archive so that je vérifie un paquet produit par un build.
@@ -606,13 +608,13 @@ Phase 2. Un aiguillage par type remplace la liste d'extensions refusées. Chaque
 **Référence t3code :** `apps/web/src/components/files/BinaryViewer.tsx`, `apps/web/src/components/files/binaryPreview.worker.ts:45-156` (lecture des en-têtes tar) et `:228-243` (signatures zip et gzip), `packages/client-runtime/src/zip/boundedZip.ts:5-8` (50 Mo, 10 Mo par entrée, 2 048 entrées, ratio de 200)
 
 **Acceptance Criteria:**
-- [ ] Given un fichier `.zip`, `.jar`, `.tar`, `.tar.gz` ou `.tgz` de 50 Mo au plus, when il s'ouvre, then un tableau liste Name, Size et Modified, dossiers d'abord
-- [ ] Un fil d'Ariane interne et une entrée « Back » permettent d'entrer dans un dossier de l'archive et d'en sortir
-- [ ] Aucune entrée n'est extraite sur le disque ni ouverte : la story ne fait que lister
-- [ ] Given plus de 2 048 entrées, when la liste se construit, then elle s'arrête à 2 048 et une bannière l'indique
-- [ ] Given une archive corrompue, chiffrée ou de plus de 50 Mo, when elle s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison
-- [ ] Un nom d'entrée absolu ou contenant `..` est affiché tel quel et ne sert à aucun accès au disque
-- [ ] La lecture se fait hors du fil de rendu avec un délai de 30 s
+- [x] Given un fichier `.zip`, `.jar`, `.tar`, `.tar.gz` ou `.tgz` de 50 Mo au plus, when il s'ouvre, then un tableau liste Name, Size et Modified, dossiers d'abord
+- [x] Un fil d'Ariane interne et une entrée « Back » permettent d'entrer dans un dossier de l'archive et d'en sortir
+- [x] Aucune entrée n'est extraite sur le disque ni ouverte : la story ne fait que lister
+- [x] Given plus de 2 048 entrées, when la liste se construit, then elle s'arrête à 2 048 et une bannière l'indique
+- [x] Given une archive corrompue, chiffrée ou de plus de 50 Mo, when elle s'ouvre, then l'écran « pas d'aperçu » s'affiche avec la raison
+- [x] Un nom d'entrée absolu ou contenant `..` est affiché tel quel et ne sert à aucun accès au disque
+- [x] La lecture se fait hors du fil de rendu avec un délai de 30 s
 
 ---
 
