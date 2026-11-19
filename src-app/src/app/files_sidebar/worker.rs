@@ -89,6 +89,7 @@ impl Drop for FilesWorker {
 struct Scanner {
     tree: FilesTreeState,
     watcher: Option<RecommendedWatcher>,
+    real_root: Option<PathBuf>,
     watched: HashSet<PathBuf>,
     dirty: HashSet<PathBuf>,
     git: Arc<GitStatuses>,
@@ -102,12 +103,31 @@ impl Scanner {
         Self {
             tree: FilesTreeState::root_shell(root),
             watcher: None,
+            real_root: None,
             watched: HashSet::new(),
             dirty: HashSet::new(),
             git: Arc::default(),
             git_dir: None,
             git_dirty: true,
             changes: Vec::new(),
+        }
+    }
+
+    fn resolve_real_root(&mut self) {
+        self.real_root = std::fs::canonicalize(&self.tree.root)
+            .ok()
+            .map(crate::runtime_paths::strip_verbatim_prefix)
+            .filter(|real| *real != self.tree.root);
+    }
+
+    fn tree_path(&self, path: PathBuf) -> PathBuf {
+        match self
+            .real_root
+            .as_ref()
+            .and_then(|real| path.strip_prefix(real).ok())
+        {
+            Some(rest) => self.tree.root.join(rest),
+            None => path,
         }
     }
 
@@ -334,6 +354,7 @@ impl Scanner {
         }
         self.git_dirty = true;
         for path in event.paths {
+            let path = self.tree_path(path);
             if self
                 .git_dir
                 .as_ref()
@@ -387,6 +408,7 @@ async fn run(
     while !requests.is_closed() && !updates.is_closed() {
         if ready {
             if scanner.watcher.is_none() {
+                scanner.resolve_real_root();
                 let events = events.clone();
                 scanner.watcher = notify::recommended_watcher(move |event| {
                     let _ = events.try_send(Request::Changed(event));

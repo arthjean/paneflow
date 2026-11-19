@@ -365,3 +365,38 @@ fn a_refresh_rereads_every_loaded_folder() {
     assert_eq!(scanner.tree.children[&nested].len(), 1);
     assert_eq!(scanner.tree.children[&root].len(), 2);
 }
+
+#[test]
+fn events_reported_under_the_real_path_of_an_aliased_root_refresh_the_tree() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    let first = root.join("first");
+    std::fs::create_dir(&first).expect("first directory");
+    let mut scanner = scanner(root.clone(), vec![first.clone()]);
+    let real = std::env::temp_dir().join("paneflow-real-path-of-an-aliased-root");
+    scanner.real_root = Some(real.clone());
+    let new_file = first.join("new.txt");
+    std::fs::write(&new_file, "new").expect("new file");
+
+    assert!(scanner.changed(changed(real.join("first").join("new.txt"))));
+    assert!(scanner.dirty.contains(&first), "{:?}", scanner.dirty);
+    assert!(scanner.scan(|| false));
+    assert_eq!(scanner.tree.children[&first][0].path, new_file);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_reached_through_a_symlink_knows_its_real_path() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let real = temp.path().canonicalize().expect("canonical").join("real");
+    std::fs::create_dir(&real).expect("real directory");
+    let alias = temp.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).expect("symlink");
+    let mut scanner = Scanner::new(alias);
+    scanner.resolve_real_root();
+    assert_eq!(scanner.real_root, Some(real));
+
+    let mut direct = Scanner::new(temp.path().canonicalize().expect("canonical"));
+    direct.resolve_real_root();
+    assert_eq!(direct.real_root, None);
+}
