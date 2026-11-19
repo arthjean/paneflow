@@ -26,7 +26,7 @@ If a line of this skill is what makes you pause, quote it in the report and say 
 
 | Channel | Every row must hold, each with evidence |
 |---|---|
-| Stable `X.Y.Z` | Tag-push `release` run succeeded; the GitHub Release is published, marked latest, carries the full signed asset set and the final notes; `repo_publish` and `update_cask` each ran their job (not skipped) for this tag and succeeded; apt metadata and the cask report `X.Y.Z`; the Ubuntu and Fedora container installs print `paneflow X.Y.Z`; paneflow.dev serves `X.Y.Z` from a ready deployment of the release-sync commit, and its post-deploy check passes. |
+| Stable `X.Y.Z` | Tag-push `release` run succeeded; the GitHub Release is published, marked latest, carries the full signed asset set and the final notes; `repo_publish` and `update_cask` each ran their job (not skipped) for this tag and succeeded; apt metadata and the cask report `X.Y.Z`; the Ubuntu and Fedora container installs print `paneflow X.Y.Z`; paneflow.dev serves `X.Y.Z` from a ready deployment of the release-sync commit. |
 | `-rc.N`, `-alpha.N`, `-beta.N` | Tag-push `release` run succeeded; the GitHub Release is a published prerelease with the full signed asset set and the final notes. Streams, cask, and site stay on the last stable. |
 
 A red, skipped, or unverified row is an open row. Keep the run going until the contract holds or one of the four blockers applies.

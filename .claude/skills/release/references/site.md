@@ -36,15 +36,14 @@ git commit -m "chore(release): publish Paneflow vX.Y.Z"
 git push origin main
 ```
 
-Vercel deploys `main`. Wait for the deployment of that exact commit to be ready: `gh api repos/arthjean/paneflow-web/commits/<sha>/status --jq '.statuses[] | "\(.context): \(.state)"'` reports the Vercel context. Then run the post-deploy guard of `docs/deploy-validation-runbook.md` in the site repo, which rules over this file:
+Vercel deploys `main`. Wait for the deployment of that exact commit to be ready: `gh api repos/arthjean/paneflow-web/commits/<sha>/status --jq '.statuses[] | "\(.context): \(.state)"'` reports the Vercel context. Then confirm the download page:
 
 ```bash
-bun run check:seo --base-url https://paneflow.dev --inventory <scratch>/site-inventory-X.Y.Z.json
 curl -fsSL https://paneflow.dev/download | grep -o "paneflow-X.Y.Z[^\"<]*" | sort -u
 ```
 
-Do not use `scripts/post-deploy-i18n-check.sh` as the gate: that runbook retires it, because it still expects `/legal/privacy` to redirect to French while privacy now ships in all six languages.
+The release stops there. Do not run `bun run check:seo` against production or `scripts/post-deploy-i18n-check.sh`, and do not change the site's SEO tooling during a release: Arthur owns those checks and runs them himself.
 
 Run `bun run indexnow` only when public URLs were added or removed.
 
-**Criterion:** `bun run check` and `bun run build` passed, the commit is on `origin/main`, its Vercel deployment is ready, the post-deploy `check:seo` guard passes against production, and `/download` links `X.Y.Z` artifacts.
+**Criterion:** `bun run check` and `bun run build` passed, the commit is on `origin/main`, its Vercel deployment is ready, and `/download` links `X.Y.Z` artifacts.
