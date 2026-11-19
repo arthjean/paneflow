@@ -210,7 +210,9 @@ mod tests {
 
     fn project() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.path().canonicalize().expect("canonical root");
+        let root = crate::runtime_paths::strip_verbatim_prefix(
+            dir.path().canonicalize().expect("canonical root"),
+        );
         for file in [
             "src/app/mod.rs",
             "src/terminal/mod.rs",

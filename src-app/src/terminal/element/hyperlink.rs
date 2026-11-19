@@ -210,7 +210,10 @@ fn resolve_path(path_str: &str, cwd: Option<&Path>) -> Option<PathBuf> {
         let cwd = cwd?;
         cwd.join(path_str)
     };
-    candidate.canonicalize().ok()
+    candidate
+        .canonicalize()
+        .ok()
+        .map(crate::runtime_paths::strip_verbatim_prefix)
 }
 
 fn canonical_has_md_extension(path: &Path) -> bool {
@@ -595,7 +598,9 @@ pub fn match_loose_path(
         && let Ok(resolved) = root.join(path).canonicalize()
         && resolved.is_file()
     {
-        return Some(LooseMatch::Unique(resolved));
+        return Some(LooseMatch::Unique(
+            crate::runtime_paths::strip_verbatim_prefix(resolved),
+        ));
     }
     let wanted = forward_slashes(path);
     if wanted.is_empty() || wanted.split('/').any(|part| part == "..") {
@@ -965,7 +970,7 @@ mod tests {
         let nested = tmp.path().join("nested");
         fs::create_dir_all(&nested).expect("create nested");
         let md = write_md(tmp.path(), "real.md");
-        let canonical = md.canonicalize().expect("canonicalize");
+        let canonical = PathBuf::from(canonical_display(&md));
 
         let line_text = "see ../real.md";
         let map = ascii_map(line_text);
@@ -1235,5 +1240,29 @@ mod tests {
         let map = ascii_map(line_text);
         let zones = detect_code_paths_on_line_mapped(line_text, line0(), &map, None);
         assert!(zones.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_letter_path_with_backslashes_and_a_line_suffix_is_a_code_link() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let rs_path = write_md(tmp.path(), "main.rs");
+        let display = canonical_display(&rs_path);
+        assert!(
+            display.as_bytes()[1] == b':' && display.contains('\\'),
+            "{display}"
+        );
+        let line_text = format!("error[E0308]: mismatched types at {display}:12:3, see above");
+        let map = ascii_map(&line_text);
+        let zones = detect_code_paths_on_line_mapped(&line_text, line0(), &map, None);
+        let zone = zones
+            .iter()
+            .find(|zone| zone.uri.ends_with("main.rs"))
+            .expect("the Windows path is a link");
+        assert_eq!((zone.line, zone.col), (Some(12), Some(3)));
+        assert_eq!(
+            zone.uri, display,
+            "the link carries the plain drive path, never the verbatim \\\\?\\ form"
+        );
     }
 }
