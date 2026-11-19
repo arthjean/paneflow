@@ -70,12 +70,29 @@ async fn reveal(path: &Path) -> std::io::Result<()> {
 
 #[cfg(target_os = "windows")]
 async fn reveal(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::process::CommandExt;
-    let mut launch = std::process::Command::new("explorer.exe");
-    launch.raw_arg(format!("/select,\"{}\"", path.display()));
-    crate::external_open::run_workspace_command(launch)
-        .await
-        .map(|_| ())
+    let path = crate::runtime_paths::strip_verbatim_prefix(path.to_path_buf());
+    log::info!("workspace reveal: {}", path.display());
+    smol::unblock(move || select_in_explorer(&path)).await
+}
+
+#[cfg(target_os = "windows")]
+fn select_in_explorer(path: &Path) -> std::io::Result<()> {
+    use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{ILFree, SHOpenFolderAndSelectItems, SHParseDisplayName};
+
+    let name = windows::core::HSTRING::from(path);
+    let entered = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+    let mut item: *mut ITEMIDLIST = std::ptr::null_mut();
+    let outcome = unsafe { SHParseDisplayName(&name, None, &mut item, 0, None) }
+        .and_then(|()| unsafe { SHOpenFolderAndSelectItems(item, None, 0) });
+    if !item.is_null() {
+        unsafe { ILFree(Some(item)) };
+    }
+    if entered {
+        unsafe { CoUninitialize() };
+    }
+    outcome.map_err(|error| std::io::Error::other(error.message()))
 }
 
 #[cfg(target_os = "linux")]
@@ -161,6 +178,20 @@ mod tests {
         assert_eq!(
             file_uri(Path::new("/home/a b/ré#1.rs")),
             "file:///home/a%20b/r%C3%A9%231.rs"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn revealing_a_missing_file_names_file_explorer_and_opens_no_window() {
+        let missing = std::env::temp_dir()
+            .join("paneflow-no-such-dir")
+            .join("missing file.txt");
+        let outcome = smol::block_on(reveal_in_file_manager(missing));
+        let message = outcome.expect_err("a missing file cannot be selected");
+        assert!(
+            message.starts_with("Couldn't reveal in File Explorer: "),
+            "{message}"
         );
     }
 

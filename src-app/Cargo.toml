@@ -403,12 +403,15 @@ windows-registry = "0.5"
 # App icon setting: IShellLinkW and IPersistFile point the user's pinned
 # taskbar shortcut at the chosen icon (see `app_icon::shortcut`). Same version
 # as GPUI's own `windows` dependency and a subset of its features, so no new
-# crate or binding module is compiled.
+# crate or binding module is compiled. "Reveal in File Explorer" selects the
+# file through SHOpenFolderAndSelectItems, whose ITEMIDLIST lives in
+# Win32_UI_Shell_Common: explorer.exe /select truncates paths past MAX_PATH.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
 ] }
 
 [target.'cfg(windows)'.build-dependencies]
