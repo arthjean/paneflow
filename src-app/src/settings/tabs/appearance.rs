@@ -1,6 +1,6 @@
 use gpui::{
     ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, img, prelude::*, px,
+    SharedString, Styled, div, img, prelude::*, px, svg,
 };
 
 use paneflow_config::schema::{AppIcon, BackgroundStyle, InterfaceStyle, PaneFlowConfig};
@@ -21,11 +21,20 @@ const THEME_MODE_TILE_RADIUS: f32 = 10.;
 const THEME_MODE_TILE_BORDER: f32 = 2.;
 const THEME_PREVIEW_CORNER_RADIUS: f32 = 8.;
 
-const APP_ICON_TILE: f32 = 64.;
+const APP_ICON_TILE: f32 = 44.;
 const APP_ICON_RING_GAP: f32 = 2.;
-const APP_ICON_RING_RADIUS: f32 = 18.;
-const APP_ICON_TILE_GAP: f32 = 6.;
-const APP_ICON_ROW_GAP: f32 = 10.;
+const APP_ICON_RING_RADIUS: f32 = 14.;
+const APP_ICON_TRIGGER_ICON: f32 = 20.;
+const APP_ICON_TRIGGER_CHEVRON: f32 = 12.;
+const APP_ICON_CELL_WIDTH: f32 = 76.;
+const APP_ICON_CELL_LABEL_GAP: f32 = 6.;
+const APP_ICON_GRID_ROW_GAP: f32 = 14.;
+const APP_ICON_GALLERY_TOP: f32 = 12.;
+const APP_ICON_GALLERY_PADDING: f32 = 12.;
+const APP_ICON_GALLERY_RADIUS: f32 = 14.;
+const APP_ICON_GALLERY_FILL_ALPHA: f32 = 0.035;
+const APP_ICON_GALLERY_DROP: f32 = 6.;
+const APP_ICON_PICKER_SECONDS: f32 = 0.2;
 
 const PREVIEW_BAR_W: f32 = 4.;
 const PREVIEW_BAR_PAD: f32 = 4.;
@@ -85,10 +94,8 @@ impl PaneFlowApp {
                 self.render_background_style_select(ui, cx),
             );
         }
-        let preset_card = preset_card.row(
-            &search::APP_ICON,
-            self.render_app_icon_row(window.scale_factor(), ui, cx),
-        );
+        let preset_card =
+            preset_card.row(&search::APP_ICON, self.render_app_icon_row(window, ui, cx));
 
         let reduce_motion = self.cached_config.reduce_motion_enabled();
         let motion_row = div()
@@ -694,39 +701,126 @@ impl PaneFlowApp {
 
     fn render_app_icon_row(
         &self,
-        scale_factor: f32,
+        window: &gpui::Window,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let scale_factor = window.scale_factor();
         let current = self.cached_config.resolved_app_icon();
-        let mut tiles = div()
+        let now = std::time::Instant::now();
+        if self.app_icon_picker.is_animating(now) {
+            window.request_animation_frame();
+        }
+        let amount = self.app_icon_picker.amount(now);
+        let open = self.app_icon_picker.is_open();
+
+        let chevron = svg()
+            .size(px(APP_ICON_TRIGGER_CHEVRON))
+            .flex_none()
+            .path("icons/settings/arrow-down-01.svg")
+            .text_color(with_alpha(ui.text, 0.8))
+            .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                std::f32::consts::PI * amount,
+            )));
+        let trigger = select_trigger("app-icon-select", search::APP_ICON.title, open, ui)
+            .on_press(cx.listener(|this, _, _window, cx| {
+                this.app_icon_picker.toggle(std::time::Instant::now());
+                cx.notify();
+            }))
+            .child(
+                img(crate::app_icon::preview_asset(current, scale_factor))
+                    .size(px(APP_ICON_TRIGGER_ICON))
+                    .flex_none(),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(ui.text)
+                    .truncate()
+                    .child(current.label()),
+            )
+            .child(chevron);
+
+        let header = div()
             .flex()
             .flex_row()
-            .flex_wrap()
-            .gap(px(APP_ICON_TILE_GAP));
-        for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
-            tiles = tiles.child(
-                app_icon_tile(idx, icon, current == icon, scale_factor, ui).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _window, cx| {
-                        this.apply_app_icon(icon, cx);
-                    },
-                )),
-            );
-        }
-
-        div()
-            .id("row-app-icon")
-            .flex()
-            .flex_col()
-            .gap(px(APP_ICON_ROW_GAP))
-            .px(px(12.))
-            .py(px(10.))
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
             .child(setting_text(
                 ui,
                 search::APP_ICON.title,
                 search::APP_ICON.description,
             ))
-            .child(tiles)
+            .child(div().flex_shrink_0().child(trigger));
+
+        let gallery = (amount > 0.).then(|| {
+            let mut grid = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap_y(px(APP_ICON_GRID_ROW_GAP));
+            for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
+                let is_active = current == icon;
+                let tile = app_icon_tile(idx, icon, is_active, scale_factor, ui).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.apply_app_icon(icon, cx);
+                    }),
+                );
+                grid = grid.child(app_icon_cell(tile, icon, is_active, ui));
+            }
+            let measure_into = self.app_icon_picker.height.clone();
+            let natural = div()
+                .relative()
+                .top(px(-APP_ICON_GALLERY_DROP * (1. - amount)))
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w_full()
+                .pt(px(APP_ICON_GALLERY_TOP))
+                .child(
+                    div()
+                        .w_full()
+                        .p(px(APP_ICON_GALLERY_PADDING))
+                        .rounded(px(APP_ICON_GALLERY_RADIUS))
+                        .bg(with_alpha(ui.text, APP_ICON_GALLERY_FILL_ALPHA))
+                        .child(grid),
+                )
+                .child(
+                    gpui::canvas(
+                        move |bounds, _, _| {
+                            measure_into.set(Some(f32::from(bounds.size.height)));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                );
+            let measured = self.app_icon_picker.height.get();
+            div()
+                .id("app-icon-gallery")
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w_full()
+                .overflow_hidden()
+                .opacity(amount)
+                .when(amount < 1., |wrapper| {
+                    wrapper.h(px(measured.unwrap_or(0.) * amount))
+                })
+                .child(natural)
+        });
+
+        div()
+            .id("row-app-icon")
+            .flex()
+            .flex_col()
+            .px(px(12.))
+            .py(px(10.))
+            .child(header)
+            .children(gallery)
             .into_any_element()
     }
 
@@ -1206,6 +1300,81 @@ fn app_icon_tile(
         )
 }
 
+fn app_icon_cell(
+    tile: AnimatedHover,
+    icon: AppIcon,
+    is_active: bool,
+    ui: crate::theme::UiColors,
+) -> gpui::Div {
+    div()
+        .w(px(APP_ICON_CELL_WIDTH))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(APP_ICON_CELL_LABEL_GAP))
+        .child(tile)
+        .child(
+            div()
+                .w_full()
+                .text_center()
+                .truncate()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(if is_active { ui.text } else { ui.muted })
+                .when(is_active, |label| {
+                    label.font_weight(gpui::FontWeight::MEDIUM)
+                })
+                .child(icon.label()),
+        )
+}
+
+#[derive(Default)]
+pub(crate) struct AppIconPicker {
+    open: bool,
+    from: f32,
+    started_at: Option<std::time::Instant>,
+    height: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+}
+
+impl AppIconPicker {
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
+
+    fn progress(&self, now: std::time::Instant) -> Option<f32> {
+        self.started_at.map(|started_at| {
+            (now.saturating_duration_since(started_at).as_secs_f32() / APP_ICON_PICKER_SECONDS)
+                .clamp(0., 1.)
+        })
+    }
+
+    pub(crate) fn is_animating(&self, now: std::time::Instant) -> bool {
+        self.progress(now).is_some_and(|progress| progress < 1.)
+    }
+
+    pub(crate) fn amount(&self, now: std::time::Instant) -> f32 {
+        let to = if self.open { 1. } else { 0. };
+        match self.progress(now) {
+            Some(progress) => {
+                self.from + (to - self.from) * crate::ui_primitives::ease_out_cubic(progress)
+            }
+            None => to,
+        }
+    }
+
+    pub(crate) fn toggle(&mut self, now: std::time::Instant) {
+        self.from = self.amount(now);
+        self.open = !self.open;
+        self.started_at = (!crate::ui_primitives::reduce_motion()).then_some(now);
+    }
+
+    pub(crate) fn close(&mut self) {
+        self.open = false;
+        self.from = 0.;
+        self.started_at = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,5 +1384,51 @@ mod tests {
         for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
             let _ = app_icon_tile(idx, icon, idx == 0, 1.0, crate::theme::ui_colors());
         }
+    }
+
+    #[test]
+    fn app_icon_picker_starts_folded() {
+        let picker = AppIconPicker::default();
+        let now = std::time::Instant::now();
+        assert!(!picker.is_open());
+        assert_eq!(picker.amount(now), 0.);
+        assert!(!picker.is_animating(now));
+    }
+
+    #[test]
+    fn app_icon_picker_unfolds_and_settles_open() {
+        let mut picker = AppIconPicker::default();
+        let start = std::time::Instant::now();
+        picker.toggle(start);
+        let midway = start + std::time::Duration::from_millis(100);
+        let settled = start + std::time::Duration::from_secs(1);
+        assert!(picker.is_open());
+        assert!(picker.amount(midway) > 0. && picker.amount(midway) < 1.);
+        assert!(picker.is_animating(midway));
+        assert_eq!(picker.amount(settled), 1.);
+        assert!(!picker.is_animating(settled));
+    }
+
+    #[test]
+    fn app_icon_picker_folds_back_from_where_it_was() {
+        let mut picker = AppIconPicker::default();
+        let start = std::time::Instant::now();
+        picker.toggle(start);
+        let midway = start + std::time::Duration::from_millis(60);
+        let reached = picker.amount(midway);
+        picker.toggle(midway);
+        assert!((picker.amount(midway) - reached).abs() < f32::EPSILON);
+        let settled = midway + std::time::Duration::from_secs(1);
+        assert_eq!(picker.amount(settled), 0.);
+    }
+
+    #[test]
+    fn closing_the_app_icon_picker_folds_it_at_once() {
+        let mut picker = AppIconPicker::default();
+        let start = std::time::Instant::now();
+        picker.toggle(start);
+        picker.close();
+        assert!(!picker.is_open());
+        assert_eq!(picker.amount(start), 0.);
     }
 }

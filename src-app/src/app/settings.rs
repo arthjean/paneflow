@@ -24,6 +24,7 @@ impl PaneFlowApp {
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_settings_expanded = None;
+        self.app_icon_picker.close();
         self.space_avatar_import.error = None;
         self.space_env_editor = None;
         self.font_dropdown_open = false;
@@ -84,6 +85,7 @@ impl PaneFlowApp {
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_settings_expanded = None;
+        self.app_icon_picker.close();
         self.space_avatar_import.error = None;
         self.space_env_editor = None;
         self.clear_settings_search(cx);

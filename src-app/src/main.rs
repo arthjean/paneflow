@@ -262,6 +262,7 @@ struct PaneFlowApp {
     agent_profile_editor: Option<crate::settings::tabs::agents::AgentProfileEditor>,
     agents_list_expanded: bool,
     agents_list_animation: Option<SidebarWidthAnimation>,
+    app_icon_picker: crate::settings::tabs::appearance::AppIconPicker,
     integration_status: Option<Vec<paneflow_mcp_install::IntegrationStatus>>,
     integration_busy: Option<String>,
     integration_errors: std::collections::HashMap<String, String>,

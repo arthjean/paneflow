@@ -1497,6 +1497,16 @@ right-aligned. Toggles are 36 by 22 with an 18 px white knob. Selects open a
 button. The Appearance page leads with three theme tiles (System, Light,
 Dark, 134 tall, radius 10, 2 px border) holding a mockup painted from the
 preset, a live diff sample, then the preset select and the preferences.
+The App icon row is folded by default: a select trigger shows the current
+icon at 20 px, its name, and a 12 px chevron that turns half a turn as the row
+opens. Opening grows the row to its measured height over 200 ms with a cubic
+ease-out while the gallery fades in and settles 6 px down; reduced motion opens
+it at once. The gallery is a well of `text` at 0.035, radius 14, padding 12,
+holding every icon at 44 px in a 76 px cell above its name at 11 px (`text`
+Medium when selected, `muted` otherwise), with 14 px between rows. The selected
+icon sits in a 2 px `text` ring at 0.85 with radius 14, and the others show
+that ring at 0.32 on hover. Picking an icon keeps the gallery open, and leaving
+the page folds it.
 
 The Keyboard Shortcuts page is a register, not a tree. Under the heading, one
 12 px muted line carries the contract: click a row, press the new chord,

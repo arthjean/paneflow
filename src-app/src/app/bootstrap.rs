@@ -323,6 +323,7 @@ impl PaneFlowApp {
             agent_profile_editor: None,
             agents_list_expanded: false,
             agents_list_animation: None,
+            app_icon_picker: Default::default(),
             integration_status: None,
             integration_busy: None,
             integration_errors: std::collections::HashMap::new(),
