@@ -1,6 +1,7 @@
 use super::config::{
     lenient_opt_bool, lenient_opt_cursor_blink, lenient_opt_cursor_shape, lenient_opt_f32,
-    lenient_opt_osc52_clipboard, lenient_opt_string, lenient_opt_string_map, lenient_opt_usize,
+    lenient_opt_open_links_in, lenient_opt_osc52_clipboard, lenient_opt_string,
+    lenient_opt_string_map, lenient_opt_usize,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -88,6 +89,35 @@ impl<'de> Deserialize<'de> for Osc52ClipboardConfig {
                     "terminal.osc52_clipboard value not recognized, defaulting to copy",
                 );
                 Self::Copy
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenLinksInConfig {
+    #[default]
+    Dock,
+    ExternalEditor,
+}
+
+impl<'de> Deserialize<'de> for OpenLinksInConfig {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(d)?;
+        Ok(match raw.as_str() {
+            "dock" => Self::Dock,
+            "external_editor" => Self::ExternalEditor,
+            other => {
+                tracing::warn!(
+                    target: "paneflow_config::terminal",
+                    value = other,
+                    "terminal.open_links_in value not recognized, defaulting to dock",
+                );
+                Self::Dock
             }
         })
     }
@@ -216,6 +246,12 @@ pub struct TerminalConfig {
     pub scrollbar: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_osc52_clipboard")]
     pub osc52_clipboard: Option<Osc52ClipboardConfig>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_opt_open_links_in"
+    )]
+    pub open_links_in: Option<OpenLinksInConfig>,
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub xt_checksum_report: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_xt_checksum_extension")]
@@ -237,6 +273,10 @@ impl TerminalConfig {
     pub const DEFAULT_MINIMUM_CONTRAST: f32 = 60.0;
 
     pub const MAX_XT_CHECKSUM_EXTENSION: u8 = 31;
+
+    pub fn resolved_open_links_in(&self) -> OpenLinksInConfig {
+        self.open_links_in.unwrap_or_default()
+    }
 
     pub fn resolved_xt_checksum_report(&self) -> bool {
         self.xt_checksum_report.unwrap_or(false)

@@ -114,6 +114,23 @@ fn paste_needs_confirmation(text: &str, bracketed: bool) -> bool {
     !bracketed && text.contains('\n')
 }
 
+pub(crate) const PREFILL_CANCELLED: &str = "Paste cancelled";
+pub(crate) const PREFILL_EMPTY: &str = "There is nothing to insert";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Prefill {
+    Inserted,
+    Confirming,
+}
+
+pub(crate) fn prefill_text(text: &str) -> String {
+    let cleaned: String = normalize_paste_text(text)
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .collect();
+    cleaned.trim_end_matches('\n').to_owned()
+}
+
 fn multiline_paste_prompt(lines: usize) -> String {
     if lines == 1 {
         "Paste a line that runs immediately?".to_owned()
@@ -928,18 +945,32 @@ impl TerminalView {
         }
     }
 
-    fn open_hyperlink(&self, link: &HyperlinkZone, cx: &mut Context<Self>) {
+    fn open_hyperlink(
+        &self,
+        link: &HyperlinkZone,
+        alternate: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         match link.source {
             HyperlinkSource::FilePath => {
                 cx.emit(TerminalEvent::OpenMarkdownPath(std::path::PathBuf::from(
                     &link.uri,
                 )));
             }
+            HyperlinkSource::CodePath if super::link_fallback::link_is_ambiguous(link) => {
+                cx.emit(TerminalEvent::PickCodePath {
+                    query: link.uri.clone(),
+                    window: window.window_handle(),
+                });
+            }
             HyperlinkSource::CodePath => {
                 cx.emit(TerminalEvent::OpenCodePath {
                     path: std::path::PathBuf::from(&link.uri),
                     line: link.line,
                     col: link.col,
+                    alternate,
+                    window: window.window_handle(),
                 });
             }
             HyperlinkSource::Osc8 | HyperlinkSource::Regex => {
@@ -1032,7 +1063,8 @@ impl TerminalView {
             && link.is_openable
         {
             backend.clear_selection();
-            self.open_hyperlink(&link, cx);
+            let alternate = event.modifiers.shift && !mode.intersects(Modes::MOUSE_MODE);
+            self.open_hyperlink(&link, alternate, window, cx);
             cx.notify();
             return;
         }
@@ -1175,6 +1207,22 @@ impl TerminalView {
         }
     }
 
+    pub(super) fn handle_tree_drop(
+        &mut self,
+        drag: &crate::app::drag::FileTreeDrag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.accepts_prefill() {
+            return;
+        }
+        cx.emit(TerminalEvent::TreeFileDropped {
+            path: drag.path.clone(),
+            root: drag.root.clone(),
+            window: window.window_handle(),
+        });
+    }
+
     pub(super) fn write_paste_text(&self, text: &str) {
         self.write_paste_text_from(text, ghostty::ClipboardLocation::Standard);
     }
@@ -1192,15 +1240,21 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let text = normalize_paste_text(text);
-        let bracketed = self
-            .terminal
-            .session_backend()
-            .modes()
-            .contains(Modes::BRACKETED_PASTE);
-        if !paste_needs_confirmation(&text, bracketed) {
+        if !paste_needs_confirmation(&text, self.bracketed_paste_enabled()) {
             self.terminal.write_ghostty_paste(text, false, location);
             return;
         }
+        self.confirm_multiline_paste(text, location, |_, _, _| {}, window, cx);
+    }
+
+    fn confirm_multiline_paste(
+        &mut self,
+        text: String,
+        location: ghostty::ClipboardLocation,
+        settled: impl FnOnce(Result<(), &'static str>, &mut Window, &mut gpui::App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let lines = text.lines().count();
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
@@ -1214,17 +1268,72 @@ impl TerminalView {
             ],
             cx,
         );
-        cx.spawn(
-            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                if answer.await != Ok(0) {
+        cx.spawn_in(
+            window,
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
+                let confirmed = answer.await == Ok(0);
+                let Ok(outcome) = this.update(cx, |view, _cx| {
+                    if confirmed {
+                        super::view::input_outcome(
+                            view.terminal.write_ghostty_paste(text, true, location),
+                        )
+                    } else {
+                        Err(PREFILL_CANCELLED)
+                    }
+                }) else {
                     return;
-                }
-                let _ = this.update(cx, |view, _cx| {
-                    view.terminal.write_ghostty_paste(text, true, location);
-                });
+                };
+                let _ = cx.update(|window, cx| settled(outcome, window, cx));
             },
         )
         .detach();
+    }
+
+    pub(crate) fn accepts_prefill(&self) -> bool {
+        self.terminal.exited.is_none() && self.terminal.host_link.accepts_input()
+    }
+
+    pub(crate) fn prefill(
+        &mut self,
+        text: &str,
+        settled: impl FnOnce(Result<(), &'static str>, &mut Window, &mut gpui::App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Prefill, &'static str> {
+        if !self.accepts_prefill() {
+            return Err(super::view::INPUT_REJECTED);
+        }
+        let text = prefill_text(text);
+        if text.is_empty() {
+            return Err(PREFILL_EMPTY);
+        }
+        if paste_needs_confirmation(&text, self.bracketed_paste_enabled()) {
+            self.confirm_multiline_paste(
+                text,
+                ghostty::ClipboardLocation::Standard,
+                settled,
+                window,
+                cx,
+            );
+            return Ok(Prefill::Confirming);
+        }
+        super::view::input_outcome(self.terminal.write_ghostty_paste(
+            text,
+            false,
+            ghostty::ClipboardLocation::Standard,
+        ))
+        .map(|()| Prefill::Inserted)
+    }
+
+    pub(crate) fn prefill_path(
+        &mut self,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Prefill, &'static str> {
+        let text = paths_to_pty_text(&[path.to_path_buf()], self.terminal.shell_quoting)
+            .ok_or(PREFILL_EMPTY)?;
+        self.prefill(&format!("{text} "), |_, _, _| {}, window, cx)
     }
 
     pub(crate) fn write_program_injected_text(&self, text: &str) -> Result<(), &'static str> {
@@ -1651,6 +1760,21 @@ mod tests {
     #[test]
     fn paste_text_drops_esc_and_c1_so_a_payload_cannot_close_the_bracket() {
         assert_eq!(normalize_paste_text("a\x1b[201~b\u{0085}c"), "a[201~bc");
+    }
+
+    #[test]
+    fn prefilled_text_keeps_only_line_breaks_and_tabs_among_control_characters() {
+        assert_eq!(
+            super::prefill_text("a\x1b[201~rm -rf /\x07\x00\u{7f}\tb\r\nc\u{0085}"),
+            "a[201~rm -rf /\tb\nc"
+        );
+    }
+
+    #[test]
+    fn prefilled_text_never_ends_with_a_line_break() {
+        assert_eq!(super::prefill_text("@src/main.rs \r\n"), "@src/main.rs ");
+        assert_eq!(super::prefill_text("one\ntwo\n\n"), "one\ntwo");
+        assert_eq!(super::prefill_text("\r\n"), "");
     }
 
     #[test]

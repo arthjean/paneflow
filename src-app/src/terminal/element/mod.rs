@@ -38,7 +38,7 @@ pub(crate) use font::{base_font, embedded_mono_cell_metrics};
 use geometry::CellGeometry;
 pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
-    is_url_scheme_openable,
+    is_url_scheme_openable, loose_code_paths, loose_code_zone, match_loose_path,
 };
 use sprites::{Sprite, is_private_use, sprite_for};
 

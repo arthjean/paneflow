@@ -400,6 +400,8 @@ impl PaneFlowApp {
             files_sidebar_root: None,
             files_sidebar_workspace: None,
             files_menu_open: None,
+            comment_agents: std::collections::HashMap::new(),
+            comment_offer: None,
             toast: None,
             toast_queue: std::collections::VecDeque::new(),
             _toast_task: None,

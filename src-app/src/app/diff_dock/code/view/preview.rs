@@ -25,6 +25,11 @@ pub(crate) enum CodeViewEvent {
         position: Point<Pixels>,
     },
     DisplayChanged(super::super::controls::EditorDisplay),
+    SendComment {
+        comment: crate::app::agent_send::RangeComment,
+        position: Point<Pixels>,
+        window: gpui::AnyWindowHandle,
+    },
 }
 
 impl gpui::EventEmitter<CodeViewEvent> for CodeView {}

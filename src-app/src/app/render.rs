@@ -158,6 +158,12 @@ impl Render for PaneFlowApp {
         startup_trace::on_app_render(window);
         let sidebar_view = self.sidebar_view(cx);
         self.acknowledge_seen_declared_errors(cx);
+        crate::terminal::link_fallback::sync_workspace_roots(
+            self.workspaces
+                .iter()
+                .map(|workspace| (workspace.id, std::path::PathBuf::from(&workspace.cwd))),
+            cx,
+        );
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
         #[cfg(target_os = "windows")]
@@ -1057,6 +1063,10 @@ impl Render for PaneFlowApp {
 
         if let Some(menu) = self.files_menu_open.clone() {
             app_content = app_content.child(self.render_files_context_menu(menu, ui, window, cx));
+        }
+
+        if let Some(offer) = self.comment_offer.clone() {
+            app_content = app_content.child(self.render_comment_agent_menu(offer, window, cx));
         }
 
         if let Some(menu) = self.diff_dock.tab_menu

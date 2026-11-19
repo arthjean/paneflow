@@ -87,6 +87,15 @@ impl RowMap {
         map
     }
 
+    pub(crate) fn with_block(&self, block: Option<RowSpan>) -> Self {
+        let spans = self
+            .spans
+            .iter()
+            .map(|span| RowSpan { below: 0, ..*span })
+            .chain(block.map(|block| RowSpan { wrap: 0, ..block }));
+        Self::from_spans(self.line_count, spans)
+    }
+
     fn rebuild_prefix(&mut self) {
         self.extra_before.clear();
         self.extra_before.reserve(self.spans.len() + 1);
@@ -102,6 +111,7 @@ impl RowMap {
         self.line_count
     }
 
+    #[cfg(test)]
     pub(crate) fn is_uniform(&self) -> bool {
         self.spans.is_empty()
     }

@@ -72,6 +72,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -91,6 +92,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -115,6 +117,7 @@ fn test_terminal_ligatures_true() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -143,6 +146,7 @@ fn test_terminal_ligatures_false() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -177,6 +181,7 @@ fn test_terminal_integrated_glyphs_default_on_and_false_opt_out() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -219,6 +224,7 @@ fn test_terminal_color_emoji_default_on_and_false_opt_out() {
             minimum_contrast: None,
             scrollbar: None,
             osc52_clipboard: None,
+            open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
         })
@@ -258,6 +264,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         minimum_contrast: None,
         scrollbar: None,
         osc52_clipboard: None,
+        open_links_in: None,
         xt_checksum_report: None,
         xt_checksum_extension: None,
     };
@@ -278,6 +285,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         minimum_contrast: None,
         scrollbar: None,
         osc52_clipboard: None,
+        open_links_in: None,
         xt_checksum_report: None,
         xt_checksum_extension: None,
     };

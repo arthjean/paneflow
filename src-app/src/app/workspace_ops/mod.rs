@@ -456,6 +456,7 @@ impl PaneFlowApp {
         self.sidebar_selection.close_menu();
         self.pane_menu_open = None;
         self.files_menu_open = None;
+        self.comment_offer = None;
         self.diff_dock.tab_menu = None;
         self.diff_dock.crumb_menu = None;
         self.usage.close();

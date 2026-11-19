@@ -26,7 +26,7 @@ use super::navigation::{
     MINIMAP_FONT_SIZE, NavigationLayout, SCROLLBAR_SIZE, minimap_top, minimap_track, minimap_width,
     scrollbar_track,
 };
-use super::rows::{RowMap, RowSlot, px_to_rows, rows_in, rows_to_px};
+use super::rows::{RowMap, RowSlot, RowSpan, px_to_rows, rows_in, rows_to_px};
 use super::view::CodeView;
 use super::wrap;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
@@ -197,6 +197,8 @@ struct CodeScrollState {
     map: RefCell<RowMap>,
     wrap: Cell<Option<WrapKey>>,
     pending: Cell<Option<WrapKey>>,
+    block: Cell<Option<RowSpan>>,
+    block_installed: Cell<Option<RowSpan>>,
     segments: RefCell<HashMap<usize, Rc<[Range<usize>]>>>,
 }
 
@@ -282,6 +284,7 @@ impl CodeScroll {
         let anchor = self.line_position();
         let rows = map.rows_at_line_position(anchor);
         *self.0.map.borrow_mut() = map;
+        self.0.block_installed.set(self.0.block.get());
         self.0.wrap.set(wrap);
         self.0.pending.set(None);
         self.0.segments.borrow_mut().clear();
@@ -293,14 +296,41 @@ impl CodeScroll {
         }
     }
 
+    pub(crate) fn set_block(&self, block: Option<RowSpan>) {
+        self.0.block.set(block.filter(|block| block.below > 0));
+    }
+
+    fn block_is_stale(&self) -> bool {
+        self.0.block.get() != self.0.block_installed.get()
+    }
+
+    fn install_block(&self) {
+        let block = self.0.block.get();
+        let anchor = self.line_position();
+        let map = self.0.map.borrow().with_block(block);
+        let rows = map.rows_at_line_position(anchor);
+        *self.0.map.borrow_mut() = map;
+        self.0.block_installed.set(block);
+        self.0
+            .rows
+            .set(if rows.is_finite() { rows.max(0.0) } else { 0.0 });
+        if self.viewport_height() > 0.0 {
+            self.set_rows(self.rows());
+        }
+    }
+
     pub(crate) fn sync_wrap(&self, doc: &CodeDocument, cols: Option<usize>) -> WrapSync {
         let line_count = doc.line_count();
         let Some(cols) = cols else {
-            if self.0.wrap.get().is_some() || !self.0.map.borrow().is_uniform() {
-                self.install_map(RowMap::uniform(line_count), None);
+            if self.0.wrap.get().is_some() {
+                self.install_map(RowMap::from_spans(line_count, self.0.block.get()), None);
                 return WrapSync::Rebuilt;
             }
             self.set_line_count(line_count);
+            if self.block_is_stale() {
+                self.install_block();
+                return WrapSync::Rebuilt;
+            }
             return WrapSync::Fresh;
         };
         let key = WrapKey {
@@ -308,10 +338,17 @@ impl CodeScroll {
             cols,
         };
         if self.0.wrap.get() == Some(key) && self.0.map.borrow().line_count() == line_count {
+            if self.block_is_stale() {
+                self.install_block();
+                return WrapSync::Rebuilt;
+            }
             return WrapSync::Fresh;
         }
         if doc.len_bytes() > SYNC_WRAP_BYTES {
             self.set_line_count(line_count);
+            if self.block_is_stale() {
+                self.install_block();
+            }
             if self.0.pending.get() == Some(key) {
                 return WrapSync::Fresh;
             }
@@ -323,7 +360,13 @@ impl CodeScroll {
     }
 
     fn install_layout(&self, line_count: usize, layout: wrap::WrapLayout, key: WrapKey) {
-        self.install_map(RowMap::from_spans(line_count, layout.spans), Some(key));
+        self.install_map(
+            RowMap::from_spans(
+                line_count,
+                layout.spans.into_iter().chain(self.0.block.get()),
+            ),
+            Some(key),
+        );
         let mut cache = self.0.segments.borrow_mut();
         for (line, parts) in layout.seeded {
             cache.insert(line, parts.into());
@@ -651,6 +694,17 @@ impl CodeHitMap {
 
     pub(crate) fn row_top(&self, row: usize) -> f32 {
         self.top_y + rows_to_px(row as f64 - self.first_row as f64) as f32
+    }
+
+    pub(crate) fn text_line_at(&self, map: &RowMap, position: Point<Pixels>) -> Option<usize> {
+        let row = usize::try_from(self.row_at(f32::from(position.y))).ok()?;
+        if row >= map.total_rows() {
+            return None;
+        }
+        match map.slot_at(row) {
+            RowSlot::Text { line, .. } => Some(line),
+            RowSlot::Block { .. } => None,
+        }
     }
 
     pub(crate) fn marker_at(&self, position: Point<Pixels>) -> Option<usize> {

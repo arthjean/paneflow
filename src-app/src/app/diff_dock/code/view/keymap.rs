@@ -1,6 +1,10 @@
 use super::*;
 
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
+#[cfg(target_os = "macos")]
+pub(crate) const COMMENT_KEYSTROKE: &str = "cmd-shift-m";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const COMMENT_KEYSTROKE: &str = "ctrl-shift-m";
 
 actions!(
     paneflow_code_editor,
@@ -43,6 +47,7 @@ actions!(
         CeSave,
         CeEscape,
         CeFind,
+        CeComment,
     ]
 );
 
@@ -90,6 +95,7 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-v", CePaste, ctx),
         KeyBinding::new("cmd-s", CeSave, ctx),
         KeyBinding::new("cmd-f", CeFind, ctx),
+        KeyBinding::new(COMMENT_KEYSTROKE, CeComment, ctx),
     ]);
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
@@ -110,5 +116,6 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-v", CePaste, ctx),
         KeyBinding::new("ctrl-s", CeSave, ctx),
         KeyBinding::new("ctrl-f", CeFind, ctx),
+        KeyBinding::new(COMMENT_KEYSTROKE, CeComment, ctx),
     ]);
 }

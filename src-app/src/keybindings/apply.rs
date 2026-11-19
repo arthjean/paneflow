@@ -132,6 +132,7 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     }
 
     crate::widgets::text_input::register_keybindings(cx);
+    crate::widgets::text_area::register_keybindings(cx);
     crate::app::diff_dock::code::view::register_keybindings(cx);
 }
 

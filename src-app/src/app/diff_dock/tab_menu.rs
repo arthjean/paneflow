@@ -5,6 +5,7 @@ use gpui::{AnyElement, ClipboardItem, Context, Pixels, Point, SharedString, Wind
 use super::model::DiffDockTab;
 use super::tabs::TabBatch;
 use crate::PaneFlowApp;
+use crate::app::agent_send::{AgentTarget, send_to_agent_item};
 use crate::app::files_tree::workspace_relative_path;
 use crate::app::menu_icons as icon;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
@@ -21,6 +22,7 @@ pub(crate) struct DiffTabMenu {
 pub(super) enum TabMenuAction {
     CopyPath,
     CopyRelativePath,
+    SendToAgent(u64),
     Close,
     CloseOthers,
     CloseToTheRight,
@@ -35,7 +37,11 @@ pub(super) enum TabMenuTarget {
     Strip,
 }
 
-pub(super) fn tab_menu_items(target: TabMenuTarget, can_reopen: bool) -> ActionMenu<TabMenuAction> {
+pub(super) fn tab_menu_items(
+    target: TabMenuTarget,
+    can_reopen: bool,
+    agents: &[AgentTarget],
+) -> ActionMenu<TabMenuAction> {
     let mut menu = ActionMenu::new();
     if target == TabMenuTarget::File {
         menu = menu
@@ -49,6 +55,7 @@ pub(super) fn tab_menu_items(target: TabMenuTarget, can_reopen: bool) -> ActionM
                     .icon(icon::LINK)
                     .mnemonic('r'),
             )
+            .item(send_to_agent_item(agents, TabMenuAction::SendToAgent))
             .separator();
     }
     if target != TabMenuTarget::Strip {
@@ -92,7 +99,7 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    fn diff_tab_root(&self) -> PathBuf {
+    pub(crate) fn diff_tab_root(&self) -> PathBuf {
         self.diff_dock
             .data
             .as_ref()
@@ -120,7 +127,11 @@ impl PaneFlowApp {
             (Some(_), None) => TabMenuTarget::Other,
             (None, _) => TabMenuTarget::Strip,
         };
-        let actions = tab_menu_items(target, !self.diff_dock.closed_files.is_empty());
+        let actions = tab_menu_items(
+            target,
+            !self.diff_dock.closed_files.is_empty(),
+            &self.agent_targets(cx),
+        );
         let root = self.diff_tab_root();
         let index = menu.target;
         let handlers = self.menu_handlers(
@@ -142,6 +153,11 @@ impl PaneFlowApp {
                                 workspace_relative_path(&root, path),
                             ));
                             this.show_toast("Copied relative path", cx);
+                        }
+                    }
+                    (TabMenuAction::SendToAgent(surface_id), _) => {
+                        if let Some(path) = &path {
+                            this.send_file_to_agent(*surface_id, &root, path, window, cx);
                         }
                     }
                     (TabMenuAction::Close, Some(index)) => {
@@ -190,12 +206,13 @@ mod tests {
 
     #[test]
     fn a_file_tab_menu_lists_the_copy_and_close_actions() {
-        let menu = tab_menu_items(TabMenuTarget::File, true);
+        let menu = tab_menu_items(TabMenuTarget::File, true, &[]);
         assert_eq!(
             labels(&menu),
             [
                 "Copy Path",
                 "Copy Relative Path",
+                crate::app::agent_send::NO_AGENT,
                 "Close",
                 "Close Others",
                 "Close to the Right",
@@ -207,11 +224,11 @@ mod tests {
 
     #[test]
     fn reopening_is_disabled_while_the_history_is_empty() {
-        let menu = tab_menu_items(TabMenuTarget::Strip, false);
+        let menu = tab_menu_items(TabMenuTarget::Strip, false, &[]);
         assert_eq!(labels(&menu), ["Close All", REOPEN_CLOSED_TAB]);
         let last = menu.entries().len() - 1;
         assert!(!menu.enabled_at_for_test(last));
-        let menu = tab_menu_items(TabMenuTarget::Strip, true);
+        let menu = tab_menu_items(TabMenuTarget::Strip, true, &[]);
         assert!(menu.enabled_at_for_test(menu.entries().len() - 1));
         assert_eq!(
             menu.action_at(menu.entries().len() - 1),
@@ -221,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_non_file_tab_has_no_path_to_copy() {
-        let menu = tab_menu_items(TabMenuTarget::Other, false);
+        let menu = tab_menu_items(TabMenuTarget::Other, false, &[]);
         assert_eq!(labels(&menu)[0], "Close");
         assert!(!labels(&menu).iter().any(|label| label.starts_with("Copy")));
     }

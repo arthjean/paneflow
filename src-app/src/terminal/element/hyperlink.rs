@@ -518,6 +518,128 @@ pub fn detect_code_paths_on_line_mapped(
     zones
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LooseCodePath {
+    pub path: String,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LooseMatch {
+    Unique(PathBuf),
+    Ambiguous,
+}
+
+fn is_loose_candidate(path_str: &str) -> bool {
+    !path_str.is_empty()
+        && !contains_control_char(path_str)
+        && !path_str.chars().any(char::is_whitespace)
+        && !path_str.starts_with('~')
+        && !is_posix_absolute(path_str)
+        && !is_windows_absolute(path_str)
+        && !has_url_scheme_prefix(path_str)
+        && (has_path_separator(path_str) || stem_len(path_str) >= MIN_BARE_STEM_LEN)
+}
+
+pub fn loose_code_paths(line_text: &str, cwd: Option<&Path>) -> Vec<LooseCodePath> {
+    let mut found = Vec::new();
+    for ext_match in code_extension_regex().find_iter(line_text) {
+        let path_end = ext_match.end();
+        if !extension_tail_ok(line_text, path_end) {
+            continue;
+        }
+        let display_end = code_candidate_display_end(line_text, path_end);
+        let starts = candidate_start_positions(line_text, ext_match.start());
+        let resolves = starts.iter().any(|start| {
+            let (path_str, _, _) = split_path_and_location(&line_text[*start..display_end]);
+            validated_path_candidate(path_str, cwd, canonical_has_code_extension).is_some()
+        });
+        if resolves {
+            continue;
+        }
+        let Some(start) = starts.last().copied() else {
+            continue;
+        };
+        let (path_str, line, col) = split_path_and_location(&line_text[start..display_end]);
+        if is_loose_candidate(path_str) {
+            found.push(LooseCodePath {
+                path: path_str.to_owned(),
+                byte_start: start,
+                byte_end: display_end,
+                line,
+                col,
+            });
+        }
+    }
+    found
+}
+
+fn forward_slashes(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let mut rest = normalized.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped;
+    }
+    rest.to_owned()
+}
+
+pub fn match_loose_path(
+    path: &str,
+    root: Option<&Path>,
+    project: Option<(&Path, &[String])>,
+) -> Option<LooseMatch> {
+    if let Some(root) = root
+        && let Ok(resolved) = root.join(path).canonicalize()
+        && resolved.is_file()
+    {
+        return Some(LooseMatch::Unique(resolved));
+    }
+    let wanted = forward_slashes(path);
+    if wanted.is_empty() || wanted.split('/').any(|part| part == "..") {
+        return None;
+    }
+    let (project_root, files) = project?;
+    let tail = format!("/{wanted}");
+    let mut matches = files.iter().filter(|file| {
+        let file = forward_slashes(file);
+        file == wanted || file.ends_with(&tail)
+    });
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return Some(LooseMatch::Ambiguous);
+    }
+    Some(LooseMatch::Unique(project_root.join(first)))
+}
+
+pub fn loose_code_zone(
+    line_text: &str,
+    line: crate::terminal::types::Line,
+    char_to_col: &[usize],
+    loose: &LooseCodePath,
+    found: &LooseMatch,
+) -> Option<HyperlinkZone> {
+    let target = match found {
+        LooseMatch::Unique(path) => path.clone(),
+        LooseMatch::Ambiguous => PathBuf::from(&loose.path),
+    };
+    zone_for_candidate(
+        line_text,
+        line,
+        char_to_col,
+        target,
+        CandidateZoneSpec {
+            byte_start: loose.byte_start,
+            byte_end: loose.byte_end,
+            source: HyperlinkSource::CodePath,
+            line_no: loose.line,
+            col_no: loose.col,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

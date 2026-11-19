@@ -148,6 +148,7 @@ mod tests {
                 minimum_contrast: Some(0.0),
                 scrollbar: Some(true),
                 osc52_clipboard: Some(Osc52ClipboardConfig::Copy),
+                open_links_in: Some(OpenLinksInConfig::Dock),
                 xt_checksum_report: Some(false),
                 xt_checksum_extension: Some(0),
             }),

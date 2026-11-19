@@ -78,6 +78,7 @@ impl CodeView {
     }
 
     pub(super) fn note_changes(&mut self, changes: &[TrackerWindow], cx: &mut Context<Self>) {
+        self.shift_comment(changes);
         if !self.tracker.is_active() {
             return;
         }

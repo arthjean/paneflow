@@ -326,6 +326,8 @@ struct PaneFlowApp {
     files_sidebar_root: Option<std::path::PathBuf>,
     files_sidebar_workspace: Option<u64>,
     files_menu_open: Option<FilesContextMenu>,
+    comment_agents: std::collections::HashMap<u64, u64>,
+    comment_offer: Option<app::agent_send::CommentOffer>,
     toast: Option<Toast>,
     toast_queue: std::collections::VecDeque<Toast>,
     _toast_task: Option<gpui::Task<()>>,

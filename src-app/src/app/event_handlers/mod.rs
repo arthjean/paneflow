@@ -623,16 +623,30 @@ impl PaneFlowApp {
             terminal::TerminalEvent::FleetSearchRequested { query, regex } => {
                 self.start_fleet_search(query.clone(), *regex, cx);
             }
-            terminal::TerminalEvent::OpenCodePath { path, line, col } => {
-                let path = path.clone();
-                let line = *line;
-                let col = *col;
-                let preference = self.cached_config.external_editor.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        crate::editor::open_at_location(&path, line, col, preference.as_deref());
-                    })
-                    .detach();
+            terminal::TerminalEvent::OpenCodePath {
+                path,
+                line,
+                col,
+                alternate,
+                window,
+            } => {
+                self.follow_code_link(
+                    &terminal,
+                    crate::app::terminal_links::CodeLink {
+                        path: path.clone(),
+                        line: *line,
+                        col: *col,
+                        alternate: *alternate,
+                        window: *window,
+                    },
+                    cx,
+                );
+            }
+            terminal::TerminalEvent::PickCodePath { query, window } => {
+                self.pick_code_link(query.clone(), *window, cx);
+            }
+            terminal::TerminalEvent::TreeFileDropped { path, root, window } => {
+                self.tree_file_dropped(terminal, path.clone(), root.clone(), *window, cx);
             }
             terminal::TerminalEvent::ProgramNotification { title, body } => {
                 let surface_id = terminal.entity_id().as_u64();

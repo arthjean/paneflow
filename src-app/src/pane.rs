@@ -1026,6 +1026,8 @@ impl Pane {
             | TerminalEvent::Notice(_)
             | TerminalEvent::OpenMarkdownPath(_)
             | TerminalEvent::OpenCodePath { .. }
+            | TerminalEvent::PickCodePath { .. }
+            | TerminalEvent::TreeFileDropped { .. }
             | TerminalEvent::FontZoomChanged
             | TerminalEvent::FleetSearchRequested { .. }
             | TerminalEvent::ProgramNotification { .. }

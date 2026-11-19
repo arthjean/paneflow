@@ -223,6 +223,24 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    pub(crate) fn open_file_finder_with(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_finder.is_none() {
+            self.open_file_finder(window, cx);
+        }
+        if self.file_finder.is_none() {
+            return;
+        }
+        let query = query.to_owned();
+        self.file_finder_input
+            .update(cx, |input, cx| input.set_value(query.clone(), cx));
+        self.file_finder_query_changed(query, cx);
+    }
+
     pub(crate) fn file_finder_query_changed(&mut self, query: String, cx: &mut Context<Self>) {
         let Some(state) = self.file_finder.as_mut() else {
             return;

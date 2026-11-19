@@ -167,6 +167,7 @@ impl Render for CodeView {
         };
 
         self.scroll.set_line_count(doc.line_count());
+        self.sync_comment_block();
         self.apply_pending_cursor();
         self.apply_pending_scroll(window);
         self.apply_pending_reveal(window, cx);
@@ -175,6 +176,14 @@ impl Render for CodeView {
             self.refresh_find(cx);
         }
         let popup = self.render_marker_popup(ui, window, cx);
+        let comment_block = self.render_comment_block(ui, cx);
+        let comment_button = self.render_comment_button(ui, cx);
+        let editor_menu = self.render_editor_menu(window, cx);
+        let key_context = if self.comment_focused(window, cx) {
+            comment::COMMENT_KEY_CONTEXT
+        } else {
+            CODE_KEY_CONTEXT
+        };
         let find_bar = self.render_find_bar(ui, cx);
         let theme = crate::theme::active_theme();
         let focused = self.focus.is_focused(window);
@@ -207,16 +216,26 @@ impl Render for CodeView {
 
         let host = div()
             .id(self.element_id.clone())
+            .relative()
             .flex_1()
             .min_h_0()
             .w_full()
             .overflow_hidden()
             .line_height(px(CODE_ROW_HEIGHT))
             .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                if !*hovered {
+                    this.leave_gutter(cx);
+                }
                 if !*hovered && this.navigation.hovered.take().is_some() {
                     cx.notify();
                 }
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    this.on_context_down(ev, window, cx);
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -231,11 +250,13 @@ impl Render for CodeView {
             .on_scroll(cx.listener(|this, ev: &ScrollEvent, _window, cx| {
                 this.apply_wheel(ev, cx);
             }))
-            .child(element);
+            .child(element)
+            .children(comment_block)
+            .children(comment_button);
 
         let body = div()
             .id("code-view-body")
-            .key_context(CODE_KEY_CONTEXT)
+            .key_context(key_context)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
@@ -275,6 +296,7 @@ impl Render for CodeView {
             .on_action(cx.listener(Self::save_action))
             .on_action(cx.listener(Self::escape))
             .on_action(cx.listener(Self::open_find))
+            .on_action(cx.listener(Self::comment_at_caret))
             .flex_1()
             .min_h_0()
             .w_full()
@@ -284,19 +306,22 @@ impl Render for CodeView {
                 this.on_scrollbar_move(ev, cx);
                 this.on_text_move(ev, cx);
                 this.on_marker_move(ev, cx);
+                this.on_comment_move(ev, cx);
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, ev: &MouseUpEvent, _w, cx| {
+                cx.listener(|this, ev: &MouseUpEvent, window, cx| {
                     this.on_scrollbar_up(ev, cx);
                     this.on_text_up(ev, cx);
+                    this.on_comment_up(window, cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|this, ev: &MouseUpEvent, _w, cx| {
+                cx.listener(|this, ev: &MouseUpEvent, window, cx| {
                     this.on_scrollbar_up(ev, cx);
                     this.on_text_up(ev, cx);
+                    this.on_comment_up(window, cx);
                 }),
             )
             .children(banners)
@@ -312,6 +337,7 @@ impl Render for CodeView {
             .flex_col()
             .child(body)
             .children(find_bar)
+            .children(editor_menu)
             .into_any_element()
     }
 }

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, ElementId, InteractiveElement, IntoElement, Pixels,
-    SharedString, Styled, Window, deferred, div, point, px,
+    AnyElement, App, ClipboardItem, Context, ElementId, InteractiveElement, IntoElement,
+    ParentElement, Pixels, SharedString, Styled, Window, deferred, div, point, px,
 };
 
 use crate::app::files_tree;
@@ -143,6 +143,28 @@ pub(crate) fn render_context_menu<A: Clone + 'static>(
     deferred(crate::ui_primitives::menu_reveal((id, "reveal"), panel))
         .priority(3)
         .into_any_element()
+}
+
+pub(crate) fn render_anchored_context_menu<A: Clone + 'static>(
+    id: impl Into<ElementId>,
+    menu: ActionMenu<A>,
+    position: gpui::Point<Pixels>,
+    handlers: MenuHandlers<A>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let id: ElementId = id.into();
+    let ui = crate::theme::ui_colors();
+    let size = menu.size(window);
+    let at = clamped_context_menu_position(position, size.width, size.height, window);
+    let panel = menu.render(id.clone(), handlers, ui, window, cx).occlude();
+    deferred(
+        gpui::anchored()
+            .position(at)
+            .child(crate::ui_primitives::menu_reveal((id, "reveal"), panel)),
+    )
+    .priority(3)
+    .into_any_element()
 }
 
 impl PaneFlowApp {

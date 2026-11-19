@@ -416,6 +416,12 @@
           "enum": ["copy", "off", null],
           "default": "copy"
         },
+        "open_links_in": {
+          "type": ["string", "null"],
+          "description": "Where a clicked code path opens. dock opens it in the Files dock at the line; external_editor opens it in the external editor. Holding Shift while clicking picks the other one.",
+          "enum": ["dock", "external_editor", null],
+          "default": "dock"
+        },
         "xt_checksum_report": {
           "type": ["boolean", "null"],
           "description": "Answer DECRQCRA checksum requests. Off by default because a running program can checksum the screen one cell at a time and so read back everything on it, including output from other programs.",

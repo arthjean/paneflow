@@ -1,5 +1,6 @@
 pub mod about_dialog;
 pub mod actions;
+pub(crate) mod agent_send;
 pub mod agent_status;
 pub mod attention;
 pub mod auto_naming;
@@ -45,6 +46,7 @@ pub(crate) mod spaces;
 pub mod system_info_dialog;
 pub mod tab_worktree;
 pub mod telemetry_events;
+pub(crate) mod terminal_links;
 pub mod theme_selection;
 pub mod title_bar_menus;
 pub mod unsaved_dialog;

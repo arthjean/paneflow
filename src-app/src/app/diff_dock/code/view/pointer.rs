@@ -191,7 +191,7 @@ impl CodeView {
         cx.notify();
     }
 
-    fn drag_autoscroll(&mut self, position: Point<Pixels>) -> bool {
+    pub(super) fn drag_autoscroll(&mut self, position: Point<Pixels>) -> bool {
         let bounds = self.scroll.bounds();
         let geometry = self.geometry.get();
         let mut moved = false;

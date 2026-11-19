@@ -787,7 +787,6 @@ impl TerminalView {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn launch_workspace_id(&self) -> u64 {
         self.launch.workspace_id
     }
@@ -1078,16 +1077,34 @@ impl TerminalView {
         }
         self.ctrl_hovered_link = None;
         let resolver = self.hover_link_resolver;
+        let root = super::link_fallback::workspace_root(self.launch_workspace_id(), cx);
+        let scope = super::link_fallback::LooseLinkScope {
+            cwd: cwd.as_deref().map(std::path::PathBuf::from),
+            index: super::link_fallback::link_index(root.as_deref(), cx),
+            root,
+        };
+        let executor = cx.background_executor().clone();
         let resolved = cx.background_executor().spawn({
             let line_text = line_text.clone();
             let cwd = cwd.clone();
             async move {
-                resolver(
+                let mut zones = resolver(
                     &line_text,
                     line,
                     &char_to_col,
                     cwd.as_deref().map(std::path::Path::new),
-                )
+                );
+                zones.extend(
+                    super::link_fallback::loose_link_zones(
+                        &line_text,
+                        line,
+                        &char_to_col,
+                        scope,
+                        executor,
+                    )
+                    .await,
+                );
+                zones
             }
         });
         cx.spawn(
@@ -1133,6 +1150,17 @@ pub enum TerminalEvent {
         path: std::path::PathBuf,
         line: Option<u32>,
         col: Option<u32>,
+        alternate: bool,
+        window: gpui::AnyWindowHandle,
+    },
+    PickCodePath {
+        query: String,
+        window: gpui::AnyWindowHandle,
+    },
+    TreeFileDropped {
+        path: std::path::PathBuf,
+        root: std::path::PathBuf,
+        window: gpui::AnyWindowHandle,
     },
     FontZoomChanged,
     FleetSearchRequested {
@@ -1842,9 +1870,27 @@ impl Render for TerminalView {
             el = el.child(banner);
         }
 
+        let tree_drop = self.accepts_prefill().then(|| {
+            let ui = crate::theme::ui_colors();
+            div()
+                .id("terminal-tree-drop")
+                .debug_selector(|| "terminal-tree-drop".into())
+                .absolute()
+                .inset_0()
+                .drag_over::<crate::app::drag::FileTreeDrag>(move |style, _, _, _| {
+                    style
+                        .border_2()
+                        .border_color(ui.accent.opacity(0.7))
+                        .bg(ui.accent.opacity(0.08))
+                })
+                .on_drop(cx.listener(Self::handle_tree_drop))
+        });
+
         div()
             .size_full()
+            .relative()
             .child(el)
+            .children(tree_drop)
             .children(self.path_picker.as_ref().map(|slot| slot.picker.clone()))
     }
 }
@@ -3010,8 +3056,19 @@ mod tests {
                 let label = match event {
                     TerminalEvent::Notice(message) => format!("notice:{message}"),
                     TerminalEvent::SelectionCopied => "copied".to_owned(),
-                    TerminalEvent::OpenCodePath { path, .. } => {
-                        format!("open:{}", path.display())
+                    TerminalEvent::OpenCodePath {
+                        path, alternate, ..
+                    } => {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        if *alternate {
+                            format!("open-alternate:{name}")
+                        } else {
+                            format!("open:{name}")
+                        }
+                    }
+                    TerminalEvent::PickCodePath { query, .. } => format!("pick:{query}"),
+                    TerminalEvent::TreeFileDropped { path, root, .. } => {
+                        format!("dropped:{}:{}", root.display(), path.display())
                     }
                     _ => return,
                 };
@@ -3065,7 +3122,7 @@ mod tests {
 
     fn code_path_zone(line: Line) -> HyperlinkZone {
         HyperlinkZone {
-            uri: "src/main.rs".to_owned(),
+            uri: resolved_stub_path().to_string_lossy().into_owned(),
             start: Point::new(line.0, 0),
             end: Point::new(line.0, 40),
             is_openable: true,
@@ -3073,6 +3130,190 @@ mod tests {
             line: None,
             col: None,
         }
+    }
+
+    fn resolved_stub_path() -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join("paneflow-link-stub")
+            .join("main.rs")
+    }
+
+    fn resolve_ambiguously(
+        _line_text: &str,
+        line: Line,
+        _char_to_column: &[usize],
+        _cwd: Option<&std::path::Path>,
+    ) -> Vec<HyperlinkZone> {
+        vec![HyperlinkZone {
+            uri: "src/main.rs".to_owned(),
+            ..code_path_zone(line)
+        }]
+    }
+
+    fn link_test_terminal(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<TerminalView>,
+        Entity<TerminalHost>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let (terminal, host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            view.hover_link_resolver = resolve_immediately;
+            view.terminal
+                .write_output(b"see src/main.rs:12 for the details of this failure\r\n");
+        });
+        settle_until(cx, "the output", |cx| {
+            terminal.read_with(cx, |view, _| {
+                view.terminal
+                    .session_backend()
+                    .line_text_at(Point::new(0, 0))
+                    .is_some_and(|line| line.text.contains("main.rs"))
+            })
+        });
+        (terminal, host, cx)
+    }
+
+    fn click_link(
+        terminal: &Entity<TerminalView>,
+        modifiers: gpui::Modifiers,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let (cell_width, line_height) = terminal.read_with(cx, |view, _| {
+            (view.cell_width.as_f32(), view.line_height.as_f32())
+        });
+        let origin = terminal.read_with(cx, |view, _| {
+            *view
+                .element_origin
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        });
+        let at = gpui::point(
+            origin.x + gpui::px(3.5 * cell_width),
+            origin.y + gpui::px(0.5 * line_height),
+        );
+        cx.simulate_mouse_move(at, None, modifiers);
+        settle_until(cx, "the hovered link", |cx| {
+            terminal.read_with(cx, |view, _| view.ctrl_hovered_link.is_some())
+        });
+        cx.simulate_mouse_down(at, MouseButton::Left, modifiers);
+        cx.simulate_mouse_up(at, MouseButton::Left, modifiers);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_plain_link_click_asks_for_the_default_target_and_shift_for_the_other(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = link_test_terminal(cx);
+        let (events, _subscription) = record_events(&terminal, cx);
+        click_link(&terminal, link_modifiers(), cx);
+        assert_eq!(*events.borrow(), vec!["open:main.rs".to_owned()]);
+
+        events.borrow_mut().clear();
+        click_link(
+            &terminal,
+            gpui::Modifiers {
+                shift: true,
+                ..link_modifiers()
+            },
+            cx,
+        );
+        assert_eq!(*events.borrow(), vec!["open-alternate:main.rs".to_owned()]);
+    }
+
+    #[gpui::test]
+    fn a_path_with_several_candidates_asks_for_the_file_picker(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = link_test_terminal(cx);
+        terminal.update(cx, |view, _cx| {
+            view.hover_link_resolver = resolve_ambiguously;
+            view.hover_link_cache = None;
+        });
+        let (events, _subscription) = record_events(&terminal, cx);
+        click_link(&terminal, link_modifiers(), cx);
+        assert_eq!(*events.borrow(), vec!["pick:src/main.rs".to_owned()]);
+    }
+
+    #[gpui::test]
+    fn a_tree_file_dropped_on_a_live_terminal_is_reported_and_an_ended_one_ignores_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let (events, _subscription) = record_events(&terminal, cx);
+        let drag = crate::app::drag::FileTreeDrag {
+            path: std::path::PathBuf::from("/w/src/main.rs"),
+            root: std::path::PathBuf::from("/w"),
+            label: "main.rs".into(),
+            icon: None,
+        };
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(cx.debug_bounds("terminal-tree-drop").is_some());
+        terminal.update_in(cx, |view, window, cx| {
+            assert!(view.accepts_prefill());
+            view.handle_tree_drop(&drag, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec!["dropped:/w:/w/src/main.rs".to_owned()]
+        );
+
+        events.borrow_mut().clear();
+        terminal.update_in(cx, |view, window, cx| {
+            view.terminal.exited = Some(0);
+            assert!(!view.accepts_prefill());
+            view.handle_tree_drop(&drag, window, cx);
+            assert_eq!(
+                view.prefill("@src/main.rs ", |_, _, _| {}, window, cx),
+                Err(INPUT_REJECTED)
+            );
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(events.borrow().is_empty());
+        assert!(cx.debug_bounds("terminal-tree-drop").is_none());
+    }
+
+    #[gpui::test]
+    fn a_confirmed_multiline_prefill_settles_after_the_terminal_is_released(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let settled = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        for answer in ["Paste", "Cancel"] {
+            let seen = settled.clone();
+            let reader = terminal.downgrade();
+            let started = terminal.update_in(cx, |view, window, cx| {
+                view.prefill(
+                    "src/main.rs:5-7\n\nrename these",
+                    move |outcome, _window, cx| {
+                        let live = reader
+                            .upgrade()
+                            .is_some_and(|terminal| terminal.read(cx).accepts_prefill());
+                        seen.borrow_mut().push((outcome, live));
+                    },
+                    window,
+                    cx,
+                )
+            });
+            assert_eq!(started, Ok(crate::terminal::Prefill::Confirming));
+            assert!(cx.has_pending_prompt());
+            cx.simulate_prompt_answer(answer);
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            *settled.borrow(),
+            vec![
+                (Ok(()), true),
+                (Err(crate::terminal::input::PREFILL_CANCELLED), true)
+            ]
+        );
     }
 
     #[gpui::test]
@@ -3190,7 +3431,7 @@ mod tests {
                 .ctrl_hovered_link
                 .clone()
                 .map(|link| link.uri)),
-            Some("src/main.rs".to_owned())
+            Some(resolved_stub_path().to_string_lossy().into_owned())
         );
     }
 
@@ -3257,7 +3498,7 @@ mod tests {
         cx.simulate_mouse_down(at_column(3.0), MouseButton::Left, link_modifiers());
         cx.simulate_mouse_up(at_column(3.0), MouseButton::Left, link_modifiers());
         cx.run_until_parked();
-        assert_eq!(*events.borrow(), vec!["open:src/main.rs".to_owned()]);
+        assert_eq!(*events.borrow(), vec!["open:main.rs".to_owned()]);
     }
 
     #[gpui::test]

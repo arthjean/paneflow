@@ -1,6 +1,7 @@
 use gpui::{AnyElement, ClipboardItem, Context, SharedString};
 
 use super::open_with::{self, OPEN_WITH_DEFAULT_LABEL, OPEN_WITH_LABEL};
+use crate::app::agent_send::{AgentTarget, send_to_agent_item};
 use crate::app::files_tree;
 use crate::app::menu_icons as icon;
 use crate::app::sidebar::context_menu::{EditorMenuEntry, installed_editors, render_context_menu};
@@ -15,6 +16,7 @@ pub(crate) enum FilesMenuAction {
     OpenIn(&'static EditorMenuEntry),
     CopyPath,
     CopyRelativePath,
+    SendToAgent(u64),
 }
 
 pub(crate) fn open_with_actions(
@@ -32,6 +34,7 @@ pub(crate) fn open_with_actions(
 
 pub(crate) fn files_menu_actions(
     editors: &'static [&'static EditorMenuEntry],
+    agents: &[AgentTarget],
 ) -> ActionMenu<FilesMenuAction> {
     let open_with = if editors.is_empty() {
         MenuItem::disabled(OPEN_WITH_LABEL).icon(icon::FILE_CODE)
@@ -61,6 +64,8 @@ pub(crate) fn files_menu_actions(
                 .icon(icon::LINK)
                 .mnemonic('r'),
         )
+        .separator()
+        .item(send_to_agent_item(agents, FilesMenuAction::SendToAgent))
 }
 
 impl PaneFlowApp {
@@ -72,16 +77,18 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let actions = match menu.scope {
-            FilesMenuScope::Full => files_menu_actions(installed_editors()),
+            FilesMenuScope::Full => {
+                files_menu_actions(installed_editors(), &self.agent_targets(cx))
+            }
             FilesMenuScope::OpenWith => open_with_actions(installed_editors()),
         };
         let id = SharedString::from(format!("files-context-menu-{}", menu.path.display()));
         let target = menu.clone();
         let handlers = self.menu_handlers(
             cx,
-            move |this, action: &FilesMenuAction, _, cx| {
+            move |this, action: &FilesMenuAction, window, cx| {
                 this.files_menu_open = None;
-                this.run_files_menu_action(*action, &target, cx);
+                this.run_files_menu_action(*action, &target, window, cx);
                 cx.notify();
             },
             |this| this.files_menu_open = None,
@@ -93,10 +100,15 @@ impl PaneFlowApp {
         &mut self,
         action: FilesMenuAction,
         target: &FilesContextMenu,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
         let path = target.path.clone();
         let launch = match action {
+            FilesMenuAction::SendToAgent(surface_id) => {
+                self.send_file_to_agent(surface_id, &target.root, &path, window, cx);
+                return;
+            }
             FilesMenuAction::CopyPath => {
                 cx.write_to_clipboard(ClipboardItem::new_string(
                     path.to_string_lossy().into_owned(),
@@ -151,7 +163,7 @@ mod tests {
     #[test]
     fn the_tree_menu_lists_its_entries_in_order() {
         static ONE: [&EditorMenuEntry; 1] = [&EDITOR_MENU_ENTRIES[0]];
-        let menu = files_menu_actions(&ONE);
+        let menu = files_menu_actions(&ONE, &[]);
         assert_eq!(
             labels(&menu),
             vec![
@@ -160,9 +172,31 @@ mod tests {
                 "Open With",
                 "Copy Path",
                 "Copy Relative Path",
+                crate::app::agent_send::NO_AGENT,
             ]
         );
         assert!(menu.enabled_at_for_test(2));
+        let last = menu.entries().len() - 1;
+        assert!(!menu.enabled_at_for_test(last));
+    }
+
+    #[test]
+    fn the_tree_menu_sends_to_the_only_agent_of_the_workspace() {
+        let agents = [AgentTarget {
+            surface_id: 5,
+            tool: crate::agent_launcher::TerminalAgent::ClaudeCode,
+            title: "review".into(),
+        }];
+        let menu = files_menu_actions(&[], &agents);
+        let last = menu.entries().len() - 1;
+        assert_eq!(
+            labels(&menu).last().map(String::as_str),
+            Some(crate::app::agent_send::SEND_TO_AGENT)
+        );
+        assert!(matches!(
+            menu.action_at(last),
+            Some(FilesMenuAction::SendToAgent(5))
+        ));
     }
 
     #[test]
@@ -177,7 +211,7 @@ mod tests {
 
     #[test]
     fn open_with_is_disabled_when_no_editor_is_installed() {
-        let menu = files_menu_actions(&[]);
+        let menu = files_menu_actions(&[], &[]);
         assert_eq!(labels(&menu)[2], "Open With");
         assert!(!menu.enabled_at_for_test(2));
         assert!(menu.enabled_at_for_test(0));

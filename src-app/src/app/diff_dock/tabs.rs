@@ -126,11 +126,18 @@ impl PaneFlowApp {
                 cx,
             )
         });
-        cx.subscribe(&terminal, |_, _, event: &TerminalEvent, cx| {
-            if matches!(event, TerminalEvent::ChildExited) {
-                cx.notify();
-            }
-        })
+        cx.subscribe(
+            &terminal,
+            |this, terminal, event: &TerminalEvent, cx| match event {
+                TerminalEvent::ChildExited => cx.notify(),
+                TerminalEvent::OpenCodePath { .. }
+                | TerminalEvent::PickCodePath { .. }
+                | TerminalEvent::TreeFileDropped { .. } => {
+                    this.handle_terminal_event(terminal, event, cx);
+                }
+                _ => {}
+            },
+        )
         .detach();
 
         let focus = terminal.read(cx).focus_handle(cx);
@@ -217,15 +224,38 @@ impl PaneFlowApp {
             },
         )
         .detach();
-        cx.subscribe(&view, |this, _, event: &CodeViewEvent, cx| {
-            this.handle_code_view_event(event, cx);
+        cx.subscribe(&view, |this, view, event: &CodeViewEvent, cx| {
+            this.handle_code_view_event(&view, event, cx);
         })
         .detach();
         view
     }
 
-    pub(crate) fn handle_code_view_event(&mut self, event: &CodeViewEvent, cx: &mut Context<Self>) {
+    pub(crate) fn handle_code_view_event(
+        &mut self,
+        view: &gpui::Entity<CodeView>,
+        event: &CodeViewEvent,
+        cx: &mut Context<Self>,
+    ) {
         match event {
+            CodeViewEvent::SendComment {
+                comment,
+                position,
+                window,
+            } => {
+                let host = cx.weak_entity();
+                let origin = view.downgrade();
+                let comment = comment.clone();
+                let position = *position;
+                let window = *window;
+                cx.defer(move |cx| {
+                    let _ = window.update(cx, |_, window, cx| {
+                        let _ = host.update(cx, |app, cx| {
+                            app.offer_comment_to_agents(origin, comment, position, window, cx);
+                        });
+                    });
+                });
+            }
             CodeViewEvent::Toast(message) => self.show_toast(message.to_string(), cx),
             CodeViewEvent::DisplayChanged(display) => {
                 self.persist_setting(false, "editor", display.to_config_value(), cx);

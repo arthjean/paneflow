@@ -139,6 +139,20 @@ impl FilesSidebar {
             }
         }));
 
+        let drag = crate::app::drag::FileTreeDrag {
+            path: path.clone(),
+            root: self.tree.root.clone(),
+            label: row.label.clone(),
+            icon: (!is_dir).then(|| {
+                crate::file_icons::icon_path_for(
+                    row.icon_token,
+                    crate::file_icons::IconVariant::for_ui(ui),
+                )
+                .into()
+            }),
+        };
+        el = el.on_drag(drag, |drag, _offset, _window, cx| cx.new(|_| drag.clone()));
+
         let click_path = path.clone();
         el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.focus.focus(window, cx);

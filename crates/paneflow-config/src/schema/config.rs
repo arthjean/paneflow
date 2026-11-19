@@ -1,6 +1,7 @@
 use super::{
     AgentPanelConfig, AgentsConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
-    Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig, UsageConfig,
+    OpenLinksInConfig, Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig,
+    UsageConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -557,6 +558,13 @@ where
     D: serde::Deserializer<'de>,
 {
     lenient_opt_value(d, "terminal OSC 52 clipboard policy")
+}
+
+pub(super) fn lenient_opt_open_links_in<'de, D>(d: D) -> Result<Option<OpenLinksInConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "terminal link target")
 }
 
 pub(super) fn lenient_opt_string_map<'de, D>(

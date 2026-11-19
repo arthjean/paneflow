@@ -1173,8 +1173,8 @@ file tree at the full width of the dock; opening a file from it replaces the
 Files tab with the file's tab. Every content tab is closable, including Changes and the
 first tab. File tabs have no cap. A middle click closes a file tab, through the
 same two-click arming as its `×` when it is modified. A right click on a tab
-opens the tab menu of 5.6: `Copy Path` and `Copy Relative Path` on a file tab,
-then `Close`, `Close Others`, `Close to the Right`, `Close All`, and below a
+opens the tab menu of 5.6: `Copy Path`, `Copy Relative Path` and `Send to
+Agent` on a file tab, then `Close`, `Close Others`, `Close to the Right`, `Close All`, and below a
 separator `Reopen Closed Tab`, disabled while the dock has closed nothing; a
 right click on the empty strip offers `Close All` and `Reopen Closed Tab`.
 Batch closes never touch Changes or Terminal and keep modified file tabs,
@@ -1311,10 +1311,26 @@ the root or is ignored.
 A right click on a row opens a menu of 5.6: `Open with Default App`, the
 platform's reveal entry (`Reveal in Finder`, `Reveal in File Explorer`,
 `Reveal in File Manager`), `Open With` and the editors found on the machine
-(disabled when none is), then `Copy Path` and `Copy Relative Path`. On Linux
+(disabled when none is), then `Copy Path` and `Copy Relative Path`, then
+below a separator `Send to Agent`. On Linux
 the reveal asks `org.freedesktop.FileManager1` to select the file and opens
 the parent folder when the service does not answer. A launch that fails
 toasts the application and its error.
+
+`Send to Agent` inserts the path in the terminal of an agent of the shown
+workspace and focuses it, never submitting: `@path` for Claude Code, Codex and
+Gemini, the bare path for the other runtimes, relative to the workspace root
+and quoted by the runtime's rule when it holds a space. With one agent the
+entry acts at once; with several it opens a submenu in the Agents order, each
+row carrying the runtime logo at 14 px, the tab title and the runtime name;
+with none the entry is disabled and reads `No agent in this workspace`.
+
+A tree row drags as an `overlay` chip holding its 16 px file icon and its
+name, and the drag opens nothing. A terminal that accepts input shows a 2 px
+`accent` border at 0.7 and an `accent` wash at 0.08 while the chip is over it;
+an ended or disconnected terminal shows no zone and ignores the drop. A drop on
+an agent's terminal inserts the `Send to Agent` text, a drop on a shell inserts
+the path with that shell's quoting, as a file dropped from the system does.
 
 The tree button sits immediately after Editor Controls in the file toolbar.
 It and `secondary-alt-f` toggle the embedded tree; on the Files tab the
@@ -1354,6 +1370,38 @@ is absent on a read-only file; Replace All is one undo step.
 Opening a file at a line or a range of lines, `:N` in the find bar for
 instance, centers it and washes it with the same warm hue at 0.14. The
 wash leaves on the next keystroke, click or scroll.
+
+Resting the pointer on the editor gutter for 200 ms shows a 16 px `accent`
+square with a 10 px plus, radius 4, at the left of the hovered line's number,
+with the tooltip "Comment on this line (drag for a range)"; it then follows the
+pointer from line to line and leaves with it. A click comments that line and a
+drag down or up the gutter comments the range, washed in `accent` at 0.14
+while dragging and while the comment is open. A right click on the text opens
+a menu of 5.6: `Comment Selection`, disabled without a selection, then `Copy`,
+`Paste` and `Select All`. From the keyboard, `secondary-shift-m` comments the
+selected lines, or the caret's line without a selection.
+
+The comment is a block of 8 rows (144 px) under the last line of its range,
+from the gutter edge to 28 px before the right edge; the lines below move down
+by its height and scrolling stays continuous. Inside 6 px of vertical margin
+it is an `overlay` panel, radius 8, 1 px `border`, padded 10 by 8, in the
+interface font: the range label (`L12` or `L12-L15`) in `LABEL_SM` medium
+`muted`, a four-row field in `BODY` with the placeholder "Tell the agent what
+to change", then right-aligned 24 px buttons 8 apart, `Cancel` (1 px `border`,
+`subtle` on hover) and `Send to Agent` (`accent` fill, `base` text, 0.64
+opacity while the field is blank). The field takes focus, Enter adds a line,
+`secondary-enter` sends, Escape and `Cancel` close the block and return focus
+to the text. One comment exists per tab: opening another replaces an empty one
+and asks before discarding typed text. The block follows its lines through
+edits and closes when all of them are deleted. `Send to Agent` picks the agent
+as the tree entry does, with the last agent chosen for the workspace first in
+the list, and pastes into its terminal, in one bracketed paste that is never
+submitted: the relative path with `:12` or `:12-15`, a blank line, the comment,
+a blank line, then the quoted lines in a code fence tagged with the file
+extension. The comment is cut at 16,000 characters and the quoted lines at
+32,000, each ending with "… truncated …". The block closes once the terminal
+took the text; a refusal keeps it open and toasts the reason. The large-file
+viewer and the non-text previews have no gutter button.
 
 A file tab picks its viewer by extension, then by its first 8 KB: images,
 CSV and TSV tables, Markdown, archives, then text. A file nothing can show

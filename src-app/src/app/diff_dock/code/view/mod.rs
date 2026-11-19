@@ -1,4 +1,5 @@
 mod change_markers;
+mod comment;
 mod disk_sync;
 mod editing;
 mod find;
@@ -232,6 +233,11 @@ pub(crate) struct CodeView {
     pending_reveal: Option<FileReveal>,
     revealed_lines: Option<Range<usize>>,
     pending_cursor: Option<(usize, usize)>,
+    comment: Option<comment::CommentDraft>,
+    gutter_hover: Option<comment::GutterHover>,
+    hover_generation: u64,
+    comment_drag: Option<comment::CommentDrag>,
+    editor_menu: Option<Point<Pixels>>,
     kind: crate::app::diff_dock::preview::PreviewKind,
     rendered: bool,
     rendered_views: preview::RenderedViews,
@@ -353,6 +359,11 @@ impl CodeView {
             pending_reveal: None,
             revealed_lines: None,
             pending_cursor: None,
+            comment: None,
+            gutter_hover: None,
+            hover_generation: 0,
+            comment_drag: None,
+            editor_menu: None,
             kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
             rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
                 &path_kind,
@@ -430,6 +441,11 @@ impl CodeView {
             pending_reveal: None,
             revealed_lines: None,
             pending_cursor: None,
+            comment: None,
+            gutter_hover: None,
+            hover_generation: 0,
+            comment_drag: None,
+            editor_menu: None,
             kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
             rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
                 &path_kind,
@@ -472,12 +488,13 @@ impl CodeView {
     pub(crate) fn line_bands(&self, doc: &CodeDocument) -> Vec<LineBand> {
         self.revealed_lines
             .clone()
-            .filter(|lines| lines.start < doc.line_count())
             .map(|lines| LineBand {
                 lines,
                 color: reveal_color(),
             })
             .into_iter()
+            .chain(self.comment_bands(crate::theme::ui_colors()))
+            .filter(|band| band.lines.start < doc.line_count())
             .collect()
     }
 
@@ -749,6 +766,11 @@ impl CodeView {
         self.visual_goal = None;
         self.revealed_lines = None;
         self.pending_reveal = None;
+        self.comment = None;
+        self.gutter_hover = None;
+        self.comment_drag = None;
+        self.editor_menu = None;
+        self.scroll.set_block(None);
         self.history.clear();
         self.saved_mark = edit::HistoryMark::default();
         self.marked = None;
