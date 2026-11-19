@@ -49,10 +49,10 @@
     {
       "id": "EP-007",
       "title": "Arbre : projection incrémentale",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-006",
@@ -278,15 +278,15 @@
       "id": "US-038",
       "title": "Projection incrémentale de l'arbre",
       "epic": "EP-007",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [
         "US-016"
       ],
       "started_at": "2026-11-19T10:30:00+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-017",
