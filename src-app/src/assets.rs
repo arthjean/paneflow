@@ -13,6 +13,10 @@ use rust_embed::RustEmbed;
     not(any(target_os = "macos", test)),
     exclude = "icons/app/*-macos-*.png"
 )]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    exclude = "icons/app/*-linux-*.png"
+)]
 pub struct Assets;
 
 impl AssetSource for Assets {

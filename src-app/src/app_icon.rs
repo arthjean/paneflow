@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use paneflow_config::schema::AppIcon;
 
+#[cfg(target_os = "linux")]
+mod desktop_entry;
 #[cfg(any(target_os = "windows", test))]
 mod ico;
 #[cfg(target_os = "windows")]
@@ -27,6 +29,8 @@ const ICON_FILE_LARGEST_SIZE: u32 = 128;
 const SLUGS_WITH_A_SCALED_DRAWING: [&str; 2] = ["black", "white"];
 #[cfg(any(target_os = "macos", test))]
 const MACOS_ICON_SIZE: u32 = 512;
+#[cfg(any(target_os = "linux", test))]
+const LINUX_ICON_SIZE: u32 = 256;
 
 static APPLIED: AtomicU8 = AtomicU8::new(0);
 static SHORTCUTS_SYNCED: AtomicBool = AtomicBool::new(false);
@@ -57,7 +61,7 @@ fn code(icon: AppIcon) -> u8 {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn applied() -> AppIcon {
     let applied = APPLIED.load(Ordering::Relaxed);
     AppIcon::ALL
@@ -125,6 +129,11 @@ fn macos_asset(slug: &str) -> String {
     format!("icons/app/{slug}-macos-{MACOS_ICON_SIZE}.png")
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn linux_asset(slug: &str) -> String {
+    format!("icons/app/{slug}-linux-{LINUX_ICON_SIZE}.png")
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn drawn_size(sizes: &[u32], logical: u32, dpi: u32) -> u32 {
     let wanted = (logical * dpi).div_ceil(96);
@@ -176,7 +185,11 @@ pub(crate) fn apply(icon: AppIcon, cx: &mut gpui::App) {
     if changed || first {
         windows::sync_shortcuts();
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    if changed || first {
+        linux::sync_desktop_entry();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     let _ = first;
     if !changed {
         return;
@@ -391,6 +404,107 @@ mod macos {
     }
 }
 
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    use sha2::Digest;
+
+    use super::desktop_entry::{self, Applications, Change, Launcher};
+
+    const ICON_FILE_HASH_BYTES: usize = 4;
+
+    static DESKTOP_SYNC: Mutex<()> = Mutex::new(());
+
+    fn icons_directory() -> Option<PathBuf> {
+        Some(crate::runtime_paths::data_dir()?.join("icons"))
+    }
+
+    fn ensure_icon_file(directory: &Path, slug: &str) -> Option<PathBuf> {
+        let file = crate::assets::Assets::get(&super::linux_asset(slug))?;
+        let hash: String = sha2::Sha256::digest(&file.data)
+            .iter()
+            .take(ICON_FILE_HASH_BYTES)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let path = directory.join(format!("paneflow-{slug}-{hash}.png"));
+        if std::fs::read(&path).is_ok_and(|existing| existing == file.data.as_ref()) {
+            return Some(path);
+        }
+        let staging = directory.join(format!(".paneflow-{slug}-{hash}.{}", std::process::id()));
+        let written = std::fs::create_dir_all(directory)
+            .and_then(|()| std::fs::write(&staging, &file.data))
+            .and_then(|()| std::fs::rename(&staging, &path));
+        if let Err(err) = written {
+            let _ = std::fs::remove_file(&staging);
+            log::warn!("Could not write the app icon {}: {err}", path.display());
+            return None;
+        }
+        Some(path)
+    }
+
+    fn sync_to_the_applied_icon() {
+        let Ok(_exclusive) = DESKTOP_SYNC.lock() else {
+            return;
+        };
+        let icon = super::applied();
+        let Some(directory) = icons_directory() else {
+            return;
+        };
+        let Ok(executable) = std::env::current_exe() else {
+            return;
+        };
+        let picture = match super::asset_slug(icon) {
+            None => None,
+            Some(slug) => match ensure_icon_file(&directory, slug) {
+                Some(path) => Some(path),
+                None => return,
+            },
+        };
+        let Some(applications) = Applications::from_environment() else {
+            return;
+        };
+        let search_path = std::env::var_os("PATH");
+        let launcher = Launcher {
+            executable: &executable,
+            search_path: search_path.as_deref(),
+        };
+        let entry = applications.user.join(desktop_entry::DESKTOP_FILE);
+        match desktop_entry::sync(&applications, &launcher, picture.as_deref(), &directory) {
+            Ok(Change::Unchanged) => {}
+            Ok(Change::Mirrored) => log::info!(
+                "Copied the installed desktop entry to {} with the chosen app icon",
+                entry.display()
+            ),
+            Ok(Change::Pointed) => log::info!(
+                "Pointed the desktop entry {} at the chosen app icon",
+                entry.display()
+            ),
+            Ok(Change::Removed) => log::info!(
+                "Removed the desktop entry copy {}, the installed icon is back",
+                entry.display()
+            ),
+            Err(err) => log::warn!(
+                "Could not apply the app icon to the desktop entry {}: {err}",
+                entry.display()
+            ),
+        }
+    }
+
+    pub(super) fn sync_desktop_entry() {
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-app-icon".into())
+            .spawn(sync_to_the_applied_icon);
+        if let Err(err) = spawned {
+            log::warn!("Could not start the app icon desktop entry sync: {err}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +527,7 @@ mod tests {
                 assert_eq!(png_side(&bitmap_asset(slug, size)), size);
             }
             assert_eq!(png_side(&macos_asset(slug)), MACOS_ICON_SIZE);
+            assert_eq!(png_side(&linux_asset(slug)), LINUX_ICON_SIZE);
         }
     }
 

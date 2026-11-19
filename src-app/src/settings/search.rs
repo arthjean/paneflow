@@ -57,8 +57,8 @@ pub(crate) const APP_ICON: SettingCopy = SettingCopy {
         "Icon of the running app in the Dock. The Dock shows the installed icon again once \
          Paneflow quits."
     } else {
-        "Icon of new Paneflow windows under X11. Wayland takes the icon from the installed \
-         desktop entry."
+        "Icon of Paneflow in the dock, the app grid and the window switcher, set on its \
+         desktop entry so it stays while Paneflow is closed."
     },
 };
 pub(crate) const BACKGROUND_STYLE: SettingCopy = SettingCopy {

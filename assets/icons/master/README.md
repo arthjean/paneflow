@@ -91,9 +91,35 @@ corners. Their masters are `skins/<name>-1024.png`:
 |---|---|---|
 | `skins/<name>-1024.png` | `<name>-<size>.png`, sizes 16, 24, 32, 40, 48, 64, 96, 128 | Every Windows bitmap and icon file entry, the X11 window icon and the Settings preview. A skin has no pixel-fitted drawing and no `-shell-` file: each size is a Lanczos reduction of the master, computed on premultiplied alpha so the transparent corners leave no fringe. |
 | `skins/<name>-1024.png` | `<name>-macos-512.png` | The Dock image: the master reduced to 412 px, the 80.47% body, centered on a transparent 512 px canvas. |
+| `skins/<name>-1024.png` | `<name>-linux-256.png` | The Linux desktop entry icon: the master reduced to 224 px, the 87.5% keyline of the installed hicolor icon, centered on a transparent 256 px canvas. |
+
+### Linux desktop entry icons
+
+A Wayland compositor draws the icon of the desktop entry that matches the
+window's app id, never one the window sends, and GNOME offers no protocol for a
+window icon at all. So on Linux Paneflow writes the chosen icon to
+`icons/paneflow-<name>-<hash>.png` in the Paneflow home and points the
+`paneflow.desktop` entry at that file. An entry installed by a package is copied
+to `$XDG_DATA_HOME/applications`, which the desktop prefers, with an
+`X-Paneflow-Mirror-Of` key naming its source and a `TryExec` on this Paneflow;
+the copy is refreshed from the source at each launch and deleted when Glass
+comes back or the source goes. The entry a `.tar.gz` install writes there gets
+its `Icon` line rewritten instead. `src-app/src/app_icon/desktop_entry.rs` holds
+those rules.
+
+Every variant ships one `<name>-linux-256.png` for this, because the desktop
+scales a single file to the dock, the app grid and the window switcher. It
+carries the 87.5% keyline of `paneflow-icon-linux-1024.png`, so a variant reads
+at the size of the glass icon next to it. The skins reduce their master; `black`,
+`white`, `black-solid` and `white-solid` render their reference drawing
+(`paneflow-icon-bars-<name>.svg`, `paneflow-icon-solid-<name>.svg`) at 1024 px
+first. Regenerate the twenty files with
+`bash scripts/build-linux-app-icons.sh`, which needs ImageMagick 7 with its
+librsvg delegate.
 
 `src-app/src/assets.rs` leaves every `*-macos-*.png` out of the Windows and
-Linux binaries, which never read them.
+Linux binaries, and every `*-linux-*.png` out of the Windows and macOS ones,
+which never read them.
 
 `glass-64.png`, `glass-96.png` and `glass-128.png` are the Settings preview of
 the glass icon, downscaled from `paneflow-icon-windows-1024.png`.

@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Fixed
+
+- **The App icon setting now works on Linux under Wayland.** Picking an icon in Settings › Appearance › App icon used to change nothing on Wayland, because the compositor shows the icon of the installed desktop entry. Paneflow now points that entry at the chosen icon, so the dock, the app grid and the window switcher show it, and it stays while Paneflow is closed. A `.rpm` or `.deb` entry is copied to `~/.local/share/applications/paneflow.desktop` with the new icon, refreshed from the package at each launch, and deleted when you pick Glass again; once the package is uninstalled, its `TryExec` line hides the copy. The entry of a `.tar.gz` install gets its icon line rewritten. Each icon now ships a 256 px Linux version at the margin of the installed icon, so it is as large as Glass next to other apps. An entry whose icon you set yourself, an entry that opens another program, and an AppImage without a desktop entry keep their icon.
+
 ## [0.20.0] - 2026-11-19
 
 ### Upgrade notes
