@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Éditeur : géométrie, lecture et moteur de coloration",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-004",
@@ -292,93 +292,93 @@
       "id": "US-017",
       "title": "Table de correspondance entre lignes et positions",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:08:27+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-018",
       "title": "Retour à la ligne",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:25:28+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-019",
       "title": "Recherche et remplacement dans le fichier",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:50:48+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-020",
       "title": "Ouverture à une ligne avec plage surlignée",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:50:48+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-021",
       "title": "Mémoire de défilement par fichier",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:50:48+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-022",
       "title": "Prototype du moteur lexical WebAssembly derrière le banc",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "L",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:50:48+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-023",
       "title": "Validate assumption: la justesse du moteur lexical suffit pour Paneflow",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "size": "M",
       "blocked_by": [
         "US-022"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-18T21:50:48+01:00",
+      "completed_at": "2026-11-19",
+      "reviewed_at": "2026-11-19"
     },
     {
       "id": "US-024",

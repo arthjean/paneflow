@@ -9,6 +9,8 @@
 | 1.1 | 2026-11-18 | Arthur Jean | Chaque story reçoit une ligne « Référence t3code » vers le code source de t3code (`52f0f8af`) et des paquets `@pierre/*` installés, chemins vérifiés un par un. US-032 cite aussi la technique de bloc de Zed. |
 | 1.2 | 2026-11-18 | Arthur Jean | Mesure US-016 : ligne de base `bench/baselines/linux-x86_64/tree.json` enregistrée par `scripts/bench-tree.sh --set-baseline` sur `f69413df`, arbre propre, Ryzen 7 7800X3D, part CPU 0,99 ([résultat](../bench/results/tree-20261118T182030Z-f69413dfc269.json)). 50 000 entrées : lignes après dépliage 19,57 ms (27,65 Mio alloués), 1 000 ajouts et suppressions 37,12 ms (38,17 Mio), recherche 2,41 ms. 300 000 entrées : 164,81 ms (173,04 Mio), 267,52 ms (232,48 Mio), 14,12 ms. Ces calculs tournent hors du fil de rendu, mais la construction des lignes dépasse 16 ms sur 50 000 entrées : **décision, porter** l'index de lignes visibles par nœud et l'application par différence de t3code. Story de suivi US-038 ajoutée au PRD, dans le nouvel EP-007. |
 | 1.3 | 2026-11-18 | Arthur Jean | Revue d'EP-002. Deux défauts corrigés. (1) `sync_files_sidebar_session`, appelé à chaque rendu du dock, relançait la révélation d'US-012 dès que la sélection quittait le fichier actif : la recherche était vidée à la frappe suivante et un dossier parent replié se redépliait. La révélation ne se déclenche plus qu'au changement de fichier actif (`FilesSidebar::reveal_request`). (2) La recherche fusionnait deux dossiers qui ne diffèrent que par la casse (`Docs/`, `docs/`) et donnait un chemin faux aux fichiers du second. (3) `tree.json` manquait à la liste des lignes de base connues de `src-app/src/bench_harness.rs`, ce qui faisait échouer `every_committed_baseline_is_clean_current_and_on_its_platform` ; le test valide maintenant son schéma, son arbre propre et sa plateforme. US-015 et US-016 certifiées. Passe visuelle d'US-009 à US-014 sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-files`, dans un Xvfb privé avec openbox et lavapipe, piloté par agent-desktop et xdotool, sur un dépôt de test (`.gitignore`, fichiers à point, dossier illisible, `Docs/` et `docs/`, chemin de 14 niveaux) : barre dans l'ordre, rotation de « Refresh files » jusqu'à la fin de la relecture, « Expand all » sans les dossiers ignorés puis « Collapse all », indicateur de chargement tournant puis statique sous `reduce_motion`, « Unable to load folder. » sur un dossier illisible ; ignorés atténués et ouvrables, fichiers à point normaux, `.git` masqué ; recherche dans un dossier jamais déplié avec parents dépliés et surlignage, « No matching files. », « More matches available. Refine your search. », Échap, `.gitignore` respecté ; révélation au changement d'onglet sans vol de focus, fichier ignoré jamais révélé, et le correctif (1) confirmé à l'écran (recherche et repli conservés) ; menu de l'arbre, « Reveal in File Manager » sélectionnant le fichier par `FileManager1`, toast d'échec du repli `xdg-open` ; icônes claires et sombres en Paneflow Dark, Paneflow Light et Claude Light, fenêtre de 800 par 500. Question ouverte d'US-014 tranchée : les icônes de Pierre remplacent celles de Paneflow quand un équivalent existe. EP-002 certifié. Constat hors epic : sur 14 niveaux, le retrait de 18 px dépasse la largeur par défaut de l'arbre et masque le nom du fichier. |
+| 1.4 | 2026-11-18 | Arthur Jean | EP-003 remis en revue, sauf la décision d'US-023. Table `RowMap` (`code/rows.rs`) entre lignes et rangées visuelles ; retour à la ligne par onglet (`editor.word_wrap`, faux par défaut), dont la première image d'une ligne géante tombe de 17,96 ms à 2,60 ms ; barre de recherche et de remplacement hors du fil de rendu ; révélation d'une ligne ou d'une plage, utilisée aujourd'hui par `:N` et prête pour US-034 ; mémoire de 200 positions par fenêtre. Banc sans régression au-delà de 5 % (`keystroke_to_runs` +0,5 %, requête d'un écran +2,0 %). Prototype lexical derrière la fonctionnalité `lexer-prototype` et rapport de mesure et de justesse ajoutés (section « Rapport du prototype lexical »). Décision de moteur d'Arthur (2026-11-19) : coloration progressive à deux couches, voie 1 en hybride. Couche 0, un lexer natif en Rust réécrit à partir des lexers de Pierre (Apache-2.0), sans wasm ni compilation à la volée, colore la première image, tous les langages et les blocs imbriqués. Couche 1, tree-sitter avec injections, le remplace dès que l'arbre est prêt pour les langages qui ont une grammaire, Rust en tête. Les jetons sémantiques du LSP sont une troisième couche envisagée plus tard. Le binaire embarqué n'est pas livré. L'intégration fera l'objet d'un PRD suivant ; son premier sujet est une transition invisible entre les deux couches. |
+| 1.5 | 2026-11-19 | Arthur Jean | Revue d'EP-003. Deux défauts corrigés. (1) La mémoire de défilement d'US-021 et la réouverture d'un onglet fermé enregistraient la position en rangées visuelles, puis la rejouaient comme une position de ligne sur la table uniforme d'un onglet neuf : avec `editor.word_wrap` actif, un fichier relu à la ligne 151 se rouvrait à la ligne 271. La position est maintenant une position de ligne (`FilePosition::scroll_line`, `ClosedFileTab::scroll_line`), appliquée une fois la table du retour à la ligne installée ; test `a_remembered_position_lands_on_the_same_line_when_the_tab_wraps`, rouge sans le correctif. (2) Le lavis d'une ligne révélée par `:N` restait affiché quand Entrée ou une nouvelle requête emmenait le curseur sur une occurrence ailleurs ; il part maintenant avec le curseur (`stepping_to_a_match_clears_the_highlight_of_a_revealed_line`). Écart mineur aligné : la découpe du retour à la ligne retirait toutes les fins `\r` d'une ligne, le document une seule. Banc après correctifs ([résultat](../bench/results/editor-20261119T065327Z-f08ffcef5d04.json), part CPU 0,99) : `keystroke_to_runs` +0,7 %, requête d'un écran -0,2 %, première image d'une ligne géante repliée 2,60 ms. Passe visuelle sur un build debug du `PANEFLOW_HOME` `~/.paneflow-dev-ep003`, dans un Xvfb privé de 800 par 500 avec openbox et lavapipe, piloté par xdotool, `reduce_motion` actif, en Paneflow Dark, Paneflow Light et Claude Dark, sur un dépôt de test (chemin à quatre niveaux, Markdown à lignes longues modifié, JSON d'une ligne de 12 008 caractères) : menu Editor Controls avec Word Wrap (survol, coché depuis le réglage), lignes repliées aux espaces sans numéro sur les rangées de continuation, barre git sur toutes les rangées d'une ligne repliée, `:24` centré et lavé sur ses sept rangées, compteur « 5 of 29 » et occurrence courante distincte, rangée de remplacement, expression invalide (bordure et message « unclosed group », Replace désactivé), Échap qui rend le focus, rangée de remplacement absente sur le fichier en lecture seule dont la ligne géante se replie. Constat non corrigé : un onglet replié de moins de 2 Mio reconstruit toute sa table à chaque frappe (0,66 ms pour 300 Ko, environ 4,6 ms à 2 Mio) ; une mise à jour incrémentale de la table est à prévoir. L'ouverture à une ligne d'un onglet déjà ouvert (`open_diff_file_tab_at`) n'a pas encore d'appelant : US-034 en sera le premier. EP-003 certifié. |
 
 ## Problem Statement
 
@@ -396,11 +398,11 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/VirtualizedFile.js:11,68-71,124-158,512-534`, hauteur fixe par défaut, mesures seulement pour les lignes repliées, totaux tous les 5 000 lignes), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/constants.js:87-92`, 20 px, blocs de 50 lignes), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/utils/createWindowFromScrollPosition.js:3-21`)
 
 **Acceptance Criteria:**
-- [ ] Une structure unique répond à : position verticale d'une ligne, ligne à une position verticale, hauteur totale du document, rangées visibles
-- [ ] Les sites qui multiplient ou divisent par `CODE_ROW_HEIGHT` pour situer une ligne passent par cette structure : `code/element.rs`, `code/navigation/layout.rs`, `code/view/change_markers.rs`, `code/view/input_handler.rs`, `code/view/mod.rs`, `code/view/motion.rs`, `code/view/pointer.rs`, `code/view/disk_sync.rs`, `code/view/render.rs`
-- [ ] Given aucune ligne repliée et aucun bloc, when un fichier s'affiche, then le rendu est identique au pixel près à celui d'avant, vérifié par les tests de géométrie existants
-- [ ] Given un document vide ou d'une seule ligne, when la structure est interrogée hors bornes, then elle renvoie la première ou la dernière ligne sans panique
-- [ ] `scripts/bench-editor.sh` ne montre aucune régression au-delà de 5 % sur `keystroke_to_runs` et sur la requête d'un écran
+- [x] Une structure unique répond à : position verticale d'une ligne, ligne à une position verticale, hauteur totale du document, rangées visibles
+- [x] Les sites qui multiplient ou divisent par `CODE_ROW_HEIGHT` pour situer une ligne passent par cette structure : `code/element.rs`, `code/navigation/layout.rs`, `code/view/change_markers.rs`, `code/view/input_handler.rs`, `code/view/mod.rs`, `code/view/motion.rs`, `code/view/pointer.rs`, `code/view/disk_sync.rs`, `code/view/render.rs`
+- [x] Given aucune ligne repliée et aucun bloc, when un fichier s'affiche, then le rendu est identique au pixel près à celui d'avant, vérifié par les tests de géométrie existants
+- [x] Given un document vide ou d'une seule ligne, when la structure est interrogée hors bornes, then elle renvoie la première ou la dernière ligne sans panique
+- [x] `scripts/bench-editor.sh` ne montre aucune régression au-delà de 5 % sur `keystroke_to_runs` et sur la requête d'un écran
 
 #### US-018: Retour à la ligne
 **Description:** As a développeur qui supervise des agents, I want que les longues lignes se replient so that je lis du Markdown ou du JSON sans défilement horizontal.
@@ -411,12 +413,12 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:1193-1195,1543-1551` (bascule par panneau sur un réglage global), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/VirtualizedFile.js:124-158`), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/components/Virtualizer.js:286-364`, ancrage de la première ligne visible)
 
 **Acceptance Criteria:**
-- [ ] Given un fichier ouvert, when j'active « Word Wrap » dans le menu Editor Controls, then les lignes se replient à la largeur du contenu et le défilement horizontal disparaît
-- [ ] Le réglage `editor.word_wrap` (faux par défaut) fixe l'état initial ; la bascule du menu ne vaut que pour l'onglet
-- [ ] Given une ligne repliée, when je clique, sélectionne ou déplace le curseur avec Haut et Bas, then le curseur suit les rangées visuelles
-- [ ] Given le retour à la ligne actif, when la largeur du dock change, then la ligne en haut de l'écran reste en haut
-- [ ] Les marqueurs git, les numéros de ligne et la minimap restent alignés sur la première rangée de chaque ligne
-- [ ] Given un fichier en lecture seule pour ligne de plus de 10 000 caractères, when le retour à la ligne est actif, then cette ligne se replie et aucune image ne dépasse 16 ms sur le banc
+- [x] Given un fichier ouvert, when j'active « Word Wrap » dans le menu Editor Controls, then les lignes se replient à la largeur du contenu et le défilement horizontal disparaît
+- [x] Le réglage `editor.word_wrap` (faux par défaut) fixe l'état initial ; la bascule du menu ne vaut que pour l'onglet
+- [x] Given une ligne repliée, when je clique, sélectionne ou déplace le curseur avec Haut et Bas, then le curseur suit les rangées visuelles
+- [x] Given le retour à la ligne actif, when la largeur du dock change, then la ligne en haut de l'écran reste en haut
+- [x] Les marqueurs git, les numéros de ligne et la minimap restent alignés sur la première rangée de chaque ligne
+- [x] Given un fichier en lecture seule pour ligne de plus de 10 000 caractères, when le retour à la ligne est actif, then cette ligne se replie et aucune image ne dépasse 16 ms sur le banc
 
 #### US-019: Recherche et remplacement dans le fichier
 **Description:** As a développeur qui supervise des agents, I want chercher dans le fichier ouvert so that je retrouve un nom sans le parcourir.
@@ -427,15 +429,15 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/editor/command.js:5-54,123-132`, rechercher, remplacer, occurrence suivante), `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/constants.js:55-85`, libellés de la barre de recherche)
 
 **Acceptance Criteria:**
-- [ ] Given le focus dans l'éditeur, when j'appuie sur `secondary-f`, then une barre de recherche s'ouvre, pré-remplie avec la sélection si elle tient sur une ligne
-- [ ] Given une requête, when je tape, then toutes les occurrences sont surlignées et un compteur affiche « 3 of 17 »
-- [ ] Entrée va à l'occurrence suivante, Maj+Entrée à la précédente, Échap ferme la barre et rend le focus à l'éditeur
-- [ ] La barre offre deux bascules : « Match Case » et « Regular Expression »
-- [ ] Given la rangée de remplacement dépliée, when je choisis « Replace » ou « Replace All », then le texte est remplacé et « Replace All » s'annule d'un seul Ctrl+Z
-- [ ] Given une expression régulière invalide, when je tape, then le champ passe à l'état d'erreur avec le message de l'analyseur et aucune occurrence n'est surlignée
-- [ ] Given un fichier en lecture seule, when la barre est ouverte, then la rangée de remplacement est absente
-- [ ] Given la requête `:120`, when je valide, then l'éditeur va à la ligne 120 ; un numéro hors bornes va à la dernière ligne
-- [ ] La recherche sur un fichier de 10 Mio s'exécute hors du fil de rendu et une requête plus récente annule la précédente
+- [x] Given le focus dans l'éditeur, when j'appuie sur `secondary-f`, then une barre de recherche s'ouvre, pré-remplie avec la sélection si elle tient sur une ligne
+- [x] Given une requête, when je tape, then toutes les occurrences sont surlignées et un compteur affiche « 3 of 17 »
+- [x] Entrée va à l'occurrence suivante, Maj+Entrée à la précédente, Échap ferme la barre et rend le focus à l'éditeur
+- [x] La barre offre deux bascules : « Match Case » et « Regular Expression »
+- [x] Given la rangée de remplacement dépliée, when je choisis « Replace » ou « Replace All », then le texte est remplacé et « Replace All » s'annule d'un seul Ctrl+Z
+- [x] Given une expression régulière invalide, when je tape, then le champ passe à l'état d'erreur avec le message de l'analyseur et aucune occurrence n'est surlignée
+- [x] Given un fichier en lecture seule, when la barre est ouverte, then la rangée de remplacement est absente
+- [x] Given la requête `:120`, when je valide, then l'éditeur va à la ligne 120 ; un numéro hors bornes va à la dernière ligne
+- [x] La recherche sur un fichier de 10 Mio s'exécute hors du fil de rendu et une requête plus récente annule la précédente
 
 #### US-020: Ouverture à une ligne avec plage surlignée
 **Description:** As a développeur qui supervise des agents, I want qu'un fichier s'ouvre sur la ligne demandée so that je lis tout de suite ce que l'agent a désigné.
@@ -446,12 +448,12 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `apps/web/src/components/files/fileLineReveal.ts:16-24` (centrage), `apps/web/src/components/files/FilePreviewPanel.tsx:472-687` (borne de ligne, garde de 20 images, abandon au premier geste), `apps/web/src/components/files/fileSurfaceChrome.tsx:27-59` (fond de la ligne révélée), `apps/web/src/rightPanelStore.ts:916-937` (`revealLine`, `revealRequestId`). t3code ne surligne qu'une ligne ; ce PRD surligne la plage
 
 **Acceptance Criteria:**
-- [ ] L'ouverture d'un onglet de fichier accepte une ligne, une colonne et une ligne de fin, toutes facultatives
-- [ ] Given une ligne demandée, when le fichier s'affiche, then la plage est centrée verticalement et surlignée d'un fond qui laisse la sélection lisible
-- [ ] Given une plage de plusieurs lignes, when elle est révélée, then toutes ses lignes sont surlignées
-- [ ] Given une ligne au-delà de la fin du fichier, when il s'ouvre, then la dernière ligne est révélée
-- [ ] Given un fichier déjà ouvert, when il est rouvert avec une autre ligne, then son onglet est activé et la nouvelle plage révélée
-- [ ] Given une frappe, un clic ou un défilement de l'utilisateur, when il survient, then le surlignage disparaît
+- [x] L'ouverture d'un onglet de fichier accepte une ligne, une colonne et une ligne de fin, toutes facultatives
+- [x] Given une ligne demandée, when le fichier s'affiche, then la plage est centrée verticalement et surlignée d'un fond qui laisse la sélection lisible
+- [x] Given une plage de plusieurs lignes, when elle est révélée, then toutes ses lignes sont surlignées
+- [x] Given une ligne au-delà de la fin du fichier, when il s'ouvre, then la dernière ligne est révélée
+- [x] Given un fichier déjà ouvert, when il est rouvert avec une autre ligne, then son onglet est activé et la nouvelle plage révélée
+- [x] Given une frappe, un clic ou un défilement de l'utilisateur, when il survient, then le surlignage disparaît
 
 #### US-021: Mémoire de défilement par fichier
 **Description:** As a développeur qui explore un dépôt, I want retrouver ma position dans un fichier rouvert so that je reprends ma lecture.
@@ -462,10 +464,10 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `apps/web/src/components/files/FilePreviewPanel.tsx:501-599` (mémoire et restauration), `apps/web/src/components/diffs/useCodeViewScrollRestore.ts`
 
 **Acceptance Criteria:**
-- [ ] Given un onglet fermé, when je rouvre le fichier dans la même session, then le défilement et le curseur reviennent à leur position
-- [ ] La mémoire garde les 200 derniers fichiers par fenêtre et oublie les plus anciens
-- [ ] Given un fichier raccourci entre-temps, when il est rouvert, then la position est ramenée à la dernière ligne
-- [ ] Given une ouverture avec une ligne demandée, when le fichier s'affiche, then la ligne demandée l'emporte sur la position mémorisée
+- [x] Given un onglet fermé, when je rouvre le fichier dans la même session, then le défilement et le curseur reviennent à leur position
+- [x] La mémoire garde les 200 derniers fichiers par fenêtre et oublie les plus anciens
+- [x] Given un fichier raccourci entre-temps, when il est rouvert, then la position est ramenée à la dernière ligne
+- [x] Given une ouverture avec une ligne demandée, when le fichier s'affiche, then la ligne demandée l'emporte sur la position mémorisée
 
 #### US-022: Prototype du moteur lexical WebAssembly derrière le banc
 **Description:** As a mainteneur de Paneflow, I want faire tourner le moteur de Pierre sur le corpus du banc so that sa vitesse est mesurée sur la machine de référence.
@@ -476,12 +478,12 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/highlighter.js:9-10,44-46,80,157-242`, mémoire, fonctions d'accueil Unicode, choix du langage), `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/live.js:101,441-550`, reprise incrémentale et budget de 1 ms), `apps/web/src/lib/syntaxHighlighting.ts:17-22`, `apps/web/src/components/DiffWorkerPoolProvider.tsx:21-26,64-71`, `@pierre/diffs` (`node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4*/node_modules/@pierre/diffs/dist/highlighter/highlights-editor.js:26-163`)
 
 **Acceptance Criteria:**
-- [ ] Le binaire `highlights.wasm` de `@pierre/highlights` 0.5.1 est exécuté depuis Rust, avec ses deux fonctions d'accueil de classes Unicode, derrière une fonctionnalité Cargo désactivée par défaut
-- [ ] Le code du prototype n'est compilé dans aucun binaire de release ni dans les trois binaires d'aide plafonnés
-- [ ] La suite du banc de l'éditeur gagne des cas qui mesurent le prototype sur le corpus de `code/bench_corpus.rs` : coloration complète du fichier Rust de 300 Ko, une frappe au milieu, la requête d'un écran de 60 lignes
-- [ ] Les mêmes cas existent pour le moteur tree-sitter actuel, pour une comparaison côte à côte dans la même exécution
-- [ ] Given un langage inconnu du moteur, when il est demandé, then le prototype renvoie du texte sans couleur et aucun cas n'échoue
-- [ ] Le rapport de mesure est ajouté au PRD : débit, médiane et 95e centile de la frappe, mémoire retenue, taille ajoutée au binaire, coût d'un appel
+- [x] Le binaire `highlights.wasm` de `@pierre/highlights` 0.5.1 est exécuté depuis Rust, avec ses deux fonctions d'accueil de classes Unicode, derrière une fonctionnalité Cargo désactivée par défaut
+- [x] Le code du prototype n'est compilé dans aucun binaire de release ni dans les trois binaires d'aide plafonnés
+- [x] La suite du banc de l'éditeur gagne des cas qui mesurent le prototype sur le corpus de `code/bench_corpus.rs` : coloration complète du fichier Rust de 300 Ko, une frappe au milieu, la requête d'un écran de 60 lignes
+- [x] Les mêmes cas existent pour le moteur tree-sitter actuel, pour une comparaison côte à côte dans la même exécution
+- [x] Given un langage inconnu du moteur, when il est demandé, then le prototype renvoie du texte sans couleur et aucun cas n'échoue
+- [x] Le rapport de mesure est ajouté au PRD : débit, médiane et 95e centile de la frappe, mémoire retenue, taille ajoutée au binaire, coût d'un appel
 
 #### US-023: Validate assumption: la justesse du moteur lexical suffit pour Paneflow
 **Description:** As a mainteneur de Paneflow, I want comparer les couleurs des deux moteurs so that le choix du moteur repose sur la vitesse et sur la justesse.
@@ -492,12 +494,12 @@ Phase 2. L'éditeur cesse de supposer une rangée par ligne, puis reçoit le ret
 **Référence t3code :** `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/token-types.js:2-76`, 73 catégories), `@pierre/highlights` (`node_modules/.pnpm/@pierre+highlights@0.5.1/node_modules/@pierre/highlights/dist/languages.js:3-350`, 152 langages), `apps/web/src/lib/syntaxHighlighting.ts:13-15` (alias de dialectes)
 
 **Acceptance Criteria:**
-- [ ] Pour Rust, TypeScript, Python, Markdown avec blocs de code et HTML avec script, un fichier du corpus est coloré par les deux moteurs et les écarts sont comptés par catégorie de jeton
-- [ ] Le rapport liste les constructions où le moteur lexical se trompe ou perd une distinction : macros et durées de vie en Rust, génériques en TypeScript, chaînes multi-lignes
-- [ ] Le rapport compare la couverture : langages colorés par chaque moteur, et langages imbriqués
-- [ ] Given un écart jugé bloquant sur Rust, when le rapport est écrit, then il recommande de garder tree-sitter pour ce langage et le dit
-- [ ] Le rapport se termine par une recommandation entre trois voies (réécriture native en Rust, binaire embarqué, statu quo tree-sitter étendu) et la décision d'Arthur est consignée dans le changelog du PRD
-- [ ] Aucun code de production ne change dans cette story
+- [x] Pour Rust, TypeScript, Python, Markdown avec blocs de code et HTML avec script, un fichier du corpus est coloré par les deux moteurs et les écarts sont comptés par catégorie de jeton
+- [x] Le rapport liste les constructions où le moteur lexical se trompe ou perd une distinction : macros et durées de vie en Rust, génériques en TypeScript, chaînes multi-lignes
+- [x] Le rapport compare la couverture : langages colorés par chaque moteur, et langages imbriqués
+- [x] Given un écart jugé bloquant sur Rust, when le rapport est écrit, then il recommande de garder tree-sitter pour ce langage et le dit
+- [x] Le rapport se termine par une recommandation entre trois voies (réécriture native en Rust, binaire embarqué, statu quo tree-sitter étendu) et la décision d'Arthur est consignée dans le changelog du PRD
+- [x] Aucun code de production ne change dans cette story
 
 ---
 
@@ -786,6 +788,60 @@ Clôture. Les branches `cfg(windows)` ne se compilent pas sous Linux et ne sont 
 - [ ] Un chemin Windows avec lettre de lecteur et barres obliques inverses, suivi de `:ligne`, cliqué dans un terminal, ouvre le dock à la bonne ligne
 - [ ] Given un défaut trouvé, when il est corrigé, then la correction est rejouée sur Fedora ; un défaut non corrigé est consigné avec son ticket
 - [ ] L'état de macOS est écrit pour EP-003, EP-004 et EP-005 : essayé sur matériel ou relu par inspection
+
+## Rapport du prototype lexical (US-022, US-023)
+
+Mesuré le 2026-11-18 sur la machine de référence (Ryzen 7 7800X3D, Fedora, Linux x86_64), build release, `cpu_share` 1,00, par `PANEFLOW_HIGHLIGHTS_WASM=<chemin de highlights.wasm> scripts/bench-editor.sh --lexer-prototype` ([résultat](../bench/results/editor-20261118T204756Z-f08ffcef5d04.json)). Le prototype exécute `highlights.wasm` de `@pierre/highlights` 0.5.1 dans wasmtime 50.0.2 (Cranelift), avec ses deux fonctions d'accueil `is_id_start` et `is_id_continue` répondues par `unicode-ident` (XID, plus ZWNJ et ZWJ pour la continuation). Il vit dans `src-app/src/app/diff_dock/code/lexer_prototype.rs`, compilé seulement en test sous la fonctionnalité `lexer-prototype`, désactivée par défaut.
+
+### Mesure (US-022)
+
+Corpus : le fichier Rust de 295 Ko de `code/bench_corpus.rs`.
+
+| Mesure | Moteur lexical | tree-sitter | Rapport |
+|---|---|---|---|
+| Coloration complète (médiane) | 3,40 ms, soit 87 Mo/s | 45,16 ms, soit 6,5 Mo/s | 13,3 fois plus rapide |
+| Frappe au milieu du fichier, médiane / 95e centile | 4,5 µs / 4,9 µs | 60,9 µs / 95,9 µs | 13,5 fois / 19,5 fois |
+| Requête d'un écran de 60 lignes (médiane) | 3,6 µs | 176,4 µs (`viewport_query_60_rows`) | 49 fois |
+| Mémoire retenue pour le fichier coloré | 2,08 Mio (mémoire linéaire et tas Rust) | 9,79 Mio (arbre 8,29 Mio par `tree_memory_probe`, couleurs par ligne 1,50 Mio) | 4,7 fois moins |
+| Nouvelle instance (onglet vide) | 27,4 µs | sans objet | |
+| Coût d'un appel vers le module | 10 ns (`liveLineCount`, moyenne sur 10 000 appels) | sans objet | |
+| Taille ajoutée au binaire | 9,67 Mio (wasmtime et Cranelift, binaire release strippé, mesuré par un binaire minimal avec et sans le moteur), plus 303 Ko pour `highlights.wasm` | 0 (déjà livré) | |
+
+La frappe lexicale reprend le lexer jusqu'à ce que son état redevienne identique, puis relit les 60 lignes. La frappe tree-sitter fait l'épissure, l'analyse incrémentale et le remplissage des 60 lignes sans budget. `keystroke_to_runs` (lignes pseudo-aléatoires, budget de 2 ms) vaut 534 µs dans ce build et reste la métrique de référence du banc. Un langage inconnu du moteur (`cobol`) revient en texte sans couleur (`an_unknown_language_comes_back_as_uncolored_text`).
+
+### Justesse (US-023)
+
+Méthode : `lexer_compare::lexer_correctness_report` colore le même texte par les deux moteurs et compare, octet par octet hors espaces, le rôle de couleur que l'éditeur affiche (la chaîne de `DiffSyntax::color_for_capture`, gardée alignée par `every_role_label_matches_the_editor_palette`). Pour tree-sitter, la première capture gagne, comme dans l'éditeur.
+
+| Fichier | Octets colorés | Accord | Principaux écarts |
+|---|---|---|---|
+| Rust, corpus de 300 Ko | 222 155 | 84,1 % | champs (`property`) lus comme variables : 31 % d'accord ; variables lues comme espaces de noms ou étiquettes (76 %) ; types lus comme `Self` ou variables (84 %) ; opérateurs lus comme ponctuation (74 %) |
+| TypeScript, `scripts/generate-file-icons.ts` | 7 053 | 96,6 % | types lus comme variables (62 %) |
+| Python, fixture du test | 776 | 92,1 % | décorateurs et appels lus comme attributs ou variables (63 %) |
+| Markdown avec blocs de code, corpus | 33 898 | 67,3 % | le moteur lexical colore le code des blocs, tree-sitter le laisse en `text.literal` |
+| HTML avec script et style | 550 | 49,8 % | 262 octets de script et de style colorés par le seul moteur lexical |
+
+Constructions où le moteur lexical se trompe ou perd une distinction :
+
+- Rust : la définition d'une macro (`macro_rules! square`, nom lu comme variable) ; la ligne de continuation d'une chaîne ordinaire sur plusieurs lignes (lue comme variable ; la ligne suivante redevient juste, l'erreur ne se propage pas) ; un variant d'énumération (`Option::Some`, lu comme fonction) ; le champ d'une structure. Les appels de macro (`println!`, `vec!`), les attributs, les littéraux de caractère, les chaînes brutes sur plusieurs lignes et les types en argument générique sont justes. Les durées de vie (`'a`) sont colorées comme étiquettes par le moteur lexical ; tree-sitter laisse l'apostrophe sans couleur et colore le nom comme une variable.
+- TypeScript : génériques (`Map<string, Array<number>>`, `parse<UserId>`), comparaison `a < b && c > d` et gabarit sur plusieurs lignes sont justes.
+- Python : une chaîne à triples guillemets sur plusieurs lignes est juste ; un décorateur est un attribut plutôt qu'une fonction ; la variable interpolée d'une f-string reste couleur chaîne.
+
+Couverture : tree-sitter colore 18 langages dans Paneflow (Rust, JSON, JSONC, Bash, Python, TypeScript, TSX, JavaScript, TOML, Markdown, Go, YAML, CSS, HTML, C, C++, Java, Ruby, plus le Markdown en ligne) et aucun langage imbriqué : le code d'un bloc Markdown, un `<script>` ou un `<style>` restent sans couleur. Le moteur lexical reconnaît 152 identifiants de langage (153 avec `plain`) et colore les blocs imbriqués (Rust dans un bloc Markdown, JavaScript et CSS dans HTML).
+
+Écart jugé bloquant sur Rust : la perte de la distinction entre champ et variable (69 % des octets de champ du corpus) et la continuation fausse des chaînes sur plusieurs lignes touchent le langage principal du dépôt. Le rapport recommande donc de garder tree-sitter pour Rust.
+
+### Recommandation
+
+Trois voies :
+
+1. Réécriture native en Rust d'un moteur lexical inspiré de celui de Pierre (licence Apache-2.0) : pas de wasmtime ni de Cranelift (aucun ajout de 9,67 Mio, aucun besoin d'autoriser la compilation à la volée sous le runtime durci de macOS), pas de frontière d'appel, langages ajoutés un par un. Coût : réécrire et maintenir chaque lexer.
+2. Binaire embarqué (`highlights.wasm` dans wasmtime) : 152 langages et les blocs imbriqués tout de suite, au prix de 9,67 Mio, d'un module tiers figé et de la compilation à la volée.
+3. Statu quo tree-sitter étendu : justesse maximale sur Rust, mais 13 fois plus lent à la coloration complète, 4,7 fois plus de mémoire, et des injections à écrire pour chaque langage imbriqué.
+
+Recommandation : voie 1 en hybride. tree-sitter reste le moteur de Rust (écart bloquant ci-dessus) ; un moteur lexical natif colore les blocs imbriqués (Markdown, HTML) et les langages que tree-sitter ne couvre pas, et peut colorer la première image d'un gros fichier pendant que l'arbre se construit. La voie 2 sert de référence de justesse et de vitesse pour cette réécriture, sans être livrée.
+
+Décision d'Arthur (2026-11-19) : coloration progressive à deux couches, consignée au changelog (version 1.4). Un lexer natif en Rust colore la première image, tous les langages et les blocs imbriqués ; tree-sitter avec injections le remplace dès que l'arbre est prêt pour les langages qui ont une grammaire ; les jetons sémantiques du LSP viendront peut-être ensuite. Ordre de réécriture des lexers : langages imbriqués et langages sans grammaire tree-sitter, puis la première image des gros fichiers, puis le reste à la demande.
 
 ## Functional Requirements
 
