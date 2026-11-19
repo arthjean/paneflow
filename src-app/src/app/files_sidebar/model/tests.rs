@@ -383,3 +383,118 @@ fn selection_falls_back_to_the_nearest_visible_ancestor() {
         Some(root.join("z.rs"))
     );
 }
+
+#[test]
+fn folders_added_removed_or_turned_into_files_in_any_batch_order_keep_counts_like_a_full_flatten() {
+    for seed in 0..12u64 {
+        let mut disk = nested_disk();
+        let mut model = TreeModel::new(disk.root.clone(), Vec::new());
+        let mut lcg = Lcg(0xabcd ^ seed.wrapping_mul(0x9e37_79b9));
+        let mut dirs: Vec<PathBuf> = disk.listings.keys().cloned().collect();
+        dirs.sort();
+        let mut order = dirs.clone();
+        for i in (1..order.len()).rev() {
+            order.swap(i, lcg.next(i + 1));
+        }
+        for dir in &order {
+            let change = disk.listing(&model, dir, false);
+            model.apply(vec![change]);
+        }
+        assert_matches_naive(&disk, &model);
+        for step in 0..300 {
+            let mut known: Vec<PathBuf> = disk.listings.keys().cloned().collect();
+            known.sort();
+            let target = known[lcg.next(known.len())].clone();
+            match lcg.next(7) {
+                0 | 1 => {
+                    let expand = !model.is_expanded(&target);
+                    model.set_expanded(&target, expand);
+                }
+                2 => {
+                    let child = target.join(format!("newdir{step:04}"));
+                    let listing = disk.listings.get_mut(&target).expect("listing");
+                    listing.push(dir(&child));
+                    listing.sort_by(compare_nodes);
+                    disk.listings.insert(
+                        child.clone(),
+                        vec![file(&child.join("x.rs")), file(&child.join("y.rs"))],
+                    );
+                    if lcg.next(2) == 0 {
+                        model.set_expanded(&child, true);
+                    }
+                    let parent_change = disk.listing(&model, &target, true);
+                    let child_change = disk.listing(&model, &child, true);
+                    if lcg.next(2) == 0 {
+                        model.apply(vec![parent_change, child_change]);
+                    } else {
+                        model.apply(vec![child_change, parent_change]);
+                    }
+                }
+                3 => {
+                    let listing = disk.listings.get(&target).expect("listing").clone();
+                    let subdirs: Vec<&FileNode> = listing.iter().filter(|n| n.is_dir).collect();
+                    if subdirs.is_empty() {
+                        continue;
+                    }
+                    let victim = subdirs[lcg.next(subdirs.len())].path.clone();
+                    let to_file = lcg.next(2) == 0;
+                    let listing = disk.listings.get_mut(&target).expect("listing");
+                    listing.retain(|n| n.path != victim);
+                    if to_file {
+                        listing.push(file(&victim));
+                    }
+                    listing.sort_by(compare_nodes);
+                    let gone: Vec<PathBuf> = disk
+                        .listings
+                        .keys()
+                        .filter(|d| d.starts_with(&victim))
+                        .cloned()
+                        .collect();
+                    let mut batch = vec![disk.listing(&model, &target, true)];
+                    for d in &gone {
+                        disk.listings.remove(d);
+                        batch.push(DirChange::Dropped(d.clone()));
+                    }
+                    if lcg.next(2) == 0 {
+                        batch.reverse();
+                    }
+                    model.apply(batch);
+                }
+                4 => {
+                    let mut all: Vec<PathBuf> = disk.listings.keys().cloned().collect();
+                    all.sort();
+                    let set: HashSet<PathBuf> =
+                        all.into_iter().filter(|_| lcg.next(3) == 0).collect();
+                    model.replace_expanded(set);
+                }
+                5 => {
+                    let mut set: HashSet<PathBuf> = model.expanded().clone();
+                    for _ in 0..lcg.next(5) {
+                        set.insert(known[lcg.next(known.len())].clone());
+                    }
+                    for _ in 0..lcg.next(3) {
+                        let p = known[lcg.next(known.len())].clone();
+                        set.remove(&p);
+                    }
+                    model.replace_expanded(set);
+                }
+                _ => {
+                    let listing = disk.listings.get_mut(&target).expect("listing");
+                    let files: Vec<usize> = (0..listing.len())
+                        .filter(|&ix| !listing[ix].is_dir)
+                        .collect();
+                    if !files.is_empty() {
+                        let ix = files[lcg.next(files.len())];
+                        listing[ix].size += 1;
+                    }
+                    let change = disk.listing(&model, &target, lcg.next(4) != 0);
+                    model.apply(vec![change]);
+                }
+            }
+            if step % 10 == 0 {
+                assert_matches_naive(&disk, &model);
+            }
+        }
+        assert_matches_naive(&disk, &model);
+    }
+}
