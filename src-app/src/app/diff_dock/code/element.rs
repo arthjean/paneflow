@@ -26,13 +26,15 @@ use super::navigation::{
     MINIMAP_FONT_SIZE, NavigationLayout, SCROLLBAR_SIZE, minimap_top, minimap_track, minimap_width,
     scrollbar_track,
 };
+use super::rows::{RowMap, RowSlot, px_to_rows, rows_in, rows_to_px};
 use super::view::CodeView;
+use super::wrap;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
 use crate::tab_stops::TabExpandedLine;
 use crate::widgets::ime_caret::follow_ime_caret;
 use crate::widgets::scrollbar::ScrollableHandle;
 
-pub(crate) const CODE_ROW_HEIGHT: f32 = 18.0;
+pub(crate) use super::rows::CODE_ROW_HEIGHT;
 pub(crate) const CODE_FONT_SIZE: f32 = 12.0;
 const NUM_GAP: f32 = 6.0;
 const GUTTER_PAD_L: f32 = 8.0;
@@ -45,23 +47,6 @@ const CARET_WIDTH: f32 = 2.0;
 
 const SCROLL_EPSILON: f32 = 0.5;
 const REVEAL_MARGIN_ROWS: f32 = 2.0;
-
-const OVERDRAW_ROWS: usize = 1;
-
-pub(crate) fn visible_rows_at(
-    scroll_rows: f64,
-    viewport_h: f32,
-    line_count: usize,
-) -> Range<usize> {
-    if line_count == 0 || viewport_h <= 0.0 {
-        return 0..0;
-    }
-    let top = scroll_rows.max(0.0);
-    let first = (top as usize).saturating_sub(OVERDRAW_ROWS);
-    let bottom = top + f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
-    let last = bottom as usize + 1 + OVERDRAW_ROWS;
-    first.min(line_count)..last.min(line_count)
-}
 
 pub(crate) fn device_round(y: f64, scale_factor: f32) -> f32 {
     if scale_factor.is_nan() || scale_factor <= 0.0 {
@@ -113,7 +98,7 @@ pub(crate) fn reveal_rows(row: usize, viewport_h: f32, max_rows: f64, current: f
     if viewport_h <= 0.0 {
         return current;
     }
-    let visible = f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
+    let visible = rows_in(viewport_h);
     let margin = f64::from(REVEAL_MARGIN_ROWS)
         .min((visible - 1.0) / 2.0)
         .max(0.0);
@@ -190,11 +175,29 @@ pub(crate) fn line_content_hash(line: &str) -> u64 {
     hasher.finish()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WrapKey {
+    pub(crate) revision: u64,
+    pub(crate) cols: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WrapSync {
+    Fresh,
+    Rebuilt,
+    Background(WrapKey),
+}
+
+pub(crate) const SYNC_WRAP_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Default)]
 struct CodeScrollState {
     rows: Cell<f64>,
     viewport: Cell<Bounds<Pixels>>,
-    line_count: Cell<usize>,
+    map: RefCell<RowMap>,
+    wrap: Cell<Option<WrapKey>>,
+    pending: Cell<Option<WrapKey>>,
+    segments: RefCell<HashMap<usize, Rc<[Range<usize>]>>>,
 }
 
 #[derive(Clone, Default)]
@@ -218,22 +221,18 @@ impl CodeScroll {
     }
 
     pub(crate) fn visible_rows(&self) -> f64 {
-        let viewport_h = self.viewport_height();
-        if viewport_h <= 0.0 {
-            return 0.0;
-        }
-        f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)
+        rows_in(self.viewport_height())
     }
 
     pub(crate) fn max_rows(&self) -> f64 {
         if self.viewport_height() <= 0.0 {
             return 0.0;
         }
-        (self.0.line_count.get() as f64 - self.visible_rows()).max(0.0)
+        (self.0.map.borrow().total_rows() as f64 - self.visible_rows()).max(0.0)
     }
 
     pub(crate) fn content_top(&self) -> f32 {
-        (self.rows() * f64::from(CODE_ROW_HEIGHT)) as f32
+        rows_to_px(self.rows()) as f32
     }
 
     pub(crate) fn set_rows(&self, rows: f64) -> bool {
@@ -254,17 +253,178 @@ impl CodeScroll {
     }
 
     pub(crate) fn scroll_by_pixels(&self, dy: f32) -> bool {
-        self.set_rows(self.rows() + f64::from(dy) / f64::from(CODE_ROW_HEIGHT))
+        self.set_rows(self.rows() + px_to_rows(f64::from(dy)))
     }
 
     pub(crate) fn set_line_count(&self, line_count: usize) {
-        self.0.line_count.set(line_count);
+        self.0.map.borrow_mut().set_line_count(line_count);
         self.set_rows(self.rows());
     }
 
     pub(crate) fn set_metrics(&self, viewport: Bounds<Pixels>, line_count: usize) {
         self.0.viewport.set(viewport);
         self.set_line_count(line_count);
+    }
+
+    pub(crate) fn map(&self) -> std::cell::Ref<'_, RowMap> {
+        self.0.map.borrow()
+    }
+
+    pub(crate) fn line_position(&self) -> f64 {
+        self.0.map.borrow().line_position(self.rows())
+    }
+
+    pub(crate) fn wrap_key(&self) -> Option<WrapKey> {
+        self.0.wrap.get()
+    }
+
+    pub(crate) fn install_map(&self, map: RowMap, wrap: Option<WrapKey>) {
+        let anchor = self.line_position();
+        let rows = map.rows_at_line_position(anchor);
+        *self.0.map.borrow_mut() = map;
+        self.0.wrap.set(wrap);
+        self.0.pending.set(None);
+        self.0.segments.borrow_mut().clear();
+        self.0
+            .rows
+            .set(if rows.is_finite() { rows.max(0.0) } else { 0.0 });
+        if self.viewport_height() > 0.0 {
+            self.set_rows(self.rows());
+        }
+    }
+
+    pub(crate) fn sync_wrap(&self, doc: &CodeDocument, cols: Option<usize>) -> WrapSync {
+        let line_count = doc.line_count();
+        let Some(cols) = cols else {
+            if self.0.wrap.get().is_some() || !self.0.map.borrow().is_uniform() {
+                self.install_map(RowMap::uniform(line_count), None);
+                return WrapSync::Rebuilt;
+            }
+            self.set_line_count(line_count);
+            return WrapSync::Fresh;
+        };
+        let key = WrapKey {
+            revision: doc.revision(),
+            cols,
+        };
+        if self.0.wrap.get() == Some(key) && self.0.map.borrow().line_count() == line_count {
+            return WrapSync::Fresh;
+        }
+        if doc.len_bytes() > SYNC_WRAP_BYTES {
+            self.set_line_count(line_count);
+            if self.0.pending.get() == Some(key) {
+                return WrapSync::Fresh;
+            }
+            self.0.pending.set(Some(key));
+            return WrapSync::Background(key);
+        }
+        self.install_layout(line_count, wrap::wrap_layout(doc.text(), cols), key);
+        WrapSync::Rebuilt
+    }
+
+    fn install_layout(&self, line_count: usize, layout: wrap::WrapLayout, key: WrapKey) {
+        self.install_map(RowMap::from_spans(line_count, layout.spans), Some(key));
+        let mut cache = self.0.segments.borrow_mut();
+        for (line, parts) in layout.seeded {
+            cache.insert(line, parts.into());
+        }
+    }
+
+    pub(crate) fn accept_background_wrap(
+        &self,
+        doc: &CodeDocument,
+        key: WrapKey,
+        layout: wrap::WrapLayout,
+    ) -> bool {
+        if self.0.pending.get() != Some(key) || doc.revision() != key.revision {
+            return false;
+        }
+        self.install_layout(doc.line_count(), layout, key);
+        true
+    }
+
+    pub(crate) fn segments(&self, doc: &CodeDocument, line: usize) -> Rc<[Range<usize>]> {
+        let whole = || -> Rc<[Range<usize>]> {
+            let len = doc.line_byte_range(line).map_or(0, |range| range.len());
+            Rc::from(std::slice::from_ref(&(0..len)))
+        };
+        let Some(key) = self.0.wrap.get() else {
+            return whole();
+        };
+        if key.revision != doc.revision() || self.0.map.borrow().text_rows(line) == 1 {
+            return whole();
+        }
+        if let Some(cached) = self.0.segments.borrow().get(&line) {
+            return cached.clone();
+        }
+        let Some(slice) = doc.text().get_line(line) else {
+            return whole();
+        };
+        let parts: Rc<[Range<usize>]> = wrap::segments(slice, key.cols).into();
+        self.0.segments.borrow_mut().insert(line, parts.clone());
+        parts
+    }
+
+    pub(crate) fn text_row(&self, doc: &CodeDocument, offset: usize) -> usize {
+        let line = doc.byte_to_line(offset);
+        let top = self.0.map.borrow().line_top(line);
+        let parts = self.segments(doc, line);
+        if parts.len() <= 1 {
+            return top;
+        }
+        let start = doc.line_to_byte(line);
+        top + wrap::segment_index(&parts, offset.saturating_sub(start))
+    }
+
+    pub(crate) fn segment_column(&self, doc: &CodeDocument, offset: usize) -> usize {
+        let line = doc.byte_to_line(offset);
+        let parts = self.segments(doc, line);
+        let start = doc.line_to_byte(line);
+        let local = offset.saturating_sub(start);
+        let segment = parts[wrap::segment_index(&parts, local)].clone();
+        doc.text()
+            .byte_slice(start + segment.start..start + local.clamp(segment.start, segment.end))
+            .chars()
+            .fold(0, crate::tab_stops::advance)
+    }
+
+    pub(crate) fn offset_at_text_row(
+        &self,
+        doc: &CodeDocument,
+        row: usize,
+        column: usize,
+    ) -> usize {
+        let slot = self.0.map.borrow().slot_at(row);
+        let (line, segment) = match slot {
+            RowSlot::Text { line, segment } => (line, segment),
+            RowSlot::Block { line, .. } => (line, usize::MAX),
+        };
+        let start = doc.line_to_byte(line);
+        let parts = self.segments(doc, line);
+        let index = segment.min(parts.len().saturating_sub(1));
+        let range = parts[index].clone();
+        let text = doc
+            .text()
+            .byte_slice(start + range.start..start + range.end);
+        let mut col = 0usize;
+        let mut local = range.start;
+        for ch in text.chars() {
+            let next = crate::tab_stops::advance(col, ch);
+            if next > column {
+                break;
+            }
+            col = next;
+            local += ch.len_utf8();
+        }
+        let last_segment = index + 1 >= parts.len();
+        if !last_segment && local >= range.end && range.end > range.start {
+            let prior = doc
+                .text()
+                .byte_slice(start + range.start..start + range.end);
+            let back = prior.chars().last().map_or(0, char::len_utf8);
+            local = range.end - back;
+        }
+        cursor::clamp(doc, start + local)
     }
 }
 
@@ -274,10 +434,7 @@ impl ScrollableHandle for CodeScroll {
     }
 
     fn max_offset(&self) -> Point<Pixels> {
-        point(
-            px(0.),
-            px((self.max_rows() * f64::from(CODE_ROW_HEIGHT)) as f32),
-        )
+        point(px(0.), px(rows_to_px(self.max_rows()) as f32))
     }
 
     fn offset(&self) -> Point<Pixels> {
@@ -285,7 +442,7 @@ impl ScrollableHandle for CodeScroll {
     }
 
     fn set_offset(&self, offset: Point<Pixels>) {
-        self.set_rows(f64::from(-f32::from(offset.y)) / f64::from(CODE_ROW_HEIGHT));
+        self.set_rows(px_to_rows(f64::from(-f32::from(offset.y))));
     }
 }
 
@@ -371,6 +528,7 @@ pub(crate) struct CodeHitMap {
     pub(crate) materialized_lines: usize,
     pub(crate) materialized_numbers: usize,
     pub(crate) lines: Vec<Option<Rc<TabExpandedLine>>>,
+    pub(crate) segments: Vec<Range<usize>>,
     pub(crate) shapes: CodeShapes,
 }
 
@@ -488,11 +646,11 @@ pub(crate) struct CodeShapes {
 
 impl CodeHitMap {
     fn row_at(&self, y: f32) -> isize {
-        self.first_row as isize + ((y - self.top_y) / CODE_ROW_HEIGHT).floor() as isize
+        self.first_row as isize + px_to_rows(f64::from(y - self.top_y)).floor() as isize
     }
 
     pub(crate) fn row_top(&self, row: usize) -> f32 {
-        self.top_y + (row as f32 - self.first_row as f32) * CODE_ROW_HEIGHT
+        self.top_y + rows_to_px(row as f64 - self.first_row as f64) as f32
     }
 
     pub(crate) fn marker_at(&self, position: Point<Pixels>) -> Option<usize> {
@@ -510,25 +668,42 @@ impl CodeHitMap {
             .map(|hit| hit.index)
     }
 
-    pub(crate) fn offset_at(&self, doc: &CodeDocument, position: Point<Pixels>) -> usize {
-        let last = doc.line_count().saturating_sub(1) as isize;
+    pub(crate) fn offset_at(
+        &self,
+        doc: &CodeDocument,
+        map: &RowMap,
+        position: Point<Pixels>,
+    ) -> usize {
         let raw = self.row_at(f32::from(position.y));
-        let row = raw.clamp(0, last) as usize;
-        let range = doc
-            .line_byte_range(row)
-            .unwrap_or_else(|| doc.len_bytes()..doc.len_bytes());
-        let index = raw - self.first_row as isize;
-        if index < 0 {
-            return range.start;
+        if raw < 0 {
+            return 0;
         }
-        let Some(slot) = self.lines.get(index as usize) else {
-            return range.end;
+        let row = raw as usize;
+        if row >= map.total_rows() {
+            return doc.len_bytes();
+        }
+        let line = map.line_at(row);
+        let line_range = doc
+            .line_byte_range(line)
+            .unwrap_or_else(|| doc.len_bytes()..doc.len_bytes());
+        let Some(index) = row.checked_sub(self.first_row) else {
+            return line_range.start;
         };
-        let Some(line) = slot else {
-            return range.start;
+        let (Some(slot), Some(segment)) = (self.lines.get(index), self.segments.get(index)) else {
+            return line_range.end;
         };
-        let local = line.closest_index_for_x(position.x - px(self.text_x));
-        cursor::clamp(doc, range.start + local.min(range.end - range.start))
+        if matches!(map.slot_at(row), RowSlot::Block { .. }) {
+            return line_range.end;
+        }
+        let Some(shaped) = slot else {
+            return segment.start;
+        };
+        let local = shaped.closest_index_for_x(position.x - px(self.text_x));
+        let mut offset = segment.start + local.min(segment.end - segment.start);
+        if offset >= segment.end && segment.end < line_range.end && segment.end > segment.start {
+            offset = doc.snap_to_boundary(segment.end - 1);
+        }
+        cursor::clamp(doc, offset)
     }
 }
 
@@ -707,7 +882,14 @@ impl Element for CodeElement {
         );
         let element_w = (f32::from(bounds.size.width) - scrollbar_w - minimap_w).max(0.0);
         let text_viewport_w = text_viewport_width(element_w, gutter_w);
-        let h_max = max_h_offset(doc.longest_line_columns(), memo.digit_w, text_viewport_w);
+        let wrap_cols = view
+            .word_wrap()
+            .then(|| wrap::wrap_columns(text_viewport_w, memo.digit_w));
+        let h_max = if wrap_cols.is_some() {
+            0.0
+        } else {
+            max_h_offset(doc.longest_line_columns(), memo.digit_w, text_viewport_w)
+        };
         let caret_x = cursor::display_column(doc, self.caret.cursor) as f32 * memo.digit_w;
         let h_offset = h_offset_after_viewport_change(
             caret_x,
@@ -727,9 +909,15 @@ impl Element for CodeElement {
             Bounds::new(bounds.origin, size(bounds.size.width, px(viewport_h))),
             line_count,
         );
+        let wrap_job = match self.scroll.sync_wrap(doc, wrap_cols) {
+            WrapSync::Background(key) => Some(key),
+            WrapSync::Fresh | WrapSync::Rebuilt => None,
+        };
         let scroll_rows = self.scroll.rows();
         let scale_factor = window.scale_factor();
-        let rows = visible_rows_at(scroll_rows, viewport_h, line_count);
+        let map = self.scroll.map();
+        let total_rows = map.total_rows();
+        let rows = map.visible_rows(scroll_rows, viewport_h);
         let vertical = display.scrollbar.then(|| {
             scrollbar_track(
                 Bounds::new(
@@ -737,7 +925,7 @@ impl Element for CodeElement {
                     size(px(SCROLLBAR_SIZE), px(viewport_h)),
                 ),
                 self.scroll.visible_rows(),
-                line_count as f64,
+                total_rows as f64,
                 scroll_rows,
                 false,
             )
@@ -799,7 +987,7 @@ impl Element for CodeElement {
         let origin_y = f64::from(f32::from(bounds.origin.y));
         let row_y = |row: usize| -> Pixels {
             px(device_round(
-                origin_y + (row as f64 - scroll_rows) * f64::from(CODE_ROW_HEIGHT),
+                origin_y + rows_to_px(row as f64 - scroll_rows),
                 scale_factor,
             ))
         };
@@ -818,7 +1006,7 @@ impl Element for CodeElement {
 
         if visible > 0 {
             let top = row_y(rows.start);
-            let span_h = px(visible as f32 * CODE_ROW_HEIGHT);
+            let span_h = px(rows_to_px(visible as f64) as f32);
             quads.push(Quad {
                 bounds: Bounds::new(point(left, top), size(bounds.size.width, span_h)),
                 color: self.palette.context_bg,
@@ -833,10 +1021,27 @@ impl Element for CodeElement {
 
         let cursor = self.caret.cursor.min(doc.len_bytes());
         let cursor_row = doc.byte_to_line(cursor);
+        let cursor_text_row = self.scroll.text_row(doc, cursor);
         let sel = self.caret.selection.clone();
         let marked = self.caret.marked.clone();
-        if sel.start >= sel.end && rows.contains(&cursor_row) {
-            let y = row_y(cursor_row);
+        for band in view.line_bands(doc) {
+            let first = map.line_top(band.lines.start);
+            let last = map.boundary_row(band.lines.end.min(line_count));
+            let from = first.max(rows.start);
+            let to = last.min(rows.end);
+            if from < to {
+                quads.push(Quad {
+                    bounds: Bounds::new(
+                        point(left, row_y(from)),
+                        size(bounds.size.width, px(rows_to_px((to - from) as f64) as f32)),
+                    ),
+                    color: band.color,
+                    clip: None,
+                });
+            }
+        }
+        if sel.start >= sel.end && rows.contains(&cursor_text_row) {
+            let y = row_y(cursor_text_row);
             quads.push(Quad {
                 bounds: Bounds::new(point(left, y), size(bounds.size.width, px(CODE_ROW_HEIGHT))),
                 color: cursor_line_wash(self.palette.cursor_line_bg, self.caret.focused),
@@ -859,6 +1064,7 @@ impl Element for CodeElement {
             materialized_lines: 0,
             materialized_numbers: 0,
             lines: Vec::with_capacity(visible),
+            segments: Vec::with_capacity(visible),
             shapes: CodeShapes::default(),
         };
 
@@ -867,12 +1073,7 @@ impl Element for CodeElement {
         let hovered = view.hovered_marker();
         if visible > 0 && !blocks.is_empty() {
             let window_top = hits.top_y;
-            for rect in marker_rects(
-                blocks,
-                rows.start,
-                CODE_ROW_HEIGHT,
-                visible as f32 * CODE_ROW_HEIGHT,
-            ) {
+            for rect in marker_rects(blocks, &map, rows.start, rows_to_px(visible as f64) as f32) {
                 let hover = hovered == Some(rect.index);
                 let (color, x, w) = match rect.kind {
                     BlockKind::Added => {
@@ -912,80 +1113,138 @@ impl Element for CodeElement {
         let marker_pointer = hovered.is_some();
 
         let hl = view.highlighter();
+        let mut syntax_line: Option<usize> = None;
         for row in rows.clone() {
             let y = row_y(row);
-
-            let num_color = if row == cursor_row {
-                self.palette.text
-            } else {
-                self.palette.muted
+            let (row_line, segment) = match map.slot_at(row) {
+                RowSlot::Text { line, segment } => (line, segment),
+                RowSlot::Block { line, .. } => {
+                    let end = doc
+                        .line_byte_range(line)
+                        .map_or(doc.len_bytes(), |range| range.end);
+                    hits.lines.push(None);
+                    hits.segments.push(end..end);
+                    continue;
+                }
             };
-            let number = row + 1;
-            let digits = digit_count(number);
-            self.runs.clear();
-            self.runs.push(TextRun {
-                len: digits,
-                font: self.font.clone(),
-                color: num_color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            });
-            let (num_line, number_materialized) = shapes.numbers.shape(
-                number as u64,
-                |text| text.parse() == Ok(number),
-                self.font_size,
-                &self.runs,
-                window.text_system(),
-                || number.to_string().into(),
-            );
-            if number_materialized {
-                shapes.numbers_shaped += 1;
-                hits.materialized_numbers += 1;
-            }
-            let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
-            glyphs.push(CodeGlyph {
-                origin: point(num_x, y),
-                line: num_line.shaped().clone(),
-                clip: None,
-            });
 
-            let range = doc
-                .line_byte_range(row)
+            if segment == 0 {
+                let num_color = if row_line == cursor_row {
+                    self.palette.text
+                } else {
+                    self.palette.muted
+                };
+                let number = row_line + 1;
+                let digits = digit_count(number);
+                self.runs.clear();
+                self.runs.push(TextRun {
+                    len: digits,
+                    font: self.font.clone(),
+                    color: num_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+                let (num_line, number_materialized) = shapes.numbers.shape(
+                    number as u64,
+                    |text| text.parse() == Ok(number),
+                    self.font_size,
+                    &self.runs,
+                    window.text_system(),
+                    || number.to_string().into(),
+                );
+                if number_materialized {
+                    shapes.numbers_shaped += 1;
+                    hits.materialized_numbers += 1;
+                }
+                let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
+                glyphs.push(CodeGlyph {
+                    origin: point(num_x, y),
+                    line: num_line.shaped().clone(),
+                    clip: None,
+                });
+            }
+
+            let line_range = doc
+                .line_byte_range(row_line)
                 .unwrap_or_else(|| doc.len_bytes()..doc.len_bytes());
-            let row_sel = row_selection(&sel, &range);
+            let parts = self.scroll.segments(doc, row_line);
+            let local = parts
+                .get(segment)
+                .cloned()
+                .unwrap_or(line_range.len()..line_range.len());
+            let range = line_range.start + local.start..line_range.start + local.end;
+            let last_segment = segment + 1 >= parts.len();
+            let row_sel = row_selection(&sel, &range)
+                .filter(|_| last_segment || sel.start < range.end || sel.start == sel.end);
             let origin = point(text_x - px(h_offset), y);
 
             let len = range.end - range.start;
-            let line = match doc.line(row).filter(|_| len > 0) {
+            let line = match doc.line(row_line).filter(|_| len > 0) {
                 None => None,
                 Some(slice) => {
-                    self.syntax.clear();
-                    if let Some(hl) = hl {
-                        hl.runs_into(row, &mut self.syntax);
+                    if syntax_line != Some(row_line) {
+                        self.syntax.clear();
+                        if let Some(hl) = hl {
+                            hl.runs_into(row_line, &mut self.syntax);
+                        }
+                        syntax_line = Some(row_line);
                     }
-                    fill_text_runs(
-                        &self.font,
-                        &mut self.runs,
-                        len,
-                        &self.syntax,
-                        self.palette.text,
-                    );
-                    if let Some((local, _)) = &row_sel {
+                    let slice = if parts.len() > 1 {
+                        slice.byte_slice(local.clone())
+                    } else {
+                        slice
+                    };
+                    if parts.len() > 1 {
+                        let segment_syntax: LineRuns = self
+                            .syntax
+                            .iter()
+                            .filter(|(span, _)| span.end > local.start && span.start < local.end)
+                            .map(|(span, color)| {
+                                (
+                                    span.start.max(local.start) - local.start
+                                        ..span.end.min(local.end) - local.start,
+                                    *color,
+                                )
+                            })
+                            .collect();
+                        fill_text_runs(
+                            &self.font,
+                            &mut self.runs,
+                            len,
+                            &segment_syntax,
+                            self.palette.text,
+                        );
+                    } else {
+                        fill_text_runs(
+                            &self.font,
+                            &mut self.runs,
+                            len,
+                            &self.syntax,
+                            self.palette.text,
+                        );
+                    }
+                    if let Some((local_sel, _)) = &row_sel {
                         let fg = self.colors.selection_fg;
-                        Self::restyle_in_place(&mut self.runs, &mut self.restyled, local, |run| {
-                            run.color = fg
-                        });
+                        Self::restyle_in_place(
+                            &mut self.runs,
+                            &mut self.restyled,
+                            local_sel,
+                            |run| run.color = fg,
+                        );
                     }
-                    if let Some((local, _)) = row_selection(&marked, &range) {
+                    if let Some((local_mark, _)) = row_selection(&marked, &range) {
                         let underline = UnderlineStyle {
                             color: Some(self.colors.cursor),
                             thickness: px(1.0),
                             wavy: false,
                         };
-                        Self::restyle_in_place(&mut self.runs, &mut self.restyled, &local, |run| {
-                            run.underline = Some(underline)
-                        });
+                        Self::restyle_in_place(
+                            &mut self.runs,
+                            &mut self.restyled,
+                            &local_mark,
+                            |run| run.underline = Some(underline),
+                        );
                     }
                     let (shaped, materialized) = shapes.lines.shape_rope_line(
                         slice,
@@ -1000,14 +1259,35 @@ impl Element for CodeElement {
                 }
             };
 
-            if let Some((local, wraps)) = row_sel {
+            for band in view.match_bands(range.clone()) {
                 let x0 = line
                     .as_ref()
-                    .map(|l| l.x_for_index(local.start))
+                    .map(|l| l.x_for_index(band.range.start - range.start))
+                    .unwrap_or(px(0.));
+                let x1 = line
+                    .as_ref()
+                    .map(|l| l.x_for_index(band.range.end - range.start))
+                    .unwrap_or(px(0.));
+                if x1 > x0 {
+                    quads.push(Quad {
+                        bounds: Bounds::new(
+                            point(origin.x + x0, y),
+                            size(x1 - x0, px(CODE_ROW_HEIGHT)),
+                        ),
+                        color: band.color,
+                        clip: Some(text_clip),
+                    });
+                }
+            }
+
+            if let Some((local_sel, wraps)) = row_sel {
+                let x0 = line
+                    .as_ref()
+                    .map(|l| l.x_for_index(local_sel.start))
                     .unwrap_or(px(0.));
                 let mut x1 = line
                     .as_ref()
-                    .map(|l| l.x_for_index(local.end))
+                    .map(|l| l.x_for_index(local_sel.end))
                     .unwrap_or(px(0.));
                 if wraps {
                     x1 += px(memo.digit_w.max(1.0));
@@ -1024,11 +1304,11 @@ impl Element for CodeElement {
                 }
             }
 
-            if row == cursor_row && self.caret.focused && self.caret.visible {
-                let local = cursor.saturating_sub(range.start);
+            if row == cursor_text_row && self.caret.focused && self.caret.visible {
+                let local_caret = cursor.saturating_sub(range.start).min(len);
                 let x = line
                     .as_ref()
-                    .map(|l| l.x_for_index(local))
+                    .map(|l| l.x_for_index(local_caret))
                     .unwrap_or(px(0.));
                 quads.push(Quad {
                     bounds: Bounds::new(
@@ -1050,7 +1330,9 @@ impl Element for CodeElement {
             } else {
                 hits.lines.push(None);
             }
+            hits.segments.push(range);
         }
+        drop(map);
         shapes.lines.end_frame();
         shapes.numbers.end_frame();
         hits.shapes = shapes;
@@ -1058,6 +1340,10 @@ impl Element for CodeElement {
         if let Some(h_offset) = revealed {
             let view = self.view.clone();
             cx.defer(move |cx| view.update(cx, |view, _| view.keep_h_offset(h_offset)));
+        }
+        if let Some(key) = wrap_job {
+            let view = self.view.clone();
+            cx.defer(move |cx| view.update(cx, |view, cx| view.spawn_wrap(key, cx)));
         }
 
         Some(CodePrepaint {
@@ -1171,10 +1457,15 @@ impl Element for CodeElement {
 mod tests {
     use std::path::PathBuf;
 
+    use super::super::rows::OVERDRAW_ROWS;
     use super::*;
 
     fn bound_for(viewport_h: f32) -> usize {
         (viewport_h / CODE_ROW_HEIGHT) as usize + 1 + 2 * OVERDRAW_ROWS
+    }
+
+    fn visible_rows_at(scroll_rows: f64, viewport_h: f32, line_count: usize) -> Range<usize> {
+        RowMap::uniform(line_count).visible_rows(scroll_rows, viewport_h)
     }
 
     fn visible_rows(content_top: f32, viewport_h: f32, line_count: usize) -> Range<usize> {
@@ -1697,13 +1988,15 @@ mod tests {
             materialized_lines: 0,
             materialized_numbers: 0,
             lines: vec![None],
+            segments: std::iter::once(4..7).collect(),
             ..CodeHitMap::default()
         };
+        let rows = RowMap::uniform(doc.line_count());
 
-        let below = map.offset_at(&doc, point(px(500.), px(10_000.)));
+        let below = map.offset_at(&doc, &rows, point(px(500.), px(10_000.)));
         assert_eq!(below, doc.len_bytes());
-        assert_eq!(map.offset_at(&doc, point(px(0.), px(-10_000.))), 0);
-        assert_eq!(map.offset_at(&doc, point(px(0.), px(105.))), 4);
+        assert_eq!(map.offset_at(&doc, &rows, point(px(0.), px(-10_000.))), 0);
+        assert_eq!(map.offset_at(&doc, &rows, point(px(0.), px(105.))), 4);
     }
 
     #[test]

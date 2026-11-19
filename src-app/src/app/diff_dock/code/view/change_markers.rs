@@ -294,10 +294,13 @@ impl CodeView {
     ) -> Option<AnyElement> {
         let popup = self.popup.as_ref()?;
         let bounds = self.scroll.bounds();
-        let (row_top, anchor_x) = {
+        let (row_top, first_rows, anchor_x) = {
+            let map = self.scroll.map();
+            let line = popup.block.lines.start as usize;
             let hits = self.hits.borrow();
             (
-                hits.row_top(popup.block.lines.start as usize),
+                hits.row_top(map.boundary_row(line)),
+                map.text_rows(line),
                 hits.marker_x + MARKER_COLUMN_W,
             )
         };
@@ -305,7 +308,7 @@ impl CodeView {
         let row_bottom = if kind == BlockKind::Deleted {
             row_top
         } else {
-            row_top + CODE_ROW_HEIGHT
+            row_top + super::super::rows::rows_to_px(first_rows as f64) as f32
         };
         let width = popup_width(f32::from(bounds.size.width));
         let height = popup_height_estimate(kind, popup.shown.len(), popup.hidden);

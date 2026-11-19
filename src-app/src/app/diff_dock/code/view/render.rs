@@ -158,9 +158,15 @@ impl Render for CodeView {
         };
 
         self.scroll.set_line_count(doc.line_count());
-        Self::apply_pending_scroll(&self.scroll, &mut self.pending_scroll_rows, window);
+        self.apply_pending_cursor();
+        self.apply_pending_scroll(window);
+        self.apply_pending_reveal(window, cx);
         let banners = self.banners(ui, cx);
+        if self.find_bar().is_some() {
+            self.refresh_find(cx);
+        }
         let popup = self.render_marker_popup(ui, window, cx);
+        let find_bar = self.render_find_bar(ui, cx);
         let theme = crate::theme::active_theme();
         let focused = self.focus.is_focused(window);
         let element = CodeElement::new(
@@ -218,7 +224,7 @@ impl Render for CodeView {
             }))
             .child(element);
 
-        div()
+        let body = div()
             .id("code-view-body")
             .key_context(CODE_KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -259,6 +265,7 @@ impl Render for CodeView {
             .on_action(cx.listener(Self::outdent))
             .on_action(cx.listener(Self::save_action))
             .on_action(cx.listener(Self::escape))
+            .on_action(cx.listener(Self::open_find))
             .flex_1()
             .min_h_0()
             .w_full()
@@ -285,7 +292,17 @@ impl Render for CodeView {
             )
             .children(banners)
             .child(host)
-            .children(popup)
+            .children(popup);
+        div()
+            .id("code-view-frame")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(body)
+            .children(find_bar)
             .into_any_element()
     }
 }
@@ -589,7 +606,7 @@ mod tests {
             let y = px(hits.row_top(0) + CODE_ROW_HEIGHT / 2.);
             let at_column = |column: usize| {
                 let x = px(hits.text_x) + line.shaped().x_for_index(column);
-                hits.offset_at(doc, point(x, y))
+                hits.offset_at(doc, &view.scroll.map(), point(x, y))
             };
             assert_eq!(at_column(1), 1, "the left edge of the tab is before it");
             assert_eq!(at_column(2), 1, "the left half of the tab lands before it");

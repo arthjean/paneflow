@@ -85,9 +85,10 @@ impl NavigationState {
         .clamp(0.0, max);
         if !thumb.contains(&position) {
             offset = if part == NavigationPart::Minimap {
-                layout.minimap_top
-                    + f64::from(f32::from(mouse - origin)) / f64::from(MINIMAP_LINE_HEIGHT)
-                    - scroll.visible_rows() / 2.0
+                scroll.map().rows_at_line_position(
+                    layout.minimap_top
+                        + f64::from(f32::from(mouse - origin)) / f64::from(MINIMAP_LINE_HEIGHT),
+                ) - scroll.visible_rows() / 2.0
             } else {
                 f64::from(f32::from(mouse - origin - thumb_length / 2.0)) * units_per_pixel
             }

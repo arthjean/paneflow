@@ -190,6 +190,11 @@
           "type": ["boolean", "null"],
           "description": "Draw the editor's vertical scrollbar. Default true.",
           "default": true
+        },
+        "word_wrap": {
+          "type": ["boolean", "null"],
+          "description": "Wrap long lines at the editor's width when a file opens. The Word Wrap entry of the editor's controls menu changes it for one tab only. Default false.",
+          "default": false
         }
       }
     },

@@ -7,6 +7,10 @@ pub(crate) mod document;
 pub(crate) mod edit;
 pub(crate) mod element;
 pub(crate) mod highlight;
+#[cfg(all(test, feature = "lexer-prototype"))]
+mod lexer_compare;
+#[cfg(all(test, feature = "lexer-prototype"))]
+mod lexer_prototype;
 pub(crate) mod load;
 pub(crate) mod markers;
 mod minimap;
@@ -14,8 +18,10 @@ mod navigation;
 mod navigation_paint;
 #[cfg(test)]
 mod perf_bench;
+pub(crate) mod rows;
 pub(crate) mod save;
 pub(crate) mod view;
+pub(crate) mod wrap;
 
 use super::render;
 

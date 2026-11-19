@@ -102,8 +102,12 @@ impl EntityInputHandler for CodeView {
         let geometry = self.geometry.get();
         let doc = self.state.document()?;
         let start = doc.utf16_to_byte(range_utf16.start);
-        let row = doc.byte_to_line(start);
-        let column = cursor::display_column(doc, start);
+        let row = self.scroll.text_row(doc, start);
+        let column = if self.scroll.wrap_key().is_some() {
+            self.scroll.segment_column(doc, start)
+        } else {
+            cursor::display_column(doc, start)
+        };
         let hits = self.hits.borrow();
         let (x, y) = if hits.lines.is_empty() {
             (
@@ -113,7 +117,7 @@ impl EntityInputHandler for CodeView {
         } else {
             (
                 hits.text_x + column as f32 * geometry.char_w,
-                hits.top_y + row.saturating_sub(hits.first_row) as f32 * CODE_ROW_HEIGHT,
+                hits.row_top(row.max(hits.first_row)),
             )
         };
         Some(Bounds {
@@ -129,7 +133,7 @@ impl EntityInputHandler for CodeView {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let doc = self.state.document()?;
-        let offset = self.hits.borrow().offset_at(doc, point);
+        let offset = self.hits.borrow().offset_at(doc, &self.scroll.map(), point);
         Some(doc.byte_to_utf16(offset))
     }
 }

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Context, Focusable, Window};
 
-use super::code::view::CodeView;
+use super::code::view::{CodeView, FilePosition, FileReveal};
 use super::model::DiffDockTab;
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
@@ -13,11 +13,35 @@ use crate::terminal::{TerminalEvent, TerminalView};
 const CLOSE_ARM_DELAY: Duration = Duration::from_millis(400);
 const CLOSE_ARM_EXPIRY: Duration = Duration::from_secs(4);
 pub(crate) const CLOSED_FILE_TABS_KEPT: usize = 20;
+pub(crate) const FILE_POSITIONS_KEPT: usize = 200;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct FilePositions(VecDeque<(PathBuf, FilePosition)>);
+
+impl FilePositions {
+    pub(crate) fn record(&mut self, path: PathBuf, position: FilePosition) {
+        self.0.retain(|(known, _)| *known != path);
+        self.0.push_front((path, position));
+        self.0.truncate(FILE_POSITIONS_KEPT);
+    }
+
+    pub(crate) fn get(&self, path: &Path) -> Option<FilePosition> {
+        self.0
+            .iter()
+            .find(|(known, _)| known == path)
+            .map(|(_, position)| *position)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ClosedFileTab {
     pub(crate) path: PathBuf,
-    pub(crate) scroll_rows: f64,
+    pub(crate) scroll_line: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -123,13 +147,14 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_diff_file_tab_at(path, None, window, cx);
+        self.open_diff_file_tab_at(path, None, None, window, cx);
     }
 
     pub(crate) fn open_diff_file_tab_at(
         &mut self,
         path: PathBuf,
-        scroll_rows: Option<f64>,
+        scroll_line: Option<f64>,
+        reveal: Option<FileReveal>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -139,12 +164,28 @@ impl PaneFlowApp {
             self.diff_dock.diff_tabs.remove(index);
         }
         let index = match file_open_plan(&self.diff_tab_facts(cx), &path, pending) {
-            FileOpen::Activate(index) => index,
-            FileOpen::Insert(index) => {
-                let view = self.new_code_view(path, false, cx);
-                if let Some(rows) = scroll_rows {
-                    view.update(cx, |view, _| view.restore_scroll_rows(rows));
+            FileOpen::Activate(index) => {
+                if let (Some(reveal), Some(DiffDockTab::File(view))) =
+                    (reveal, self.diff_dock.diff_tabs.get(index))
+                {
+                    view.update(cx, |view, cx| view.reveal(reveal, cx));
                 }
+                index
+            }
+            FileOpen::Insert(index) => {
+                let remembered = self.diff_dock.file_positions.get(&path);
+                let view = self.new_code_view(path, false, cx);
+                view.update(cx, |view, cx| {
+                    if let Some(position) = remembered {
+                        view.restore_position(position);
+                    }
+                    if let Some(line) = scroll_line {
+                        view.restore_scroll_line(line);
+                    }
+                    if let Some(reveal) = reveal {
+                        view.reveal(reveal, cx);
+                    }
+                });
                 self.diff_dock
                     .diff_tabs
                     .insert(index, DiffDockTab::File(view));
@@ -169,9 +210,12 @@ impl PaneFlowApp {
             }
         });
         let controls = view.read(cx).controls.clone();
-        cx.subscribe(&controls, |this, _, display, cx| {
-            this.persist_setting(false, "editor", display.to_config_value(), cx);
-        })
+        cx.subscribe(
+            &controls,
+            |this, _, display: &super::code::controls::EditorDisplay, cx| {
+                this.persist_setting(false, "editor", display.to_config_value(), cx);
+            },
+        )
         .detach();
         view
     }
@@ -371,7 +415,8 @@ impl PaneFlowApp {
                                 app.diff_dock.picked = true;
                                 app.open_diff_file_tab_at(
                                     closed.path,
-                                    Some(closed.scroll_rows),
+                                    Some(closed.scroll_line),
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -395,8 +440,13 @@ impl PaneFlowApp {
             let view = view.read(cx);
             self.diff_dock.closed_files.record(ClosedFileTab {
                 path: view.path().to_path_buf(),
-                scroll_rows: view.current_scroll_rows(),
+                scroll_line: view.current_scroll_line(),
             });
+            if let Some(position) = view.position() {
+                self.diff_dock
+                    .file_positions
+                    .record(view.path().to_path_buf(), position);
+            }
         }
         if matches!(closed, DiffDockTab::File(_) | DiffDockTab::PendingFile)
             && !self
@@ -688,13 +738,44 @@ mod tests {
     }
 
     #[test]
+    fn file_positions_keep_the_two_hundred_latest_files_per_window() {
+        let mut positions = FilePositions::default();
+        let at = |line: usize| FilePosition {
+            scroll_line: line as f64,
+            line,
+            column: 0,
+        };
+        for index in 0..FILE_POSITIONS_KEPT + 25 {
+            positions.record(PathBuf::from(format!("/repo/{index}.rs")), at(index));
+        }
+        assert_eq!(positions.len(), FILE_POSITIONS_KEPT);
+        assert_eq!(
+            positions.get(Path::new("/repo/0.rs")),
+            None,
+            "the oldest is forgotten"
+        );
+        assert_eq!(
+            positions.get(Path::new("/repo/224.rs")),
+            Some(at(224)),
+            "the newest is kept"
+        );
+        positions.record(PathBuf::from("/repo/30.rs"), at(7));
+        assert_eq!(positions.get(Path::new("/repo/30.rs")), Some(at(7)));
+        assert_eq!(
+            positions.len(),
+            FILE_POSITIONS_KEPT,
+            "a re-record replaces its entry"
+        );
+    }
+
+    #[test]
     fn closed_tabs_reopen_newest_first_and_keep_twenty() {
         let mut closed = ClosedFileTabs::default();
         assert!(closed.is_empty());
         for index in 0..CLOSED_FILE_TABS_KEPT + 5 {
             closed.record(ClosedFileTab {
                 path: PathBuf::from(format!("/repo/{index}.rs")),
-                scroll_rows: index as f64,
+                scroll_line: index as f64,
             });
         }
         assert_eq!(closed.paths().len(), CLOSED_FILE_TABS_KEPT);
@@ -703,11 +784,11 @@ mod tests {
             latest.path,
             PathBuf::from(format!("/repo/{}.rs", CLOSED_FILE_TABS_KEPT + 4))
         );
-        assert_eq!(latest.scroll_rows, (CLOSED_FILE_TABS_KEPT + 4) as f64);
+        assert_eq!(latest.scroll_line, (CLOSED_FILE_TABS_KEPT + 4) as f64);
 
         closed.record(ClosedFileTab {
             path: PathBuf::from("/repo/10.rs"),
-            scroll_rows: 3.0,
+            scroll_line: 3.0,
         });
         let paths = closed.paths();
         assert_eq!(paths[0], PathBuf::from("/repo/10.rs"));

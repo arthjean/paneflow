@@ -1,6 +1,6 @@
 use gpui::{Bounds, Pixels, Point, point, px, size};
 
-use super::super::element::{CODE_ROW_HEIGHT, CodeScroll};
+use super::super::element::CodeScroll;
 
 pub(crate) use crate::widgets::scrollbar::geometry::{
     MIN_THUMB, SCROLLBAR_SIZE, Track, scrollbar_track,
@@ -71,21 +71,29 @@ pub(crate) fn minimap_track(
     scroll: &CodeScroll,
 ) -> Track {
     let height = f32::from(bounds.size.height);
-    let thumb_height = (scroll.viewport_height() / CODE_ROW_HEIGHT * MINIMAP_LINE_HEIGHT)
+    let (top_line, visible_lines) = {
+        let map = scroll.map();
+        let top_line = map.line_position(scroll.rows());
+        let bottom_line = map.line_position(scroll.rows() + scroll.visible_rows());
+        (top_line, bottom_line - top_line)
+    };
+    let thumb_height = (visible_lines as f32 * MINIMAP_LINE_HEIGHT)
         .max(MIN_THUMB)
         .min(height);
     let top =
-        ((scroll.rows() - minimap_top(line_count, scroll)) * f64::from(MINIMAP_LINE_HEIGHT)) as f32;
+        ((top_line - minimap_top(line_count, scroll)) * f64::from(MINIMAP_LINE_HEIGHT)) as f32;
     Track {
         bounds,
-        thumb: (height > 0.0 && line_count as f64 > scroll.visible_rows()).then(|| {
-            Bounds::new(
-                point(
-                    bounds.origin.x,
-                    bounds.origin.y + px(top.clamp(0.0, (height - thumb_height).max(0.0))),
-                ),
-                size(bounds.size.width, px(thumb_height)),
-            )
-        }),
+        thumb: (height > 0.0 && scroll.map().total_rows() as f64 > scroll.visible_rows()).then(
+            || {
+                Bounds::new(
+                    point(
+                        bounds.origin.x,
+                        bounds.origin.y + px(top.clamp(0.0, (height - thumb_height).max(0.0))),
+                    ),
+                    size(bounds.size.width, px(thumb_height)),
+                )
+            },
+        ),
     }
 }

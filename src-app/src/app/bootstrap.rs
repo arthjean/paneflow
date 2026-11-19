@@ -509,6 +509,7 @@ impl PaneFlowApp {
                 header_hover: None,
                 tab_menu: None,
                 closed_files: Default::default(),
+                file_positions: Default::default(),
                 crumb_menu: None,
                 crumb_generation: 0,
                 crumb_scroll: gpui::ScrollHandle::new(),

@@ -21,7 +21,7 @@ pub(crate) use model::{
     DiffDockTab, DiffHover,
 };
 pub(crate) use tab_menu::DiffTabMenu;
-pub(crate) use tabs::ClosedFileTabs;
+pub(crate) use tabs::{ClosedFileTabs, FilePositions};
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,

@@ -585,7 +585,7 @@ mod tests {
         });
         assert_eq!(
             max_rows,
-            line_count as f64 - f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)
+            line_count as f64 - crate::app::diff_dock::code::rows::rows_in(viewport_h)
         );
         assert_eq!(rows, max_rows, "the position must stop at the new end");
     }

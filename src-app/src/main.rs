@@ -193,6 +193,7 @@ struct DiffDockState {
     pub(crate) header_hover: Option<usize>,
     pub(crate) tab_menu: Option<crate::app::diff_dock::DiffTabMenu>,
     pub(crate) closed_files: crate::app::diff_dock::ClosedFileTabs,
+    pub(crate) file_positions: crate::app::diff_dock::FilePositions,
     pub(crate) crumb_menu: Option<crate::app::diff_dock::CrumbMenu>,
     pub(crate) crumb_generation: u64,
     pub(crate) crumb_scroll: gpui::ScrollHandle,

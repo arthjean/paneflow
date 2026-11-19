@@ -3,7 +3,10 @@ use super::*;
 fn wheel_pixels(delta: &ScrollDelta, char_w: f32) -> Point<f32> {
     match delta {
         ScrollDelta::Pixels(pixels) => Point::new(f32::from(pixels.x), f32::from(pixels.y)),
-        ScrollDelta::Lines(lines) => Point::new(lines.x * char_w, lines.y * CODE_ROW_HEIGHT),
+        ScrollDelta::Lines(lines) => Point::new(
+            lines.x * char_w,
+            super::super::rows::rows_to_px(f64::from(lines.y)) as f32,
+        ),
     }
 }
 
@@ -22,6 +25,7 @@ impl CodeView {
         let geometry = self.geometry.get();
         let delta = wheel_pixels(&ev.delta, geometry.char_w);
         self.sync_scroll_line_count();
+        self.dismiss_reveal();
         let mut moved = self.scroll.scroll_by_pixels(-delta.y);
         if delta.x != 0.0 {
             let next = (self.h_offset - delta.x).clamp(0.0, geometry.max_h_offset);
@@ -47,6 +51,7 @@ impl CodeView {
             self.geometry.get().max_h_offset,
         );
         if handled {
+            self.dismiss_reveal();
             cx.notify();
         }
         handled
@@ -70,9 +75,13 @@ impl CodeView {
         }
     }
 
-    fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
+    pub(super) fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
         let doc = self.state.document()?;
-        Some(self.hits.borrow().offset_at(doc, position))
+        Some(
+            self.hits
+                .borrow()
+                .offset_at(doc, &self.scroll.map(), position),
+        )
     }
 
     fn chain_click(&mut self, position: Point<Pixels>, now: Instant) -> u8 {
@@ -103,6 +112,7 @@ impl CodeView {
         if !self.scroll.bounds().contains(&ev.position) {
             return false;
         }
+        self.dismiss_reveal();
         window.focus(&self.focus, cx);
         self.end_typing_group();
         let Some(offset) = self.offset_at(ev.position) else {
@@ -190,7 +200,7 @@ impl CodeView {
             f32::from(position.y),
             f32::from(bounds.origin.y),
             f32::from(bounds.bottom()),
-            DRAG_SCROLL_ROWS * CODE_ROW_HEIGHT,
+            super::super::rows::rows_to_px(f64::from(DRAG_SCROLL_ROWS)) as f32,
         );
         if dy != 0.0 {
             self.sync_scroll_line_count();

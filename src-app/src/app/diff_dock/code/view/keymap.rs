@@ -42,6 +42,7 @@ actions!(
         CeOutdent,
         CeSave,
         CeEscape,
+        CeFind,
     ]
 );
 
@@ -88,6 +89,7 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-x", CeCut, ctx),
         KeyBinding::new("cmd-v", CePaste, ctx),
         KeyBinding::new("cmd-s", CeSave, ctx),
+        KeyBinding::new("cmd-f", CeFind, ctx),
     ]);
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
@@ -107,5 +109,6 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-x", CeCut, ctx),
         KeyBinding::new("ctrl-v", CePaste, ctx),
         KeyBinding::new("ctrl-s", CeSave, ctx),
+        KeyBinding::new("ctrl-f", CeFind, ctx),
     ]);
 }

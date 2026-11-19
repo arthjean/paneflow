@@ -1,11 +1,16 @@
 mod change_markers;
 mod disk_sync;
 mod editing;
+mod find;
 mod input_handler;
 mod keymap;
 mod motion;
 mod pointer;
 mod render;
+#[cfg(test)]
+mod reveal_tests;
+#[cfg(test)]
+mod wrap_tests;
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -41,8 +46,7 @@ use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
 use super::element;
 use super::element::{
     CODE_FONT_SIZE, CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap,
-    CodeScroll, GutterMemo, autoscroll_step, code_font, reveal_h_offset, reveal_rows,
-    visible_rows_at,
+    CodeScroll, GutterMemo, WrapKey, autoscroll_step, code_font, reveal_h_offset, reveal_rows,
 };
 use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
@@ -51,6 +55,7 @@ use super::highlight::{
 use super::load::{CodeLoadError, CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::markers::MARKER_COLUMN_W;
 use super::navigation::NavigationState;
+use super::rows::rows_to_px;
 use super::save::{self, FileStamp};
 use super::spawn_blocking_then;
 use crate::diff::{DiffSyntax, highlight_lines, palette};
@@ -92,6 +97,46 @@ enum DiskState {
 }
 
 type PopupLine = (SharedString, Vec<(Range<usize>, Hsla)>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LineBand {
+    pub(crate) lines: Range<usize>,
+    pub(crate) color: Hsla,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FileReveal {
+    pub(crate) line: usize,
+    pub(crate) column: Option<usize>,
+    pub(crate) end_line: Option<usize>,
+}
+
+impl FileReveal {
+    pub(crate) fn line(line: usize) -> Self {
+        Self {
+            line,
+            column: None,
+            end_line: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FilePosition {
+    pub(crate) scroll_line: f64,
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+pub(crate) fn reveal_color() -> Hsla {
+    gpui::hsla(0.14, 0.9, 0.55, 0.14)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MatchBand {
+    pub(crate) range: Range<usize>,
+    pub(crate) color: Hsla,
+}
 
 struct MarkerPopup {
     block: Block,
@@ -176,7 +221,13 @@ pub(crate) struct CodeView {
     popup: Option<MarkerPopup>,
     highlight_budget: Duration,
     load_deferred: bool,
-    pending_scroll_rows: Option<f64>,
+    pending_scroll_line: Option<f64>,
+    word_wrap: bool,
+    visual_goal: Option<(usize, usize)>,
+    find: Option<find::FindBar>,
+    pending_reveal: Option<FileReveal>,
+    revealed_lines: Option<Range<usize>>,
+    pending_cursor: Option<(usize, usize)>,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -202,25 +253,37 @@ impl CodeView {
         }
     }
 
-    pub(crate) fn current_scroll_rows(&self) -> f64 {
-        self.pending_scroll_rows
-            .unwrap_or_else(|| self.scroll.rows())
+    pub(crate) fn current_scroll_line(&self) -> f64 {
+        self.pending_scroll_line
+            .unwrap_or_else(|| self.scroll.line_position())
     }
 
-    pub(crate) fn restore_scroll_rows(&mut self, rows: f64) {
-        self.pending_scroll_rows = (rows.is_finite() && rows > 0.0).then_some(rows);
+    pub(crate) fn restore_scroll_line(&mut self, line: f64) {
+        self.pending_scroll_line = (line.is_finite() && line > 0.0).then_some(line);
     }
 
-    fn apply_pending_scroll(scroll: &CodeScroll, pending: &mut Option<f64>, window: &mut Window) {
-        let Some(rows) = *pending else {
+    fn wrap_settled(&self) -> bool {
+        let Some(doc) = self.state.document() else {
+            return false;
+        };
+        !self.word_wrap
+            || self
+                .scroll
+                .wrap_key()
+                .is_some_and(|key| key.revision == doc.revision())
+    }
+
+    fn apply_pending_scroll(&mut self, window: &mut Window) {
+        let Some(line) = self.pending_scroll_line else {
             return;
         };
-        if scroll.viewport_height() <= 0.0 {
+        if self.scroll.viewport_height() <= 0.0 || !self.wrap_settled() {
             window.request_animation_frame();
             return;
         }
-        scroll.set_rows(rows);
-        *pending = None;
+        let rows = self.scroll.map().rows_at_line_position(line);
+        self.scroll.set_rows(rows);
+        self.pending_scroll_line = None;
     }
 
     fn with_state(
@@ -275,7 +338,13 @@ impl CodeView {
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
-            pending_scroll_rows: None,
+            pending_scroll_line: None,
+            word_wrap: super::controls::editor_display().word_wrap,
+            visual_goal: None,
+            find: None,
+            pending_reveal: None,
+            revealed_lines: None,
+            pending_cursor: None,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -340,7 +409,13 @@ impl CodeView {
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
-            pending_scroll_rows: None,
+            pending_scroll_line: None,
+            word_wrap: super::controls::editor_display().word_wrap,
+            visual_goal: None,
+            find: None,
+            pending_reveal: None,
+            revealed_lines: None,
+            pending_cursor: None,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -348,14 +423,165 @@ impl CodeView {
 
     #[cfg(test)]
     pub(crate) fn visible_row_range(&self) -> Range<usize> {
-        let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
+        if self.state.document().is_none() {
             return 0..0;
+        }
+        self.visible_lines()
+    }
+
+    fn visible_lines(&self) -> Range<usize> {
+        let map = self.scroll.map();
+        map.lines_in(map.visible_rows(self.scroll.rows(), self.scroll.viewport_height()))
+    }
+
+    pub(crate) fn word_wrap(&self) -> bool {
+        self.word_wrap
+    }
+
+    pub(crate) fn set_word_wrap(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.word_wrap == on {
+            return;
+        }
+        self.word_wrap = on;
+        self.visual_goal = None;
+        if on {
+            self.h_offset = 0.0;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn line_bands(&self, doc: &CodeDocument) -> Vec<LineBand> {
+        self.revealed_lines
+            .clone()
+            .filter(|lines| lines.start < doc.line_count())
+            .map(|lines| LineBand {
+                lines,
+                color: reveal_color(),
+            })
+            .into_iter()
+            .collect()
+    }
+
+    pub(crate) fn reveal(&mut self, reveal: FileReveal, cx: &mut Context<Self>) {
+        self.pending_reveal = Some(reveal);
+        self.pending_scroll_line = None;
+        self.pending_cursor = None;
+        cx.notify();
+    }
+
+    pub(crate) fn restore_position(&mut self, position: FilePosition) {
+        self.restore_scroll_line(position.scroll_line);
+        self.pending_cursor = Some((position.line, position.column));
+    }
+
+    pub(crate) fn position(&self) -> Option<FilePosition> {
+        let Some(doc) = self.state.document() else {
+            let (line, column) = self.pending_cursor?;
+            return Some(FilePosition {
+                scroll_line: self.current_scroll_line(),
+                line,
+                column,
+            });
         };
-        visible_rows_at(
-            self.scroll.rows(),
-            self.scroll.viewport_height(),
-            line_count,
-        )
+        let offset = self.selection.cursor();
+        Some(FilePosition {
+            scroll_line: self.current_scroll_line(),
+            line: doc.byte_to_line(offset),
+            column: cursor::goal_column(doc, offset),
+        })
+    }
+
+    fn apply_pending_cursor(&mut self) {
+        let Some((line, column)) = self.pending_cursor else {
+            return;
+        };
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let last = doc.line_count().saturating_sub(1);
+        let offset = cursor::offset_at_column(doc, line.min(last), column);
+        self.selection = CodeSelection::at(offset);
+        self.goal_column = cursor::goal_column(doc, offset);
+        self.pending_cursor = None;
+    }
+
+    pub(super) fn dismiss_reveal(&mut self) {
+        self.revealed_lines = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn revealed_lines(&self) -> Option<Range<usize>> {
+        self.revealed_lines.clone()
+    }
+
+    fn apply_pending_reveal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(reveal) = self.pending_reveal else {
+            return;
+        };
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        if self.scroll.viewport_height() <= 0.0 || !self.wrap_settled() {
+            window.request_animation_frame();
+            return;
+        }
+        let last = doc.line_count().saturating_sub(1);
+        let start = reveal.line.max(1).saturating_sub(1).min(last);
+        let end = reveal
+            .end_line
+            .map_or(start, |end| end.max(1).saturating_sub(1).min(last))
+            .max(start);
+        let offset = cursor::offset_at_column(
+            doc,
+            start,
+            reveal.column.unwrap_or(1).max(1).saturating_sub(1),
+        );
+        self.pending_reveal = None;
+        self.place_caret(offset, false, cx);
+        let (top, rows) = {
+            let map = self.scroll.map();
+            let top = map.line_top(start);
+            (top, map.boundary_row(end + 1).saturating_sub(top))
+        };
+        let visible = self.scroll.visible_rows();
+        let target = if rows as f64 >= visible {
+            top as f64
+        } else {
+            top as f64 + rows as f64 / 2.0 - visible / 2.0
+        };
+        self.scroll.set_rows(target);
+        self.revealed_lines = Some(start..end + 1);
+        cx.notify();
+    }
+
+    pub(crate) fn match_bands(&self, range: Range<usize>) -> Vec<MatchBand> {
+        self.find_match_bands(range)
+    }
+
+    pub(crate) fn spawn_wrap(&mut self, key: WrapKey, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        if doc.revision() != key.revision {
+            return;
+        }
+        let text = doc.text().clone();
+        let load_generation = self.slot.current();
+        spawn_blocking_then(
+            cx,
+            move || super::wrap::wrap_layout(&text, key.cols),
+            move |view: &mut Self, spans, cx| {
+                if !view.slot.accept(load_generation) {
+                    return;
+                }
+                let Some(doc) = view.state.document() else {
+                    return;
+                };
+                if view.scroll.accept_background_wrap(doc, key, spans) {
+                    cx.notify();
+                }
+            },
+        );
     }
 
     #[cfg(test)]
@@ -392,8 +618,9 @@ impl CodeView {
 
     #[cfg(test)]
     pub(crate) fn row_top(&self, row: usize) -> f32 {
+        let visual = self.scroll.map().line_top(row);
         let hits = self.hits.borrow();
-        hits.top_y + row.saturating_sub(hits.first_row) as f32 * CODE_ROW_HEIGHT
+        hits.top_y + rows_to_px(visual.saturating_sub(hits.first_row) as f64) as f32
     }
 
     #[cfg(test)]
@@ -463,12 +690,12 @@ impl CodeView {
             return false;
         }
         let content_top = self.scroll.content_top();
-        let row = doc.byte_to_line(self.selection.cursor());
+        let row = self.scroll.text_row(doc, self.selection.cursor());
         Self::row_intersects_viewport(row, content_top, viewport_h)
     }
 
     fn row_intersects_viewport(row: usize, content_top: f32, viewport_h: f32) -> bool {
-        let row_top = row as f32 * CODE_ROW_HEIGHT;
+        let row_top = rows_to_px(row as f64) as f32;
         row_top < content_top + viewport_h && row_top + CODE_ROW_HEIGHT > content_top
     }
 
@@ -496,7 +723,12 @@ impl CodeView {
         self.gutter_memo.set(GutterMemo::default());
         self.geometry.set(CodeGeometry::default());
         *self.hits.borrow_mut() = CodeHitMap::default();
+        self.scroll
+            .install_map(super::rows::RowMap::uniform(0), None);
         self.scroll.reset_rows();
+        self.visual_goal = None;
+        self.revealed_lines = None;
+        self.pending_reveal = None;
         self.history.clear();
         self.saved_mark = edit::HistoryMark::default();
         self.marked = None;
@@ -632,7 +864,7 @@ impl CodeView {
         };
         let viewport_h = self.scroll.viewport_height();
         let rows = if viewport_h > 0.0 {
-            visible_rows_at(self.scroll.rows(), viewport_h, line_count)
+            self.visible_lines()
         } else {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };

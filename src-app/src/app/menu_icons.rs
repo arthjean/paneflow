@@ -43,6 +43,7 @@ pub(crate) const VSCODE: &str = "icons/menu/vscode.svg";
 pub(crate) const WEBSTORM: &str = "icons/menu/webstorm.svg";
 pub(crate) const WHATS_NEW: &str = "icons/menu/whats-new.svg";
 pub(crate) const WHITESPACE: &str = "icons/menu/whitespace.svg";
+pub(crate) const WORD_WRAP: &str = "icons/menu/word-wrap.svg";
 
 #[cfg(test)]
 mod tests {
@@ -94,6 +95,7 @@ mod tests {
             super::WEBSTORM,
             super::WHATS_NEW,
             super::WHITESPACE,
+            super::WORD_WRAP,
         ] {
             assert!(
                 crate::assets::Assets::get(path).is_some(),

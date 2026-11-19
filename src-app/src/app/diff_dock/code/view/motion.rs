@@ -11,7 +11,8 @@ impl CodeView {
         self.place_caret(offset, false, cx);
     }
 
-    fn place_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+    pub(super) fn place_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        self.dismiss_reveal();
         self.end_typing_group();
         let Some(doc) = self.state.document() else {
             return;
@@ -24,19 +25,52 @@ impl CodeView {
     }
 
     fn move_rows(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
+        self.dismiss_reveal();
         self.end_typing_group();
+        self.sync_row_map(cx);
         let goal = self.goal_column;
         let Some(doc) = self.state.document() else {
             return;
         };
-        let offset = cursor::vertical(doc, self.selection.cursor(), goal, delta);
+        let from = self.selection.cursor();
+        let offset = if self.scroll.wrap_key().is_some() {
+            let column = match self.visual_goal {
+                Some((at, column)) if at == from => column,
+                _ => self.scroll.segment_column(doc, from),
+            };
+            let target = visual_target(&self.scroll.map(), self.scroll.text_row(doc, from), delta);
+            let offset = self.scroll.offset_at_text_row(doc, target, column);
+            self.visual_goal = Some((offset, column));
+            offset
+        } else {
+            cursor::vertical(doc, from, goal, delta)
+        };
         self.selection.apply(offset, extend);
         self.after_motion(cx);
+    }
+
+    pub(super) fn sync_row_map(&mut self, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let cols = if self.word_wrap {
+            self.scroll.wrap_key().map(|key| key.cols)
+        } else {
+            None
+        };
+        if cols.is_none() && self.word_wrap {
+            self.scroll.set_line_count(doc.line_count());
+            return;
+        }
+        if let super::super::element::WrapSync::Background(key) = self.scroll.sync_wrap(doc, cols) {
+            self.spawn_wrap(key, cx);
+        }
     }
 
     pub(super) fn after_motion(&mut self, cx: &mut Context<Self>) {
         self.last_motion = Instant::now();
         self.blink_visible = true;
+        self.sync_row_map(cx);
         self.reveal_cursor();
         cx.notify();
     }
@@ -57,9 +91,11 @@ impl CodeView {
             return;
         };
         let offset = self.selection.cursor();
-        let row = doc.byte_to_line(offset);
+        let row = self.scroll.text_row(doc, offset);
         let column = cursor::display_column(doc, offset);
-        self.scroll.set_line_count(doc.line_count());
+        if self.scroll.wrap_key().is_none() {
+            self.scroll.set_line_count(doc.line_count());
+        }
 
         let target = reveal_rows(row, viewport_h, self.scroll.max_rows(), self.scroll.rows());
         self.scroll.set_rows(target);
@@ -280,6 +316,27 @@ impl CodeView {
         let offset = if end { cursor::doc_end(doc) } else { 0 };
         self.place_caret(offset, extend, cx);
     }
+}
+
+fn visual_target(
+    map: &crate::app::diff_dock::code::rows::RowMap,
+    from: usize,
+    delta: isize,
+) -> usize {
+    use crate::app::diff_dock::code::rows::RowSlot;
+    let last = map.total_rows().saturating_sub(1) as isize;
+    let step = delta.signum();
+    let mut target = (from as isize + delta).clamp(0, last);
+    while matches!(map.slot_at(target as usize), RowSlot::Block { .. })
+        && (0..=last).contains(&(target + step))
+        && step != 0
+    {
+        target += step;
+    }
+    if matches!(map.slot_at(target as usize), RowSlot::Block { .. }) {
+        return from;
+    }
+    target as usize
 }
 
 #[cfg(test)]

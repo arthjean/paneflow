@@ -419,7 +419,7 @@ call site never branches on the style to pick a radius.
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
 | Diff | body inset 8 on the sides and bottom, row 20, file header 32 and sticky at the same height, 8 after an expanded file, hunk separator 24 inset 8 with a 32 expand cell, a gap of 2 and radius 6, gutter of 2 characters, the line number (3 digits at least) and 1 character, then a 2 px gap in the background color and 1 character before the code, change bar 4, split divider 2, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Changes toolbar and tree | toolbar row 28 with 8 below, controls 24, layout segments 20 tall, icons 14; tree 40 % of the dock between 160 and 256 wide, header 28, rows 24 inset 6, indentation 12, icons 14, chevrons 12 |
-| Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
+| Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left; rows 18 whether a line wraps or not; find bar 440 wide inset 6 from the top right, rows 36, controls 28 |
 
 ### 4.6 Typography
 
@@ -1326,10 +1326,34 @@ the full dock width. Sessions can remain open alongside the integrated tree.
 Tree visibility remains local to the active agent session.
 
 The file header places Zed's 14 px `filter.svg` icon after `Ln` and `Col`.
-Its Editor Controls menu offers Minimap and Scrollbar toggles, scoped to the
-open file tab. The minimap starts hidden; scrollbars start visible. It is an
-action menu of 5.6 whose two rows are toggles. Escape, an outside click, or a
-second click on the trigger dismisses it.
+Its Editor Controls menu offers Minimap, Scrollbar and Word Wrap toggles,
+scoped to the open file tab. The minimap starts hidden; scrollbars start
+visible; Word Wrap starts from `editor.word_wrap` (off by default) and a toggle
+never writes the setting back. It is an action menu of 5.6 whose rows are
+toggles. Escape, an outside click, or a second click on the trigger dismisses
+it.
+
+Word Wrap folds each line at the last space or tab that fits the text width,
+or mid-word when a word is wider than the row. A wrapped tab has no horizontal
+scrollbar. Continuation rows are 18 px like any other row, carry no line
+number, and keep the git marker bar spanning every row of its lines. Up and
+Down walk visual rows and keep the caret's column inside the row. A width
+change keeps the line at the top of the viewport in place.
+
+`secondary-f` opens the find bar in the top right corner of the file tab: a
+squircle on `subtle` with a 1 px border that turns `agent_error` on an invalid
+regular expression, whose message sits on its own row below. Its first row
+holds the replace chevron, the query field, Match Case and Regular Expression
+toggles (Aa, .*), the `N of M` count, then Previous, Next and Close. The query
+is case-insensitive by default; `:120` jumps to line 120 instead. Every match
+gets a translucent warm band and the current one a stronger band, both under
+the selection. Enter and Shift+Enter step through matches, Escape closes the
+bar and returns focus to the text. The replace row (Replace and Replace All)
+is absent on a read-only file; Replace All is one undo step.
+
+Opening a file at a line or a range of lines, `:N` in the find bar for
+instance, centers it and washes it with the same warm hue at 0.14. The
+wash leaves on the next keystroke, click or scroll.
 
 Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
 minimum, and a 1 px left border on the vertical track and thumb. Both axes

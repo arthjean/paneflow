@@ -16,6 +16,7 @@ use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt, text_tooltip};
 pub(crate) struct EditorDisplay {
     pub(crate) minimap: bool,
     pub(crate) scrollbar: bool,
+    pub(crate) word_wrap: bool,
 }
 
 impl EditorDisplay {
@@ -23,6 +24,7 @@ impl EditorDisplay {
         Self {
             minimap: config.minimap_enabled(),
             scrollbar: config.scrollbar_enabled(),
+            word_wrap: config.word_wrap_enabled(),
         }
     }
 
@@ -30,44 +32,75 @@ impl EditorDisplay {
         serde_json::json!({
             "minimap": self.minimap,
             "scrollbar": self.scrollbar,
+            "word_wrap": self.word_wrap,
         })
     }
 }
 
 static EDITOR_MINIMAP: AtomicBool = AtomicBool::new(false);
 static EDITOR_SCROLLBAR: AtomicBool = AtomicBool::new(true);
+static EDITOR_WORD_WRAP: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn set_editor_display(display: EditorDisplay) {
     EDITOR_MINIMAP.store(display.minimap, Ordering::Relaxed);
     EDITOR_SCROLLBAR.store(display.scrollbar, Ordering::Relaxed);
+    EDITOR_WORD_WRAP.store(display.word_wrap, Ordering::Relaxed);
 }
 
 pub(crate) fn editor_display() -> EditorDisplay {
     EditorDisplay {
         minimap: EDITOR_MINIMAP.load(Ordering::Relaxed),
         scrollbar: EDITOR_SCROLLBAR.load(Ordering::Relaxed),
+        word_wrap: EDITOR_WORD_WRAP.load(Ordering::Relaxed),
     }
 }
 
 pub(crate) struct EditorControls {
     open: bool,
     editor_focus: FocusHandle,
+    word_wrap: bool,
 }
 
 #[derive(Clone, Copy)]
 enum EditorControl {
+    WordWrap,
     Minimap,
     Scrollbar,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WordWrapToggled(pub(crate) bool);
 
 impl EditorControls {
     pub(crate) fn attach(editor_focus: FocusHandle, cx: &mut Context<CodeView>) -> Entity<Self> {
         let controls = cx.new(|_| Self {
             open: false,
             editor_focus,
+            word_wrap: editor_display().word_wrap,
         });
         cx.observe(&controls, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(
+            &controls,
+            |view: &mut CodeView, _, toggled: &WordWrapToggled, cx| {
+                view.set_word_wrap(toggled.0, cx);
+            },
+        )
+        .detach();
         controls
+    }
+
+    #[cfg(test)]
+    pub(crate) fn word_wrap(&self) -> bool {
+        self.word_wrap
+    }
+
+    #[cfg(test)]
+    pub(crate) fn toggle_word_wrap_for_test(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose(EditorControl::WordWrap, window, cx);
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -79,6 +112,12 @@ impl EditorControls {
     fn choose(&mut self, control: EditorControl, window: &mut Window, cx: &mut Context<Self>) {
         let mut display = editor_display();
         match control {
+            EditorControl::WordWrap => {
+                self.word_wrap = !self.word_wrap;
+                cx.emit(WordWrapToggled(self.word_wrap));
+                self.close(window, cx);
+                return;
+            }
             EditorControl::Minimap => display.minimap = !display.minimap,
             EditorControl::Scrollbar => display.scrollbar = !display.scrollbar,
         }
@@ -90,6 +129,13 @@ impl EditorControls {
         let ui = crate::theme::ui_colors();
         let display = editor_display();
         let menu = ActionMenu::new()
+            .item(
+                MenuItem::new("Word Wrap", EditorControl::WordWrap)
+                    .id("code-editor-control-word-wrap")
+                    .icon(icon::WORD_WRAP)
+                    .mnemonic('w')
+                    .toggle(self.word_wrap),
+            )
             .item(
                 MenuItem::new("Minimap", EditorControl::Minimap)
                     .id("code-editor-control-minimap")
@@ -126,6 +172,7 @@ impl EditorControls {
 }
 
 impl EventEmitter<EditorDisplay> for EditorControls {}
+impl EventEmitter<WordWrapToggled> for EditorControls {}
 
 impl Render for EditorControls {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

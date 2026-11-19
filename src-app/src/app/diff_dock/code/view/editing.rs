@@ -9,6 +9,7 @@ const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 
 impl CodeView {
     pub(super) fn take_whole_document(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_reveal();
         self.end_typing_group();
         let Some(doc) = self.state.document() else {
             return;
@@ -39,6 +40,7 @@ impl CodeView {
             self.flash_read_only(cx);
             return false;
         }
+        self.dismiss_reveal();
         let before = self.selection;
         let now = Instant::now();
         let batched = self
@@ -392,9 +394,11 @@ impl CodeView {
         self.shift_lines(true, cx);
     }
 
-    pub(super) fn escape(&mut self, _: &CeEscape, _w: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn escape(&mut self, _: &CeEscape, window: &mut Window, cx: &mut Context<Self>) {
         if self.popup.is_some() {
             self.close_marker_popup(cx);
+        } else if self.find_bar().is_some() {
+            self.close_find(window, cx);
         } else {
             cx.propagate();
         }

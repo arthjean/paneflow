@@ -32,10 +32,12 @@ use super::bench_corpus::{
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
-use super::element::{CODE_FONT_SIZE, ShapeCache};
+use super::element::{CODE_FONT_SIZE, CODE_ROW_HEIGHT, CodeScroll, ShapeCache};
 use super::highlight::{
     CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
 };
+use super::rows::{RowMap, RowSlot};
+use super::wrap;
 
 const VIEWPORT_ROWS: usize = 60;
 
@@ -268,6 +270,81 @@ fn viewport_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
             index += 1;
             let first = stride(index, span);
             highlighter.requery_rows(&doc, first..first + VIEWPORT_ROWS);
+        },
+    ));
+}
+
+const WRAP_COLUMNS: usize = 100;
+
+fn wrapped_frame(scroll: &CodeScroll, doc: &CodeDocument) -> usize {
+    scroll.sync_wrap(doc, Some(WRAP_COLUMNS));
+    let rows = {
+        let map = scroll.map();
+        map.visible_rows(scroll.rows(), scroll.viewport_height())
+    };
+    let mut bytes = 0usize;
+    for row in rows {
+        let slot = scroll.map().slot_at(row);
+        if let RowSlot::Text { line, segment } = slot {
+            bytes += scroll
+                .segments(doc, line)
+                .get(segment)
+                .map_or(0, |range| range.len());
+        }
+    }
+    bytes
+}
+
+fn giant_line_scroll(doc: &CodeDocument) -> CodeScroll {
+    let scroll = CodeScroll::new();
+    scroll.set_metrics(
+        gpui::Bounds::new(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(800.), px(VIEWPORT_ROWS as f32 * CODE_ROW_HEIGHT)),
+        ),
+        doc.line_count(),
+    );
+    scroll.sync_wrap(doc, Some(WRAP_COLUMNS));
+    let middle = scroll.map().total_rows() / 2;
+    scroll.set_rows(middle as f64);
+    scroll
+}
+
+fn wrap_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let rust = document("bench-300kb.rs", &corpora.highlighted_rust);
+    metrics.push(measure(
+        "wrap_layout_300kb",
+        "the row map rebuilt for word wrap at 100 columns on 300 KB of Rust: every line measured and the prefix sums built, the synchronous work a width change or an edit costs a wrapped tab",
+        2,
+        50,
+        || {
+            std::hint::black_box(RowMap::from_spans(
+                rust.line_count(),
+                wrap::wrap_layout(rust.text(), WRAP_COLUMNS).spans,
+            ));
+        },
+    ));
+    let giant_text = format!("{{\n{}\n}}\n", minified_json_line(RELOAD_RUST_BYTES));
+    let giant = document("bench-giant.json", &giant_text);
+    metrics.push(measure(
+        "wrapped_giant_line_first_frame",
+        "the first frame of a file whose 2 MB line wraps at 100 columns: the synchronous row map build, then the 60 visible rows in the middle of the line resolved to their segments, the render-thread work of a prepaint before shaping",
+        1,
+        10,
+        || {
+            let scroll = giant_line_scroll(&giant);
+            std::hint::black_box(wrapped_frame(&scroll, &giant));
+        },
+    ));
+    let warm = giant_line_scroll(&giant);
+    wrapped_frame(&warm, &giant);
+    metrics.push(measure(
+        "wrapped_giant_line_warm_frame",
+        "a later frame of the same wrapped 2 MB line: the map and the line's segments are cached, so a frame only resolves its 60 rows",
+        5,
+        200,
+        || {
+            std::hint::black_box(wrapped_frame(&warm, &giant));
         },
     ));
 }
@@ -1076,6 +1153,163 @@ fn tree_memory_probe_in_a_fresh_process() {
     }
 }
 
+#[cfg(feature = "lexer-prototype")]
+const ENGINE_METRICS: [&str; 9] = [
+    "lexer_full_color_300kb",
+    "tree_sitter_full_color_300kb",
+    "lexer_keystroke_mid_file",
+    "tree_sitter_keystroke_mid_file",
+    "lexer_viewport_query_60_rows",
+    "lexer_retained_bytes",
+    "tree_sitter_runs_retained_bytes",
+    "lexer_call_ns",
+    "lexer_instantiate",
+];
+
+#[cfg(feature = "lexer-prototype")]
+const ENGINE_CALLS: usize = 10_000;
+
+#[cfg(feature = "lexer-prototype")]
+fn mid_row(doc_lines: usize, index: usize) -> usize {
+    doc_lines / 2 + index % 32
+}
+
+#[cfg(feature = "lexer-prototype")]
+fn lexer_engine_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    use super::lexer_prototype::{LexPosition, LexerPrototype, language_id};
+
+    let engine = match LexerPrototype::from_env() {
+        Ok(engine) => engine,
+        Err(reason) => {
+            println!("PANEFLOW_BENCH_NOTE lexer prototype unavailable: {reason}");
+            for name in ENGINE_METRICS {
+                metrics.push(Metric::unavailable(
+                    name,
+                    "ns",
+                    "set PANEFLOW_HIGHLIGHTS_WASM to the highlights.wasm of @pierre/highlights 0.5.1",
+                ));
+            }
+            return;
+        }
+    };
+    let rust = language_id("rs");
+    let text = corpora.highlighted_rust.as_str();
+
+    metrics.push(measure(
+        "lexer_instantiate",
+        "one fresh instance of the precompiled highlights.wasm module with its two Unicode host functions and an empty document, the fixed cost of a new tab",
+        3,
+        50,
+        || {
+            std::hint::black_box(engine.document("", rust).expect("an empty document"));
+        },
+    ));
+    metrics.push(measure(
+        "lexer_full_color_300kb",
+        "the lexical prototype colors the whole 300 KB Rust file: a fresh instance, the text staged into its memory and every line tokenized",
+        2,
+        20,
+        || {
+            std::hint::black_box(engine.document(text, rust).expect("a colored document"));
+        },
+    ));
+    let doc = document("bench-300kb.rs", text);
+    metrics.push(measure(
+        "tree_sitter_full_color_300kb",
+        "tree-sitter colors the whole 300 KB Rust file: the blocking initial parse plus the highlight query over every row, the counterpart of lexer_full_color_300kb",
+        2,
+        20,
+        || {
+            let mut highlighter = parsed(&doc, dark());
+            highlighter.requery_rows(&doc, 0..doc.line_count());
+            std::hint::black_box(highlighter);
+        },
+    ));
+
+    let heap_before = live_bytes();
+    let mut lexed = engine.document(text, rust).expect("a colored document");
+    let heap = (live_bytes() - heap_before).max(0) as f64;
+    let linear = lexed.memory_bytes() as f64;
+    metrics.push(Metric::count(
+        "lexer_retained_bytes",
+        "bytes",
+        heap + linear,
+        "bytes one colored 300 KB Rust document holds in the prototype: the instance's linear memory (text, line table, tokens, lexer states) plus the Rust heap it allocated; the compiled module is shared and not counted",
+    ));
+    let heap_before = live_bytes();
+    let mut highlighter = parsed(&doc, dark());
+    highlighter.requery_rows(&doc, 0..doc.line_count());
+    let runs = (live_bytes() - heap_before).max(0) as f64;
+    metrics.push(Metric::count(
+        "tree_sitter_runs_retained_bytes",
+        "bytes",
+        runs,
+        "Rust heap bytes the tree-sitter highlighter of the 300 KB file holds once every row is colored; the syntax tree lives in the C allocator and is measured by tree_memory_probe",
+    ));
+    drop(highlighter);
+
+    let mut index = 0usize;
+    metrics.push(measure(
+        "lexer_keystroke_mid_file",
+        "one inserted character in the middle of the 300 KB Rust file in the prototype: the edit staged, the lexer rerun until its state matches again, then the 60 rows below read back",
+        5,
+        200,
+        || {
+            index += 1;
+            let line = mid_row(lexed.line_count(), index);
+            let at = LexPosition { line, column: 0 };
+            lexed.replace(at, at, "x").expect("an edit");
+            std::hint::black_box(lexed.query(line..line + VIEWPORT_ROWS));
+        },
+    ));
+    let mut doc = document("bench-300kb.rs", text);
+    let mut highlighter = parsed(&doc, dark());
+    let mut index = 0usize;
+    metrics.push(measure_segments(
+        "tree_sitter_keystroke_mid_file",
+        "one inserted character in the middle of the 300 KB Rust file with tree-sitter: splice, incremental parse or deferred-tree apply and the fill of the 60 rows below, the counterpart of lexer_keystroke_mid_file",
+        5,
+        200,
+        |timer| {
+            index += 1;
+            let row = mid_row(doc.line_count(), index);
+            let offset = doc.line_to_byte(row);
+            apply_ui_edit(&mut doc, &mut highlighter, offset..offset, "x", timer);
+            let end = (row + VIEWPORT_ROWS).min(doc.line_count());
+            timer.time(|| highlighter.fill_stale_rows(&doc, row..end, UNBOUNDED_BUDGET));
+        },
+    ));
+
+    let mut lexed = engine.document(text, rust).expect("a colored document");
+    let span = lexed.line_count().saturating_sub(VIEWPORT_ROWS).max(1);
+    let mut index = 0usize;
+    metrics.push(measure(
+        "lexer_viewport_query_60_rows",
+        "the tokens of one 60-row viewport read back from the prototype at the same pseudo-random rows as viewport_query_60_rows, its tree-sitter counterpart in this run",
+        5,
+        200,
+        || {
+            index += 1;
+            let first = stride(index, span);
+            std::hint::black_box(lexed.query(first..first + VIEWPORT_ROWS));
+        },
+    ));
+
+    let started = Instant::now();
+    let mut lines = 0usize;
+    for _ in 0..ENGINE_CALLS {
+        lines = lines.wrapping_add(std::hint::black_box(lexed.line_count()));
+    }
+    let per_call = started.elapsed().as_nanos() as f64 / ENGINE_CALLS as f64;
+    std::hint::black_box(lines);
+    metrics.push(Metric::count(
+        "lexer_call_ns",
+        "ns",
+        per_call,
+        "mean cost of one host-to-module call that does no work (liveLineCount), over 10,000 calls: the floor every per-line read pays",
+    ));
+}
+
 #[test]
 #[ignore = "editor performance benchmark: run through scripts/bench-editor"]
 fn editor_pipeline_benchmark() {
@@ -1090,6 +1324,9 @@ fn editor_pipeline_benchmark() {
     keystroke_scenario(&mut metrics, &corpora);
     plain_keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
+    #[cfg(feature = "lexer-prototype")]
+    lexer_engine_scenarios(&mut metrics, &corpora);
+    wrap_scenarios(&mut metrics, &corpora);
     fill_stale_scenario(&mut metrics, &corpora);
     pagedown_scenario(&mut metrics, &corpora);
     unclosed_comment_scenario(&mut metrics, &corpora);

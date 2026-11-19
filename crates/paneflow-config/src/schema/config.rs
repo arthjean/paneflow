@@ -146,6 +146,8 @@ pub struct EditorDisplayConfig {
     pub minimap: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub scrollbar: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub word_wrap: Option<bool>,
 }
 
 impl EditorDisplayConfig {
@@ -155,6 +157,10 @@ impl EditorDisplayConfig {
 
     pub fn scrollbar_enabled(&self) -> bool {
         self.scrollbar.unwrap_or(true)
+    }
+
+    pub fn word_wrap_enabled(&self) -> bool {
+        self.word_wrap.unwrap_or(false)
     }
 }
 

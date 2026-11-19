@@ -87,6 +87,7 @@ mod tests {
             editor: EditorDisplayConfig {
                 minimap: Some(true),
                 scrollbar: Some(false),
+                word_wrap: Some(true),
             },
             automation: AutomationConfig {
                 tab_auto_naming: Some(true),

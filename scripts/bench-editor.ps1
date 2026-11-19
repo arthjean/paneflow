@@ -21,6 +21,12 @@ Copy the fresh result over bench/baselines/<os>-<arch>/editor.json. Refused
 from a dirty tracked worktree, and when the run reports a cpu_share below 0.90, because a contended run inflates every timing
 it would freeze.
 
+.PARAMETER LexerPrototype
+Build with the lexer-prototype feature and add the cases that run the
+highlights.wasm engine of @pierre/highlights 0.5.1 beside tree-sitter. Needs
+PANEFLOW_HIGHLIGHTS_WASM. Never combined with -SetBaseline: the baseline stays
+the build that ships.
+
 .PARAMETER Help
 Print this help and exit.
 
@@ -33,6 +39,7 @@ scripts/bench-editor.ps1 -SetBaseline
 [CmdletBinding()]
 param(
     [switch]$SetBaseline,
+    [switch]$LexerPrototype,
     [switch]$Help
 )
 
@@ -42,6 +49,12 @@ if ($Help) {
     Get-Help $PSCommandPath -Detailed
     exit 0
 }
+
+if ($SetBaseline -and $LexerPrototype) {
+    Write-Error "-LexerPrototype measures a build that never ships: record the baseline without it"
+    exit 2
+}
+$features = if ($LexerPrototype) { @("--features", "lexer-prototype") } else { @() }
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -62,7 +75,7 @@ $env:PANEFLOW_BENCH_DIRTY = $dirty
 $env:PANEFLOW_BENCH_STAMP = $stamp
 $env:PANEFLOW_BENCH_BASELINE_DIR = Join-Path $root "bench/baselines"
 
-cargo test --release --locked -p paneflow-app --bin paneflow `
+cargo test --release --locked -p paneflow-app --bin paneflow @features `
     app::diff_dock::code::perf_bench::editor_pipeline_benchmark `
     -- --ignored --exact --nocapture --test-threads=1
 if ($LASTEXITCODE -ne 0) {
