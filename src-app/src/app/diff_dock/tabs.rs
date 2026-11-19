@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AppContext, Context, Focusable, Window};
 
-use super::code::view::{CodeView, FilePosition, FileReveal};
+use super::code::view::{CodeView, CodeViewEvent, FilePosition, FileReveal};
 use super::model::DiffDockTab;
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
@@ -217,7 +217,34 @@ impl PaneFlowApp {
             },
         )
         .detach();
+        cx.subscribe(&view, |this, _, event: &CodeViewEvent, cx| {
+            this.handle_code_view_event(event, cx);
+        })
+        .detach();
         view
+    }
+
+    pub(crate) fn handle_code_view_event(&mut self, event: &CodeViewEvent, cx: &mut Context<Self>) {
+        match event {
+            CodeViewEvent::Toast(message) => self.show_toast(message.to_string(), cx),
+            CodeViewEvent::DisplayChanged(display) => {
+                self.persist_setting(false, "editor", display.to_config_value(), cx);
+            }
+            CodeViewEvent::OpenWithMenu { path, position } => {
+                let root = self
+                    .active_workspace()
+                    .map(|ws| PathBuf::from(&ws.cwd))
+                    .unwrap_or_default();
+                self.dismiss_transient_surfaces();
+                self.files_menu_open = Some(crate::FilesContextMenu {
+                    root,
+                    path: path.clone(),
+                    position: *position,
+                    scope: crate::app::window::FilesMenuScope::OpenWith,
+                });
+                cx.notify();
+            }
+        }
     }
 
     fn pending_file_tab(&self) -> Option<usize> {

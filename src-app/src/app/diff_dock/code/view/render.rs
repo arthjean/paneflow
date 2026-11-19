@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) const RETRY_LABEL: &str = "Retry";
+
 impl CodeView {
     fn render_load_error(
         &self,
@@ -22,7 +24,7 @@ impl CodeView {
             .child(panel)
             .child(
                 div()
-                    .id("code-reload")
+                    .id("code-retry")
                     .flex_none()
                     .h(px(26.))
                     .px(px(10.))
@@ -39,7 +41,7 @@ impl CodeView {
                         let path = this.path.clone();
                         this.open(path, cx);
                     }))
-                    .child("Reload"),
+                    .child(RETRY_LABEL),
             )
             .into_any_element()
     }
@@ -145,6 +147,13 @@ impl Render for CodeView {
         self.sync_theme();
         self.fill_visible_highlights(window);
         let ui = crate::theme::ui_colors();
+
+        if let Some(preview) = self.render_preview(ui, cx) {
+            return preview;
+        }
+        if let Some(rendered) = self.render_rendered(cx) {
+            return rendered;
+        }
 
         let Some(doc) = self.state.document() else {
             return match self.state.error_message() {

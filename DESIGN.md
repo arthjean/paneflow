@@ -1355,6 +1355,38 @@ Opening a file at a line or a range of lines, `:N` in the find bar for
 instance, centers it and washes it with the same warm hue at 0.14. The
 wash leaves on the next keystroke, click or scroll.
 
+A file tab picks its viewer by extension, then by its first 8 KB: images,
+CSV and TSV tables, Markdown, archives, then text. A file nothing can show
+lands on the No preview screen, centered: the 32 px file-type icon, "No preview
+for this file" in `TITLE` semibold, a `muted` line with the size and the
+reason, then three 26 px bordered buttons on one wrapping row, "Open with
+Default App" on `surface`, the reveal label, and "Open With", which opens the
+installed editors as an action menu of 5.6 and is disabled when there are none.
+A file that vanished shows "File no longer exists." with a Retry button.
+
+Text between 10 MB and 256 MB opens in a read-only viewer under the `overlay`
+banner "Large file: read-only, no syntax colors", whose right end reads
+"Indexing…" and then "N lines · size". Its 18 px rows reuse the editor's mono
+font and gutter; a click selects a line, Shift extends the range, and the copy
+refuses more than 16 MB with a toast.
+
+The image viewer has a 32 px toolbar with a 1 px bottom border: the `W × H`
+size (or "Loading image…"), then 24 px icon buttons Zoom out, the zoom
+percentage in `text`, Zoom in, Fit and Actual size. It opens on Fit, which never
+passes 100% and keeps 16 px around the image; the zoom steps by 1.25 between 5%
+and 800%, and a larger image pans by wheel or drag.
+
+Markdown and delimited files carry a 28 px eye or code toggle before Editor
+Controls, labeled "Show rendered markdown" and "Show markdown source", or
+"Show table" and "Show source". The table has a fixed `overlay` header row,
+24 px rows separated by 1 px `border` hairlines, a `muted` line-number column,
+and columns sized from the first 100 rows between 60 and 400 px. An archive
+lists Name, Size and Modified in 26 px rows, folders first, under a breadcrumb
+of the archive's own folders and a Back row; Name keeps at least 120 px, so
+Size and Modified shrink first in a narrow dock. Truncation and hidden columns
+use the same `overlay` banner as the large-text viewer, whose own label
+ellipsizes before its status does.
+
 Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
 minimum, and a 1 px left border on the vertical track and thumb. Both axes
 support centered track clicks and dragging. Git change markers occupy the

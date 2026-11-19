@@ -1,8 +1,6 @@
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
-use gpui::Context;
-
 use super::document::{CodeDocument, ReadOnlyReason};
 use super::edit::IndentUnit;
 use super::highlight::CodeHighlighter;
@@ -36,7 +34,9 @@ impl CodeLoadError {
             ),
             Self::Binary => "Binary file - this file cannot be shown as text.".to_string(),
             Self::NotUtf8 => "This file is not valid UTF-8, so it cannot be edited.".to_string(),
-            Self::NotFound => "File not found - it may have been moved or deleted.".to_string(),
+            Self::NotFound => {
+                "File no longer exists. It may have been moved or deleted.".to_string()
+            }
             Self::PermissionDenied => "Permission denied - this file cannot be read.".to_string(),
             Self::NotAFile => "This path is not a file.".to_string(),
             Self::Io { detail } => format!("This file could not be read: {detail}."),
@@ -174,7 +174,7 @@ fn is_read_only(meta: &std::fs::Metadata) -> bool {
     meta.permissions().readonly()
 }
 
-fn io_error(err: &std::io::Error) -> CodeLoadError {
+pub(crate) fn io_error(err: &std::io::Error) -> CodeLoadError {
     match err.kind() {
         ErrorKind::NotFound => CodeLoadError::NotFound,
         ErrorKind::PermissionDenied => CodeLoadError::PermissionDenied,
@@ -208,26 +208,10 @@ impl CodeLoadSlot {
     }
 }
 
-pub(crate) fn spawn_code_load<V, F>(
-    path: PathBuf,
-    generation: u64,
-    syntax: DiffSyntax,
-    cx: &mut Context<V>,
-    apply: F,
-) where
-    V: 'static,
-    F: FnOnce(&mut V, u64, CodeOpen, &mut Context<V>) + 'static,
-{
-    super::spawn_blocking_then(
-        cx,
-        move || open_blocking(&path, syntax),
-        move |view, outcome, cx| apply(view, generation, outcome, cx),
-    );
-}
-
 pub(crate) enum CodeLoadState {
     Loading,
     Ready(Box<LoadedCode>),
+    Preview(crate::app::diff_dock::preview::FilePreview),
     Failed(CodeLoadError),
 }
 
@@ -427,7 +411,7 @@ mod tests {
         std::fs::remove_file(&path).expect("remove");
         let err = load_blocking(&path).expect_err("refused");
         assert_eq!(err, CodeLoadError::NotFound);
-        assert!(err.message().starts_with("File not found"));
+        assert!(err.message().starts_with("File no longer exists"));
     }
 
     #[test]
@@ -521,7 +505,7 @@ mod tests {
         let failed = CodeLoadState::from_outcome(Err(CodeLoadError::NotFound));
         assert_eq!(
             failed.error_message().as_deref(),
-            Some("File not found - it may have been moved or deleted.")
+            Some("File no longer exists. It may have been moved or deleted.")
         );
     }
 

@@ -6,6 +6,9 @@ mod input_handler;
 mod keymap;
 mod motion;
 mod pointer;
+mod preview;
+#[cfg(test)]
+mod preview_tests;
 mod render;
 #[cfg(test)]
 mod reveal_tests;
@@ -52,7 +55,7 @@ use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
     spawn_deferred_parse,
 };
-use super::load::{CodeLoadError, CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
+use super::load::{CodeLoadError, CodeLoadSlot, CodeLoadState};
 use super::markers::MARKER_COLUMN_W;
 use super::navigation::NavigationState;
 use super::rows::rows_to_px;
@@ -63,6 +66,7 @@ use crate::settings::components::menu_surface;
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
 use crate::widgets::ime_caret::ImeCaretReport;
 pub(crate) use keymap::*;
+pub(crate) use preview::CodeViewEvent;
 use render::*;
 
 const INITIAL_HIGHLIGHT_ROWS: usize = 60;
@@ -228,6 +232,9 @@ pub(crate) struct CodeView {
     pending_reveal: Option<FileReveal>,
     revealed_lines: Option<Range<usize>>,
     pending_cursor: Option<(usize, usize)>,
+    kind: crate::app::diff_dock::preview::PreviewKind,
+    rendered: bool,
+    rendered_views: preview::RenderedViews,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -294,6 +301,7 @@ impl CodeView {
     ) -> Self {
         let focus = cx.focus_handle();
         let controls = EditorControls::attach(focus.clone(), cx);
+        let path_kind = path.clone();
         Self {
             controls,
             navigation: NavigationState::default(),
@@ -345,6 +353,11 @@ impl CodeView {
             pending_reveal: None,
             revealed_lines: None,
             pending_cursor: None,
+            kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
+            rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
+                &path_kind,
+            )),
+            rendered_views: preview::RenderedViews::none(),
             _watcher: None,
             _watch_bridge: None,
         }
@@ -360,6 +373,7 @@ impl CodeView {
         highlighter.parse_initial_blocking(&document);
         let focus = cx.focus_handle();
         let controls = EditorControls::attach(focus.clone(), cx);
+        let path_kind = path.clone();
         Self {
             controls,
             navigation: NavigationState::default(),
@@ -416,6 +430,11 @@ impl CodeView {
             pending_reveal: None,
             revealed_lines: None,
             pending_cursor: None,
+            kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
+            rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
+                &path_kind,
+            )),
+            rendered_views: preview::RenderedViews::none(),
             _watcher: None,
             _watch_bridge: None,
         }
@@ -463,6 +482,7 @@ impl CodeView {
     }
 
     pub(crate) fn reveal(&mut self, reveal: FileReveal, cx: &mut Context<Self>) {
+        self.rendered = false;
         self.pending_reveal = Some(reveal);
         self.pending_scroll_line = None;
         self.pending_cursor = None;
@@ -748,40 +768,15 @@ impl CodeView {
         self.popup = None;
         self._watcher = None;
         self._watch_bridge = None;
+        self.kind = crate::app::diff_dock::preview::preview_kind(&self.path);
+        self.rendered = preview::rendered_by_default(self.kind);
+        self.rendered_views = preview::RenderedViews::none();
         self.start_load(cx);
         cx.notify();
     }
 
     fn start_load(&mut self, cx: &mut Context<Self>) {
-        let generation = self.slot.begin();
-        let syntax = DiffSyntax::from_theme(&crate::theme::active_theme());
-        self.theme_generation = crate::theme::theme_generation();
-        spawn_code_load(
-            self.path.clone(),
-            generation,
-            syntax,
-            cx,
-            |view: &mut Self, generation, outcome: CodeOpen, cx| {
-                if !view.slot.accept(generation) {
-                    return;
-                }
-                match outcome {
-                    Ok(loaded) => {
-                        view.indent = loaded.indent;
-                        view.buffer_stamp = loaded.stamp;
-                        view.disk_stamp = loaded.stamp;
-                        view.state = CodeLoadState::Ready(Box::new(loaded));
-                        view.start_initial_parse(cx);
-                        view.start_base_load(cx);
-                    }
-                    Err(err) => {
-                        view.state = CodeLoadState::Failed(err);
-                    }
-                }
-                view.start_watcher(cx);
-                cx.notify();
-            },
-        );
+        self.spawn_open(false, cx);
     }
 
     fn start_initial_parse(&mut self, cx: &mut Context<Self>) {

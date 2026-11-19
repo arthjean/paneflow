@@ -3,6 +3,11 @@ use super::*;
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 const RELOAD_DIFF_ATTEMPTS: usize = 2;
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static WATCHER_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub(crate) enum SaveStart {
     Clean,
     Deferred,
@@ -49,6 +54,24 @@ async fn probe_disk(
     let Some(generation) = disk_generation(this, cx) else {
         return false;
     };
+    let previewing = cx
+        .update(|cx| this.read_with(cx, |view: &CodeView, _| view.preview_active()))
+        .unwrap_or(false);
+    if previewing {
+        let probe = path.to_path_buf();
+        let stamp = cx
+            .background_spawn(async move { FileStamp::read(&probe) })
+            .await;
+        return cx
+            .update(|cx| {
+                this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+                    if view.disk_generation == generation {
+                        view.preview_disk_changed(stamp, cx);
+                    }
+                })
+            })
+            .is_ok();
+    }
     let probe = path.to_path_buf();
     let read = cx
         .background_spawn(async move { read_for_reload(&probe) })
@@ -248,6 +271,10 @@ impl CodeView {
     pub(super) fn start_watcher(&mut self, cx: &mut Context<Self>) {
         self._watcher = None;
         self._watch_bridge = None;
+        #[cfg(test)]
+        if WATCHER_OFF.with(std::cell::Cell::get) {
+            return;
+        }
         let Some(parent) = self.path.parent().map(Path::to_path_buf) else {
             return;
         };
@@ -396,12 +423,25 @@ impl CodeView {
         None
     }
 
-    fn disk_unreadable(&mut self, error: CodeLoadError, force: bool, cx: &mut Context<Self>) {
+    pub(super) fn disk_unreadable(
+        &mut self,
+        error: CodeLoadError,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) {
         if !force && self.is_dirty() {
             if self.disk != DiskState::Conflict {
                 self.disk = DiskState::Conflict;
                 cx.notify();
             }
+            return;
+        }
+        if matches!(
+            error,
+            CodeLoadError::Binary | CodeLoadError::NotUtf8 | CodeLoadError::TooLarge { .. }
+        ) {
+            let path = self.path.clone();
+            self.open(path, cx);
             return;
         }
         self.state = CodeLoadState::Failed(error);
@@ -832,57 +872,76 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn failure_of(view: &CodeView) -> Option<CodeLoadError> {
-        match &view.state {
-            CodeLoadState::Failed(error) => Some(error.clone()),
-            _ => None,
-        }
-    }
-
     #[gpui::test]
-    async fn a_reload_applies_the_open_guards_instead_of_splicing(cx: &mut TestAppContext) {
+    async fn a_reload_reopens_a_file_that_turned_binary_or_large_in_its_viewer(
+        cx: &mut TestAppContext,
+    ) {
+        WATCHER_OFF.with(|off| off.set(true));
         let (dir, view, cx) = file_view(cx, "one\n", false);
         let path = dir.path().join("main.rs");
+        let settle = async |view: &Entity<CodeView>, cx: &mut VisualTestContext| {
+            for _ in 0..200 {
+                cx.run_until_parked();
+                let settled =
+                    view.update(cx, |view, _| !matches!(view.state, CodeLoadState::Loading));
+                if settled {
+                    break;
+                }
+                smol::Timer::after(Duration::from_millis(5)).await;
+            }
+        };
+        let screen = |view: &CodeView| match &view.state {
+            CodeLoadState::Preview(crate::app::diff_dock::preview::FilePreview::NoPreview(
+                screen,
+            )) => screen.reason.clone(),
+            _ => None,
+        };
 
         std::fs::write(&path, b"bin\0ary\n").expect("binary write");
         probe(&view, cx, &path).await;
+        settle(&view, cx).await;
         view.update(cx, |view, _cx| {
-            assert_eq!(failure_of(view), Some(CodeLoadError::Binary));
+            assert!(screen(view).is_some_and(|reason| reason.contains("binary")));
             assert_ne!(view.disk, DiskState::Deleted);
+        });
+
+        std::fs::write(&path, "text again\n").expect("readable again");
+        probe(&view, cx, &path).await;
+        settle(&view, cx).await;
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "text again\n", "a readable file reopens");
         });
 
         std::fs::write(&path, [b'o', b'k', 0xff, 0xfe, b'\n']).expect("invalid utf-8");
         probe(&view, cx, &path).await;
+        settle(&view, cx).await;
         view.update(cx, |view, _cx| {
-            assert_eq!(
-                failure_of(view),
-                Some(CodeLoadError::NotUtf8),
+            assert!(
+                screen(view).is_some_and(|reason| reason.contains("UTF-8")),
                 "invalid UTF-8 reads as unreadable, not as a deleted file"
             );
             assert_ne!(view.disk, DiskState::Deleted);
         });
 
-        let huge = vec![b'x'; 11 * 1024 * 1024];
-        std::fs::write(&path, &huge).expect("grow to 11 MiB");
-        probe(&view, cx, &path).await;
-        view.update(cx, |view, _cx| {
-            assert!(
-                matches!(failure_of(view), Some(CodeLoadError::TooLarge { .. })),
-                "the view switches to the too-large state"
-            );
-        });
-
         std::fs::write(&path, "back to text\n").expect("readable again");
         probe(&view, cx, &path).await;
-        for _ in 0..200 {
-            cx.run_until_parked();
-            if view.update(cx, |view, _cx| view.document().is_some()) {
-                break;
-            }
-            smol::Timer::after(Duration::from_millis(5)).await;
-        }
+        settle(&view, cx).await;
+        let huge: Vec<u8> = (0..200_000)
+            .flat_map(|n| format!("{n:063}\n").into_bytes())
+            .collect();
+        std::fs::write(&path, &huge).expect("grow past 10 MiB");
+        probe(&view, cx, &path).await;
+        settle(&view, cx).await;
         view.update(cx, |view, _cx| {
-            assert_eq!(text_of(view), "back to text\n", "a readable file reopens");
+            assert!(
+                matches!(
+                    view.state,
+                    CodeLoadState::Preview(crate::app::diff_dock::preview::FilePreview::LargeText(
+                        _
+                    ))
+                ),
+                "the view switches to the large-text viewer"
+            );
         });
     }
 

@@ -7,7 +7,6 @@ use super::panel::{FilesEvent, FilesSidebar};
 use super::projection::{DirState, FileRow};
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::app::files_git;
-use crate::app::files_tree;
 use crate::ui_primitives::{LABEL_SM, squircle_skin};
 
 const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
@@ -19,6 +18,13 @@ pub(super) fn is_dimmed(node: &crate::app::files_tree::FileNode) -> bool {
     node.is_ignored || node.is_hidden
 }
 
+pub(super) fn row_label_color(
+    status: files_git::GitSummary,
+    ui: crate::theme::UiColors,
+) -> gpui::Hsla {
+    files_git::label_color(status, ui).unwrap_or(ui.text)
+}
+
 impl FilesSidebar {
     pub(super) fn files_row(
         &self,
@@ -28,13 +34,8 @@ impl FilesSidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let node = &row.node;
-        let refused = files_tree::editor_refuses(node);
         let dimmed = is_dimmed(node);
-        let text_color = files_git::label_color(row.status, ui).unwrap_or(if refused {
-            ui.muted
-        } else {
-            ui.text
-        });
+        let text_color = row_label_color(row.status, ui);
         let indicator = files_git::status_indicator(row.status, ui);
         let indent = px(SIDEBAR_ROW_PADDING_X + row.depth as f32 * INDENT_STEP);
         let path = node.path.clone();
@@ -131,6 +132,7 @@ impl FilesSidebar {
                     root: this.tree.root.clone(),
                     path: menu_path.clone(),
                     position,
+                    scope: crate::app::window::FilesMenuScope::Full,
                 }));
                 cx.stop_propagation();
                 cx.notify();
@@ -210,5 +212,31 @@ impl FilesSidebar {
             });
 
         el.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::files_tree::FileNode;
+
+    #[test]
+    fn a_retired_binary_extension_row_is_neither_dimmed_nor_muted() {
+        let ui = crate::theme::ui_colors_with(&crate::theme::paneflow_dark());
+        for name in ["logo.png", "app.wasm", "dump.zip", "font.woff2", "huge.log"] {
+            let node = FileNode {
+                path: std::path::PathBuf::from(format!("/w/{name}")),
+                is_dir: false,
+                is_ignored: false,
+                is_hidden: false,
+                size: 512 * 1024 * 1024,
+            };
+            assert!(!is_dimmed(&node), "{name}");
+            assert_eq!(
+                row_label_color(files_git::GitSummary::default(), ui),
+                ui.text,
+                "{name}"
+            );
+        }
     }
 }

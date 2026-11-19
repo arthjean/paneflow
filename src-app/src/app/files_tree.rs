@@ -54,30 +54,6 @@ impl FilesTreeState {
     }
 }
 
-const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "tiff", "tif", "psd", "heic", "mp3",
-    "wav", "flac", "ogg", "m4a", "aac", "mp4", "mkv", "mov", "avi", "webm", "wmv", "zip", "gz",
-    "bz2", "xz", "zst", "7z", "rar", "tar", "tgz", "jar", "whl", "exe", "dll", "so", "dylib", "o",
-    "a", "lib", "obj", "pdb", "class", "wasm", "bin", "msi", "appimage", "dmg", "deb", "rpm",
-    "ttf", "otf", "woff", "woff2", "eot", "pdf", "db", "sqlite", "sqlite3", "bcmap", "pyc",
-];
-
-pub(crate) fn is_binary_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            let e = e.to_ascii_lowercase();
-            BINARY_EXTENSIONS.contains(&e.as_str())
-        })
-        .unwrap_or(false)
-}
-
-pub(crate) fn editor_refuses(node: &FileNode) -> bool {
-    !node.is_dir
-        && (is_binary_extension(&node.path)
-            || node.size > crate::app::diff_dock::code::load::MAX_FILE_BYTES as u64)
-}
-
 pub(crate) fn node_name(node: &FileNode) -> String {
     node.path
         .file_name()
@@ -409,41 +385,6 @@ mod tests {
         let children = HashMap::new();
         let expanded = HashSet::new();
         assert!(flatten_visible(&root, &expanded, &children).is_empty());
-    }
-
-    #[test]
-    fn binary_extensions_are_recognized_case_insensitively() {
-        assert!(is_binary_extension(Path::new("/w/logo.PNG")));
-        assert!(is_binary_extension(Path::new("/w/app.wasm")));
-        assert!(is_binary_extension(Path::new("/w/lib.so")));
-        assert!(!is_binary_extension(Path::new("/w/main.rs")));
-        assert!(!is_binary_extension(Path::new("/w/README")));
-        assert!(!is_binary_extension(Path::new("/w/notes.md")));
-    }
-
-    #[test]
-    fn editor_refuses_binary_and_oversized_files_only() {
-        let limit = crate::app::diff_dock::code::load::MAX_FILE_BYTES as u64;
-
-        let mut png = file("/w/logo.png");
-        png.size = 12;
-        assert!(editor_refuses(&png));
-
-        let mut huge = file("/w/dump.log");
-        huge.size = limit + 1;
-        assert!(editor_refuses(&huge));
-
-        let mut at_limit = file("/w/dump.log");
-        at_limit.size = limit;
-        assert!(!editor_refuses(&at_limit));
-
-        let mut source = file("/w/main.rs");
-        source.size = 4_096;
-        assert!(!editor_refuses(&source));
-
-        let mut d = dir("/w/target");
-        d.size = limit + 1;
-        assert!(!editor_refuses(&d));
     }
 
     #[test]

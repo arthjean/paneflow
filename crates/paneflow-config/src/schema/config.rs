@@ -148,6 +148,10 @@ pub struct EditorDisplayConfig {
     pub scrollbar: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub word_wrap: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub markdown_rendered: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub csv_table: Option<bool>,
 }
 
 impl EditorDisplayConfig {
@@ -161,6 +165,14 @@ impl EditorDisplayConfig {
 
     pub fn word_wrap_enabled(&self) -> bool {
         self.word_wrap.unwrap_or(false)
+    }
+
+    pub fn markdown_rendered_enabled(&self) -> bool {
+        self.markdown_rendered.unwrap_or(false)
+    }
+
+    pub fn csv_table_enabled(&self) -> bool {
+        self.csv_table.unwrap_or(true)
     }
 }
 

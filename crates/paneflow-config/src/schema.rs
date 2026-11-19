@@ -88,6 +88,8 @@ mod tests {
                 minimap: Some(true),
                 scrollbar: Some(false),
                 word_wrap: Some(true),
+                markdown_rendered: Some(true),
+                csv_table: Some(false),
             },
             automation: AutomationConfig {
                 tab_auto_naming: Some(true),

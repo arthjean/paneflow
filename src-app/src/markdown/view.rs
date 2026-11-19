@@ -33,6 +33,8 @@ const MAX_RENDERED_TABLE_COLUMNS: u16 = 64;
 
 const BODY_TEXT_SIZE: gpui::Pixels = px(14.);
 
+pub(crate) const RENDER_TOO_LARGE: &str = "File too large to render";
+
 static MARKDOWN_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct MarkdownView {
@@ -53,6 +55,7 @@ pub struct MarkdownView {
     search_matches: Vec<usize>,
     search_current: usize,
     scroll_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
+    source_generation: u64,
 }
 
 impl MarkdownView {
@@ -61,6 +64,44 @@ impl MarkdownView {
     }
 
     pub fn open(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let view = Self::blank(path, cx);
+        view.start_initial_load(cx);
+        view.start_scroll_persistence(cx);
+        view
+    }
+
+    pub(crate) fn embedded(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self::blank(path, cx)
+    }
+
+    pub(crate) fn set_source(&mut self, text: String, cx: &mut Context<Self>) {
+        self.source_generation = self.source_generation.wrapping_add(1);
+        let generation = self.source_generation;
+        let parse = cx.background_spawn(async move { parse_with_limit(&text) });
+        cx.spawn(async move |this, cx| {
+            let parsed = parse.await;
+            let _ = this.update(cx, |view: &mut Self, cx| {
+                if view.source_generation != generation {
+                    return;
+                }
+                match parsed {
+                    Ok(ast) => view.apply_loaded(Some(ast), None),
+                    Err(ParseError::TooLarge { .. }) => {
+                        view.apply_loaded(None, Some(RENDER_TOO_LARGE.into()));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rendered_text(&self) -> Option<String> {
+        self.ast.as_deref().map(harvest_text)
+    }
+
+    fn blank(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let element_id = make_element_id(&path);
         let search_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search", cx));
@@ -69,7 +110,7 @@ impl MarkdownView {
             this.on_search_input_changed(query, cx);
         })
         .detach();
-        let view = Self {
+        Self {
             path,
             ast: None,
             error: Some("Loading...".into()),
@@ -87,10 +128,8 @@ impl MarkdownView {
             search_matches: Vec::new(),
             search_current: 0,
             scroll_drag: None,
-        };
-        view.start_initial_load(cx);
-        view.start_scroll_persistence(cx);
-        view
+            source_generation: 0,
+        }
     }
 
     fn start_initial_load(&self, cx: &mut Context<Self>) {

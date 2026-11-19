@@ -180,6 +180,14 @@ pub(crate) struct FilesContextMenu {
     pub(crate) root: std::path::PathBuf,
     pub(crate) path: std::path::PathBuf,
     pub(crate) position: Point<Pixels>,
+    pub(crate) scope: FilesMenuScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FilesMenuScope {
+    #[default]
+    Full,
+    OpenWith,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

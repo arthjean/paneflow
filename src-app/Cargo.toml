@@ -52,8 +52,13 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3
 # Windows hands it over as BMP and some macOS apps as TIFF, so both decoders
 # are needed to transcode it to PNG. GPUI already depends on this exact crate
 # with `png`, `bmp` and `tiff` enabled, so declaring it directly adds no new
-# transitive dependency.
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff", "jpeg", "gif", "webp"] }
+# transitive dependency. The dock's image viewer decodes the same formats plus
+# `ico`, a feature that only enables the crate's own BMP and PNG readers.
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff", "jpeg", "gif", "webp", "ico"] }
+
+# The dock's image viewer rasterizes SVG files with the resvg GPUI already
+# links, with file references refused, so it adds no new crate.
+resvg = { version = "0.46.0", default-features = false }
 
 # Font tables GPUI does not expose: line gap, `post` underline metrics, and
 # per-glyph ink bounds. The terminal renderer reads them from the embedded
@@ -448,9 +453,6 @@ minisign = "0.9.1"
 # Every shipped pane attaches to a `paneflow-host` session instead, so the
 # release binary opens no PTY of its own and does not link this crate.
 portable-pty = "0.9.0"
-# The same resvg GPUI rasterizes SVG with: the terminal mask tests render the
-# box-drawing and undercurl masks the way `paint_svg` does and read the pixels.
-resvg = { version = "0.46.0", default-features = false }
 tracing-test = "0.2"
 # The scene exporter splits proportional text where cosmic-text shapes words
 # apart, at UAX #14 break opportunities, with the crate cosmic-text uses.

@@ -4,6 +4,7 @@ use super::open_with::{self, OPEN_WITH_DEFAULT_LABEL, OPEN_WITH_LABEL};
 use crate::app::files_tree;
 use crate::app::menu_icons as icon;
 use crate::app::sidebar::context_menu::{EditorMenuEntry, installed_editors, render_context_menu};
+use crate::app::window::FilesMenuScope;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
 use crate::{FilesContextMenu, PaneFlowApp};
 
@@ -16,24 +17,26 @@ pub(crate) enum FilesMenuAction {
     CopyRelativePath,
 }
 
+pub(crate) fn open_with_actions(
+    editors: &'static [&'static EditorMenuEntry],
+) -> ActionMenu<FilesMenuAction> {
+    ActionMenu::new().items(editors.iter().map(|entry| {
+        MenuItem::new(
+            entry.label.trim_start_matches("Open in "),
+            FilesMenuAction::OpenIn(entry),
+        )
+        .icon(entry.icon)
+        .mnemonic(entry.mnemonic)
+    }))
+}
+
 pub(crate) fn files_menu_actions(
     editors: &'static [&'static EditorMenuEntry],
 ) -> ActionMenu<FilesMenuAction> {
     let open_with = if editors.is_empty() {
         MenuItem::disabled(OPEN_WITH_LABEL).icon(icon::FILE_CODE)
     } else {
-        MenuItem::submenu(
-            OPEN_WITH_LABEL,
-            ActionMenu::new().items(editors.iter().map(|entry| {
-                MenuItem::new(
-                    entry.label.trim_start_matches("Open in "),
-                    FilesMenuAction::OpenIn(entry),
-                )
-                .icon(entry.icon)
-                .mnemonic(entry.mnemonic)
-            })),
-        )
-        .icon(icon::FILE_CODE)
+        MenuItem::submenu(OPEN_WITH_LABEL, open_with_actions(editors)).icon(icon::FILE_CODE)
     };
     ActionMenu::new()
         .item(
@@ -68,7 +71,10 @@ impl PaneFlowApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let actions = files_menu_actions(installed_editors());
+        let actions = match menu.scope {
+            FilesMenuScope::Full => files_menu_actions(installed_editors()),
+            FilesMenuScope::OpenWith => open_with_actions(installed_editors()),
+        };
         let id = SharedString::from(format!("files-context-menu-{}", menu.path.display()));
         let target = menu.clone();
         let handlers = self.menu_handlers(
@@ -157,6 +163,16 @@ mod tests {
             ]
         );
         assert!(menu.enabled_at_for_test(2));
+    }
+
+    #[test]
+    fn the_open_with_scope_lists_only_the_installed_editors() {
+        static ONE: [&EditorMenuEntry; 1] = [&EDITOR_MENU_ENTRIES[0]];
+        let menu = open_with_actions(&ONE);
+        assert_eq!(
+            labels(&menu),
+            vec![EDITOR_MENU_ENTRIES[0].label.trim_start_matches("Open in ")]
+        );
     }
 
     #[test]

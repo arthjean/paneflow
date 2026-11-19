@@ -1,8 +1,8 @@
-mod context_menu;
+pub(crate) mod context_menu;
 mod integration;
 mod keyboard;
 mod list;
-mod open_with;
+pub(crate) mod open_with;
 mod panel;
 #[cfg(test)]
 mod perf_bench;

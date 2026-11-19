@@ -17,6 +17,8 @@ pub(crate) struct EditorDisplay {
     pub(crate) minimap: bool,
     pub(crate) scrollbar: bool,
     pub(crate) word_wrap: bool,
+    pub(crate) markdown_rendered: bool,
+    pub(crate) csv_table: bool,
 }
 
 impl EditorDisplay {
@@ -25,6 +27,8 @@ impl EditorDisplay {
             minimap: config.minimap_enabled(),
             scrollbar: config.scrollbar_enabled(),
             word_wrap: config.word_wrap_enabled(),
+            markdown_rendered: config.markdown_rendered_enabled(),
+            csv_table: config.csv_table_enabled(),
         }
     }
 
@@ -33,6 +37,8 @@ impl EditorDisplay {
             "minimap": self.minimap,
             "scrollbar": self.scrollbar,
             "word_wrap": self.word_wrap,
+            "markdown_rendered": self.markdown_rendered,
+            "csv_table": self.csv_table,
         })
     }
 }
@@ -40,11 +46,15 @@ impl EditorDisplay {
 static EDITOR_MINIMAP: AtomicBool = AtomicBool::new(false);
 static EDITOR_SCROLLBAR: AtomicBool = AtomicBool::new(true);
 static EDITOR_WORD_WRAP: AtomicBool = AtomicBool::new(false);
+static EDITOR_MARKDOWN_RENDERED: AtomicBool = AtomicBool::new(false);
+static EDITOR_CSV_TABLE: AtomicBool = AtomicBool::new(true);
 
 pub(crate) fn set_editor_display(display: EditorDisplay) {
     EDITOR_MINIMAP.store(display.minimap, Ordering::Relaxed);
     EDITOR_SCROLLBAR.store(display.scrollbar, Ordering::Relaxed);
     EDITOR_WORD_WRAP.store(display.word_wrap, Ordering::Relaxed);
+    EDITOR_MARKDOWN_RENDERED.store(display.markdown_rendered, Ordering::Relaxed);
+    EDITOR_CSV_TABLE.store(display.csv_table, Ordering::Relaxed);
 }
 
 pub(crate) fn editor_display() -> EditorDisplay {
@@ -52,6 +62,8 @@ pub(crate) fn editor_display() -> EditorDisplay {
         minimap: EDITOR_MINIMAP.load(Ordering::Relaxed),
         scrollbar: EDITOR_SCROLLBAR.load(Ordering::Relaxed),
         word_wrap: EDITOR_WORD_WRAP.load(Ordering::Relaxed),
+        markdown_rendered: EDITOR_MARKDOWN_RENDERED.load(Ordering::Relaxed),
+        csv_table: EDITOR_CSV_TABLE.load(Ordering::Relaxed),
     }
 }
 

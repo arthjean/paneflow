@@ -195,6 +195,16 @@
           "type": ["boolean", "null"],
           "description": "Wrap long lines at the editor's width when a file opens. The Word Wrap entry of the editor's controls menu changes it for one tab only. Default false.",
           "default": false
+        },
+        "markdown_rendered": {
+          "type": ["boolean", "null"],
+          "description": "Show Markdown files rendered in the dock rather than as source. The header's rendered and source toggle sets it for every Markdown file. A file opened at a requested line always shows its source. Default false.",
+          "default": false
+        },
+        "csv_table": {
+          "type": ["boolean", "null"],
+          "description": "Show CSV and TSV files as a table in the dock rather than as source. The header's table and source toggle sets it for every delimited file. Default true.",
+          "default": true
         }
       }
     },

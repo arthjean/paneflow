@@ -6,6 +6,7 @@ mod git;
 mod model;
 mod new_tab_menu;
 mod options_menu;
+pub(crate) mod preview;
 mod render;
 #[cfg(test)]
 pub(crate) use render::render_diff_header_icon_button;
@@ -472,18 +473,37 @@ impl PaneFlowApp {
                 self.render_files_sidebar_fill(),
             ),
             Some(DiffDockTab::File(view)) => {
-                let (path, line, column) = {
+                let (path, position, editing) = {
                     let view = view.read(cx);
-                    let (line, column) = view.cursor_line_column();
-                    (view.path().to_path_buf(), line, column)
+                    let editing = view.shows_text_position();
+                    (
+                        view.path().to_path_buf(),
+                        editing.then(|| view.cursor_line_column()),
+                        editing,
+                    )
                 };
-                let controls = view.read(cx).controls.clone().into_any_element();
+                let mode_toggle = view.update(cx, |view, cx| view.render_mode_toggle(ui, cx));
+                let controls = editing.then(|| view.read(cx).controls.clone().into_any_element());
+                let controls = match (mode_toggle, controls) {
+                    (None, controls) => controls,
+                    (Some(toggle), controls) => Some(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(toggle)
+                            .children(controls)
+                            .into_any_element(),
+                    ),
+                };
                 let tree_toggle = file_chrome::render_tree_toggle(self.files_sidebar_open, ui, cx);
                 (
                     Some(render_diff_file_header(
                         self.render_dock_crumbs(Some(&path), ui, cx),
-                        Some((line, column)),
-                        Some(controls),
+                        position,
+                        controls,
                         Some(tree_toggle),
                         ui,
                     )),
