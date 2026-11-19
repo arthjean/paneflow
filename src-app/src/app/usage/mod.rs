@@ -59,7 +59,7 @@ pub(crate) struct UsagePanel {
 }
 
 impl UsagePanel {
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn set_snapshot_for_test(
         &mut self,
         inventory: Vec<InventoryEntry>,

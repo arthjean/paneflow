@@ -968,7 +968,7 @@ mod tests {
         assert_eq!(
             stored_dock_path(
                 std::path::Path::new("/repo"),
-                std::path::Path::new("/repo/src/a.rs")
+                &std::path::Path::new("/repo").join("src").join("a.rs")
             ),
             std::path::Path::new("src").join("a.rs").to_string_lossy()
         );

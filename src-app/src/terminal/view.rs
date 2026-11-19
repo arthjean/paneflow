@@ -376,7 +376,7 @@ impl TerminalView {
         self.search_active
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn window_size_for_test(&self) -> Option<TerminalWindowSize> {
         self.recorded_window_size()
     }

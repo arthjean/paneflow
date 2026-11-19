@@ -60,7 +60,7 @@ mod probe_log;
 #[cfg(test)]
 mod redraw_guard;
 mod runtime_paths;
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod scene_export;
 mod search;
 mod settings;

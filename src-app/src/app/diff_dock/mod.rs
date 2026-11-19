@@ -1165,7 +1165,7 @@ impl PaneFlowApp {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 impl PaneFlowApp {
     /// Opens the unified Changes tab on `cwd` at `width`, settled: no
     /// reveal animation and no checkout picker.

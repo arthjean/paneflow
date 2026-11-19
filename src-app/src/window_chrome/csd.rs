@@ -798,7 +798,7 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn override_decorations_for_test(decorations: Option<Decorations>) {
     DECORATIONS_OVERRIDE.set(decorations);
 }
