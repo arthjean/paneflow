@@ -97,6 +97,7 @@ impl SidebarResize {
         self.drag.is_some_and(|drag| drag.edge.is_some())
     }
 
+    #[cfg(test)]
     fn held_on_the_detent(&self) -> bool {
         self.drag.is_some_and(|drag| drag.on_detent)
     }
@@ -253,12 +254,7 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let on_resize = Self::sidebar_resizer(cx);
         let dragging = self.sidebar_resize.dragging();
-        let (upper, lower) = if self.sidebar_resize.held_on_the_detent() {
-            let caught = gpui::Background::from(ui.accent);
-            (caught, caught)
-        } else {
-            fading_rule(with_alpha(ui.text, SIDEBAR_RESIZE_RULE_ALPHA))
-        };
+        let (upper, lower) = fading_rule(with_alpha(ui.text, SIDEBAR_RESIZE_RULE_ALPHA));
         let lit = dragging && !self.sidebar_resize.held_at_an_edge();
         let half = |fill: gpui::Background| {
             let half = div().flex_1().when(lit, |half| half.bg(fill));
