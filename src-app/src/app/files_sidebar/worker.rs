@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use smol::channel::{Receiver, Sender};
 
+use super::model::{DirChange, ListingDiff};
 use crate::app::files_git::{self, GitStatuses};
-use crate::app::files_tree::{FilesTreeState, read_dir_listing};
+use crate::app::files_tree::{FileNode, FilesTreeState, read_dir_listing};
 
 const DEBOUNCE: Duration = Duration::from_millis(40);
 const MAX_LATENCY: Duration = Duration::from_millis(160);
@@ -16,7 +17,8 @@ pub(super) const EXPAND_ALL_LIMIT: usize = 2_000;
 
 pub(super) struct TreeUpdate {
     pub revision: u64,
-    pub tree: FilesTreeState,
+    pub changes: Vec<DirChange>,
+    pub expanded: Option<HashSet<PathBuf>>,
     pub git: Arc<GitStatuses>,
     pub watcher_available: bool,
     pub refreshed: u64,
@@ -92,6 +94,7 @@ struct Scanner {
     git: Arc<GitStatuses>,
     git_dir: Option<PathBuf>,
     git_dirty: bool,
+    changes: Vec<DirChange>,
 }
 
 impl Scanner {
@@ -104,6 +107,7 @@ impl Scanner {
             git: Arc::default(),
             git_dir: None,
             git_dirty: true,
+            changes: Vec::new(),
         }
     }
 
@@ -131,14 +135,26 @@ impl Scanner {
         }
         if self.dirty.remove(dir) || !self.tree.children.contains_key(dir) {
             let listing = read_dir_listing(&self.tree.root, dir);
-            if listing.is_some() {
-                self.tree.unreadable.remove(dir);
+            let unreadable = listing.is_none();
+            let was_unreadable = if unreadable {
+                !self.tree.unreadable.insert(dir.to_path_buf())
             } else {
-                self.tree.unreadable.insert(dir.to_path_buf());
-            }
-            self.tree
-                .children
-                .insert(dir.to_path_buf(), listing.unwrap_or_default());
+                self.tree.unreadable.remove(dir)
+            };
+            let nodes = listing.unwrap_or_default();
+            let diff = match self.tree.children.get(dir) {
+                Some(previous) if **previous == *nodes && was_unreadable == unreadable => return,
+                Some(previous) => Some(ListingDiff::between(previous, &nodes)),
+                None => None,
+            };
+            let nodes: Arc<[FileNode]> = nodes.into();
+            self.tree.children.insert(dir.to_path_buf(), nodes.clone());
+            self.changes.push(DirChange::Listing {
+                dir: dir.to_path_buf(),
+                nodes,
+                diff,
+                unreadable,
+            });
         }
     }
 
@@ -191,7 +207,7 @@ impl Scanner {
             active.insert(dir.clone());
             self.load(&dir);
             if let Some(children) = self.tree.children.get(&dir) {
-                for node in children {
+                for node in children.iter() {
                     let expanded = expanded_ancestors && self.tree.expanded.contains(&node.path);
                     let keeps_listing =
                         !node.is_ignored && self.tree.children.contains_key(&node.path);
@@ -212,7 +228,14 @@ impl Scanner {
                         })
                 })
         });
-        self.tree.children.retain(|dir, _| active.contains(dir));
+        let changes = &mut self.changes;
+        self.tree.children.retain(|dir, _| {
+            let keep = active.contains(dir);
+            if !keep {
+                changes.push(DirChange::Dropped(dir.clone()));
+            }
+            keep
+        });
         self.tree.unreadable.retain(|dir| active.contains(dir));
         self.watched.retain(|dir| {
             if active.contains(dir) {
@@ -355,6 +378,7 @@ async fn run(
 ) {
     scanner.set_expanded(expanded);
     let mut revision = 0;
+    let mut sent_expanded: Option<(u64, HashSet<PathBuf>)> = None;
     let mut refreshed = 0;
     let mut expanded_all = None;
     let mut ready = true;
@@ -373,10 +397,20 @@ async fn run(
             if !scanner.scan(|| requests.is_closed() || updates.is_closed()) {
                 break;
             }
+            let expanded = sent_expanded
+                .as_ref()
+                .is_none_or(|(sent_revision, sent)| {
+                    *sent_revision != revision || *sent != scanner.tree.expanded
+                })
+                .then(|| scanner.tree.expanded.clone());
+            if let Some(expanded) = &expanded {
+                sent_expanded = Some((revision, expanded.clone()));
+            }
             if updates
                 .try_send(TreeUpdate {
                     revision,
-                    tree: scanner.tree.clone(),
+                    changes: std::mem::take(&mut scanner.changes),
+                    expanded,
                     git: scanner.git.clone(),
                     watcher_available: scanner.watcher_available(),
                     refreshed,

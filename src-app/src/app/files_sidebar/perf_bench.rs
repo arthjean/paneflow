@@ -1,21 +1,27 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::app::files_git::GitStatuses;
-use crate::app::files_tree::{FileNode, FilesTreeState, compare_nodes};
-use crate::bench_harness::{Metric, measure, process_cpu_time, publish, refuse_debug_profile};
+use crate::app::files_tree::{FileNode, compare_nodes};
+use crate::bench_harness::{
+    Metric, SegmentTimer, measure, measure_segments, process_cpu_time, publish,
+    refuse_debug_profile,
+};
 use crate::terminal::project_files::ProjectFiles;
 
-use super::projection::FilesProjection;
+use super::model::{DirChange, ListingDiff, TreeModel};
+use super::projection::FileRow;
 use super::search::rank_hits;
 
 pub(crate) const TREE_CORPUS_SEED: u64 = 0x7472_6565_0000_0001;
 const CHANGES: usize = 1_000;
+const WINDOW: usize = 64;
 
 struct Corpus {
-    tree: FilesTreeState,
-    expanded: HashSet<PathBuf>,
+    root: PathBuf,
+    folder: PathBuf,
+    listing: Arc<[FileNode]>,
     files: ProjectFiles,
 }
 
@@ -24,85 +30,132 @@ fn file_name(index: usize) -> String {
     format!("file_{index:06}.{extension}")
 }
 
-fn node(path: PathBuf) -> FileNode {
+fn node(path: PathBuf, is_dir: bool) -> FileNode {
     FileNode {
         path,
-        is_dir: false,
+        is_dir,
         is_ignored: false,
         is_hidden: false,
-        size: 1_024,
+        size: if is_dir { 0 } else { 1_024 },
     }
 }
 
 fn flat_corpus(entries: usize) -> Corpus {
     let root = PathBuf::from("bench-root");
+    let folder = root.join("flat");
     let mut listing: Vec<FileNode> = (0..entries)
-        .map(|index| node(root.join(file_name(index))))
+        .map(|index| node(folder.join(file_name(index)), false))
         .collect();
     listing.sort_by(compare_nodes);
-    let mut tree = FilesTreeState::root_shell(root.clone());
-    tree.children.insert(root.clone(), listing);
-    let expanded = HashSet::from([root.clone()]);
     let files = ProjectFiles {
-        root,
+        root: root.clone(),
         paths: (0..entries).map(file_name).collect(),
         complete: true,
     };
     Corpus {
-        tree,
-        expanded,
+        root,
+        folder,
+        listing: listing.into(),
         files,
     }
 }
 
-fn apply_changes(base: &FilesTreeState) -> FilesTreeState {
-    let mut tree = base.clone();
-    let root = tree.root.clone();
-    if let Some(listing) = tree.children.get_mut(&root) {
-        let stride = (listing.len() / (CHANGES / 2)).max(1);
-        let mut removed = 0;
-        let mut index = listing.len();
-        while removed < CHANGES / 2 && index >= stride {
-            index -= stride;
-            listing.remove(index);
-            removed += 1;
-        }
-        listing
-            .extend((0..CHANGES / 2).map(|added| node(root.join(format!("added_{added:04}.rs")))));
-        listing.sort_by(compare_nodes);
+fn listing_change(
+    dir: &std::path::Path,
+    nodes: Arc<[FileNode]>,
+    diff: Option<ListingDiff>,
+) -> DirChange {
+    DirChange::Listing {
+        dir: dir.to_path_buf(),
+        nodes,
+        diff,
+        unreadable: false,
     }
-    tree
+}
+
+fn collapsed_model(corpus: &Corpus) -> TreeModel {
+    let mut model = TreeModel::new(corpus.root.clone(), Vec::new());
+    model.apply(vec![listing_change(
+        &corpus.root,
+        vec![node(corpus.folder.clone(), true)].into(),
+        None,
+    )]);
+    model
+}
+
+fn window(model: &TreeModel, start: usize, git: &GitStatuses) -> Vec<FileRow> {
+    model
+        .rows(start..start + WINDOW)
+        .into_iter()
+        .map(|row| FileRow::from_ref(row, git))
+        .collect()
+}
+
+fn changed_listing(base: &[FileNode], folder: &std::path::Path) -> Vec<FileNode> {
+    let mut listing = base.to_vec();
+    let stride = (listing.len() / (CHANGES / 2)).max(1);
+    let mut removed = 0;
+    let mut index = listing.len();
+    while removed < CHANGES / 2 && index >= stride {
+        index -= stride;
+        listing.remove(index);
+        removed += 1;
+    }
+    listing.extend(
+        (0..CHANGES / 2).map(|added| node(folder.join(format!("added_{added:04}.rs")), false)),
+    );
+    listing
 }
 
 fn scenarios(metrics: &mut Vec<Metric>, corpus: &Corpus, names: [&'static str; 3], iters: usize) {
     let git = GitStatuses::default();
-    metrics.push(measure(
+    let middle = corpus.listing.len() / 2;
+    let mut model = collapsed_model(corpus);
+    metrics.push(measure_segments(
         names[0],
-        "the rows of a flat expanded folder rebuilt from its listing, as the projection does after a folder is expanded",
+        "a collapsed flat folder expanded: its listing installed with one visible count per entry, the folder opened, and the 64 rows of a scrolled window built; no row outside the window is built",
         1,
         iters,
-        || {
-            std::hint::black_box(FilesProjection::build(
-                &corpus.tree,
-                &corpus.expanded,
-                None,
-                &git,
-            ));
+        |timer: &mut SegmentTimer| {
+            let listing = corpus.listing.clone();
+            let rows = timer.time(|| {
+                model.apply(vec![listing_change(&corpus.folder, listing, None)]);
+                model.set_expanded(&corpus.folder, true);
+                window(&model, middle, &git)
+            });
+            assert_eq!(rows.len(), WINDOW);
+            std::hint::black_box(rows);
+            model.set_expanded(&corpus.folder, false);
+            model.apply(vec![DirChange::Dropped(corpus.folder.clone())]);
         },
     ));
-    metrics.push(measure(
+    let mut model = collapsed_model(corpus);
+    model.apply(vec![listing_change(
+        &corpus.folder,
+        corpus.listing.clone(),
+        None,
+    )]);
+    model.set_expanded(&corpus.folder, true);
+    metrics.push(measure_segments(
         names[1],
-        "1,000 entries of that folder changed on disk (500 removed, 500 added): the snapshot clone the worker sends, the re-sorted listing and the rebuilt rows",
+        "1,000 entries of that expanded folder changed on disk (500 removed, 500 added): the re-read listing sorted, diffed against the previous one by the worker, applied to the visible counts of the changed entries only, and the 64 rows of a scrolled window rebuilt",
         1,
         iters,
-        || {
-            let tree = apply_changes(&corpus.tree);
-            std::hint::black_box(FilesProjection::build(
-                &tree,
-                &corpus.expanded,
-                None,
-                &git,
-            ));
+        |timer: &mut SegmentTimer| {
+            let mut fresh = changed_listing(&corpus.listing, &corpus.folder);
+            let rows = timer.time(|| {
+                fresh.sort_by(compare_nodes);
+                let diff = ListingDiff::between(&corpus.listing, &fresh);
+                let nodes: Arc<[FileNode]> = fresh.into();
+                model.apply(vec![listing_change(&corpus.folder, nodes.clone(), Some(diff))]);
+                (window(&model, middle, &git), nodes)
+            });
+            let (rows, nodes) = rows;
+            assert_eq!(rows.len(), WINDOW);
+            assert_eq!(model.row_count(), corpus.listing.len() + 1);
+            std::hint::black_box(rows);
+            let back = ListingDiff::between(&nodes, &corpus.listing);
+            model.apply(vec![listing_change(&corpus.folder, corpus.listing.clone(), Some(back))]);
         },
     ));
     metrics.push(measure(

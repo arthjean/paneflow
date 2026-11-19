@@ -1,5 +1,7 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileNode {
@@ -10,26 +12,11 @@ pub(crate) struct FileNode {
     pub size: u64,
 }
 
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VisibleRow {
-    pub node: FileNode,
-    pub depth: usize,
-    pub expanded: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct VisibleRowRef<'a> {
-    pub node: &'a FileNode,
-    pub depth: usize,
-    pub expanded: bool,
-}
-
 #[derive(Clone, Default)]
 pub(crate) struct FilesTreeState {
     pub root: PathBuf,
     pub expanded: HashSet<PathBuf>,
-    pub children: HashMap<PathBuf, Vec<FileNode>>,
+    pub children: HashMap<PathBuf, Arc<[FileNode]>>,
     pub unreadable: HashSet<PathBuf>,
 }
 
@@ -45,10 +32,12 @@ impl FilesTreeState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn root_listing_ready(&self) -> bool {
         self.children.contains_key(&self.root)
     }
 
+    #[cfg(test)]
     pub(crate) fn root_unreadable(&self) -> bool {
         self.unreadable.contains(&self.root)
     }
@@ -61,12 +50,26 @@ pub(crate) fn node_name(node: &FileNode) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn compare_nodes(a: &FileNode, b: &FileNode) -> std::cmp::Ordering {
-    b.is_dir.cmp(&a.is_dir).then_with(|| {
-        node_name(a)
-            .to_ascii_lowercase()
-            .cmp(&node_name(b).to_ascii_lowercase())
-    })
+pub(crate) fn compare_nodes(a: &FileNode, b: &FileNode) -> Ordering {
+    compare_entries(a.is_dir, &a.path, b.is_dir, &b.path)
+}
+
+pub(crate) fn compare_entries(a_is_dir: bool, a: &Path, b_is_dir: bool, b: &Path) -> Ordering {
+    b_is_dir
+        .cmp(&a_is_dir)
+        .then_with(|| {
+            let a_name = a.file_name().unwrap_or_default().as_encoded_bytes();
+            let b_name = b.file_name().unwrap_or_default().as_encoded_bytes();
+            a_name
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .cmp(b_name.iter().map(u8::to_ascii_lowercase))
+        })
+        .then_with(|| {
+            a.as_os_str()
+                .as_encoded_bytes()
+                .cmp(b.as_os_str().as_encoded_bytes())
+        })
 }
 
 #[cfg(test)]
@@ -166,59 +169,10 @@ fn build_gitignore(root: &Path, dir: &Path) -> Option<ignore::gitignore::Gitigno
     builder.build().ok()
 }
 
-#[cfg(test)]
-pub(crate) fn flatten_visible(
-    root: &Path,
-    expanded: &HashSet<PathBuf>,
-    children: &HashMap<PathBuf, Vec<FileNode>>,
-) -> Vec<VisibleRow> {
-    flatten_visible_refs(root, expanded, children)
-        .into_iter()
-        .map(|row| VisibleRow {
-            node: row.node.clone(),
-            depth: row.depth,
-            expanded: row.expanded,
-        })
-        .collect()
-}
-
 pub(crate) fn workspace_relative_path(root: &Path, path: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rel) => rel.to_string_lossy().into_owned(),
         Err(_) => path.to_string_lossy().into_owned(),
-    }
-}
-
-pub(crate) fn flatten_visible_refs<'a>(
-    root: &Path,
-    expanded: &HashSet<PathBuf>,
-    children: &'a HashMap<PathBuf, Vec<FileNode>>,
-) -> Vec<VisibleRowRef<'a>> {
-    let mut out = Vec::new();
-    push_children_refs(root, 0, expanded, children, &mut out);
-    out
-}
-
-fn push_children_refs<'a>(
-    dir: &Path,
-    depth: usize,
-    expanded: &HashSet<PathBuf>,
-    children: &'a HashMap<PathBuf, Vec<FileNode>>,
-    out: &mut Vec<VisibleRowRef<'a>>,
-) {
-    let Some(listing) = children.get(dir) else {
-        return;
-    };
-    for node in listing {
-        let is_expanded = node.is_dir && expanded.contains(&node.path);
-        out.push(VisibleRowRef {
-            node,
-            depth,
-            expanded: is_expanded,
-        });
-        if is_expanded {
-            push_children_refs(&node.path, depth + 1, expanded, children, out);
-        }
     }
 }
 
@@ -251,7 +205,7 @@ mod tests {
         let root = PathBuf::from("/r");
         let mut shell = FilesTreeState::root_shell(root.clone());
         assert!(!shell.root_listing_ready());
-        shell.children.insert(root, Vec::new());
+        shell.children.insert(root, Arc::from([]));
         assert!(shell.root_listing_ready());
     }
 
@@ -264,40 +218,17 @@ mod tests {
     }
 
     #[test]
-    fn flatten_skips_collapsed_and_uncached_subtrees() {
-        let root = PathBuf::from("/r");
-        let mut children = HashMap::new();
-        children.insert(
-            root.clone(),
-            vec![dir("/r/src"), dir("/r/docs"), file("/r/a.md")],
-        );
-        children.insert("/r/src".into(), vec![file("/r/src/main.rs")]);
-        let mut expanded = HashSet::new();
-        expanded.insert(root.clone());
-        expanded.insert(PathBuf::from("/r/src"));
-
-        let rows = flatten_visible(&root, &expanded, &children);
-        let names: Vec<(String, usize)> =
-            rows.iter().map(|r| (node_name(&r.node), r.depth)).collect();
-        assert_eq!(
-            names,
-            vec![
-                ("src".to_string(), 0),
-                ("main.rs".to_string(), 1),
-                ("docs".to_string(), 0),
-                ("a.md".to_string(), 0),
-            ]
-        );
-    }
-
-    #[test]
-    fn flatten_empty_dir_yields_no_rows() {
-        let root = PathBuf::from("/r");
-        let mut children = HashMap::new();
-        children.insert(root.clone(), Vec::new());
-        let mut expanded = HashSet::new();
-        expanded.insert(root.clone());
-        assert!(flatten_visible(&root, &expanded, &children).is_empty());
+    fn compare_nodes_orders_names_that_differ_only_by_case_by_their_bytes() {
+        let mut nodes = [
+            dir("/r/docs"),
+            dir("/r/Docs"),
+            file("/r/b.md"),
+            file("/r/B.md"),
+        ];
+        nodes.sort_by(compare_nodes);
+        let names: Vec<String> = nodes.iter().map(node_name).collect();
+        assert_eq!(names, vec!["Docs", "docs", "B.md", "b.md"]);
+        assert_eq!(compare_nodes(&nodes[0], &nodes[0].clone()), Ordering::Equal);
     }
 
     #[test]
@@ -377,14 +308,6 @@ mod tests {
             workspace_relative_path(Path::new("/r"), Path::new("/other/y")),
             "/other/y"
         );
-    }
-
-    #[test]
-    fn flatten_missing_root_listing_is_empty() {
-        let root = PathBuf::from("/r");
-        let children = HashMap::new();
-        let expanded = HashSet::new();
-        assert!(flatten_visible(&root, &expanded, &children).is_empty());
     }
 
     #[test]

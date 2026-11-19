@@ -1,12 +1,13 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use gpui::SharedString;
 
+use super::model::RowRef;
 use super::search::SearchHit;
 use crate::app::files_git::{GitStatuses, GitSummary};
-use crate::app::files_tree::{self, FileNode, FilesTreeState};
+use crate::app::files_tree::{self, FileNode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DirState {
@@ -52,10 +53,21 @@ impl FileRow {
             state,
         }
     }
+
+    pub(super) fn from_ref(row: RowRef<'_>, git: &GitStatuses) -> Self {
+        Self::new(
+            row.node,
+            row.depth,
+            row.expanded,
+            Vec::new(),
+            row.state,
+            git,
+        )
+    }
 }
 
 #[derive(Default)]
-pub(super) struct FilesProjection {
+pub(super) struct SearchRows {
     pub rows: Vec<FileRow>,
     indices: HashMap<PathBuf, usize>,
 }
@@ -66,29 +78,9 @@ struct Level<'a> {
     files: Vec<(String, &'a str, &'a SearchHit)>,
 }
 
-impl FilesProjection {
-    pub fn build(
-        tree: &FilesTreeState,
-        expanded: &HashSet<PathBuf>,
-        search: Option<&[SearchHit]>,
-        git: &GitStatuses,
-    ) -> Self {
-        let rows = match search {
-            Some(hits) => search_rows(&tree.root, hits, git),
-            None => files_tree::flatten_visible_refs(&tree.root, expanded, &tree.children)
-                .into_iter()
-                .map(|row| {
-                    FileRow::new(
-                        row.node,
-                        row.depth,
-                        row.expanded,
-                        Vec::new(),
-                        dir_state(tree, row.node, row.expanded),
-                        git,
-                    )
-                })
-                .collect(),
-        };
+impl SearchRows {
+    pub fn build(root: &Path, hits: &[SearchHit], git: &GitStatuses) -> Self {
+        let rows = search_rows(root, hits, git);
         let indices = rows
             .iter()
             .enumerate()
@@ -116,18 +108,6 @@ impl FilesProjection {
         self.rows
             .get(previous_index.min(self.rows.len().saturating_sub(1)))
             .map(|row| row.node.path.clone())
-    }
-}
-
-fn dir_state(tree: &FilesTreeState, node: &FileNode, expanded: bool) -> DirState {
-    if !node.is_dir {
-        DirState::Ready
-    } else if tree.unreadable.contains(&node.path) {
-        DirState::Failed
-    } else if expanded && !tree.children.contains_key(&node.path) {
-        DirState::Loading
-    } else {
-        DirState::Ready
     }
 }
 

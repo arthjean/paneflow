@@ -195,7 +195,7 @@ impl FilesSidebar {
             } else {
                 NO_MATCHES
             }
-        } else if self.tree.root_listing_ready() {
+        } else if self.model.root_listing_ready() {
             "This folder is empty."
         } else {
             "Loading files..."
@@ -203,10 +203,10 @@ impl FilesSidebar {
     }
 
     fn files_sidebar_body(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
-        if self.tree.root_unreadable() {
+        if self.model.root_unreadable() {
             return self.files_unreadable_body(ui, cx);
         }
-        if self.projection.rows.is_empty() {
+        if self.row_count() == 0 {
             let message = div()
                 .flex_1()
                 .p(px(14.))
@@ -218,12 +218,11 @@ impl FilesSidebar {
             return message.into_any_element();
         }
         list::files_list(
-            self.projection.rows.len(),
+            self.row_count(),
             &self.scroll,
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                let projection = this.projection.clone();
-                range
-                    .filter_map(|index| projection.rows.get(index))
+                this.rows_in(range)
+                    .iter()
                     .map(|row| {
                         this.files_row(
                             row,

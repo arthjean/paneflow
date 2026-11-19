@@ -129,7 +129,7 @@ impl FilesSidebar {
                 this.focus.focus(window, cx);
                 this.select_path(&menu_path, cx);
                 cx.emit(FilesEvent::ContextMenu(crate::FilesContextMenu {
-                    root: this.tree.root.clone(),
+                    root: this.model.root().to_path_buf(),
                     path: menu_path.clone(),
                     position,
                     scope: crate::app::window::FilesMenuScope::Full,
@@ -141,7 +141,7 @@ impl FilesSidebar {
 
         let drag = crate::app::drag::FileTreeDrag {
             path: path.clone(),
-            root: self.tree.root.clone(),
+            root: self.model.root().to_path_buf(),
             label: row.label.clone(),
             icon: (!is_dir).then(|| {
                 crate::file_icons::icon_path_for(

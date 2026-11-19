@@ -19,12 +19,13 @@ result prefixes:
 
 The tree suite measures the file tree of the dock on two flat folders, 50,000
 and then 300,000 entries, built in memory so a run reads nothing from disk:
-`rows_after_expand_*` rebuilds the rows of the expanded folder as the
-projection does after a folder is expanded, `apply_1000_changes_*` clones the
-snapshot the worker sends, removes 500 entries, adds 500, re-sorts the listing
-and rebuilds the rows, and `search_*` ranks every file against a query and
-keeps the first 200, as the tree search does after its typing pause. Like the
-editor suite it refuses a debug build.
+`rows_after_expand_*` installs the listing of a collapsed folder in the tree
+model, expands it and builds the 64 rows of a window scrolled to the middle of
+the folder, `apply_1000_changes_*` removes 500 entries and adds 500, sorts the
+re-read listing, diffs it against the previous one as the worker does, applies
+the diff to the visible counts and rebuilds the same window, and `search_*`
+ranks every file against a query and keeps the first 200, as the tree search
+does after its typing pause. Like the editor suite it refuses a debug build.
 
 ### Baselines per platform
 

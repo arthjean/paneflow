@@ -2,6 +2,7 @@ pub(crate) mod context_menu;
 mod integration;
 mod keyboard;
 mod list;
+mod model;
 pub(crate) mod open_with;
 mod panel;
 #[cfg(test)]

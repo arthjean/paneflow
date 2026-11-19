@@ -150,27 +150,44 @@ the view cache. `PaneFlowApp` owns its placement, workspace association and
 editor integration; row hover and keyboard selection update the rail entity.
 The implementation is under `src-app/src/app/files_sidebar/`.
 
-Three states have separate lifetimes, following Zed's project panel model:
+Four parts have separate lifetimes, following Zed's project panel model:
 
-- `worker.rs` owns the directory snapshot and nonrecursive filesystem watches
+- `worker.rs` owns the directory listings and nonrecursive filesystem watches
   on a dedicated thread. It registers each watch before reading the directory,
   loads newly expanded directories, and refreshes invalidated listings. Loaded
   collapsed directories remain searchable and watched. Deleted or ignored
   subtrees are pruned. Watch events are coalesced in the worker; unavailable
-  watches fall back to background polling and registration retries.
-- `projection.rs` prepares ordered rows, labels, icons, filter highlights and
-  a path-to-index map on GPUI's background executor. Tree, expansion and query
-  changes replace the pending projection task. Epoch and revision checks
-  discard results from an earlier root, fold state or query.
-- `panel.rs` owns the current projection, path-based selection, input focus and
+  watches fall back to background polling and registration retries. Each
+  update carries only the folders that changed: a listing is an
+  `Arc<[FileNode]>` shared with the panel, never copied, and a re-read listing
+  comes with the positions of its removed and inserted entries, computed by a
+  merge walk over the two sorted listings. A folder that did not change is not
+  sent.
+- `model.rs` holds the panel's `TreeModel`: for every loaded folder, the
+  number of visible rows under each entry (1 for a file or a collapsed folder,
+  1 plus the folder's own total when it is expanded) in a Fenwick tree, so a
+  prefix sum, a point update and a row lookup each cost O(log n). Expanding or
+  collapsing a folder adds its total to each expanded ancestor; a listing diff
+  carries the counts of unchanged entries over and computes only the inserted
+  ones. Rows are never flattened: `rows(range)` descends to the first row of
+  the range, then walks the listings for as many rows as the range asks.
+  Path-to-row lookup binary-searches each ancestor listing, which is sorted by
+  `files_tree::compare_nodes`, a total order (folders first, ASCII
+  case-insensitive name, then the exact path).
+- `projection.rs` turns a model row into a `FileRow` (label, icon, git status,
+  element ids) only when the list asks for it, and builds the search rows,
+  which are bounded by the 200 results, on GPUI's background executor. Query
+  changes replace the pending search task; epoch and revision checks discard
+  results from an earlier root or query.
+- `panel.rs` owns the model, path-based selection, input focus and
   uniform-list scroll handle. `view.rs` renders only the requested row range.
-  Hover uses the immediate squircle state and does not flatten, filter or sort
-  the tree. Selection survives insertions; a collapsed selection returns to
-  its visible ancestor. Keyboard navigation reveals the selected row.
+  Hover uses the immediate squircle state and does not rebuild any row.
+  Selection survives insertions; a collapsed selection returns to its visible
+  ancestor. Keyboard navigation reveals the selected row.
 
 Closing or switching workspaces cancels the worker and pending publications.
-The closing animation keeps its last snapshot until it finishes, then releases
-the snapshot on a background executor. The rail keeps Paneflow's 300 px width,
+The closing animation keeps its last model until it finishes, then releases
+the model on a background executor. The rail keeps Paneflow's 300 px width,
 28 px rows, icons, indentation and full-width hover inside the 8 px edge insets.
 
 ## Keystroke → pixel

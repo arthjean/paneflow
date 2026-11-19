@@ -8,11 +8,11 @@ use gpui::{
     UniformListScrollHandle,
 };
 
-use super::projection::FilesProjection;
+use super::model::TreeModel;
+use super::projection::SearchRows;
 use super::search::TreeSearch;
 use super::worker::FilesWorker;
 use crate::app::files_git::GitStatuses;
-use crate::app::files_tree::FilesTreeState;
 use crate::widgets::text_input::TextInput;
 
 pub(crate) const SEARCH_QUERY_MAX_CHARS: usize = 256;
@@ -33,10 +33,9 @@ pub(crate) enum FilesEvent {
 }
 
 pub(crate) struct FilesSidebar {
-    pub(super) tree: Arc<FilesTreeState>,
+    pub(super) model: TreeModel,
     pub(super) git: Arc<GitStatuses>,
-    pub(super) expanded: HashSet<PathBuf>,
-    pub(super) projection: Arc<FilesProjection>,
+    pub(super) search_rows: Option<Arc<SearchRows>>,
     pub(super) selected: Option<PathBuf>,
     pub(super) filter_input: Entity<TextInput>,
     pub(super) query: String,
@@ -65,6 +64,8 @@ pub(crate) struct FilesSidebar {
     pub(super) render_count: usize,
     #[cfg(test)]
     pub(super) projection_count: usize,
+    #[cfg(test)]
+    pub(super) rows_built: std::cell::Cell<usize>,
 }
 
 impl EventEmitter<FilesEvent> for FilesSidebar {}
@@ -96,10 +97,9 @@ impl FilesSidebar {
             cx.observe(&signal, |_, _, cx| cx.notify()).detach();
         }
         Self {
-            tree: Arc::new(FilesTreeState::default()),
+            model: TreeModel::default(),
             git: Arc::default(),
-            expanded: HashSet::new(),
-            projection: Arc::default(),
+            search_rows: None,
             selected: None,
             filter_input,
             query: String::new(),
@@ -128,6 +128,8 @@ impl FilesSidebar {
             render_count: 0,
             #[cfg(test)]
             projection_count: 0,
+            #[cfg(test)]
+            rows_built: std::cell::Cell::new(0),
         }
     }
 
@@ -136,14 +138,9 @@ impl FilesSidebar {
         self.release_snapshot(cx);
         self.active = true;
         self.revision = 0;
-        self.tree = Arc::new(FilesTreeState::root_shell(root.clone()));
+        self.model = TreeModel::new(root.clone(), expanded.iter().cloned());
         self.git = Arc::default();
-        self.expanded = expanded
-            .iter()
-            .cloned()
-            .chain(std::iter::once(root.clone()))
-            .collect();
-        self.projection = Arc::default();
+        self.search_rows = None;
         self.selected = None;
         self.query.clear();
         self.search = TreeSearch::default();
@@ -159,7 +156,7 @@ impl FilesSidebar {
         if !self.active {
             return;
         }
-        let root = self.tree.root.clone();
+        let root = self.model.root().to_path_buf();
         let expanded = self.expanded_paths();
         self.open(root, expanded, cx);
     }
@@ -186,23 +183,24 @@ impl FilesSidebar {
         if self.active {
             return;
         }
-        let tree = std::mem::take(&mut self.tree);
+        let model = std::mem::take(&mut self.model);
         let git = std::mem::take(&mut self.git);
-        let projection = std::mem::take(&mut self.projection);
-        let expanded = std::mem::take(&mut self.expanded);
+        let search_rows = self.search_rows.take();
         let search = std::mem::take(&mut self.search);
         self.selected = None;
         cx.background_spawn(async move {
-            drop((tree, git, projection, expanded, search));
+            drop((model, git, search_rows, search));
         })
         .detach();
     }
 
     pub(super) fn expanded_paths(&self) -> Vec<PathBuf> {
+        let root = self.model.root();
         let mut paths: Vec<_> = self
-            .expanded
+            .model
+            .expanded()
             .iter()
-            .filter(|path| **path != self.tree.root)
+            .filter(|path| path.as_path() != root)
             .cloned()
             .collect();
         paths.sort();
@@ -211,7 +209,7 @@ impl FilesSidebar {
 
     pub(super) fn emit_expansion(&self, cx: &mut Context<Self>) {
         cx.emit(FilesEvent::Expanded {
-            root: self.tree.root.clone(),
+            root: self.model.root().to_path_buf(),
             paths: self.expanded_paths(),
         });
     }
@@ -250,7 +248,8 @@ impl FilesSidebar {
         if self.all_expanded {
             self.all_expanded = false;
             self.expanding_all = false;
-            self.expanded = HashSet::from([self.tree.root.clone()]);
+            let root = self.model.root().to_path_buf();
+            self.model.replace_expanded(HashSet::from([root]));
             self.send_expansion();
             self.emit_expansion(cx);
             self.schedule_projection(false, cx);

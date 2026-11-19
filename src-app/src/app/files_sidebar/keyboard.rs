@@ -8,7 +8,7 @@ impl FilesSidebar {
     pub(super) fn selected_index(&self) -> Option<usize> {
         self.selected
             .as_deref()
-            .and_then(|path| self.projection.index(path))
+            .and_then(|path| self.row_index(path))
     }
 
     pub(super) fn reveal_selection(&self) {
@@ -18,7 +18,7 @@ impl FilesSidebar {
     }
 
     pub(super) fn select_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if self.projection.index(path).is_some() {
+        if self.row_index(path).is_some() {
             self.selected = Some(path.to_path_buf());
             self.reveal_selection();
             cx.notify();
@@ -29,7 +29,7 @@ impl FilesSidebar {
         if !self.active {
             return;
         }
-        let root = self.tree.root.clone();
+        let root = self.model.root().to_path_buf();
         if path == root {
             self.reveal_target = None;
             self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -49,11 +49,11 @@ impl FilesSidebar {
             return;
         }
         self.reveal_request = Some(path.to_path_buf());
-        let root = self.tree.root.clone();
+        let root = self.model.root().to_path_buf();
         if path == root || !path.starts_with(&root) {
             return;
         }
-        if self.selected.as_deref() == Some(path) && self.projection.index(path).is_some() {
+        if self.selected.as_deref() == Some(path) && self.row_index(path).is_some() {
             return;
         }
         self.reveal_generation = self.reveal_generation.wrapping_add(1);
@@ -78,7 +78,7 @@ impl FilesSidebar {
     }
 
     fn reveal_entry(&mut self, path: &Path, expand_self: bool, cx: &mut Context<Self>) {
-        let root = self.tree.root.clone();
+        let root = self.model.root().to_path_buf();
         self.clear_search(cx);
         let first = if expand_self {
             Some(path)
@@ -90,7 +90,7 @@ impl FilesSidebar {
             .flat_map(Path::ancestors)
             .take_while(|ancestor| *ancestor != root)
         {
-            self.expanded.insert(ancestor.to_path_buf());
+            self.model.set_expanded(ancestor, true);
         }
         self.send_expansion();
         self.selected = Some(path.to_path_buf());
@@ -114,7 +114,7 @@ impl FilesSidebar {
         let Some(target) = self.reveal_target.as_ref() else {
             return;
         };
-        if let Some(index) = self.projection.index(target) {
+        if let Some(index) = self.row_index(target) {
             self.selected = Some(target.clone());
             self.scroll.scroll_to_item(index, ScrollStrategy::Center);
             self.reveal_target = None;
@@ -123,7 +123,7 @@ impl FilesSidebar {
 
     fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
         self.reveal_target = None;
-        if let Some(row) = self.projection.rows.get(index) {
+        if let Some(row) = self.row_at(index) {
             self.selected = Some(row.node.path.clone());
             self.reveal_selection();
             cx.notify();
@@ -134,9 +134,8 @@ impl FilesSidebar {
         if !self.active {
             return;
         }
-        if !self.expanded.remove(path) {
-            self.expanded.insert(path.to_path_buf());
-        }
+        let expanded = self.model.is_expanded(path);
+        self.model.set_expanded(path, !expanded);
         self.send_expansion();
         self.emit_expansion(cx);
         self.schedule_projection(true, cx);
@@ -158,9 +157,8 @@ impl FilesSidebar {
             self.reveal_dir(path, cx);
         } else if is_dir {
             if self
-                .projection
-                .index(path)
-                .and_then(|index| self.projection.rows.get(index))
+                .row_index(path)
+                .and_then(|index| self.row_at(index))
                 .is_some_and(|row| row.state == super::projection::DirState::Failed)
             {
                 self.reload_dir(path.to_path_buf(), cx);
@@ -170,7 +168,7 @@ impl FilesSidebar {
         } else {
             cx.emit(FilesEvent::OpenFile {
                 path: path.to_path_buf(),
-                root: self.tree.root.clone(),
+                root: self.model.root().to_path_buf(),
                 window: window.window_handle(),
             });
         }
@@ -206,9 +204,9 @@ impl FilesSidebar {
         {
             return;
         }
-        let count = self.projection.rows.len();
+        let count = self.row_count();
         let index = self.selected_index().unwrap_or(0);
-        let row = self.projection.rows.get(index).cloned();
+        let row = self.row_at(index);
         match event.keystroke.key.as_str() {
             "escape" => {
                 if !self.clear_files_filter(window, cx) {
@@ -224,12 +222,10 @@ impl FilesSidebar {
             }
             "right" if let Some(row) = row => {
                 if row.node.is_dir && self.query.is_empty() {
-                    if !self.expanded.contains(&row.node.path) {
+                    if !self.model.is_expanded(&row.node.path) {
                         self.toggle_dir(&row.node.path, cx);
                     } else if self
-                        .projection
-                        .rows
-                        .get(index + 1)
+                        .row_at(index + 1)
                         .is_some_and(|next| next.depth > row.depth)
                     {
                         self.select_index(index + 1, cx);
@@ -238,7 +234,7 @@ impl FilesSidebar {
             }
             "left" if let Some(row) = row => {
                 if self.query.is_empty() {
-                    if row.node.is_dir && self.expanded.contains(&row.node.path) {
+                    if row.node.is_dir && self.model.is_expanded(&row.node.path) {
                         self.toggle_dir(&row.node.path, cx);
                     } else if let Some(parent) = row.node.path.parent() {
                         self.select_path(parent, cx);

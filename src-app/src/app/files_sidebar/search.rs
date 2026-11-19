@@ -124,7 +124,7 @@ impl FilesSidebar {
         if self.search.walk.is_some() {
             return;
         }
-        let root = self.tree.root.clone();
+        let root = self.model.root().to_path_buf();
         let cancelled = self.walk_cancelled.clone();
         let epoch = self.epoch;
         self.search.walk = Some(cx.spawn(async move |this, cx| {

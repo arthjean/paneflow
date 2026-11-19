@@ -9,9 +9,10 @@ use gpui::{
 };
 
 use super::FilesSidebar;
-use super::projection::FilesProjection;
+use super::model::{DirChange, TreeModel};
+use super::projection::{FileRow, SearchRows};
 use crate::app::files_git::GitStatuses;
-use crate::app::files_tree::{FileNode, FilesTreeState};
+use crate::app::files_tree::{FileNode, compare_nodes};
 
 fn node(path: PathBuf, is_dir: bool) -> FileNode {
     FileNode {
@@ -23,9 +24,51 @@ fn node(path: PathBuf, is_dir: bool) -> FileNode {
     }
 }
 
-fn tree(count: usize) -> FilesTreeState {
+struct Snapshot {
+    root: PathBuf,
+    expanded: std::collections::HashSet<PathBuf>,
+    children: std::collections::HashMap<PathBuf, Vec<FileNode>>,
+    unreadable: std::collections::HashSet<PathBuf>,
+}
+
+impl Snapshot {
+    fn root_shell(root: PathBuf) -> Self {
+        Self {
+            expanded: std::collections::HashSet::from([root.clone()]),
+            root,
+            children: std::collections::HashMap::new(),
+            unreadable: std::collections::HashSet::new(),
+        }
+    }
+
+    fn model(&self) -> TreeModel {
+        let mut model = TreeModel::new(self.root.clone(), self.expanded.iter().cloned());
+        model.apply(
+            self.children
+                .iter()
+                .map(|(dir, nodes)| {
+                    let mut nodes = nodes.clone();
+                    nodes.sort_by(compare_nodes);
+                    DirChange::Listing {
+                        dir: dir.clone(),
+                        nodes: nodes.into(),
+                        diff: None,
+                        unreadable: self.unreadable.contains(dir),
+                    }
+                })
+                .collect(),
+        );
+        model
+    }
+}
+
+fn all_rows(panel: &FilesSidebar) -> Vec<FileRow> {
+    panel.rows_in(0..panel.row_count())
+}
+
+fn tree(count: usize) -> Snapshot {
     let root = PathBuf::from("workspace");
-    let mut tree = FilesTreeState::root_shell(root.clone());
+    let mut tree = Snapshot::root_shell(root.clone());
     tree.children.insert(
         root.clone(),
         (0..count)
@@ -35,16 +78,10 @@ fn tree(count: usize) -> FilesTreeState {
     tree
 }
 
-fn install(panel: &mut FilesSidebar, tree: FilesTreeState) {
+fn install(panel: &mut FilesSidebar, tree: Snapshot) {
     panel.active = true;
-    panel.expanded = tree.expanded.clone();
-    panel.projection = Arc::new(FilesProjection::build(
-        &tree,
-        &panel.expanded,
-        None,
-        &GitStatuses::default(),
-    ));
-    panel.tree = Arc::new(tree);
+    panel.model = tree.model();
+    panel.search_rows = None;
 }
 
 struct Sibling(Rc<Cell<usize>>);
@@ -84,7 +121,7 @@ impl Render for Harness {
 
 fn harness(
     cx: &mut TestAppContext,
-    tree: FilesTreeState,
+    tree: Snapshot,
 ) -> (
     Entity<FilesSidebar>,
     Rc<Cell<usize>>,
@@ -125,7 +162,6 @@ fn panel_hover_repaints_immediately_without_rebuilding_projection(cx: &mut TestA
     assert_eq!(first.origin.x, px(8.));
     assert_eq!(first.size.width, px(284.));
     assert_eq!(first.size.height, px(28.));
-    let projection = panel.read_with(cx, |panel, _| panel.projection.clone());
     for (position, repaint) in [
         (point(px(9.), first.center().y), true),
         (point(px(291.), first.center().y), false),
@@ -138,7 +174,6 @@ fn panel_hover_repaints_immediately_without_rebuilding_projection(cx: &mut TestA
         cx.update(|window, cx| window.simulate_mouse_move(position, cx));
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.render_count - before, usize::from(repaint));
-            assert!(Arc::ptr_eq(&panel.projection, &projection));
             assert_eq!(panel.projection_count, 0);
         });
         assert_eq!(sibling.get(), sibling_before);
@@ -177,7 +212,7 @@ fn panel_keyboard_reveals_selection_and_moves_between_parent_and_child(cx: &mut 
             Some(expected)
         );
     }
-    assert!(!panel.read_with(cx, |panel, _| panel.expanded.contains(&dir)));
+    assert!(!panel.read_with(cx, |panel, _| panel.model.is_expanded(&dir)));
     cx.update(|window, cx| {
         window.refresh();
         window.draw(cx).clear(cx);
@@ -188,7 +223,7 @@ fn panel_keyboard_reveals_selection_and_moves_between_parent_and_child(cx: &mut 
         .expect("home scrolls back to first row");
     cx.simulate_click(point(px(290.), first.center().y), Modifiers::default());
     cx.run_until_parked();
-    assert!(panel.read_with(cx, |panel, _| panel.expanded.contains(&dir)));
+    assert!(panel.read_with(cx, |panel, _| panel.model.is_expanded(&dir)));
 }
 
 fn leak(id: String) -> &'static str {
@@ -240,7 +275,7 @@ fn project_search_finds_files_of_never_expanded_folders_with_their_parents(
             &[deep.clone(), rel(&["README.md"]), rel(&["file-0001.rs"])],
         ))
     });
-    let before = panel.read_with(cx, |panel, _| panel.expanded.clone());
+    let before = panel.read_with(cx, |panel, _| panel.model.expanded().clone());
 
     type_query(cx, &panel, "needle");
     cx.run_until_parked();
@@ -258,9 +293,7 @@ fn project_search_finds_files_of_never_expanded_folders_with_their_parents(
 
     let root = PathBuf::from("workspace");
     panel.read_with(cx, |panel, _| {
-        let rows: Vec<(PathBuf, usize, bool)> = panel
-            .projection
-            .rows
+        let rows: Vec<(PathBuf, usize, bool)> = all_rows(panel)
             .iter()
             .map(|row| (row.node.path.clone(), row.depth, row.expanded))
             .collect();
@@ -272,10 +305,11 @@ fn project_search_finds_files_of_never_expanded_folders_with_their_parents(
                 (root.join("src").join("deep").join("needle.rs"), 2, false),
             ]
         );
-        let file = &panel.projection.rows[2];
+        let file = &all_rows(panel)[2];
         assert_eq!(&file.label[file.highlights[0].clone()], "needle");
         assert_eq!(
-            panel.expanded, before,
+            *panel.model.expanded(),
+            before,
             "searching never touches the fold state"
         );
     });
@@ -284,12 +318,8 @@ fn project_search_finds_files_of_never_expanded_folders_with_their_parents(
     cx.run_until_parked();
     panel.read_with(cx, |panel, _| {
         assert!(panel.query.is_empty());
-        assert_eq!(panel.expanded, before);
-        assert_eq!(
-            panel.projection.rows.len(),
-            20,
-            "the tree is back as it was"
-        );
+        assert_eq!(*panel.model.expanded(), before);
+        assert_eq!(panel.row_count(), 20, "the tree is back as it was");
     });
 }
 
@@ -315,7 +345,7 @@ fn project_search_caps_its_results_and_says_when_more_or_none_match(cx: &mut Tes
         let hits = panel.search.hits.as_ref().expect("results");
         assert_eq!(hits.len(), super::search::SEARCH_RESULT_LIMIT);
         assert!(panel.search.truncated);
-        assert_eq!(panel.projection.rows.len(), 201, "one folder and 200 files");
+        assert_eq!(panel.row_count(), 201, "one folder and 200 files");
     });
     assert!(cx.debug_bounds("files-search-truncated").is_some());
     assert_eq!(
@@ -326,7 +356,7 @@ fn project_search_caps_its_results_and_says_when_more_or_none_match(cx: &mut Tes
     type_query(cx, &panel, "zzzz");
     settle_search(cx);
     panel.read_with(cx, |panel, _| {
-        assert!(panel.projection.rows.is_empty());
+        assert_eq!(panel.row_count(), 0);
         assert!(!panel.search.truncated);
         assert_eq!(panel.empty_message(), "No matching files.");
     });
@@ -389,7 +419,6 @@ fn panel_discards_pending_projection_on_close_and_keeps_the_latest_search(cx: &m
         rel: name.to_string(),
         highlights: Vec::new(),
     };
-    let original = panel.read_with(cx, |panel, _| panel.projection.clone());
     panel.update(cx, |panel, cx| {
         panel.query = "0099".into();
         panel.search.hits = Some(Arc::new(vec![hit("file-0099.rs")]));
@@ -397,12 +426,12 @@ fn panel_discards_pending_projection_on_close_and_keeps_the_latest_search(cx: &m
         panel.deactivate();
     });
     cx.run_until_parked();
-    assert!(panel.read_with(cx, |panel, _| Arc::ptr_eq(&original, &panel.projection)));
+    assert!(panel.read_with(cx, |panel, _| panel.search_rows.is_none()));
     panel.update(cx, |panel, cx| panel.release_snapshot(cx));
     cx.run_until_parked();
     panel.read_with(cx, |panel, _| {
-        assert!(panel.tree.children.is_empty());
-        assert!(panel.projection.rows.is_empty());
+        assert!(!panel.model.root_listing_ready());
+        assert_eq!(panel.row_count(), 0);
     });
     panel.update(cx, |panel, cx| {
         install(panel, tree(200));
@@ -415,8 +444,8 @@ fn panel_discards_pending_projection_on_close_and_keeps_the_latest_search(cx: &m
     });
     cx.run_until_parked();
     panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.projection.rows.len(), 1);
-        assert_eq!(panel.projection.rows[0].label.as_ref(), "file-0001.rs");
+        assert_eq!(panel.row_count(), 1);
+        assert_eq!(all_rows(panel)[0].label.as_ref(), "file-0001.rs");
         assert!(!panel.pending_reveal);
     });
 }
@@ -447,7 +476,11 @@ fn the_toolbar_holds_refresh_then_search_then_expand_all(cx: &mut TestAppContext
     panel.update(cx, |panel, cx| panel.toggle_expand_all(cx));
     panel.read_with(cx, |panel, _| {
         assert_eq!(panel.expand_toggle_label(), "Expand all");
-        assert_eq!(panel.expanded.len(), 1, "collapse all keeps only the root");
+        assert_eq!(
+            panel.model.expanded().len(),
+            1,
+            "collapse all keeps only the root"
+        );
     });
 }
 
@@ -469,7 +502,10 @@ fn an_expanded_folder_without_a_listing_shows_a_loading_indicator_and_a_failed_o
     let (panel, _, cx) = harness(cx, snapshot);
     panel.read_with(cx, |panel, _| {
         let state = |path: &PathBuf| {
-            panel.projection.rows[panel.projection.index(path).expect("row")].state
+            panel
+                .row_at(panel.row_index(path).expect("row"))
+                .expect("row")
+                .state
         };
         assert_eq!(state(&slow), super::projection::DirState::Loading);
         assert_eq!(state(&broken), super::projection::DirState::Failed);
@@ -570,7 +606,7 @@ fn refresh_spins_until_the_reread_lands_and_expand_all_stops_at_two_thousand_fol
     for ix in 0..super::worker::EXPAND_ALL_LIMIT + 5 {
         std::fs::create_dir_all(wide.join(format!("d{ix:04}"))).expect("folder");
     }
-    let (panel, _, cx) = harness(cx, FilesTreeState::root_shell(root.clone()));
+    let (panel, _, cx) = harness(cx, Snapshot::root_shell(root.clone()));
     let toasts = Rc::new(std::cell::RefCell::new(Vec::new()));
     let sink = toasts.clone();
     cx.update(|_, cx| {
@@ -582,21 +618,24 @@ fn refresh_spins_until_the_reread_lands_and_expand_all_stops_at_two_thousand_fol
         .detach()
     });
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.open(root.clone(), Vec::new(), cx)));
-    wait_for(cx, &panel, |panel| panel.tree.root_listing_ready());
+    wait_for(cx, &panel, |panel| panel.model.root_listing_ready());
 
     std::fs::write(root.join("late.txt"), "late").expect("late file");
     panel.update(cx, |panel, cx| panel.refresh(cx));
     assert!(panel.read_with(cx, |panel, _| panel.refreshing));
     wait_for(cx, &panel, |panel| !panel.refreshing);
     wait_for(cx, &panel, |panel| {
-        panel.projection.index(&root.join("late.txt")).is_some()
+        panel.row_index(&root.join("late.txt")).is_some()
     });
 
     panel.update(cx, |panel, cx| panel.toggle_expand_all(cx));
     wait_for(cx, &panel, |panel| !panel.expanding_all);
     panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.expanded.len() - 1, super::worker::EXPAND_ALL_LIMIT);
-        assert!(!panel.expanded.contains(&root.join("ignored")));
+        assert_eq!(
+            panel.model.expanded().len() - 1,
+            super::worker::EXPAND_ALL_LIMIT
+        );
+        assert!(!panel.model.is_expanded(&root.join("ignored")));
     });
     assert_eq!(
         toasts.borrow().as_slice(),
@@ -618,15 +657,17 @@ fn a_folder_that_fails_to_load_retries_on_click(cx: &mut TestAppContext) {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).ok();
         return;
     }
-    let (panel, _, cx) = harness(cx, FilesTreeState::root_shell(root.clone()));
+    let (panel, _, cx) = harness(cx, Snapshot::root_shell(root.clone()));
     cx.update(|_, cx| {
         panel.update(cx, |panel, cx| {
             panel.open(root.clone(), vec![locked.clone()], cx)
         })
     });
     wait_for(cx, &panel, |panel| {
-        panel.projection.index(&locked).is_some_and(|ix| {
-            panel.projection.rows[ix].state == super::projection::DirState::Failed
+        panel.row_index(&locked).is_some_and(|ix| {
+            panel
+                .row_at(ix)
+                .is_some_and(|row| row.state == super::projection::DirState::Failed)
         })
     });
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
@@ -639,9 +680,9 @@ fn a_folder_that_fails_to_load_retries_on_click(cx: &mut TestAppContext) {
         .expect("failed row");
     cx.simulate_click(row.center(), Modifiers::default());
     wait_for(cx, &panel, |panel| {
-        panel.projection.index(&locked.join("inside.txt")).is_some()
+        panel.row_index(&locked.join("inside.txt")).is_some()
     });
-    assert!(panel.read_with(cx, |panel, _| panel.expanded.contains(&locked)));
+    assert!(panel.read_with(cx, |panel, _| panel.model.is_expanded(&locked)));
 }
 
 #[gpui::test]
@@ -678,8 +719,8 @@ fn revealing_the_active_file_expands_its_parents_clears_the_search_and_keeps_foc
         let panel = panel.read(cx);
         assert!(panel.query.is_empty());
         assert!(panel.filter_input.read(cx).value().is_empty());
-        assert!(panel.expanded.contains(&src));
-        assert!(!panel.expanded.contains(&file), "a file is never expanded");
+        assert!(panel.model.is_expanded(&src));
+        assert!(!panel.model.is_expanded(&file), "a file is never expanded");
         assert_eq!(panel.selected.as_deref(), Some(file.as_path()));
         assert!(panel.reveal_target.is_none(), "the reveal has landed");
         assert!(
@@ -701,11 +742,11 @@ fn revealing_the_active_file_expands_its_parents_clears_the_search_and_keeps_foc
     );
 
     let outside = PathBuf::from("elsewhere").join("main.rs");
-    let expanded = panel.read_with(cx, |panel, _| panel.expanded.clone());
+    let expanded = panel.read_with(cx, |panel, _| panel.model.expanded().clone());
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&outside, cx)));
     wait_for_reveal(cx, &panel);
     panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.expanded, expanded);
+        assert_eq!(*panel.model.expanded(), expanded);
         assert_eq!(panel.selected, Some(root.join("file-0000.rs")));
     });
 }
@@ -735,7 +776,7 @@ fn the_active_file_is_revealed_once_so_each_frame_keeps_the_search_and_the_colla
     });
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&file, cx)));
     wait_for_reveal(cx, &panel);
-    assert!(panel.read_with(cx, |panel, _| panel.expanded.contains(&src)));
+    assert!(panel.read_with(cx, |panel, _| panel.model.is_expanded(&src)));
 
     type_query(cx, &panel, "0001");
     settle_search(cx);
@@ -754,7 +795,7 @@ fn the_active_file_is_revealed_once_so_each_frame_keeps_the_search_and_the_colla
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&file, cx)));
     wait_for_reveal(cx, &panel);
     assert!(
-        !panel.read_with(cx, |panel, _| panel.expanded.contains(&src)),
+        !panel.read_with(cx, |panel, _| panel.model.is_expanded(&src)),
         "a repeated reveal keeps the folder the user collapsed"
     );
 
@@ -769,7 +810,7 @@ fn the_active_file_is_revealed_once_so_each_frame_keeps_the_search_and_the_colla
 
 #[test]
 fn search_rows_keep_folders_that_differ_only_by_case_apart() {
-    let snapshot = FilesTreeState::root_shell(PathBuf::from("workspace"));
+    let snapshot = Snapshot::root_shell(PathBuf::from("workspace"));
     let root = snapshot.root.clone();
     let hits = [
         super::search::SearchHit {
@@ -781,12 +822,7 @@ fn search_rows_keep_folders_that_differ_only_by_case_apart() {
             highlights: Vec::new(),
         },
     ];
-    let projection = FilesProjection::build(
-        &snapshot,
-        &std::collections::HashSet::new(),
-        Some(&hits),
-        &GitStatuses::default(),
-    );
+    let projection = SearchRows::build(&root, &hits, &GitStatuses::default());
     let paths: Vec<PathBuf> = projection
         .rows
         .iter()
@@ -812,7 +848,7 @@ fn an_ignored_active_file_is_never_revealed(cx: &mut TestAppContext) {
     let built = target.join("debug").join("app.d");
     std::fs::create_dir_all(built.parent().expect("parent")).expect("target tree");
     std::fs::write(&built, "").expect("file");
-    let mut snapshot = FilesTreeState::root_shell(root.clone());
+    let mut snapshot = Snapshot::root_shell(root.clone());
     let mut ignored = node(target.clone(), true);
     ignored.is_ignored = true;
     snapshot.children.insert(root.clone(), vec![ignored]);
@@ -820,7 +856,7 @@ fn an_ignored_active_file_is_never_revealed(cx: &mut TestAppContext) {
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_file(&built, cx)));
     wait_for_reveal(cx, &panel);
     panel.read_with(cx, |panel, _| {
-        assert!(!panel.expanded.contains(&target));
+        assert!(!panel.model.is_expanded(&target));
         assert_ne!(panel.selected.as_deref(), Some(built.as_path()));
     });
 }
@@ -842,12 +878,15 @@ fn projection_stamps_git_status_onto_files_and_their_parent_directories() {
     snapshot.expanded.insert(dir.clone());
     let git = GitStatuses::parse(&root, "", b" M src/main.rs\0");
 
-    let projection = FilesProjection::build(&snapshot, &snapshot.expanded, None, &git);
+    let model = snapshot.model();
+    let rows: Vec<FileRow> = model
+        .rows(0..model.row_count())
+        .into_iter()
+        .map(|row| FileRow::from_ref(row, &git))
+        .collect();
 
     let status = |path: &PathBuf| {
-        projection
-            .rows
-            .iter()
+        rows.iter()
             .find(|row| &row.node.path == path)
             .expect("row")
             .status
@@ -867,8 +906,7 @@ fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collaps
         .get_mut(&root)
         .unwrap()
         .insert(0, node(root.join("a.rs"), false));
-    let projection =
-        FilesProjection::build(&snapshot, &snapshot.expanded, None, &GitStatuses::default());
+    let projection = snapshot.model();
     assert_eq!(
         projection.reconcile_selection(Some(&selected), 1),
         Some(selected)
@@ -879,8 +917,7 @@ fn projection_keeps_selection_on_insert_and_recovers_visible_ancestor_on_collaps
         .get_mut(&root)
         .unwrap()
         .insert(0, node(dir.clone(), true));
-    let projection =
-        FilesProjection::build(&snapshot, &snapshot.expanded, None, &GitStatuses::default());
+    let projection = snapshot.model();
     assert_eq!(
         projection.reconcile_selection(Some(&dir.join("nested/main.rs")), 3),
         Some(dir)
@@ -926,7 +963,7 @@ fn the_tree_handle_steps_by_sixteen_and_jumps_to_its_bounds() {
 
 #[gpui::test]
 fn an_unreadable_root_offers_a_retry_instead_of_an_empty_tree(cx: &mut TestAppContext) {
-    let mut snapshot = FilesTreeState::root_shell(PathBuf::from("workspace"));
+    let mut snapshot = Snapshot::root_shell(PathBuf::from("workspace"));
     snapshot
         .children
         .insert(PathBuf::from("workspace"), Vec::new());
@@ -956,17 +993,17 @@ fn revealing_a_folder_expands_its_ancestors_and_selects_it(cx: &mut TestAppConte
         .children
         .insert(inner.clone(), vec![node(inner.join("deep.rs"), false)]);
     let (panel, _, cx) = harness(cx, snapshot);
-    assert!(!panel.read_with(cx, |panel, _| panel.expanded.contains(&src)));
+    assert!(!panel.read_with(cx, |panel, _| panel.model.is_expanded(&src)));
 
     cx.update(|_, cx| panel.update(cx, |panel, cx| panel.reveal_dir(&inner, cx)));
     cx.run_until_parked();
 
     panel.read_with(cx, |panel, _| {
-        assert!(panel.expanded.contains(&src));
-        assert!(panel.expanded.contains(&inner));
+        assert!(panel.model.is_expanded(&src));
+        assert!(panel.model.is_expanded(&inner));
         assert_eq!(panel.selected.as_deref(), Some(inner.as_path()));
         assert!(panel.reveal_target.is_none(), "the reveal has landed");
-        assert!(panel.projection.index(&inner).is_some());
+        assert!(panel.row_index(&inner).is_some());
     });
 
     let outside = PathBuf::from("elsewhere").join("dir");
@@ -996,4 +1033,68 @@ fn the_project_search_walk_skips_what_git_ignores() {
         hits.iter().map(|hit| hit.rel.clone()).collect::<Vec<_>>(),
         vec![rel(&["src", "deep", "needle.rs"])]
     );
+}
+
+#[gpui::test]
+fn a_burst_of_disk_changes_applies_only_the_changed_entries_and_builds_only_the_shown_rows(
+    cx: &mut TestAppContext,
+) {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().to_path_buf();
+    let big = root.join("big");
+    let other = root.join("other");
+    std::fs::create_dir_all(&big).expect("big folder");
+    std::fs::create_dir_all(&other).expect("other folder");
+    std::fs::File::create(other.join("kept.rs")).expect("kept file");
+    for ix in 0..2_000 {
+        std::fs::File::create(big.join(format!("file_{ix:04}.rs"))).expect("file");
+    }
+    let (panel, _, cx) = harness(cx, Snapshot::root_shell(root.clone()));
+    cx.update(|_, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open(root.clone(), vec![big.clone(), other.clone()], cx)
+        })
+    });
+    wait_for(cx, &panel, |panel| panel.row_count() == 2 + 2_000 + 1);
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    let built = panel.read_with(cx, |panel, _| panel.rows_built.get());
+    assert!(
+        (1..=64).contains(&built),
+        "one frame of 2,003 rows built {built} rows"
+    );
+    let (counted, other_listing) = panel.read_with(cx, |panel, _| {
+        (
+            panel.model.counted_entries,
+            panel.model.listing_ptr(&other).expect("other listing"),
+        )
+    });
+
+    for ix in (0..2_000).step_by(4) {
+        std::fs::remove_file(big.join(format!("file_{ix:04}.rs"))).expect("remove");
+    }
+    for ix in 0..500 {
+        std::fs::File::create(big.join(format!("new_{ix:04}.rs"))).expect("create");
+    }
+    wait_for(cx, &panel, |panel| {
+        panel.row_index(&big.join("new_0499.rs")).is_some()
+            && panel.row_index(&big.join("file_1996.rs")).is_none()
+            && panel.row_count() == 2 + 2_000 + 1
+    });
+    panel.read_with(cx, |panel, _| {
+        assert_eq!(
+            panel.model.counted_entries - counted,
+            500,
+            "only the created entries get a fresh visible count"
+        );
+        assert_eq!(
+            panel.model.listing_ptr(&other),
+            Some(other_listing),
+            "an untouched folder keeps the listing it was given"
+        );
+        assert_eq!(panel.row_index(&big.join("file_0001.rs")), Some(1));
+        assert_eq!(panel.row_index(&big.join("new_0000.rs")), Some(1 + 1_500));
+    });
 }
