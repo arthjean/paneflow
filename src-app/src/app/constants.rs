@@ -29,6 +29,7 @@ pub(crate) fn rail_row_radius() -> Pixels {
     )
 }
 
+#[cfg(not(target_os = "linux"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowBackdropPreference {
     Auto,
@@ -38,6 +39,7 @@ pub(crate) enum WindowBackdropPreference {
     Opaque,
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn window_backdrop_preference(config_value: Option<&str>) -> WindowBackdropPreference {
     if let Ok(value) = std::env::var("PANEFLOW_WINDOW_BACKDROP") {
         return parse_window_backdrop_preference(&value);
@@ -46,6 +48,7 @@ pub(crate) fn window_backdrop_preference(config_value: Option<&str>) -> WindowBa
     config_window_backdrop_preference(config_value)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn config_window_backdrop_preference(config_value: Option<&str>) -> WindowBackdropPreference {
     #[cfg(target_os = "windows")]
     if let Some(value) = config_value.map(str::trim)
@@ -59,6 +62,7 @@ fn config_window_backdrop_preference(config_value: Option<&str>) -> WindowBackdr
         .unwrap_or(WindowBackdropPreference::Auto)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn parse_window_backdrop_preference(value: &str) -> WindowBackdropPreference {
     match value.trim().to_ascii_lowercase() {
         value if value.is_empty() || value == "auto" => WindowBackdropPreference::Auto,
@@ -73,6 +77,7 @@ fn parse_window_backdrop_preference(value: &str) -> WindowBackdropPreference {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn window_background_appearance(
     config_value: Option<&str>,
 ) -> WindowBackgroundAppearance {
@@ -80,6 +85,7 @@ pub(crate) fn window_background_appearance(
     window_background_appearance_for_preference(preference)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn window_background_appearance_for_preference(
     preference: WindowBackdropPreference,
 ) -> WindowBackgroundAppearance {
@@ -107,12 +113,6 @@ fn window_background_appearance_for_preference(
             _ => WindowBackgroundAppearance::Transparent,
         }
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        let _ = preference;
-        WindowBackgroundAppearance::Opaque
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -124,8 +124,17 @@ pub(crate) fn window_backdrop_uses_mica(config_value: Option<&str>) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn window_backdrop_requests_blur(config_value: Option<&str>) -> bool {
-    window_backdrop_preference(config_value) == WindowBackdropPreference::Blurred
+pub(crate) fn initial_window_background(
+    _config: &paneflow_config::schema::PaneFlowConfig,
+) -> WindowBackgroundAppearance {
+    WindowBackgroundAppearance::Opaque
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn initial_window_background(
+    config: &paneflow_config::schema::PaneFlowConfig,
+) -> WindowBackgroundAppearance {
+    window_background_appearance(config.window_backdrop.as_deref())
 }
 
 #[cfg(target_os = "macos")]
@@ -277,15 +286,16 @@ mod tests {
 
     #[test]
     fn linux_window_starts_opaque_until_the_display_backend_is_known() {
-        for preference in [
-            WindowBackdropPreference::Auto,
-            WindowBackdropPreference::Mica,
-            WindowBackdropPreference::Blurred,
-            WindowBackdropPreference::Transparent,
-            WindowBackdropPreference::Opaque,
+        for json in [
+            serde_json::json!({}),
+            serde_json::json!({ "background_style": "blended" }),
+            serde_json::json!({ "background_style": "themed" }),
+            serde_json::json!({ "window_backdrop": "blurred", "linux_chrome_material": true }),
         ] {
+            let config: paneflow_config::schema::PaneFlowConfig =
+                serde_json::from_value(json).expect("the config deserializes");
             assert_eq!(
-                window_background_appearance_for_preference(preference),
+                initial_window_background(&config),
                 WindowBackgroundAppearance::Opaque
             );
         }

@@ -310,7 +310,11 @@ impl Render for PaneFlowApp {
             - main_panel_left_inset
             - panel_inset;
         #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::refresh_blur_region(window, backdrop.is_blended());
+        crate::window_chrome::linux_backdrop::sync_window_backdrop(
+            window,
+            backdrop.is_blended(),
+            cx,
+        );
 
         self.settle_dock_restore_focus(window, cx);
         self.settle_diff_dock_picker_focus(window, cx);

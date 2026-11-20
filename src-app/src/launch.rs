@@ -441,9 +441,7 @@ pub(crate) fn run() {
                     window_min_size: Some(crate::window_state::minimum_size()),
                     window_decorations: Some(decorations),
                     titlebar: Some(titlebar_options),
-                    window_background: crate::app::constants::window_background_appearance(
-                        config.window_backdrop.as_deref(),
-                    ),
+                    window_background: crate::app::constants::initial_window_background(&config),
                     app_id: Some("paneflow".into()),
                     icon: crate::app_icon::window_icon(config.resolved_app_icon()),
                     ..crate::frame_policy::paced_window_options()
@@ -471,10 +469,9 @@ pub(crate) fn run() {
                         );
                     }
                     #[cfg(target_os = "linux")]
-                    crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
+                    crate::window_chrome::linux_backdrop::sync_window_backdrop(
                         window,
-                        config.native_material_requested(),
-                        crate::app::constants::window_backdrop_requests_blur(config.window_backdrop.as_deref()),
+                        crate::window_chrome::window_backdrop(&config, window).is_blended(),
                         cx,
                     );
 

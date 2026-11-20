@@ -290,9 +290,10 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
         let subscription = cx.observe_window_bounds(window, |this, window, cx| {
             crate::window_state::record_windowed_size(window);
             #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::refresh_blur_region(
+            crate::window_chrome::linux_backdrop::sync_window_backdrop(
                 window,
-                this.cached_config.native_material_requested(),
+                crate::window_chrome::window_backdrop(&this.cached_config, window).is_blended(),
+                cx,
             );
             if this.settings_section.is_some() {
                 this.reset_settings_scroll();
@@ -328,9 +329,10 @@ pub(crate) fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<Pa
                 this.probe_workspace_git_now(idx, cx);
             }
             #[cfg(target_os = "linux")]
-            crate::window_chrome::linux_backdrop::refresh_blur_region(
+            crate::window_chrome::linux_backdrop::sync_window_backdrop(
                 window,
-                this.cached_config.native_material_requested(),
+                crate::window_chrome::window_backdrop(&this.cached_config, window).is_blended(),
+                cx,
             );
             cx.notify();
         });

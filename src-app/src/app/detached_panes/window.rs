@@ -87,9 +87,7 @@ impl PaneFlowApp {
                 }),
                 app_owns_titlebar_drag: true,
                 app_id: Some("paneflow".into()),
-                window_background: crate::app::constants::window_background_appearance(
-                    config.window_backdrop.as_deref(),
-                ),
+                window_background: crate::app::constants::initial_window_background(&config),
                 focus: restored_bounds.is_none(),
                 icon: crate::app_icon::window_icon(config.resolved_app_icon()),
                 ..crate::frame_policy::paced_window_options()
@@ -119,12 +117,9 @@ impl PaneFlowApp {
                     None
                 };
                 #[cfg(target_os = "linux")]
-                crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
+                crate::window_chrome::linux_backdrop::sync_window_backdrop(
                     window,
-                    config.native_material_requested(),
-                    crate::app::constants::window_backdrop_requests_blur(
-                        config.window_backdrop.as_deref(),
-                    ),
+                    crate::window_chrome::window_backdrop(&config, window).is_blended(),
                     cx,
                 );
                 let window_id = window.window_handle().window_id();
@@ -300,7 +295,11 @@ impl Render for DetachedPaneWindow {
         let backdrop = crate::window_chrome::style_backdrop(self.background_style, window);
         crate::window_chrome::veil::note_frame_backdrop(backdrop);
         #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::refresh_blur_region(window, backdrop.is_blended());
+        crate::window_chrome::linux_backdrop::sync_window_backdrop(
+            window,
+            backdrop.is_blended(),
+            cx,
+        );
         #[cfg(target_os = "windows")]
         if self.backdrop_light != Some(theme.background.l > 0.5) {
             crate::window_chrome::backdrop::sync_wallpaper_mica_theme(
