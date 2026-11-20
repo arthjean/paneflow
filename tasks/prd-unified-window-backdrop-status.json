@@ -1,0 +1,272 @@
+{
+  "prd": {
+    "file": "tasks/prd-unified-window-backdrop.md",
+    "title": "One window backdrop model on every platform",
+    "created_at": "2026-11-20",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "One `background_style` key",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-002",
+      "title": "One veil module",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Linux blurs whenever Blended is on",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "macOS uses the untinted system blur",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Windows code path, cleanup and documentation",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Windows validation on real hardware",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Resolve the background style from the new key and the legacy keys",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
+    },
+    {
+      "id": "US-002",
+      "title": "Write the new key and drop the legacy ones",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
+    },
+    {
+      "id": "US-003",
+      "title": "One background style control in Settings",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
+    },
+    {
+      "id": "US-004",
+      "title": "`BlurSupport` and the veil functions",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Route every backdrop-dependent fill through the veil module",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "A debug override for `BlurSupport`, and the visual check of the thick veil",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Request blur from the style, and feed the probe into `BlurSupport`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Degrade on sessions that cannot blur",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Replace the Sidebar material with GPUI's `Blurred`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Fullscreen, Reduce transparency and corners on macOS",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Blended on Windows is the Acrylic system backdrop under the veil",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Remove the legacy accessors and guard against their return",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-003",
+        "US-006",
+        "US-008",
+        "US-009",
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Tracked documentation",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Blended on Windows 11",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Upgrade paths and the fallback on Windows",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-006",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Fix what the hardware pass finds",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-014",
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
