@@ -162,12 +162,6 @@ pub fn setting_card(ui: crate::theme::UiColors) -> Div {
     })
 }
 
-pub fn card_tint(color: Hsla) -> impl IntoElement {
-    with_surface_shape(|| {
-        squircle::squircle_fill(crate::app::constants::SETTINGS_CARD_RADIUS, color)
-    })
-}
-
 pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
     div().h(px(1.)).w_full().bg(with_alpha(ui.border, 0.5))
 }
@@ -1737,18 +1731,113 @@ pub(crate) fn switch_blue() -> Hsla {
     Hsla::from(rgb(0x339cff))
 }
 
-pub(crate) fn apple_red() -> Hsla {
-    Hsla::from(rgb(0xff453a))
+pub(crate) const PAGE_TITLE_SIZE: f32 = 26.;
+pub(crate) const CARD_BUTTON_FILL_REST: f32 = 0.06;
+pub(crate) const CARD_BUTTON_FILL_HOVER: f32 = 0.1;
+
+pub(crate) fn settings_breadcrumb(
+    id: &'static str,
+    parent: &'static str,
+    back_label: &'static str,
+    name: impl Into<SharedString>,
+    ui: crate::theme::UiColors,
+    on_back: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .child(
+            div()
+                .id(id)
+                .flex_none()
+                .cursor(CursorStyle::PointingHand)
+                .text_size(px(PAGE_TITLE_SIZE))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(ui.muted)
+                .hover(|style| style.text_color(ui.text))
+                .role(gpui::accesskit::Role::Button)
+                .aria_label(back_label)
+                .on_click(on_back)
+                .child(parent),
+        )
+        .child(
+            svg()
+                .size(px(18.))
+                .flex_none()
+                .path("icons/settings/arrow-right-01.svg")
+                .text_color(ui.muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(PAGE_TITLE_SIZE))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(ui.text)
+                .child(name.into()),
+        )
 }
 
-pub(crate) fn quiet_card() -> gpui::Div {
-    let bg = card_color();
+pub(crate) fn card_button(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    let id: SharedString = id.into();
+    let label: SharedString = label.into();
+    squircle_skin(
+        div()
+            .id(id.clone())
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .px(px(10.))
+            .py(px(4.))
+            .cursor(CursorStyle::PointingHand)
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(ui.text),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
+    )
+    .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .child(label)
+}
+
+pub(crate) fn row_text(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    ui: crate::theme::UiColors,
+) -> Div {
     div()
+        .flex_1()
+        .min_w_0()
         .flex()
         .flex_col()
-        .bg(bg)
-        .rounded(px(8.))
-        .overflow_hidden()
+        .gap(px(2.))
+        .child(
+            div()
+                .truncate()
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ui.text)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .text_size(crate::ui_primitives::LABEL_SM)
+                .text_color(ui.muted)
+                .child(description.into()),
+        )
 }
 
 #[cfg(test)]

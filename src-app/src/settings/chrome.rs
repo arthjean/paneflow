@@ -438,6 +438,8 @@ impl PaneFlowApp {
             self.render_usage_heading(title_text, window, cx)
         } else if section == SettingsSection::Spaces {
             self.render_spaces_heading(title_text, cx)
+        } else if section == SettingsSection::Workspaces {
+            self.render_workspaces_heading(title_text, cx)
         } else {
             title_text.pb(px(20.)).into_any_element()
         };
@@ -633,6 +635,8 @@ impl PaneFlowApp {
         self.general_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
+        self.workspace_template_delete_armed = false;
+        self.workspace_template_notice = None;
         if self.recording_shortcut.is_some() {
             self.recording_shortcut = None;
             crate::keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);

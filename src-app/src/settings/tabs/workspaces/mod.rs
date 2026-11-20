@@ -1,24 +1,127 @@
+mod canvas;
 mod editor;
 
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, PathPromptOptions, SharedString, Styled, div, prelude::*, px, rgb, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::{
     CommandDefinition, CommandTarget, SurfaceDefinition, WorkspaceDefinition,
 };
 
+use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::templates::*;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, apple_red, card_tint, deferred_select_menu, ghost_skin,
-    hairline, inverse_fill, quiet_card, raised_icon_button, section_header_with_action,
-    select_chevron, select_menu, select_option, select_trigger, setting_card, settings_label,
-    soft_icon_button, switch_blue, text_field, with_alpha,
+    CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, inverse_fill, raised_icon_button, setting_card,
+    settings_breadcrumb, with_alpha,
 };
 use crate::settings::search::Block;
-use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
-use crate::{PaneFlowApp, WorkspaceTemplateDropdown};
+use crate::settings::tabs::spaces::{HintTone, render_hint};
+use crate::ui_primitives::{
+    AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TITLE, squircle_skin,
+};
+
+const BLOCK: &str = "Workspace templates";
+const INTRO: &str = "Each template opens a project with its agents, dev servers, and shells \
+     already laid out.";
+const INTRO_MAX_WIDTH: f32 = 520.;
+const WELCOME_TITLE: &str = "Open your whole setup in one click";
+const WELCOME_BODY: &str = "Save the panes you start on every project, with their agents and \
+     commands, and launch them together next time.";
+const WELCOME_TEXT_WIDTH: f32 = 380.;
+const DEFAULT_SERVER_COMMAND: &str = "bun dev";
+const LIST_INSET: f32 = 6.;
+const ROW_PADDING_X: f32 = 10.;
+const ROW_PADDING_Y: f32 = 9.;
+const ROW_GAP: f32 = 12.;
+const ROW_LOGO: f32 = 14.;
+const ROW_LOGO_LIMIT: usize = 3;
+const CHIP_GLYPH_WIDTH: f32 = 16.;
+const CHIP_GLYPH_HEIGHT: f32 = 12.;
+const CHIP_PADDING_X: f32 = 12.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TemplateNoticeAt {
+    Identity,
+    Pane,
+    Launch,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TemplateNotice {
+    pub(crate) at: TemplateNoticeAt,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TemplatePreset {
+    AgentAndServer,
+    TwoAgents,
+    Blank,
+}
+
+impl TemplatePreset {
+    const ALL: [TemplatePreset; 3] = [Self::AgentAndServer, Self::TwoAgents, Self::Blank];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AgentAndServer => "Agent, server, shell",
+            Self::TwoAgents => "Two agents",
+            Self::Blank => "Blank",
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::AgentAndServer => "agent-server",
+            Self::TwoAgents => "two-agents",
+            Self::Blank => "blank",
+        }
+    }
+
+    fn layout(self) -> &'static str {
+        match self {
+            Self::AgentAndServer => "main_vertical",
+            Self::TwoAgents | Self::Blank => "even_h",
+        }
+    }
+
+    fn panes(self, agents: &[TerminalAgent]) -> Vec<SurfaceDefinition> {
+        let agent_pane = |agent: Option<&TerminalAgent>, focus: bool| match agent {
+            Some(agent) => SurfaceDefinition {
+                surface_type: Some("terminal".to_string()),
+                name: Some(agent.display_name().to_string()),
+                agent: Some(agent.tag().to_string()),
+                focus: focus.then_some(true),
+                ..Default::default()
+            },
+            None => SurfaceDefinition {
+                surface_type: Some("terminal".to_string()),
+                name: Some("Shell".to_string()),
+                focus: focus.then_some(true),
+                ..Default::default()
+            },
+        };
+        match self {
+            Self::AgentAndServer => vec![
+                agent_pane(agents.first(), true),
+                SurfaceDefinition {
+                    surface_type: Some("terminal".to_string()),
+                    name: Some("Dev server".to_string()),
+                    command: Some(DEFAULT_SERVER_COMMAND.to_string()),
+                    ..Default::default()
+                },
+                agent_pane(None, false),
+            ],
+            Self::TwoAgents => vec![
+                agent_pane(agents.first(), true),
+                agent_pane(agents.get(1).or(agents.first()), false),
+            ],
+            Self::Blank => vec![agent_pane(None, true)],
+        }
+    }
+}
 
 impl PaneFlowApp {
     pub(crate) fn render_workspaces_content(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -30,269 +133,257 @@ impl PaneFlowApp {
         }
 
         let templates = self.workspace_template_indices();
+        if templates.is_empty() {
+            return Block::new(BLOCK)
+                .child(self.render_workspaces_welcome(ui, cx))
+                .finish();
+        }
+        let mut list = setting_card(ui).p(px(LIST_INSET)).gap(px(2.));
+        for idx in templates {
+            list = list.child(self.render_workspace_template_row(idx, ui, cx));
+        }
+        Block::new(BLOCK)
+            .child(
+                div()
+                    .pb(px(16.))
+                    .px(px(2.))
+                    .max_w(px(INTRO_MAX_WIDTH))
+                    .text_size(BODY)
+                    .text_color(ui.muted)
+                    .child(INTRO),
+            )
+            .child(list)
+            .finish()
+    }
+
+    pub(crate) fn render_workspaces_heading(
+        &self,
+        title: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ui = crate::theme::ui_colors();
+        let (fill, ink) = inverse_fill(ui);
+        if self.workspace_template_detail_open
+            && let Some(idx) = self.selected_workspace_template_index()
+        {
+            let (name, launchable) = self
+                .cached_config
+                .commands
+                .get(idx)
+                .and_then(|command| {
+                    let workspace = command.workspace()?;
+                    Some((
+                        template_title(command, workspace),
+                        !template_surfaces(workspace).is_empty(),
+                    ))
+                })
+                .unwrap_or_default();
+            let launch = raised_icon_button(
+                "workspace-template-launch",
+                "Launch",
+                "icons/settings/play.svg",
+                fill,
+                ink,
+                launchable,
+            )
+            .when(launchable, |button| {
+                button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.launch_workspace_template(idx, window, cx);
+                }))
+            });
+            return div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.))
+                .pb(px(20.))
+                .child(settings_breadcrumb(
+                    "workspaces-breadcrumb",
+                    "Workspaces",
+                    "Back to all templates",
+                    name,
+                    ui,
+                    cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.close_workspace_template_detail(window, cx);
+                    }),
+                ))
+                .child(launch)
+                .into_any_element();
+        }
+        if self.workspace_template_indices().is_empty() {
+            return title.pb(px(20.)).into_any_element();
+        }
         let create = raised_icon_button(
             "workspace-template-create",
-            "Create workspace",
+            "New template",
             "icons/settings/add-01.svg",
-            switch_blue(),
-            gpui::white(),
+            fill,
+            ink,
             true,
         )
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.create_workspace_template(cx);
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.create_workspace_template(TemplatePreset::Blank, cx);
+            let input = this.workspace_template_name_input.clone();
+            input.update(cx, |input, cx| input.select_all_text(cx));
+            let focus = input.read(cx).focus_handle.clone();
+            window.focus(&focus, cx);
         }));
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(12.))
+            .pb(px(6.))
+            .child(title)
+            .child(div().flex_1())
+            .child(create)
+            .into_any_element()
+    }
 
-        let mut list = div().flex().flex_col().gap(px(10.));
-        if templates.is_empty() {
-            list = list.child(empty_templates_card(ui, cx));
-        } else {
-            for idx in templates {
-                list = list.child(self.render_workspace_template_card(idx, ui, cx));
-            }
+    fn render_workspace_template_row(
+        &self,
+        idx: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(command) = self.cached_config.commands.get(idx) else {
+            return div().into_any_element();
+        };
+        let Some(workspace) = command.workspace() else {
+            return div().into_any_element();
+        };
+        let title = template_title(command, workspace);
+        let meta = template_meta(workspace.cwd.as_deref(), template_surfaces(workspace).len());
+        let mut logos = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.));
+        for agent in canvas::template_agents(workspace)
+            .into_iter()
+            .take(ROW_LOGO_LIMIT)
+        {
+            logos = logos.child(canvas::agent_logo(agent, ROW_LOGO, ui));
         }
-
-        div()
-            .flex()
-            .flex_col()
-            .child(
-                Block::new("Workspace templates")
-                    .gap(20.)
-                    .child(section_header_with_action(
-                        ui,
-                        "Workspace templates",
-                        create,
-                    ))
-                    .child(list)
-                    .finish(),
-            )
-            .child(div().h(px(160.)).flex_none())
-            .into_any_element()
-    }
-
-    fn render_workspace_template_detail(
-        &self,
-        idx: usize,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(command) = self.cached_config.commands.get(idx) else {
-            return div().into_any_element();
-        };
-        let Some(workspace) = command.workspace() else {
-            return div().into_any_element();
-        };
-        let title = workspace
-            .name
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or(command.name.as_str());
-        let cwd = workspace.cwd.as_deref().unwrap_or("No project path");
-        let pane_count = template_surfaces(workspace).len();
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(
-                div().flex().flex_row().items_center().child(
-                    soft_icon_button(
-                        "workspace-template-back",
-                        "Back",
-                        "icons/settings/arrow-left-02.svg",
-                        ui,
-                    )
-                    .on_click(cx.listener(
-                        |this, _: &ClickEvent, _window, cx| {
-                            this.close_workspace_template_detail(cx);
-                        },
-                    )),
+        squircle_skin(
+            div()
+                .id(("workspace-template-row", idx))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(ROW_GAP))
+                .px(px(ROW_PADDING_X))
+                .py(px(ROW_PADDING_Y))
+                .cursor(CursorStyle::PointingHand),
+            format!("workspace-template-row-{idx}"),
+            ROW_RADIUS,
+            None,
+            Some(with_alpha(ui.text, 0.05)),
+        )
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(format!("Open template {title}"))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            this.open_workspace_template(idx, cx);
+        }))
+        .child(canvas::layout_mark(workspace, ui))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.))
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(BODY_EMPHASIS)
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(ui.text)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(LABEL_SM)
+                        .text_color(ui.muted)
+                        .child(meta),
                 ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(layout_preview(
-                        workspace_layout_preset(workspace),
-                        pane_count.max(1),
-                        ui,
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(ui.text)
-                                    .truncate()
-                                    .child(title.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(ui.muted)
-                                    .truncate()
-                                    .child(cwd.to_string()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(px(8.))
-                            .child(
-                                raised_icon_button(
-                                    ("workspace-template-run", idx),
-                                    "Run",
-                                    "icons/settings/play.svg",
-                                    switch_blue(),
-                                    gpui::white(),
-                                    pane_count > 0,
-                                )
-                                .when(pane_count > 0, |b| {
-                                    b.on_click(cx.listener(
-                                        move |this, _: &ClickEvent, _window, cx| {
-                                            this.run_workspace_template_in_open_project(idx, cx);
-                                        },
-                                    ))
-                                }),
-                            )
-                            .child(
-                                soft_icon_button(
-                                    ("workspace-template-duplicate", idx),
-                                    "Duplicate",
-                                    "icons/settings/copy-01.svg",
-                                    ui,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _: &ClickEvent, _window, cx| {
-                                        this.duplicate_workspace_template(idx, cx);
-                                    },
-                                )),
-                            )
-                            .child(
-                                raised_icon_button(
-                                    ("workspace-template-delete", idx),
-                                    "Delete",
-                                    "icons/settings/delete-02.svg",
-                                    apple_red(),
-                                    gpui::white(),
-                                    true,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _: &ClickEvent, _window, cx| {
-                                        this.delete_workspace_template(idx, cx);
-                                    },
-                                )),
-                            ),
-                    ),
-            )
-            .child(self.render_workspace_template_editor(ui, cx))
-            .child(div().h(px(160.)).flex_none())
-            .into_any_element()
+        )
+        .child(logos)
+        .child(
+            svg()
+                .size(px(12.))
+                .flex_none()
+                .path("icons/settings/arrow-right-01.svg")
+                .text_color(ui.muted),
+        )
+        .into_any_element()
     }
 
-    fn render_workspace_template_card(
+    fn render_workspaces_welcome(
         &self,
-        idx: usize,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(command) = self.cached_config.commands.get(idx) else {
-            return div().into_any_element();
-        };
-        let Some(workspace) = command.workspace() else {
-            return div().into_any_element();
-        };
-        let selected = self.workspace_template_detail_open
-            && self.selected_workspace_template_index() == Some(idx);
-        let title = workspace
-            .name
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or(command.name.as_str());
-        let cwd = workspace.cwd.as_deref().unwrap_or("No project path");
-        let pane_count = template_surfaces(workspace).len();
-        let layout = workspace_layout_preset(workspace);
-        let summary = template_summary(workspace);
-
+        let agents = TerminalAgent::visible(&self.cached_config);
+        let mut presets = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_center()
+            .gap(px(8.));
+        for preset in TemplatePreset::ALL {
+            let mark = if preset == TemplatePreset::Blank {
+                canvas::glyph("icons/settings/add-01.svg", 14., ui.text)
+            } else {
+                canvas::preset_glyph(
+                    preset.layout(),
+                    preset.panes(&agents).len(),
+                    CHIP_GLYPH_WIDTH,
+                    CHIP_GLYPH_HEIGHT,
+                    with_alpha(ui.text, 0.7),
+                )
+            };
+            presets = presets.child(template_chip(preset, mark, ui).on_click(cx.listener(
+                move |this, _: &ClickEvent, _window, cx| {
+                    this.create_workspace_template(preset, cx);
+                },
+            )));
+        }
         setting_card(ui)
-            .when(selected, |d| {
-                d.child(card_tint(with_alpha(switch_blue(), 0.08)))
-            })
-            .id(("workspace-template-card", idx))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.select_workspace_template(idx, cx);
-            }))
             .child(
                 div()
-                    .px(px(12.))
-                    .py(px(10.))
                     .flex()
-                    .flex_row()
+                    .flex_col()
                     .items_center()
-                    .gap(px(12.))
-                    .child(layout_preview(layout, pane_count, ui))
+                    .px(px(32.))
+                    .pt(px(32.))
+                    .pb(px(32.))
+                    .child(canvas::welcome_preview(agents.first().copied(), ui))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(ui.text)
-                                    .truncate()
-                                    .child(title.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(ui.muted)
-                                    .truncate()
-                                    .child(cwd.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(ui.muted)
-                                    .truncate()
-                                    .child(summary),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .px(px(8.))
-                            .py(px(3.))
-                            .rounded(px(999.))
-                            .bg(with_alpha(ui.text, 0.08))
-                            .text_size(px(11.))
+                            .pt(px(20.))
+                            .text_size(TITLE)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(ui.text)
-                            .child(format!("{pane_count} panes")),
+                            .child(WELCOME_TITLE),
                     )
                     .child(
-                        svg()
-                            .size(px(14.))
-                            .flex_none()
-                            .path("icons/settings/arrow-right-01.svg")
-                            .text_color(ui.muted),
-                    ),
+                        div()
+                            .pt(px(6.))
+                            .max_w(px(WELCOME_TEXT_WIDTH))
+                            .text_center()
+                            .text_size(BODY)
+                            .text_color(ui.muted)
+                            .child(WELCOME_BODY),
+                    )
+                    .child(div().pt(px(22.)).child(presets)),
             )
             .into_any_element()
     }
 
-    fn create_workspace_template(&mut self, cx: &mut Context<Self>) {
+    fn create_workspace_template(&mut self, preset: TemplatePreset, cx: &mut Context<Self>) {
         let cwd = self
             .active_workspace()
             .map(|ws| ws.cwd.clone())
@@ -302,10 +393,14 @@ impl PaneFlowApp {
                     .map(|p| p.display().to_string())
             })
             .unwrap_or_default();
-        let name = self
-            .active_workspace()
-            .map(|ws| format!("{} setup", ws.title))
-            .unwrap_or_else(|| "New workspace".to_string());
+        let base = std::path::Path::new(&cwd)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "New template".to_string());
+        let name = unique_template_name(&self.cached_config.commands, &base);
+        let agents = TerminalAgent::visible(&self.cached_config);
+        let layout_preset = preset.layout().to_string();
         let command = CommandDefinition {
             name: name.clone(),
             description: Some(format!("Workspace template for {cwd}")),
@@ -314,105 +409,213 @@ impl PaneFlowApp {
                 workspace: WorkspaceDefinition {
                     name: Some(name),
                     cwd: Some(cwd),
-                    layout_preset: Some("even_h".to_string()),
+                    layout_preset: Some(layout_preset.clone()),
                     color: None,
-                    layout: None,
+                    layout: build_layout_from_surfaces(&layout_preset, preset.panes(&agents)),
                 },
             },
         };
         let mut commands = self.cached_config.commands.clone();
         commands.push(command);
-        self.workspace_template_selected = Some(commands.len() - 1);
-        self.workspace_template_detail_open = true;
-        self.workspace_template_selected_pane = 0;
-        self.workspace_template_status =
-            Some("Draft created. Add panes to enable Run.".to_string());
+        let idx = commands.len() - 1;
         self.persist_workspace_commands(commands, cx);
-        self.sync_workspace_template_inputs(cx);
+        self.open_workspace_template(idx, cx);
     }
 
-    fn select_workspace_template(&mut self, idx: usize, cx: &mut Context<Self>) {
+    pub(crate) fn open_workspace_template(&mut self, idx: usize, cx: &mut Context<Self>) {
         self.workspace_template_selected = Some(idx);
         self.workspace_template_detail_open = true;
         self.workspace_template_selected_pane = 0;
-        self.workspace_template_status = None;
+        self.workspace_template_notice = None;
         self.workspace_template_dropdown = None;
+        self.workspace_template_delete_armed = false;
+        self.reset_settings_scroll();
         self.sync_workspace_template_inputs(cx);
-    }
-
-    fn close_workspace_template_detail(&mut self, cx: &mut Context<Self>) {
-        self.workspace_template_detail_open = false;
-        self.workspace_template_dropdown = None;
-        self.workspace_template_status = None;
         cx.notify();
     }
 
+    pub(crate) fn close_workspace_template_detail(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_workspace_template_if_editing(window, cx);
+        self.workspace_template_detail_open = false;
+        self.workspace_template_dropdown = None;
+        self.workspace_template_notice = None;
+        self.workspace_template_delete_armed = false;
+        self.settings_focus.focus(window, cx);
+        self.reset_settings_scroll();
+        cx.notify();
+    }
+
+    pub(crate) fn step_back_from_workspace_template(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_template_delete_armed {
+            self.workspace_template_delete_armed = false;
+            cx.notify();
+            return;
+        }
+        self.close_workspace_template_detail(window, cx);
+    }
+
     fn duplicate_workspace_template(&mut self, idx: usize, cx: &mut Context<Self>) {
-        let Some(template) = self.cached_config.commands.get(idx).cloned() else {
+        let Some(mut copy) = self.cached_config.commands.get(idx).cloned() else {
             return;
         };
-        let mut copy = template;
-        copy.name = format!("{} copy", copy.name);
-        let copy_name = copy.name.clone();
+        let name =
+            unique_template_name(&self.cached_config.commands, &format!("{} copy", copy.name));
+        copy.name = name.clone();
         if let Some(workspace) = copy.workspace_mut() {
-            workspace.name = Some(copy_name);
+            workspace.name = Some(name);
         }
         let mut commands = self.cached_config.commands.clone();
         commands.push(copy);
-        self.workspace_template_selected = Some(commands.len() - 1);
-        self.workspace_template_detail_open = true;
-        self.workspace_template_selected_pane = 0;
-        self.workspace_template_status = Some("Workspace duplicated.".to_string());
+        let idx = commands.len() - 1;
         self.persist_workspace_commands(commands, cx);
-        self.sync_workspace_template_inputs(cx);
+        self.open_workspace_template(idx, cx);
     }
 
-    fn delete_workspace_template(&mut self, idx: usize, cx: &mut Context<Self>) {
+    fn delete_workspace_template(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if idx >= self.cached_config.commands.len() {
             return;
         }
         let mut commands = self.cached_config.commands.clone();
         commands.remove(idx);
-        self.workspace_template_selected = commands
-            .iter()
-            .enumerate()
-            .find_map(|(i, command)| command.workspace().is_some().then_some(i));
-        self.workspace_template_detail_open = false;
+        self.workspace_template_selected = None;
         self.workspace_template_selected_pane = 0;
-        self.workspace_template_status = Some("Workspace deleted.".to_string());
         self.persist_workspace_commands(commands, cx);
+        self.workspace_template_delete_armed = false;
+        self.workspace_template_detail_open = false;
+        self.workspace_template_notice = None;
+        self.settings_focus.focus(window, cx);
+        self.reset_settings_scroll();
         self.sync_workspace_template_inputs(cx);
+        cx.notify();
     }
 
-    fn run_workspace_template_in_open_project(&mut self, idx: usize, cx: &mut Context<Self>) {
-        self.workspace_template_selected = Some(idx);
-        let mut commands = self.cached_config.commands.clone();
-        let result = self
-            .apply_workspace_inputs(&mut commands, cx)
-            .and_then(|idx| self.apply_pane_inputs(&mut commands, idx, cx).map(|_| idx))
-            .and_then(|idx| {
-                let params = self.workspace_up_params(&commands, idx)?;
-                let project = commands
-                    .get(idx)
-                    .and_then(CommandDefinition::workspace)
-                    .and_then(|workspace| workspace.cwd.as_deref())
-                    .ok_or_else(|| "project path is required".to_string())?;
-                let target_idx = self
-                    .open_workspace_index_for_project(project)
-                    .ok_or_else(|| "open this project first".to_string())?;
-                self.launch_workspace_params_in_open_workspace(&params, target_idx, cx)
+    fn launch_workspace_template(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_workspace_template_fields(cx);
+        let commands = self.cached_config.commands.clone();
+        let params = match self.workspace_up_params(&commands, idx) {
+            Ok(params) => params,
+            Err(message) => {
+                self.set_template_notice(TemplateNoticeAt::Launch, sentence(&message), cx);
+                return;
+            }
+        };
+        let Some(project) = commands
+            .get(idx)
+            .and_then(CommandDefinition::workspace)
+            .and_then(|workspace| workspace.cwd.as_deref())
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
+            .map(str::to_string)
+        else {
+            self.set_template_notice(
+                TemplateNoticeAt::Launch,
+                "Choose a project folder first.".to_string(),
+                cx,
+            );
+            return;
+        };
+        if let Some(target) = self.open_workspace_index_for_project(&project) {
+            self.finish_template_launch(&params, target, window, cx);
+            return;
+        }
+        let path = std::path::PathBuf::from(&project);
+        cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
+            let state = crate::fs_probe::probe_dirs(
+                vec![path.clone()],
+                crate::app::recents::RECENT_PROBE_TIMEOUT,
+                std::path::Path::is_dir,
+            )
+            .await
+            .pop()
+            .map(|(_, state)| state);
+            let _ = this.update_in(cx, |app, window, cx| match state {
+                Some(crate::fs_probe::DirProbe::Dir) => {
+                    app.open_workspace_folders(std::slice::from_ref(&path), cx);
+                    match app.open_workspace_index_for_project(&project) {
+                        Some(target) => app.finish_template_launch(&params, target, window, cx),
+                        None => app.set_template_notice(
+                            TemplateNoticeAt::Launch,
+                            format!("Paneflow could not open {project}."),
+                            cx,
+                        ),
+                    }
+                }
+                Some(crate::fs_probe::DirProbe::Missing) => app.set_template_notice(
+                    TemplateNoticeAt::Launch,
+                    "The project folder no longer exists. Choose another one.".to_string(),
+                    cx,
+                ),
+                _ => app.set_template_notice(
+                    TemplateNoticeAt::Launch,
+                    "The project folder did not respond. Try again.".to_string(),
+                    cx,
+                ),
             });
+        })
+        .detach();
+    }
 
-        match result {
-            Ok(_) => {
-                self.persist_workspace_commands(commands, cx);
+    fn finish_template_launch(
+        &mut self,
+        params: &serde_json::Value,
+        target: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.launch_workspace_params_in_open_workspace(params, target, cx) {
+            Ok(()) => {
                 self.close_settings(cx);
+                self.select_workspace(target, window, cx);
             }
             Err(message) => {
-                self.workspace_template_status = Some(format!("Error: {message}"));
-                cx.notify();
+                self.set_template_notice(TemplateNoticeAt::Launch, sentence(&message), cx);
             }
         }
+    }
+
+    fn set_template_notice(
+        &mut self,
+        at: TemplateNoticeAt,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace_template_notice = Some(TemplateNotice { at, message });
+        cx.notify();
+    }
+
+    fn clear_template_notice(&mut self, at: TemplateNoticeAt) {
+        if self
+            .workspace_template_notice
+            .as_ref()
+            .is_some_and(|notice| notice.at == at)
+        {
+            self.workspace_template_notice = None;
+        }
+    }
+
+    fn template_notice(&self, at: TemplateNoticeAt) -> Option<String> {
+        self.workspace_template_notice
+            .as_ref()
+            .filter(|notice| notice.at == at)
+            .map(|notice| notice.message.clone())
     }
 
     fn persist_workspace_commands(
@@ -422,29 +625,16 @@ impl PaneFlowApp {
     ) {
         self.cached_config =
             crate::config_writer::with_commands(&self.cached_config, commands.clone());
-        let saved_message = self
-            .workspace_template_status
-            .as_deref()
-            .filter(|message| !message.starts_with("Error:"))
-            .map(|message| format!("Saved: {}", message.trim_end_matches('.')))
-            .unwrap_or_else(|| "Saved workspace templates".to_string());
-        self.workspace_template_status = Some("Saving workspace templates...".to_string());
         cx.notify();
         cx.spawn(async move |this, cx| {
             let ok =
                 smol::unblock(move || crate::config_writer::save_commands_checked(commands)).await;
+            if ok {
+                return;
+            }
             let _ = this.update(cx, |this, cx| {
-                if ok {
-                    this.workspace_template_status = Some(saved_message);
-                } else {
-                    log::warn!("settings: failed to persist workspace templates");
-                    this.workspace_template_status = Some(
-                        "Error: workspace templates changed in memory but could not be saved"
-                            .to_string(),
-                    );
-                    this.show_toast("Workspace templates could not be saved", cx);
-                }
-                cx.notify();
+                log::warn!("settings: failed to persist workspace templates");
+                this.show_toast("Workspace templates could not be saved", cx);
             });
         })
         .detach();
@@ -477,81 +667,140 @@ impl PaneFlowApp {
     }
 }
 
-fn empty_templates_card(ui: crate::theme::UiColors, _cx: &mut Context<PaneFlowApp>) -> AnyElement {
-    setting_card(ui)
-        .child(
-            div()
-                .px(px(12.))
-                .py(px(14.))
-                .text_size(px(12.))
-                .text_color(ui.muted)
-                .child("No workspace templates yet."),
-        )
-        .into_any_element()
+fn template_chip(
+    preset: TemplatePreset,
+    mark: AnyElement,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
+    let id = SharedString::from(format!("workspace-template-preset-{}", preset.slug()));
+    squircle_skin(
+        div()
+            .id(id.clone())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(CHIP_PADDING_X - 2.))
+            .pr(px(CHIP_PADDING_X))
+            .py(px(6.))
+            .cursor(CursorStyle::PointingHand),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
+    )
+    .accessible_control(
+        gpui::accesskit::Role::Button,
+        format!("Create a template: {}", preset.label()),
+    )
+    .child(mark)
+    .child(
+        div()
+            .text_size(BODY)
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(ui.text)
+            .child(preset.label()),
+    )
 }
 
-fn layout_preview(preset: &str, count: usize, ui: crate::theme::UiColors) -> AnyElement {
-    let n = count.clamp(1, 4);
-    let cell = |active: bool| {
-        div().flex_1().rounded(px(3.)).bg(if active {
-            with_alpha(switch_blue(), 0.72)
-        } else {
-            with_alpha(ui.text, 0.12)
-        })
-    };
-    let mut preview = div()
-        .w(px(54.))
-        .h(px(38.))
-        .p(px(4.))
-        .rounded(px(7.))
-        .bg(ui.subtle)
-        .gap(px(3.));
+fn template_title(command: &CommandDefinition, workspace: &WorkspaceDefinition) -> String {
+    workspace
+        .name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(command.name.as_str())
+        .to_string()
+}
 
-    preview = match preset {
-        "even_v" => {
-            let mut col = preview.flex().flex_col();
-            for i in 0..n {
-                col = col.child(cell(i == 0));
-            }
-            col
-        }
-        "main_vertical" => preview.flex().flex_row().child(cell(true)).child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(3.))
-                .child(cell(false))
-                .child(cell(false)),
+fn pane_count_label(panes: usize) -> String {
+    match panes {
+        0 => "No panes yet".to_string(),
+        1 => "1 pane".to_string(),
+        n => format!("{n} panes"),
+    }
+}
+
+fn template_meta(cwd: Option<&str>, panes: usize) -> String {
+    let panes = pane_count_label(panes);
+    match cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
+        Some(cwd) => format!(
+            "{} · {panes}",
+            crate::settings::tabs::worktrees::display_path(std::path::Path::new(cwd))
         ),
-        "tiled" if n > 2 => preview
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .gap(px(3.))
-                    .child(cell(true))
-                    .child(cell(false)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .gap(px(3.))
-                    .child(cell(false))
-                    .child(cell(false)),
-            ),
-        _ => {
-            let mut row = preview.flex().flex_row();
-            for i in 0..n {
-                row = row.child(cell(i == 0));
-            }
-            row
+        None => format!("No project folder · {panes}"),
+    }
+}
+
+fn unique_template_name(commands: &[CommandDefinition], base: &str) -> String {
+    let taken = |name: &str| commands.iter().any(|command| command.name == name);
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| base.to_string())
+}
+
+fn sentence(message: &str) -> String {
+    let message = message.trim().trim_end_matches('.');
+    let mut chars = message.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn template(name: &str) -> CommandDefinition {
+        CommandDefinition {
+            name: name.to_string(),
+            description: None,
+            keywords: Vec::new(),
+            target: CommandTarget::Workspace {
+                workspace: WorkspaceDefinition {
+                    name: Some(name.to_string()),
+                    cwd: None,
+                    layout_preset: None,
+                    color: None,
+                    layout: None,
+                },
+            },
         }
-    };
-    preview.into_any_element()
+    }
+
+    #[test]
+    fn a_new_template_name_never_collides_with_an_existing_one() {
+        let commands = vec![template("paneflow"), template("paneflow 2")];
+        assert_eq!(unique_template_name(&commands, "paneflow"), "paneflow 3");
+        assert_eq!(unique_template_name(&commands, "site"), "site");
+    }
+
+    #[test]
+    fn a_template_summary_counts_its_panes_in_plain_words() {
+        assert_eq!(template_meta(None, 0), "No project folder · No panes yet");
+        assert_eq!(template_meta(Some("/srv/app"), 1), "/srv/app · 1 pane");
+        assert_eq!(template_meta(Some("/srv/app"), 3), "/srv/app · 3 panes");
+    }
+
+    #[test]
+    fn launch_errors_read_as_sentences() {
+        assert_eq!(
+            sentence("add at least one pane before running"),
+            "Add at least one pane before running."
+        );
+        assert_eq!(sentence(""), "");
+    }
+
+    #[test]
+    fn every_preset_starts_with_its_first_pane_focused() {
+        for preset in TemplatePreset::ALL {
+            let panes = preset.panes(&[]);
+            assert!(!panes.is_empty(), "{}", preset.label());
+            assert_eq!(panes[0].focus, Some(true), "{}", preset.label());
+        }
+    }
 }

@@ -409,7 +409,7 @@ fn branch_slug_id(branch: &str, idx: usize) -> String {
     format!("{}-{idx}", worktree::branch_slug(branch))
 }
 
-fn display_path(path: &std::path::Path) -> String {
+pub(crate) fn display_path(path: &std::path::Path) -> String {
     if let Some(home) = dirs::home_dir()
         && let Ok(rel) = path.strip_prefix(&home)
     {

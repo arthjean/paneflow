@@ -1584,6 +1584,52 @@ because `subtle` vanishes on the dark card. Errors read in `vc_deleted` and
 warnings in `text` after an amber glyph, because the fixed red and
 `vc_modified` fall under 4.5:1 as text on the light card.
 
+The Workspaces page follows the same list and drill-in grammar for workspace
+templates (`src-app/src/settings/tabs/workspaces/`). With no template, a
+welcome card shows the artifact itself: a 184 by 112 plate (`text` at 0.04,
+radius 13, 5 px inset) holding a main tile with the first visible agent's logo
+at 24 px beside a command tile and a shell tile (`text` at 0.07, radius 8,
+16 px glyphs), then `Open your whole setup in one click` at 14 Semibold, one
+12 px muted sentence capped at 380 px, and three preset chips in the Spaces
+chip skin: `Agent, server, shell` (Main left: the agent, `bun dev`, a shell),
+`Two agents` (side by side, the first two visible agents), and `Blank` (one
+shell, add glyph). Each chip's mark is a 16 by 12 miniature of its layout.
+Once templates exist, the heading carries `New template` (inverse fill), which
+creates a blank template, opens it, and selects its name, then one 12 px muted
+intro line and one card of inset rows (squircle 14 in 6 px of padding): a 40 by
+28 layout miniature (`text` at 0.06, radius 7, cells at 0.24), the name at 13
+Medium over `{folder with ~} · {n} panes` at 11 muted, the 14 px logos of its
+agents (three at most), and a chevron.
+
+A template page has the 26 px breadcrumb of the Spaces page with `Launch`
+(inverse fill, play glyph, disabled without panes) at its trailing edge.
+`Launch` opens the project folder as a workspace when it is not open yet (the
+folder is probed off the render thread), runs the template there, and closes
+Settings on it. The page stacks, 24 px apart: an identity card (16 px padding)
+with the 32 px name field over a ghost folder button showing the path with
+`~`; the `Layout` eyebrow, whose trailing edge holds four full-radius 28 px
+pills, each an 18 by 12 miniature of a preset with its name as the tooltip,
+and a soft `Add pane`; a card whose 6 px inset holds the layout canvas, 196 px
+tall (264 from five panes, and never less than 52 px per stacked row), drawn
+from the template's own layout tree. Each pane is a tile (squircle 14,
+concentric with the card, `text` at 0.045, 0.075 on hover, gaps of 6). A tile
+84 px tall or more stands upright: its agent logo or command or shell glyph at
+20 px over its name at 12 Medium and what runs in it at 11 muted, centered. A
+shorter tile, such as a row of a stacked layout, lies flat: an 18 px glyph,
+then the name over what runs in it, left-aligned, 14 px from the edge. The
+second line is dropped when it repeats the name. Clicking a tile selects it:
+`text` at 0.08 inside a 1.5 px ring of `text` at 0.4. Under the
+`Pane · {name}` eyebrow, with a `Remove pane` ghost in `vc_deleted`, one card edits the selected pane: `Runs` as an `Agent` |
+`Command` | `Shell` pill group, then the agent select (logo, name) and
+`Prompt`, or `Command`, then `Name` and `Folder`. The last card holds
+`Duplicate template` and `Delete template`, whose confirmation reads
+`Delete {name}?` beside `Cancel` and the red `Delete template`. Nothing on the
+page has a Save button: a text field commits on Enter or when the pointer goes
+down anywhere else while it has focus, and every pill, tile, and select writes
+at once. An invalid value keeps the previous one on disk and explains itself
+in `vc_deleted` under its card. Escape closes the agent select, then the
+delete question, then returns to the list.
+
 A space plate (`space_avatar`) follows the abstract plates of paneflow.dev:
 a duotone of one dark mineral ground and one luminous ink, mixed in OKLab,
 lit by a long-exposure streak. A main band 0.17 wide runs along the plate's

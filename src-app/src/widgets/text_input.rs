@@ -212,6 +212,11 @@ impl TextInput {
         self.set_value(SharedString::default(), cx);
     }
 
+    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+        self.select_to(self.content.len(), cx);
+    }
+
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);

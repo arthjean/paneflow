@@ -96,7 +96,7 @@ pub(crate) enum GeneralDropdown {
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum WorkspaceTemplateDropdown {
-    Layout,
+    Agent,
 }
 
 #[derive(Clone, Copy)]

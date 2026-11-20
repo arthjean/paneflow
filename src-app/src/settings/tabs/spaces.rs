@@ -14,10 +14,11 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
-    CARD_PADDING_X, CARD_PADDING_Y, SETTINGS_ROW_PADDING_Y, destructive_color, ghost_icon_button,
-    ghost_skin, hairline, hairline_inset, input_frame, inverse_fill, primary_button, raised_button,
-    raised_icon_button, render_logo, section_header, section_header_with_action,
-    select_menu_surface, setting_card, soft_button, with_alpha,
+    CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, CARD_PADDING_X, CARD_PADDING_Y,
+    SETTINGS_ROW_PADDING_Y, card_button, destructive_color, ghost_icon_button, ghost_skin,
+    hairline, hairline_inset, input_frame, inverse_fill, primary_button, raised_button,
+    raised_icon_button, render_logo, row_text, section_header, section_header_with_action,
+    select_menu_surface, setting_card, settings_breadcrumb, soft_button, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
@@ -28,7 +29,6 @@ use crate::ui_primitives::{
     lerp_color, squircle_skin, text_tooltip,
 };
 
-const PAGE_TITLE_SIZE: f32 = 26.;
 const INTRO_MAX_WIDTH: f32 = 520.;
 const SECTION_GAP: f32 = 24.;
 const SECTION_ACTION_HEIGHT: f32 = 26.;
@@ -59,8 +59,6 @@ const WELCOME_MARK_OVERLAP: f32 = 12.;
 const WELCOME_TEXT_WIDTH: f32 = 380.;
 const PRESET_MARK: f32 = 14.;
 const PRESET_PADDING_X: f32 = 12.;
-const FILL_REST: f32 = 0.06;
-const FILL_HOVER: f32 = 0.1;
 const SECRET_MASK: &str = "••••••••";
 const SPACES_INTRO: &str =
     "Group workspaces by context, each with its own terminal environment if you need one.";
@@ -1699,47 +1697,18 @@ fn render_space_breadcrumb(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .min_w_0()
-        .pb(px(20.))
-        .child(
-            div()
-                .id("spaces-breadcrumb")
-                .flex_none()
-                .cursor(CursorStyle::PointingHand)
-                .text_size(px(PAGE_TITLE_SIZE))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(ui.muted)
-                .hover(|style| style.text_color(ui.text))
-                .role(gpui::accesskit::Role::Button)
-                .aria_label("Back to all spaces")
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.close_space_detail(window, cx);
-                }))
-                .child("Spaces"),
-        )
-        .child(
-            svg()
-                .size(px(18.))
-                .flex_none()
-                .path("icons/settings/arrow-right-01.svg")
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(px(PAGE_TITLE_SIZE))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(ui.text)
-                .child(name),
-        )
-        .into_any_element()
+    settings_breadcrumb(
+        "spaces-breadcrumb",
+        "Spaces",
+        "Back to all spaces",
+        name,
+        ui,
+        cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.close_space_detail(window, cx);
+        }),
+    )
+    .pb(px(20.))
+    .into_any_element()
 }
 
 fn render_spaces_welcome(ui: crate::theme::UiColors, cx: &mut Context<PaneFlowApp>) -> AnyElement {
@@ -1858,8 +1827,8 @@ fn preset_chip(
             .cursor(CursorStyle::PointingHand),
         format!("{id}-squircle"),
         ROW_RADIUS,
-        Some(with_alpha(ui.text, FILL_REST)),
-        Some(with_alpha(ui.text, FILL_HOVER)),
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
+        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
     )
     .accessible_control(
         gpui::accesskit::Role::Button,
@@ -1877,31 +1846,6 @@ fn preset_chip(
             .text_color(ui.text)
             .child(label),
     )
-}
-
-fn card_button(
-    id: impl Into<SharedString>,
-    label: &'static str,
-    ui: crate::theme::UiColors,
-) -> gpui::Stateful<gpui::Div> {
-    let id: SharedString = id.into();
-    squircle_skin(
-        div()
-            .id(id.clone())
-            .flex_none()
-            .px(px(10.))
-            .py(px(4.))
-            .cursor(CursorStyle::PointingHand)
-            .text_size(BODY)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(ui.text),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        Some(with_alpha(ui.text, FILL_REST)),
-        Some(with_alpha(ui.text, FILL_HOVER)),
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label)
-    .child(label)
 }
 
 fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -> AnyElement {
@@ -1945,33 +1889,6 @@ fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -
         );
     }
     list.into_any_element()
-}
-
-fn row_text(
-    title: impl Into<SharedString>,
-    description: impl Into<SharedString>,
-    ui: crate::theme::UiColors,
-) -> gpui::Div {
-    div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(
-            div()
-                .truncate()
-                .text_size(BODY)
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(ui.text)
-                .child(title.into()),
-        )
-        .child(
-            div()
-                .text_size(LABEL_SM)
-                .text_color(ui.muted)
-                .child(description.into()),
-        )
 }
 
 fn space_summary(
@@ -2018,7 +1935,7 @@ fn discard_avatar_in_background(file_name: String, cx: &mut Context<PaneFlowApp>
         .detach();
 }
 
-fn render_hint(
+pub(crate) fn render_hint(
     text: impl Into<SharedString>,
     tone: HintTone,
     ui: crate::theme::UiColors,

@@ -173,30 +173,38 @@ impl PaneFlowApp {
             cx.notify();
         })
         .detach();
-        let workspace_template_name_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Workspace name", cx));
+        let workspace_template_name_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Template name", cx)
+                .with_accessible_name("Template name")
+        });
         cx.observe(&workspace_template_name_input, |_, _, cx| cx.notify())
             .detach();
         let workspace_template_project_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Project path", cx));
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Project folder", cx));
         cx.observe(&workspace_template_project_input, |_, _, cx| cx.notify())
             .detach();
-        let workspace_pane_name_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Pane name", cx));
+        let workspace_pane_name_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Optional", cx)
+                .with_accessible_name("Pane name")
+        });
         cx.observe(&workspace_pane_name_input, |_, _, cx| cx.notify())
             .detach();
-        let workspace_pane_cwd_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Pane cwd", cx));
+        let workspace_pane_cwd_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Project folder", cx)
+                .with_accessible_name("Pane folder")
+        });
         cx.observe(&workspace_pane_cwd_input, |_, _, cx| cx.notify())
             .detach();
         let workspace_pane_command_input = cx.new(|cx| {
-            crate::widgets::text_input::TextInput::new("", "clear && bun dev", cx)
+            crate::widgets::text_input::TextInput::new("", "bun dev", cx)
                 .with_accessible_name("Pane command")
         });
         cx.observe(&workspace_pane_command_input, |_, _, cx| cx.notify())
             .detach();
-        let workspace_pane_prompt_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Prompt to prefill", cx));
+        let workspace_pane_prompt_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Optional", cx)
+                .with_accessible_name("Prompt to prefill")
+        });
         cx.observe(&workspace_pane_prompt_input, |_, _, cx| cx.notify())
             .detach();
 
@@ -313,7 +321,8 @@ impl PaneFlowApp {
             workspace_template_selected: None,
             workspace_template_detail_open: false,
             workspace_template_selected_pane: 0,
-            workspace_template_status: None,
+            workspace_template_notice: None,
+            workspace_template_delete_armed: false,
             workspace_template_name_input,
             workspace_template_project_input,
             workspace_pane_name_input,

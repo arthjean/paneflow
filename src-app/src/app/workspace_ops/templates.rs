@@ -1,7 +1,5 @@
 use paneflow_config::schema::{LayoutNode, SurfaceDefinition, WorkspaceDefinition};
 
-use crate::agent_launcher::TerminalAgent;
-
 pub(crate) const LAYOUT_PRESETS: &[(&str, &str)] = &[
     ("even_h", "Side by side"),
     ("even_v", "Stacked"),
@@ -22,13 +20,6 @@ pub(crate) fn workspace_layout_preset(workspace: &WorkspaceDefinition) -> &str {
         .as_deref()
         .filter(|preset| LAYOUT_PRESETS.iter().any(|(value, _)| value == preset))
         .unwrap_or("even_h")
-}
-
-pub(crate) fn layout_label(preset: &str) -> &'static str {
-    LAYOUT_PRESETS
-        .iter()
-        .find_map(|(value, label)| (*value == preset).then_some(*label))
-        .unwrap_or("Side by side")
 }
 
 pub(crate) fn template_surfaces(workspace: &WorkspaceDefinition) -> Vec<SurfaceDefinition> {
@@ -166,33 +157,6 @@ pub(crate) fn surface_title(surface: &SurfaceDefinition, idx: usize) -> String {
         .filter(|name| !name.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("Pane {}", idx + 1))
-}
-
-pub(crate) fn surface_detail(surface: &SurfaceDefinition) -> String {
-    if let Some(agent) = surface.agent.as_deref().and_then(TerminalAgent::from_tag) {
-        agent.display_name().to_string()
-    } else if let Some(command) = surface.command.as_deref().filter(|c| !c.trim().is_empty()) {
-        command.to_string()
-    } else {
-        "Empty shell".to_string()
-    }
-}
-
-pub(crate) fn template_summary(workspace: &WorkspaceDefinition) -> String {
-    let panes = template_surfaces(workspace);
-    if panes.is_empty() {
-        return "Draft, no panes yet".to_string();
-    }
-    let agents = panes
-        .iter()
-        .filter(|pane| pane_kind(pane) == PaneKind::Agent)
-        .count();
-    let commands = panes
-        .iter()
-        .filter(|pane| pane_kind(pane) == PaneKind::Command)
-        .count();
-    let shells = panes.len().saturating_sub(agents + commands);
-    format!("{agents} agents · {commands} commands · {shells} shells")
 }
 
 #[cfg(test)]
