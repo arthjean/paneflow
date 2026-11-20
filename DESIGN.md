@@ -1643,23 +1643,28 @@ The usage bubble opens from the sidebar capsule of 5.2: a 284 px
 `menu_surface` whose bottom edge sits 52 px above the sidebar's, revealed with
 `menu_reveal`.
 Escape, an outside click, or a second click closes it and returns focus to
-the capsule. Its header pairs the `Plan usage` eyebrow (11 Semibold muted)
-with `Updated {relative time}` at 11 muted, taken from the oldest snapshot
-shown. One block per account follows, the active space's accounts first: the
+the capsule. Every line of the bubble, the last row included, starts on one
+10 px content inset. Its header pairs the `Plan usage` title (12 Medium
+`text`) with `Updated {relative time}` at 11 muted, taken from the oldest
+snapshot shown. One block per account follows, the active space's accounts
+first, separated by space alone (no divider): the
 15 px agent logo, the agent name at 12.5 Medium, and the account label at
 11.5 muted, truncated with a tooltip. Each window is a meter: a 52 px label,
 a 4 px capsule bar on a `text` at 0.13 track in the level color of 4.3, and the
 percentage right-aligned on 34 px, with the reset time in the meter's tooltip.
-A week window with a projection adds one line: the warning glyph and `At this
+A week window whose projection needs attention adds one line: the 12 px warning glyph and `At this
 pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets.`
-when it overshoots, `Weekly limit reached. It resets {Thu 09:00}.` with the
-glyph in the `Critical` color once the week is used up, otherwise `On track:
-about {66%} of the week used when it resets.` in muted. An account without limits shows one muted sentence that
+when it overshoots, or `Weekly limit reached. It resets {Thu 09:00}.` with the
+glyph in the `Critical` color once the week is used up. An on-track week adds
+nothing here; its `On track` line shows only in Settings › Usage. A single
+divider separates the accounts from the last row. An account without limits shows one muted sentence that
 says why and names the fix (no snapshot yet, API key billing, no limits
 reported, reset since the snapshot). The list scrolls past 420 px with the
-header and the last row fixed; the last row, a `menu_row`, opens Settings ›
-Usage. Up and Down move a 1 px `text` ring at 0.35 across the blocks and that
-row.
+header and the last row fixed; the last row, 28 px high with the menu row
+hover of `text` at 0.05, opens Settings › Usage. Up and Down move a 1.5 px
+`text` ring at 0.35 across the blocks and that row. The hover and the ring
+are concentric with the bubble: their radius is the bubble's resolved radius
+minus its padding (14 - 4 = 10), never the menu row radius.
 
 ### 5.7 Palettes
 

@@ -14,12 +14,14 @@ use super::model::{
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 
-use crate::settings::components::{menu_divider, menu_row, menu_surface_filled, with_alpha};
+use crate::settings::components::{
+    MENU_RADIUS, menu_divider_color, menu_padding, menu_row_height, menu_surface_filled, with_alpha,
+};
 use crate::theme::UiColors;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::ring::{RingSize, level_color, ring};
 use crate::ui_primitives::squircle::squircle_border;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin, text_tooltip};
+use crate::ui_primitives::{squircle_skin, text_tooltip};
 
 const BUBBLE_WIDTH: f32 = 284.;
 const BUBBLE_BOTTOM: f32 = 52.;
@@ -28,9 +30,15 @@ const CAPSULE_RADIUS: f32 = 12.;
 const METER_LABEL_WIDTH: f32 = 52.;
 const METER_PERCENT_WIDTH: f32 = 34.;
 const METER_BAR_HEIGHT: f32 = 4.;
+const CONTENT_INSET: f32 = 10.;
+const ACCOUNT_SPACING: f32 = 4.;
+const DIVIDER_MARGIN: f32 = 4.;
 const LOGO_SIZE: f32 = 15.;
 const SMALL_TEXT: f32 = 11.5;
 const FOCUS_RING_ALPHA: f32 = 0.35;
+const FOCUS_RING_WIDTH: f32 = 1.5;
+const ROW_HOVER_ALPHA: f32 = 0.05;
+const OPEN_SETTINGS_GROUP: &str = "usage-open-settings-row";
 const TRACK_ALPHA: f32 = 0.13;
 const OPEN_SETTINGS_LABEL: &str = "Open usage settings";
 
@@ -139,17 +147,34 @@ impl PaneFlowApp {
             .id("usage-bubble-accounts")
             .flex()
             .flex_col()
+            .gap(px(ACCOUNT_SPACING))
             .min_h_0()
             .max_h(px(list_max_height))
             .overflow_y_scroll();
         for (index, block) in view.blocks.iter().enumerate() {
-            if index > 0 {
-                accounts = accounts.child(bubble_divider(ui));
-            }
             accounts = accounts.child(render_block(index, block, cursor == Some(index), ui));
         }
-        let open_settings = menu_row("usage-open-settings", false, ui)
+        let inner_radius = nested_row_radius();
+        let open_settings = div()
+            .id("usage-open-settings")
+            .group(OPEN_SETTINGS_GROUP)
             .relative()
+            .flex_none()
+            .h(menu_row_height())
+            .px(px(CONTENT_INSET))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(inner_radius)
+                    .bg(with_alpha(ui.text, ROW_HOVER_ALPHA))
+                    .invisible()
+                    .group_hover(OPEN_SETTINGS_GROUP, |style| style.visible()),
+            )
             .role(Role::Button)
             .aria_label(OPEN_SETTINGS_LABEL)
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -173,7 +198,7 @@ impl PaneFlowApp {
             )
             .when(cursor == Some(settings_stop), |row| {
                 row.aria_active_descendant()
-                    .child(focus_ring(ROW_RADIUS, ui))
+                    .child(nested_focus_ring(inner_radius, ui))
             });
         let header = div()
             .flex()
@@ -181,13 +206,14 @@ impl PaneFlowApp {
             .items_baseline()
             .justify_between()
             .gap(px(8.))
-            .px(px(10.))
-            .py(px(6.))
+            .px(px(CONTENT_INSET))
+            .pt(px(8.))
+            .pb(px(2.))
             .child(
                 div()
-                    .text_size(crate::ui_primitives::LABEL_SM)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.muted)
+                    .text_size(crate::ui_primitives::BODY)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.text)
                     .child("Plan usage"),
             )
             .when_some(view.updated.clone(), |header, updated| {
@@ -249,8 +275,27 @@ impl PaneFlowApp {
     }
 }
 
+fn nested_row_radius() -> gpui::Pixels {
+    crate::ui_primitives::interface_style::frame_corner(MENU_RADIUS) - menu_padding()
+}
+
+fn nested_focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
+    div()
+        .absolute()
+        .inset_0()
+        .rounded(radius)
+        .border(px(FOCUS_RING_WIDTH))
+        .border_color(with_alpha(ui.text, FOCUS_RING_ALPHA))
+        .into_any_element()
+}
+
 fn bubble_divider(ui: UiColors) -> gpui::Div {
-    menu_divider(ui)
+    div()
+        .flex_none()
+        .mx(px(CONTENT_INSET))
+        .my(px(DIVIDER_MARGIN))
+        .h(px(1.))
+        .bg(menu_divider_color(ui))
 }
 
 fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors) -> AnyElement {
@@ -300,7 +345,7 @@ fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors)
             .child(text.clone())
             .into_any_element(),
         BlockBody::Windows(rows) => {
-            let mut meters = div().flex().flex_col().gap(px(3.));
+            let mut meters = div().flex().flex_col().gap(px(5.));
             for (window, row) in rows.iter().enumerate() {
                 meters = meters.child(render_meter(index, window, row, focused, ui));
             }
@@ -312,10 +357,9 @@ fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors)
         .relative()
         .flex()
         .flex_col()
-        .gap(px(7.))
-        .px(px(10.))
-        .pt(px(8.))
-        .pb(px(10.))
+        .gap(px(8.))
+        .px(px(CONTENT_INSET))
+        .py(px(8.))
         .role(Role::Group)
         .aria_label(format!("{}, {}", block.agent.display_name(), block.label))
         .child(identity)
@@ -323,7 +367,7 @@ fn render_block(index: usize, block: &AccountBlock, focused: bool, ui: UiColors)
         .when(focused, |block| {
             block
                 .aria_active_descendant()
-                .child(focus_ring(ROW_RADIUS, ui))
+                .child(nested_focus_ring(nested_row_radius(), ui))
         })
         .into_any_element()
 }
@@ -392,7 +436,11 @@ fn render_meter(
         None if focused => stack = stack.child(muted_line(row.reset.clone(), ui)),
         None => {}
     }
-    if let Some(pace) = &row.pace {
+    if let Some(pace) = row
+        .pace
+        .as_ref()
+        .filter(|pace| !matches!(pace, Pace::OnTrack(_)))
+    {
         stack = stack.child(pace_line(pace, ui));
     }
     stack.into_any_element()
@@ -408,37 +456,29 @@ fn muted_line(text: String, ui: UiColors) -> AnyElement {
 }
 
 pub(super) fn pace_line(pace: &Pace, ui: UiColors) -> AnyElement {
-    let (icon, icon_color, text_color, text) = match pace {
-        Pace::Reached(text) => (
-            "icons/triangle-alert.svg",
-            level_color(UsageLevel::Critical, ui),
-            ui.text,
-            text,
-        ),
-        Pace::ReachesLimit(text) => (
-            "icons/triangle-alert.svg",
-            level_color(UsageLevel::Warn, ui),
-            ui.text,
-            text,
-        ),
-        Pace::OnTrack(text) => ("icons/check.svg", ui.muted, ui.muted, text),
+    let (alert, text_color, text) = match pace {
+        Pace::Reached(text) => (Some(level_color(UsageLevel::Critical, ui)), ui.text, text),
+        Pace::ReachesLimit(text) => (Some(level_color(UsageLevel::Warn, ui)), ui.text, text),
+        Pace::OnTrack(text) => (None, ui.muted, text),
     };
     div()
         .flex()
         .flex_row()
         .items_start()
-        .gap(px(7.))
+        .gap(px(6.))
         .text_size(px(SMALL_TEXT))
         .line_height(relative(1.4))
         .text_color(text_color)
-        .child(
-            svg()
-                .mt(px(1.))
-                .size(px(13.))
-                .flex_none()
-                .path(icon)
-                .text_color(icon_color),
-        )
+        .when_some(alert, |line, color| {
+            line.child(
+                svg()
+                    .mt(px(2.))
+                    .size(px(12.))
+                    .flex_none()
+                    .path("icons/triangle-alert.svg")
+                    .text_color(color),
+            )
+        })
         .child(div().flex_1().min_w_0().child(text.clone()))
         .into_any_element()
 }
@@ -470,7 +510,7 @@ pub(super) fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
         .inset_0()
         .child(squircle_border(
             radius,
-            px(1.5),
+            px(FOCUS_RING_WIDTH),
             with_alpha(ui.text, FOCUS_RING_ALPHA),
         ))
         .into_any_element()

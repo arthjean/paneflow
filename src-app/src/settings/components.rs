@@ -1185,10 +1185,6 @@ pub(crate) fn menu_divider_inset(_resting: Pixels) -> Pixels {
     action_menu::ROW_INSET
 }
 
-pub(crate) fn menu_divider(ui: crate::theme::UiColors) -> Div {
-    action_menu::menu_separator(ui)
-}
-
 pub(crate) fn surface_edge(ui: crate::theme::UiColors) -> Hsla {
     pick_surface(
         with_alpha(ui.border, CHROME_EDGE_ALPHA),
