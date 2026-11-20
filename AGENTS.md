@@ -173,6 +173,14 @@ the two you did.
   each manifest header names. `vendor/cosmic-text` patches the cosmic-text
   version `gpui_wgpu` requires: when a bump moves that version, Cargo reports
   the patch as unused, so re-vendor it at the new version as well.
+- **One tooltip per element, or GPUI panics.** `accessible_control`
+  (`src-app/src/ui_primitives.rs`) already sets a `delayed_tooltip` from the
+  accessible label, and every shared settings control calls it
+  (`toggle_switch`, `soft_button`, `card_button`, `raised_button`,
+  `raised_icon_button`, `ghost_icon_button`, ...). Never chain another
+  `delayed_tooltip` or `tooltip` on one of them: the page panics with
+  "calling tooltip more than once on the same element" the first time it
+  draws. Pass the wording you want as the label instead.
 - The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
   `LICENSE` and `Cargo.toml`.
 
