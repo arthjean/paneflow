@@ -770,14 +770,14 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Paneflow sites:** `crates/paneflow-serve/src/worker.rs:103-180,268-332`, `server.rs:38-46`; `crates/paneflow-home/src/lib.rs:76-118,429`.
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow_home::init_lua_path()` and its `_in(home)` variant, when they are called, then they return `<home>/init.lua`, and the home layout test lists the file and the `lua/` directory
-- [ ] Given a worker start, when `init.lua` exists, then it is executed on one dedicated thread that owns the Lua state and a single-threaded executor, and no other worker thread touches the state
-- [ ] Given no `init.lua`, when the worker starts, then nothing is loaded, no warning is logged, and every existing worker behavior is unchanged
-- [ ] Given `config.status`, when it is called, then it returns the path, whether a file was found, the load time, the count of actions, bindings, handlers and timers, and the list of load problems with file, line, severity and message
-- [ ] Given an `init.lua` that raises at load, when the worker starts, then the worker still starts, serves all its other methods, and `config.status` reports the error
-- [ ] Given the runtime, when it is created, then it has the 256 MiB memory cap of A7 and no load-time deadline other than the instruction hook used to stop it at shutdown
-- [ ] Given `worker.shutdown`, when it arrives while Lua is running, then the runtime thread stops within the worker's existing drain window and the shutdown still completes
-- [ ] Given a release build and a debug build, when each loads its file, then each reads only its own home (`~/.paneflow` or `~/.paneflow-dev`)
+- [x] Given `paneflow_home::init_lua_path()` and its `_in(home)` variant, when they are called, then they return `<home>/init.lua`, and the home layout test lists the file and the `lua/` directory
+- [x] Given a worker start, when `init.lua` exists, then it is executed on one dedicated thread that owns the Lua state and a single-threaded executor, and no other worker thread touches the state
+- [x] Given no `init.lua`, when the worker starts, then nothing is loaded, no warning is logged, and every existing worker behavior is unchanged
+- [x] Given `config.status`, when it is called, then it returns the path, whether a file was found, the load time, the count of actions, bindings, handlers and timers, and the list of load problems with file, line, severity and message
+- [x] Given an `init.lua` that raises at load, when the worker starts, then the worker still starts, serves all its other methods, and `config.status` reports the error
+- [x] Given the runtime, when it is created, then it has the 256 MiB memory cap of A7 and no load-time deadline other than the instruction hook used to stop it at shutdown
+- [x] Given `worker.shutdown`, when it arrives while Lua is running, then the runtime thread stops within the worker's existing drain window and the shutdown still completes
+- [x] Given a release build and a debug build, when each loads its file, then each reads only its own home (`~/.paneflow` or `~/.paneflow-dev`)
 
 #### US-036: Define actions
 **Description:** As a user, I want to declare a named action with a title and typed arguments so that it can be run from anywhere.
@@ -789,13 +789,13 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Rex reference:** `rex.action{ ... }` (page "Custom Actions", sections "Defining an Action", "Arguments").
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.action{ name, title, run }`, when it is called at load, then the action is registered; `description`, `category` (default `Actions`), `keywords`, `args` and `agents` (default `false`) are optional
-- [ ] Given a `name` that is not lowercase letters, digits and underscores, or that contains a dot, when it is declared, then the load reports an error for that declaration and the rest of the file still loads
-- [ ] Given `args = { file = "string", ratio = "number?" }`, when it is declared, then the types `string`, `number`, `integer`, `boolean`, `object`, `array` and `any` are accepted, a trailing `?` marks an optional argument, and a table with a `type` key is used as a JSON Schema as written
-- [ ] Given the same `name` declared twice, when the file loads, then one warning is reported and the later declaration wins
-- [ ] Given `paneflow.action` called after load (inside an action, a handler or a timer), when it runs, then it raises an error
-- [ ] Given `action.list`, when it is called, then it returns each action's name, title, description, category, keywords, argument schema, `agents` flag and source (`init.lua:12`)
-- [ ] Given `paneflow actions`, when it runs, then it prints the loaded actions, and `--json` prints the `action.list` result
+- [x] Given `paneflow.action{ name, title, run }`, when it is called at load, then the action is registered; `description`, `category` (default `Actions`), `keywords`, `args` and `agents` (default `false`) are optional
+- [x] Given a `name` that is not lowercase letters, digits and underscores, or that contains a dot, when it is declared, then the load reports an error for that declaration and the rest of the file still loads
+- [x] Given `args = { file = "string", ratio = "number?" }`, when it is declared, then the types `string`, `number`, `integer`, `boolean`, `object`, `array` and `any` are accepted, a trailing `?` marks an optional argument, and a table with a `type` key is used as a JSON Schema as written
+- [x] Given the same `name` declared twice, when the file loads, then one warning is reported and the later declaration wins
+- [x] Given `paneflow.action` called after load (inside an action, a handler or a timer), when it runs, then it raises an error
+- [x] Given `action.list`, when it is called, then it returns each action's name, title, description, category, keywords, argument schema, `agents` flag and source (`init.lua:12`)
+- [x] Given `paneflow actions`, when it runs, then it prints the loaded actions, and `--json` prints the `action.list` result
 
 #### US-037: Run actions
 **Description:** As a user, I want to run an action with arguments and get its result so that actions are real commands.
@@ -807,16 +807,16 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Rex reference:** page "Custom Actions", sections "The Run Function", "Running an Action", "Calling Other Actions", "Trying an Action Before Reloading"; 30 s limit (L.884-887).
 
 **Acceptance Criteria:**
-- [ ] Given `action.invoke { name, args, ctx }`, when the action's `run(ctx, args)` returns, then the method returns its value; returning nothing, `nil` or `true` yields no result
-- [ ] Given arguments that do not match the declared schema, when `action.invoke` is called, then it is refused before `run` starts with a message such as `no argument named "bogus"; the action takes file, ratio?`
-- [ ] Given `run` raising an error, when it ends, then `action.invoke` returns an error carrying the message with file and line
-- [ ] Given two actions invoked at the same time, when one waits on an API call, a command or a sleep, then the other runs meanwhile, and only one runs Lua at any instant
-- [ ] Given an action still running 30 seconds after it started, not counting the time it spent waiting in a prompt (EP-006), when the limit is reached, then it is stopped with a `timeout` error; time spent in API calls, commands and sleeps counts
-- [ ] Given `paneflow.invoke(name, args)` inside an action, when it is called, then the other action runs with the same `ctx`; nesting deeper than 16 returns `nil` and a message
-- [ ] Given `ctx`, when `run` reads it, then it has `origin` (`key`, `palette`, `cli`, `api`, `script`, `agent`, `timer`, `event`) and the ids known at the call (`surface_id`, `pane_id`, `tab_id`, `workspace_id`, `client_id`), and API calls inside `run` default to them
-- [ ] Given `paneflow do dev_layout file=app.log`, when it runs, then it calls `action.invoke`, prints the result as JSON and exits 0, or prints the error and exits 1
-- [ ] Given `paneflow do ~/.paneflow/init.lua --action dev_layout file=app.log`, when it runs, then the file is loaded in the CLI process and the action runs from it without touching the worker's loaded configuration
-- [ ] Given a script run with `paneflow do`, when it calls `paneflow.invoke` with a name it does not define, then the worker's action of that name runs
+- [x] Given `action.invoke { name, args, ctx }`, when the action's `run(ctx, args)` returns, then the method returns its value; returning nothing, `nil` or `true` yields no result
+- [x] Given arguments that do not match the declared schema, when `action.invoke` is called, then it is refused before `run` starts with a message such as `no argument named "bogus"; the action takes file, ratio?`
+- [x] Given `run` raising an error, when it ends, then `action.invoke` returns an error carrying the message with file and line
+- [x] Given two actions invoked at the same time, when one waits on an API call, a command or a sleep, then the other runs meanwhile, and only one runs Lua at any instant
+- [x] Given an action still running 30 seconds after it started, not counting the time it spent waiting in a prompt (EP-006), when the limit is reached, then it is stopped with a `timeout` error; time spent in API calls, commands and sleeps counts
+- [x] Given `paneflow.invoke(name, args)` inside an action, when it is called, then the other action runs with the same `ctx`; nesting deeper than 16 returns `nil` and a message
+- [x] Given `ctx`, when `run` reads it, then it has `origin` (`key`, `palette`, `cli`, `api`, `script`, `agent`, `timer`, `event`) and the ids known at the call (`surface_id`, `pane_id`, `tab_id`, `workspace_id`, `client_id`), and API calls inside `run` default to them
+- [x] Given `paneflow do dev_layout file=app.log`, when it runs, then it calls `action.invoke`, prints the result as JSON and exits 0, or prints the error and exits 1
+- [x] Given `paneflow do ~/.paneflow/init.lua --action dev_layout file=app.log`, when it runs, then the file is loaded in the CLI process and the action runs from it without touching the worker's loaded configuration
+- [x] Given a script run with `paneflow do`, when it calls `paneflow.invoke` with a name it does not define, then the worker's action of that name runs
 
 #### US-038: Reload, check, and always-on handlers
 **Description:** As a user, I want my edits to apply when I save, a broken file to change nothing, and handlers that keep running so that the configuration is safe to iterate on.
@@ -828,14 +828,14 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Paneflow sites:** `crates/paneflow-config/src/watcher.rs:13-15`.
 
 **Acceptance Criteria:**
-- [ ] Given `init.lua` or a file it required being saved, when 300 ms pass with no further change, then the worker loads the file into a new state
-- [ ] Given a reload that succeeds, when it completes, then the new actions, bindings, handlers and timers replace the old ones in one step, one `config.reloaded` event is appended, and actions still running on the old state run to completion
-- [ ] Given a reload that fails, when it completes, then the previous configuration stays fully active, `config.status` reports the error, and one `config.reloaded` event with `ok = false` is appended
-- [ ] Given `paneflow config reload`, when it runs, then it forces a reload and prints the status; given `paneflow config check [path]`, then the file is loaded in the CLI process, problems are printed with file and line, and the exit status is 1 when any error exists
-- [ ] Given `paneflow.on(event, fn)` in `init.lua`, when a matching event arrives, then the handler runs in the worker, including while no window is open
-- [ ] Given `paneflow.after` and `paneflow.every` in `init.lua`, when they are called at load or inside an action or handler, then they behave as in US-030 and are cancelled by the next successful reload
-- [ ] Given a handler or a timer that raises, when it fails, then the error is logged, counted in `config.status`, and the handler or timer keeps running
-- [ ] Given the file deleted, when the watcher fires, then the configuration is cleared as a successful reload of an empty file
+- [x] Given `init.lua` or a file it required being saved, when 300 ms pass with no further change, then the worker loads the file into a new state
+- [x] Given a reload that succeeds, when it completes, then the new actions, bindings, handlers and timers replace the old ones in one step, one `config.reloaded` event is appended, and actions still running on the old state run to completion
+- [x] Given a reload that fails, when it completes, then the previous configuration stays fully active, `config.status` reports the error, and one `config.reloaded` event with `ok = false` is appended
+- [x] Given `paneflow config reload`, when it runs, then it forces a reload and prints the status; given `paneflow config check [path]`, then the file is loaded in the CLI process, problems are printed with file and line, and the exit status is 1 when any error exists
+- [x] Given `paneflow.on(event, fn)` in `init.lua`, when a matching event arrives, then the handler runs in the worker, including while no window is open
+- [x] Given `paneflow.after` and `paneflow.every` in `init.lua`, when they are called at load or inside an action or handler, then they behave as in US-030 and are cancelled by the next successful reload
+- [x] Given a handler or a timer that raises, when it fails, then the error is logged, counted in `config.status`, and the handler or timer keeps running
+- [x] Given the file deleted, when the watcher fires, then the configuration is cleared as a successful reload of an empty file
 
 #### US-039: Actions in the command palette
 **Description:** As a user, I want my actions listed in the palette so that I can find and run them by title.
@@ -847,13 +847,13 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Paneflow sites:** `src-app/src/app/command_palette/mod.rs:55-60,135-320,472-518`, `catalog.rs:32-81,137-156,237,781`.
 
 **Acceptance Criteria:**
-- [ ] Given actions loaded in the worker, when the palette opens, then each appears under its category with its title, and its description, name and keywords match the filter
-- [ ] Given a palette entry for an action, when it is chosen, then the palette closes and `action.invoke` is called from a background thread with `origin = "palette"` and the focused ids
-- [ ] Given an action that fails, when its error returns, then one toast shows the action title and the first line of the message
-- [ ] Given a `config.reloaded` event, when the palette opens next, then it shows the new action list
-- [ ] Given the worker unreachable, when the palette opens, then it shows the built-in entries only, with no error and no delay on the render thread
-- [ ] Given no `init.lua`, when the palette opens, then it is identical to today's, entry for entry
-- [ ] Given an action with required arguments chosen from the palette, when it is invoked, then it runs with no arguments and the schema check of US-037 reports what is missing in the toast
+- [x] Given actions loaded in the worker, when the palette opens, then each appears under its category with its title, and its description, name and keywords match the filter
+- [x] Given a palette entry for an action, when it is chosen, then the palette closes and `action.invoke` is called from a background thread with `origin = "palette"` and the focused ids
+- [x] Given an action that fails, when its error returns, then one toast shows the action title and the first line of the message
+- [x] Given a `config.reloaded` event, when the palette opens next, then it shows the new action list
+- [x] Given the worker unreachable, when the palette opens, then it shows the built-in entries only, with no error and no delay on the render thread
+- [x] Given no `init.lua`, when the palette opens, then it is identical to today's, entry for entry
+- [x] Given an action with required arguments chosen from the palette, when it is invoked, then it runs with no arguments and the schema check of US-037 reports what is missing in the toast
 
 #### US-040: `paneflow.bind` and the keymap the worker serves
 **Description:** As a user, I want to declare key bindings in `init.lua` so that my actions are one keystroke away.
@@ -865,12 +865,12 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Rex reference:** `rex.bind(key, action[, args])`, `rex.unbind`, `rex.bindings` (page "Rex Lua API").
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.bind(key, name[, args])`, when it is called at load, then the binding is recorded with its source (`init.lua:14`), and `key` is kept as written for the window to parse with the syntax of `paneflow.json` shortcuts
-- [ ] Given `keymap.list`, when it is called, then it returns each binding with key, action name, arguments, source, and whether the name is a Lua action of this file or a name left for the window to resolve as a built-in action
-- [ ] Given a binding to a Lua action whose arguments do not match the action's schema, when the file loads, then one warning is reported and the binding is left out of `keymap.list`
-- [ ] Given `paneflow.unbind(key)`, when it is called, then this file's bindings of that key are removed and the key is listed as unbound for the window to drop its default; `paneflow.bindings()` returns the bindings made so far
-- [ ] Given `paneflow.bind(key, function)`, when it is called, then the load reports an error that says to define an action and bind its name
-- [ ] Given `paneflow.bind` called after load, when it runs, then it raises an error
+- [x] Given `paneflow.bind(key, name[, args])`, when it is called at load, then the binding is recorded with its source (`init.lua:14`), and `key` is kept as written for the window to parse with the syntax of `paneflow.json` shortcuts
+- [x] Given `keymap.list`, when it is called, then it returns each binding with key, action name, arguments, source, and whether the name is a Lua action of this file or a name left for the window to resolve as a built-in action
+- [x] Given a binding to a Lua action whose arguments do not match the action's schema, when the file loads, then one warning is reported and the binding is left out of `keymap.list`
+- [x] Given `paneflow.unbind(key)`, when it is called, then this file's bindings of that key are removed and the key is listed as unbound for the window to drop its default; `paneflow.bindings()` returns the bindings made so far
+- [x] Given `paneflow.bind(key, function)`, when it is called, then the load reports an error that says to define an action and bind its name
+- [x] Given `paneflow.bind` called after load, when it runs, then it raises an error
 
 #### US-041: The window applies `init.lua` bindings
 **Description:** As a user, I want the keys I bound in `init.lua` to work in the app, and the keys I set in Settings to keep winning, so that the two never surprise me.
@@ -882,15 +882,15 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Paneflow sites:** `src-app/src/keybindings/apply.rs:44-52,73-128`, `registry.rs:73-81,644,672-686`; `src-app/src/app/settings.rs:94,127-153,548-568`; `src-app/src/app/bootstrap.rs:31-35`; `crates/paneflow-config/src/schema/config.rs:13`.
 
 **Acceptance Criteria:**
-- [ ] Given an action type that carries an action name and arguments, when a test binds it to a key at runtime through `cx.bind_keys` and presses the key, then the handler receives the name and the arguments (validates A10; on failure the story is BLOCKED with the finding)
-- [ ] Given the window, when it applies key bindings, then the order is defaults, then `init.lua` bindings, then `paneflow.json` shortcuts, so a key set in Settings always wins and Settings keeps showing what the key does
-- [ ] Given a key bound in both files, when bindings are applied, then one warning names the key and both sources and is counted in the toast of US-043
-- [ ] Given a key bound to a Lua action, when it is pressed, then `action.invoke` is called from a background thread with `origin = "key"` and the bound arguments, and the key is not sent to the terminal
-- [ ] Given a binding whose name is an entry of the `ACTIONS` table, when the key is pressed, then that built-in action is dispatched as its default binding would
-- [ ] Given a binding whose name is neither a Lua action nor a built-in action, or whose key does not parse, when bindings are applied, then one warning is reported and the binding is skipped
-- [ ] Given a `config.reloaded` event, a saved shortcut or a keyboard layout change, when it happens, then the window re-applies bindings in the same order
-- [ ] Given the worker unreachable at window start, when bindings are applied, then defaults and `paneflow.json` shortcuts apply at once, and `init.lua` bindings are added when the worker answers
-- [ ] Given no `init.lua`, when the Settings shortcut list is opened, then it equals today's
+- [x] Given an action type that carries an action name and arguments, when a test binds it to a key at runtime through `cx.bind_keys` and presses the key, then the handler receives the name and the arguments (validates A10; on failure the story is BLOCKED with the finding)
+- [x] Given the window, when it applies key bindings, then the order is defaults, then `init.lua` bindings, then `paneflow.json` shortcuts, so a key set in Settings always wins and Settings keeps showing what the key does
+- [x] Given a key bound in both files, when bindings are applied, then one warning names the key and both sources and is counted in the toast of US-043
+- [x] Given a key bound to a Lua action, when it is pressed, then `action.invoke` is called from a background thread with `origin = "key"` and the bound arguments, and the key is not sent to the terminal
+- [x] Given a binding whose name is an entry of the `ACTIONS` table, when the key is pressed, then that built-in action is dispatched as its default binding would
+- [x] Given a binding whose name is neither a Lua action nor a built-in action, or whose key does not parse, when bindings are applied, then one warning is reported and the binding is skipped
+- [x] Given a `config.reloaded` event, a saved shortcut or a keyboard layout change, when it happens, then the window re-applies bindings in the same order
+- [x] Given the worker unreachable at window start, when bindings are applied, then defaults and `paneflow.json` shortcuts apply at once, and `init.lua` bindings are added when the worker answers
+- [x] Given no `init.lua`, when the Settings shortcut list is opened, then it equals today's
 
 #### US-042: Built-in actions from Lua
 **Description:** As a script author, I want to trigger a built-in action such as zoom from Lua so that my actions can compose what the app already does.
@@ -902,12 +902,12 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Rex reference:** `rex.client.queue(name[, args])` (page "Rex Lua API").
 
 **Acceptance Criteria:**
-- [ ] Given `client.list_actions` (owned by the window), when it is called, then it returns the name, description and group of every entry of the `ACTIONS` table
-- [ ] Given `client.dispatch_action { name }`, when it is called, then the window dispatches that action on the GPUI thread as the palette does, and replies once it is dispatched
-- [ ] Given an unknown name, when `client.dispatch_action` is called, then it replies `-32602` and names the action
-- [ ] Given `paneflow.client.queue(name)` inside an action, when `run` returns without error, then the queued actions are dispatched in order; when `run` fails, they are discarded
-- [ ] Given `paneflow.client.queue(name)` in a `paneflow do` script, when it is called, then the action is dispatched immediately
-- [ ] Given no window, when `paneflow.client.queue` is called, then it raises an error that says no window is attached
+- [x] Given `client.list_actions` (owned by the window), when it is called, then it returns the name, description and group of every entry of the `ACTIONS` table
+- [x] Given `client.dispatch_action { name }`, when it is called, then the window dispatches that action on the GPUI thread as the palette does, and replies once it is dispatched
+- [x] Given an unknown name, when `client.dispatch_action` is called, then it replies `-32602` and names the action
+- [x] Given `paneflow.client.queue(name)` inside an action, when `run` returns without error, then the queued actions are dispatched in order; when `run` fails, they are discarded
+- [x] Given `paneflow.client.queue(name)` in a `paneflow do` script, when it is called, then the action is dispatched immediately
+- [x] Given no window, when `paneflow.client.queue` is called, then it raises an error that says no window is attached
 
 #### US-043: Show configuration problems in the app
 **Description:** As a user, I want to see that my `init.lua` failed and where so that I do not wonder why a key does nothing.
@@ -919,12 +919,12 @@ A user writes `~/.paneflow/init.lua`, defines named actions in Lua, binds keys t
 **Paneflow sites:** `src-app/src/app/notifications.rs:52-78,140-238`; `src-app/src/worker_bootstrap.rs:61-83`.
 
 **Acceptance Criteria:**
-- [ ] Given a `config.reloaded` event with `ok = false`, when the window receives it, then one toast shows `init.lua:<line>: <first line of the message>` with an action that opens the file in the dock's editor, at that line when the editor can reveal a line
-- [ ] Given a load error present when the window starts, when the worker answers `config.status`, then the same toast is shown once
-- [ ] Given warnings only (a duplicate action, a key conflict), when a reload completes, then one toast gives the count and the same open action, and nothing is shown when the count is 0
-- [ ] Given the same error reported twice in a row, when the second arrives, then no second toast is queued
-- [ ] Given a key bound to a Lua action pressed while the worker is unreachable, when it is pressed, then one toast says scripting is unavailable, shown at most once per outage
-- [ ] The toast uses the existing toast primitive and adds no new permanent chrome
+- [x] Given a `config.reloaded` event with `ok = false`, when the window receives it, then one toast shows `init.lua:<line>: <first line of the message>` with an action that opens the file in the dock's editor, at that line when the editor can reveal a line
+- [x] Given a load error present when the window starts, when the worker answers `config.status`, then the same toast is shown once
+- [x] Given warnings only (a duplicate action, a key conflict), when a reload completes, then one toast gives the count and the same open action, and nothing is shown when the count is 0
+- [x] Given the same error reported twice in a row, when the second arrives, then no second toast is queued
+- [x] Given a key bound to a Lua action pressed while the worker is unreachable, when it is pressed, then one toast says scripting is unavailable, shown at most once per outage
+- [x] The toast uses the existing toast primitive and adds no new permanent chrome
 
 ---
 
