@@ -661,7 +661,7 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 - [x] Given a script that raises an error, when it ends, then `Error: <message>` is printed to stderr and the exit status is 1
 - [x] Given `paneflow.stop(3)`, when it is called, then the script ends at once and the exit status is 3
 - [x] Given a file that does not exist or does not parse, when `paneflow do` runs, then it prints the path or the syntax error with its line and exits 1 without contacting Paneflow
-- [ ] Given this example, when it runs inside a pane of a debug build, then a second pane opens beside the first and the script prints its id: `local s = assert(paneflow.surface.split{ direction = "right" }) return { surface_id = s.surface_id }`
+- [x] Given this example, when it runs inside a pane of a debug build, then a second pane opens beside the first and the script prints its id: `local s = assert(paneflow.surface.split{ direction = "vertical" }) return { surface_id = s.surface_id }`
 
 #### US-030: Sleep and timers
 **Description:** As a script author, I want `sleep`, `after` and `every` so that a script can act later without blocking.
@@ -699,7 +699,7 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 - [x] Given a script run inside a pane, when it follows events, then it hears its own workspace only, and `--all` hears every workspace
 - [x] Given `--for 10m`, when the time runs out, then the script exits 0; given `--fail-fast`, when a handler raises, then the script exits 1; without it the error is printed and the script continues
 - [x] Given the worker restarting, when the stream ends, then the runtime reconnects with `since`, and on an `evicted` reply it calls handlers registered for `events.resync` and continues from the current `seq`
-- [ ] Given this example, when it runs with `PANEFLOW_IPC_ORCHESTRATION=1` in a debug build, then it prints a non-zero `exit_code`: the script splits with `command = "false"`, calls `paneflow.wait("terminal.exited", { surface_id = id }, 600)` and returns `{ exit_code = ev.exit_code }`
+- [x] Given this example, when it runs with `PANEFLOW_IPC_ORCHESTRATION=1` in a debug build, then it prints a non-zero `exit_code`: the script splits with `command = "exit 3"` (the command is typed into the pane's shell, so it must end that shell), calls `paneflow.wait("terminal.exited", { surface_id = id }, 600)` and returns `{ exit_code = ev.exit_code }`
 
 #### US-032: Run commands: `paneflow.exec`
 **Description:** As a script author, I want to run a program and read its output so that scripts can use git and other tools without a shell.
