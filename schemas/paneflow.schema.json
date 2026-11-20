@@ -255,41 +255,61 @@
       "enum": ["client", "server", null],
       "default": "client"
     },
+    "background_style": {
+      "type": ["string", "null"],
+      "description": "Look of the window background. 'themed' paints the app in solid theme colors. 'blended' asks the system to blur what lies behind the window and paints one theme veil over it. Null or absent resolves from the legacy keys (window_backdrop and the per-platform material keys) of a config saved by an older release, else 'themed'; an unknown value resolves to 'themed'. Hot-reloads. Set from Settings > Appearance > Background style or the command palette.",
+      "enum": ["themed", "blended", null],
+      "default": "themed"
+    },
     "window_backdrop": {
       "type": ["string", "null"],
       "description": "Native window backdrop. 'auto' uses Mica on supported Windows 11 builds and opaque elsewhere; 'mica' forces Mica when supported; 'blurred'/'acrylic' opts into blur, except on Windows, where a config value resolves to 'auto' and only PANEFLOW_WINDOW_BACKDROP=blurred applies blur; 'transparent' keeps a transparent surface; 'opaque'/'off' disables native transparency. Read once at startup; PANEFLOW_WINDOW_BACKDROP overrides it for one launch.",
       "enum": ["auto", "mica", "blurred", "acrylic", "transparent", "opaque", "off", null],
-      "default": "auto"
+      "default": "auto",
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "windows_terminal_material": {
       "type": ["boolean", "null"],
       "description": "Windows-only. When true, CLI terminal default backgrounds are transparent so the active native window backdrop (Mica, blur, or transparent) can show through. Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "windows_chrome_material": {
       "type": ["boolean", "null"],
       "description": "Windows-only. When true, the primary sidebar card reveals the active native window backdrop (Mica, blur, or transparent). Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "windows_material_veil": {
       "type": ["boolean", "null"],
       "description": "Windows-only. When true, the system backdrop switches from Mica to Acrylic, a blur of what lies behind the window, and the shell paints a theme veil over it (0.72 on dark themes, 0.80 on light ones) while the terminal card adds a 0.35 shade, like Linux: this is the Blended background style. When false or null, the backdrop shows through unveiled: the Mica background style. Only matters while windows_chrome_material or windows_terminal_material is on. Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "macos_chrome_material": {
       "type": ["boolean", "null"],
       "description": "macOS-only. When true, the primary sidebar card reveals AppKit's native Sidebar material. Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "linux_terminal_material": {
       "type": ["boolean", "null"],
       "description": "Linux-only. When true, the window surface turns transparent and the terminal card becomes a translucent shade over the window veil, so a compositor blur shows through. Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "linux_chrome_material": {
       "type": ["boolean", "null"],
       "description": "Linux-only. When true, the window surface turns transparent and the sidebar and title bar show a translucent theme veil, so a compositor blur shows through. Other platforms ignore this field.",
-      "default": false
+      "default": false,
+      "deprecated": true,
+      "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "interface_style": {
       "type": ["string", "null"],

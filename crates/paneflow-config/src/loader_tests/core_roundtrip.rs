@@ -22,6 +22,7 @@ fn test_serialization_roundtrip() {
             },
         }],
         window_decorations: None,
+        background_style: None,
         window_backdrop: None,
         windows_terminal_material: None,
         windows_chrome_material: None,

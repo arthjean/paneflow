@@ -431,12 +431,67 @@ fn save_setting_ordered_at(
     value: serde_json::Value,
     sequence: u64,
 ) -> SettingWrite {
-    let _guard = config_write_guard();
-    let slot = format!(
-        "{}|{}{key}",
-        path.display(),
-        if nested { "terminal." } else { "" }
+    let slot = format!("{}{key}", if nested { "terminal." } else { "" });
+    save_ordered_at(path, &slot, sequence, |json| {
+        if nested {
+            apply_terminal_field(json, key, value);
+        } else if let Some(root) = json.as_object_mut() {
+            if value.is_null() {
+                root.remove(key);
+            } else {
+                root.insert(key.to_string(), value);
+            }
+        }
+    })
+}
+
+pub fn save_background_style_ordered(
+    style: paneflow_config::schema::BackgroundStyle,
+    sequence: u64,
+) -> SettingWrite {
+    let Some(path) = paneflow_config::loader::config_path() else {
+        log::warn!("config: cannot determine config path, not saving");
+        return SettingWrite::Failed;
+    };
+    save_background_style_ordered_at(&path, style, sequence)
+}
+
+fn save_background_style_ordered_at(
+    path: &PathBuf,
+    style: paneflow_config::schema::BackgroundStyle,
+    sequence: u64,
+) -> SettingWrite {
+    save_ordered_at(path, BACKGROUND_STYLE_KEY, sequence, |json| {
+        apply_background_style(json, style);
+    })
+}
+
+const BACKGROUND_STYLE_KEY: &str = "background_style";
+
+fn apply_background_style(
+    json: &mut serde_json::Value,
+    style: paneflow_config::schema::BackgroundStyle,
+) {
+    let Some(root) = json.as_object_mut() else {
+        return;
+    };
+    for legacy in paneflow_config::schema::PaneFlowConfig::LEGACY_BACKGROUND_STYLE_KEYS {
+        root.remove(legacy);
+    }
+    root.insert(
+        BACKGROUND_STYLE_KEY.to_string(),
+        serde_json::Value::String(style.wire_str().to_string()),
     );
+}
+
+fn save_ordered_at(
+    path: &PathBuf,
+    slot_key: &str,
+    sequence: u64,
+    apply: impl FnOnce(&mut serde_json::Value),
+) -> SettingWrite {
+    let _guard = config_write_guard();
+    let slot = format!("{}|{slot_key}", path.display());
     let mut last = LAST_WRITTEN.lock().unwrap_or_else(PoisonError::into_inner);
     if last.get(&slot).is_some_and(|written| *written >= sequence) {
         return SettingWrite::Superseded;
@@ -444,15 +499,7 @@ fn save_setting_ordered_at(
     let Ok(mut json) = load_raw_config(path) else {
         return SettingWrite::Failed;
     };
-    if nested {
-        apply_terminal_field(&mut json, key, value);
-    } else if let Some(root) = json.as_object_mut() {
-        if value.is_null() {
-            root.remove(key);
-        } else {
-            root.insert(key.to_string(), value);
-        }
-    }
+    apply(&mut json);
     if !write_config_checked(path, &json) {
         return SettingWrite::Failed;
     }
@@ -500,8 +547,10 @@ mod tests {
     use super::{
         SettingWrite, apply_agent_panel_field, apply_terminal_field, load_raw_config,
         merge_shortcut, reset_backup_path, reset_shortcuts_at, restore_default_binding,
-        save_setting_ordered_at, unbind_action, with_field, write_config_checked,
+        save_background_style_ordered_at, save_setting_ordered_at, unbind_action, with_field,
+        write_config_checked,
     };
+    use paneflow_config::schema::{BackgroundStyle, PaneFlowConfig};
     use serde_json::{Value, json};
 
     #[test]
@@ -541,6 +590,103 @@ mod tests {
             SettingWrite::Written,
             "a nested key has its own order"
         );
+    }
+
+    fn legacy_backdrop_config() -> String {
+        let mut root = serde_json::Map::new();
+        root.insert("theme".into(), json!("One Dark"));
+        for key in PaneFlowConfig::LEGACY_BACKGROUND_STYLE_KEYS {
+            root.insert(key.to_string(), json!(true));
+        }
+        root.insert("window_backdrop".into(), json!("blurred"));
+        root.insert("shortcuts".into(), json!({"ctrl-k": "close_pane"}));
+        root.insert(
+            "terminal".into(),
+            json!({"cursor_shape": "bar", "minimum_contrast": 0.0}),
+        );
+        root.insert("font_size".into(), json!(15.5));
+        root.insert("unknown_future_key".into(), json!({"nested": [1, 2]}));
+        let body = serde_json::to_string(&serde_json::Value::Object(root)).unwrap();
+        body.replace(",", ",\n\t\t")
+    }
+
+    #[test]
+    fn saving_a_background_style_writes_the_new_key_and_drops_every_legacy_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        let original = legacy_backdrop_config();
+        std::fs::write(&p, &original).unwrap();
+        let before = load_raw_config(&p).unwrap();
+
+        for (sequence, style) in [(1, BackgroundStyle::Blended), (2, BackgroundStyle::Themed)] {
+            assert_eq!(
+                save_background_style_ordered_at(&p, style, sequence),
+                SettingWrite::Written
+            );
+            let written = load_raw_config(&p).unwrap();
+            assert_eq!(written["background_style"], json!(style.wire_str()));
+            for key in PaneFlowConfig::LEGACY_BACKGROUND_STYLE_KEYS {
+                assert!(written.get(key).is_none(), "{key} survived: {written}");
+            }
+            for key in [
+                "theme",
+                "shortcuts",
+                "terminal",
+                "font_size",
+                "unknown_future_key",
+            ] {
+                assert_eq!(written[key], before[key], "{key} changed");
+            }
+            let loaded = paneflow_config::loader::load_config_from_path(&p);
+            assert_eq!(loaded.resolved_background_style(), style);
+        }
+    }
+
+    #[test]
+    fn an_older_background_style_write_never_lands_after_a_newer_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        std::fs::write(&p, "{}").unwrap();
+        assert_eq!(
+            save_background_style_ordered_at(&p, BackgroundStyle::Blended, 4),
+            SettingWrite::Written
+        );
+        assert_eq!(
+            save_background_style_ordered_at(&p, BackgroundStyle::Themed, 3),
+            SettingWrite::Superseded
+        );
+        assert_eq!(
+            load_raw_config(&p).unwrap()["background_style"],
+            json!("blended")
+        );
+    }
+
+    #[test]
+    fn a_background_style_save_to_an_unwritable_file_fails_and_leaves_it_untouched() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        let original = legacy_backdrop_config();
+        std::fs::write(&p, &original).unwrap();
+        let mut permissions = std::fs::metadata(&p).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&p, permissions.clone()).unwrap();
+
+        assert_eq!(
+            save_background_style_ordered_at(&p, BackgroundStyle::Themed, 1),
+            SettingWrite::Failed
+        );
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), original);
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&p, permissions).unwrap();
+
+        let invalid = dir.path().join("invalid.json");
+        std::fs::write(&invalid, "{ not json").unwrap();
+        assert_eq!(
+            save_background_style_ordered_at(&invalid, BackgroundStyle::Blended, 1),
+            SettingWrite::Failed
+        );
+        assert_eq!(std::fs::read_to_string(&invalid).unwrap(), "{ not json");
     }
 
     #[test]

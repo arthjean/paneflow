@@ -226,10 +226,10 @@ pub(crate) fn sidebar_tab_active_background() -> Hsla {
 }
 
 pub(crate) fn sidebar_menu_background(
-    style: Option<paneflow_config::schema::BackgroundStyle>,
+    style: paneflow_config::schema::BackgroundStyle,
     ui: crate::theme::UiColors,
 ) -> Hsla {
-    if style.is_some_and(|style| style != paneflow_config::schema::BackgroundStyle::Themed) {
+    if style != paneflow_config::schema::BackgroundStyle::Themed {
         sidebar_tab_fill(SIDEBAR_TAB_ACTIVE_OPACITY, false)
     } else {
         crate::settings::components::select_menu_surface(ui)
@@ -341,8 +341,7 @@ mod material_tests {
     #[test]
     fn a_sidebar_menu_over_a_translucent_window_hides_the_rows_beneath_it() {
         let ui = crate::theme::ui_colors_with(&crate::theme::active_theme());
-        let fill =
-            sidebar_menu_background(Some(paneflow_config::schema::BackgroundStyle::Blended), ui);
+        let fill = sidebar_menu_background(paneflow_config::schema::BackgroundStyle::Blended, ui);
 
         assert_eq!(
             fill.a, 1.0,

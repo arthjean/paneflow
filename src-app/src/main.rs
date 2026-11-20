@@ -287,6 +287,7 @@ struct PaneFlowApp {
     effective_shortcuts: Vec<keybindings::ShortcutEntry>,
     recording_shortcut: Option<&'static str>,
     pending_settings: std::collections::HashMap<String, crate::app::settings::PendingSetting>,
+    background_style_save_sequence: u64,
     quit_choice_write: Option<gpui::Task<bool>>,
     shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     shortcut_capture_active: bool,

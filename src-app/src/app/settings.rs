@@ -200,6 +200,20 @@ pub(crate) fn overlay_pending_settings<'a>(
     })
 }
 
+pub(crate) fn config_after_background_style_save(
+    config: &paneflow_config::schema::PaneFlowConfig,
+    style: paneflow_config::schema::BackgroundStyle,
+    outcome: config_writer::SettingWrite,
+    latest: bool,
+) -> Option<paneflow_config::schema::PaneFlowConfig> {
+    if outcome != config_writer::SettingWrite::Written || !latest {
+        return None;
+    }
+    let mut next = config.clone();
+    next.set_background_style(style);
+    Some(next)
+}
+
 const RESET_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 pub(crate) fn reset_confirmation_accepted(
@@ -237,44 +251,7 @@ impl PaneFlowApp {
                 ws.propagate_config(&self.cached_config, cx);
             }
         }
-        if !nested
-            && matches!(
-                key,
-                "windows_terminal_material"
-                    | "windows_chrome_material"
-                    | "windows_material_veil"
-                    | "macos_chrome_material"
-                    | "linux_terminal_material"
-                    | "linux_chrome_material"
-            )
-        {
-            for ws in &self.workspaces {
-                ws.propagate_config(&self.cached_config, cx);
-            }
-        }
-        if nested && terminal_key_repaints_open_terminals(key) {
-            for ws in &self.workspaces {
-                ws.propagate_config(&self.cached_config, cx);
-            }
-        }
-        if !nested && key == "reduce_motion" {
-            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
-        }
-        if !nested && key == "interface_style" {
-            crate::ui_primitives::interface_style::set_interface_style(
-                self.cached_config.resolved_interface_style(),
-                cx,
-            );
-        }
-        if !nested && key == "app_icon" {
-            crate::app_icon::apply(self.cached_config.resolved_app_icon(), cx);
-        }
-        if !nested && key == "editor" {
-            self.apply_editor_display(cx);
-        }
-        if !nested && key == "worktrees" {
-            crate::workspace::worktree::set_worktrees_root(self.cached_config.worktrees.dir_path());
-        }
+        self.apply_setting_effects(nested, key, cx);
         if default_shell_changed {
             self.handle_default_shell_changed(cx);
         }
@@ -312,6 +289,80 @@ impl PaneFlowApp {
             });
         })
         .detach();
+    }
+
+    fn apply_setting_effects(&mut self, nested: bool, key: &str, cx: &mut Context<Self>) {
+        if !nested && key == "background_style" {
+            for ws in &self.workspaces {
+                ws.propagate_config(&self.cached_config, cx);
+            }
+        }
+        if nested && terminal_key_repaints_open_terminals(key) {
+            for ws in &self.workspaces {
+                ws.propagate_config(&self.cached_config, cx);
+            }
+        }
+        if !nested && key == "reduce_motion" {
+            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
+        }
+        if !nested && key == "interface_style" {
+            crate::ui_primitives::interface_style::set_interface_style(
+                self.cached_config.resolved_interface_style(),
+                cx,
+            );
+        }
+        if !nested && key == "app_icon" {
+            crate::app_icon::apply(self.cached_config.resolved_app_icon(), cx);
+        }
+        if !nested && key == "editor" {
+            self.apply_editor_display(cx);
+        }
+        if !nested && key == "worktrees" {
+            crate::workspace::worktree::set_worktrees_root(self.cached_config.worktrees.dir_path());
+        }
+    }
+
+    pub(crate) fn persist_background_style(
+        &mut self,
+        style: paneflow_config::schema::BackgroundStyle,
+        cx: &mut Context<Self>,
+    ) {
+        let sequence = config_writer::next_setting_sequence();
+        self.background_style_save_sequence = sequence;
+        cx.spawn(async move |this, cx| {
+            let outcome = smol::unblock(move || {
+                config_writer::save_background_style_ordered(style, sequence)
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_background_style_save(style, sequence, outcome, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn finish_background_style_save(
+        &mut self,
+        style: paneflow_config::schema::BackgroundStyle,
+        sequence: u64,
+        outcome: config_writer::SettingWrite,
+        cx: &mut Context<Self>,
+    ) {
+        if outcome == config_writer::SettingWrite::Failed {
+            log::warn!("settings: failed to persist background_style; keeping the previous style");
+            self.show_toast("Could not save the background style", cx);
+            return;
+        }
+        let latest = self.background_style_save_sequence == sequence;
+        let Some(next) =
+            config_after_background_style_save(&self.cached_config, style, outcome, latest)
+        else {
+            return;
+        };
+        self.cached_config = next;
+        crate::config_snapshot::publish(&self.cached_config, cx);
+        self.apply_setting_effects(false, "background_style", cx);
+        cx.notify();
     }
 
     pub(crate) fn handle_default_shell_changed(&mut self, cx: &mut Context<Self>) {
@@ -738,6 +789,57 @@ pub(crate) fn reconcile_telemetry(old: Option<bool>, new: Option<bool>) -> Telem
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_style_reaches_memory_only_after_its_latest_save_is_written() {
+        use config_writer::SettingWrite;
+        use paneflow_config::schema::{BackgroundStyle, PaneFlowConfig};
+
+        let current: PaneFlowConfig = serde_json::from_value(serde_json::json!({
+            "theme": "One Dark",
+            "linux_chrome_material": true,
+            "windows_chrome_material": true,
+            "macos_chrome_material": true,
+        }))
+        .unwrap();
+
+        for outcome in [SettingWrite::Failed, SettingWrite::Superseded] {
+            for latest in [true, false] {
+                assert_eq!(
+                    config_after_background_style_save(
+                        &current,
+                        BackgroundStyle::Themed,
+                        outcome,
+                        latest
+                    ),
+                    None,
+                    "{outcome:?} must leave the in-memory config unchanged"
+                );
+            }
+        }
+        assert_eq!(
+            config_after_background_style_save(
+                &current,
+                BackgroundStyle::Themed,
+                SettingWrite::Written,
+                false
+            ),
+            None,
+            "a newer pick is still in flight"
+        );
+
+        let next = config_after_background_style_save(
+            &current,
+            BackgroundStyle::Themed,
+            SettingWrite::Written,
+            true,
+        )
+        .unwrap();
+        assert_eq!(next.resolved_background_style(), BackgroundStyle::Themed);
+        assert_eq!(next.background_style, Some(BackgroundStyle::Themed));
+        assert_eq!(next.linux_chrome_material, None);
+        assert_eq!(next.theme.as_deref(), Some("One Dark"));
+    }
 
     #[test]
     fn telemetry_toasts_are_written_in_us_english() {

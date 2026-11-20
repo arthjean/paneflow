@@ -25,7 +25,6 @@ pub(crate) enum Needs {
     ManyWorkspaces,
     Spaces,
     ManyTabs,
-    NativeMaterial,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -336,12 +335,12 @@ fn workspace_icon_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
 }
 
 fn background_style_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
-    let current = app.cached_config.background_style();
+    let current = app.cached_config.resolved_background_style();
     BackgroundStyle::ALL
         .iter()
         .map(|&style| ScopeValue {
             label: style.label().to_string(),
-            current: current == Some(style),
+            current: current == style,
             apply: Apply::BackgroundStyle(style),
         })
         .collect()
@@ -1287,7 +1286,7 @@ pub(crate) const COMMANDS: &[Command] = &[
         label: "Background style",
         icon: Some("icons/palette/layers-01.svg"),
         keywords: "appearance themed blended transparency translucent blur material mica vibrancy",
-        needs: Needs::NativeMaterial,
+        needs: Needs::Always,
         section: Section::Appearance,
         kind: Kind::Scope(Scope::BackgroundStyle),
     },

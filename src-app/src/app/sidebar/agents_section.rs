@@ -1487,7 +1487,7 @@ impl PaneFlowApp {
         let show = self.cached_config.sidebar_show;
         let spaces_declared = !self.cached_config.spaces.is_empty();
         let fill = crate::app::constants::sidebar_menu_background(
-            self.cached_config.background_style(),
+            self.cached_config.resolved_background_style(),
             ui,
         );
         squircle_skin(

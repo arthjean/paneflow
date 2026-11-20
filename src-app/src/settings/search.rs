@@ -63,17 +63,9 @@ pub(crate) const APP_ICON: SettingCopy = SettingCopy {
 };
 pub(crate) const BACKGROUND_STYLE: SettingCopy = SettingCopy {
     title: "Background style",
-    description: if cfg!(target_os = "macos") {
-        "Themed paints the app in solid theme colors. Blended shows the native macOS material \
-         behind the sidebar."
-    } else if cfg!(target_os = "linux") {
-        "Themed paints the app in solid theme colors. Blended lets the desktop show through the \
-         sidebar and the terminal."
-    } else {
-        "Themed paints the app in solid theme colors. Mica lets the wallpaper tint show through \
-         the sidebar and the terminal. Blended lets the desktop show through a blur, under a veil \
-         of theme color."
-    },
+    description: "Themed paints the app in solid theme colors. Blended adds transparency: a \
+                  window material that blurs the desktop behind Paneflow, under a veil of theme \
+                  color.",
 };
 pub(crate) const REDUCE_MOTION: SettingCopy = SettingCopy {
     title: "Reduce motion",
@@ -85,22 +77,6 @@ pub(crate) const COMFORTABLE_DENSITY: SettingCopy = SettingCopy {
     description: "Separate panes into rounded cards with a gutter between them. Off joins them \
                   edge to edge with a thin divider. Applies to the Rounded interface style: \
                   Classic is always edge to edge.",
-};
-#[cfg(target_os = "windows")]
-pub(crate) const CHROME_MATERIAL: SettingCopy = SettingCopy {
-    title: "Chrome material",
-    description: "Let Mica show through the navigation card.",
-};
-#[cfg(target_os = "macos")]
-pub(crate) const SIDEBAR_TRANSPARENCY: SettingCopy = SettingCopy {
-    title: "Sidebar transparency",
-    description: "Show the native macOS Sidebar material in the navigation card.",
-};
-#[cfg(target_os = "linux")]
-pub(crate) const CHROME_TRANSPARENCY: SettingCopy = SettingCopy {
-    title: "Sidebar transparency",
-    description: "Let the desktop show through the sidebar and the title bar. The blur comes from \
-                  your compositor, for example Blur my Shell on GNOME.",
 };
 pub(crate) const CURSOR_SHAPE: SettingCopy = SettingCopy {
     title: "Cursor shape",
@@ -148,17 +124,6 @@ pub(crate) const SCROLLBAR: SettingCopy = SettingCopy {
     title: "Scrollbar",
     description: "Overlay scrollbar that appears while scrolling or hovering the right edge. \
                   Takes effect on the next new terminal.",
-};
-#[cfg(target_os = "windows")]
-pub(crate) const ACRYLIC_MATERIAL: SettingCopy = SettingCopy {
-    title: "Enable acrylic material",
-    description: "Applies a translucent texture behind the terminal window.",
-};
-#[cfg(target_os = "linux")]
-pub(crate) const TERMINAL_TRANSPARENCY: SettingCopy = SettingCopy {
-    title: "Terminal transparency",
-    description: "Let the desktop show through the terminal, behind a denser veil than the \
-                  sidebar.",
 };
 pub(crate) const WORKTREE_ROOT: SettingCopy = SettingCopy {
     title: "Worktree root",
@@ -224,7 +189,6 @@ const GENERAL_COPIES: &[&SettingCopy] = &[
     &ON_QUIT,
     &NATIVE_NOTIFICATIONS,
 ];
-#[cfg(target_os = "windows")]
 const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &THEME_PRESET,
     &INTERFACE_STYLE,
@@ -233,70 +197,7 @@ const APPEARANCE_COPIES: &[&SettingCopy] = &[
     &APP_ICON,
     &REDUCE_MOTION,
     &COMFORTABLE_DENSITY,
-    &CHROME_MATERIAL,
 ];
-#[cfg(target_os = "macos")]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[
-    &THEME_PRESET,
-    &INTERFACE_STYLE,
-    &WORKSPACE_ICON,
-    &BACKGROUND_STYLE,
-    &APP_ICON,
-    &REDUCE_MOTION,
-    &COMFORTABLE_DENSITY,
-    &SIDEBAR_TRANSPARENCY,
-];
-#[cfg(target_os = "linux")]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[
-    &THEME_PRESET,
-    &INTERFACE_STYLE,
-    &WORKSPACE_ICON,
-    &BACKGROUND_STYLE,
-    &APP_ICON,
-    &REDUCE_MOTION,
-    &COMFORTABLE_DENSITY,
-    &CHROME_TRANSPARENCY,
-];
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-const APPEARANCE_COPIES: &[&SettingCopy] = &[
-    &THEME_PRESET,
-    &INTERFACE_STYLE,
-    &WORKSPACE_ICON,
-    &APP_ICON,
-    &REDUCE_MOTION,
-    &COMFORTABLE_DENSITY,
-];
-#[cfg(target_os = "windows")]
-const TERMINAL_COPIES: &[&SettingCopy] = &[
-    &CURSOR_SHAPE,
-    &CURSOR_COLOR,
-    &FONT_FAMILY,
-    &FONT_SIZE,
-    &LINE_HEIGHT,
-    &CELL_WIDTH,
-    &FONT_WEIGHT,
-    &INTEGRATED_GLYPHS,
-    &COLOR_EMOJI,
-    &SCROLLBAR,
-    &MINIMUM_CONTRAST,
-    &ACRYLIC_MATERIAL,
-];
-#[cfg(target_os = "linux")]
-const TERMINAL_COPIES: &[&SettingCopy] = &[
-    &CURSOR_SHAPE,
-    &CURSOR_COLOR,
-    &FONT_FAMILY,
-    &FONT_SIZE,
-    &LINE_HEIGHT,
-    &CELL_WIDTH,
-    &FONT_WEIGHT,
-    &INTEGRATED_GLYPHS,
-    &COLOR_EMOJI,
-    &SCROLLBAR,
-    &MINIMUM_CONTRAST,
-    &TERMINAL_TRANSPARENCY,
-];
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TERMINAL_COPIES: &[&SettingCopy] = &[
     &CURSOR_SHAPE,
     &CURSOR_COLOR,
@@ -322,17 +223,7 @@ const USAGE_COPIES: &[&SettingCopy] = &[
 const AGENTS_COPIES: &[&SettingCopy] = &[&CLAUDE_FULL_ACCESS, &AI_FREE_ACCESS, &INJECTION_FENCE];
 
 const GENERAL_HEADERS: &[&str] = &["Defaults", "Notifications"];
-#[cfg(target_os = "windows")]
-const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "Windows", "System", "Light", "Dark"];
-#[cfg(target_os = "macos")]
-const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "macOS", "System", "Light", "Dark"];
-#[cfg(target_os = "linux")]
-const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "Linux", "System", "Light", "Dark"];
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light", "Dark"];
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display", "Window"];
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
 const AGENTS_HEADERS: &[&str] = &[
     "Agents",
@@ -658,6 +549,45 @@ mod tests {
         assert!(section_matches(SettingsSection::Terminal, "contrast"));
         assert!(section_matches(SettingsSection::Worktrees, "snapshots"));
         assert!(!section_matches(SettingsSection::McpServers, "worktree"));
+    }
+
+    #[test]
+    fn material_transparency_and_blur_find_only_the_background_style_row() {
+        let sections = [
+            SettingsSection::General,
+            SettingsSection::Appearance,
+            SettingsSection::Terminal,
+            SettingsSection::Agents,
+            SettingsSection::Usage,
+            SettingsSection::McpServers,
+            SettingsSection::Workspaces,
+            SettingsSection::Spaces,
+            SettingsSection::Worktrees,
+            SettingsSection::Shortcuts,
+        ];
+        for query in ["material", "transparency", "blur"] {
+            let query = normalize(query);
+            let rows: Vec<&str> = sections
+                .iter()
+                .flat_map(|section| section_copies(*section).iter())
+                .filter(|copy| copy_matches(copy, &query))
+                .map(|copy| copy.title)
+                .collect();
+            assert_eq!(rows, [BACKGROUND_STYLE.title], "{query}");
+            assert!(section_matches(SettingsSection::Appearance, &query));
+            assert!(!section_matches(SettingsSection::Terminal, &query));
+        }
+        for removed in ["Windows", "macOS", "Linux", "Window"] {
+            let removed = normalize(removed);
+            for section in [SettingsSection::Appearance, SettingsSection::Terminal] {
+                assert!(
+                    !section_headers(section)
+                        .iter()
+                        .any(|header| normalize(header) == removed),
+                    "{removed}"
+                );
+            }
+        }
     }
 
     #[test]

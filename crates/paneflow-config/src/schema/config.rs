@@ -21,6 +21,8 @@ pub struct PaneFlowConfig {
     pub commands: Vec<CommandDefinition>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub window_decorations: Option<String>,
+    #[serde(default, deserialize_with = "lenient_background_style")]
+    pub background_style: Option<BackgroundStyle>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub window_backdrop: Option<String>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -319,12 +321,65 @@ impl PaneFlowConfig {
         self.agent_button_visibility.get(key).copied()
     }
 
+    pub const LEGACY_BACKGROUND_STYLE_KEYS: [&'static str; 7] = [
+        "window_backdrop",
+        "windows_terminal_material",
+        "windows_chrome_material",
+        "windows_material_veil",
+        "macos_chrome_material",
+        "linux_terminal_material",
+        "linux_chrome_material",
+    ];
+
+    pub fn resolved_background_style(&self) -> BackgroundStyle {
+        self.background_style
+            .unwrap_or_else(|| self.legacy_background_style(HostPlatform::CURRENT))
+    }
+
+    pub fn set_background_style(&mut self, style: BackgroundStyle) {
+        self.background_style = Some(style);
+        self.window_backdrop = None;
+        self.windows_terminal_material = None;
+        self.windows_chrome_material = None;
+        self.windows_material_veil = None;
+        self.macos_chrome_material = None;
+        self.linux_terminal_material = None;
+        self.linux_chrome_material = None;
+    }
+
+    fn legacy_background_style(&self, platform: HostPlatform) -> BackgroundStyle {
+        let backdrop_disables_materials = self.window_backdrop.as_deref().is_some_and(|value| {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("opaque")
+                || value.eq_ignore_ascii_case("off")
+                || (platform == HostPlatform::Macos && value.eq_ignore_ascii_case("transparent"))
+        });
+        if backdrop_disables_materials {
+            return BackgroundStyle::Themed;
+        }
+        let materials = match platform {
+            HostPlatform::Windows => [self.windows_chrome_material, self.windows_terminal_material],
+            HostPlatform::Macos => [self.macos_chrome_material, None],
+            HostPlatform::Linux => [self.linux_chrome_material, self.linux_terminal_material],
+            HostPlatform::Other => [None, None],
+        };
+        if materials.iter().any(|material| material.unwrap_or(false)) {
+            BackgroundStyle::Blended
+        } else {
+            BackgroundStyle::Themed
+        }
+    }
+
+    fn blended(&self) -> bool {
+        self.resolved_background_style() == BackgroundStyle::Blended
+    }
+
     pub fn windows_terminal_material_enabled(&self) -> bool {
-        cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
+        cfg!(target_os = "windows") && self.blended()
     }
 
     pub fn linux_terminal_material_enabled(&self) -> bool {
-        cfg!(target_os = "linux") && self.linux_terminal_material.unwrap_or(false)
+        cfg!(target_os = "linux") && self.blended()
     }
 
     pub fn terminal_material_enabled(&self) -> bool {
@@ -335,94 +390,26 @@ impl PaneFlowConfig {
         self.cockpit_chrome_material_enabled() || self.terminal_material_enabled()
     }
 
-    fn window_backdrop_disables_chrome_material(&self) -> bool {
-        self.window_backdrop.as_deref().is_some_and(|value| {
-            let value = value.trim();
-            value.eq_ignore_ascii_case("opaque") || value.eq_ignore_ascii_case("off")
-        })
-    }
-
     pub fn macos_chrome_material_enabled(&self) -> bool {
-        !self.window_backdrop_disables_chrome_material()
-            && !self
-                .window_backdrop
-                .as_deref()
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case("transparent"))
-            && self.macos_chrome_material.unwrap_or(false)
+        cfg!(target_os = "macos") && self.blended()
     }
-
-    pub const BACKGROUND_STYLE_KEYS: &'static [&'static str] = if cfg!(target_os = "windows") {
-        &["windows_chrome_material", "windows_terminal_material"]
-    } else if cfg!(target_os = "macos") {
-        &["macos_chrome_material"]
-    } else if cfg!(target_os = "linux") {
-        &["linux_chrome_material", "linux_terminal_material"]
-    } else {
-        &[]
-    };
 
     pub fn material_veiled(&self) -> bool {
         if cfg!(target_os = "linux") {
             true
         } else if cfg!(target_os = "windows") {
-            self.windows_material_veil.unwrap_or(false)
+            self.blended()
         } else {
             false
         }
-    }
-
-    pub fn background_style(&self) -> Option<BackgroundStyle> {
-        let dual = [
-            self.cockpit_chrome_material_enabled(),
-            self.terminal_material_enabled(),
-        ];
-        let macos = [self.macos_chrome_material_enabled()];
-        let materials: &[bool] = if cfg!(any(target_os = "windows", target_os = "linux")) {
-            &dual
-        } else if cfg!(target_os = "macos") {
-            &macos
-        } else {
-            &[]
-        };
-        let style = BackgroundStyle::from_materials(materials)?;
-        Some(
-            if style == BackgroundStyle::Blended
-                && cfg!(target_os = "windows")
-                && !self.material_veiled()
-            {
-                BackgroundStyle::Mica
-            } else {
-                style
-            },
-        )
-    }
-
-    pub fn background_style_settings(style: BackgroundStyle) -> Vec<(&'static str, bool)> {
-        let materials = style != BackgroundStyle::Themed;
-        let mut settings: Vec<(&'static str, bool)> = Self::BACKGROUND_STYLE_KEYS
-            .iter()
-            .map(|&key| (key, materials))
-            .collect();
-        if cfg!(target_os = "windows") {
-            settings.push(("windows_material_veil", style == BackgroundStyle::Blended));
-        }
-        settings
     }
 
     pub fn cockpit_chrome_material_enabled(&self) -> bool {
-        if self.window_backdrop_disables_chrome_material() {
-            return false;
-        }
-
-        if cfg!(target_os = "windows") {
-            self.windows_chrome_material.unwrap_or(false)
-        } else if cfg!(target_os = "macos") {
-            self.macos_chrome_material_enabled()
-        } else if cfg!(target_os = "linux") {
-            self.linux_chrome_material.unwrap_or(false)
-        } else {
-            false
-        }
+        cfg!(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        )) && self.blended()
     }
 
     pub fn reduce_motion_enabled(&self) -> bool {
@@ -821,37 +808,80 @@ impl WorkspaceIcon {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BackgroundStyle {
+    #[default]
     Themed,
-    Mica,
     Blended,
 }
 
 impl BackgroundStyle {
-    pub const ALL: &'static [Self] = if cfg!(target_os = "windows") {
-        &[Self::Themed, Self::Mica, Self::Blended]
-    } else {
-        &[Self::Themed, Self::Blended]
-    };
+    pub const ALL: &'static [Self] = &[Self::Themed, Self::Blended];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Themed => "Themed",
-            Self::Mica => "Mica",
             Self::Blended => "Blended",
         }
     }
 
-    fn from_materials(materials: &[bool]) -> Option<Self> {
-        if materials.iter().all(|enabled| !enabled) {
-            Some(Self::Themed)
-        } else if materials.iter().all(|enabled| *enabled) {
-            Some(Self::Blended)
-        } else {
-            None
+    pub fn wire_str(self) -> &'static str {
+        match self {
+            Self::Themed => "themed",
+            Self::Blended => "blended",
         }
     }
+
+    fn from_wire(value: &str) -> Option<Self> {
+        let value = value.trim();
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|style| style.wire_str().eq_ignore_ascii_case(value))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostPlatform {
+    Windows,
+    Macos,
+    Linux,
+    Other,
+}
+
+impl HostPlatform {
+    const CURRENT: Self = if cfg!(target_os = "windows") {
+        Self::Windows
+    } else if cfg!(target_os = "macos") {
+        Self::Macos
+    } else if cfg!(target_os = "linux") {
+        Self::Linux
+    } else {
+        Self::Other
+    };
+}
+
+fn lenient_background_style<'de, D>(d: D) -> Result<Option<BackgroundStyle>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(d)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    let style = value
+        .as_str()
+        .and_then(BackgroundStyle::from_wire)
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                target: "paneflow_config",
+                value = %value,
+                "unknown background_style value; using themed",
+            );
+            BackgroundStyle::Themed
+        });
+    Ok(Some(style))
 }
 
 fn lenient_value_or_default<'de, D, T>(d: D) -> Result<T, D::Error>
@@ -1056,69 +1086,287 @@ mod tests {
         }
     }
 
-    #[test]
-    fn background_style_is_themed_or_blended_only_when_every_material_agrees() {
-        assert_eq!(
-            BackgroundStyle::from_materials(&[]),
-            Some(BackgroundStyle::Themed)
-        );
-        assert_eq!(
-            BackgroundStyle::from_materials(&[false, false]),
-            Some(BackgroundStyle::Themed)
-        );
-        assert_eq!(
-            BackgroundStyle::from_materials(&[true, true]),
-            Some(BackgroundStyle::Blended)
-        );
-        assert_eq!(BackgroundStyle::from_materials(&[true, false]), None);
+    fn config(json: serde_json::Value) -> PaneFlowConfig {
+        serde_json::from_value(json).unwrap()
+    }
+
+    const PLATFORMS: [HostPlatform; 4] = [
+        HostPlatform::Windows,
+        HostPlatform::Macos,
+        HostPlatform::Linux,
+        HostPlatform::Other,
+    ];
+
+    fn platform_material_keys(platform: HostPlatform) -> &'static [&'static str] {
+        match platform {
+            HostPlatform::Windows => &["windows_chrome_material", "windows_terminal_material"],
+            HostPlatform::Macos => &["macos_chrome_material"],
+            HostPlatform::Linux => &["linux_chrome_material", "linux_terminal_material"],
+            HostPlatform::Other => &[],
+        }
+    }
+
+    const ALL_MATERIAL_KEYS: [&str; 5] = [
+        "windows_chrome_material",
+        "windows_terminal_material",
+        "macos_chrome_material",
+        "linux_chrome_material",
+        "linux_terminal_material",
+    ];
+
+    fn resolved_for(config: &PaneFlowConfig, platform: HostPlatform) -> BackgroundStyle {
+        config
+            .background_style
+            .unwrap_or_else(|| config.legacy_background_style(platform))
     }
 
     #[test]
-    fn background_style_defaults_to_themed_and_its_settings_round_trip() {
+    fn an_explicit_background_style_wins_over_every_legacy_key() {
+        let mut legacy = serde_json::Map::new();
+        for key in ALL_MATERIAL_KEYS {
+            legacy.insert(key.to_string(), serde_json::json!(false));
+        }
+        legacy.insert("window_backdrop".into(), serde_json::json!("opaque"));
+        legacy.insert("windows_material_veil".into(), serde_json::json!(false));
+        legacy.insert("background_style".into(), serde_json::json!("blended"));
+        let blended = config(serde_json::Value::Object(legacy.clone()));
         assert_eq!(
-            PaneFlowConfig::default().background_style(),
-            Some(BackgroundStyle::Themed)
+            blended.resolved_background_style(),
+            BackgroundStyle::Blended
         );
-        if PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty() {
-            return;
+        for platform in PLATFORMS {
+            assert_eq!(resolved_for(&blended, platform), BackgroundStyle::Blended);
         }
 
+        for key in ALL_MATERIAL_KEYS {
+            legacy.insert(key.to_string(), serde_json::json!(true));
+        }
+        legacy.insert("window_backdrop".into(), serde_json::json!("blurred"));
+        legacy.insert("background_style".into(), serde_json::json!("themed"));
+        let themed = config(serde_json::Value::Object(legacy));
+        assert_eq!(themed.resolved_background_style(), BackgroundStyle::Themed);
+    }
+
+    #[test]
+    fn any_material_key_of_the_running_platform_resolves_to_blended() {
+        for platform in PLATFORMS {
+            for &key in platform_material_keys(platform) {
+                let legacy = config(serde_json::json!({ key: true }));
+                assert_eq!(
+                    resolved_for(&legacy, platform),
+                    BackgroundStyle::Blended,
+                    "{platform:?} {key}"
+                );
+                let with_backdrop =
+                    config(serde_json::json!({ key: true, "window_backdrop": "auto" }));
+                assert_eq!(
+                    resolved_for(&with_backdrop, platform),
+                    BackgroundStyle::Blended
+                );
+            }
+        }
+        let mica = config(serde_json::json!({
+            "windows_chrome_material": true,
+            "windows_terminal_material": true,
+            "windows_material_veil": false,
+        }));
+        assert_eq!(
+            resolved_for(&mica, HostPlatform::Windows),
+            BackgroundStyle::Blended
+        );
+        let custom = config(serde_json::json!({
+            "linux_chrome_material": true,
+            "linux_terminal_material": false,
+        }));
+        assert_eq!(
+            resolved_for(&custom, HostPlatform::Linux),
+            BackgroundStyle::Blended
+        );
+    }
+
+    #[test]
+    fn an_opaque_or_off_backdrop_keeps_the_legacy_config_themed() {
+        let mut materials = serde_json::Map::new();
+        for key in ALL_MATERIAL_KEYS {
+            materials.insert(key.to_string(), serde_json::json!(true));
+        }
+        for backdrop in ["opaque", "off", " OFF ", "Opaque"] {
+            let mut json = materials.clone();
+            json.insert("window_backdrop".into(), serde_json::json!(backdrop));
+            let legacy = config(serde_json::Value::Object(json));
+            for platform in PLATFORMS {
+                assert_eq!(
+                    resolved_for(&legacy, platform),
+                    BackgroundStyle::Themed,
+                    "{platform:?} {backdrop}"
+                );
+            }
+        }
+        let mut json = materials;
+        json.insert("window_backdrop".into(), serde_json::json!("transparent"));
+        let transparent = config(serde_json::Value::Object(json));
+        assert_eq!(
+            resolved_for(&transparent, HostPlatform::Macos),
+            BackgroundStyle::Themed
+        );
+        assert_eq!(
+            resolved_for(&transparent, HostPlatform::Linux),
+            BackgroundStyle::Blended
+        );
+    }
+
+    #[test]
+    fn a_config_without_any_backdrop_key_is_themed() {
+        let empty = config(serde_json::json!({}));
+        assert_eq!(empty.resolved_background_style(), BackgroundStyle::Themed);
+        for platform in PLATFORMS {
+            assert_eq!(resolved_for(&empty, platform), BackgroundStyle::Themed);
+        }
+        assert_eq!(
+            PaneFlowConfig::default().resolved_background_style(),
+            BackgroundStyle::Themed
+        );
+    }
+
+    #[test]
+    fn material_keys_of_another_platform_only_stay_themed() {
+        for platform in PLATFORMS {
+            let mut json = serde_json::Map::new();
+            for other in PLATFORMS.into_iter().filter(|other| *other != platform) {
+                for &key in platform_material_keys(other) {
+                    json.insert(key.to_string(), serde_json::json!(true));
+                }
+            }
+            json.insert("windows_material_veil".into(), serde_json::json!(true));
+            let foreign = config(serde_json::Value::Object(json));
+            assert_eq!(
+                resolved_for(&foreign, platform),
+                BackgroundStyle::Themed,
+                "{platform:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_background_style_string_loads_as_themed() {
+        for value in ["mica", "acrylic", "", "blurred"] {
+            let unknown = config(serde_json::json!({
+                "background_style": value,
+                "linux_chrome_material": true,
+                "windows_chrome_material": true,
+                "macos_chrome_material": true,
+                "theme": "One Dark",
+            }));
+            assert_eq!(unknown.background_style, Some(BackgroundStyle::Themed));
+            assert_eq!(unknown.resolved_background_style(), BackgroundStyle::Themed);
+            assert_eq!(unknown.theme.as_deref(), Some("One Dark"));
+        }
+        let loose = config(serde_json::json!({ "background_style": " Blended " }));
+        assert_eq!(loose.resolved_background_style(), BackgroundStyle::Blended);
+    }
+
+    #[test]
+    fn a_non_string_background_style_loads_as_themed_and_keeps_the_rest_of_the_file() {
+        for value in [
+            serde_json::json!(3),
+            serde_json::json!(true),
+            serde_json::json!(["blended"]),
+            serde_json::json!({"style": "blended"}),
+        ] {
+            let malformed = config(serde_json::json!({
+                "background_style": value,
+                "linux_chrome_material": true,
+                "theme": "One Dark",
+                "font_size": 15.0,
+            }));
+            assert_eq!(
+                malformed.resolved_background_style(),
+                BackgroundStyle::Themed
+            );
+            assert_eq!(malformed.theme.as_deref(), Some("One Dark"));
+            assert_eq!(malformed.font_size, Some(15.0));
+        }
+        let null = config(serde_json::json!({
+            "background_style": null,
+            "linux_chrome_material": true,
+        }));
+        assert_eq!(null.background_style, None);
+        assert_eq!(
+            resolved_for(&null, HostPlatform::Linux),
+            BackgroundStyle::Blended
+        );
+    }
+
+    #[test]
+    fn background_style_has_two_variants_on_every_platform() {
+        assert_eq!(
+            BackgroundStyle::ALL,
+            &[BackgroundStyle::Themed, BackgroundStyle::Blended]
+        );
         for &style in BackgroundStyle::ALL {
-            let settings: serde_json::Map<String, serde_json::Value> =
-                PaneFlowConfig::background_style_settings(style)
-                    .into_iter()
-                    .map(|(key, value)| (key.to_string(), serde_json::Value::Bool(value)))
-                    .collect();
-            let config: PaneFlowConfig =
-                serde_json::from_value(serde_json::Value::Object(settings)).unwrap();
-            assert_eq!(config.background_style(), Some(style), "{style:?}");
+            match style {
+                BackgroundStyle::Themed | BackgroundStyle::Blended => {}
+            }
+            let json = serde_json::json!({ "background_style": style.wire_str() });
+            assert_eq!(config(json).background_style, Some(style));
+            assert_eq!(
+                serde_json::to_value(style).unwrap(),
+                serde_json::Value::String(style.wire_str().to_string())
+            );
         }
     }
 
     #[test]
-    fn mica_is_offered_on_windows_only() {
+    fn setting_a_background_style_clears_every_legacy_field() {
+        let mut legacy = serde_json::Map::new();
+        for key in PaneFlowConfig::LEGACY_BACKGROUND_STYLE_KEYS {
+            legacy.insert(key.to_string(), serde_json::json!(true));
+        }
+        legacy.insert("window_backdrop".into(), serde_json::json!("blurred"));
+        legacy.insert("theme".into(), serde_json::json!("One Dark"));
+        let mut cfg = config(serde_json::Value::Object(legacy));
+        cfg.set_background_style(BackgroundStyle::Themed);
+        assert_eq!(cfg.resolved_background_style(), BackgroundStyle::Themed);
+        let written = serde_json::to_value(&cfg).unwrap();
+        for key in PaneFlowConfig::LEGACY_BACKGROUND_STYLE_KEYS {
+            assert!(written[key].is_null(), "{key} survived: {written}");
+        }
+        assert_eq!(written["background_style"], serde_json::json!("themed"));
+        assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn the_derived_material_accessors_follow_the_resolved_style() {
+        let blended = config(serde_json::json!({ "background_style": "blended" }));
+        let themed = config(serde_json::json!({
+            "background_style": "themed",
+            "linux_chrome_material": true,
+            "windows_chrome_material": true,
+            "macos_chrome_material": true,
+        }));
+        assert!(!themed.cockpit_chrome_material_enabled());
+        assert!(!themed.terminal_material_enabled());
+        assert!(!themed.native_material_requested());
+        assert!(!themed.macos_chrome_material_enabled());
         assert_eq!(
-            BackgroundStyle::ALL.contains(&BackgroundStyle::Mica),
-            cfg!(target_os = "windows")
+            blended.cockpit_chrome_material_enabled(),
+            cfg!(any(
+                target_os = "windows",
+                target_os = "macos",
+                target_os = "linux"
+            ))
         );
-    }
-
-    #[test]
-    fn windows_materials_without_the_veil_keep_the_mica_style() {
-        let mica = PaneFlowConfig {
-            windows_chrome_material: Some(true),
-            windows_terminal_material: Some(true),
-            ..Default::default()
-        };
-        let blended = PaneFlowConfig {
-            windows_material_veil: Some(true),
-            ..mica.clone()
-        };
-        if cfg!(target_os = "windows") {
-            assert_eq!(mica.background_style(), Some(BackgroundStyle::Mica));
-            assert_eq!(blended.background_style(), Some(BackgroundStyle::Blended));
-            assert!(blended.material_veiled());
-            assert!(!mica.material_veiled());
-        }
+        assert_eq!(
+            blended.terminal_material_enabled(),
+            cfg!(any(target_os = "windows", target_os = "linux"))
+        );
+        assert_eq!(
+            blended.macos_chrome_material_enabled(),
+            cfg!(target_os = "macos")
+        );
+        assert_eq!(
+            blended.material_veiled(),
+            cfg!(any(target_os = "windows", target_os = "linux"))
+        );
     }
 }

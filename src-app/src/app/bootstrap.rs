@@ -353,6 +353,7 @@ impl PaneFlowApp {
             effective_shortcuts,
             recording_shortcut: None,
             pending_settings: std::collections::HashMap::new(),
+            background_style_save_sequence: 0,
             quit_choice_write: None,
             shortcut_search_input,
             shortcut_capture_active: false,

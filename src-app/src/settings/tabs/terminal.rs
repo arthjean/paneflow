@@ -357,7 +357,7 @@ impl PaneFlowApp {
                 self.terminal_minimum_contrast_row(minimum_contrast_step(&terminal), ui, cx),
             );
 
-        let content = div()
+        div()
             .flex()
             .flex_col()
             .child(
@@ -374,61 +374,7 @@ impl PaneFlowApp {
                     .child(section_header(ui, "Display"))
                     .card(display_card)
                     .finish(),
-            );
-
-        #[cfg(target_os = "windows")]
-        let content = {
-            let material_card = SearchCard::new(ui).row(
-                &search::ACRYLIC_MATERIAL,
-                self.terminal_toggle_row(
-                    "term-windows-terminal-material",
-                    search::ACRYLIC_MATERIAL.title,
-                    search::ACRYLIC_MATERIAL.description,
-                    config.windows_terminal_material_enabled(),
-                    "windows_terminal_material",
-                    false,
-                    ui,
-                    cx,
-                ),
-            );
-
-            content.child(
-                Block::new("Window")
-                    .top_gap(20.)
-                    .gap(20.)
-                    .child(section_header(ui, "Window"))
-                    .card(material_card)
-                    .finish(),
             )
-        };
-
-        #[cfg(target_os = "linux")]
-        let content = {
-            let material_card = SearchCard::new(ui).row(
-                &search::TERMINAL_TRANSPARENCY,
-                self.terminal_toggle_row(
-                    "term-linux-terminal-material",
-                    search::TERMINAL_TRANSPARENCY.title,
-                    search::TERMINAL_TRANSPARENCY.description,
-                    config.linux_terminal_material_enabled(),
-                    "linux_terminal_material",
-                    false,
-                    ui,
-                    cx,
-                ),
-            );
-
-            content.child(
-                Block::new("Window")
-                    .top_gap(20.)
-                    .gap(20.)
-                    .child(section_header(ui, "Window"))
-                    .card(material_card)
-                    .finish(),
-            )
-        };
-
-        content
     }
 
     fn terminal_font_family_row(

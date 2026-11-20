@@ -202,9 +202,6 @@ impl PaneFlowApp {
             Needs::ManyTabs => self
                 .active_workspace()
                 .is_some_and(|workspace| workspace.tab_count() > 1),
-            Needs::NativeMaterial => {
-                !paneflow_config::schema::PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty()
-            }
         }
     }
 

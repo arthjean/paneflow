@@ -3,7 +3,7 @@ use gpui::{
     SharedString, Styled, div, img, prelude::*, px, svg,
 };
 
-use paneflow_config::schema::{AppIcon, BackgroundStyle, InterfaceStyle, PaneFlowConfig};
+use paneflow_config::schema::{AppIcon, BackgroundStyle, InterfaceStyle};
 
 use paneflow_config::schema::WorkspaceIcon;
 
@@ -78,7 +78,7 @@ impl PaneFlowApp {
         }
 
         let preset_row = self.render_theme_preset_select(preset, ui, cx);
-        let mut preset_card = SearchCard::new(ui)
+        let preset_card = SearchCard::new(ui)
             .row(&search::THEME_PRESET, preset_row)
             .row(
                 &search::INTERFACE_STYLE,
@@ -87,15 +87,12 @@ impl PaneFlowApp {
             .row(
                 &search::WORKSPACE_ICON,
                 self.render_workspace_icon_select(window.scale_factor(), ui, cx),
-            );
-        if !PaneFlowConfig::BACKGROUND_STYLE_KEYS.is_empty() {
-            preset_card = preset_card.row(
+            )
+            .row(
                 &search::BACKGROUND_STYLE,
                 self.render_background_style_select(ui, cx),
-            );
-        }
-        let preset_card =
-            preset_card.row(&search::APP_ICON, self.render_app_icon_row(window, ui, cx));
+            )
+            .row(&search::APP_ICON, self.render_app_icon_row(window, ui, cx));
 
         let reduce_motion = self.cached_config.reduce_motion_enabled();
         let motion_row = div()
@@ -178,153 +175,11 @@ impl PaneFlowApp {
                     .row(&search::COMFORTABLE_DENSITY, density_row),
             )
             .finish();
-        let content = div()
+        div()
             .flex()
             .flex_col()
             .child(theme_block)
-            .child(preferences_block);
-
-        #[cfg(target_os = "windows")]
-        let content = {
-            let chrome_material = self.cached_config.cockpit_chrome_material_enabled();
-            let chrome_material_row = div()
-                .id("row-windows-chrome-material")
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(16.))
-                .px(px(12.))
-                .py(px(10.))
-                .child(setting_text(
-                    ui,
-                    search::CHROME_MATERIAL.title,
-                    search::CHROME_MATERIAL.description,
-                ))
-                .child(
-                    crate::settings::components::toggle_switch(
-                        "windows-chrome-material-toggle",
-                        search::CHROME_MATERIAL.title,
-                        chrome_material,
-                        ui,
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _window, cx| {
-                            this.persist_setting(
-                                false,
-                                "windows_chrome_material",
-                                serde_json::Value::Bool(!chrome_material),
-                                cx,
-                            );
-                        },
-                    )),
-                );
-
-            content.child(
-                Block::new("Windows")
-                    .top_gap(18.)
-                    .child(section_header(ui, "Windows"))
-                    .card(SearchCard::new(ui).row(&search::CHROME_MATERIAL, chrome_material_row))
-                    .finish(),
-            )
-        };
-
-        #[cfg(target_os = "macos")]
-        let content = {
-            let sidebar_material = self.cached_config.macos_chrome_material_enabled();
-            let sidebar_material_row = div()
-                .id("row-macos-chrome-material")
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(16.))
-                .px(px(12.))
-                .py(px(10.))
-                .child(setting_text(
-                    ui,
-                    search::SIDEBAR_TRANSPARENCY.title,
-                    search::SIDEBAR_TRANSPARENCY.description,
-                ))
-                .child(
-                    crate::settings::components::toggle_switch(
-                        "macos-chrome-material-toggle",
-                        search::SIDEBAR_TRANSPARENCY.title,
-                        sidebar_material,
-                        ui,
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _window, cx| {
-                            this.persist_setting(
-                                false,
-                                "macos_chrome_material",
-                                serde_json::Value::Bool(!sidebar_material),
-                                cx,
-                            );
-                        },
-                    )),
-                );
-
-            content.child(
-                Block::new("macOS")
-                    .top_gap(18.)
-                    .child(section_header(ui, "macOS"))
-                    .card(
-                        SearchCard::new(ui)
-                            .row(&search::SIDEBAR_TRANSPARENCY, sidebar_material_row),
-                    )
-                    .finish(),
-            )
-        };
-
-        #[cfg(target_os = "linux")]
-        let content = {
-            let chrome_material = self.cached_config.cockpit_chrome_material_enabled();
-            let chrome_material_row = div()
-                .id("row-linux-chrome-material")
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(16.))
-                .px(px(12.))
-                .py(px(10.))
-                .child(setting_text(
-                    ui,
-                    search::CHROME_TRANSPARENCY.title,
-                    search::CHROME_TRANSPARENCY.description,
-                ))
-                .child(
-                    crate::settings::components::toggle_switch(
-                        "linux-chrome-material-toggle",
-                        search::CHROME_TRANSPARENCY.title,
-                        chrome_material,
-                        ui,
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _window, cx| {
-                            this.persist_setting(
-                                false,
-                                "linux_chrome_material",
-                                serde_json::Value::Bool(!chrome_material),
-                                cx,
-                            );
-                        },
-                    )),
-                );
-
-            content.child(
-                Block::new("Linux")
-                    .top_gap(18.)
-                    .child(section_header(ui, "Linux"))
-                    .card(
-                        SearchCard::new(ui).row(&search::CHROME_TRANSPARENCY, chrome_material_row),
-                    )
-                    .finish(),
-            )
-        };
-
-        content
+            .child(preferences_block)
     }
 
     fn render_theme_mode_tile(
@@ -839,7 +694,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let is_open = self.general_dropdown == Some(GeneralDropdown::BackgroundStyle);
-        let current = self.cached_config.background_style();
+        let current = self.cached_config.resolved_background_style();
 
         let mut trigger =
             select_trigger("background-style-select", "Background style", is_open, ui)
@@ -860,7 +715,7 @@ impl PaneFlowApp {
                         .text_size(crate::ui_primitives::BODY)
                         .text_color(ui.text)
                         .truncate()
-                        .child(current.map_or("Custom", BackgroundStyle::label)),
+                        .child(current.label()),
                 )
                 .child(select_chevron(ui));
 
@@ -874,7 +729,7 @@ impl PaneFlowApp {
                 },
             ));
             for (idx, &style) in BackgroundStyle::ALL.iter().enumerate() {
-                let is_current = current == Some(style);
+                let is_current = current == style;
                 menu = menu.option(
                     select_option(("background-style", idx), is_current, ui)
                         .cursor(CursorStyle::Arrow)
@@ -917,9 +772,7 @@ impl PaneFlowApp {
         style: BackgroundStyle,
         cx: &mut Context<Self>,
     ) {
-        for (key, enabled) in PaneFlowConfig::background_style_settings(style) {
-            self.persist_setting(false, key, serde_json::Value::Bool(enabled), cx);
-        }
+        self.persist_background_style(style, cx);
     }
 
     pub(crate) fn apply_theme_mode(

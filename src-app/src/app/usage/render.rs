@@ -226,7 +226,7 @@ impl PaneFlowApp {
                 )
             });
         let fill = crate::app::constants::sidebar_menu_background(
-            self.cached_config.background_style(),
+            self.cached_config.resolved_background_style(),
             ui,
         );
         let margin = crate::app::sidebar::SIDEBAR_ROW_MARGIN_X;

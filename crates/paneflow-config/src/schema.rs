@@ -56,6 +56,7 @@ mod tests {
             theme_mode: Some("dark".to_string()),
             commands: Vec::new(),
             window_decorations: Some("client".to_string()),
+            background_style: Some(BackgroundStyle::Blended),
             window_backdrop: Some("auto".to_string()),
             windows_terminal_material: Some(true),
             windows_chrome_material: Some(true),
@@ -453,105 +454,6 @@ mod tests {
             cfg.resolved_scrollback_lines_for_profile(TerminalSurfaceProfile::Agent),
             500
         );
-    }
-
-    #[test]
-    fn cockpit_chrome_material_respects_current_platform_switch() {
-        let cfg = PaneFlowConfig::default();
-        assert!(!cfg.cockpit_chrome_material_enabled());
-
-        let cfg = PaneFlowConfig {
-            windows_chrome_material: Some(true),
-            macos_chrome_material: Some(true),
-            linux_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert!(cfg.cockpit_chrome_material_enabled());
-
-        let cfg = PaneFlowConfig {
-            windows_chrome_material: Some(false),
-            macos_chrome_material: Some(true),
-            linux_chrome_material: Some(false),
-            ..Default::default()
-        };
-        assert_eq!(
-            cfg.cockpit_chrome_material_enabled(),
-            cfg!(target_os = "macos")
-        );
-
-        let cfg = PaneFlowConfig {
-            linux_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            cfg.cockpit_chrome_material_enabled(),
-            cfg!(target_os = "linux")
-        );
-
-        let cfg = PaneFlowConfig {
-            window_backdrop: Some("opaque".to_string()),
-            windows_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert!(!cfg.cockpit_chrome_material_enabled());
-    }
-
-    #[test]
-    fn linux_materials_default_off_and_drive_the_background_style() {
-        let themed = PaneFlowConfig::default();
-        assert!(!themed.terminal_material_enabled());
-        assert!(!themed.native_material_requested());
-
-        let blended = PaneFlowConfig {
-            linux_chrome_material: Some(true),
-            linux_terminal_material: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            blended.terminal_material_enabled(),
-            cfg!(target_os = "linux")
-        );
-        assert_eq!(
-            blended.native_material_requested(),
-            cfg!(target_os = "linux")
-        );
-        if cfg!(target_os = "linux") {
-            assert_eq!(themed.background_style(), Some(BackgroundStyle::Themed));
-            assert_eq!(blended.background_style(), Some(BackgroundStyle::Blended));
-            assert_eq!(
-                PaneFlowConfig {
-                    linux_terminal_material: Some(true),
-                    ..Default::default()
-                }
-                .background_style(),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn macos_chrome_material_defaults_off_and_respects_switches() {
-        assert!(!PaneFlowConfig::default().macos_chrome_material_enabled());
-
-        let enabled = PaneFlowConfig {
-            macos_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert!(enabled.macos_chrome_material_enabled());
-
-        let globally_opaque = PaneFlowConfig {
-            window_backdrop: Some("opaque".to_string()),
-            macos_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert!(!globally_opaque.macos_chrome_material_enabled());
-
-        let raw_transparent = PaneFlowConfig {
-            window_backdrop: Some("transparent".to_string()),
-            macos_chrome_material: Some(true),
-            ..Default::default()
-        };
-        assert!(!raw_transparent.macos_chrome_material_enabled());
     }
 
     #[test]
