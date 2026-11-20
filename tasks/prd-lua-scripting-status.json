@@ -1,0 +1,1096 @@
+{
+  "prd": {
+    "file": "tasks/prd-lua-scripting.md",
+    "title": "A typed API, Lua scripting, and a layout that lives outside the window",
+    "created_at": "2026-11-19",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "One typed, self-describing API",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "The layout becomes plain data with stable ids",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 14,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "A gap-free event log",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Lua scripts from the CLI",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 9,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "`init.lua`, actions and key bindings",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 9,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Prompts any client can answer",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "The layout authority moves to the worker",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "Layout with no window",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-009",
+      "title": "Agents ask and act",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 7,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-010",
+      "title": "Windows validation and release readiness",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Pin the app's wire format in a conformance case file",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Create `paneflow-api` and migrate the read methods",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Migrate the remaining methods and delete the hand-written dispatch",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "`system.describe` and a checked-in schema snapshot",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "`paneflow api list`, `describe` and `call`",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Route each call to its owner",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Complete the operation inventory",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Pin today's behavior: create, close, undo, focus, rename",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Pin today's behavior: move, reorder, resize, zoom, presets, restore",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "`paneflow-layout`: the model, ids and the view",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008",
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Operations, part 1: create, close, focus, rename",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Operations, part 2: move and reorder",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Operations, part 3: resize, zoom, presets, restore",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Undo close in the model",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "The window projects the model",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012",
+        "US-013",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Drag-and-drop and dividers go through the model",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Detached panes are keyed by pane id",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "IPC paths go through the model and direct assignments end",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-016",
+        "US-017"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Stable ids on the wire and one save path",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-018",
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Prove parity",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "The worker serves its methods through the registry",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-004"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "The event log and `events.follow`",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Terminal and agent events from the host stream",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Layout events from the window",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-022",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Follow events from the CLI",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-022",
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Validate the engine on every target",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "The script runtime core",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-026"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Bind the API into Lua",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-027",
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "`paneflow do`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-028"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Sleep and timers",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-029"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "React to events: `paneflow.on` and `paneflow.wait`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-030",
+        "US-023",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Run commands: `paneflow.exec`",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-029"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Limits and guard rails",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-030"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-034",
+      "title": "Editor stubs and a generated reference",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-028"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-035",
+      "title": "The worker hosts the configuration runtime",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-027",
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-036",
+      "title": "Define actions",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-035"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-037",
+      "title": "Run actions",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-036",
+        "US-029",
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-038",
+      "title": "Reload, check, and always-on handlers",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-036",
+        "US-031"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-039",
+      "title": "Actions in the command palette",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-037",
+        "US-038"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-040",
+      "title": "`paneflow.bind` and the keymap the worker serves",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-036"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-041",
+      "title": "The window applies `init.lua` bindings",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-040"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-042",
+      "title": "Built-in actions from Lua",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-037",
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-043",
+      "title": "Show configuration problems in the app",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-038",
+        "US-041"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-044",
+      "title": "The prompt broker",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-045",
+      "title": "The text prompt in the window",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-044"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-046",
+      "title": "The choice prompt in the window",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-045"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-047",
+      "title": "`paneflow.ui.input` and `paneflow.ui.pick`",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-044",
+        "US-037",
+        "US-041",
+        "US-045"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-048",
+      "title": "Several clients, one answer",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-044"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-049",
+      "title": "Pending prompts in the attention queue",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-045"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-050",
+      "title": "Measure before moving",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-020"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-051",
+      "title": "The worker hosts the model and writes the session file",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-050",
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-052",
+      "title": "Id leases",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-051"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-053",
+      "title": "The window becomes a layout client",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-052"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-054",
+      "title": "Keep working while the worker is away",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-055",
+      "title": "Window-only state leaves the session file",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-056",
+      "title": "Effects and structural methods move to the worker",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-057",
+      "title": "Events, actions and documents follow the new owner",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-056",
+        "US-037",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-058",
+      "title": "Inventory session launch",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-057"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-059",
+      "title": "Extract session launch into a shared crate",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-060",
+      "title": "The worker starts terminals",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-059"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-061",
+      "title": "Layout methods answer with no window",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-060"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-062",
+      "title": "A window attaches to a layout it did not build",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-060"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-063",
+      "title": "Quitting keeps its meaning",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-061",
+        "US-062"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-064",
+      "title": "Prove that a hook can answer",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-065",
+      "title": "The `ask_human` tool",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-048"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-066",
+      "title": "Show who is asking",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-065",
+        "US-049"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-067",
+      "title": "Answer an agent's own question from Paneflow",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-064",
+        "US-066",
+        "US-046"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-068",
+      "title": "Answer a permission request from Paneflow",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-067"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-069",
+      "title": "Actions as agent tools",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-037",
+        "US-065",
+        "US-066"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-070",
+      "title": "Install and retire the new integrations",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-067",
+        "US-069"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-071",
+      "title": "Windows: scripts, events and commands",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005",
+        "US-031",
+        "US-032",
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-072",
+      "title": "Windows: configuration, keys and prompts",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-047",
+        "US-046",
+        "US-043"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-073",
+      "title": "Windows: layout authority, headless and agents",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-057"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-074",
+      "title": "Fix what Windows found",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-071",
+        "US-072",
+        "US-073"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-075",
+      "title": "Release records",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-074"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
