@@ -4,8 +4,7 @@ mod support;
 
 use std::sync::Arc;
 
-use paneflow_script::{Level, SystemClock};
-use serde_json::json;
+use paneflow_script::SystemClock;
 use support::{FakeBackend, Harness, harness_with, returned};
 
 fn real_time() -> Harness {
@@ -42,6 +41,8 @@ fn a_non_zero_exit_is_a_result_on_windows() {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use paneflow_script::Level;
+    use serde_json::json;
 
     fn pid_alive(pid: u64) -> bool {
         std::process::Command::new("kill")
