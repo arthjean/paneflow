@@ -403,6 +403,7 @@ impl PaneFlowApp {
             .rounded_sm()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .debug_selector(|| "tab-rename-field".to_string())
             .child(self.rename_input.clone())
     }
 }

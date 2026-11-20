@@ -2,6 +2,7 @@ mod create_close;
 mod ids;
 mod parity;
 mod rearrange;
+mod sidebar;
 
 use std::cell::RefCell;
 use std::process::Command;
@@ -61,7 +62,7 @@ fn every_layout_pin_holds_in_an_isolated_home() {
         .filter(|line| line.starts_with("test app::layout_pins::") && line.ends_with(" ok"))
         .count();
     assert!(
-        passed >= create_close::PINS + ids::PINS + parity::PINS + rearrange::PINS,
+        passed >= create_close::PINS + ids::PINS + parity::PINS + rearrange::PINS + sidebar::PINS,
         "only {passed} layout pins ran\n{stdout}"
     );
 }
