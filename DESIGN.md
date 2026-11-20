@@ -1526,8 +1526,12 @@ binding at once. Under the heading, 16 px below its note and 20 px above the fir
 page's search field is the `filter_field` of the command palette
 (`FilterFieldStyle::palette`: a 34 px well of `text` at 0.07, radius 9, 14 px
 text) reading `Search by name or keys`, with the clear button and, at its
-trailing edge, a 24 px round `Find by keys` toggle holding the 14 px keyboard
-glyph in `muted`, `accent` over `accent` at 0.15 while armed. The query is
+trailing edge, a 24 px `Find by keys` toggle inset 5 px on its three sides at
+radius 4, concentric with the well (9 = 4 + 5), holding the 14 px keyboard of
+`keyboard-keys.svg` in `muted`, `accent` over `accent` at 0.15 while armed.
+That glyph is the settings keyboard without its cable, redrawn so its ink is
+centered in its box like the search glyph's, since the cable pushes the
+keyboard body 2.5 units low. The query is
 parsed rather than matched as text: each token that reads as a chord
 (`ctrl+shift+d`, `Shift+Ctrl+D`, `cmd-k`, `⌘⇧D`, or modifiers alone such as
 `ctrl+alt`) is compared with every binding as a keystroke, whatever the order

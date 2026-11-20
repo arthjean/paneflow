@@ -16,8 +16,8 @@ use crate::settings::components::{
 use crate::settings::search;
 use crate::ui_primitives::squircle::squircle_border;
 use crate::ui_primitives::{
-    AccessibleControlExt, BODY, FOCUS_BLUE, FilterFieldStyle, LABEL_SM, ROW_RADIUS,
-    TooltipDelayExt, filter_field, highlight_ranges, squircle_skin, text_tooltip,
+    AccessibleControlExt, BODY, FOCUS_BLUE, FilterFieldShape, FilterFieldStyle, LABEL_SM,
+    ROW_RADIUS, TooltipDelayExt, filter_field, highlight_ranges, squircle_skin, text_tooltip,
 };
 use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
@@ -55,6 +55,7 @@ const KEY_TOGGLE_SIZE: Pixels = px(24.);
 const KEY_TOGGLE_GLYPH: Pixels = px(14.);
 const KEY_TOGGLE_ARMED_ALPHA: f32 = 0.15;
 const KEY_TOGGLE_HOVER_ALPHA: f32 = 0.08;
+const KEY_TOGGLE_ICON: &str = "icons/settings/keyboard-keys.svg";
 
 const RESTING_NOTE: &str = "The keys for what you do most. Click one to change it.";
 const LISTENING_NOTE: &str = if cfg!(target_os = "macos") {
@@ -134,6 +135,19 @@ fn classify_typed_key(keystroke: &gpui::Keystroke, query_empty: bool, cx: &App) 
         }
         _ => TypedKey::Other,
     }
+}
+
+fn search_field_style() -> FilterFieldStyle {
+    FilterFieldStyle::palette()
+}
+
+fn key_toggle_frame(style: FilterFieldStyle) -> (Pixels, Pixels) {
+    let inset = (style.height - KEY_TOGGLE_SIZE) / 2.;
+    let field_radius = match style.shape {
+        FilterFieldShape::Well(radius) => radius,
+        FilterFieldShape::Capsule => style.height / 2.,
+    };
+    (inset, (field_radius - inset).max(px(0.)))
 }
 
 pub(crate) fn new_shortcut_list_state() -> ListState {
@@ -547,6 +561,8 @@ impl PaneFlowApp {
         } else {
             with_alpha(ui.text, KEY_TOGGLE_HOVER_ALPHA)
         };
+        let style = search_field_style();
+        let (toggle_inset, toggle_radius) = key_toggle_frame(style);
         let key_toggle = div()
             .id("shortcut-find-by-keys")
             .size(KEY_TOGGLE_SIZE)
@@ -554,7 +570,7 @@ impl PaneFlowApp {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_full()
+            .rounded(toggle_radius)
             .bg(toggle_rest)
             .hover(move |style| style.bg(toggle_hover))
             .cursor_pointer()
@@ -580,7 +596,7 @@ impl PaneFlowApp {
             .child(
                 svg()
                     .size(KEY_TOGGLE_GLYPH)
-                    .path("icons/settings/keyboard.svg")
+                    .path(KEY_TOGGLE_ICON)
                     .text_color(if armed { accent } else { ui.muted }),
             );
 
@@ -589,7 +605,7 @@ impl PaneFlowApp {
             "shortcut-search-clear",
             SEARCH_LABEL,
             ui,
-            FilterFieldStyle::palette(),
+            style,
             focused || armed,
             has_query,
             true,
@@ -602,7 +618,7 @@ impl PaneFlowApp {
                 this.focus_shortcut_search(window, cx);
             }),
         )
-        .pr(px(5.))
+        .pr(toggle_inset)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _, window, cx| {
@@ -1133,6 +1149,18 @@ mod tests {
             .text(),
             "Ctrl+B is already assigned to Toggle sidebar. Press it again to reassign."
         );
+    }
+
+    #[test]
+    fn the_find_by_keys_toggle_is_concentric_with_the_search_field() {
+        let style = search_field_style();
+        let (inset, radius) = key_toggle_frame(style);
+        assert_eq!(inset * 2. + KEY_TOGGLE_SIZE, style.height);
+        let FilterFieldShape::Well(field_radius) = style.shape else {
+            panic!("the search field is a well");
+        };
+        assert_eq!(radius + inset, field_radius);
+        assert!(crate::assets::Assets::get(KEY_TOGGLE_ICON).is_some());
     }
 
     #[test]
