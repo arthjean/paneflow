@@ -276,7 +276,7 @@ struct PaneFlowApp {
     space_name_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     space_name_editor: Option<crate::settings::tabs::spaces::SpaceNameEditor>,
     space_delete_armed: Option<paneflow_config::schema::SpaceId>,
-    space_settings_expanded: Option<paneflow_config::schema::SpaceId>,
+    space_detail: Option<paneflow_config::schema::SpaceId>,
     space_env_editor: Option<crate::settings::tabs::spaces::SpaceEnvEditor>,
     space_integrations: crate::settings::tabs::spaces::SpaceIntegrations,
     space_avatar_import: crate::settings::tabs::spaces::SpaceAvatarImport,

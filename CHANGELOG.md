@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings › Spaces is a list with one page per space.** Clicking a space now opens its own page, reached back through the `Spaces` breadcrumb or Escape, instead of unfolding a form inside the list. The page leads with the space's image, its name, editable in place, and its color, then lists its environment variables in the terminal font with secret values masked, its agent setup with each runtime's logo, and the delete action. With no space yet, the page offers `Work`, `Personal` and `Client` presets, each created with its color in one click, and `Custom`.
+
 ### Fixed
 
 - **Customize agent rows and the usage bubble no longer show the sidebar through them under Mica or Blended.** Their fill was the active tab tint at 16% opacity, and the compositor blur only reaches the desktop behind the window, not the rows Paneflow paints beneath a menu, so a row's title and diffstat read through the menu. The fill is now that tint laid opaque over the title bar color.

@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use gpui::{Context, Window};
 use paneflow_config::schema::{
-    DEFAULT_SPACE_NAME, MAX_SPACES, PaneFlowConfig, SpaceConfig, SpaceId, validate_space_name,
+    DEFAULT_SPACE_NAME, MAX_SPACES, PaneFlowConfig, SpaceColor, SpaceConfig, SpaceId,
+    validate_space_name,
 };
 
 use crate::PaneFlowApp;
@@ -408,6 +409,15 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn add_space(&mut self, cx: &mut Context<Self>) -> Option<SpaceId> {
+        self.add_space_with(None, None, cx)
+    }
+
+    pub(crate) fn add_space_with(
+        &mut self,
+        name: Option<&str>,
+        color: Option<SpaceColor>,
+        cx: &mut Context<Self>,
+    ) -> Option<SpaceId> {
         if self.cached_config.spaces.len() >= MAX_SPACES {
             self.show_toast(SPACE_LIMIT_REASON, cx);
             return None;
@@ -416,8 +426,19 @@ impl PaneFlowApp {
         let mut spaces = self.cached_config.spaces.clone();
         spaces.push(SpaceConfig {
             id: id.clone(),
-            name: next_space_name(&self.cached_config),
-            color: None,
+            name: name
+                .filter(|name| {
+                    validate_space_name(
+                        name,
+                        self.cached_config
+                            .spaces
+                            .iter()
+                            .map(|space| space.name.as_str()),
+                    )
+                    .is_ok()
+                })
+                .map_or_else(|| next_space_name(&self.cached_config), str::to_string),
+            color,
             avatar: None,
             env: Default::default(),
         });

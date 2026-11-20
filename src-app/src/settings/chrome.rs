@@ -436,6 +436,8 @@ impl PaneFlowApp {
             .child(section_title(section));
         let title = if section == SettingsSection::Usage {
             self.render_usage_heading(title_text, window, cx)
+        } else if section == SettingsSection::Spaces {
+            self.render_spaces_heading(title_text, cx)
         } else {
             title_text.pb(px(20.)).into_any_element()
         };

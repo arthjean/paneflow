@@ -1536,28 +1536,55 @@ red `Reset`. The scrollbar of the list sits at the panel edge, as in the
 panes and the docks, and the fixed heading, intro line, and filter keep a
 20 px gap above the scrolling rows.
 
-The Spaces page opens with one 11 px muted intro line and a `New space`
-button at its trailing edge, which shows the limit reason beside it once 9
-spaces exist. One card lists `Default`, then every space, as inset rows:
-squircle 14 inside the 6 px card padding, so they sit concentric in the 20
-radius card, with a 20 px mark, the mesh gradient for `Default`, the name at 13 Medium
-over a muted count of workspaces and variables, and a chevron. Hovering a
-space's mark lays a black scrim at 0.5 with a white 12 px pencil over it, and
-clicking it opens the system file picker; the chosen image is decoded off the
-render thread, oriented, cropped to its centered square, scaled to 96 px, and
-stored as a PNG in the home's `avatars/` directory, which the mark then draws
-in a circle with the color as its loading and fallback state. Clicking a row
-opens that space, and only that one, below it: Name, Image (`Upload image`, or
-`Replace image` and `Remove image`), Color, Environment, and Agent setup on a
-92 px label column, then `Delete space`, whose confirmation
-swaps the button for the question, `Cancel`, and the red `Delete space`. A
-closed row shows a failed agent setup in `vc_deleted`, or the count of
-environment warnings after the amber triangle. The color choice uses the same
-marks at 16 px in 24 px circular targets: an outline for no color, then one
-mesh per color, each five hues around its own (red leans coral and rose,
-blue leans azure and indigo), fixed across themes. Errors read
-in `vc_deleted` and warnings in `text` after an amber glyph, because the fixed
-red and `vc_modified` fall under 4.5:1 as text on the light card.
+The Spaces page is a list that drills into one page per space. With no space
+yet, the heading stands alone over a welcome card: the `Default` mesh and the
+blue, green, and magenta meshes at 36 px, each in a 3 px ring of the card
+surface and overlapping by 12 px, then `Keep your contexts apart` at 14
+Semibold, one 12 px muted sentence capped at 380 px and centered, and preset
+chips (`Work` blue, `Personal` green, `Client` magenta, then `Custom` with the
+add glyph). A chip is a squircle 14 of `text` at 0.06, 0.1 on hover, holding a
+14 px mark and a 12 Medium label, its mark side 2 px tighter than its text side.
+A preset creates that space with its color and opens it; `Custom` creates the
+next `Space {n}` and focuses its name. Once a space exists, the heading carries
+a `New space` button at its trailing edge, preceded by the limit reason once 9
+spaces exist, and one 12 px muted intro line follows. One card lists `Default`,
+then every space, as inset rows: squircle 14 inside the 6 px card padding, so
+they sit concentric in the 20 radius card, with a 24 px mark, the name at 13
+Medium over a muted count of workspaces and variables, and a chevron. A row
+shows a failed agent setup in `vc_deleted`, or the count of environment
+warnings after the amber triangle. `Default` has no chevron and does not open.
+
+Clicking a space opens its page, and the heading becomes a breadcrumb at 26
+Semibold: `Spaces` in `muted` (`text` on hover, back to the list on click), an
+18 px chevron, and the space name truncated. Escape steps back: it closes the
+environment editor or the delete question first, then returns to the list. The
+page stacks, 24 px apart: an identity card (16 px padding) with the 56 px mark
+and, beside it, the name field (32 px tall, 14 Medium, 320 px at most) over the
+color marks at 16 px in 24 px circular targets, the first one aligned with the
+field edge: an outline for no color, then one mesh per color, each five hues
+around its own (red leans coral and rose, blue leans azure and indigo), fixed
+across themes. `Remove image` sits at the trailing end of the color row while an
+image is set. The mark wears a 22 px badge at its bottom right (card surface
+ring of 2 px, `text` at 0.14 inside, an 11 px add or pencil glyph), and hovering
+it lays a black scrim at 0.5 with a white 18 px pencil over it. Clicking it
+opens the system file picker; the chosen image is decoded off the render
+thread, oriented, cropped to its centered square, scaled to 96 px, and stored as
+a PNG in the home's `avatars/` directory, which the mark then draws in a circle
+with the color as its loading and fallback state. Under the `Environment`
+eyebrow, with a soft `Edit` at its trailing edge, a card lists the variables in
+the terminal font at 11 px, name in `text` on a 180 px column and value in
+`muted`, with a secret value masked; with none, one row says so and offers
+`Add variable`. Editing swaps the list for name and value fields in the same
+card, with `Add variable`, `Cancel`, and the blue `Save`. Warnings follow the
+card. `Agent setup` lists one row per runtime: its 18 px logo, the runtime name
+at 12 Medium over `Hooks and MCP · {state}`, and `Install` or `Retry`, a spinner
+while it installs, or a muted tick once installed. The last card holds `Delete
+space` over the fate of its workspaces and a `Delete` ghost in `vc_deleted`;
+the confirmation asks `Delete {name}?` beside `Cancel` and the red `Delete
+space`. Buttons inside a card are squircle 14 of `text` at 0.06, 0.1 on hover,
+because `subtle` vanishes on the dark card. Errors read in `vc_deleted` and
+warnings in `text` after an amber glyph, because the fixed red and
+`vc_modified` fall under 4.5:1 as text on the light card.
 
 The Usage page (`src-app/src/app/usage/page.rs`), under Integrations between
 Agents and Plugins with the 15 px `chart-bar-line` glyph, has the 26 px heading, a

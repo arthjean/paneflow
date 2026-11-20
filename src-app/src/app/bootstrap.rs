@@ -334,7 +334,7 @@ impl PaneFlowApp {
             space_name_input,
             space_name_editor: None,
             space_delete_armed: None,
-            space_settings_expanded: None,
+            space_detail: None,
             space_env_editor: None,
             space_integrations: Default::default(),
             space_avatar_import: Default::default(),
