@@ -1,0 +1,21 @@
+[package]
+name = "paneflow-script"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "The Lua 5.4 runtime behind `paneflow do`: the paneflow table, timers, events and commands, on one thread"
+
+[dependencies]
+mlua = { version = "=0.12.2", default-features = false, features = ["lua54", "vendored", "async", "serialize"] }
+paneflow-api.workspace = true
+paneflow-home.workspace = true
+paneflow-process.workspace = true
+serde_json.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+paneflow-config.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -5,6 +5,7 @@ use serde_json::Value;
 
 pub(crate) mod api_cmd;
 mod control_cmds;
+mod do_cmd;
 mod events_cmd;
 mod flow_cmd;
 mod flow_spec;
@@ -29,6 +30,7 @@ pub const EXIT_TIMEOUT: i32 = 4;
 
 const VERBS: &[&str] = &[
     "api",
+    "do",
     "ls",
     "read",
     "search",
@@ -191,6 +193,11 @@ enum Commands {
         about = "List, describe and call every Paneflow method on the process that owns it"
     )]
     Api(api_cmd::ApiCommand),
+    #[command(
+        about = "Run a Lua script against Paneflow: a file, -e '<chunk>' or - for stdin",
+        long_about = "Run a Lua 5.4 script in this process against Paneflow. The script reaches every method as paneflow.<namespace>.<method>{...}, reacts to events with paneflow.on and paneflow.wait, sets timers with paneflow.after and paneflow.every, and runs programs with paneflow.exec.\n\nkey=value pairs after the script fill paneflow.args, typed by spelling (n=2 is a number, on=true a boolean). A returned value is printed as one line of JSON. An error prints `Error: <message>` and exits 1; paneflow.stop(n) exits n; Ctrl-C exits 130.\n\nExamples:\n  paneflow do ./split.lua\n  paneflow do -e 'return paneflow.surface.list()'\n  echo 'return paneflow.args.n * 2' | paneflow do - n=21"
+    )]
+    Do(do_cmd::DoArgs),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -560,6 +567,10 @@ pub fn run() -> i32 {
         };
     }
 
+    if let Commands::Do(args) = command {
+        return do_cmd::run(args);
+    }
+
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
             Ok(code) => code,
@@ -789,6 +800,7 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             None => Err(CliTransport::no_controller("paneflow watch")),
         },
         Commands::Api(command) => api_cmd::run(command),
+        Commands::Do(args) => Ok(do_cmd::run(args)),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
         Commands::Sessions {

@@ -37,6 +37,15 @@ pub(super) enum ApiCommand {
         )]
         args: Option<String>,
     },
+    #[command(
+        about = "Print a Lua language server definition file for paneflow do scripts, from the registry linked into this binary",
+        long_about = "Print a Lua language server definition file (---@meta) with one typed function per method and the runtime functions of paneflow do, generated from the registry linked into this binary; no running instance is needed.\n\nExample:\n  paneflow api stubs > ~/.paneflow/lua/paneflow.d.lua"
+    )]
+    Stubs,
+    #[command(
+        about = "Print a Markdown reference of every method, from the registry linked into this binary"
+    )]
+    Docs,
 }
 
 enum Source {
@@ -504,7 +513,28 @@ pub(super) fn run(command: ApiCommand) -> Result<i32, CliError> {
             pairs,
             args,
         } => call(&catalog, &method, &pairs, args.as_deref()),
+        ApiCommand::Stubs => {
+            print!(
+                "{}",
+                paneflow_script::stubs::lua_stubs(&linked_descriptions(&catalog))
+            );
+            Ok(EXIT_OK)
+        }
+        ApiCommand::Docs => {
+            print!(
+                "{}",
+                paneflow_script::stubs::markdown_reference(&linked_descriptions(&catalog))
+            );
+            Ok(EXIT_OK)
+        }
     }
+}
+
+fn linked_descriptions(catalog: &Catalog) -> Vec<Value> {
+    catalog
+        .iter()
+        .map(paneflow_api::Descriptor::describe)
+        .collect()
 }
 
 #[cfg(test)]

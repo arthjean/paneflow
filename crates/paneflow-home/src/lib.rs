@@ -246,6 +246,16 @@ pub fn serve_runtime_dir_in(home: &Path) -> PathBuf {
     serve_dir_in(home).join(SERVE_RUNTIME_DIR_NAME)
 }
 
+pub const LUA_DIR_NAME: &str = "lua";
+
+pub fn lua_dir_in(home: &Path) -> PathBuf {
+    home.join(LUA_DIR_NAME)
+}
+
+pub fn lua_dir() -> Option<PathBuf> {
+    paneflow_home().map(|home| lua_dir_in(&home))
+}
+
 const SERVE_ENDPOINT_PREFIX: &str = "paneflow-serve-";
 
 #[cfg(windows)]
