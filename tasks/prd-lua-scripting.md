@@ -516,11 +516,11 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Paneflow sites:** `crates/paneflow-serve/src/server.rs:599-700`, `protocol.rs:20-71`; `protocol/controller-conformance-v1.json`; `ARCHITECTURE.md:692-696`.
 
 **Acceptance Criteria:**
-- [ ] Given `worker.hello`, `worker.status`, `worker.shutdown`, `agent.snapshot`, `agent.follow`, `agent.activity_log`, `agent.acknowledge` and the `usage.*` methods, when they are called, then each is served through `paneflow-api` and `crates/paneflow-serve/tests/controller_conformance.rs` passes unchanged
-- [ ] Given `system.describe` on the worker endpoint, when it is called, then it returns the worker's methods
-- [ ] Given a client that has not sent `worker.hello`, when it calls another method, then it is refused as today
-- [ ] Given `ARCHITECTURE.md`, when this story ends, then its "No front door" paragraph is rewritten: the worker answers the method families it owns, still forwards nothing to the core, and the reason (it is replaced on every update and owns no terminal) is stated
-- [ ] Given the worker's capability file `protocol/host-capabilities-v1.json`, when a new method family is added later, then a client that reads an older set refuses the call before a frame leaves, as today
+- [x] Given `worker.hello`, `worker.status`, `worker.shutdown`, `agent.snapshot`, `agent.follow`, `agent.activity_log`, `agent.acknowledge` and the `usage.*` methods, when they are called, then each is served through `paneflow-api` and `crates/paneflow-serve/tests/controller_conformance.rs` passes unchanged
+- [x] Given `system.describe` on the worker endpoint, when it is called, then it returns the worker's methods
+- [x] Given a client that has not sent `worker.hello`, when it calls another method, then it is refused as today
+- [x] Given `ARCHITECTURE.md`, when this story ends, then its "No front door" paragraph is rewritten: the worker answers the method families it owns, still forwards nothing to the core, and the reason (it is replaced on every update and owns no terminal) is stated
+- [x] Given the worker's capability file `protocol/host-capabilities-v1.json`, when a new method family is added later, then a client that reads an older set refuses the call before a frame leaves, as today
 
 #### US-022: The event log and `events.follow`
 **Description:** As a script author, I want to follow events with a sequence number so that I never miss or repeat one.
@@ -530,14 +530,14 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-021
 
 **Acceptance Criteria:**
-- [ ] Given the log, when an event is appended, then it gets the next `seq` (starting at 1 for a worker start), a `ts` in milliseconds, a `type`, the ids that apply (`workspace_id`, `tab_id`, `pane_id`, `surface_id`, `session`) and a `data` object
-- [ ] Given `events.follow` with no parameter, when it is called, then the stream sends a header with the current `seq` and the worker's `epoch`, then every later event in order
-- [ ] Given `events.follow` with `since` and the same `epoch`, when the events after `since` are still in the ring, then the stream replays them first, with no gap and no duplicate
-- [ ] Given `since` older than the ring, or an `epoch` that is not the worker's, when `events.follow` is called, then it replies with a typed `evicted` error carrying the current `seq` and `epoch`
-- [ ] Given `types` (exact names or a `prefix.*` form) and `workspace_id`, when they are passed, then only matching events are sent, and the `seq` values of sent events stay those of the log
-- [ ] Given a follower whose unsent backlog exceeds 8 MiB, when the next event is queued, then the worker closes that connection and other followers are unaffected
-- [ ] Given the ring, when more than 1,024 events exist, then the oldest are dropped from the ring and `seq` keeps increasing
-- [ ] Given no frame for the keepalive interval `agent.follow` uses (`FOLLOW_KEEPALIVE`, 2 s, `crates/paneflow-serve/src/server.rs:31`), when a follower is connected, then it receives a keepalive frame
+- [x] Given the log, when an event is appended, then it gets the next `seq` (starting at 1 for a worker start), a `ts` in milliseconds, a `type`, the ids that apply (`workspace_id`, `tab_id`, `pane_id`, `surface_id`, `session`) and a `data` object
+- [x] Given `events.follow` with no parameter, when it is called, then the stream sends a header with the current `seq` and the worker's `epoch`, then every later event in order
+- [x] Given `events.follow` with `since` and the same `epoch`, when the events after `since` are still in the ring, then the stream replays them first, with no gap and no duplicate
+- [x] Given `since` older than the ring, or an `epoch` that is not the worker's, when `events.follow` is called, then it replies with a typed `evicted` error carrying the current `seq` and `epoch`
+- [x] Given `types` (exact names or a `prefix.*` form) and `workspace_id`, when they are passed, then only matching events are sent, and the `seq` values of sent events stay those of the log
+- [x] Given a follower whose unsent backlog exceeds 8 MiB, when the next event is queued, then the worker closes that connection and other followers are unaffected
+- [x] Given the ring, when more than 1,024 events exist, then the oldest are dropped from the ring and `seq` keeps increasing
+- [x] Given no frame for the keepalive interval `agent.follow` uses (`FOLLOW_KEEPALIVE`, 2 s, `crates/paneflow-serve/src/server.rs:31`), when a follower is connected, then it receives a keepalive frame
 
 #### US-023: Terminal and agent events from the host stream
 **Description:** As a script author, I want events for directory changes, title changes, bells and program exits so that scripts react without polling.
@@ -549,13 +549,13 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Paneflow sites:** `crates/paneflow-serve/src/core_link.rs:45-155`, `state.rs:94-118,473-528`, `worker.rs:268-332`; `crates/paneflow-host/src/agent.rs:168-198`.
 
 **Acceptance Criteria:**
-- [ ] Given a session whose working directory changes, when the host frame arrives, then one `terminal.cwd_changed` event is appended with the new `cwd` and the session id
-- [ ] Given a title change, a new `bell_at_ms` value, or a lifecycle that becomes exited, when the frame arrives, then one `terminal.title_changed`, `terminal.bell` or `terminal.exited` (with `exit_code` when the host recorded one) is appended
-- [ ] Given an agent session whose projected state changes, when the worker's reducer applies it, then one `agent.state_changed` event is appended with the tool, the previous state and the new state
-- [ ] Given a plain shell with no agent, when it changes directory and exits, then the events above are appended for it (validates A2)
-- [ ] Given the worker reconnecting to the host after a dropped stream, when it takes a fresh snapshot, then it appends events only for fields that differ from its last known values, and none for unchanged sessions
-- [ ] Given a worker start, when it rebuilds from the host manifests, then no event is appended for the initial state
-- [ ] The host crate is not modified by this story
+- [x] Given a session whose working directory changes, when the host frame arrives, then one `terminal.cwd_changed` event is appended with the new `cwd` and the session id
+- [x] Given a title change, a new `bell_at_ms` value, or a lifecycle that becomes exited, when the frame arrives, then one `terminal.title_changed`, `terminal.bell` or `terminal.exited` (with `exit_code` when the host recorded one) is appended
+- [x] Given an agent session whose projected state changes, when the worker's reducer applies it, then one `agent.state_changed` event is appended with the tool, the previous state and the new state
+- [x] Given a plain shell with no agent, when it changes directory and exits, then the events above are appended for it (validates A2)
+- [x] Given the worker reconnecting to the host after a dropped stream, when it takes a fresh snapshot, then it appends events only for fields that differ from its last known values, and none for unchanged sessions
+- [x] Given a worker start, when it rebuilds from the host manifests, then no event is appended for the initial state
+- [x] The host crate is not modified by this story
 
 #### US-024: Layout events from the window
 **Description:** As a script author, I want events for panes, tabs and workspaces being created, closed, focused and renamed so that scripts follow the layout.
@@ -565,12 +565,12 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-022, US-019
 
 **Acceptance Criteria:**
-- [ ] Given a model op applied in the window, when it returns events, then the window sends them to the worker with `events.publish` on a background thread, in the order the ops were applied
-- [ ] Given `workspace.created`, `workspace.closed`, `workspace.renamed`, `workspace.selected`, `tab.created`, `tab.closed`, `tab.renamed`, `tab.selected`, `pane.created`, `pane.closed`, `pane.focused`, `surface.created`, `surface.closed`, `surface.renamed` and `layout.changed` (with the revision), when the matching op is applied, then exactly one event of that type is appended with the model ids
-- [ ] Given the worker unreachable, when ops are applied, then their events are kept in a bounded window-side queue of 1,024 and sent in order on reconnect, and if the queue overflows the window sends one `layout.resync` event instead of the lost ones
-- [ ] Given a divider drag, when it ends, then exactly one `layout.changed` is published for it
-- [ ] Given `events.publish` with an event type outside the layout family, when it is called, then it is refused with `-32602`
-- [ ] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
+- [x] Given a model op applied in the window, when it returns events, then the window sends them to the worker with `events.publish` on a background thread, in the order the ops were applied
+- [x] Given `workspace.created`, `workspace.closed`, `workspace.renamed`, `workspace.selected`, `tab.created`, `tab.closed`, `tab.renamed`, `tab.selected`, `pane.created`, `pane.closed`, `pane.focused`, `surface.created`, `surface.closed`, `surface.renamed` and `layout.changed` (with the revision), when the matching op is applied, then exactly one event of that type is appended with the model ids
+- [x] Given the worker unreachable, when ops are applied, then their events are kept in a bounded window-side queue of 1,024 and sent in order on reconnect, and if the queue overflows the window sends one `layout.resync` event instead of the lost ones
+- [x] Given a divider drag, when it ends, then exactly one `layout.changed` is published for it
+- [x] Given `events.publish` with an event type outside the layout family, when it is called, then it is refused with `-32602`
+- [x] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
 
 #### US-025: Follow events from the CLI
 **Description:** As a user, I want to watch the event log from a shell so that I can see what a script would receive.
@@ -580,11 +580,11 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-022, US-006
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow events`, when it runs, then it prints one line per event with `seq`, type and ids until interrupted, and `--json` prints one JSON object per line
-- [ ] Given `--types terminal.*,pane.closed` and `--since <seq>`, when they are passed, then they map to the `events.follow` parameters
-- [ ] Given the worker restarting while the command runs, when the stream ends, then the command reconnects, prints one line saying the sequence restarted, and continues
-- [ ] Given no worker, when the command runs, then it exits with the existing "no instance" code
-- [ ] `paneflow watch` and `paneflow wait` are unchanged
+- [x] Given `paneflow events`, when it runs, then it prints one line per event with `seq`, type and ids until interrupted, and `--json` prints one JSON object per line
+- [x] Given `--types terminal.*,pane.closed` and `--since <seq>`, when they are passed, then they map to the `events.follow` parameters
+- [x] Given the worker restarting while the command runs, when the stream ends, then the command reconnects, prints one line saying the sequence restarted, and continues
+- [x] Given no worker, when the command runs, then it exits with the existing "no instance" code
+- [x] `paneflow watch` and `paneflow wait` are unchanged
 
 ---
 
