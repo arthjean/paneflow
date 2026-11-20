@@ -203,6 +203,8 @@ impl PaneFlowApp {
             self.cached_config.background_style(),
             ui,
         );
+        let margin = crate::app::sidebar::SIDEBAR_ROW_MARGIN_X;
+        let bubble_left = (self.sidebar_width() - margin - BUBBLE_WIDTH).max(margin);
         let top = self.usage.bubble_top();
         let bubble = menu_surface_filled(div().id("usage-bubble"), fill, ui)
             .child(
@@ -238,7 +240,7 @@ impl PaneFlowApp {
             div()
                 .absolute()
                 .bottom(px(BUBBLE_BOTTOM))
-                .left(px(crate::app::sidebar::SIDEBAR_ROW_MARGIN_X))
+                .left(px(bubble_left))
                 .occlude()
                 .child(bubble),
         ))
