@@ -127,7 +127,7 @@ Web research was not run: every design question was answered by source code (Pan
 
 | # | Assumption | Risk | Validation |
 |---|------------|------|------------|
-| A1 | Keeping 25 % of the see-through reads as color, not shapes, on Paneflow's dark and light themes. | Medium: a wrong value is a one-constant change. | US-006 |
+| A1 | Keeping 25 % of the see-through reads as color, not shapes, on Paneflow's dark and light themes. | Medium: a wrong value is a one-constant change. | US-006. Dark theme observed 2026-11-20 by Arthur on GNOME 51.1 Wayland (debug build, `veil` tagged home, `PANEFLOW_DEV_BLUR_SUPPORT=none`): the shell read as a faint tint with no shapes, the terminal card as opaque. Light theme observed the same day with the same override: the sidebar and the panes read as near-opaque color, with no shapes. That run kept the compositor blur on behind the window; the light veil (0.95) lets through less than the dark one (0.93), which showed no shapes over a sharp desktop. The `Full` column (real blur) was approved the same day for the sidebar and the panes. **Confirmed**, 0.25 kept |
 | A2 | Treating an offered Wayland blur as `Full` is right even on a compositor configured for a weak blur (Hyprland with a small radius). | Low: the result is today's veil. | None, accepted; see Non-Goals |
 | A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux, and no Mac is confirmed available. | US-010, which stays `BLOCKED` until a Mac confirms it; Open Question 2 |
 | A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-010 |
@@ -228,15 +228,15 @@ Every fill that depends on the backdrop is computed in one place from the style 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] A module under `src-app/src/window_chrome/` defines `BlurSupport` with the variants `Full` and `None`
-- [ ] Given Blended, `Full` and a dark theme color, when the shell veil is computed, then its alpha is 0.72; with a light theme color, 0.80
-- [ ] Given Blended and `None`, when the shell veil is computed, then its alpha is 0.93 on a dark theme color and 0.95 on a light one
-- [ ] Given Blended and `Full`, when the terminal card fill is computed, then it is black at 0.35 on a dark theme and white at 0.35 on a light one
-- [ ] Given Blended and `None`, when the terminal card fill is computed, then it is the theme background with alpha 1
-- [ ] Given Themed, when either fill is computed, then its alpha is 1 whatever `BlurSupport` is
-- [ ] Given Blended and `surface_has_alpha` false, when `effective_style` is called, then it returns Themed
-- [ ] Given Blended and `surface_has_alpha` true, when `effective_style` is called, then it returns Blended
-- [ ] Given a `keep` factor outside 0 to 1, when the thickening function is called, then it clamps the factor and returns an alpha between the base alpha and 1
+- [x] A module under `src-app/src/window_chrome/` defines `BlurSupport` with the variants `Full` and `None`
+- [x] Given Blended, `Full` and a dark theme color, when the shell veil is computed, then its alpha is 0.72; with a light theme color, 0.80
+- [x] Given Blended and `None`, when the shell veil is computed, then its alpha is 0.93 on a dark theme color and 0.95 on a light one
+- [x] Given Blended and `Full`, when the terminal card fill is computed, then it is black at 0.35 on a dark theme and white at 0.35 on a light one
+- [x] Given Blended and `None`, when the terminal card fill is computed, then it is the theme background with alpha 1
+- [x] Given Themed, when either fill is computed, then its alpha is 1 whatever `BlurSupport` is
+- [x] Given Blended and `surface_has_alpha` false, when `effective_style` is called, then it returns Themed
+- [x] Given Blended and `surface_has_alpha` true, when `effective_style` is called, then it returns Blended
+- [x] Given a `keep` factor outside 0 to 1, when the thickening function is called, then it clamps the factor and returns an alpha between the base alpha and 1
 
 #### US-005: Route every backdrop-dependent fill through the veil module
 **Description:** As the maintainer, I want no call site to decide an opacity by platform so that the three platforms cannot drift apart.
@@ -245,13 +245,13 @@ Every fill that depends on the backdrop is computed in one place from the style 
 **Dependencies:** Blocked by US-004
 
 **Acceptance Criteria:**
-- [ ] `cockpit_shell_background`, `cockpit_chrome_background`, `cockpit_backdrop_background`, `sidebar_tab_fill` and `window_border_color` in `src-app/src/app/constants.rs` take their result from the veil module and contain no `cfg!(target_os` test
-- [ ] `pane_card_background` in `src-app/src/pane.rs` takes its result from the veil module and has no `#[cfg(target_os` branch
-- [ ] `material_veiled` has no occurrence in `src-app/src` or `crates/paneflow-config/src`
-- [ ] The opacity constants 0.72, 0.80 and 0.35 are defined only in the veil module
-- [ ] Given Themed, when the main window and a detached pane window render, then every shell and terminal fill is the same color as before this story, checked by the existing `material_tests` adapted to the new functions
-- [ ] Given a window whose `BlurSupport` changes while it is open, when the next frame renders, then the shell veil uses the new value
-- [ ] Given a config whose `background_style` is invalid, when a window renders, then every shell and terminal fill is the Themed one
+- [x] `cockpit_shell_background`, `cockpit_chrome_background`, `cockpit_backdrop_background`, `sidebar_tab_fill` and `window_border_color` in `src-app/src/app/constants.rs` take their result from the veil module and contain no `cfg!(target_os` test
+- [x] `pane_card_background` in `src-app/src/pane.rs` takes its result from the veil module and has no `#[cfg(target_os` branch
+- [x] `material_veiled` has no occurrence in `src-app/src` or `crates/paneflow-config/src`
+- [x] The opacity constants 0.72, 0.80 and 0.35 are defined only in the veil module
+- [x] Given Themed, when the main window and a detached pane window render, then every shell and terminal fill is the same color as before this story, checked by the existing `material_tests` adapted to the new functions
+- [x] Given a window whose `BlurSupport` changes while it is open, when the next frame renders, then the shell veil uses the new value
+- [x] Given a config whose `background_style` is invalid, when a window renders, then every shell and terminal fill is the Themed one
 
 #### US-006: A debug override for `BlurSupport`, and the visual check of the thick veil
 **Description:** As the maintainer, I want to force `BlurSupport` in a debug build so that I can see the degraded look on a machine that blurs.
@@ -260,12 +260,12 @@ Every fill that depends on the backdrop is computed in one place from the style 
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=none`, when a Blended window renders, then it uses the `None` column of D6
-- [ ] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=full`, when a Blended window renders on a surface that cannot blur, then it uses the `Full` column of D6
-- [ ] Given a release build, when `PANEFLOW_DEV_BLUR_SUPPORT` is set, then it has no effect
-- [ ] Given an unknown value of the variable, when a debug build starts, then one warning is logged and the detected `BlurSupport` is used
-- [ ] `AGENTS.md`, "Running and testing", lists `PANEFLOW_DEV_BLUR_SUPPORT`
-- [ ] Assumption A1 is recorded as confirmed or adjusted in this PRD after Arthur views a dark and a light theme with the override set to `none` on a debug build with its own tagged home
+- [x] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=none`, when a Blended window renders, then it uses the `None` column of D6
+- [x] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=full`, when a Blended window renders on a surface that cannot blur, then it uses the `Full` column of D6
+- [x] Given a release build, when `PANEFLOW_DEV_BLUR_SUPPORT` is set, then it has no effect
+- [x] Given an unknown value of the variable, when a debug build starts, then one warning is logged and the detected `BlurSupport` is used
+- [x] `AGENTS.md`, "Running and testing", lists `PANEFLOW_DEV_BLUR_SUPPORT`
+- [x] Assumption A1 is recorded as confirmed or adjusted in this PRD after Arthur views a dark and a light theme with the override set to `none` on a debug build with its own tagged home
 
 ---
 
