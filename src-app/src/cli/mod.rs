@@ -3,11 +3,13 @@ use paneflow_ipc_client::host_control::{ControlTarget, HostTransport, resolve_co
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
+pub(crate) mod api_cmd;
 mod control_cmds;
 mod flow_cmd;
 mod flow_spec;
 mod host_cmd;
 mod read_cmds;
+pub(crate) mod router;
 mod selector;
 mod send_cmd;
 mod serve_cmd;
@@ -25,6 +27,7 @@ pub const EXIT_TARGET: i32 = 3;
 pub const EXIT_TIMEOUT: i32 = 4;
 
 const VERBS: &[&str] = &[
+    "api",
     "ls",
     "read",
     "search",
@@ -181,6 +184,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(
+        subcommand,
+        about = "List, describe and call every Paneflow method on the process that owns it"
+    )]
+    Api(api_cmd::ApiCommand),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -515,6 +523,16 @@ pub fn run() -> i32 {
         return EXIT_OK;
     };
 
+    if let Commands::Api(command) = command {
+        return match api_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
             Ok(code) => code,
@@ -727,6 +745,7 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             }
             None => Err(CliTransport::no_controller("paneflow watch")),
         },
+        Commands::Api(command) => api_cmd::run(command),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
         Commands::Sessions {

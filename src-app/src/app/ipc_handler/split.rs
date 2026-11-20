@@ -308,7 +308,8 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        match self.prepare_split(params, ipc_orchestration_enabled(), cx) {
+        let spec = paneflow_api::methods::surface::Split::SPEC;
+        match self.prepare_split(params, spawn_gate_open(&spec), cx) {
             Ok(task) => IpcReply::Async(task),
             Err(error) => IpcReply::Ready(error.into_value()),
         }
@@ -331,7 +332,9 @@ impl PaneFlowApp {
             }
         };
         if pane_spec_requires_orchestration(params) && !orchestration_allowed {
-            return Err(orchestration_disabled_error("surface.split"));
+            return Err(spawn_gate_refusal(
+                &paneflow_api::methods::surface::Split::SPEC,
+            ));
         }
         let managed_worktree = parse_managed_worktree(params.get("managed_worktree"));
         let anchor = self.split_anchor(spec.surface_id, cx)?;

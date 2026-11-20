@@ -952,316 +952,309 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(super) fn handle_surface_method(
+    pub(super) fn surface_list(
         &mut self,
-        method: &str,
-        params: &serde_json::Value,
-        caller_pid: Option<i64>,
+        call: Call<'_, paneflow_api::methods::surface::ListParams>,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
-        match method {
-            "surface.list" => {
-                let requested_workspace_id = match self.scope_workspace_id(params, cx) {
-                    Ok(workspace_id) => workspace_id,
-                    Err(error) => return error.into_value(),
-                };
-                let (workspace, count) = match surface_list_scope(
-                    &self.workspaces,
-                    self.active_idx,
-                    requested_workspace_id,
-                ) {
-                    Ok(scope) => scope,
-                    Err(error) => return error.into_value(),
-                };
-                let surfaces: Vec<_> = self
-                    .collect_surface_meta(cx)
-                    .into_iter()
-                    .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
-                    .map(surface_meta_value)
-                    .collect();
-                serde_json::json!({
-                    "pane_count": count,
-                    "workspace": workspace,
-                    "scope_workspace_id": requested_workspace_id,
-                    "surfaces": surfaces,
-                })
+        let params = call.raw;
+        let requested_workspace_id = match self.scope_workspace_id(params, cx) {
+            Ok(workspace_id) => workspace_id,
+            Err(error) => return error.into_value(),
+        };
+        let (workspace, count) =
+            match surface_list_scope(&self.workspaces, self.active_idx, requested_workspace_id) {
+                Ok(scope) => scope,
+                Err(error) => return error.into_value(),
+            };
+        let surfaces: Vec<_> = self
+            .collect_surface_meta(cx)
+            .into_iter()
+            .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
+            .map(surface_meta_value)
+            .collect();
+        serde_json::json!({
+            "pane_count": count,
+            "workspace": workspace,
+            "scope_workspace_id": requested_workspace_id,
+            "surfaces": surfaces,
+        })
+    }
+
+    pub(super) fn fleet_list(
+        &mut self,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let name_by_sid: HashMap<u64, String> = self
+            .collect_surface_meta(cx)
+            .into_iter()
+            .map(|m| (m.surface_id, m.name))
+            .collect();
+        let fleets: Vec<WsFleet> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(idx, ws)| WsFleet {
+                idx,
+                sessions: &ws.agent_sessions,
+                detected: &ws.detected_agents,
+            })
+            .collect();
+        let agents = build_fleet_rows(&fleets, &name_by_sid, std::time::Instant::now());
+        serde_json::json!({ "agents": agents })
+    }
+
+    pub(super) fn surface_status(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::TargetParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let terminal = match self.resolve_surface(params, cx) {
+            Ok(t) => t,
+            Err(e) => return e.into_value(),
+        };
+        let sid = terminal.entity_id().as_u64();
+        let output_generation = terminal.read(cx).terminal.output_generation;
+        let session_id = terminal.read(cx).terminal.session_id.to_string();
+        let projected_state_seq = self
+            .host_agent_row(&terminal.read(cx).terminal.session_id)
+            .map(|row| row.state_seq);
+        let session = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.agent_sessions.values())
+            .find(|s| s.surface_id == Some(sid));
+        let mut status = surface_status_value(
+            sid,
+            session,
+            output_generation,
+            std::time::Instant::now(),
+            projected_state_seq,
+        );
+        status["session"] = serde_json::json!(session_id);
+        status
+    }
+
+    pub(super) fn surface_rename(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::RenameParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        if let Err(error) = opt_str(params, "new_name") {
+            return error.into_value();
+        }
+        let terminal = match self.resolve_surface(params, cx) {
+            Ok(t) => t,
+            Err(e) => return e.into_value(),
+        };
+        let new_name = parse_rename_name(params);
+        terminal.update(cx, |view, _cx| {
+            view.terminal.custom_name = new_name.clone();
+        });
+        self.save_session(cx);
+        cx.notify();
+        serde_json::json!({"renamed": true, "name": new_name})
+    }
+
+    pub(super) fn surface_focus(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::FocusParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(sid) = call.params.surface_id else {
+            return JsonRpcError::invalid_params("missing 'surface_id' parameter").into_value();
+        };
+        let Some(loc) = reveal_surface(&mut self.workspaces, sid, cx) else {
+            return JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
+                .into_value();
+        };
+        let ws_idx = loc.workspace_idx;
+        let pane = loc.pane;
+        self.activate_workspace_without_window(ws_idx, cx);
+        pane.update(cx, |_p, cx| cx.notify());
+        cx.defer(move |cx| {
+            if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
+                return;
             }
-            "fleet.list" => {
-                let name_by_sid: HashMap<u64, String> = self
-                    .collect_surface_meta(cx)
-                    .into_iter()
-                    .map(|m| (m.surface_id, m.name))
-                    .collect();
-                let fleets: Vec<WsFleet> = self
-                    .workspaces
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ws)| WsFleet {
-                        idx,
-                        sessions: &ws.agent_sessions,
-                        detected: &ws.detected_agents,
-                    })
-                    .collect();
-                let agents = build_fleet_rows(&fleets, &name_by_sid, std::time::Instant::now());
-                serde_json::json!({ "agents": agents })
+            for handle in cx.windows() {
+                if let Some(main) = handle.downcast::<PaneFlowApp>() {
+                    let _ = main.update(cx, |_, window, cx| {
+                        pane.read(cx).focus_handle(cx).focus(window, cx);
+                    });
+                }
             }
-            "surface.status" => {
-                let terminal = match self.resolve_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                let sid = terminal.entity_id().as_u64();
-                let output_generation = terminal.read(cx).terminal.output_generation;
-                let session_id = terminal.read(cx).terminal.session_id.to_string();
-                let projected_state_seq = self
-                    .host_agent_row(&terminal.read(cx).terminal.session_id)
-                    .map(|row| row.state_seq);
-                let session = self
-                    .workspaces
-                    .iter()
-                    .flat_map(|ws| ws.agent_sessions.values())
-                    .find(|s| s.surface_id == Some(sid));
-                let mut status = surface_status_value(
-                    sid,
-                    session,
-                    output_generation,
-                    std::time::Instant::now(),
-                    projected_state_seq,
+        });
+        self.save_session(cx);
+        cx.notify();
+        serde_json::json!({
+            "focused": true,
+            "surface_id": sid,
+            "workspace": ws_idx,
+            "scope": "workspace",
+        })
+    }
+
+    pub(super) fn surface_send_text(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::SendTextParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let caller_pid = call.caller_pid;
+        let SendTextRequest {
+            text,
+            submit,
+            paste: paste_param,
+            surface_id: requested_sid,
+        } = match send_text_request(params) {
+            Ok(request) => request,
+            Err(error) => return error.into_value(),
+        };
+        let unrestricted = self.cached_config.ai_unrestricted_enabled();
+        if text.is_empty() && !submit {
+            return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
+        }
+        const MAX_TEXT_LEN: usize = 64 * 1024;
+        if text.len() > MAX_TEXT_LEN {
+            return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
+        }
+        let target: Option<Entity<TerminalView>> = if let Some(sid) = requested_sid {
+            match self.find_surface_terminal_by_id(sid, cx) {
+                Some(t) => Some(t),
+                None => {
+                    return JsonRpcError::invalid_params("Surface not found").into_value();
+                }
+            }
+        } else {
+            self.active_workspace()
+                .and_then(|ws| ws.active_tab().root.as_ref())
+                .and_then(|root| find_first_terminal(root, cx))
+        };
+        let Some(terminal) = target else {
+            return JsonRpcError::invalid_params("No active terminal").into_value();
+        };
+        let wrote_sid = terminal.entity_id().as_u64();
+        if let Err(error) = self.authorize_surface_write(params, wrote_sid, unrestricted, cx) {
+            return error.into_value();
+        }
+        let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
+        let agent_hint = self.surface_agent_hint(wrote_sid, cx);
+        let terminal_bracketed_paste = terminal.read(cx).bracketed_paste_enabled();
+        let paste = resolve_paste_mode(
+            paste_param,
+            submit,
+            agent_hint.is_some(),
+            terminal_bracketed_paste,
+        );
+        let paste =
+            match resolve_send_text_body_mode(text, paste_param, paste, terminal_bracketed_paste) {
+                Ok(paste) => paste,
+                Err(message) => return JsonRpcError::invalid_params(message).into_value(),
+            };
+        if !text.is_empty() {
+            let written = if paste {
+                terminal.read(cx).write_program_injected_text(text)
+            } else {
+                terminal.read(cx).write_program_text(text)
+            };
+            if let Err(reason) = written {
+                return input_rejected_error(reason).into_value();
+            }
+        }
+        if submit {
+            if paste && !text.is_empty() {
+                let floor = std::time::Duration::from_millis(
+                    self.cached_config.resolved_submit_paste_delay_ms(),
                 );
-                status["session"] = serde_json::json!(session_id);
-                status
+                Self::schedule_deferred_submit(&terminal, floor, cx);
+            } else if let Err(reason) = terminal.read(cx).write_program_text("\r") {
+                return input_rejected_error(reason).into_value();
             }
-            "surface.rename" => {
-                if let Err(error) = opt_str(params, "new_name") {
-                    return error.into_value();
-                }
-                let terminal = match self.resolve_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                let new_name = parse_rename_name(params);
-                terminal.update(cx, |view, _cx| {
-                    view.terminal.custom_name = new_name.clone();
-                });
-                self.save_session(cx);
-                cx.notify();
-                serde_json::json!({"renamed": true, "name": new_name})
-            }
-            "surface.focus" => {
-                let sid = match opt_u64(params, "surface_id") {
-                    Ok(Some(sid)) => sid,
-                    Ok(None) => {
-                        return JsonRpcError::invalid_params("missing 'surface_id' parameter")
-                            .into_value();
-                    }
-                    Err(error) => return error.into_value(),
-                };
-                let Some(loc) = reveal_surface(&mut self.workspaces, sid, cx) else {
-                    return JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
-                        .into_value();
-                };
-                let ws_idx = loc.workspace_idx;
-                let pane = loc.pane;
-                self.activate_workspace_without_window(ws_idx, cx);
-                pane.update(cx, |_p, cx| cx.notify());
-                cx.defer(move |cx| {
-                    if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
-                        return;
-                    }
-                    for handle in cx.windows() {
-                        if let Some(main) = handle.downcast::<PaneFlowApp>() {
-                            let _ = main.update(cx, |_, window, cx| {
-                                pane.read(cx).focus_handle(cx).focus(window, cx);
-                            });
-                        }
-                    }
-                });
-                self.save_session(cx);
-                cx.notify();
-                serde_json::json!({
-                    "focused": true,
-                    "surface_id": sid,
-                    "workspace": ws_idx,
-                    "scope": "workspace",
-                })
-            }
-            "surface.send_text" => {
-                let SendTextRequest {
-                    text,
-                    submit,
-                    paste: paste_param,
-                    surface_id: requested_sid,
-                } = match send_text_request(params) {
-                    Ok(request) => request,
-                    Err(error) => return error.into_value(),
-                };
-                let unrestricted = self.cached_config.ai_unrestricted_enabled();
-                if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
-                    return JsonRpcError {
-                        code: -32601,
-                        message:
-                            "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
-                                .to_string(),
-                    }
-                    .into_value();
-                }
-                if text.is_empty() && !submit {
-                    return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
-                }
-                const MAX_TEXT_LEN: usize = 64 * 1024;
-                if text.len() > MAX_TEXT_LEN {
-                    return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
-                }
-                let target: Option<Entity<TerminalView>> = if let Some(sid) = requested_sid {
-                    match self.find_surface_terminal_by_id(sid, cx) {
-                        Some(t) => Some(t),
-                        None => {
-                            return JsonRpcError::invalid_params("Surface not found").into_value();
-                        }
-                    }
-                } else {
-                    self.active_workspace()
-                        .and_then(|ws| ws.active_tab().root.as_ref())
-                        .and_then(|root| find_first_terminal(root, cx))
-                };
-                let Some(terminal) = target else {
-                    return JsonRpcError::invalid_params("No active terminal").into_value();
-                };
-                let wrote_sid = terminal.entity_id().as_u64();
-                if let Err(error) =
-                    self.authorize_surface_write(params, wrote_sid, unrestricted, cx)
-                {
-                    return error.into_value();
-                }
-                let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
-                let agent_hint = self.surface_agent_hint(wrote_sid, cx);
-                let terminal_bracketed_paste = terminal.read(cx).bracketed_paste_enabled();
-                let paste = resolve_paste_mode(
-                    paste_param,
-                    submit,
-                    agent_hint.is_some(),
-                    terminal_bracketed_paste,
-                );
-                let paste = match resolve_send_text_body_mode(
-                    text,
-                    paste_param,
-                    paste,
-                    terminal_bracketed_paste,
-                ) {
-                    Ok(paste) => paste,
-                    Err(message) => return JsonRpcError::invalid_params(message).into_value(),
-                };
-                if !text.is_empty() {
-                    let written = if paste {
-                        terminal.read(cx).write_program_injected_text(text)
-                    } else {
-                        terminal.read(cx).write_program_text(text)
-                    };
-                    if let Err(reason) = written {
-                        return input_rejected_error(reason).into_value();
-                    }
-                }
-                if submit {
-                    if paste && !text.is_empty() {
-                        let floor = std::time::Duration::from_millis(
-                            self.cached_config.resolved_submit_paste_delay_ms(),
-                        );
-                        Self::schedule_deferred_submit(&terminal, floor, cx);
-                    } else if let Err(reason) = terminal.read(cx).write_program_text("\r") {
-                        return input_rejected_error(reason).into_value();
-                    }
-                }
-                log_pane_write(
-                    "surface.send_text",
-                    wrote_sid,
-                    caller_pid,
-                    text.len(),
-                    unrestricted,
-                    forced,
-                );
-                let submit_mode = if submit && paste && !text.is_empty() {
-                    serde_json::Value::String("deferred_paste_cr".to_string())
-                } else if submit {
-                    serde_json::Value::String("inline_cr".to_string())
-                } else {
-                    serde_json::Value::Null
-                };
-                serde_json::json!({
-                    "sent": true,
-                    "length": text.len(),
-                    "submitted": submit,
-                    "paste": paste,
-                    "submit_mode": submit_mode,
-                    "agent_target": agent_hint.is_some(),
-                    "agent_tool": agent_hint.map(|a| a.binary()),
-                    "terminal_bracketed_paste": terminal_bracketed_paste,
-                })
-            }
-            "surface.send_keystroke" => {
-                let (keystroke, requested_sid) =
-                    match (opt_str(params, "keystroke"), opt_u64(params, "surface_id")) {
-                        (Ok(keystroke), Ok(sid)) => (keystroke.unwrap_or(""), sid),
-                        (Err(error), _) | (_, Err(error)) => return error.into_value(),
-                    };
-                let unrestricted = self.cached_config.ai_unrestricted_enabled();
-                if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
-                    return JsonRpcError {
-                        code: -32601,
-                        message: "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use".to_string(),
-                    }
-                    .into_value();
-                }
-                if keystroke.is_empty() {
-                    return JsonRpcError::invalid_params("Missing 'keystroke' parameter")
-                        .into_value();
-                }
-                if keystroke.contains('\r') || keystroke.contains('\n') {
-                    return JsonRpcError::invalid_params(
-                        "keystroke must not contain CR or LF bytes",
-                    )
-                    .into_value();
-                }
-                let terminal = if let Some(sid) = requested_sid {
-                    self.find_surface_terminal_by_id(sid, cx)
-                } else if let Some(ws) = self.active_workspace()
-                    && let Some(root) = &ws.active_tab().root
-                {
-                    find_first_terminal(root, cx)
-                } else {
-                    None
-                };
-                if let Some(t) = &terminal
-                    && let Err(error) = self.authorize_surface_write(
-                        params,
+        }
+        log_pane_write(
+            "surface.send_text",
+            wrote_sid,
+            caller_pid,
+            text.len(),
+            unrestricted,
+            forced,
+        );
+        let submit_mode = if submit && paste && !text.is_empty() {
+            serde_json::Value::String("deferred_paste_cr".to_string())
+        } else if submit {
+            serde_json::Value::String("inline_cr".to_string())
+        } else {
+            serde_json::Value::Null
+        };
+        serde_json::json!({
+            "sent": true,
+            "length": text.len(),
+            "submitted": submit,
+            "paste": paste,
+            "submit_mode": submit_mode,
+            "agent_target": agent_hint.is_some(),
+            "agent_tool": agent_hint.map(|a| a.binary()),
+            "terminal_bracketed_paste": terminal_bracketed_paste,
+        })
+    }
+
+    pub(super) fn surface_send_keystroke(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::SendKeystrokeParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let caller_pid = call.caller_pid;
+        let (keystroke, requested_sid) =
+            match (opt_str(params, "keystroke"), opt_u64(params, "surface_id")) {
+                (Ok(keystroke), Ok(sid)) => (keystroke.unwrap_or(""), sid),
+                (Err(error), _) | (_, Err(error)) => return error.into_value(),
+            };
+        let unrestricted = self.cached_config.ai_unrestricted_enabled();
+        if keystroke.is_empty() {
+            return JsonRpcError::invalid_params("Missing 'keystroke' parameter").into_value();
+        }
+        if keystroke.contains('\r') || keystroke.contains('\n') {
+            return JsonRpcError::invalid_params("keystroke must not contain CR or LF bytes")
+                .into_value();
+        }
+        let terminal = if let Some(sid) = requested_sid {
+            self.find_surface_terminal_by_id(sid, cx)
+        } else if let Some(ws) = self.active_workspace()
+            && let Some(root) = &ws.active_tab().root
+        {
+            find_first_terminal(root, cx)
+        } else {
+            None
+        };
+        if let Some(t) = &terminal
+            && let Err(error) =
+                self.authorize_surface_write(params, t.entity_id().as_u64(), unrestricted, cx)
+        {
+            return error.into_value();
+        }
+        match terminal {
+            Some(t) => match t.read(cx).send_keystroke(keystroke) {
+                Ok(()) => {
+                    log_pane_write(
+                        "surface.send_keystroke",
                         t.entity_id().as_u64(),
+                        caller_pid,
+                        keystroke.len(),
                         unrestricted,
-                        cx,
-                    )
-                {
-                    return error.into_value();
+                        false,
+                    );
+                    serde_json::json!({"sent": true})
                 }
-                match terminal {
-                    Some(t) => match t.read(cx).send_keystroke(keystroke) {
-                        Ok(()) => {
-                            log_pane_write(
-                                "surface.send_keystroke",
-                                t.entity_id().as_u64(),
-                                caller_pid,
-                                keystroke.len(),
-                                unrestricted,
-                                false,
-                            );
-                            serde_json::json!({"sent": true})
-                        }
-                        Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
-                            input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
-                        }
-                        Err(e) => JsonRpcError::invalid_params(e).into_value(),
-                    },
-                    None => JsonRpcError::invalid_params("No active terminal").into_value(),
+                Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
+                    input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
                 }
-            }
-            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+                Err(e) => JsonRpcError::invalid_params(e).into_value(),
+            },
+            None => JsonRpcError::invalid_params("No active terminal").into_value(),
         }
     }
 }

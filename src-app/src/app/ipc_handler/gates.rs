@@ -90,31 +90,7 @@ pub(super) fn log_pane_write(
 }
 
 pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_json::Value {
-    let methods = [
-        "system.ping",
-        "system.capabilities",
-        "system.identify",
-        "system.counters",
-        "workspace.list",
-        "workspace.create",
-        "workspace.select",
-        "workspace.close",
-        "workspace.current",
-        "workspace.restore_layout",
-        "workspace.up",
-        "surface.list",
-        "surface.read",
-        "surface.search",
-        "surface.rename",
-        "surface.send_text",
-        "surface.send_keystroke",
-        "surface.split",
-        "surface.focus",
-        "surface.status",
-        "fleet.list",
-        "events.subscribe",
-        crate::tmux_compat::METHOD,
-    ];
+    let methods = registry().capability_names();
     serde_json::json!({
         "scripting": scripting,
         "orchestration": orchestration,

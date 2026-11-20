@@ -101,8 +101,9 @@ pub(crate) fn workspace_up_request(
             .map_err(|err| JsonRpcError::invalid_params(format!("pane {i}: {}", err.message)))?;
         planned.push(plan);
     }
-    if pane_specs.iter().any(pane_spec_requires_orchestration) && !ipc_orchestration_enabled() {
-        return Err(orchestration_disabled_error("workspace.up"));
+    let spec = paneflow_api::methods::workspace::Up::SPEC;
+    if pane_specs.iter().any(pane_spec_requires_orchestration) && !spawn_gate_open(&spec) {
+        return Err(spawn_gate_refusal(&spec));
     }
     dedupe_planned_pane_labels(&mut planned);
     Ok(WorkspaceUpRequest {
@@ -129,8 +130,9 @@ pub(crate) fn workspace_create_request(
     let space = opt_str(params, "space")?.map(str::to_string);
     let cwd = opt_str(params, "cwd")?.map(str::to_string);
     let layout = parse_layout_param(params)?;
-    if layout.as_ref().is_some_and(layout_requires_orchestration) && !ipc_orchestration_enabled() {
-        return Err(orchestration_disabled_error("workspace.create"));
+    let spec = paneflow_api::methods::workspace::Create::SPEC;
+    if layout.as_ref().is_some_and(layout_requires_orchestration) && !spawn_gate_open(&spec) {
+        return Err(spawn_gate_refusal(&spec));
     }
     Ok(WorkspaceCreateRequest {
         name,
@@ -684,112 +686,122 @@ impl PaneFlowApp {
         Some(false)
     }
 
-    pub(super) fn handle_workspace_method(
+    pub(super) fn workspace_list(
         &mut self,
-        method: &str,
-        params: &serde_json::Value,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
+        _cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        workspace_list_value(
+            &self.workspaces,
+            self.shown_workspace_idx(),
+            &self.cached_config,
+        )
+    }
+
+    pub(super) fn workspace_current(
+        &mut self,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
-        match method {
-            "workspace.list" => workspace_list_value(
-                &self.workspaces,
-                self.shown_workspace_idx(),
-                &self.cached_config,
-            ),
-            "workspace.current" => {
-                if let Some(ws) = self.active_workspace() {
-                    let layout = ws.serialize_layout_without_scrollback(cx);
-                    serde_json::json!({
-                        "index": self.active_idx,
-                        "title": ws.title,
-                        "cwd": ws.cwd,
-                        "panes": ws.pane_count(),
-                        "space": crate::app::spaces::space_json(&self.cached_config, ws.space.as_ref()),
-                        "layout": layout.and_then(|l| serde_json::to_value(l).ok()),
-                    })
-                } else {
-                    serde_json::json!(null)
-                }
+        if let Some(ws) = self.active_workspace() {
+            let layout = ws.serialize_layout_without_scrollback(cx);
+            serde_json::json!({
+                "index": self.active_idx,
+                "title": ws.title,
+                "cwd": ws.cwd,
+                "panes": ws.pane_count(),
+                "space": crate::app::spaces::space_json(&self.cached_config, ws.space.as_ref()),
+                "layout": layout.and_then(|l| serde_json::to_value(l).ok()),
+            })
+        } else {
+            serde_json::json!(null)
+        }
+    }
+
+    pub(super) fn workspace_select(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::IndexParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(idx) = call.params.index else {
+            return JsonRpcError::invalid_params("missing 'index' parameter").into_value();
+        };
+        if idx < self.workspaces.len() {
+            self.activate_workspace_without_window(idx, cx);
+            serde_json::json!({"selected": idx})
+        } else {
+            index_out_of_bounds(idx, self.workspaces.len()).into_value()
+        }
+    }
+
+    pub(super) fn workspace_close(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::IndexParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(idx) = call.params.index else {
+            return JsonRpcError::invalid_params("missing 'index' parameter").into_value();
+        };
+        if self.workspaces.len() <= 1 {
+            return JsonRpcError::invalid_params("Cannot close the last workspace").into_value();
+        }
+        if idx >= self.workspaces.len() {
+            return index_out_of_bounds(idx, self.workspaces.len()).into_value();
+        }
+        match self.close_without_prompt(crate::app::close_policy::CloseTarget::Workspace(idx), cx) {
+            Ok(()) => serde_json::json!({"closed": idx}),
+            Err(refusal) => JsonRpcError::confirmation_required(refusal.message()).into_value(),
+        }
+    }
+
+    pub(super) fn workspace_restore_layout(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::RestoreLayoutParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let mut layout = match parse_layout_param(params) {
+            Ok(Some(layout)) => layout,
+            Ok(None) => {
+                return JsonRpcError::invalid_params("missing 'layout' parameter").into_value();
             }
-            "workspace.select" => {
-                let idx = match required_index(params) {
-                    Ok(idx) => idx,
-                    Err(error) => return error.into_value(),
-                };
-                if idx < self.workspaces.len() {
-                    self.activate_workspace_without_window(idx, cx);
-                    serde_json::json!({"selected": idx})
-                } else {
-                    index_out_of_bounds(idx, self.workspaces.len()).into_value()
-                }
+            Err(error) => return error.into_value(),
+        };
+        let spec = paneflow_api::methods::workspace::RestoreLayout::SPEC;
+        if layout_requires_orchestration(&layout) && !spawn_gate_open(&spec) {
+            return spawn_gate_refusal(&spec).into_value();
+        }
+        let needed = layout.leaf_count();
+        if needed == 0 || needed > MAX_PANES {
+            return JsonRpcError::invalid_params(format!(
+                "layout must hold between 1 and {MAX_PANES} panes"
+            ))
+            .into_value();
+        }
+        let surplus = self
+            .active_workspace()
+            .map(|ws| surplus_panes(ws.active_tab(), needed))
+            .unwrap_or_default();
+        for pane in &surplus {
+            let target = crate::app::close_policy::CloseTarget::Pane(pane.clone());
+            if let Some(refusal) = self.close_refusal(&target, cx) {
+                return JsonRpcError::confirmation_required(refusal.message()).into_value();
             }
-            "workspace.close" => {
-                let idx = match required_index(params) {
-                    Ok(idx) => idx,
-                    Err(error) => return error.into_value(),
-                };
-                if self.workspaces.len() <= 1 {
-                    return JsonRpcError::invalid_params("Cannot close the last workspace")
-                        .into_value();
-                }
-                if idx >= self.workspaces.len() {
-                    return index_out_of_bounds(idx, self.workspaces.len()).into_value();
-                }
-                match self
-                    .close_without_prompt(crate::app::close_policy::CloseTarget::Workspace(idx), cx)
-                {
-                    Ok(()) => serde_json::json!({"closed": idx}),
-                    Err(refusal) => {
-                        JsonRpcError::confirmation_required(refusal.message()).into_value()
-                    }
-                }
+        }
+        for pane in surplus {
+            self.perform_close(
+                crate::app::close_policy::CloseTarget::Pane(pane),
+                crate::app::close_policy::CloseIntent::Hold,
+                None,
+                cx,
+            );
+        }
+        match self.apply_layout_from_json(&mut layout, cx) {
+            Ok(()) => {
+                let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
+                serde_json::json!({"restored": true, "panes": panes})
             }
-            "workspace.restore_layout" => {
-                let mut layout = match parse_layout_param(params) {
-                    Ok(Some(layout)) => layout,
-                    Ok(None) => {
-                        return JsonRpcError::invalid_params("missing 'layout' parameter")
-                            .into_value();
-                    }
-                    Err(error) => return error.into_value(),
-                };
-                if layout_requires_orchestration(&layout) && !ipc_orchestration_enabled() {
-                    return orchestration_disabled_error("workspace.restore_layout").into_value();
-                }
-                let needed = layout.leaf_count();
-                if needed == 0 || needed > MAX_PANES {
-                    return JsonRpcError::invalid_params(format!(
-                        "layout must hold between 1 and {MAX_PANES} panes"
-                    ))
-                    .into_value();
-                }
-                let surplus = self
-                    .active_workspace()
-                    .map(|ws| surplus_panes(ws.active_tab(), needed))
-                    .unwrap_or_default();
-                for pane in &surplus {
-                    let target = crate::app::close_policy::CloseTarget::Pane(pane.clone());
-                    if let Some(refusal) = self.close_refusal(&target, cx) {
-                        return JsonRpcError::confirmation_required(refusal.message()).into_value();
-                    }
-                }
-                for pane in surplus {
-                    self.perform_close(
-                        crate::app::close_policy::CloseTarget::Pane(pane),
-                        crate::app::close_policy::CloseIntent::Hold,
-                        None,
-                        cx,
-                    );
-                }
-                match self.apply_layout_from_json(&mut layout, cx) {
-                    Ok(()) => {
-                        let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
-                        serde_json::json!({"restored": true, "panes": panes})
-                    }
-                    Err(e) => JsonRpcError::invalid_params(e).into_value(),
-                }
-            }
-            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+            Err(e) => JsonRpcError::invalid_params(e).into_value(),
         }
     }
 }

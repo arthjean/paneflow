@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
+    "crates/paneflow-api",
     "crates/paneflow-colrv1",
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
@@ -43,6 +44,7 @@ categories = ["command-line-utilities"]
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1.2.2"
 
 # Calendar dates and the local time zone
 jiff = { version = "0.2.35", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform", "tzdb-zoneinfo"] }
@@ -67,6 +69,7 @@ widestring = "1"
 
 # Internal crates
 paneflow-agent-config = { path = "crates/paneflow-agent-config", default-features = false }
+paneflow-api = { path = "crates/paneflow-api" }
 paneflow-config = { path = "crates/paneflow-config" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }

@@ -610,6 +610,15 @@ impl TerminalView {
         session: Option<paneflow_config::schema::SessionId>,
         cx: &mut Context<Self>,
     ) -> Self {
+        #[cfg(test)]
+        if cx.has_global::<DisplayOnlyTerminals>() {
+            let mut terminal = TerminalState::new_display_only(24, 80);
+            drop(terminal.take_backend_events());
+            if let Some(session) = session {
+                terminal.session_id = session;
+            }
+            return Self::from_terminal_state(launch, terminal, cx);
+        }
         let surface_id = cx.entity_id().as_u64();
         let config = crate::config_snapshot::current(cx);
         launch.space_env = crate::space_env::workspace_env(&config, launch.workspace_id);
@@ -819,6 +828,12 @@ impl TerminalView {
         )
     }
 }
+
+#[cfg(test)]
+pub(crate) struct DisplayOnlyTerminals;
+
+#[cfg(test)]
+impl gpui::Global for DisplayOnlyTerminals {}
 
 #[derive(Clone)]
 struct HostedLaunch {

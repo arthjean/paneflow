@@ -277,6 +277,14 @@ impl UpdateCheckTrigger {
     }
 }
 
+pub fn idle_check() -> (SharedUpdateSlot, UpdateCheckTrigger) {
+    let (trigger, _requests) = std::sync::mpsc::channel();
+    (
+        std::sync::Arc::new(std::sync::Mutex::new(None)),
+        UpdateCheckTrigger(trigger),
+    )
+}
+
 pub fn spawn_check(
     telemetry: std::sync::Arc<crate::telemetry::client::TelemetryClient>,
     wake: crate::app::wake::AppWake,

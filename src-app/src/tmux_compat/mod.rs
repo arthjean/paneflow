@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 
 pub(crate) const TEAM_ENV: &str = "PANEFLOW_TMUX_TEAM";
-pub(crate) const METHOD: &str = "tmux.compat";
 const SHIM_NAME: &str = "tmux";
 const COMPAT_DIR: &str = "tmux-compat";
 const TMUX_VALUE: &str = "paneflow-tmux-compat,0,0";
@@ -130,7 +129,10 @@ fn call_desktop(argv: &[String]) -> Result<serde_json::Value, String> {
     {
         params["scope_session"] = serde_json::Value::String(session);
     }
-    IpcClient::new(endpoint.path).call(METHOD, params)
+    IpcClient::new(endpoint.path).call(
+        <paneflow_api::methods::tmux::Compat as paneflow_api::Method>::SPEC.name,
+        params,
+    )
 }
 
 #[cfg(test)]

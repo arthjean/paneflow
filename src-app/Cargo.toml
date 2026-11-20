@@ -94,6 +94,7 @@ paneflow-process = { workspace = true }
 # `paneflow <verb>` CLI subcommands use to drive a RUNNING instance over the
 # existing IPC socket and exit before any GPUI init.
 paneflow-ipc-client = { workspace = true }
+paneflow-api.workspace = true
 # File system watcher (OS-native: inotify/FSEvents/ReadDirectoryChanges)
 notify = "7"
 

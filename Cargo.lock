@@ -4627,6 +4627,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-api"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "paneflow-app"
 version = "0.20.0"
 dependencies = [
@@ -4661,6 +4670,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "open",
  "paneflow-agent-config",
+ "paneflow-api",
  "paneflow-config",
  "paneflow-home",
  "paneflow-host",

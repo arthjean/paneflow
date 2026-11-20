@@ -1,0 +1,1105 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-app",
+  "version": 1,
+  "description": "Cases the window's JSON-RPC endpoint must pass. src-app/src/app/ipc_handler/conformance.rs starts a real app with display-only terminals in its own process and state home, once with the scripting and orchestration gates closed and once with PANEFLOW_IPC_SCRIPTING=1, and runs every case over the real socket or named pipe in file order. A result expectation pins the type of every field, nested ones included; values pins exact field values; a case whose expectation or gates no runner reads is a failure naming the case, not a skip. `$surface` stands for the first surface of the shown workspace at the time the case runs.",
+  "cases": [
+    {
+      "id": "system_ping",
+      "summary": "system.ping answers on the connection thread with pong.",
+      "method": "system.ping",
+      "expect": {
+        "result": {
+          "pong": "boolean"
+        }
+      }
+    },
+    {
+      "id": "system_identify",
+      "summary": "system.identify names the app, its version and the wire protocol.",
+      "method": "system.identify",
+      "expect": {
+        "result": {
+          "name": "string",
+          "version": "string",
+          "protocol": "string"
+        }
+      }
+    },
+    {
+      "id": "system_counters",
+      "summary": "system.counters returns every work counter the app keeps.",
+      "method": "system.counters",
+      "expect": {
+        "result": {
+          "counters": {
+            "root_renders": "integer",
+            "sidebar_renders": "integer",
+            "host_agent_snapshots_applied": "integer",
+            "session_list_calls": "integer",
+            "git_spawns": {
+              "total": "integer",
+              "probe": "integer",
+              "user_action": "integer",
+              "by_subcommand": {
+                "add": "integer",
+                "branch": "integer",
+                "cat-file": "integer",
+                "clone": "integer",
+                "config": "integer",
+                "diff": "integer",
+                "diff-index": "integer",
+                "for-each-ref": "integer",
+                "log": "integer",
+                "ls-files": "integer",
+                "merge-base": "integer",
+                "rev-parse": "integer",
+                "show": "integer",
+                "status": "integer",
+                "switch": "integer",
+                "symbolic-ref": "integer",
+                "worktree": "integer",
+                "write-tree": "integer",
+                "other": "integer"
+              }
+            },
+            "process_spawns": "integer",
+            "process_identity": {
+              "pid": "integer",
+              "started_at": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "system_capabilities_closed",
+      "summary": "system.capabilities lists every method and reports both gates closed.",
+      "method": "system.capabilities",
+      "expect": {
+        "result": {
+          "scripting": "boolean",
+          "orchestration": "boolean",
+          "methods": [
+            "string"
+          ]
+        },
+        "values": {
+          "scripting": false,
+          "orchestration": false,
+          "methods": [
+            "system.ping",
+            "system.capabilities",
+            "system.identify",
+            "system.counters",
+            "workspace.list",
+            "workspace.create",
+            "workspace.select",
+            "workspace.close",
+            "workspace.current",
+            "workspace.restore_layout",
+            "workspace.up",
+            "surface.list",
+            "surface.read",
+            "surface.search",
+            "surface.rename",
+            "surface.send_text",
+            "surface.send_keystroke",
+            "surface.split",
+            "surface.focus",
+            "surface.status",
+            "fleet.list",
+            "events.subscribe",
+            "tmux.compat"
+          ]
+        }
+      }
+    },
+    {
+      "id": "workspace_list",
+      "summary": "workspace.list returns every workspace with index, title, cwd, pane count, active flag and space.",
+      "method": "workspace.list",
+      "expect": {
+        "result": {
+          "workspaces": [
+            {
+              "index": "integer",
+              "title": "string",
+              "cwd": "string",
+              "panes": "integer",
+              "active": "boolean",
+              "space": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "workspace_current",
+      "summary": "workspace.current returns the shown workspace with its layout document.",
+      "method": "workspace.current",
+      "expect": {
+        "result": {
+          "index": "integer",
+          "title": "string",
+          "cwd": "string",
+          "panes": "integer",
+          "space": "null",
+          "layout": {
+            "type": "string",
+            "surfaces": [
+              {
+                "surface_type": "string",
+                "name": "string",
+                "command": "null",
+                "cwd": "null",
+                "env": "null",
+                "focus": "boolean",
+                "session": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "surface_list",
+      "summary": "surface.list returns the active workspace's surfaces with their identity and scope.",
+      "method": "surface.list",
+      "expect": {
+        "result": {
+          "pane_count": "integer",
+          "workspace": "integer",
+          "scope_workspace_id": "null",
+          "surfaces": [
+            {
+              "surface_id": "integer",
+              "name": "string",
+              "title": "string",
+              "cwd": "null",
+              "cmd": "null",
+              "workspace_id": "integer",
+              "workspace": "integer",
+              "scope": "string",
+              "tab_id": "integer",
+              "tab_title": "string",
+              "space": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface_list_mistyped_workspace_id",
+      "summary": "surface.list refuses a workspace_id that is not an integer.",
+      "method": "surface.list",
+      "params": {
+        "workspace_id": "one"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_read",
+      "summary": "surface.read returns the trailing lines with their counts, eof, output generation and truncation flag.",
+      "method": "surface.read",
+      "params": {
+        "surface_id": "$surface",
+        "lines": 5,
+        "fenced": false
+      },
+      "expect": {
+        "result": {
+          "text": "string",
+          "lines": "integer",
+          "total_lines": "integer",
+          "eof": "boolean",
+          "output_generation": "integer",
+          "truncated": "boolean"
+        }
+      }
+    },
+    {
+      "id": "surface_read_mistyped_lines",
+      "summary": "surface.read refuses a lines count that is not an integer.",
+      "method": "surface.read",
+      "params": {
+        "surface_id": "$surface",
+        "lines": "5"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_search",
+      "summary": "surface.search returns the matching lines and a truncation flag.",
+      "method": "surface.search",
+      "params": {
+        "surface_id": "$surface",
+        "pattern": "conformance"
+      },
+      "expect": {
+        "result": {
+          "matches": [
+            {
+              "line": "integer",
+              "text": "string"
+            }
+          ],
+          "truncated": "boolean"
+        }
+      }
+    },
+    {
+      "id": "surface_search_missing_pattern",
+      "summary": "surface.search refuses a request with no pattern.",
+      "method": "surface.search",
+      "params": {
+        "surface_id": "$surface"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_status",
+      "summary": "surface.status returns the surface's agent state, hook flag, output generation and session.",
+      "method": "surface.status",
+      "params": {
+        "surface_id": "$surface"
+      },
+      "expect": {
+        "result": {
+          "surface_id": "integer",
+          "state": "string",
+          "state_seq": "integer",
+          "hooked": "boolean",
+          "tool": "string",
+          "active_tool_name": "string",
+          "message": "string",
+          "last_result": "string",
+          "waiting_ms": "integer",
+          "idle_ms": "integer",
+          "output_generation": "integer",
+          "session": "string"
+        }
+      }
+    },
+    {
+      "id": "surface_status_mistyped_surface_id",
+      "summary": "surface.status refuses a surface_id that is not an integer.",
+      "method": "surface.status",
+      "params": {
+        "surface_id": "first"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "fleet_list",
+      "summary": "fleet.list returns the agent rows of every workspace.",
+      "method": "fleet.list",
+      "expect": {
+        "result": {
+          "agents": [
+            {
+              "pid": "integer",
+              "tool": "string",
+              "state": "string",
+              "hooked": "boolean",
+              "reason": "null",
+              "surface_id": "integer",
+              "surface_name": "string",
+              "workspace": "integer",
+              "active_tool_name": "string",
+              "message": "string",
+              "last_result": "string",
+              "waiting_ms": "integer",
+              "idle_ms": "integer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface_rename",
+      "summary": "surface.rename sets the custom name and echoes it.",
+      "method": "surface.rename",
+      "params": {
+        "surface_id": "$surface",
+        "name": "renamed"
+      },
+      "expect": {
+        "result": {
+          "renamed": "boolean",
+          "name": "string"
+        }
+      }
+    },
+    {
+      "id": "surface_rename_mistyped_new_name",
+      "summary": "surface.rename refuses a new_name that is not a string.",
+      "method": "surface.rename",
+      "params": {
+        "surface_id": "$surface",
+        "new_name": 5
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_focus",
+      "summary": "surface.focus reveals the surface and reports its workspace.",
+      "method": "surface.focus",
+      "params": {
+        "surface_id": "$surface"
+      },
+      "expect": {
+        "result": {
+          "focused": "boolean",
+          "surface_id": "integer",
+          "workspace": "integer",
+          "scope": "string"
+        }
+      }
+    },
+    {
+      "id": "surface_focus_missing_surface_id",
+      "summary": "surface.focus refuses a request with no surface_id.",
+      "method": "surface.focus",
+      "params": {},
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_send_text_gate_closed",
+      "summary": "surface.send_text is refused while the scripting gate is closed.",
+      "method": "surface.send_text",
+      "params": {
+        "surface_id": "$surface",
+        "text": "echo"
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
+        }
+      }
+    },
+    {
+      "id": "surface_send_keystroke_gate_closed",
+      "summary": "surface.send_keystroke is refused while the scripting gate is closed.",
+      "method": "surface.send_keystroke",
+      "params": {
+        "surface_id": "$surface",
+        "keystroke": "escape"
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use"
+        }
+      }
+    },
+    {
+      "id": "surface_send_text_mistyped_with_gate_closed",
+      "summary": "surface.send_text checks parameter types before its gate.",
+      "method": "surface.send_text",
+      "params": {
+        "surface_id": "$surface",
+        "text": 5
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_split",
+      "summary": "surface.split adds a pane next to the surface and returns the new surface.",
+      "method": "surface.split",
+      "params": {
+        "surface_id": "$surface",
+        "direction": "vertical"
+      },
+      "expect": {
+        "result": {
+          "split": "boolean",
+          "direction": "string",
+          "panes": "integer",
+          "surface_id": "integer"
+        }
+      }
+    },
+    {
+      "id": "surface_split_mistyped_direction",
+      "summary": "surface.split refuses a direction that is not a string.",
+      "method": "surface.split",
+      "params": {
+        "surface_id": "$surface",
+        "direction": 7
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_split_orchestration_closed",
+      "summary": "surface.split with a command is refused while the orchestration gate is closed.",
+      "method": "surface.split",
+      "params": {
+        "surface_id": "$surface",
+        "direction": "vertical",
+        "command": "make"
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
+        }
+      }
+    },
+    {
+      "id": "workspace_create",
+      "summary": "workspace.create opens a workspace and returns its index, title and pane count.",
+      "method": "workspace.create",
+      "params": {
+        "name": "gamma"
+      },
+      "expect": {
+        "result": {
+          "index": "integer",
+          "title": "string",
+          "panes": "integer"
+        }
+      }
+    },
+    {
+      "id": "workspace_create_mistyped_name",
+      "summary": "workspace.create refuses a name that is not a string.",
+      "method": "workspace.create",
+      "params": {
+        "name": 5
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "workspace_create_orchestration_closed",
+      "summary": "workspace.create with a layout that runs a command is refused while the orchestration gate is closed.",
+      "method": "workspace.create",
+      "params": {
+        "name": "gated",
+        "layout": {
+          "type": "pane",
+          "surfaces": [
+            {
+              "command": "make"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "workspace.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
+        }
+      }
+    },
+    {
+      "id": "workspace_up",
+      "summary": "workspace.up opens a workspace from pane specs and returns what it created.",
+      "method": "workspace.up",
+      "params": {
+        "name": "delta",
+        "panes": [
+          {
+            "label": "one"
+          },
+          {
+            "label": "two"
+          }
+        ]
+      },
+      "expect": {
+        "result": {
+          "index": "integer",
+          "title": "string",
+          "panes": "integer",
+          "surface_ids": [
+            "integer"
+          ],
+          "labels": [
+            "string"
+          ]
+        }
+      }
+    },
+    {
+      "id": "workspace_up_missing_panes",
+      "summary": "workspace.up refuses a request with no panes.",
+      "method": "workspace.up",
+      "params": {
+        "name": "empty"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "workspace_up_orchestration_closed",
+      "summary": "workspace.up with a pane command is refused while the orchestration gate is closed.",
+      "method": "workspace.up",
+      "params": {
+        "panes": [
+          {
+            "command": "make"
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "workspace.up orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
+        }
+      }
+    },
+    {
+      "id": "workspace_select",
+      "summary": "workspace.select shows the workspace at an index and echoes it.",
+      "method": "workspace.select",
+      "params": {
+        "index": 0
+      },
+      "expect": {
+        "result": {
+          "selected": "integer"
+        }
+      }
+    },
+    {
+      "id": "workspace_select_missing_index",
+      "summary": "workspace.select refuses a request with no index.",
+      "method": "workspace.select",
+      "params": {},
+      "expect": {
+        "error": {
+          "code": -32602,
+          "message": "missing 'index' parameter"
+        }
+      }
+    },
+    {
+      "id": "workspace_restore_layout",
+      "summary": "workspace.restore_layout conforms the shown tab to a layout document and returns its pane count.",
+      "method": "workspace.restore_layout",
+      "params": {
+        "layout": {
+          "type": "pane",
+          "surfaces": [
+            {
+              "name": "restored"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": {
+          "restored": "boolean",
+          "panes": "integer"
+        }
+      }
+    },
+    {
+      "id": "workspace_restore_layout_missing_layout",
+      "summary": "workspace.restore_layout refuses a request with no layout.",
+      "method": "workspace.restore_layout",
+      "params": {},
+      "expect": {
+        "error": {
+          "code": -32602,
+          "message": "missing 'layout' parameter"
+        }
+      }
+    },
+    {
+      "id": "workspace_restore_layout_too_many_panes",
+      "summary": "workspace.restore_layout refuses a layout with more leaves than the pane limit.",
+      "method": "workspace.restore_layout",
+      "params": {
+        "layout": {
+          "type": "split",
+          "direction": "vertical",
+          "children": [
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                {}
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "error": {
+          "code": -32602,
+          "message": "layout must hold between 1 and 32 panes"
+        }
+      }
+    },
+    {
+      "id": "workspace_restore_layout_orchestration_closed",
+      "summary": "workspace.restore_layout with a prompt is refused while the orchestration gate is closed.",
+      "method": "workspace.restore_layout",
+      "params": {
+        "layout": {
+          "type": "pane",
+          "surfaces": [
+            {
+              "prompt": "go"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "workspace.restore_layout orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
+        }
+      }
+    },
+    {
+      "id": "tmux_compat",
+      "summary": "tmux.compat runs a tmux command for a team and returns its stdout, stderr and exit code.",
+      "method": "tmux.compat",
+      "params": {
+        "team": "conformance",
+        "surface_id": "$surface",
+        "argv": [
+          "display-message",
+          "-p",
+          "#{pane_id}"
+        ]
+      },
+      "expect": {
+        "result": {
+          "stdout": "string",
+          "stderr": "string",
+          "exit": "integer"
+        }
+      }
+    },
+    {
+      "id": "tmux_compat_missing_team",
+      "summary": "tmux.compat refuses a request with no team.",
+      "method": "tmux.compat",
+      "params": {
+        "surface_id": "$surface",
+        "argv": [
+          "list-panes"
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "workspace_close",
+      "summary": "workspace.close closes the workspace at an index and echoes it.",
+      "method": "workspace.close",
+      "params": {
+        "index": 2
+      },
+      "expect": {
+        "result": {
+          "closed": "integer"
+        }
+      }
+    },
+    {
+      "id": "workspace_close_missing_index",
+      "summary": "workspace.close refuses a request with no index.",
+      "method": "workspace.close",
+      "params": {},
+      "expect": {
+        "error": {
+          "code": -32602,
+          "message": "missing 'index' parameter"
+        }
+      }
+    },
+    {
+      "id": "events_subscribe",
+      "summary": "events.subscribe acknowledges with a subscribed frame carrying the subscription id.",
+      "method": "events.subscribe",
+      "params": {
+        "types": [
+          "surface_changed"
+        ]
+      },
+      "expect": {
+        "stream": [
+          {
+            "type": "string",
+            "id": "integer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "events_subscribe_unknown_type",
+      "summary": "events.subscribe refuses an unknown event type.",
+      "method": "events.subscribe",
+      "params": {
+        "types": [
+          "bogus"
+        ]
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "unknown_method",
+      "summary": "An unknown method is refused with method not found and its name.",
+      "method": "nope.nothing",
+      "params": {},
+      "expect": {
+        "error": {
+          "code": -32601,
+          "message": "Method not found: nope.nothing"
+        }
+      }
+    },
+    {
+      "id": "system_capabilities_open",
+      "summary": "With PANEFLOW_IPC_SCRIPTING=1, system.capabilities reports both gates open.",
+      "method": "system.capabilities",
+      "gates": "open",
+      "expect": {
+        "result": {
+          "scripting": "boolean",
+          "orchestration": "boolean",
+          "methods": [
+            "string"
+          ]
+        },
+        "values": {
+          "scripting": true,
+          "orchestration": true,
+          "methods": [
+            "system.ping",
+            "system.capabilities",
+            "system.identify",
+            "system.counters",
+            "workspace.list",
+            "workspace.create",
+            "workspace.select",
+            "workspace.close",
+            "workspace.current",
+            "workspace.restore_layout",
+            "workspace.up",
+            "surface.list",
+            "surface.read",
+            "surface.search",
+            "surface.rename",
+            "surface.send_text",
+            "surface.send_keystroke",
+            "surface.split",
+            "surface.focus",
+            "surface.status",
+            "fleet.list",
+            "events.subscribe",
+            "tmux.compat"
+          ]
+        }
+      }
+    },
+    {
+      "id": "surface_send_text",
+      "summary": "With the scripting gate open, surface.send_text writes the text without submitting it and reports how it was delivered.",
+      "method": "surface.send_text",
+      "gates": "open",
+      "params": {
+        "surface_id": "$surface",
+        "text": "echo conformance"
+      },
+      "expect": {
+        "result": {
+          "sent": "boolean",
+          "length": "integer",
+          "submitted": "boolean",
+          "paste": "boolean",
+          "submit_mode": "null",
+          "agent_target": "boolean",
+          "agent_tool": "string",
+          "terminal_bracketed_paste": "boolean"
+        }
+      }
+    },
+    {
+      "id": "surface_send_text_missing_text",
+      "summary": "surface.send_text refuses a request with no text and no submit.",
+      "method": "surface.send_text",
+      "gates": "open",
+      "params": {
+        "surface_id": "$surface"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    },
+    {
+      "id": "surface_send_keystroke",
+      "summary": "With the scripting gate open, surface.send_keystroke writes a named key.",
+      "method": "surface.send_keystroke",
+      "gates": "open",
+      "params": {
+        "surface_id": "$surface",
+        "keystroke": "escape"
+      },
+      "expect": {
+        "result": {
+          "sent": "boolean"
+        }
+      }
+    },
+    {
+      "id": "surface_send_keystroke_missing_keystroke",
+      "summary": "surface.send_keystroke refuses a request with no keystroke.",
+      "method": "surface.send_keystroke",
+      "gates": "open",
+      "params": {
+        "surface_id": "$surface"
+      },
+      "expect": {
+        "error": {
+          "code": -32602
+        }
+      }
+    }
+  ]
+}

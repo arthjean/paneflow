@@ -884,7 +884,17 @@ fn handle_connection(
                             }
                         };
 
-                        if method == "events.subscribe" {
+                        let route = crate::app::ipc_handler::registry().route(&method);
+                        if let crate::app::ipc_handler::Route::Stream(entry) = route {
+                            if let Err(error) = entry.validate(&params) {
+                                let envelope = json!({
+                                    "jsonrpc": "2.0",
+                                    "error": {"code": error.code, "message": error.message},
+                                    "id": response_id,
+                                });
+                                push_frame(&mut writer, &envelope);
+                                return;
+                            }
                             let Some(_subscription_guard) = ConnectionGuard::try_acquire(
                                 Arc::clone(&active_subscriptions),
                                 MAX_SUBSCRIPTION_CONNECTIONS,
@@ -908,21 +918,15 @@ fn handle_connection(
                             ));
                         }
 
-                        match method.as_str() {
-                            "system.ping" => {
-                                json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": response_id})
+                        match route {
+                            crate::app::ipc_handler::Route::Inline(entry) => {
+                                crate::app::ipc_handler::promote_response(
+                                    entry.answer_inline(&params),
+                                    response_id,
+                                )
                             }
-                            "system.identify" => {
-                                json!({"jsonrpc": "2.0", "result": {
-                                    "name": "PaneFlow",
-                                    "version": env!("CARGO_PKG_VERSION"),
-                                    "protocol": "jsonrpc-2.0"
-                                }, "id": response_id})
-                            }
-                            "system.counters" => {
-                                json!({"jsonrpc": "2.0", "result": crate::work_counters::counters(), "id": response_id})
-                            }
-                            _ => dispatch_to_gpui(
+                            crate::app::ipc_handler::Route::Stream(_)
+                            | crate::app::ipc_handler::Route::App => dispatch_to_gpui(
                                 &request_tx,
                                 method,
                                 params,
