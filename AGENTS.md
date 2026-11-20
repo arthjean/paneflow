@@ -247,8 +247,10 @@ when the run ends.
 subdirectory, is local, untracked evidence and review scratch space: never
 assume another agent can read it, and a tracked document that names such a path
 must state that it is local evidence. When you implement a PRD in a separate
-worktree, Arthur still reads the copy in `C:\dev\paneflow`: copy every status
-change and every ticked acceptance criterion back to both files there.
+worktree, Arthur still reads the copy in the main checkout (`C:\dev\paneflow`
+on Windows, `~/dev/paneflow` on Linux): copy every status change and every
+ticked acceptance criterion back to both files there, a review verdict
+included, before you report the work done.
 
 ## No comments in source code
 
