@@ -196,6 +196,7 @@ PANEFLOW_PIXEL_PROBE=1 RUST_LOG=debug cargo run   # log terminal cell, glyph and
 PANEFLOW_PIXEL_PROBE_OVERLAY=1 cargo run # paint the pixel-probe overlay over the terminal grid, debug only
 PANEFLOW_DEV_INSTALL_METHOD=apt cargo run # pretend a system-package install (dnf, apt, zypper, rpm-ostree), debug only
 PANEFLOW_DEV_FORCE_UPDATE=9.9.9 cargo run # fake an available update to exercise the update UI, debug only
+PANEFLOW_DEV_BLUR_SUPPORT=none cargo run # force the veil's blur support (full or none) under Blended, debug only
 cargo build --release                    # thin LTO, strip, codegen-units=1
 cargo test -p paneflow-config            # single crate
 cargo test -p paneflow-app --test flex_nchild -- --nocapture   # layout integration

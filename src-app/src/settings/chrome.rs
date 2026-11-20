@@ -344,7 +344,7 @@ impl PaneFlowApp {
             .flex_col()
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
-                self.cached_config.cockpit_chrome_material_enabled(),
+                self.backdrop.is_blended(),
             ))
             .child(self.render_settings_nav_header(ui, cx))
             .child(div().mx(px(8.)).mt(px(4.)).child(search))

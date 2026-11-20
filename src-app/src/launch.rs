@@ -457,7 +457,7 @@ pub(crate) fn run() {
                         crate::window_chrome::backdrop::apply_system_backdrop(
                             window,
                             crate::theme::active_theme().background.l > 0.5,
-                            config.material_veiled(),
+                            crate::window_chrome::window_backdrop(&config, window).is_blended(),
                         );
                     }
                     #[cfg(target_os = "macos")]

@@ -20,9 +20,7 @@ pub(crate) struct DetachedPaneWindow {
     bounds_save: Option<gpui::Task<()>>,
     orphaned: bool,
     reveal_tabs: bool,
-    chrome_material_enabled: bool,
-    terminal_material_enabled: bool,
-    material_veiled: bool,
+    background_style: paneflow_config::schema::BackgroundStyle,
     #[cfg(target_os = "windows")]
     backdrop_light: Option<bool>,
     #[cfg(target_os = "windows")]
@@ -105,7 +103,7 @@ impl PaneFlowApp {
                     crate::window_chrome::backdrop::apply_system_backdrop(
                         window,
                         crate::theme::active_theme().background.l > 0.5,
-                        config.material_veiled(),
+                        crate::window_chrome::window_backdrop(&config, window).is_blended(),
                     );
                 }
                 #[cfg(target_os = "macos")]
@@ -139,11 +137,7 @@ impl PaneFlowApp {
                     if let Some(owner) = owner.upgrade() {
                         cx.observe(&owner, |this: &mut DetachedPaneWindow, owner, cx| {
                             let owner = owner.read(cx);
-                            this.chrome_material_enabled =
-                                owner.cached_config.cockpit_chrome_material_enabled();
-                            this.terminal_material_enabled =
-                                owner.cached_config.terminal_material_enabled();
-                            this.material_veiled = owner.cached_config.material_veiled();
+                            this.background_style = owner.cached_config.resolved_background_style();
                             if !owner.owns_pane(&this.pane) {
                                 this.orphaned = true;
                             }
@@ -179,13 +173,13 @@ impl PaneFlowApp {
                         bounds_save: None,
                         orphaned: false,
                         reveal_tabs: true,
-                        chrome_material_enabled: config.cockpit_chrome_material_enabled(),
-                        terminal_material_enabled: config.terminal_material_enabled(),
-                        material_veiled: config.material_veiled(),
+                        background_style: config.resolved_background_style(),
                         #[cfg(target_os = "windows")]
                         backdrop_light: None,
                         #[cfg(target_os = "windows")]
-                        backdrop_acrylic: Some(config.material_veiled()),
+                        backdrop_acrylic: Some(
+                            crate::window_chrome::window_backdrop(&config, window).is_blended(),
+                        ),
                         #[cfg(target_os = "windows")]
                         system_backdrop: crate::app::constants::window_backdrop_uses_mica(
                             config.window_backdrop.as_deref(),
@@ -303,15 +297,10 @@ impl Render for DetachedPaneWindow {
         window.set_window_title(&format!("{title} - Paneflow"));
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
+        let backdrop = crate::window_chrome::style_backdrop(self.background_style, window);
+        crate::window_chrome::veil::note_frame_backdrop(backdrop);
         #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::refresh_blur_region(
-            window,
-            self.chrome_material_enabled || self.terminal_material_enabled,
-        );
-        let material_active = self.chrome_material_enabled
-            && !crate::native_material_suppressed_by_fullscreen(window.is_fullscreen());
-        #[cfg(target_os = "macos")]
-        let material_active = material_active && self.material.is_some();
+        crate::window_chrome::linux_backdrop::refresh_blur_region(window, backdrop.is_blended());
         #[cfg(target_os = "windows")]
         if self.backdrop_light != Some(theme.background.l > 0.5) {
             crate::window_chrome::backdrop::sync_wallpaper_mica_theme(
@@ -321,15 +310,15 @@ impl Render for DetachedPaneWindow {
             self.backdrop_light = Some(theme.background.l > 0.5);
         }
         #[cfg(target_os = "windows")]
-        if self.backdrop_acrylic != Some(self.material_veiled) {
+        if self.backdrop_acrylic != Some(backdrop.is_blended()) {
             if self.system_backdrop {
-                crate::window_chrome::backdrop::sync_system_backdrop(window, self.material_veiled);
+                crate::window_chrome::backdrop::sync_system_backdrop(window, backdrop.is_blended());
             }
-            self.backdrop_acrylic = Some(self.material_veiled);
+            self.backdrop_acrylic = Some(backdrop.is_blended());
         }
         #[cfg(target_os = "macos")]
         if let Some(material) = &mut self.material {
-            material.sync(theme.background.l > 0.5, material_active);
+            material.sync(theme.background.l > 0.5, backdrop.is_blended());
         }
         let shell_color = if window.is_window_active() {
             theme.title_bar_background
@@ -337,17 +326,9 @@ impl Render for DetachedPaneWindow {
             theme.title_bar_inactive_background
         };
         let shell_background =
-            crate::app::constants::cockpit_backdrop_background(shell_color, material_active);
-        let backdrop_background = crate::app::constants::cockpit_shell_background(
-            shell_color,
-            material_active
-                || (self.terminal_material_enabled
-                    && matches!(
-                        self.pane.read(cx).surface(),
-                        crate::pane::PaneSurface::Terminal(_)
-                    )),
-            self.material_veiled,
-        );
+            crate::app::constants::cockpit_backdrop_background(shell_color, backdrop);
+        let backdrop_background =
+            crate::app::constants::cockpit_shell_background(shell_color, backdrop);
         let pane = self.pane.clone();
         let close = move |window: &mut Window, cx: &mut gpui::App| {
             pane.update(cx, |pane, cx| pane.toggle_detached(window, cx));

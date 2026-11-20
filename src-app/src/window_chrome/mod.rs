@@ -7,18 +7,84 @@ pub mod linux_backdrop;
 pub mod macos_backdrop;
 pub(crate) mod title_band;
 pub mod title_bar;
+pub(crate) mod veil;
 
 use gpui::{IntoElement, PathBuilder, Styled, canvas, point};
 
-pub(crate) fn native_backdrop_material_active(
-    terminal_material_active: bool,
-    chrome_material_active: bool,
-) -> bool {
-    chrome_material_active || terminal_material_active
+const DEV_BLUR_SUPPORT_ENV: &str = "PANEFLOW_DEV_BLUR_SUPPORT";
+
+pub(crate) fn window_backdrop(
+    config: &paneflow_config::schema::PaneFlowConfig,
+    window: &gpui::Window,
+) -> veil::Backdrop {
+    style_backdrop(config.resolved_background_style(), window)
 }
 
-pub(crate) fn native_material_suppressed_by_fullscreen(is_fullscreen: bool) -> bool {
+pub(crate) fn style_backdrop(
+    style: paneflow_config::schema::BackgroundStyle,
+    window: &gpui::Window,
+) -> veil::Backdrop {
+    veil::Backdrop::new(style, surface_has_alpha(window), blur_support(window))
+}
+
+fn surface_has_alpha(window: &gpui::Window) -> bool {
+    !fullscreen_drops_surface_alpha(window.is_fullscreen()) && system_backdrop_available()
+}
+
+fn fullscreen_drops_surface_alpha(is_fullscreen: bool) -> bool {
     cfg!(target_os = "macos") && is_fullscreen
+}
+
+#[cfg(target_os = "windows")]
+fn system_backdrop_available() -> bool {
+    crate::app::constants::windows_supports_system_backdrop()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_backdrop_available() -> bool {
+    true
+}
+
+fn blur_support(window: &gpui::Window) -> veil::BlurSupport {
+    dev_blur_support_override().unwrap_or_else(|| detected_blur_support(window))
+}
+
+#[cfg(target_os = "linux")]
+fn detected_blur_support(window: &gpui::Window) -> veil::BlurSupport {
+    linux_backdrop::blur_support(window)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detected_blur_support(_window: &gpui::Window) -> veil::BlurSupport {
+    veil::BlurSupport::Full
+}
+
+fn dev_blur_support_override() -> Option<veil::BlurSupport> {
+    static OVERRIDE: std::sync::OnceLock<Option<veil::BlurSupport>> = std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        dev_blur_support_for(
+            cfg!(debug_assertions),
+            std::env::var(DEV_BLUR_SUPPORT_ENV).ok().as_deref(),
+        )
+    })
+}
+
+fn dev_blur_support_for(debug_build: bool, value: Option<&str>) -> Option<veil::BlurSupport> {
+    if !debug_build {
+        return None;
+    }
+    let value = value?.trim();
+    if value.eq_ignore_ascii_case("full") {
+        Some(veil::BlurSupport::Full)
+    } else if value.eq_ignore_ascii_case("none") {
+        Some(veil::BlurSupport::None)
+    } else {
+        log::warn!(
+            "{DEV_BLUR_SUPPORT_ENV}: unknown value '{value}', expected 'full' or 'none'; \
+             using the detected blur support"
+        );
+        None
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -96,30 +162,41 @@ pub(crate) fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> 
 }
 
 #[cfg(test)]
-mod native_material_tests {
-    use super::{native_backdrop_material_active, native_material_suppressed_by_fullscreen};
+mod backdrop_source_tests {
+    use super::{dev_blur_support_for, fullscreen_drops_surface_alpha, veil::BlurSupport};
 
     #[test]
-    fn fullscreen_suppresses_the_native_material_on_macos_only() {
-        assert!(!native_material_suppressed_by_fullscreen(false));
+    fn fullscreen_drops_the_surface_alpha_on_macos_only() {
+        assert!(!fullscreen_drops_surface_alpha(false));
         assert_eq!(
-            native_material_suppressed_by_fullscreen(true),
+            fullscreen_drops_surface_alpha(true),
             cfg!(target_os = "macos")
         );
     }
 
     #[test]
-    fn terminal_material_can_activate_backdrop_without_chrome_material() {
-        assert!(native_backdrop_material_active(true, false));
+    fn a_debug_build_forces_the_blur_support_from_the_variable() {
+        assert_eq!(
+            dev_blur_support_for(true, Some("none")),
+            Some(BlurSupport::None)
+        );
+        assert_eq!(
+            dev_blur_support_for(true, Some(" Full ")),
+            Some(BlurSupport::Full)
+        );
+        assert_eq!(dev_blur_support_for(true, None), None);
     }
 
     #[test]
-    fn chrome_material_activates_backdrop_independently() {
-        assert!(native_backdrop_material_active(false, true));
+    fn an_unknown_value_falls_back_to_the_detected_blur_support() {
+        assert_eq!(dev_blur_support_for(true, Some("partial")), None);
+        assert_eq!(dev_blur_support_for(true, Some("")), None);
     }
 
     #[test]
-    fn themed_style_keeps_the_backdrop_opaque() {
-        assert!(!native_backdrop_material_active(false, false));
+    fn a_release_build_ignores_the_variable() {
+        for value in ["none", "full", "partial"] {
+            assert_eq!(dev_blur_support_for(false, Some(value)), None);
+        }
     }
 }

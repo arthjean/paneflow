@@ -394,16 +394,6 @@ impl PaneFlowConfig {
         cfg!(target_os = "macos") && self.blended()
     }
 
-    pub fn material_veiled(&self) -> bool {
-        if cfg!(target_os = "linux") {
-            true
-        } else if cfg!(target_os = "windows") {
-            self.blended()
-        } else {
-            false
-        }
-    }
-
     pub fn cockpit_chrome_material_enabled(&self) -> bool {
         cfg!(any(
             target_os = "windows",
@@ -1363,10 +1353,6 @@ mod tests {
         assert_eq!(
             blended.macos_chrome_material_enabled(),
             cfg!(target_os = "macos")
-        );
-        assert_eq!(
-            blended.material_veiled(),
-            cfg!(any(target_os = "windows", target_os = "linux"))
         );
     }
 }

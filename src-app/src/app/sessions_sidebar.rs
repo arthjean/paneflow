@@ -148,7 +148,7 @@ impl PaneFlowApp {
             .on_key_down(cx.listener(Self::handle_sessions_sidebar_key_down))
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
-                self.cached_config.cockpit_chrome_material_enabled(),
+                self.backdrop.is_blended(),
             ))
             .child(self.sessions_sidebar_header(ui, cx))
             .child(self.sessions_sidebar_body(ui, cx))

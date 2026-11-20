@@ -633,12 +633,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn diff_dock_card_background(&self, ui: crate::theme::UiColors) -> gpui::Hsla {
-        dock_card_background(
-            &crate::theme::active_theme(),
-            ui,
-            self.cached_config.terminal_material_enabled(),
-            self.cached_config.material_veiled(),
-        )
+        dock_card_background(&crate::theme::active_theme(), ui, self.backdrop)
     }
 
     fn render_diff_dock_picker(
@@ -800,7 +795,7 @@ impl PaneFlowApp {
                 h_offsets,
             }
         };
-        let pal = palette(ui).on_material(self.cached_config.terminal_material_enabled());
+        let pal = palette(ui).on_material(self.backdrop.is_blended());
         let scroll = self.diff_dock.scroll.clone();
         let chip_row = self
             .diff_dock

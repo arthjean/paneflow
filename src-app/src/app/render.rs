@@ -166,6 +166,9 @@ impl Render for PaneFlowApp {
         );
         let ui = crate::theme::ui_colors();
         let theme = crate::theme::active_theme();
+        let backdrop = crate::window_chrome::window_backdrop(&self.cached_config, window);
+        self.backdrop = backdrop;
+        crate::window_chrome::veil::note_frame_backdrop(backdrop);
         #[cfg(target_os = "windows")]
         {
             let is_light = theme.background.l > 0.5;
@@ -173,7 +176,7 @@ impl Render for PaneFlowApp {
                 crate::window_chrome::backdrop::sync_wallpaper_mica_theme(window, is_light);
                 self.windows_backdrop_light = Some(is_light);
             }
-            let acrylic = self.cached_config.material_veiled();
+            let acrylic = backdrop.is_blended();
             if self.windows_backdrop_acrylic != Some(acrylic) {
                 if crate::app::constants::window_backdrop_uses_mica(
                     self.cached_config.window_backdrop.as_deref(),
@@ -183,12 +186,10 @@ impl Render for PaneFlowApp {
                 self.windows_backdrop_acrylic = Some(acrylic);
             }
         }
-        let chrome_material_suppressed =
-            native_material_suppressed_by_fullscreen(window.is_fullscreen());
         #[cfg(target_os = "macos")]
         crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material(
             theme.background.l > 0.5,
-            self.cached_config.macos_chrome_material_enabled() && !chrome_material_suppressed,
+            backdrop.is_blended(),
         );
         let title_bar_h =
             (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
@@ -208,7 +209,6 @@ impl Render for PaneFlowApp {
         let sessions_sidebar_opacity = (sessions_sidebar_width
             / crate::app::sessions_sidebar::SESSIONS_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
-        let secondary_sidebar_open = sessions_sidebar_mounted;
         let right_rail_width = if sessions_sidebar_mounted {
             sessions_sidebar_width
         } else {
@@ -226,44 +226,24 @@ impl Render for PaneFlowApp {
         ) {
             window.request_animation_frame();
         }
-        let terminal_material_active = self.cached_config.terminal_material_enabled();
-        let chrome_material_active =
-            self.cached_config.cockpit_chrome_material_enabled() && !chrome_material_suppressed;
         let terminal_surface_mounted = self
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().root.is_some());
-        let terminal_material_visible =
-            (settings_open || terminal_surface_mounted) && terminal_material_active;
-        let panel_inset_shell_visible = terminal_material_visible && !chrome_material_active;
-        let native_material_active =
-            native_backdrop_material_active(terminal_material_active, chrome_material_active);
         let is_window_active = window.is_window_active();
         let shell_color = if is_window_active {
             theme.title_bar_background
         } else {
             theme.title_bar_inactive_background
         };
-        let opaque_shell_bg = gpui::Hsla {
-            a: 1.,
-            ..shell_color
-        };
-        let material_veiled = self.cached_config.material_veiled();
-        let app_backdrop_bg = crate::app::constants::cockpit_shell_background(
-            shell_color,
-            native_material_active,
-            material_veiled,
-        );
+        let app_backdrop_bg =
+            crate::app::constants::cockpit_shell_background(shell_color, backdrop);
         let panel_bg = if settings_open {
-            crate::settings::components::settings_page_color(
-                ui,
-                terminal_material_active,
-                material_veiled,
-            )
+            crate::settings::components::settings_page_color(ui, backdrop)
         } else {
             gpui::transparent_black()
         };
         let panel_corner_mask_bg =
-            crate::app::constants::cockpit_backdrop_background(shell_color, chrome_material_active);
+            crate::app::constants::cockpit_backdrop_background(shell_color, backdrop);
         let panel_top = title_bar_h;
         let flush_shell = self.flush_shell();
         let panel_inset = if flush_shell {
@@ -330,10 +310,7 @@ impl Render for PaneFlowApp {
             - main_panel_left_inset
             - panel_inset;
         #[cfg(target_os = "linux")]
-        crate::window_chrome::linux_backdrop::refresh_blur_region(
-            window,
-            chrome_material_active || terminal_material_active,
-        );
+        crate::window_chrome::linux_backdrop::refresh_blur_region(window, backdrop.is_blended());
 
         self.settle_dock_restore_focus(window, cx);
         self.settle_diff_dock_picker_focus(window, cx);
@@ -503,7 +480,7 @@ impl Render for PaneFlowApp {
             tb.update_pill = update_pill;
             tb.ipc_state = self.ipc_status.state();
             tb.cockpit = true;
-            tb.cockpit_material_active = chrome_material_active;
+            tb.cockpit_material_active = backdrop.is_blended();
             tb.detached = flush_shell;
         });
 
@@ -639,31 +616,6 @@ impl Render for PaneFlowApp {
                     .flex_1()
                     .overflow_hidden()
                     .relative()
-                    .when(
-                        terminal_material_visible && primary_sidebar_mounted,
-                        |row| {
-                            row.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .top_0()
-                                    .bottom_0()
-                                    .w(px(primary_sidebar_width))
-                                    .bg(panel_corner_mask_bg),
-                            )
-                        },
-                    )
-                    .when(terminal_material_visible && secondary_sidebar_open, |row| {
-                        row.child(
-                            div()
-                                .absolute()
-                                .right_0()
-                                .top_0()
-                                .bottom_0()
-                                .w(px(sessions_sidebar_width))
-                                .bg(panel_corner_mask_bg),
-                        )
-                    })
                     .when(primary_sidebar_mounted, |row| {
                         if self.settings_section.is_some() {
                             return row.child(
@@ -729,38 +681,6 @@ impl Render for PaneFlowApp {
                                     ))
                                     .child(main_content),
                             )
-                            .when(panel_inset_shell_visible && !flush_shell, |panel_shell| {
-                                panel_shell
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .right_0()
-                                            .top(panel_top)
-                                            .bottom_0()
-                                            .w(px(crate::app::constants::PANEL_INSET))
-                                            .bg(opaque_shell_bg),
-                                    )
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .left_0()
-                                            .right_0()
-                                            .bottom_0()
-                                            .h(px(crate::app::constants::PANEL_INSET))
-                                            .bg(opaque_shell_bg),
-                                    )
-                                    .when(main_panel_left_inset > 0., |panel_shell| {
-                                        panel_shell.child(
-                                            div()
-                                                .absolute()
-                                                .left_0()
-                                                .top(panel_top)
-                                                .bottom_0()
-                                                .w(px(main_panel_left_inset))
-                                                .bg(opaque_shell_bg),
-                                        )
-                                    })
-                            })
                             .when(!flush_shell, |panel_shell| {
                                 panel_shell
                                     .child(
@@ -1085,7 +1005,7 @@ impl Render for PaneFlowApp {
             app_content,
             window,
             app_backdrop_bg,
-            crate::app::constants::window_border_color(ui.border, terminal_material_visible),
+            ui.border,
         );
         startup_trace::on_app_render_built();
         shell

@@ -7,9 +7,10 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1;
 
+use super::veil::BlurSupport;
+
 const KDE_BLUR_MANAGER_INTERFACE: &str = "org_kde_kwin_blur_manager";
 
-static TRANSLUCENT_WINDOW: AtomicBool = AtomicBool::new(false);
 static BLUR_REQUESTED: AtomicBool = AtomicBool::new(false);
 static BLUR_FALLBACK_LOGGED: AtomicBool = AtomicBool::new(false);
 static COMPOSITOR_BLUR: OnceLock<CompositorBlur> = OnceLock::new();
@@ -26,10 +27,6 @@ enum CompositorBlur {
     Pending,
     Offered,
     Missing,
-}
-
-pub(crate) fn translucent_window_active() -> bool {
-    TRANSLUCENT_WINDOW.load(Ordering::Relaxed)
 }
 
 fn unblurred_surface_appearance(
@@ -51,14 +48,30 @@ fn surface_appearance(
     blur_requested: bool,
     blur: CompositorBlur,
 ) -> WindowBackgroundAppearance {
-    if translucent
-        && blur_requested
-        && surface == SurfaceKind::Wayland
-        && blur == CompositorBlur::Offered
-    {
+    if translucent && blur_support_for(surface, blur_requested, blur) == BlurSupport::Full {
         return WindowBackgroundAppearance::Blurred;
     }
     unblurred_surface_appearance(translucent, client_decorated, surface == SurfaceKind::X11)
+}
+
+fn blur_support_for(
+    surface: SurfaceKind,
+    blur_requested: bool,
+    blur: CompositorBlur,
+) -> BlurSupport {
+    if blur_requested && surface == SurfaceKind::Wayland && blur == CompositorBlur::Offered {
+        BlurSupport::Full
+    } else {
+        BlurSupport::None
+    }
+}
+
+pub(crate) fn blur_support(window: &Window) -> BlurSupport {
+    blur_support_for(
+        surface_kind(window),
+        BLUR_REQUESTED.load(Ordering::Relaxed),
+        compositor_blur(),
+    )
 }
 
 fn blur_falls_back(surface: SurfaceKind, blur_requested: bool, blur: CompositorBlur) -> bool {
@@ -181,15 +194,15 @@ pub(crate) fn apply_subtle_chrome_material(
 }
 
 pub(crate) fn refresh_blur_region(window: &mut Window, translucent: bool) {
-    TRANSLUCENT_WINDOW.store(translucent, Ordering::Relaxed);
     window.set_background_appearance(window_appearance(window, translucent));
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CompositorBlur, SurfaceKind, blur_falls_back, compositor_offers_blur, first_blur_fallback,
-        surface_appearance, unblurred_surface_appearance,
+        BlurSupport, CompositorBlur, SurfaceKind, blur_falls_back, blur_support_for,
+        compositor_offers_blur, first_blur_fallback, surface_appearance,
+        unblurred_surface_appearance,
     };
     use gpui::WindowBackgroundAppearance;
 
@@ -348,5 +361,29 @@ mod tests {
         assert!(!compositor_offers_blur(
             ["wl_compositor", "xdg_wm_base", "wp_viewporter"].into_iter()
         ));
+    }
+
+    #[test]
+    fn the_veil_counts_on_blur_only_where_the_window_is_blurred() {
+        for surface in SURFACES {
+            for blur in BLUR_STATES {
+                for blur_requested in [false, true] {
+                    let expected = if surface == SurfaceKind::Wayland
+                        && blur_requested
+                        && blur == CompositorBlur::Offered
+                    {
+                        BlurSupport::Full
+                    } else {
+                        BlurSupport::None
+                    };
+                    assert_eq!(blur_support_for(surface, blur_requested, blur), expected);
+                    assert_eq!(
+                        surface_appearance(true, true, surface, blur_requested, blur)
+                            == WindowBackgroundAppearance::Blurred,
+                        expected == BlurSupport::Full
+                    );
+                }
+            }
+        }
     }
 }

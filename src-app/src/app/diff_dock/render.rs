@@ -19,11 +19,10 @@ use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, ROW_RADIUS, s
 pub(super) fn dock_card_background(
     theme: &crate::theme::TerminalTheme,
     ui: crate::theme::UiColors,
-    terminal_material_active: bool,
-    material_veiled: bool,
+    backdrop: crate::window_chrome::veil::Backdrop,
 ) -> Hsla {
-    if terminal_material_active {
-        crate::pane::pane_card_background(theme, true, true, material_veiled)
+    if backdrop.is_blended() {
+        crate::pane::pane_card_background(theme, backdrop, true)
     } else {
         ui.base
     }
@@ -749,13 +748,18 @@ mod tests {
             crate::theme::paneflow_dark(),
             crate::theme::paneflow_light(),
         ] {
+            use crate::window_chrome::veil::{Backdrop, BlurSupport};
             let ui = crate::theme::ui_colors_with(&theme);
-            assert_eq!(dock_card_background(&theme, ui, false, false), ui.base);
-            assert_eq!(dock_card_background(&theme, ui, false, true), ui.base);
-            for veiled in [false, true] {
+            assert_eq!(dock_card_background(&theme, ui, Backdrop::THEMED), ui.base);
+            for blur in [BlurSupport::Full, BlurSupport::None] {
+                let blended = Backdrop::new(
+                    paneflow_config::schema::BackgroundStyle::Blended,
+                    true,
+                    blur,
+                );
                 assert_eq!(
-                    dock_card_background(&theme, ui, true, veiled),
-                    crate::pane::pane_card_background(&theme, true, true, veiled)
+                    dock_card_background(&theme, ui, blended),
+                    crate::pane::pane_card_background(&theme, blended, true)
                 );
             }
         }

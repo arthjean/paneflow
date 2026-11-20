@@ -416,6 +416,7 @@ impl PaneFlowApp {
             toast_queue: std::collections::VecDeque::new(),
             _toast_task: None,
             sidebar_view: None,
+            backdrop: crate::window_chrome::veil::Backdrop::THEMED,
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
             #[cfg(target_os = "windows")]

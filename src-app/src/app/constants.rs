@@ -18,8 +18,6 @@ pub(crate) const PANE_CONTENT_INSET_X: f32 = 10.;
 pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;
 const SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.16;
 const SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.10;
-const DARK_SHELL_VEIL_OPACITY: f32 = 0.72;
-const LIGHT_SHELL_VEIL_OPACITY: f32 = 0.80;
 
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 pub(crate) const RAIL_ROW_RADIUS: Pixels = px(9.);
@@ -139,7 +137,13 @@ pub(crate) fn macos_sidebar_material_enabled(config_value: Option<&str>) -> bool
 }
 
 #[cfg(target_os = "windows")]
-fn windows_supports_system_backdrop() -> bool {
+pub(crate) fn windows_supports_system_backdrop() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(windows_build_has_system_backdrop)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_build_has_system_backdrop() -> bool {
     #[repr(C)]
     struct RtlOsVersionInfo {
         size: u32,
@@ -167,58 +171,22 @@ fn windows_supports_system_backdrop() -> bool {
     unsafe { RtlGetVersion(&mut version) >= 0 && version.build >= 22_621 }
 }
 
-pub(crate) fn cockpit_chrome_background(background: Hsla, material_active: bool) -> Hsla {
-    #[cfg(target_os = "linux")]
-    let opaque_without_material = crate::window_chrome::linux_backdrop::translucent_window_active();
-    #[cfg(not(target_os = "linux"))]
-    let opaque_without_material = cfg!(target_os = "windows");
-
-    if material_active || !opaque_without_material {
-        gpui::transparent_black()
-    } else {
-        Hsla {
-            a: 1.0,
-            ..background
-        }
-    }
+pub(crate) fn cockpit_chrome_background(_shell: Hsla, _blended: bool) -> Hsla {
+    crate::window_chrome::veil::chrome_over_shell()
 }
 
-pub(crate) fn window_border_color(border: Hsla, terminal_material_visible: bool) -> Hsla {
-    if terminal_material_visible && cfg!(target_os = "windows") {
-        gpui::transparent_black()
-    } else {
-        border
-    }
-}
-
-pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: bool) -> Hsla {
-    if material_active {
-        gpui::transparent_black()
-    } else if cfg!(target_os = "linux") {
-        Hsla {
-            a: 1.0,
-            ..background
-        }
-    } else {
-        background
-    }
+pub(crate) fn cockpit_backdrop_background(
+    background: Hsla,
+    backdrop: crate::window_chrome::veil::Backdrop,
+) -> Hsla {
+    backdrop.over_shell(background)
 }
 
 pub(crate) fn cockpit_shell_background(
     background: Hsla,
-    material_active: bool,
-    material_veiled: bool,
+    backdrop: crate::window_chrome::veil::Backdrop,
 ) -> Hsla {
-    if material_active && material_veiled {
-        let a = if background.l > 0.5 {
-            LIGHT_SHELL_VEIL_OPACITY
-        } else {
-            DARK_SHELL_VEIL_OPACITY
-        };
-        return Hsla { a, ..background };
-    }
-
-    cockpit_backdrop_background(background, material_active)
+    backdrop.shell(background)
 }
 
 pub(crate) fn sidebar_tab_active_background() -> Hsla {
@@ -230,7 +198,10 @@ pub(crate) fn sidebar_menu_background(
     ui: crate::theme::UiColors,
 ) -> Hsla {
     if style != paneflow_config::schema::BackgroundStyle::Themed {
-        sidebar_tab_fill(SIDEBAR_TAB_ACTIVE_OPACITY, false)
+        sidebar_tab_fill(
+            SIDEBAR_TAB_ACTIVE_OPACITY,
+            crate::window_chrome::veil::Backdrop::THEMED,
+        )
     } else {
         crate::settings::components::select_menu_surface(ui)
     }
@@ -277,26 +248,13 @@ pub(crate) fn sidebar_tab_hover_background() -> Hsla {
 }
 
 fn sidebar_tab_background(opacity: f32) -> Hsla {
-    #[cfg(target_os = "linux")]
-    let translucent = crate::window_chrome::linux_backdrop::translucent_window_active();
-    #[cfg(not(target_os = "linux"))]
-    let translucent = true;
-
-    sidebar_tab_fill(opacity, translucent)
+    sidebar_tab_fill(opacity, crate::window_chrome::veil::frame_backdrop())
 }
 
-fn sidebar_tab_fill(opacity: f32, translucent: bool) -> Hsla {
+fn sidebar_tab_fill(opacity: f32, backdrop: crate::window_chrome::veil::Backdrop) -> Hsla {
     let theme = crate::theme::active_theme();
     let tint = crate::theme::ui_colors_with(&theme).text.opacity(opacity);
-    if translucent {
-        tint
-    } else {
-        Hsla {
-            a: 1.0,
-            ..theme.title_bar_background
-        }
-        .blend(tint)
-    }
+    backdrop.tint_over_shell(tint, theme.title_bar_background)
 }
 
 pub(crate) const TOAST_ENTER_MS: u64 = 180;
@@ -351,34 +309,15 @@ mod material_tests {
         );
     }
 
-    #[test]
-    fn a_veiled_shell_carries_one_veil_and_clears_the_corner_masks() {
-        let dark = Hsla::from(gpui::rgb(0x141414));
-        let light = Hsla::from(gpui::rgb(0xf5f7fd));
+    use crate::window_chrome::veil::{Backdrop, BlurSupport};
+    use paneflow_config::schema::BackgroundStyle;
 
-        assert_eq!(
-            cockpit_shell_background(dark, true, true).a,
-            DARK_SHELL_VEIL_OPACITY
-        );
-        assert_eq!(
-            cockpit_shell_background(light, true, true).a,
-            LIGHT_SHELL_VEIL_OPACITY
-        );
-        assert_eq!(
-            cockpit_backdrop_background(dark, true),
-            gpui::transparent_black()
-        );
-        assert_eq!(cockpit_shell_background(dark, false, true).a, 1.0);
+    fn blended(blur: BlurSupport) -> Backdrop {
+        Backdrop::new(BackgroundStyle::Blended, true, blur)
     }
 
-    #[test]
-    fn an_unveiled_material_shell_stays_transparent() {
-        let dark = Hsla::from(gpui::rgb(0x141414));
-
-        assert_eq!(
-            cockpit_shell_background(dark, true, false),
-            gpui::transparent_black()
-        );
+    fn opaque(color: Hsla) -> Hsla {
+        Hsla { a: 1.0, ..color }
     }
 
     #[cfg(target_os = "windows")]
@@ -398,58 +337,116 @@ mod material_tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn cockpit_children_stay_transparent_over_an_opaque_shell() {
-        let background = Hsla::from(gpui::rgb(0x141414));
+    fn a_veiled_shell_carries_one_veil_and_clears_the_corner_masks() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+        let light = Hsla::from(gpui::rgb(0xf5f7fd));
+        let full = blended(BlurSupport::Full);
 
         assert_eq!(
-            cockpit_chrome_background(background, false),
+            cockpit_shell_background(dark, full),
+            full.shell(dark),
+            "the shell veil comes from the veil module"
+        );
+        assert!((cockpit_shell_background(dark, full).a - 0.72).abs() < 1e-6);
+        assert!((cockpit_shell_background(light, full).a - 0.80).abs() < 1e-6);
+        assert_eq!(
+            cockpit_backdrop_background(dark, full),
             gpui::transparent_black()
         );
-        assert_eq!(cockpit_backdrop_background(background, false), background);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn disabled_chrome_material_keeps_title_bar_opaque() {
-        let background = Hsla::from(gpui::rgb(0x141414));
-
         assert_eq!(
-            cockpit_chrome_background(background, false),
-            Hsla {
-                a: 1.0,
-                ..background
-            }
-        );
-        assert_eq!(
-            cockpit_chrome_background(background, true),
+            cockpit_chrome_background(dark, true),
             gpui::transparent_black()
         );
-        assert_eq!(cockpit_backdrop_background(background, false), background);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_chrome_stays_opaque_until_translucency_is_requested() {
+    fn a_shell_without_blur_thickens_its_veil() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+        let light = Hsla::from(gpui::rgb(0xf5f7fd));
+        let none = blended(BlurSupport::None);
+
+        assert!((cockpit_shell_background(dark, none).a - 0.93).abs() < 1e-6);
+        assert!((cockpit_shell_background(light, none).a - 0.95).abs() < 1e-6);
+        assert_eq!(
+            cockpit_backdrop_background(dark, none),
+            gpui::transparent_black()
+        );
+    }
+
+    #[test]
+    fn themed_fills_are_the_opaque_theme_colors() {
         let dark = gpui::hsla(0.71, 0.62, 0.32, 0.42);
         let light = gpui::hsla(0.09, 0.54, 0.78, 0.58);
+        let solid = Hsla::from(gpui::rgb(0x141414));
 
-        for background in [dark, light] {
+        for background in [dark, light, solid] {
+            for blur in [BlurSupport::Full, BlurSupport::None] {
+                let themed = Backdrop::new(BackgroundStyle::Themed, true, blur);
+                assert_eq!(
+                    cockpit_shell_background(background, themed),
+                    opaque(background)
+                );
+                assert_eq!(
+                    cockpit_backdrop_background(background, themed),
+                    opaque(background)
+                );
+            }
             assert_eq!(
-                cockpit_backdrop_background(background, false),
-                Hsla {
-                    a: 1.0,
-                    ..background
-                }
-            );
-            assert_eq!(
-                cockpit_shell_background(background, false, true),
-                Hsla {
-                    a: 1.0,
-                    ..background
-                }
+                cockpit_chrome_background(background, false),
+                gpui::transparent_black(),
+                "themed chrome shows the shell, which carries the inactive window color"
             );
         }
+        assert_eq!(cockpit_shell_background(solid, Backdrop::THEMED), solid);
+    }
+
+    #[test]
+    fn an_invalid_background_style_renders_every_fill_themed() {
+        let config: paneflow_config::schema::PaneFlowConfig = serde_json::from_value(
+            serde_json::json!({ "background_style": "mica", "linux_chrome_material": true }),
+        )
+        .expect("an invalid background_style still loads");
+        let solid = Hsla::from(gpui::rgb(0x141414));
+
+        for blur in [BlurSupport::Full, BlurSupport::None] {
+            let backdrop = Backdrop::new(config.resolved_background_style(), true, blur);
+            assert!(!backdrop.is_blended());
+            assert_eq!(cockpit_shell_background(solid, backdrop), solid);
+            assert_eq!(cockpit_backdrop_background(solid, backdrop), solid);
+            assert_eq!(backdrop.terminal_card(solid), solid);
+        }
+    }
+
+    #[test]
+    fn a_blur_support_change_reaches_the_next_frame_veil() {
+        let dark = Hsla::from(gpui::rgb(0x141414));
+        let before = blended(BlurSupport::None);
+        let after = blended(BlurSupport::Full);
+
+        crate::window_chrome::veil::note_frame_backdrop(before);
+        assert_eq!(crate::window_chrome::veil::frame_backdrop(), before);
+        assert!((cockpit_shell_background(dark, before).a - 0.93).abs() < 1e-6);
+        crate::window_chrome::veil::note_frame_backdrop(after);
+        assert_eq!(crate::window_chrome::veil::frame_backdrop(), after);
+        assert!((cockpit_shell_background(dark, after).a - 0.72).abs() < 1e-6);
+        crate::window_chrome::veil::note_frame_backdrop(Backdrop::THEMED);
+    }
+
+    #[test]
+    fn sidebar_tabs_preblend_their_tint_only_over_an_opaque_shell() {
+        let theme = crate::theme::active_theme();
+        let tint = crate::theme::ui_colors_with(&theme)
+            .text
+            .opacity(SIDEBAR_TAB_ACTIVE_OPACITY);
+
+        assert_eq!(
+            sidebar_tab_fill(SIDEBAR_TAB_ACTIVE_OPACITY, blended(BlurSupport::Full)),
+            tint
+        );
+        assert_eq!(
+            sidebar_tab_fill(SIDEBAR_TAB_ACTIVE_OPACITY, Backdrop::THEMED),
+            opaque(theme.title_bar_background).blend(tint)
+        );
     }
 }

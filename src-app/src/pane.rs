@@ -78,34 +78,12 @@ fn pane_colors() -> crate::theme::UiColors {
 
 pub(crate) fn pane_card_background(
     theme: &crate::theme::TerminalTheme,
-    terminal_material_active: bool,
+    backdrop: crate::window_chrome::veil::Backdrop,
     terminal_selected: bool,
-    material_veiled: bool,
 ) -> Hsla {
-    if !terminal_material_active || !terminal_selected {
-        return theme.background;
-    }
-
-    if material_veiled {
-        let shade = if theme.background.l <= 0.5 {
-            gpui::black()
-        } else {
-            gpui::white()
-        };
-        return shade.opacity(VEILED_TERMINAL_SHADE);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if theme.background.l <= 0.5 {
-            theme.background.opacity(0.35)
-        } else {
-            gpui::transparent_black()
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
+    if terminal_selected {
+        backdrop.terminal_card(theme.background)
+    } else {
         theme.background
     }
 }
@@ -263,7 +241,6 @@ fn pane_card_fill(radius: Pixels, color: Hsla, border: Option<Hsla>) -> AnyEleme
 
 const CARD_BORDER_WIDTH: Pixels = px(1.);
 const HEADER_GAP: f32 = 7.0;
-const VEILED_TERMINAL_SHADE: f32 = 0.35;
 const SECTION_PX: f32 = crate::app::constants::PANE_CONTENT_INSET_X;
 const ACTION_BUTTON_SIZE: f32 = 22.0;
 
@@ -703,6 +680,7 @@ pub struct Pane {
     tab_scroll: gpui::ScrollHandle,
     new_tab_menu: Option<Vec<crate::app::pane_palette::Preset>>,
     pub cached_config: paneflow_config::schema::PaneFlowConfig,
+    backdrop: crate::window_chrome::veil::Backdrop,
     drag_split_direction: Option<DropEdge>,
     overlay_prev_dir: Option<DropEdge>,
     overlay_from: (f32, f32, f32, f32),
@@ -766,6 +744,7 @@ impl Pane {
             tab_scroll: gpui::ScrollHandle::new(),
             new_tab_menu: None,
             cached_config,
+            backdrop: crate::window_chrome::veil::Backdrop::THEMED,
             drag_split_direction: None,
             overlay_prev_dir: None,
             overlay_from: (0.0, 0.0, 0.0, 0.0),
@@ -1875,12 +1854,7 @@ impl Pane {
         let fade_color = if let Some(background) = unified_background {
             background
         } else {
-            pane_card_background(
-                &crate::theme::active_theme(),
-                self.cached_config.terminal_material_enabled(),
-                true,
-                self.cached_config.material_veiled(),
-            )
+            pane_card_background(&crate::theme::active_theme(), self.backdrop, true)
         };
         let fades = tab_strip_fades(self.tab_scroll.clone(), fade_color);
 
@@ -2138,19 +2112,15 @@ fn cached_surface_style() -> StyleRefinement {
 }
 
 impl Render for Pane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.backdrop = crate::window_chrome::window_backdrop(&self.cached_config, window);
         let terminal_selected = matches!(self.surface(), PaneSurface::Terminal(_));
         let body = match self.surface() {
             PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
         };
         let theme = crate::theme::active_theme();
-        let card_background = pane_card_background(
-            &theme,
-            self.cached_config.terminal_material_enabled(),
-            terminal_selected,
-            self.cached_config.material_veiled(),
-        );
+        let card_background = pane_card_background(&theme, self.backdrop, terminal_selected);
 
         let dim_target = if self.dimmed() {
             self.cached_config.resolved_unfocused_pane_dim_alpha()
@@ -2928,39 +2898,65 @@ mod tests {
         assert_eq!(label(ProgressState::Remove, None), None);
     }
 
-    #[test]
-    fn terminal_material_scopes_the_card_to_windows_terminal_surfaces() {
-        let theme = crate::theme::paneflow_dark();
-
-        assert_eq!(
-            pane_card_background(&theme, true, false, true),
-            theme.background
-        );
-        assert_eq!(
-            pane_card_background(&theme, false, true, true),
-            theme.background
-        );
-
-        let unveiled = pane_card_background(&theme, true, true, false);
-        #[cfg(target_os = "windows")]
-        assert_eq!(unveiled, theme.background.opacity(0.35));
-        #[cfg(not(target_os = "windows"))]
-        assert_eq!(unveiled, theme.background);
+    fn blended(
+        blur: crate::window_chrome::veil::BlurSupport,
+    ) -> crate::window_chrome::veil::Backdrop {
+        crate::window_chrome::veil::Backdrop::new(
+            paneflow_config::schema::BackgroundStyle::Blended,
+            true,
+            blur,
+        )
     }
 
     #[test]
-    fn a_veiled_material_shades_the_terminal_card_toward_the_theme() {
+    fn the_backdrop_reaches_only_terminal_cards() {
+        use crate::window_chrome::veil::{Backdrop, BlurSupport};
+        let theme = crate::theme::paneflow_dark();
+
+        for backdrop in [
+            Backdrop::THEMED,
+            blended(BlurSupport::Full),
+            blended(BlurSupport::None),
+        ] {
+            assert_eq!(
+                pane_card_background(&theme, backdrop, false),
+                theme.background
+            );
+        }
+        assert_eq!(
+            pane_card_background(&theme, Backdrop::THEMED, true),
+            theme.background
+        );
+    }
+
+    #[test]
+    fn a_blurred_terminal_card_shades_toward_the_theme() {
+        use crate::window_chrome::veil::BlurSupport;
         let dark = crate::theme::paneflow_dark();
         let light = crate::theme::paneflow_light();
 
         assert_eq!(
-            pane_card_background(&dark, true, true, true),
-            gpui::black().opacity(super::VEILED_TERMINAL_SHADE)
+            pane_card_background(&dark, blended(BlurSupport::Full), true),
+            gpui::black().opacity(0.35)
         );
         assert_eq!(
-            pane_card_background(&light, true, true, true),
-            gpui::white().opacity(super::VEILED_TERMINAL_SHADE)
+            pane_card_background(&light, blended(BlurSupport::Full), true),
+            gpui::white().opacity(0.35)
         );
+    }
+
+    #[test]
+    fn an_unblurred_terminal_card_is_opaque() {
+        use crate::window_chrome::veil::BlurSupport;
+        for theme in [
+            crate::theme::paneflow_dark(),
+            crate::theme::paneflow_light(),
+        ] {
+            assert_eq!(
+                pane_card_background(&theme, blended(BlurSupport::None), true),
+                theme.background
+            );
+        }
     }
 
     #[test]
@@ -3030,7 +3026,9 @@ mod tests {
         assert!(!card_paints_quads(theme.background));
         #[cfg(target_os = "linux")]
         assert!(card_paints_quads(pane_card_background(
-            &theme, true, true, true
+            &theme,
+            blended(crate::window_chrome::veil::BlurSupport::Full),
+            true
         )));
     }
 

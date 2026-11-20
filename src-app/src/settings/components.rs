@@ -123,20 +123,12 @@ pub fn section_header_with_action(
         .child(action)
 }
 
-const TRANSPARENT_MATERIAL_PAGE_VEIL: f32 = 0.5;
-
 pub fn settings_page_color(
     ui: crate::theme::UiColors,
-    terminal_material_active: bool,
-    material_veiled: bool,
+    backdrop: crate::window_chrome::veil::Backdrop,
 ) -> Hsla {
-    if terminal_material_active {
-        let theme = crate::theme::active_theme();
-        let page = crate::pane::pane_card_background(&theme, true, true, material_veiled);
-        if page.a > f32::EPSILON {
-            return page;
-        }
-        return theme.background.opacity(TRANSPARENT_MATERIAL_PAGE_VEIL);
+    if backdrop.is_blended() {
+        return crate::pane::pane_card_background(&crate::theme::active_theme(), backdrop, true);
     }
     if ui.surface.l > 0.5 {
         lerp_color(ui.card, ui.text, 0.05)

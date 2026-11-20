@@ -101,10 +101,7 @@ use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::workspace::Workspace;
 use launch::run;
-use window_chrome::{
-    PanelCorner, native_backdrop_material_active, native_material_suppressed_by_fullscreen,
-    panel_corner_mask,
-};
+use window_chrome::{PanelCorner, panel_corner_mask};
 
 pub use app::actions::*;
 pub(crate) use app::bootstrap::warn_if_legacy_run_install;
@@ -334,6 +331,7 @@ struct PaneFlowApp {
     toast_queue: std::collections::VecDeque<Toast>,
     _toast_task: Option<gpui::Task<()>>,
     sidebar_view: Option<Entity<app::sidebar::view::SidebarView>>,
+    backdrop: window_chrome::veil::Backdrop,
     #[cfg(target_os = "windows")]
     windows_backdrop_light: Option<bool>,
     #[cfg(target_os = "windows")]

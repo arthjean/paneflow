@@ -863,31 +863,19 @@ impl PaneFlowApp {
     fn sidebar_chrome_background(&self) -> gpui::Hsla {
         crate::app::constants::cockpit_chrome_background(
             crate::theme::active_theme().title_bar_background,
-            self.cached_config.cockpit_chrome_material_enabled(),
+            self.backdrop.is_blended(),
         )
     }
 
     pub(super) fn sidebar_edge_fade_surface(&self, window: &Window) -> EdgeFadeSurface {
         let theme = crate::theme::active_theme();
         let chrome_background = self.sidebar_chrome_background();
-        let chrome_material = self.cached_config.cockpit_chrome_material_enabled()
-            && !crate::window_chrome::native_material_suppressed_by_fullscreen(
-                window.is_fullscreen(),
-            );
-        let native_material = crate::window_chrome::native_backdrop_material_active(
-            self.cached_config.terminal_material_enabled(),
-            chrome_material,
-        );
         let shell = if window.is_window_active() {
             theme.title_bar_background
         } else {
             theme.title_bar_inactive_background
         };
-        let backdrop = crate::app::constants::cockpit_shell_background(
-            shell,
-            native_material,
-            self.cached_config.material_veiled(),
-        );
+        let backdrop = crate::app::constants::cockpit_shell_background(shell, self.backdrop);
         EdgeFadeSurface::behind([chrome_background, backdrop])
     }
 
